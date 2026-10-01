@@ -126,6 +126,7 @@ from personalclaw.llm_helpers import (
     humanize_provider_error,
     is_model_call_failure,
 )
+from personalclaw.loop import posture as loop_posture
 from personalclaw.restart_request import RESTARTING, SHUTTING_DOWN
 from personalclaw.security import (
     is_sensitive_path,
@@ -2974,6 +2975,8 @@ async def run_chat(
             # A loop's worker and planner sessions resolve — and are metered on — the ``loops``
             # axis; every other session takes the chat binding (`model_axis_for`).
             model_axis=model_axis_for(session),
+            # An Attended loop's sessions are answered by a person: the cap does not count them.
+            unmetered=not loop_posture.spend_metered(session),
         )
         _acquired = True
         # The chosen model could not run and another answers: said now, before the reply streams

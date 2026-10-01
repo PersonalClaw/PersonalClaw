@@ -276,6 +276,7 @@ class _ChatSession:
         "_side",
         "_extra_tool_roots",
         "_unattended",
+        "_spend_metered",
     )
 
     def __init__(
@@ -339,11 +340,15 @@ class _ChatSession:
         # Who answers this session's asks, when the session's owner decided it: True = nobody
         # (an Unattended loop's worker), False = a person (an Attended loop's worker), None =
         # nobody decided, so the session key does (``guardrails.policy.is_unattended_session``).
-        # The loop manager sets it from the loop's Mode each time it arms a worker, because a
-        # loop's key names a loop, not whether anybody is watching it. Unattended: the native
-        # runtime strips interactive tools and declines an ask at once, so the turn can't wedge
-        # waiting for a person who is not there.
+        # A loop sets it from its Mode each time it arms one of its sessions (``loop.posture``),
+        # because a loop's key names a loop, not whether anybody is watching it. Unattended: the
+        # native runtime strips interactive tools and declines an ask at once, so the turn can't
+        # wedge waiting for a person who is not there.
         self._unattended: bool | None = None
+        # Whether this session's model spend counts against the daily cap for unattended work. A
+        # loop sets it from its Mode (``loop.posture``): only an Attended loop's session is the
+        # owner's own, like a chat's. Every other session is metered by the axis it runs on.
+        self._spend_metered: bool = True
         self.created_at: str = datetime.now(timezone.utc).isoformat()
         # The transcript: one entry per thing the user wrote or saw, and nothing else.
         # It is never trimmed — the whole-file save rewrites the transcript FROM this

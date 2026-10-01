@@ -16,8 +16,9 @@ export function canStopLoop(status: string): boolean {
  *  `worktree.cleanup_all`, which for every task worktree does `git worktree remove --force` AND
  *  `git branch -D`, so uncommitted work in a running task's worktree is discarded and its
  *  committed-but-unmerged work goes with the branch. A FINISHED task is merged back
- *  (`worktree.merge_worktree`), so merged work is in the workspace and untouched. A loop still
- *  planning has no workers and no worktrees: what stops is its planner. */
+ *  (`worktree.merge_worktree`), so merged work is in the workspace and untouched — on an Attended
+ *  loop only once you approve its merge, so finished work waiting for that goes with its branch
+ *  too. A loop still planning has no workers and no worktrees: what stops is its planner. */
 export function confirmStopLoop(status: string, name: string): Promise<boolean> {
   const subject = name.trim() ? `\u201c${name.trim()}\u201d` : 'this loop'
   if (status === 'planning' || status === 'intake') {
@@ -30,7 +31,7 @@ export function confirmStopLoop(status: string, name: string): Promise<boolean> 
   }
   return confirm({
     title: `Stop ${subject}?`,
-    body: "Stopping ends the project for good — it can't be resumed afterward (you'd start a new one). Work already merged into your workspace is kept, but a task still running loses its own worktree and branch. Pause instead if you just want to step in.",
+    body: "Stopping ends the project for good — it can't be resumed afterward (you'd start a new one). Work already merged into your workspace is kept, but a task still running loses its own worktree and branch, and so does finished work still waiting for you to merge it. Pause instead if you just want to step in.",
     danger: true,
     confirmLabel: 'Stop',
   })

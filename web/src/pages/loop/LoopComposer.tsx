@@ -322,8 +322,8 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
       )}
       <Segmented ariaLabel="Mode" disabled={busy} collapse="menu" value={attended ? 'attended' : 'unattended'} onChange={(v) => setAttended(v === 'attended')}
         options={[
-          { key: 'unattended', label: loopModeLabel(false), title: loopModeMeaning(false) },
-          { key: 'attended', label: loopModeLabel(true), title: loopModeMeaning(true) },
+          { key: 'unattended', label: loopModeLabel(false), title: loopModeMeaning(false, kind) },
+          { key: 'attended', label: loopModeLabel(true), title: loopModeMeaning(true, kind) },
         ]} />
       {/* The qualifier is the widest thing in this row and the least load-bearing — the title
           already explains it in full. It drops below `lg`, where the header is fighting for

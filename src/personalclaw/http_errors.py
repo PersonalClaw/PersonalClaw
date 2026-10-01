@@ -1104,6 +1104,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "routing_policy_unreadable": (
         "The routing table could not be read, so it is neither shown nor changed."
     ),
+    # ── an Attended code loop's merge review (dashboard/handlers/loop_routes.py —
+    #    GET/POST /api/loops/{id}/merge) ──
+    # 409 `loop_merge_not_waiting`: the loop is not paused on finished work waiting to be merged.
+    # 409 `loop_merge_moved`: a task's branch is not at the commit the review showed (or names a
+    # task the review did not), so nothing was merged; the review is read again.
+    "loop_merge_not_waiting": "Nothing of this loop's is waiting for you to merge.",
+    "loop_merge_moved": (
+        "The work changed since you reviewed it, so nothing was merged. Review it again."
+    ),
     # ── the skill search (dashboard/handlers/skills.py — GET /api/skills/search) ──
     # 404: the named catalogue is not one PersonalClaw has. 500: the one catalogue a scoped search
     # asked could not answer; the message is the reason, relayed.

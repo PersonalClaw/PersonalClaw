@@ -19,7 +19,7 @@ import { Centered } from '../../ui/Centered'
 import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { confirmStopLoop } from '../loop/stopLoop'
-import { api, type CodeProject, type CodeStage, type CodeFinding, type FsEntry, type TaskItem, type Loop } from '../../lib/api'
+import { api, type CodeProject, type CodeStage, type CodeFinding, type FsEntry, type TaskItem, type Loop, type LoopMerge } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
@@ -57,6 +57,7 @@ import { codeDeleteBody } from './codeMeta'
 import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { LoopApprovals } from '../loops/LoopApprovals'
+import { MergeReview, MergedWork } from './MergeReview'
 import { CockpitToast, useOnScreenReport, type CodeToastState } from './CodeToast'
 import { useMode } from '../../app/theme'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -825,7 +826,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       <div className="flex min-h-0 flex-1">
         <CollapsiblePanel side="left" panelKey="code-left" def={300} min={200} max={460}
           icon={FolderTree} label="Files">
-          <FilesRail ws={fileRoot} isProjectDir={!ws} running={active} />
+          <FilesRail ws={fileRoot} isProjectDir={!ws} running={active} merges={p.merges} />
         </CollapsiblePanel>
         <CenterEditor ws={fileRoot} showTerm={showTerm} onCloseTerm={() => setShowTerm(false)} running={active} runCmd={pendingRunCmd} />
         <CollapsiblePanel side="right" panelKey="code-right" def={340} min={260} max={520}
@@ -1118,7 +1119,7 @@ function CollapsiblePanel({ side, panelKey, def, min, max, icon: Icon, label, ch
 
 // ── left rail: file tree + git changes (Tasks moved to the right panel) ──
 
-function FilesRail({ ws, isProjectDir, running }: { ws: string; isProjectDir: boolean; running: boolean }) {
+function FilesRail({ ws, isProjectDir, running, merges }: { ws: string; isProjectDir: boolean; running: boolean; merges?: LoopMerge[] }) {
   const [tab, setTab] = useState<'files' | 'changes'>('files')
   // A light, rail-level git-status read JUST for the Changes-tab count badge — so the
   // user sees review-worthy changes are waiting while they're on the Files tab (the
@@ -1172,7 +1173,7 @@ function FilesRail({ ws, isProjectDir, running }: { ws: string; isProjectDir: bo
       {tab === 'files' && !!ws && <FileFinder ws={ws} />}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'files' ? <WorkspaceTree ws={ws} running={running} isProjectDir={isProjectDir} />
-          : <ChangesPanel ws={ws} running={running} isProjectDir={isProjectDir} />}
+          : <ChangesPanel ws={ws} running={running} isProjectDir={isProjectDir} merges={merges} />}
       </div>
     </div>
   )
@@ -1953,8 +1954,14 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
         <h3 data-type="title-m" className="text-on-surface" style={fvs(600)}>{task.title}</h3>
         {task.description && <p data-type="body-s" className="mt-1 text-on-surface-var">{task.description}</p>}
 
+        {/* The build's finished work waits for you to merge it: its review is under Tasks. */}
+        {project.status === 'needs_input' && project.pending_question?.merge && (
+          <p role="status" data-type="body-s" className="mt-m rounded-lg bg-surface-container p-s text-on-surface-var">
+            The build’s finished work is waiting for you to merge it into {project.pending_question.merge.into}. Review it under Tasks.
+          </p>
+        )}
         {/* attended question for THIS task — answer in the steer box below */}
-        {project.status === 'needs_input' && project.pending_question?.question && (
+        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && (
           <div data-type="body-s" className="mt-3 rounded-lg p-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> Needs your input
@@ -2404,7 +2411,7 @@ function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; running: boo
 /** Git changes panel — the workspace's branch + changed files, so the human can
  *  review what the agent did. Clicking a file opens it in the editor. Polls on
  *  mount + a manual refresh; git status is keyed by path. */
-function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; running: boolean; isProjectDir?: boolean }) {
+function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }: { ws: string; running: boolean; isProjectDir?: boolean; merges?: LoopMerge[] }) {
   const [nonce, setNonce] = useState(0)
   // A no-workspace project's "ws" is its engine files dir, which is NOT a git repo,
   // so git status there is meaningless — running it would render a misleading
@@ -2514,6 +2521,8 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
         {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
         <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)} className="shrink-0 px-1.5 text-[0.75rem] text-on-surface-low">refresh</Button>
       </div>
+      {/* A merge leaves the tree clean, so what the loop merged is said here, not left to the log. */}
+      <MergedWork merges={merges} />
       {entries.length === 0 ? (
         // Distinguish the three empty-map states: a failed/in-flight fetch must NOT
         // masquerade as a genuinely clean tree (the old bug — all three read "clean").
@@ -3376,8 +3385,12 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
       <div className="max-h-[40vh] overflow-y-auto px-2 pt-2">
         {/* An Attended build's workers ask before they act, and their asks are answered here. */}
         <LoopApprovals loopId={project.id} className="mb-2" />
+        {/* An Attended build's finished work, waiting for you to merge it into your branch. */}
+        {project.status === 'needs_input' && project.pending_question?.merge && (
+          <MergeReview loopId={project.id} waiting={project.pending_question.merge} onMerged={onNudged} />
+        )}
         {/* Attended question — the call to action; answer in the steer box below. */}
-        {project.status === 'needs_input' && project.pending_question?.question && (
+        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && (
           <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>

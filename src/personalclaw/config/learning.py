@@ -95,7 +95,7 @@ class LoopsConfig:
             "Trust TTL Seconds",
             "How long an Unattended loop's workers run their tool calls without asking "
             "before the supervisor pauses the loop for you to resume it. An Attended loop "
-            "asks you for each call and holds no such grant.",
+            "asks you for each call, its planner's and its workers', and holds no such grant.",
         ),
     )
     judge_use_case: str = field(

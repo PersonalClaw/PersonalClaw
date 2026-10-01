@@ -2,6 +2,7 @@ import { Check, ListChecks, GitBranch, Boxes, Lightbulb } from 'lucide-react'
 import { PlanningWalkthrough, ArtifactSection, artifactList, artifactStrings, type WalkthroughConfig } from '../../ui/PlanningWalkthrough'
 import { api, type Loop } from '../../lib/api'
 import { PlanningArtifactDoc } from '../loops/PlanningArtifactDoc'
+import { LoopApprovals } from '../loops/LoopApprovals'
 import type { CommentTarget } from '../../ui/content/commentTarget'
 
 /** The Code SDLC planning walkthrough — the shared PlanningWalkthrough wired to the
@@ -43,6 +44,7 @@ export function CodePlanningView({ projectId, onReady, onBack, onCancel, onStop 
 }) {
   return (
     <PlanningWalkthrough id={projectId} cfg={makeCfg(projectId)} onBack={onBack} onCancel={onCancel} onStop={onStop}
+      approvals={<LoopApprovals loopId={projectId} />}
       onReady={() => { api.uLoop(projectId).then(onReady).catch(() => {}) }} />
   )
 }

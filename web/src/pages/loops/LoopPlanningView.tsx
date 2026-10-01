@@ -3,6 +3,7 @@ import { PlanningWalkthrough, ArtifactSection, artifactList, artifactStrings, ty
 import { api, type Loop } from '../../lib/api'
 import { DesignStepPreview } from './DesignStepPreview'
 import { PlanningArtifactDoc } from './PlanningArtifactDoc'
+import { LoopApprovals } from './LoopApprovals'
 import type { CommentTarget } from '../../ui/content/commentTarget'
 
 /** The unified planning walkthrough (goal/general/design) — the shared
@@ -45,6 +46,7 @@ export function LoopPlanningView({ loopId, onReady, onBack, onCancel, onStop }: 
 }) {
   return (
     <PlanningWalkthrough id={loopId} cfg={makeCfg(loopId)} onBack={onBack} onCancel={onCancel} onStop={onStop}
+      approvals={<LoopApprovals loopId={loopId} />}
       onReady={() => { api.uLoop(loopId).then(onReady).catch(() => {}) }} />
   )
 }

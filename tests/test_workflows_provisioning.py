@@ -546,6 +546,48 @@ class TestTeardown:
         assert ".env" not in names, "the preserved secret never reached git history"
         assert not any(n.startswith(".pclaw-setup") for n in names), "no engine machinery committed"
 
+    async def test_the_run_branch_is_committed_under_the_owners_configured_identity(
+        self, home, repo
+    ) -> None:
+        """The run branch is what the owner merges into their own history, so its commit carries
+        the identity git is configured with there, never one of the product's own."""
+        run = _run(project_id="p-1")
+        spec = WorkspaceSpec(mode=Mode.WORKTREE)
+        result = await provisioning.provision(
+            spec, run_id=run.id, project_id="p-1", workspace_dir=str(repo)
+        )
+        provisioning.stamp_run(run, result, spec)
+        with open(os.path.join(result.path, "real-work.txt"), "w", encoding="utf-8") as fh:
+            fh.write("the thing the run produced\n")
+
+        torn = await provisioning.teardown(run, workspace_dir=str(repo))
+
+        assert torn.committed is True
+        authors = git(repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>", torn.branch).strip()
+        assert authors == "T <t@t>|T <t@t>", authors
+
+    async def test_work_with_no_identity_to_commit_it_as_is_kept_not_deleted(
+        self, home, repo, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        git(repo, "config", "--unset", "user.name")
+        git(repo, "config", "--unset", "user.email")
+        run = _run(project_id="p-1")
+        spec = WorkspaceSpec(mode=Mode.WORKTREE)
+        result = await provisioning.provision(
+            spec, run_id=run.id, project_id="p-1", workspace_dir=str(repo)
+        )
+        provisioning.stamp_run(run, result, spec)
+        with open(os.path.join(result.path, "real-work.txt"), "w", encoding="utf-8") as fh:
+            fh.write("the thing the run produced\n")
+
+        torn = await provisioning.teardown(run, workspace_dir=str(repo))
+
+        assert torn.committed is False and torn.removed is False
+        assert os.path.isfile(os.path.join(result.path, "real-work.txt")), "the work was deleted"
+        assert any("no name and email" in f for f in torn.failed), torn.failed
+
     async def test_keep_open_still_runs_teardown_but_keeps_the_directory(self, home, repo) -> None:
         """Keeping the directory is not keeping the processes. A `docker compose` left up because
         the user wanted to inspect the files is a leak the override never asked for."""

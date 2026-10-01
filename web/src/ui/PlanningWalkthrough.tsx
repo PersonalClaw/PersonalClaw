@@ -78,9 +78,12 @@ function lastSentence(raw: string): string {
   return (parts[parts.length - 1] || '').trim()
 }
 
-export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop }: {
+export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop, approvals }: {
   id: string
   cfg: WalkthroughConfig
+  /** The planner's tool calls waiting on you (an Attended loop's planner asks for them as a chat
+   *  does), answered here above the plan. */
+  approvals?: React.ReactNode
   onReady: () => void
   /** The loop is gone (deleted elsewhere): leave. */
   onBack: () => void
@@ -421,6 +424,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
         <div className="mx-auto flex h-full min-h-0 w-full flex-col gap-4 lg:flex-row" style={{ maxWidth: 'var(--content-width)' }}>
           {/* MAIN: the plan — compact steps rail + the current step's artifact gate */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
+            {approvals}
             <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3.5">
               <div data-type="label-s" className="mb-2 text-on-surface-var" style={fvs(550)}>
                 Planning steps {steps.length ? `(${approvedCount}/${steps.length} approved)` : ''}

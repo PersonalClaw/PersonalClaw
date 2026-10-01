@@ -277,7 +277,10 @@ class Loop:
     # default: a completed loop's findings/report persist (never auto-delete a user's
     # work without opt-in). External workspace_dir bindings are NEVER auto-torn-down.
     auto_teardown_on_complete: bool = False
-    attended: bool = False
+    #: The loop's Mode: True = Attended (a person answers its sessions' tool calls), False =
+    #: Unattended (they run on a standing grant). Attended unless a creator says otherwise: a
+    #: loop nobody chose a Mode for asks (``loop.posture``).
+    attended: bool = True
     autopilot: bool = True  # system drives phases vs user queues (code-ish)
     max_cycles: int = 30  # 0 = uncapped
     #: `AG-14` ceilings — 0 = uncapped, like ``max_cycles``. ``deadline_secs`` bounds ACTIVE

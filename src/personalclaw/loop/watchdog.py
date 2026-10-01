@@ -518,7 +518,9 @@ class LoopWatchdog:
         q = loop_files.pending_question(loop_id)
         if not q:
             return False
-        if not attended:
+        # A question the scheduler asked is asked again while it still holds (a merge waiting, no
+        # git identity), so a running loop drops it rather than stopping on one already settled.
+        if not attended or q.get("asked_by") == loop_files.SCHEDULER_QUESTION:
             loop_files.clear_question(loop_id)
             return False
         return True
@@ -1097,6 +1099,7 @@ class LoopWatchdog:
                 self._running_since.pop(cid, None)
         self._held &= live_ids
         from personalclaw.guardrails.incident import incident_active
+        from personalclaw.loop import posture
 
         # Read once per poll: every running loop is held, or none is.
         incident = incident_active()
@@ -1109,11 +1112,8 @@ class LoopWatchdog:
             # worker it armed (`manager.end_unattended_grant`). An Attended loop holds no such
             # grant (its owner answers each call, `manager._arm_posture`), so there is nothing of
             # it to expire and no re-authorization to ask for.
-            if (
-                not loop.attended
-                and loop.started_at
-                and time.time() - loop.started_at > cfg.trust_ttl_secs
-            ):
+            asks = posture.of(loop).asks
+            if not asks and loop.started_at and time.time() - loop.started_at > cfg.trust_ttl_secs:
                 manager.end_unattended_grant(self._state, cid)
                 loop_files.write_question(
                     cid,
@@ -1125,7 +1125,7 @@ class LoopWatchdog:
                 continue
 
             # 2. Needs input — attended pause vs unattended discard.
-            if self._handle_question(cid, attended=loop.attended):
+            if self._handle_question(cid, attended=asks):
                 store.update_status(cid, LoopStatus.NEEDS_INPUT)
                 self._publish(cid, "needs_input")
                 continue

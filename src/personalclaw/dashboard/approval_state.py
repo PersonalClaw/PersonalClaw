@@ -96,11 +96,14 @@ def chat_approval_id(session_key: str, request_id: str | int) -> str:
 
 
 def _loop_name_of(session: str) -> str | None:
-    """The name of the loop whose worker holds *session* ("" for a loop with none, or one that is
-    gone), or None when *session* is not a loop worker's."""
+    """The name of the loop whose worker or planner holds *session* ("" for a loop with none, or
+    one that is gone), or None when *session* is not one of a loop's."""
     from personalclaw.loop import manager as loop_manager
+    from personalclaw.loop.plan_walkthrough import planner_loop_id
 
     loop_id = loop_manager.worker_loop_id(session)
+    if not loop_id:
+        loop_id = planner_loop_id(session)
     if not loop_id:
         return None
     try:
@@ -1203,8 +1206,13 @@ class DashboardApprovalState:
         # would otherwise not read the agent's new floor until they are armed again.
         if original_action in ("trust", "trust_agent"):
             from personalclaw.loop import manager as loop_manager
+            from personalclaw.loop.plan_walkthrough import planner_loop_id
 
+            # A planner's card grants the same: its later passes, and the loop's workers until
+            # the run ends — a launch is a run beginning, which asks again.
             loop_id = loop_manager.worker_loop_id(name)
+            if not loop_id:
+                loop_id = planner_loop_id(name)
             if loop_id:
                 loop_manager.grant_every_worker(self, loop_id)
         resolved = action if action in ("approved", "approved_trust_reads") else "rejected"

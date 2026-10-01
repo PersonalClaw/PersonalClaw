@@ -179,29 +179,47 @@ held loop.
 
 ### Mode: Attended and Unattended
 
-A loops-table loop's Mode (`loop.attended`) decides who answers its workers' tool calls. It is set on
-every worker, the stage worker and each per-task worker alike, each time the loop arms it
-(`manager._arm_posture`), so a resume never carries one run's posture into the next.
+A loops-table loop's Mode (`loop.attended`) decides how every session the loop runs is answered
+and paid for: its planner (the walkthrough's design pass and each step pass), its stage worker,
+each per-task worker, and the merges of their work. One module decides it (`loop/posture.py`):
+`posture.of(loop)` reads the Mode, `posture.arm` sets it on a session each time the loop arms one
+(the planner at every pass, a worker at every start, resume and task spawn), and `posture.frame`
+frames the session's cycle message. So no session of a loop runs looser than its Mode, and a resume
+never carries one run's posture into the next. A Mode that is not exactly `true` or `false` (a loop
+created without one, a row the store cannot read) is the cautious reading of both halves: its
+sessions ask a person, and their spend still counts against the cap. A loop created with no Mode
+(`POST /api/loops` without `attended`, an agent's `code_project_create`) is Attended.
 
-- **Attended.** A worker's call that needs approval goes through the same path a chat's does
+- **Attended.** A session's call that needs approval goes through the same path a chat's does
   (`approval_state._hold_approval`): the card on the loop's page (`LoopApprovals`, in the loop, code
-  and design cockpits), the bell and Inbox row, a phone push and the channel approvals go to. The
-  grants that stand for chats stand here too (an agent's "Always allow" or "Trust reads", YOLO, the
-  operator's hook patterns), and the card's "This loop" scope lets every worker of this run act
-  without asking until the run ends: a pause, a stop or a restart ends it
-  (`manager.grant_every_worker`). A worker may also write one question and pause the loop. The time
-  a turn spends waiting on your answer does not count against it: the watchdog does not read the
-  wait as a wedged worker, and the cycle's own time bound stops while it waits
-  (`cancellation.wait_for_unpaused`). An Attended loop holds no standing grant, so nothing of it
-  expires.
-- **Unattended.** Nobody is there to ask, so the workers run on a standing grant: their calls go
+  and design cockpits and in the planning walkthrough), the bell and Inbox row, a phone push and the
+  channel approvals go to. The grants that stand for chats stand here too (an agent's "Always allow"
+  or "Trust reads", YOLO, the operator's hook patterns), and the card's "This loop" scope lets every
+  worker of this run, and the planner for the rest of the planning, act without asking until the run
+  ends: a launch, a pause, a stop or a restart ends it (`manager.grant_every_worker`). A worker may
+  also write one question and pause the loop. The time a turn spends waiting on your answer does not
+  count against it: the watchdog does not read the wait as a wedged worker, the cycle's own time
+  bound stops while it waits (`cancellation.wait_for_unpaused`), and so does a planner pass's
+  (`planning/runner.py`). No session is told it runs as an autonomous run. An Attended loop holds no
+  standing grant, so nothing of it expires. Its planner's and workers' model spend is the owner's,
+  as a chat's is: the daily cap for unattended work does not count it (`chat_runner` passes
+  `unmetered` from `posture.spend_metered`, and the runtime's model guard is built uncounted). The
+  supervisor's own checks of the loop's work (its stage judge, its verify and test commands) are
+  automation's and are metered as before.
+- **Unattended.** Nobody is there to ask, so the sessions run on a standing grant: their calls go
   ahead without asking, inside the deny-list, your hooks and the operator ceiling, and a call the
   grant cannot cover is declined at once rather than left waiting. An agent CLI is told the mode
-  that stops it asking. The grant lasts `loops.trust_ttl_secs` from the start of the running stretch;
-  then every worker loses it (`manager.end_unattended_grant`) and the loop waits for you
-  (`needs_input`) to resume it. A stray question is discarded.
+  that stops it asking. Each cycle message is framed as an autonomous run (`autonomous_framing`).
+  A running loop's grant lasts `loops.trust_ttl_secs` from the start of the running stretch; then
+  every worker loses it (`manager.end_unattended_grant`) and the loop waits for you (`needs_input`)
+  to resume it. A stray question is discarded. Its spend counts against the daily cap.
 
-A worker's model call rides the spend guard every automated call does (`ModelCallGuard`). The guard
+A cached runtime is rebuilt when who answers its session or whose spend it is changes
+(`session._posture_moved`), since a runtime keeps both from when it was built.
+
+A loop session's model call rides the guard every automated call does (`ModelCallGuard`: the
+breaker, the clock, the attempt audit and the outbound scan), whatever the loop's Mode; only an
+Unattended loop's is counted against the day's and the run's spend ceilings (`counted`). The guard
 puts no clock of its own on a call whose provider instance keeps one (`ModelProvider.request_timeout_secs`:
 an Ollama instance's Request Timeout, the wait for the first word and then between the parts of the
 answer); for a provider that keeps none it stops the call at 300 s. A call stopped either way says
@@ -312,8 +330,37 @@ The supervisor does not take the worker's word for it:
 - **`loop/worktree.py`** — parallel task execution: workers run several tasks
   of a phase at once, each in its own git worktree under
   `projects/<project_id>/worktrees/<task_id>` (never the user's workspace);
-  worktrees merge back when the phase's tasks finish. A non-git workspace
-  falls back to sequential execution.
+  a finished task's branch merges back into the workspace's checked-out branch. A non-git
+  workspace falls back to sequential execution.
+- **Where a task's work lands, and under whose name.** Every commit a loop makes (a task's
+  leftover edits on its branch, a merge commit, the first commit of an empty repository) is made
+  as git is configured to commit in that workspace, `user.name` and `user.email` from the
+  repository's, the owner's or the machine's settings, with `user.useConfigOnly` so git never
+  guesses one (`worktree.commit_identity`, `_CONFIGURED_IDENTITY_ONLY`). The name PersonalClaw
+  knows its owner by (Settings → Account) carries no email, so it is not one. With none
+  configured in a repository, a code loop there does not start (`CodeKind.launch_blocker` says
+  how to set one), and a running one pauses before any worker's next cycle (`CodeKind.schedule`
+  asks first, every poll), so no worker is left to commit as a name it made up; its brief says to
+  commit as git is configured and to stop and say so when git has none. A task whose branch holds
+  a commit made as anyone else (`worktree.commits_not_by`) is neither merged nor put up for
+  merging: the loop pauses and names the commits and the name they carry. An
+  **Unattended** loop merges each task's branch into the workspace's checked-out branch as the task
+  finishes. An **Attended** loop puts nothing on that branch unasked: a finished task's work stays
+  committed on its own branch, nothing new starts on top of it, and once the stage's running
+  workers finish the loop pauses with a merge review (`GET /api/loops/{id}/merge`: each task's
+  branch, the commit it is at, its commits and its diff against the branch). **Merge** approves it
+  at exactly those commits (`POST /api/loops/{id}/merge` with the commits and `{"confirm": true}`, owner-only, audited as
+  `loop_merge_approved`); the approval is held by the scheduler alone (`CodeKind.approve_merge`,
+  in memory: the loop's folder is its workers' to write, so nothing there stands for it, and after
+  a restart the loop asks again), the loop resumes, and the scheduler merges each task at that
+  commit, or asks again if its branch moved. Its questions (a merge to approve, an identity to set)
+  are asked again while they hold, so a Resume never stops on one already settled
+  (`files.SCHEDULER_QUESTION`). An Attended loop
+  never makes the first commit of an empty repository either: its tasks then stay the stage
+  worker's, in the tree. Every merge is recorded with who made it (`files.record_merge`,
+  `merges.jsonl`), and the cockpit's Changes tab lists them, since a merge leaves the tree clean.
+  A workflow run's own branch is committed the same way (`workflows/provisioning._commit_outstanding`),
+  and with no identity its folder is kept rather than deleted with the work in it.
 - **One writer at a time.** The code kind's scheduler (`CodeKind.schedule`, asked on every
   watchdog poll) never lets the stage worker and task workers write at once. A worktree is cut
   from HEAD, so a phase fans out only from a tree with no uncommitted changes to tracked files and
@@ -329,7 +376,10 @@ The supervisor does not take the worker's word for it:
   walkthrough (`plan_steps.json`, `step_artifact.json`) go to the loop's own folder: its brief names
   the absolute path, and the runner (`planning/runner.py`) reads and clears only there. A file of
   that name the planner wrote into the workspace during the pass is moved out; one that was there
-  before is the user's own and is never read or touched.
+  before is the user's own and is never read or touched. Its scratch work (a throwaway copy of the
+  workspace, a test run's output) goes in `scratch/` in the loop's own folder, which its brief names
+  and the pass removes when it ends; a worker's brief sends its scratch to a `mktemp -d` folder
+  (the user's temporary folder), never to a path under `/tmp` by name or into the checkout.
 
 ## Cockpit dispatch (frontend)
 

@@ -71,6 +71,9 @@ def repo(tmp_path):
     ws.mkdir()
     (ws / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n\n### Fixed\n")
     _git(ws, tmp_path, "init", "-q")
+    # The identity its owner configured: every commit the loop makes here carries it.
+    _git(ws, tmp_path, "config", "user.name", "t")
+    _git(ws, tmp_path, "config", "user.email", "t@example.com")
     _git(ws, tmp_path, "add", "CHANGELOG.md")
     _git(ws, tmp_path, "commit", "-q", "-m", "init")
     return ws

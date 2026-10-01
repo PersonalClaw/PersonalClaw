@@ -142,7 +142,7 @@ def _connect() -> sqlite3.Connection:
             workflow_ids TEXT NOT NULL DEFAULT '[]',
             workspace_dir TEXT NOT NULL DEFAULT '',
             auto_teardown_on_complete INTEGER NOT NULL DEFAULT 0,
-            attended INTEGER NOT NULL DEFAULT 0,
+            attended INTEGER NOT NULL DEFAULT 1,
             autopilot INTEGER NOT NULL DEFAULT 1,
             max_cycles INTEGER NOT NULL DEFAULT 30,
             max_cost_usd REAL NOT NULL DEFAULT 0,
@@ -255,7 +255,9 @@ def _row_to_loop(row: sqlite3.Row) -> Loop:
             )
         except (json.JSONDecodeError, TypeError):
             d[col] = {} if col in _DICT_COLS else []
-    d["attended"] = bool(d.get("attended", 0))
+    # The Mode: Unattended only where the store wrote one (0). A value it never writes is read
+    # as Attended, the reading under which nothing runs without its owner (``loop.posture``).
+    d["attended"] = d.get("attended") != 0
     d["autopilot"] = bool(d.get("autopilot", 1))
     d["auto_teardown_on_complete"] = bool(d.get("auto_teardown_on_complete", 0))
     return Loop.from_dict(d)
@@ -817,6 +819,9 @@ def get_redacted(loop_id: str) -> dict | None:
     # ("loop_judge", kind) — the FE thumbs attribute a verdict with no lookup.
     view["feedback_producer"] = {"producer_kind": "loop_judge", "producer_id": loop.kind}
     view["pending_question"] = files.pending_question(loop_id)
+    # What the loop's scheduler merged into the workspace's branch, by whom, oldest first: a code
+    # loop's page says what landed on the owner's branch (its working tree is clean after a merge).
+    view["merges"] = files.get_merges(loop_id)
     view["held"] = held_reason(loop.status)
     # The third-party judge's per-cycle verdicts + the marginal-value trail back the
     # cockpit's ROI rail / verdict nodes (open-ended goals). The FE reads these off

@@ -12,6 +12,12 @@ sentinel is read or cleared, and nothing in the workspace is read or removed, wh
 its name. A file the planner writes into the workspace anyway (the bare name lands in its
 working directory) is moved to the loop's folder, and only when this pass created it.
 
+The planner is armed from its loop's Mode like every session the loop runs (``loop.posture``):
+an Attended loop's planner asks a person for its tool calls the way a chat does, and an
+Unattended one runs on its grant, framed as an autonomous run. Its scratch work (a throwaway copy
+of the workspace, a test run's output) goes in the loop's own folder (:data:`SCRATCH_DIR`), which
+the pass removes when it ends.
+
 The autonudge loop self-halts the moment the sentinel appears (via the STOP file),
 so the planner is a bounded one-author task, never a runaway loop.
 """
@@ -26,6 +32,7 @@ import time
 from dataclasses import dataclass
 
 from personalclaw.guardrails.incident import incident_active
+from personalclaw.loop import posture as loop_posture
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +42,10 @@ PLANNER_MAX_CYCLES = 3
 PLANNER_FIRST_IDLE = 10
 PLANNER_POLL_SECS = 4
 PLANNER_TIMEOUT_SECS = 600
+
+#: The planner's scratch folder, inside the loop's own folder: where a throwaway copy of the
+#: workspace or a test run's output goes, never a shared temporary folder or the workspace itself.
+SCRATCH_DIR = "scratch"
 
 #: How a planner pass ended (:attr:`PlannerPass.ended`).
 WROTE = "wrote"  # the file appeared; ``text`` is what it holds
@@ -79,6 +90,32 @@ def clear_sentinels(files_dir: str, sentinels: list[str]) -> None:
                 os.unlink(p)
         except OSError:
             pass
+
+
+def scratch_rule(files_dir: str) -> str:
+    """The brief's line on where the planner's scratch work goes: its own folder in the loop's."""
+    where = os.path.join(files_dir, SCRATCH_DIR) if files_dir else SCRATCH_DIR
+    return (
+        f"\n\nScratch work — a throwaway copy of the workspace, a test run's output — goes in "
+        f"`{where}` (create it), never in a shared temporary folder such as /tmp and never in "
+        "the workspace. It is removed when this pass ends."
+    )
+
+
+def clear_scratch(files_dir: str) -> None:
+    """Remove the planner's scratch folder from the loop's own folder. Best-effort; a link
+    there is unlinked, never followed."""
+    base = (files_dir or "").strip()
+    if not base:
+        return
+    path = os.path.join(base, SCRATCH_DIR)
+    try:
+        if os.path.islink(path):
+            os.unlink(path)
+        elif os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+    except OSError:
+        logger.debug("planner: could not clear its scratch folder %s", path, exc_info=True)
 
 
 def _present(folder: str, names: list[str]) -> set[str]:
@@ -132,6 +169,8 @@ async def run_planner_pass(
     stop_sentinel_name: str = "STOP",
     timeout_secs: int | None = None,
     extra_sentinels: tuple[str, ...] = (),
+    posture: loop_posture.Posture = loop_posture.UNREADABLE,
+    granted: bool = False,
 ) -> PlannerPass:
     """Run ONE planner pass and return what it came back with (:class:`PlannerPass`: the
     sentinel's raw text, and how the pass ended). Spawns (or reuses) the planner session cwd'd to
@@ -149,6 +188,11 @@ async def run_planner_pass(
     alongside ``sentinel`` (pre-pass + teardown), and moved there first when the
     planner wrote them into the workspace (:func:`reclaim_misplaced`). Never READ from —
     only the active ``sentinel`` is the pass's output.
+
+    ``posture`` is the planner's loop's (``loop.posture.of``), and ``granted`` "This loop" from one
+    of this planning's own approval cards. A caller that names none gets the cautious posture: the
+    planner asks a person, and its spend counts. The time a turn spends waiting on its owner's
+    answer is not the pass's to spend.
     """
     skey = session_key
     _scratch = [sentinel, *(s for s in extra_sentinels if s and s != sentinel)]
@@ -178,28 +222,22 @@ async def run_planner_pass(
             workspace_dir=cwd,
             app=app,
         )
-        session._trust = True
         if files_dir and files_dir not in (session._extra_tool_roots or []):
             session._extra_tool_roots = [*(session._extra_tool_roots or []), files_dir]
         if provider:
             session.acp_provider = provider
             session.acp_provider_agent = provider_agent
             session.reasoning_effort = reasoning_effort
-            session.acp_mode = "bypassPermissions"
+        # Who answers the planner's calls, and whose spend it is: its loop's Mode, the way the
+        # loop arms its workers. One choke point for every kind's planner.
+        loop_posture.arm(session, posture, granted=granted)
         try:
             state.push_sessions_update()
         except Exception:
             pass
-        # The planner runs UNATTENDED — no one is present to answer a question or pick
-        # an option, and its output is read later as a plan. Prepend the shared
-        # autonomous-run framing so the planner never offers menus / waits for a
-        # user. One choke point → fixes BOTH the Code and Goal Loop planners.
-        from personalclaw.autonomous_framing import with_autonomous_framing
-
-        framed_brief = with_autonomous_framing(brief)
         await svc.add(
             session_name=skey,
-            message=framed_brief,
+            message=loop_posture.frame(posture, brief + scratch_rule(files_dir)),
             idle_secs=60,
             max_cycles=PLANNER_MAX_CYCLES,
             first_idle_secs=PLANNER_FIRST_IDLE,
@@ -216,12 +254,14 @@ async def run_planner_pass(
         # of after 600s.
         dead_polls = 0
         _GRACE_POLLS = 2
-        # The planner runs unattended, so incident mode holds it with every other runner: its
-        # turn in flight stops, its next one is held where it fires (the idle runtime), and the
-        # time the switch is on is not the pass's to spend — it carries on once the switch is off
-        # rather than report a time-out that never happened.
+        # The planner is loop work, so incident mode holds it with every other runner: its turn
+        # in flight stops, its next one is held where it fires (the idle runtime), and the time
+        # the switch is on is not the pass's to spend — it carries on once the switch is off
+        # rather than report a time-out that never happened. Nor is the time its turn waits on
+        # its owner's answer to one of its calls: a person deciding is not a planner running out.
         last = time.time()
         stopped_for_incident = False
+        waiting_on_owner = getattr(state, "waiting_on_owner", None)
         while time.time() < deadline:
             await asyncio.sleep(PLANNER_POLL_SECS)
             now = time.time()
@@ -234,6 +274,8 @@ async def run_planner_pass(
 
                     await halt_turn(state, skey)
                 continue
+            if callable(waiting_on_owner) and waiting_on_owner(skey):
+                deadline += now - last
             last = now
             stopped_for_incident = False
             reclaim_misplaced(_ws, files_dir, _scratch, users_own)
@@ -284,3 +326,4 @@ async def run_planner_pass(
         # user's tree (their git status, the cockpit's Changes tab).
         reclaim_misplaced(_ws, files_dir, _scratch, users_own)
         clear_sentinels(files_dir, _scratch)
+        clear_scratch(files_dir)

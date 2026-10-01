@@ -134,6 +134,7 @@ def _running_loop(**over: Any) -> Loop:
         task="write a packing note for a weekend trip",
         kind_config={"goal_type": "verifiable", "verify_command": "false"},
         max_cycles=30,
+        attended=False,  # an unattended loop, whose grant has a trust window
     )
     base.update(over)
     loop = store.create(Loop(**base))

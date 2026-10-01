@@ -47,7 +47,15 @@ class _Ctx:
 
 
 def _code(**over):
-    base = dict(id="", name="C", kind="code", task="add oauth login to the app", kind_config={})
+    # An Unattended loop: these tests drive the scheduler that merges its own tasks' work.
+    base = dict(
+        id="",
+        name="C",
+        kind="code",
+        task="add oauth login to the app",
+        kind_config={},
+        attended=False,
+    )
     base.update(over)
     return store.create(Loop(**base))
 
@@ -1050,6 +1058,9 @@ class TestParallelScheduler:
         ws = tmp_path / "repo"
         ws.mkdir()
         subprocess.run(["git", "init", "-q"], cwd=ws, check=True, capture_output=True)
+        # The identity its owner configured: every commit the loop makes here carries it.
+        for key, value in (("user.name", "t"), ("user.email", "t@example.com")):
+            subprocess.run(["git", "config", key, value], cwd=ws, check=True, capture_output=True)
         subprocess.run(
             [
                 "git",

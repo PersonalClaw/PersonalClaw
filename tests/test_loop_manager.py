@@ -113,6 +113,7 @@ def _goal(**over):
         kind="goal",
         task="investigate the latency regression",
         kind_config={"goal_type": "open_ended"},
+        attended=False,  # the unattended posture these tests arm (a loop with no Mode asks)
     )
     base.update(over)
     return store.create(Loop(**base))
@@ -389,6 +390,7 @@ class TestTaskWorker:
                 name="C",
                 kind="code",
                 task="add oauth login",
+                attended=False,
                 plan=[{"stage": "implementation", "title": "I"}],
                 kind_config={"entry_stage": "design"},
             )

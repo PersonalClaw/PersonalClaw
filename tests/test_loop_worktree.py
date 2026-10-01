@@ -30,7 +30,11 @@ def _wt_root(tmp_path, monkeypatch):
 
 
 def _init_repo(path: str, *, commit: bool = True) -> None:
+    """A repository with an identity configured in it, as its owner sets one: PersonalClaw
+    commits only as the identity git is configured with (``worktree.commit_identity``)."""
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
     if commit:
         (open(os.path.join(path, "README.md"), "w")).write("# repo\n")
         subprocess.run(["git", "add", "-A"], cwd=path, check=True)
@@ -189,67 +193,37 @@ class TestWorktreeLifecycle:
         assert "f.txt" in result.conflicts
         assert wt.branch_exists(str(d), "t-conf") is True  # branch kept for retry
 
-    def test_merge_commit_succeeds_without_git_identity(self, tmp_path, monkeypatch):
-        # Clean-container case: a freshly git-init'd workspace with NO user.name/
-        # user.email anywhere. A non-fast-forward merge creates a MERGE COMMIT that
-        # needs an identity — merge_worktree must supply its own (-c flags) so the
-        # task doesn't falsely wedge as a conflict. Scrub all git identity sources.
+    def test_a_merge_with_no_git_identity_is_refused_not_invented(self, tmp_path, monkeypatch):
+        # A workspace with NO user.name/user.email anywhere. A non-fast-forward merge creates a
+        # MERGE COMMIT that needs an identity, and PersonalClaw never supplies one of its own: it
+        # would ship in the owner's history. The merge fails, the branch is left as it was, and
+        # the scheduler asks the owner for an identity before it ever gets here.
         monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
         monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
         monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-        for var in (
-            "GIT_AUTHOR_NAME",
-            "GIT_AUTHOR_EMAIL",
-            "GIT_COMMITTER_NAME",
-            "GIT_COMMITTER_EMAIL",
-        ):
-            monkeypatch.delenv(var, raising=False)
         d = tmp_path / "repo"
         d.mkdir()
-        # base commit using the same isolated identity ensure_base_commit uses
         subprocess.run(["git", "init", "-q"], cwd=str(d), check=True)
         subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=PersonalClaw",
-                "-c",
-                "user.email=code@personalclaw.local",
-                "commit",
-                "-q",
-                "--allow-empty",
-                "-m",
-                "base",
-            ],
-            cwd=str(d),
-            check=True,
+            ["git", "commit", "-q", "--allow-empty", "-m", "base"], cwd=str(d), check=True
         )
-        # create the worktree FIRST (branches from current HEAD), then diverge base —
-        # so the branch can't fast-forward and the merge MUST create a merge commit.
         path = wt.add_worktree(str(d), "t-feat")
         assert path
         open(os.path.join(path, "feature.txt"), "w").write("task work\n")
-        # diverge base after the worktree branched
         open(os.path.join(str(d), "base.txt"), "w").write("base change\n")
         subprocess.run(["git", "add", "-A"], cwd=str(d), check=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=PersonalClaw",
-                "-c",
-                "user.email=code@personalclaw.local",
-                "commit",
-                "-q",
-                "-m",
-                "base diverge",
-            ],
-            cwd=str(d),
-            check=True,
-        )
-        # merge must succeed (true) — would fail "unable to auto-detect email" without the fix
-        assert wt.merge_worktree(str(d), "t-feat").ok is True
-        assert os.path.isfile(os.path.join(str(d), "feature.txt"))
+        subprocess.run(["git", "commit", "-q", "-m", "base diverge"], cwd=str(d), check=True)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(d), capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        assert wt.commit_identity(str(d)) is None
+        assert wt.merge_worktree(str(d), "t-feat").ok is False
+        after = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(d), capture_output=True, text=True, check=True
+        ).stdout.strip()
+        assert after == head and not os.path.isfile(os.path.join(str(d), "feature.txt"))
+        assert os.path.isfile(os.path.join(path, "feature.txt")), "the task's work was lost"
 
     def test_add_worktree_idempotent(self, tmp_path):
         d = tmp_path / "repo"

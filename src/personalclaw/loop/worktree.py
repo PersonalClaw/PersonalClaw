@@ -698,50 +698,77 @@ def add_worktree(
     return path
 
 
-def has_uncommitted_changes(workspace: str) -> bool:
-    """Whether ``workspace`` has changes to tracked files that are not committed.
+#: Every commit the loop makes is made as git is configured to commit there: ``user.name`` and
+#: ``user.email`` from the repository's own settings, the owner's or the machine's. With
+#: ``user.useConfigOnly`` git never guesses an author from the account and host names, so a commit
+#: with no identity configured fails rather than ships an invented one (:func:`commit_identity`
+#: is what the loop asks before it commits, and it asks its owner when there is none).
+_CONFIGURED_IDENTITY_ONLY = ("-c", "user.useConfigOnly=true")
+
+
+def commit_identity(workspace: str) -> tuple[str, str] | None:
+    """The name and email git commits as in *workspace*, read from its configuration the way git
+    reads them, or ``None`` when either is not set. The loop commits only as that identity, and asks
+    its owner to set one rather than invent one."""
+    rc_name, name = _git(workspace, "config", "--get", "user.name")
+    rc_email, email = _git(workspace, "config", "--get", "user.email")
+    name, email = name.strip(), email.strip()
+    if rc_name != 0 or rc_email != 0 or not name or not email:
+        return None
+    return name, email
+
+
+def has_base_commit(workspace: str) -> bool:
+    """Whether HEAD points at a commit a worktree can branch from."""
+    rc, _ = _git(workspace, "rev-parse", "--verify", "HEAD")
+    return rc == 0
+
+
+def has_uncommitted_changes(workspace: str, *, untracked: bool = False) -> bool:
+    """Whether ``workspace`` has changes to tracked files that are not committed (and, with
+    ``untracked``, files git does not track yet).
 
     A task's worktree is cut from HEAD, so it cannot see them, and merging its branch back
-    would collide with them. Untracked files are not counted: they block a merge only when the
-    branch adds the same path. A status git cannot give reads as uncommitted, the direction
-    that keeps work out of worktrees rather than in them."""
-    rc, out = _git(workspace, "status", "--porcelain", "--untracked-files=no")
+    would collide with them. Untracked files are not counted by default: they block a merge only
+    when the branch adds the same path. A status git cannot give reads as uncommitted, the
+    direction that keeps work out of worktrees rather than in them, and keeps it from being
+    deleted."""
+    shown = "--untracked-files=all" if untracked else "--untracked-files=no"
+    rc, out = _git(workspace, "status", "--porcelain", shown)
     return rc != 0 or bool(out.strip())
 
 
 def ensure_base_commit(workspace: str) -> bool:
     """Guarantee HEAD points at a commit so worktrees can branch from it. A freshly
     ``git init``'d repo has an unborn HEAD; stage + commit whatever's there (or an
-    empty commit) so worktrees work. Returns True if HEAD has a commit afterward."""
-    rc, _ = _git(workspace, "rev-parse", "--verify", "HEAD")
-    if rc == 0:
-        return True  # already has a commit
+    empty commit), as git is configured to commit there, so worktrees work. Returns True if HEAD
+    has a commit afterward. Only an Unattended loop commits this way: an Attended one puts nothing
+    on its owner's branch unasked, so it does not fan out from an unborn HEAD at all."""
+    if has_base_commit(workspace):
+        return True
     _git(workspace, "add", "-A")
-    rc, _ = _git(
+    _git(
         workspace,
-        "-c",
-        "user.name=PersonalClaw",
-        "-c",
-        "user.email=code@personalclaw.local",
+        *_CONFIGURED_IDENTITY_ONLY,
         "commit",
         "-q",
         "--allow-empty",
         "-m",
         "Initial commit (PersonalClaw Code)",
     )
-    rc2, _ = _git(workspace, "rev-parse", "--verify", "HEAD")
-    return rc2 == 0
+    return has_base_commit(workspace)
 
 
 class MergeResult(NamedTuple):
-    """Outcome of merging a task worktree back. ``ok`` = clean merge. On failure,
-    ``conflicts`` lists the conflicted files (empty for a non-conflict git error) —
-    captured BEFORE the merge is aborted, since the abort clears the unmerged state
-    and a post-abort ``conflict_paths`` would always read empty (the bug this fixes:
-    the caller would misreport every real conflict as a 'git error')."""
+    """Outcome of merging a task worktree back. ``ok`` = clean merge, and ``head`` the commit
+    the workspace's branch is at after it. On failure, ``conflicts`` lists the conflicted files
+    (empty for a non-conflict git error) — captured BEFORE the merge is aborted, since the abort
+    clears the unmerged state and a post-abort ``conflict_paths`` would always read empty (the bug
+    this fixes: the caller would misreport every real conflict as a 'git error')."""
 
     ok: bool
     conflicts: list[str] = []
+    head: str = ""
 
     def __bool__(self) -> bool:  # back-compat: callers/tests can still treat it as a bool
         return self.ok
@@ -756,41 +783,13 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
         logger.warning("worktree merge refused — unsafe task_id %r", task_id)
         return MergeResult(ok=False, conflicts=[])
     branch = branch_name(task_id)
-    # commit any uncommitted work in the worktree first
-    wt = worktree_path(workspace, task_id, project_id)
-    if os.path.isdir(wt):
-        # AUTO-WIDEN FIRST. On a sparse worktree, ``add -A`` silently declines to
-        # stage out-of-cone paths — exit 0, no error, work gone. Widening the cone to
-        # cover whatever the task actually wrote is what makes an out-of-scope write
-        # succeed; skip it and a scoped task's stray file vanishes at merge-back.
-        widen_for_pending(wt)
-        _git(wt, "add", "-A")
-        _git(
-            wt,
-            "-c",
-            "user.name=PersonalClaw",
-            "-c",
-            "user.email=code@personalclaw.local",
-            "commit",
-            "-q",
-            "-m",
-            f"task {task_id}: work",
-        )
+    if not commit_pending(workspace, task_id, project_id):
+        return MergeResult(ok=False, conflicts=[])
     # merge into base from the main workspace checkout. A non-fast-forward merge
     # (the common case — multiple task branches diverge from base) creates a MERGE
-    # COMMIT, which needs a committer identity; supply the same isolated identity
-    # used elsewhere so a freshly git-init'd workspace with no user/email configured
-    # (e.g. a clean container) doesn't fail the merge + falsely wedge as a conflict.
-    rc, out = _git(
-        workspace,
-        "-c",
-        "user.name=PersonalClaw",
-        "-c",
-        "user.email=code@personalclaw.local",
-        "merge",
-        "--no-edit",
-        branch,
-    )
+    # COMMIT, authored as git is configured to commit there (the caller asked
+    # `commit_identity` first, so a workspace with none never gets this far).
+    rc, out = _git(workspace, *_CONFIGURED_IDENTITY_ONLY, "merge", "--no-edit", branch)
     if rc != 0:
         # rc != 0 is NOT necessarily a conflict — only abort an in-progress merge
         # (MERGE_HEAD present). A non-conflict failure (e.g. a git error) left no
@@ -807,8 +806,113 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
         if conflicts:
             _git(workspace, "merge", "--abort")
         return MergeResult(ok=False, conflicts=conflicts)
+    _rc, head = _git(workspace, "rev-parse", "HEAD")
     remove_worktree(workspace, task_id, project_id)
-    return MergeResult(ok=True, conflicts=[])
+    return MergeResult(ok=True, conflicts=[], head=head.strip())
+
+
+def commit_pending(workspace: str, task_id: str, project_id: str = "") -> bool:
+    """Commit what the task's worktree holds and has not committed, on its branch, as git is
+    configured to commit there. True when nothing is left uncommitted (a worktree that is gone has
+    nothing). A task's work is committed this way before anyone is shown it to merge, so what its
+    owner reviews is what would land."""
+    if not _safe_task_id(task_id):
+        return False
+    wt = worktree_path(workspace, task_id, project_id)
+    if not os.path.isdir(wt):
+        return True
+    # AUTO-WIDEN FIRST. On a sparse worktree, ``add -A`` silently declines to
+    # stage out-of-cone paths — exit 0, no error, work gone. Widening the cone to
+    # cover whatever the task actually wrote is what makes an out-of-scope write
+    # succeed; skip it and a scoped task's stray file vanishes at merge-back.
+    widen_for_pending(wt)
+    _git(wt, "add", "-A")
+    rc, out = _git(wt, "status", "--porcelain")
+    if rc == 0 and not out.strip():
+        return True
+    rc, out = _git(wt, *_CONFIGURED_IDENTITY_ONLY, "commit", "-q", "-m", f"task {task_id}: work")
+    if rc != 0:
+        logger.info("task %s: its work could not be committed: %s", task_id, mask_child_output(out))
+    return rc == 0
+
+
+def branch_tip(workspace: str, task_id: str) -> str:
+    """The commit task *task_id*'s branch is at, or ``""`` when it has none."""
+    if not _safe_task_id(task_id):
+        return ""
+    ref = f"refs/heads/{branch_name(task_id)}"
+    rc, out = _git(workspace, "rev-parse", "--verify", "--quiet", ref)
+    return out.strip() if rc == 0 else ""
+
+
+def branch_commits(workspace: str, task_id: str) -> list[str]:
+    """The commits task *task_id*'s branch holds that the checked-out branch does not, newest
+    first, each as its short hash and subject."""
+    if not _safe_task_id(task_id):
+        return []
+    rc, out = _git(workspace, "log", "--format=%h %s", f"HEAD..{branch_name(task_id)}")
+    return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else []
+
+
+def commits_not_by(workspace: str, task_id: str, identity: tuple[str, str]) -> list[str]:
+    """The commits task *task_id*'s branch holds that the checked-out branch does not and that
+    were authored or committed as anyone but *identity* (name, email), newest first, each as its
+    short hash and the name and email it carries. A branch git cannot list reads as one such
+    commit, so work git cannot vouch for is never merged as its owner's."""
+    if not _safe_task_id(task_id):
+        return []
+    rc, out = _git(
+        workspace, "log", "--format=%h%x09%an%x09%ae%x09%cn%x09%ce", f"HEAD..{branch_name(task_id)}"
+    )
+    if rc != 0:
+        return [f"{branch_name(task_id)} (git could not list its commits)"]
+    other: list[str] = []
+    for line in out.splitlines():
+        sha, *people = line.split("\t")
+        if len(people) != 4:
+            continue
+        author, committer = tuple(people[:2]), tuple(people[2:])
+        for who in (author, committer):
+            if who != identity:
+                other.append(f"{sha} {who[0]} <{who[1]}>")
+                break
+    return other
+
+
+#: The most of a pending merge's diff one review shows; the rest is named as left out.
+REVIEW_DIFF_CHARS = 200_000
+
+
+def merge_review(workspace: str, task_ids) -> dict:
+    """What merging *task_ids*' branches into the workspace's checked-out branch would bring in:
+    for each, its branch, the commit it is at, its commits (``HEAD..branch``) and its diff against
+    the point it left the branch (``HEAD...branch``), the same text git shows. The diffs together
+    are capped at :data:`REVIEW_DIFF_CHARS`, and a review that was cut says so."""
+    into = base_branch(workspace)
+    budget = REVIEW_DIFF_CHARS
+    tasks: list[dict] = []
+    cut = False
+    for tid in dict.fromkeys(str(t) for t in task_ids):
+        if not _safe_task_id(tid):
+            continue
+        branch = branch_name(tid)
+        _rc, stat = _git(workspace, "diff", "--stat", f"HEAD...{branch}")
+        rc, diff = _git(workspace, "diff", f"HEAD...{branch}")
+        diff = diff if rc == 0 else ""
+        if len(diff) > budget:
+            diff, cut = diff[:budget], True
+        budget -= len(diff)
+        tasks.append(
+            {
+                "task_id": tid,
+                "branch": branch,
+                "tip": branch_tip(workspace, tid),
+                "commits": branch_commits(workspace, tid),
+                "stat": stat.strip(),
+                "diff": diff,
+            }
+        )
+    return {"into": into, "tasks": tasks, "cut": cut}
 
 
 def conflict_paths(workspace: str) -> list[str]:

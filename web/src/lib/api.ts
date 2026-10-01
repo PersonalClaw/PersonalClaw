@@ -6185,11 +6185,35 @@ export interface CodeProject {
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   project_id?: string; tasks_project_id?: string; task_list_ids?: Record<string, string>; session_key?: string
-  findings?: CodeFinding[]; pending_question?: { question: string; why?: string } | null
+  findings?: CodeFinding[]; pending_question?: { question: string; why?: string; merge?: LoopMergeWaiting } | null
+  /** What this loop's scheduler merged into the workspace's branch, oldest first. */
+  merges?: LoopMerge[]
   // Durable steer history (oldest first); applied_cycle stamps which cycle it took effect.
   nudges?: { text: string; sent_at?: number; sent_at_cycle?: number; applied_cycle?: number | null }[]
   // Task ids the user queued for execution (task-driven model); run once ready.
   queued_task_ids?: string[]
+}
+/** Finished work an Attended code loop paused on, waiting for its owner to merge it (`loop/kinds/sdlc`). */
+export interface LoopMergeWaiting {
+  /** The workspace's checked-out branch the work would go into. */
+  into: string
+  tasks: { task_id: string; title: string; branch: string; tip: string }[]
+}
+/** One task's waiting work, as `GET /api/loops/{id}/merge` shows it for review. */
+export interface LoopMergeReviewTask {
+  task_id: string; title: string; branch: string
+  /** The commit the branch is at: what an approval names. */
+  tip: string
+  commits: string[]; stat: string; diff: string
+}
+export interface LoopMergeReview { into: string; tasks: LoopMergeReviewTask[]; cut: boolean }
+/** One merge a loop made into its workspace's branch (`loop/files.record_merge`). */
+export interface LoopMerge {
+  task_id: string; title: string; branch: string; into: string
+  commits: string[]; head: string
+  /** Who merged it: `you` (an Attended loop's owner approved it) or `the loop` (Unattended). */
+  by: string
+  at: number
 }
 export interface CodeClassification {
   title?: string; summary?: string; classified?: boolean
@@ -8448,6 +8472,11 @@ export const api = {
     post<{ ok: boolean; queued_task_ids: string[] }>(`/api/loops/${encodeURIComponent(id)}/queue`, { task_ids: taskIds, action }),
   uLoopAutopilot: (id: string, on: boolean) =>
     post<{ ok: boolean; autopilot: boolean }>(`/api/loops/${encodeURIComponent(id)}/autopilot`, { on }),
+  /** The finished work an Attended code loop waits for you to merge, for review. */
+  uLoopMergeReview: (id: string) => get<LoopMergeReview>(`/api/loops/${encodeURIComponent(id)}/merge`),
+  /** Approve merging the reviewed work, each task at the commit the review showed; the loop resumes. */
+  uLoopMerge: (id: string, tips: Record<string, string>) =>
+    post<{ ok: boolean; loop: Loop }>(`/api/loops/${encodeURIComponent(id)}/merge`, { tips, confirm: true }),
   uLoopPlanSession: (id: string) => get<{ session: PlanSession | null }>(`/api/loops/${encodeURIComponent(id)}/plan-session`).then((d) => d.session),
   uLoopPlanStart: (id: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/start`, {}),
   uLoopPlanRetry: (id: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/retry`, {}),

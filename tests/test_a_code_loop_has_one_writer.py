@@ -62,6 +62,9 @@ def repo(tmp_path):
     ws.mkdir()
     (ws / "digest.py").write_text("import html\n\ndef title(t):\n    return html.escape(t)\n")
     _git(ws, tmp_path, "init", "-q")
+    # The identity its owner configured: every commit the loop makes here carries it.
+    _git(ws, tmp_path, "config", "user.name", "t")
+    _git(ws, tmp_path, "config", "user.email", "t@example.com")
     _git(ws, tmp_path, "add", "digest.py")
     _git(ws, tmp_path, "commit", "-q", "-m", "init")
     return ws
@@ -161,7 +164,8 @@ def _loop(ws, **over) -> Loop:
                 }
             ],
             phase_status={"implementation": "active"},
-            **over,
+            # These loops merge their task workers' work by themselves: an Unattended loop's.
+            **{"attended": False, **over},
         )
     )
     tasks_link.provision(loop.id)

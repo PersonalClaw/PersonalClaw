@@ -132,15 +132,15 @@ type RememberScope = (typeof REMEMBER_SCOPES)[number]['key']
 /** Whose words the scopes are said in: a chat's, or a loop's (`pages/loops/LoopApprovals`). */
 export type ScopeWords = 'chat' | 'loop'
 
-/** The same three scopes and the same actions, said for a loop's worker. `trust` on a loop worker
- *  reaches every worker of this run of the loop and ends with the run
- *  (`loop/manager.grant_every_worker`); `trust_agent` saves on the agent as it does from a chat,
- *  and without a profile to save on it is that same run-long grant. */
+/** The same three scopes and the same actions, said for a loop's worker or planner. `trust` on one
+ *  reaches every worker of this run of the loop, and its planner's later passes, and ends with the
+ *  run, a launch included (`loop/manager.grant_every_worker`); `trust_agent` saves on the agent as
+ *  it does from a chat, and without a profile to save on it is that same run-long grant. */
 const LOOP_SCOPE_WORDS: Record<RememberScope, { label: string; promise: (grantAgent: string) => string }> = {
   once: { label: 'Just this once', promise: () => 'Nothing is remembered. The next tool call asks again.' },
   chat: {
     label: 'This loop',
-    promise: () => 'Every worker of this loop runs its tools without asking until this run ends. A pause, a stop or a restart asks again.',
+    promise: () => 'Every worker of this loop, and its planner, runs its tools without asking until this run ends. A launch, a pause, a stop or a restart asks again.',
   },
   agent: {
     label: 'This agent',

@@ -73,8 +73,8 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('where a loop worker’s ask is answered', () => {
-  it('the nudge, the Inbox row and the link lead to the loop, for every worker of it', () => {
-    for (const session of [`loop-${LOOP_ID}`, `loop-${LOOP_ID}-t-1a2b3c4d`]) {
+  it('the nudge, the Inbox row and the link lead to the loop, for every worker of it and its planner', () => {
+    for (const session of [`loop-${LOOP_ID}`, `loop-${LOOP_ID}-t-1a2b3c4d`, `loop-plan-${LOOP_ID}`]) {
       const dest = approvalDestination(session)
       expect(dest.href, session).toBe(`#/loops/${LOOP_ID}`)
       expect(dest.linkLabel, session).toBe('Open the loop')
@@ -82,11 +82,11 @@ describe('where a loop worker’s ask is answered', () => {
     }
   })
 
-  it('🪤 VACUITY: a chat, another loop and the planner keep their own places', () => {
+  it('🪤 VACUITY: a chat and another loop keep their own places', () => {
     expect(approvalDestination('main').href).toBe('#/chat/main')
-    expect(approvalDestination(`loop-plan-${LOOP_ID}`).href).toBe(`#/chat/loop-plan-${LOOP_ID}`)
+    expect(approvalDestination('loop-plan-notaloop').href).toBe('#/chat/loop-plan-notaloop')
     expect(loopApprovalOf('loop-99999999', LOOP_ID)).toBe(false)
-    expect(loopApprovalOf(`loop-plan-${LOOP_ID}`, LOOP_ID)).toBe(false)
+    expect(loopApprovalOf('loop-plan-99999999', LOOP_ID)).toBe(false)
   })
 
   it('the nudge says a loop is asking, and links to it', async () => {
@@ -135,7 +135,7 @@ describe('the loop’s page answers its workers’ asks', () => {
     render(<LoopApprovals loopId={LOOP_ID} />)
 
     fireEvent.click(await screen.findByRole('radio', { name: 'This loop' }))
-    expect(screen.getByText(/^Every worker of this loop runs its tools without asking until this run ends/)).toBeTruthy()
+    expect(screen.getByText(/^Every worker of this loop, and its planner, runs its tools without asking until this run ends/)).toBeTruthy()
     expect(screen.queryByRole('radio', { name: 'This chat' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^Allow bash — this loop/ }))
 

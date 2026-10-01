@@ -640,6 +640,7 @@ def _build_native_runtime(
     project_id: str = "",
     model_axis: str = "",
     tool_groups: list | None = None,
+    unmetered: bool = False,
     **kwargs: Any,
 ) -> ModelProvider:
     """Construct a :class:`NativeAgentRuntime` for a ``native`` agent.
@@ -654,7 +655,9 @@ def _build_native_runtime(
     cosmetic). A model the caller names still serves; it rides BESIDE the axis,
     because the axis also decides whether the inner model is metered — only the
     non-interactive axes are wrapped by the spend guard (below, in
-    ``resolve_provider_for_use_case``). Tools come from the in-process core provider.
+    ``resolve_provider_for_use_case``). A session a person answers on one (``unmetered``: an
+    Attended loop's, ``loop.posture``) keeps the guard but not its spend ceilings: its spend is
+    its owner's, as a chat's is. Tools come from the in-process core provider.
     """
     from pathlib import Path
 
@@ -746,6 +749,7 @@ def _build_native_runtime(
             cwd=cwd,
             _force_model_axis=True,
             _model_axis_only=True,
+            unmetered=unmetered,
             **kwargs,
         )
 
@@ -1279,6 +1283,11 @@ def resolve_provider_for_use_case(
     # A call automation makes on ANY axis (``resolve_metered_model``): wrapped by the spend guard
     # below whatever the axis is. Popped unconditionally so it never reaches a resolver or factory.
     _metered = bool(kwargs.pop("_metered", False))
+    # A session a person answers on an automated axis — an Attended loop's planner or worker on the
+    # loops axis (``loop.posture``): its spend is its owner's, as a chat's is, so the guard below
+    # does not count it against the day's or the run's ceiling, and still wraps it. Only
+    # ``chat_runner.run_chat`` passes it, decided by ``loop.posture.spend_metered``.
+    _unmetered = bool(kwargs.pop("unmetered", False))
     # The caller (chat_runner) resolves the agent's runtime kind from its actual
     # PROFILE (resolve_agent_bindings.provider) and threads it here as
     # ``provider_kind``. Honor it directly — re-deriving from ``agent`` is unsafe
@@ -1383,6 +1392,7 @@ def resolve_provider_for_use_case(
             project_id=_project_id,
             model_axis=_model_axis or use_case,
             tool_groups=_tool_groups,
+            unmetered=_unmetered,
             **kwargs,
         )
 
@@ -1413,9 +1423,11 @@ def resolve_provider_for_use_case(
     # _force_model_axis under its own axis). Thread the flag through kwargs so all
     # resolution attempts below wrap identically; _resolve_from_config_registry
     # pops it (never reaches the build factory) and wraps at the single point
-    # where the entry name + model are known.
+    # where the entry name + model are known. An Attended loop's session (``_unmetered``) is
+    # wrapped too, and only the day's and the run's ceilings leave it uncounted.
     if _metered or use_case in METERED_AXES:
         kwargs["_guard_use_case"] = use_case
+        kwargs["_guard_counted"] = _metered or not _unmetered
     # A colon-qualified "Provider:model" ref is tried FIRST (below) because its
     # model_id can itself contain a slash (e.g. "nvidia:meta/llama-3.1-8b"); the
     # slash-form resolver would otherwise mis-split it. The config registry returns
@@ -2061,6 +2073,7 @@ def _resolve_from_config_registry(
     # never leak into the build kwargs / factory of a provider that knows nothing about routing.
     guard_routed = bool(kwargs.pop("_guard_routed", False))
     guard_routed_fallback = bool(kwargs.pop("_guard_routed_fallback", False))
+    guard_counted = bool(kwargs.pop("_guard_counted", True))
 
     registry = get_default_registry()
     entries = list(registry.list_entries())
@@ -2188,6 +2201,7 @@ def _resolve_from_config_registry(
             model=served_model,
             routed=guard_routed,
             routed_fallback=guard_routed_fallback,
+            counted=guard_counted,
         )
         _stamp_served_ref(guarded, served_ref)
         return guarded
@@ -2203,9 +2217,11 @@ def metered(
     model: str,
     routed: bool = False,
     routed_fallback: bool = False,
+    counted: bool = True,
 ) -> ModelProvider:
     """*built*, behind the spend guard (breaker + hard timeout + audit + day and run budgets +
-    outbound scan), as a call automation makes on *use_case*.
+    outbound scan), as a call automation makes on *use_case*. Not *counted*: everything but the
+    day and run budgets, for a session a person answers (an Attended loop's).
 
     The one place guardrails config becomes a guard: the resolution seam wraps here, and so does a
     model built outside it (``one_shot_completion``'s last resort). Config-derived tuning is read
@@ -2269,6 +2285,7 @@ def metered(
         budget_source=budget_from_config,
         run_budget_source=run_budget_from_config,
         scan_mode_source=_scan_mode_now,
+        counted=counted,
         **_timeout_kw,
     )
 

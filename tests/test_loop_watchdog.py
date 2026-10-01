@@ -104,6 +104,7 @@ def _running(**over):
         kind_config={"goal_type": "open_ended"},
         idle_secs=120,
         max_cycles=20,
+        attended=False,  # the unattended loop these tests watch (a loop with no Mode asks)
     )
     base.update(over)
     loop = store.create(Loop(**base))

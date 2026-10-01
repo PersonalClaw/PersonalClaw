@@ -94,7 +94,8 @@ class BudgetConfig:
             "Max Tokens / Day",
             "Token ceiling for ALL unattended spend in a calendar day (across every "
             "trigger). 0 = unlimited. At the ceiling further unattended runs are "
-            "skipped + paused until the next day.",
+            "skipped + paused until the next day. A chat's spend is not counted, nor an "
+            "Attended loop's: you answer its calls, so it is yours.",
         ),
     )
     max_dollars_per_day: float = field(
@@ -102,8 +103,10 @@ class BudgetConfig:
         metadata=_meta(
             "Max Dollars / Day",
             "Estimated-dollar ceiling for all unattended spend in a calendar day. "
-            "0 = unlimited. A call costs what its provider reports, else its tokens at its "
-            "model's rate: one you set in Settings → Usage → Model prices, $0 on this machine, "
+            "0 = unlimited. A chat's spend is not counted, nor an Attended loop's: you answer "
+            "its calls, so it is yours. A call costs what its provider reports, else its "
+            "tokens at its model's rate: one you set in Settings → Usage → Model prices, $0 on "
+            "this machine, "
             "the rate its app declares, or the shipped price list's. A call none of those "
             "prices is not in the total, and Settings → Usage says how many there were.",
         ),

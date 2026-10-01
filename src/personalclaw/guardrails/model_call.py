@@ -296,6 +296,7 @@ class ModelCallGuard(ModelProvider):
         budget_source: "Callable[[], Budget] | None" = None,
         run_budget_source: "Callable[[], Budget] | None" = None,
         scan_mode_source: "Callable[[], str] | None" = None,
+        counted: bool = True,
     ) -> None:
         self._inner = inner
         # The instance's own wait, mirrored like ``supports_tools`` so the guard reads as the
@@ -334,6 +335,12 @@ class ModelCallGuard(ModelProvider):
         # None run budget means unlimited, so an unscoped call behaves as before.
         self._run_budget = run_budget if run_budget is not None else Budget()
         self._meter = meter if meter is not None else get_meter()
+        # Whether the day's and the run's ceilings count this provider's calls. Not for a session a
+        # person answers on a metered axis (an Attended loop's planner and workers,
+        # ``loop.posture``): its spend is its owner's, as a chat's is, so it is neither admitted
+        # against those ceilings nor charged to them. Everything else here still applies to it:
+        # the breaker, the clock, the attempt audit and the outbound scan.
+        self._counted = bool(counted)
         # Outbound secret/PII scan mode: warn | redact | block. Forced to warn for
         # local providers by the wrap helper (content never leaves the machine).
         self._scan_mode = scan_mode if scan_mode in ("warn", "redact", "block") else "warn"
@@ -599,11 +606,15 @@ class ModelCallGuard(ModelProvider):
         # aside what it may cost and starts only when that fits beside what is spent and what the
         # calls running now have set aside, waiting for them when they hold the room it needs.
         try:
-            hold = await admit_call(
-                self._meter,
-                call_cost(self._provider_name, self._model, prompt_chars=prompt_chars),
-                self._budget,
-                self._run_budget,
+            hold = (
+                await admit_call(
+                    self._meter,
+                    call_cost(self._provider_name, self._model, prompt_chars=prompt_chars),
+                    self._budget,
+                    self._run_budget,
+                )
+                if self._counted
+                else None
             )
         except BudgetExceededError:
             self._audit(audit_id, 1, FailureMode.BUDGET_EXCEEDED, 0.0, 0, 0, False, strategy)
@@ -805,7 +816,10 @@ class ModelCallGuard(ModelProvider):
     ) -> None:
         """Charge one call that completed to the day's meter, and to the ambient run's when one
         is bound, in place of what it set aside (``SpendMeter.settle``): a call nothing priced is
-        charged as one the dollar caps could not count, never as a free one."""
+        charged as one the dollar caps could not count, never as a free one. A call the ceilings
+        do not count (``counted``) is charged to neither."""
+        if not self._counted:
+            return
         self._meter.settle(
             hold,
             ref=f"{self._provider_name}:{self._model}",
@@ -984,6 +998,7 @@ def wrap_model_call_guard(
     budget_source: Callable[[], Budget] | None = None,
     run_budget_source: Callable[[], Budget] | None = None,
     scan_mode_source: Callable[[], str] | None = None,
+    counted: bool = True,
 ) -> ModelProvider:
     """Wrap ``provider`` in a :class:`ModelCallGuard` for a non-interactive call.
 
@@ -1014,4 +1029,5 @@ def wrap_model_call_guard(
         budget_source=budget_source,
         run_budget_source=run_budget_source,
         scan_mode_source=scan_mode_source,
+        counted=counted,
     )

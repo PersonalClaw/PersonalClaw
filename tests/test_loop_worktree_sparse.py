@@ -85,6 +85,9 @@ def _repo(tmp_path, name="repo", extra: dict[str, str] | None = None) -> str:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(body)
     _git(d, "init", "-q")
+    # The identity its owner configured, which every commit PersonalClaw makes here carries.
+    _git(d, "config", "user.name", "t")
+    _git(d, "config", "user.email", "t@example.com")
     _git(d, "add", "-A")
     _git(d, "commit", "-qm", "init")
     return str(d)
@@ -322,13 +325,14 @@ class TestAutoWiden:
         listed = _git(path, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()
         assert "docs/new.md" not in listed
 
-    def test_without_widening_merge_reports_success_and_loses_the_work(self, tmp_path):
+    def test_without_widening_the_merge_does_not_land_the_work(self, tmp_path):
         """The end-to-end defect, through the REAL merge path with widening disabled.
 
-        This is the shape that makes the widen load-bearing rather than cosmetic: the
-        merge returns ``ok=True``, so every status surface says the task merged cleanly,
-        while the file the task wrote is gone from the base branch. It is also the
-        falsification target for :meth:`test_merge_back_carries_an_out_of_scope_write`.
+        This is the shape that makes the widen load-bearing rather than cosmetic: without it the
+        file the task wrote never reaches its branch, so it never reaches the base branch. The
+        merge used to report ``ok=True`` regardless; it now refuses, since what the worktree holds
+        could not be committed, and the work stays in the worktree rather than being lost. It is
+        also the falsification target for :meth:`test_merge_back_carries_an_out_of_scope_write`.
         """
         ws = _repo(tmp_path)
         path = wt.add_worktree(ws, "t-lost", scope=["src"])
@@ -340,10 +344,11 @@ class TestAutoWiden:
             mp.setattr(wt, "widen_for_pending", lambda _p: [])
             result = wt.merge_worktree(ws, "t-lost")
 
-        assert result.ok is True, "merge did not even report success — premise stale"
+        assert result.ok is False, "a merge that left the task's write behind reported success"
         assert not (
             tmp_path / "repo" / "web" / "lost.ts"
         ).exists(), "premise stale: the write survived without widening"
+        assert os.path.isfile(os.path.join(path, "web/lost.ts")), "the task's write was lost"
 
     def test_widening_makes_an_out_of_scope_write_land(self, tmp_path):
         """The acceptance clause: the write SUCCEEDS (reaches the commit) and the cone

@@ -665,7 +665,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         ? <MetaPill icon={<Bot size={11} />} text={c.agent} title="Worker agent — runs on PersonalClaw" />
         : <LoopRunsOn loop={c} onChange={LOOP_ACTION_SOURCE_STATUSES.start.has(c.status) ? moveRuntime : undefined} />}
       {modelLabel && <MetaPill icon={<Cpu size={11} />} text={modelLabel} title={c.model} />}
-      <MetaPill text={loopModeLabel(c.attended)} title={loopModeMeaning(c.attended)} />
+      <MetaPill text={loopModeLabel(c.attended)} title={loopModeMeaning(c.attended, (c as { kind?: string }).kind)} />
       {(c as { kind?: string }).kind === 'goal' && <>
         <MetaPill text={GOAL_TYPE_LABEL[c.goal_type] ?? c.goal_type} tone="primary" title="Goal type" />
         <MetaPill text={cap(c.granularity)} title="Granularity" />

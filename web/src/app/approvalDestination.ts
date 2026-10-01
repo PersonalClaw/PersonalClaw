@@ -54,21 +54,28 @@ export function workflowApprovalOf(session: string, runId: string): boolean {
  *  characters, so the planner's `loop-plan-<id>` and a chat named "loop-…" are not mistaken for
  *  one. */
 const LOOP_SESSION = /^loop-([a-f0-9]{8})(?:-(.+))?$/
+/** The session key a loop's planner holds (`loop/plan_walkthrough.planner_session_key`). An
+ *  Attended loop's planner asks for its tool calls as its workers do (`loop/posture`). */
+const LOOP_PLANNER_SESSION = /^loop-plan-([a-f0-9]{8})$/
 
 export interface LoopApprovalSession {
   loopId: string
-  /** The task a per-task worker works on; "" for the loop's stage worker. */
+  /** The task a per-task worker works on; "" for the loop's stage worker and its planner. */
   taskId: string
+  /** Whether the loop's planner asked (its planning walkthrough), not one of its workers. */
+  planner: boolean
 }
 
-/** Decode a loop worker's approval session, or `null` for anything else. */
+/** Decode the approval session of a loop's worker or planner, or `null` for anything else. */
 export function loopApprovalSession(session: string): LoopApprovalSession | null {
+  const plan = LOOP_PLANNER_SESSION.exec(session)
+  if (plan) return { loopId: plan[1], taskId: '', planner: true }
   const m = LOOP_SESSION.exec(session)
-  return m ? { loopId: m[1], taskId: m[2] ?? '' } : null
+  return m ? { loopId: m[1], taskId: m[2] ?? '', planner: false } : null
 }
 
-/** Is this approval one of *loopId*'s workers asked? The loop's page claims its own approvals out
- *  of `/api/approvals` with the same parse the nudge links with. */
+/** Is this approval one of *loopId*'s workers or its planner asked? The loop's page claims its own
+ *  approvals out of `/api/approvals` with the same parse the nudge links with. */
 export function loopApprovalOf(session: string, loopId: string): boolean {
   const parsed = loopApprovalSession(session)
   return parsed !== null && parsed.loopId === loopId
@@ -102,8 +109,9 @@ export function approvalDestination(session: string): ApprovalDestination {
       linkLabel: 'Open the workflow run',
     }
   }
-  // A loop's worker asks on the loop's own page (`LoopApprovals`): its key is no chat anyone
-  // opened, and `#/loops/<id>` lands on whichever cockpit the loop's kind has (`LoopsSection`).
+  // A loop's worker or planner asks on the loop's own page (`LoopApprovals`): its key is no chat
+  // anyone opened, and `#/loops/<id>` lands on whichever cockpit or planning walkthrough the loop
+  // is at (`LoopsSection`).
   const loop = loopApprovalSession(session)
   if (loop) {
     return {

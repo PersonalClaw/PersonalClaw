@@ -250,11 +250,13 @@ async def run_schedule_hook(strategy, loop: Loop, ctx: CycleContext) -> bool:
 def attendedness_lines(loop: Loop, *, subject: str = "task") -> list[str]:
     """The worker brief's words for the loop's Mode: who answers its calls, and whether it may ask.
 
-    One wording for every kind, and the one the loop's own posture enforces
-    (``manager._arm_posture``): an Attended worker's calls are answered by the user, an
-    Unattended worker's run on the loop's standing grant. *subject* names what the loop works
-    on ("task", "goal") in the question rule."""
-    if loop.attended:
+    One wording for every kind, and the one the loop's own posture enforces (``loop.posture``):
+    an Attended worker's calls are answered by the user, an Unattended worker's run on the loop's
+    standing grant, and a Mode that cannot be read is told what its sessions then do: ask.
+    *subject* names what the loop works on ("task", "goal") in the question rule."""
+    from personalclaw.loop import posture
+
+    if posture.of(loop).asks:
         return [
             "",
             "**Attended:** the user is watching this loop. Your tool calls ask for their "
@@ -271,6 +273,22 @@ def attendedness_lines(loop: Loop, *, subject: str = "task") -> list[str]:
         "user's safety rules. Do NOT pause to ask the user: investigate ambiguities yourself, "
         "pick the best-reasoned answer, record the assumption in your finding, and proceed. "
         "Never write questions.json in this mode.",
+    ]
+
+
+def workspace_rules_lines() -> list[str]:
+    """The worker brief's words on how it treats its owner's repository and machine: commits are
+    made as git is configured to commit there (the loop merges them under that name too), and
+    scratch work goes in a temporary folder of the owner's, not in a shared one or the checkout."""
+    return [
+        "",
+        "**Commits:** commit as git is configured here. Never set a name or email for a commit "
+        "yourself (no `-c user.name`, `--author` or `GIT_AUTHOR_*`): if git says it has none, "
+        "stop and say so — the loop asks its owner for one.",
+        "",
+        "**Scratch work** (a throwaway copy, a test run's output) goes in a folder `mktemp -d` "
+        "makes, which is your temporary folder; remove it when you are done. Never write under "
+        "/tmp by name, and never leave scratch files in the checkout.",
     ]
 
 

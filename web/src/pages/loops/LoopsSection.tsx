@@ -49,12 +49,20 @@ export function LoopsSection({ sub, navigate, query, setQuery }: RouteProps) {
   // loop still in `planning` reopens the walkthrough, one in `review` opens Plan
   // Review — NOT the cockpit (which is for launched loops). Mirrors CodeSection.
   const [resume, setResume] = useState<{ id: string; status: 'planning' | 'review'; loop: Loop } | null>(null)
+  // Through a ref, as `CockpitRouter` does: `navigate` is a new function on every render.
+  const navigateTo = useRef(navigate)
+  navigateTo.current = navigate
   useEffect(() => {
     let alive = true
     const concrete = seg && seg !== 'history'
     if (!concrete || planningId === seg || review?.loopId === seg) { setResume(null); return }
     api.uLoop(seg).then((l) => {
       if (!alive) return
+      // A code loop plans in the Code section, with its own walkthrough: a `#/loops/<id>` link to
+      // one (its planner's approval, from the bell) lands there, as the cockpit router's does.
+      if (l && (l.status === 'planning' || l.status === 'review') && loopRoute(l) !== `loops/${seg}`) {
+        navigateTo.current(loopRoute(l), { replace: true }); return
+      }
       setResume(l && (l.status === 'planning' || l.status === 'review') ? { id: seg, status: l.status as 'planning' | 'review', loop: l } : null)
     }).catch(() => { if (alive) setResume(null) })
     return () => { alive = false }

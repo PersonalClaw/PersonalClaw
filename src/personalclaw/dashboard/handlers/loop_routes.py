@@ -194,7 +194,8 @@ def _build_loop_from_body(body: dict) -> Loop:
         strategy_config=(_sc if isinstance((_sc := body.get("strategy_config")), dict) else {}),
         skill_ids=[str(s) for s in _as_list(body.get("skill_ids")) if str(s).strip()],
         workflow_ids=[str(w) for w in _as_list(body.get("workflow_ids")) if str(w).strip()],
-        attended=bool(body.get("attended", False)),
+        # A loop is Unattended only when its creator says so; one that names no Mode asks.
+        attended=body.get("attended") is not False,
         autopilot=bool(body.get("autopilot", True)),
         auto_teardown_on_complete=bool(body.get("auto_teardown_on_complete", False)),
         max_cycles=int(body.get("max_cycles", 30)),
@@ -1276,6 +1277,103 @@ async def api_loop_autopilot(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "autopilot": updated.autopilot})
 
 
+# ── an Attended code loop's merge review ──
+
+
+def _merge_waiting(cid: str) -> tuple[Loop, dict] | web.Response:
+    """Loop *cid* and the merge its scheduler put to its owner, or the refusal to answer with."""
+    if not loop_files.valid_loop_id(cid):
+        return json_error("invalid_id", status=400)
+    loop = store.get(cid)
+    if loop is None:
+        return json_error("not_found", status=404)
+    asked = loop_files.pending_question(cid) or {}
+    merge = asked.get("merge") if isinstance(asked, dict) else None
+    tasks = merge.get("tasks") if isinstance(merge, dict) else None
+    if not isinstance(merge, dict) or not isinstance(tasks, list) or not tasks:
+        return json_error("loop_merge_not_waiting", status=409)
+    if loop.status != LoopStatus.NEEDS_INPUT.value:
+        return json_error("loop_merge_not_waiting", status=409)
+    return loop, merge
+
+
+async def api_loop_merge_review(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/merge — the finished work an Attended loop waits for you to merge.
+
+    For each task: its branch, the commit it is at, its commits and its diff against your branch,
+    the same text git shows; ``cut`` says the diffs were longer than one review shows."""
+    from personalclaw.loop import worktree
+
+    waiting = _merge_waiting(request.match_info["id"])
+    if isinstance(waiting, web.Response):
+        return waiting
+    loop, merge = waiting
+    tasks = [t for t in merge["tasks"] if isinstance(t, dict)]
+    ids = [str(t.get("task_id", "")) for t in tasks]
+    titles = {str(t.get("task_id", "")): str(t.get("title", "")) for t in tasks}
+    review = await asyncio.to_thread(worktree.merge_review, loop.workspace_dir or "", ids)
+    shown = [{**task, "title": titles.get(task["task_id"], "")} for task in review["tasks"]]
+    return web.json_response({"into": review["into"], "tasks": shown, "cut": review["cut"]})
+
+
+async def api_loop_merge(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/merge {tips, confirm: true} — approve merging the work you reviewed.
+
+    ``tips`` maps each task id to the commit the review showed you. Each task's branch must still
+    be at it, or nothing is approved and the review is read again. The approval is handed to the
+    loop's scheduler (it is kept nowhere the loop's own workers can write), the loop resumes, and
+    the scheduler merges each task at that commit into your branch, as git is configured to commit
+    there, then carries on."""
+    from personalclaw.loop import worktree
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.sel import sel
+    from personalclaw.triggers.nudge import get_instance
+
+    cid = request.match_info["id"]
+    waiting = _merge_waiting(cid)
+    if isinstance(waiting, web.Response):
+        return waiting
+    loop, merge = waiting
+    body = await json_object_body(request)
+    if not confirm_granted(body):
+        return json_error(
+            "confirmation_required",
+            message='merging into your branch needs {"confirm": true} with the commits reviewed',
+            status=400,
+        )
+    tips = body.get("tips")
+    if not isinstance(tips, dict) or not all(isinstance(v, str) for v in tips.values()):
+        return json_error(
+            "invalid_request", message="'tips' must map each task id to its commit", status=400
+        )
+    ids = [str(t.get("task_id", "")) for t in merge["tasks"] if isinstance(t, dict)]
+    ws = loop.workspace_dir or ""
+    now = {tid: await asyncio.to_thread(worktree.branch_tip, ws, tid) for tid in ids}
+    if set(tips) != set(ids) or any(not now[t] or tips[t] != now[t] for t in ids):
+        return json_error("loop_merge_moved", status=409)
+    svc = get_instance()
+    if svc is None:
+        return web.json_response({"error": "autonudge unavailable"}, status=503)
+    kinds.ensure_loaded()
+    strat = kinds.get_or_none(loop.kind)
+    approve = getattr(strat, "approve_merge", None)
+    if approve is None:
+        return json_error("loop_merge_not_waiting", status=409)
+    approve(cid, now)
+    loop_files.clear_question(cid)
+    try:
+        sel().log_api_access(
+            caller="dashboard:loop",
+            operation="loop_merge_approved",
+            outcome="approved",
+            resources=f"loop={cid} into={merge.get('into', '')} tasks={','.join(ids)}",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for an approved loop merge", exc_info=True)
+    await manager.start(request.app["state"], svc, cid)
+    return web.json_response({"ok": True, "loop": _loop_view(cid)})
+
+
 # ── plan walkthrough (stepwise, gated planning) ──
 
 
@@ -1542,6 +1640,8 @@ def register_unified_loop_routes(app: web.Application) -> None:
     app.router.add_post("/api/loops/{id}/nudge", api_loop_nudge)
     app.router.add_post("/api/loops/{id}/queue", api_loop_queue)
     app.router.add_post("/api/loops/{id}/autopilot", api_loop_autopilot)
+    app.router.add_get("/api/loops/{id}/merge", api_loop_merge_review)
+    app.router.add_post("/api/loops/{id}/merge", api_loop_merge)
     app.router.add_get("/api/loops/{id}/plan-session", api_loop_plan_session)
     app.router.add_post("/api/loops/{id}/plan/start", api_loop_plan_start)
     app.router.add_post("/api/loops/{id}/plan/retry", api_loop_plan_retry)

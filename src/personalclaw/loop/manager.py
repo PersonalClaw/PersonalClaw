@@ -17,7 +17,7 @@ import logging
 
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import files as loop_files
-from personalclaw.loop import kinds, store
+from personalclaw.loop import kinds, posture, store
 from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
 
 logger = logging.getLogger(__name__)
@@ -45,30 +45,16 @@ _LOOP_GRANTS: set[str] = set()
 
 
 def _arm_posture(worker, loop: Loop) -> None:
-    """Set who answers *worker*'s tool calls from its loop's Mode, each time the loop arms it.
+    """Arm *worker* from its loop's Mode (``posture``), each time the loop arms it, with "This
+    loop" when one of this run's own approval cards gave it (:func:`grant_every_worker`).
 
-    **Unattended:** nobody is there to ask, so the worker runs under a standing grant: its tool
-    calls run without asking (the deny-list, your hooks and the operator ceiling still apply)
-    until the trust window ends (``loops.trust_ttl_secs``), and a call nothing can approve is
-    declined at once rather than left waiting. An agent CLI is told the mode that stops it asking.
-
-    **Attended:** a person answers each call the way a chat's calls are answered — the card on
-    the loop's page, the bell, the channel approvals go to — and the grants that already stand
-    for chats stand here too: an agent's "Always allow", Trust reads, YOLO, an operator's hook
-    pattern, and "This loop" from one of this run's own cards (:func:`grant_every_worker`).
-
-    Set on every arm, the per-session grants included, because a loop's Mode can change between
-    runs: a resume must never carry an unattended run's grant into an attended one. The agent
-    floor re-seeds at the worker's next turn (``chat_runner._apply_approval_floor``).
+    **Unattended:** the worker runs under a standing grant until the trust window ends
+    (``loops.trust_ttl_secs``), and a call nothing can approve is declined at once rather than left
+    waiting. **Attended:** a person answers each call the way a chat's calls are answered, and the
+    grants that already stand for chats stand here too: an agent's "Always allow", Trust reads,
+    YOLO, an operator's hook pattern.
     """
-    unattended = not loop.attended
-    worker._unattended = unattended
-    worker._trust = unattended or loop.id in _LOOP_GRANTS
-    worker._trust_reads = False
-    worker._trust_from_floor = ""
-    worker._agent_floor_seeded = False
-    if loop.provider:
-        worker.acp_mode = "bypassPermissions" if unattended else ""
+    posture.arm(worker, posture.of(loop), granted=loop.id in _LOOP_GRANTS)
 
 
 def grant_every_worker(state, loop_id: str) -> None:
@@ -297,14 +283,7 @@ def _build_nudge_message(strat, loop: Loop, d) -> str:
     """The per-cycle autonudge message: the kind's cycle_nudge, with autonomous
     framing for an unattended loop. Single source so start + a re-arm produce the
     SAME message shape."""
-    msg = strat.cycle_nudge(loop, str(d) if d else "")
-    if not loop.attended:
-        # An unattended loop has no one to answer a question or pick an option, so
-        # frame the turn as a report. Attended loops keep their own ask path.
-        from personalclaw.autonomous_framing import with_autonomous_framing
-
-        msg = with_autonomous_framing(msg)
-    return msg
+    return posture.frame(posture.of(loop), strat.cycle_nudge(loop, str(d) if d else ""))
 
 
 async def rearm_nudge_message(svc, loop_id: str) -> None:
@@ -703,11 +682,8 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
     if roots:
         session._extra_tool_roots = roots
     state.push_sessions_update()
-    msg = _task_cycle_nudge(loop, task, worktree_dir, str(d) if d else "")
-    if not loop.attended:
-        from personalclaw.autonomous_framing import with_autonomous_framing
-
-        msg = with_autonomous_framing(msg)
+    nudge = _task_cycle_nudge(loop, task, worktree_dir, str(d) if d else "")
+    msg = posture.frame(posture.of(loop), "\n".join([nudge, *kinds.workspace_rules_lines()]))
     await svc.add(
         session_name=skey,
         message=msg,

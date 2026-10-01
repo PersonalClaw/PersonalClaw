@@ -1093,12 +1093,28 @@ async def teardown(
             ok, detail = await run_step(step, path, runner=runner)
             (out.ran if ok else out.failed).append(step if ok else f"{step}: {detail}"[:500])
 
+    # Work that cannot be committed (git has no identity to commit it as here) is not deleted
+    # with its folder: the folder is kept, and the teardown says why.
+    unsaved = False
     if alive and plan.commits_first:
-        out.committed = _commit_outstanding(
-            path, out.branch, preserved=list(state.get("preserved") or [])
-        )
+        from personalclaw.loop import worktree as loop_worktree
 
-    if alive and plan.deletes:
+        if (
+            loop_worktree.is_git_repo(path)
+            and loop_worktree.commit_identity(path) is None
+            and loop_worktree.has_uncommitted_changes(path, untracked=True)
+        ):
+            unsaved = True
+            out.failed.append(
+                "commit the run's work: git has no name and email set to commit it as here, so "
+                "its folder is kept"
+            )
+        else:
+            out.committed = _commit_outstanding(
+                path, out.branch, preserved=list(state.get("preserved") or [])
+            )
+
+    if alive and plan.deletes and not unsaved:
         out.removed = _remove_workspace(
             path,
             run_id=str(getattr(run, "id", "") or ""),
@@ -1131,12 +1147,11 @@ def _commit_outstanding(path: str, branch: str, *, preserved: list[str]) -> bool
     rc, _ = loop_worktree._git(path, "add", "-A", "--", ".", *excludes)
     if rc != 0:
         return False
+    # As git is configured to commit there, never under an identity of the product's own: the
+    # run branch is what the owner merges into their own history (the caller found one set).
     rc, out = loop_worktree._git(
         path,
-        "-c",
-        "user.name=PersonalClaw",
-        "-c",
-        "user.email=code@personalclaw.local",
+        *loop_worktree._CONFIGURED_IDENTITY_ONLY,
         "commit",
         "-q",
         "-m",

@@ -145,9 +145,12 @@ async def test_spawn_falls_back_to_files_dir_when_workspace_gone(tmp_path, monke
 
 
 @pytest.mark.asyncio
-async def test_planner_brief_gets_autonomous_framing(tmp_path, monkeypatch):
-    # The planner runs UNATTENDED — the brief sent to the agent must carry the
-    # autonomous-run framing so it never offers menus or waits for an absent user.
+async def test_an_unattended_planners_brief_gets_autonomous_framing(tmp_path, monkeypatch):
+    # An Unattended loop's planner runs with nobody there — the brief sent to the agent must
+    # carry the autonomous-run framing so it never offers menus or waits for an absent user.
+    # (An Attended loop's planner is not framed: its owner answers it, `loop.posture`.)
+    from personalclaw.loop import posture
+
     monkeypatch.setattr(R, "PLANNER_POLL_SECS", 0.01)
     monkeypatch.setattr(R, "PLANNER_FIRST_IDLE", 0)
     files_dir = tmp_path / "fd"
@@ -164,6 +167,7 @@ async def test_planner_brief_gets_autonomous_framing(tmp_path, monkeypatch):
         sentinel="plan_steps.json",
         brief="design the steps",
         app="code",
+        posture=posture.UNATTENDED,
     )
     msg = svc.add_kwargs["message"]
     assert "[AUTONOMOUS RUN" in msg

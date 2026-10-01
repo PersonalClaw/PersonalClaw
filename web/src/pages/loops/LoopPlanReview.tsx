@@ -1005,7 +1005,7 @@ function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, 
 
       <div data-type="body-s" className="flex flex-col gap-1.5 text-on-surface-low">
         <div>Title: <span className="text-on-surface-var">{title || loop.name}</span></div>
-        <div>Type: <span className="text-on-surface-var">{typeLabel}</span> · Mode: <span className="text-on-surface-var" title={loopModeMeaning(!!loop.attended)}>{loopModeLabel(!!loop.attended)}</span> · Granularity: <span className="text-on-surface-var">{granularityLabel}</span></div>
+        <div>Type: <span className="text-on-surface-var">{typeLabel}</span> · Mode: <span className="text-on-surface-var" title={loopModeMeaning(!!loop.attended, (loop as { kind?: string }).kind)}>{loopModeLabel(!!loop.attended)}</span> · Granularity: <span className="text-on-surface-var">{granularityLabel}</span></div>
         {goalType === 'verifiable' && verifyCommand.trim() && (
           <div>Verify: <code className="text-on-surface-var font-mono">{verifyCommand.trim()}</code></div>
         )}

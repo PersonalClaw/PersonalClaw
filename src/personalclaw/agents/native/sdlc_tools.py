@@ -198,7 +198,8 @@ async def code_project_create(a: dict) -> ToolResult:
         # matching the classify call); stage/capability hygiene is the point here.
         "plan": _normalize_plan(a.get("stage_plan") or [], skill_ids, workflow_ids, None),
         "max_cycles": a.get("max_cycles", 60),
-        "attended": bool(a.get("attended", False)),
+        # Unattended only when the agent says so (the user chose it with them); else it asks.
+        "attended": a.get("attended") is not False,
         "success_criteria": (str(a["success_criteria"]) if a.get("success_criteria") else None),
         # Kind-config fields the code strategy owns.
         "project_kind": project_kind,
@@ -296,7 +297,8 @@ async def goal_loop_create(a: dict) -> ToolResult:
         "task": goal,
         "name": str(a.get("name") or "").strip(),
         "max_cycles": a.get("max_cycles", 30),
-        "attended": bool(a.get("attended", False)),
+        # Unattended only when the agent says so (the user chose it with them); else it asks.
+        "attended": a.get("attended") is not False,
         "success_criteria": (str(a["success_criteria"]) if a.get("success_criteria") else None),
         # Kind-config fields the goal strategy owns (ignored by general/design defaults
         # when not applicable — _build_loop_from_body layers them over the kind defaults).

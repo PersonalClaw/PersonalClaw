@@ -463,6 +463,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/loops/{id}/autopilot` — {on: bool} — toggle the execution drive live.
 - `GET /api/loops/{id}/design/tokens` — the RESOLVED token tree
 - `POST /api/loops/{id}/grill-tree` — guided-decomposition intake (grill's ``tree``
+- `GET /api/loops/{id}/merge` — the finished work an Attended loop waits for you to merge.
+- `POST /api/loops/{id}/merge` — {tips, confirm: true} — approve merging the work you reviewed.
 - `POST /api/loops/{id}/nudge` — {text, task_id?} — steer; resume if awaiting input.
 - `GET /api/loops/{id}/plan-session` — the stepwise planning walkthrough state.
 - `POST /api/loops/{id}/plan/approve` — {step_id} — approve a step + advance.

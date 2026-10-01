@@ -256,13 +256,35 @@ def _resolve_acp_spawn_cwd(cwd: str | None) -> Path:
 _WAIVING_POLICIES = frozenset({"auto", "yolo", "acceptEdits"})
 
 
-def _meter_agent_turns(provider: Any, axis: str) -> None:
+def _meter_agent_turns(provider: Any, axis: str, *, unmetered: bool = False) -> None:
     """Hand *provider* the axis it was acquired on when it makes its own model calls (an agent CLI:
-    ``acp.spend``), so its turns are metered on a metered axis. A native runtime's calls are its
-    inner model's, which the resolution seam already meters by the same axis; it has no setter."""
+    ``acp.spend``), so its turns are metered on a metered axis — unless a person answers the
+    session (``unmetered``: an Attended loop's, ``loop.posture``), whose spend is its owner's. A
+    native runtime's calls are its inner model's, which the resolution seam already meters the same
+    way; it has no setter."""
     setter = getattr(provider, "set_spend_axis", None)
     if callable(setter):
-        setter(axis)
+        setter("" if unmetered else axis)
+
+
+#: What a request says about who answers the runtime it builds and whose spend that runtime is.
+#: A cached runtime built for other answers is rebuilt rather than reused: a loop's Mode can change
+#: between its runs, and a runtime keeps both from when it was built.
+_POSTURE_KEYS = ("unattended", "unmetered")
+
+
+def _built_posture(asked: dict[str, Any]) -> dict[str, bool]:
+    """The posture a runtime built from *asked* (``get_or_create``'s factory arguments) has: what
+    it names of :data:`_POSTURE_KEYS`, and the factory's default (no) for what it does not."""
+    return {k: bool(asked.get(k)) for k in _POSTURE_KEYS}
+
+
+def _posture_moved(sess: "_Session", asked: dict[str, Any]) -> bool:
+    """Whether *asked* names a posture other than the one *sess*'s runtime was built for. Only what
+    the request names is compared, and a runtime with no recorded posture (one ``get_or_create``
+    did not build, the background session's) has none to compare."""
+    built = sess.built_posture
+    return bool(built) and any(k in asked and built[k] != bool(asked[k]) for k in _POSTURE_KEYS)
 
 
 def _bounded_policy(policy: str, *, key: str) -> str:
@@ -398,6 +420,10 @@ class _Session:
     # finishes, never under it — so an open chat or room answers its next turn as the agent
     # now reads. See ``SessionManager.mark_agent_stale``.
     definition_stale: bool = False
+    # Who answers this runtime and whose spend it is, as the request that built it said
+    # (:data:`_POSTURE_KEYS`): a runtime keeps both from when it was built, so a request naming
+    # others gets a runtime built for them (:func:`_posture_moved`).
+    built_posture: dict[str, bool] = field(default_factory=dict)
 
 
 class SessionManager:
@@ -1189,7 +1215,11 @@ class SessionManager:
                 else (
                     "what its model was resolved from changed"
                     if _resolution_moved(provider)
-                    else ""
+                    else (
+                        "who answers it or whose spend it is changed"
+                        if _posture_moved(sess, extra_factory_kwargs)
+                        else ""
+                    )
                 )
             )
             if not stale:
@@ -1349,7 +1379,11 @@ class SessionManager:
         # Every one of those three doors, the same way: an agent runtime that makes its own
         # model calls is told the axis it was acquired on, so its turns are metered when the
         # axis is. A claimed pool process was built for no axis at all.
-        _meter_agent_turns(provider, str(extra_factory_kwargs.get("model_axis") or ""))
+        _meter_agent_turns(
+            provider,
+            str(extra_factory_kwargs.get("model_axis") or ""),
+            unmetered=bool(extra_factory_kwargs.get("unmetered")),
+        )
         registered = False
         try:
             # Check if session was resumed
@@ -1384,6 +1418,7 @@ class SessionManager:
                         approval_policy=approval_policy,
                         approval_source=approval_source,
                         agent=agent or "",
+                        built_posture=_built_posture(extra_factory_kwargs),
                     )
                     _push_approval_policy(provider, approval_policy, approval_source)
                     self._sessions[key] = sess

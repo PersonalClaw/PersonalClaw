@@ -389,6 +389,27 @@ def test_the_classifier_on_a_planted_call(snippet: str, expected: str):
     assert verdict(site, guarded_axes()) == expected
 
 
+# ── the one session a person answers on a metered axis ─────────────────────────────────────
+
+#: The one call that may acquire a runtime the cap does not count on a metered axis, and the one
+#: function that decides it: an Attended loop's planner and workers are answered by a person, so
+#: their spend is their owner's, as a chat's is (``loop.posture``). The guard still wraps them.
+UNMETERED_DECIDED: dict[tuple[str, str], str] = {
+    ("dashboard/chat_runner.py", "run_chat"): "spend_metered",
+}
+
+
+def test_only_a_loops_mode_takes_a_session_off_the_cap():
+    """Every acquisition that says ``unmetered=`` is the one listed, and it says it through the
+    posture function, negated: nothing hands a runtime an unmetered flag of its own."""
+    saying = [s for s in src_sites() if any(k.arg == "unmetered" for k in s.call.keywords)]
+    assert [(s.path, s.qualname) for s in saying] == list(UNMETERED_DECIDED), saying
+    for site in saying:
+        value = next(k.value for k in site.call.keywords if k.arg == "unmetered")
+        assert isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.Not), ast.dump(value)
+        assert _called(value.operand) == UNMETERED_DECIDED[(site.path, site.qualname)]
+
+
 # ── the loop's planner ─────────────────────────────────────────────────────────────────────
 
 

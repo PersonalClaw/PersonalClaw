@@ -16,7 +16,13 @@ import time
 from dataclasses import dataclass
 
 from personalclaw.loop import files as loop_files
-from personalclaw.loop.kinds import LoopKindStrategy, attendedness_lines, register
+from personalclaw.loop import posture
+from personalclaw.loop.kinds import (
+    LoopKindStrategy,
+    attendedness_lines,
+    register,
+    workspace_rules_lines,
+)
 from personalclaw.loop.loop import Loop, LoopStatus
 from personalclaw.security import redact_for_display
 
@@ -60,6 +66,48 @@ def _ended_worker_question(loop: Loop, task, why: str) -> str:
     return (
         f'Task "{task.title}" ran out of cycles without producing a result — it may be '
         f"under-specified or blocked. {then}"
+    )
+
+
+#: Who merged a task's work into the workspace, as the loop's page says it (``files.get_merges``).
+MERGED_BY_OWNER = "you"
+MERGED_BY_LOOP = "the loop"
+
+
+def _no_identity_question(ws: str, then: str = "resume") -> str:
+    """What the owner is told when git has no identity to commit as in the loop's workspace: the
+    loop commits its work only under their own name, so it stops and asks for one, then *then*.
+    The name PersonalClaw knows them by is no identity to commit as (it carries no email)."""
+    return (
+        "This loop commits its work in git under your name, and git has no name and email set "
+        f'to commit as in {ws}. Set them there (git config user.name "Your Name" and git '
+        'config user.email "you@example.com", or the same with --global), then '
+        f"{then}. Nothing was committed."
+    )
+
+
+def _other_name_question(task, branch: str, identity: tuple[str, str], other: list[str]) -> str:
+    """What the owner is asked when a task's branch holds commits made as someone else."""
+    shown = "; ".join(other[:3]) + ("…" if len(other) > 3 else "")
+    return (
+        f'Task "{getattr(task, "title", "") or branch}" has commits on its branch {branch} made '
+        f"under another name than yours ({shown}), and the loop merges only work committed as "
+        f"git commits here, {identity[0]} <{identity[1]}>. Nothing of it was merged. Commit it "
+        "again under your name on that branch, or remove the task from the queue, then resume."
+    )
+
+
+def _merge_question(into: str, titles: list[str]) -> str:
+    """What the owner of an Attended loop is asked when finished tasks' work waits to be merged."""
+    named = ", ".join(f'"{t}"' for t in titles)
+    work = (
+        "The work of 1 finished task is"
+        if len(titles) == 1
+        else (f"The work of {len(titles)} finished tasks is")
+    )
+    return (
+        f"{work} ready to merge into {into}: {named}. Nothing of it is on {into} until you "
+        "approve it: review the changes, then merge them. The loop waits for you."
     )
 
 
@@ -324,6 +372,11 @@ class CodeKind(LoopKindStrategy):
         # (`_one_writer`), so it stands back up only the ones it stood down. In memory: after
         # a restart the stage worker is armed afresh and the next poll decides again.
         self._stood_down: set[str] = set()
+        # What an Attended loop's owner approved merging: loop id → {task id: the commit its
+        # branch was at in the review they approved} (:meth:`approve_merge`). In memory, and
+        # set only by the owner's own approval route: nothing a loop's workers can write (its
+        # folder is theirs to write) stands for it, and after a restart the loop asks again.
+        self._merge_approvals: dict[str, dict[str, str]] = {}
 
     def _is_parallel(self, loop: Loop) -> bool:
         """Parallel mode: queued work + a git workspace (worktrees available). Set
@@ -422,13 +475,18 @@ class CodeKind(LoopKindStrategy):
         the reaper's workspace-existence guard."""
         import os
 
-        if str((loop.kind_config or {}).get("project_kind", "greenfield")) != "brownfield":
-            return None
+        from personalclaw.loop import worktree
+
         ws = (loop.workspace_dir or "").strip()
-        if not ws:
-            return "This brownfield code loop needs a workspace — pick the codebase directory before starting."  # noqa: E501
-        if not os.path.isdir(ws):
-            return f"The workspace folder {ws!r} is missing (moved or deleted) — re-pick the codebase directory."  # noqa: E501
+        if str((loop.kind_config or {}).get("project_kind", "greenfield")) == "brownfield":
+            if not ws:
+                return "This brownfield code loop needs a workspace — pick the codebase directory before starting."  # noqa: E501
+            if not os.path.isdir(ws):
+                return f"The workspace folder {ws!r} is missing (moved or deleted) — re-pick the codebase directory."  # noqa: E501
+        # Its workers commit in the repository, under the owner's name, and with none to commit
+        # as one would make one up: nothing starts until git has one there.
+        if ws and worktree.is_git_repo(ws) and worktree.commit_identity(ws) is None:
+            return _no_identity_question(ws, then="start the loop")
         return None
 
     def active_stage_index(self, loop: Loop) -> int:
@@ -643,6 +701,7 @@ class CodeKind(LoopKindStrategy):
             ]
         if loop.success_criteria:
             lines += ["", f"**Definition of Done:** {loop.success_criteria}"]
+        lines += workspace_rules_lines()
         lines += [
             "",
             "Never push to git, never run destructive operations, never read credential "
@@ -1460,8 +1519,14 @@ class CodeKind(LoopKindStrategy):
         on it rather than after the stage worker has already done the work in the main tree.
         Returns True iff the loop paused for its owner (a merge the scheduler could not settle,
         a task that ran out of cycles)."""
-        from personalclaw.loop import store
+        from personalclaw.loop import store, worktree
 
+        # Every commit of the loop's, the stage worker's in the workspace itself as much as a
+        # task's, is made under the owner's name: with git holding none there, the loop stops
+        # and asks before any worker's next cycle, rather than leave a worker to make one up.
+        ws = (loop.workspace_dir or "").strip()
+        if ws and worktree.is_git_repo(ws) and self._asks_for_identity(loop, ws, ctx):
+            return True
         if loop.autopilot:
             refreshed = await self.autopilot_queue(loop)
             if refreshed is not None:
@@ -1597,7 +1662,7 @@ class CodeKind(LoopKindStrategy):
         )
         from personalclaw.triggers.nudge import why_it_ended
 
-        # 1. Reap finished task-workers.
+        # 1. Reap finished task-workers, and land their work (`_land`).
         for tid in list((loop.kind_config or {}).get("queued_task_ids", []) or []):
             skey = task_session_key(loop.id, tid)
             sess = ctx.state._sessions.get(skey)
@@ -1610,7 +1675,7 @@ class CodeKind(LoopKindStrategy):
                     and tasks_link._is_done(task.status)
                     and worktree.branch_exists(ws, tid)
                 ):
-                    if await self._reap_merge_done(loop, tid, task, ws, ctx):
+                    if await self._land(loop, tid, task, ws, ctx):
                         return True
                 continue
             task = await self._get_task(tid)
@@ -1632,10 +1697,18 @@ class CodeKind(LoopKindStrategy):
                     return True
             if task is not None and tasks_link._is_done(task.status):
                 await teardown_task_worker(ctx.svc, loop.id, tid)
-                if await self._reap_merge_done(loop, tid, task, ws, ctx):
+                if await self._land(loop, tid, task, ws, ctx):
                     return True
-        # 2. Fill free slots with ready, not-yet-running tasks.
         loop = store.get(loop.id) or loop
+        # An Attended loop's finished work waits for its owner's merge, and nothing new starts on
+        # top of it: a worktree is cut from the branch, which does not have that work yet. Once
+        # the stage's running workers finish too, all of it is put to the owner in one review.
+        waiting = await self._awaiting_merge(loop, ws, ctx)
+        if waiting:
+            if self._live_task_workers(loop, ctx.svc):
+                return False
+            return self._ask_to_merge(loop, waiting, ws, ctx)
+        # 2. Fill free slots with ready, not-yet-running tasks.
         slots = _pool_cap(loop) - len(self._live_task_workers(loop, ctx.svc))
         if slots <= 0:
             return False
@@ -1645,7 +1718,17 @@ class CodeKind(LoopKindStrategy):
         stage_worker = ctx.state._sessions.get(session_key(loop.id))
         if stage_worker is not None and getattr(stage_worker, "running", False):
             return False  # the stage worker is writing; fan out once its cycle ends
-        if not worktree.ensure_base_commit(ws) or worktree.has_uncommitted_changes(ws):
+        # Every task's work is committed and merged as git is configured to commit here, so the
+        # loop asks for an identity before it cuts a worktree whose work it could not commit.
+        # An unborn HEAD gets a first commit to branch from, but only an Unattended loop makes
+        # it: an Attended one puts nothing on its owner's branch unasked, so its tasks stay the
+        # stage worker's, in the tree, where each edit is asked for.
+        based = (
+            worktree.has_base_commit(ws)
+            if posture.of(loop).asks
+            else worktree.ensure_base_commit(ws)
+        )
+        if not based or worktree.has_uncommitted_changes(ws):
             return False
         # The stage worker stands down BEFORE the first task worker starts, so its next cycle
         # cannot fire in between (`_one_writer` stands it back up when the task workers drain).
@@ -1676,21 +1759,164 @@ class CodeKind(LoopKindStrategy):
             )
         return False
 
-    async def _reap_merge_done(self, loop: Loop, tid: str, task, ws: str, ctx) -> bool:
-        """Merge a done task's branch into base. Clean → unqueue + task_done. Conflict
+    def approve_merge(self, loop_id: str, tips: dict[str, str]) -> None:
+        """Its owner approved merging each task in *tips* at the commit named (the review they
+        read, ``POST /api/loops/{id}/merge``); the scheduler merges each there, or asks again."""
+        self._merge_approvals.setdefault(loop_id, {}).update(tips)
+
+    def _approved_tip(self, loop_id: str, task_id: str) -> str:
+        return self._merge_approvals.get(loop_id, {}).get(task_id, "")
+
+    def _drop_approval(self, loop_id: str, task_id: str) -> None:
+        approved = self._merge_approvals.get(loop_id)
+        if approved is not None:
+            approved.pop(task_id, None)
+            if not approved:
+                self._merge_approvals.pop(loop_id, None)
+
+    def _asks_for_identity(self, loop: Loop, ws: str, ctx) -> bool:
+        """Pause *loop* for its owner when git has no identity to commit as in *ws*, rather than
+        commit under an invented one. True iff it paused."""
+        from personalclaw.loop import store, worktree
+
+        if worktree.commit_identity(ws) is not None:
+            return False
+        loop_files.write_question(
+            loop.id, _no_identity_question(ws), asked_by=loop_files.SCHEDULER_QUESTION
+        )
+        store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
+        ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
+        return True
+
+    async def _land(self, loop: Loop, tid: str, task, ws: str, ctx) -> bool:
+        """A finished task's work goes into the workspace's checked-out branch: at once for an
+        Unattended loop, and for an Attended one only at the commit its owner approved merging
+        (:meth:`approve_merge`). Until then its work stays on its own branch, committed
+        there so that what its owner reviews is what would land. Returns True iff the loop paused
+        for its owner."""
+        from personalclaw.loop import worktree
+
+        if not posture.of(loop).asks:
+            if self._asks_about_another_name(loop, tid, task, ws, ctx):
+                return True
+            return await self._reap_merge_done(loop, tid, task, ws, ctx, by=MERGED_BY_LOOP)
+        if not worktree.commit_pending(ws, tid, loop.tasks_project_id):
+            return False  # nothing to review yet; the next poll tries again
+        if not worktree.branch_commits(ws, tid):
+            # The task changed nothing, so there is nothing to merge or to ask about.
+            from personalclaw.loop import store
+
+            worktree.remove_worktree(ws, tid, loop.tasks_project_id)
+            store.unqueue_tasks(loop.id, [tid])
+            ctx.publish(loop.id, "task_done", {"loop_id": loop.id, "task_id": tid, "merged": False})
+            return False
+        if self._asks_about_another_name(loop, tid, task, ws, ctx):
+            return True
+        approved = self._approved_tip(loop.id, tid)
+        if approved and approved == worktree.branch_tip(ws, tid):
+            return await self._reap_merge_done(loop, tid, task, ws, ctx, by=MERGED_BY_OWNER)
+        return False
+
+    def _asks_about_another_name(self, loop: Loop, tid: str, task, ws: str, ctx) -> bool:
+        """Pause *loop* for its owner when task *tid*'s branch holds commits made as anyone but
+        the identity git commits as in *ws* (a worker that set a name of its own), rather than
+        merge them into the owner's branch or put them up for merging. True iff it paused."""
+        from personalclaw.loop import store, worktree
+
+        identity = worktree.commit_identity(ws)
+        if identity is None:
+            return False  # the scheduler asks for one before anything gets this far
+        other = worktree.commits_not_by(ws, tid, identity)
+        if not other:
+            return False
+        loop_files.write_question(
+            loop.id,
+            _other_name_question(task, worktree.branch_name(tid), identity, other),
+            asked_by=loop_files.SCHEDULER_QUESTION,
+        )
+        store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
+        ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
+        return True
+
+    async def _awaiting_merge(self, loop: Loop, ws: str, ctx) -> list[tuple[str, object]]:
+        """The finished tasks of an Attended *loop* whose work waits for its owner to merge it:
+        queued, done, no worker turn running, and a branch of their own. Empty for an Unattended
+        loop, whose scheduler merges each as it finishes."""
+        from personalclaw.loop import tasks_link, worktree
+        from personalclaw.loop.manager import task_session_key
+
+        if not posture.of(loop).asks:
+            return []
+        waiting: list[tuple[str, object]] = []
+        for tid in list((loop.kind_config or {}).get("queued_task_ids", []) or []):
+            sess = ctx.state._sessions.get(task_session_key(loop.id, tid))
+            if sess is not None and getattr(sess, "running", False):
+                continue
+            task = await self._get_task(tid)
+            if task is None or not tasks_link._is_done(task.status):
+                continue
+            if worktree.branch_exists(ws, tid):
+                waiting.append((tid, task))
+        return waiting
+
+    def _ask_to_merge(self, loop: Loop, waiting: list[tuple[str, object]], ws: str, ctx) -> bool:
+        """Put the work waiting in an Attended loop to its owner: the loop pauses with a merge
+        review its page shows (each task's branch, its commits and its diff,
+        ``GET /api/loops/{id}/merge``), and the bell and the Inbox say it is waiting. Always
+        True: the loop paused."""
+        from personalclaw.loop import store, worktree
+
+        into = worktree.base_branch(ws)
+        tasks = [
+            {
+                "task_id": tid,
+                "title": str(getattr(task, "title", "") or tid),
+                "branch": worktree.branch_name(tid),
+                "tip": worktree.branch_tip(ws, tid),
+            }
+            for tid, task in waiting
+        ]
+        loop_files.write_question(
+            loop.id,
+            _merge_question(into, [t["title"] for t in tasks]),
+            asked_by=loop_files.SCHEDULER_QUESTION,
+            merge={"into": into, "tasks": tasks},
+        )
+        store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
+        ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
+        return True
+
+    async def _reap_merge_done(self, loop: Loop, tid: str, task, ws: str, ctx, *, by: str) -> bool:
+        """Merge a done task's branch into base, as git is configured to commit there, and note it
+        on the loop's page (*by*: who merged it). Clean → unqueue + task_done. Conflict
         → autopilot auto-resolves (the loser rebases: discard branch + re-open the task
         to re-run on the merged base) up to _CONFLICT_REDO_CAP, else pause NEEDS_INPUT.
         Returns True iff the merge did NOT integrate (caller stops + awaits the user)."""
         from personalclaw.loop import store, worktree
 
+        branch = worktree.branch_name(tid)
+        into = worktree.base_branch(ws)
+        commits = worktree.branch_commits(ws, tid)
         result = worktree.merge_worktree(ws, tid, loop.tasks_project_id)
         redo_key = f"{loop.id}:{tid}"
+        self._drop_approval(loop.id, tid)
         if result.ok:
             self._conflict_redos.pop(redo_key, None)
             store.unqueue_tasks(loop.id, [tid])
+            loop_files.record_merge(
+                loop.id,
+                {
+                    "task_id": tid,
+                    "title": str(getattr(task, "title", "") or tid),
+                    "branch": branch,
+                    "into": into,
+                    "commits": commits,
+                    "head": result.head,
+                    "by": by,
+                },
+            )
             ctx.publish(loop.id, "task_done", {"loop_id": loop.id, "task_id": tid, "merged": True})
             return False
-        branch = worktree.branch_name(tid)
         conflicts = result.conflicts
         if conflicts:
             shown = ", ".join(conflicts[:5]) + ("…" if len(conflicts) > 5 else "")

@@ -497,6 +497,12 @@ def task_finding_count(loop_id: str, task_id: str) -> int:
 
 
 # Questions (attended-mode clarification).
+#: ``asked_by`` on a question the code kind's scheduler asks (a merge to approve, a git identity to
+#: set) rather than a worker: the scheduler asks it again for as long as it holds, so a Resume
+#: never stops on one that no longer does (``watchdog.LoopWatchdog._handle_question``).
+SCHEDULER_QUESTION = "scheduler"
+
+
 def write_question(loop_id: str, question: str, **extra: Any) -> None:
     d = loop_dir(loop_id)
     if d is not None:
@@ -525,6 +531,28 @@ def clear_question(loop_id: str) -> None:
     f = d / "questions.json" if d else None
     if f and f.exists():
         f.unlink()
+
+
+# Merges (a code loop's): what its scheduler merged into the workspace, for the loop's page.
+MERGES_FILE = "merges.jsonl"
+
+
+def record_merge(loop_id: str, record: dict[str, Any]) -> None:
+    """Note that a task's work was merged into the workspace (append-only)."""
+    append_jsonl(loop_id, MERGES_FILE, {**record, "at": time.time()})
+
+
+def get_merges(loop_id: str) -> list[dict[str, Any]]:
+    """Every merge the loop made, oldest first, its words masked for display as a question's are."""
+    out = []
+    for rec in read_jsonl(loop_id, MERGES_FILE):
+        for key in ("title", "into", "branch"):
+            if isinstance(rec.get(key), str):
+                rec[key] = redact_for_display(rec[key])
+        if isinstance(rec.get("commits"), list):
+            rec["commits"] = [redact_for_display(str(c)) for c in rec["commits"]]
+        out.append(rec)
+    return out
 
 
 # Nudges (durable steer trail).

@@ -134,6 +134,14 @@ def planner_session_key(loop_id: str) -> str:
     return f"{PLANNER_SESSION_PREFIX}{loop_id}"
 
 
+def planner_loop_id(key: str) -> str:
+    """The loop whose planner holds session *key* (:func:`planner_session_key`), or ``""``."""
+    if not key.startswith(PLANNER_SESSION_PREFIX):
+        return ""
+    loop_id = key[len(PLANNER_SESSION_PREFIX) :]
+    return loop_id if loop_files.valid_loop_id(loop_id) else ""
+
+
 def _still_planning(loop_id: str) -> bool:
     """Whether loop *loop_id* still wants its planner: it exists, and it has neither launched nor
     ended. No pass starts for one that has — a Stop or a delete landing between a pass and its
@@ -167,7 +175,10 @@ def _loop_folder(loop) -> str:
 async def _run_pass(
     state, svc, loop, wt: Walkthrough, *, brief: str, sentinel: str, timeout_secs: int | None = None
 ) -> PlannerPass:
-    """One planner pass via the shared runner, resolving the loop's primitives."""
+    """One planner pass via the shared runner, resolving the loop's primitives: its Mode among
+    them, which arms the planner the way it arms the loop's workers (``loop.posture``)."""
+    from personalclaw.loop import posture
+    from personalclaw.loop.manager import _LOOP_GRANTS
     from personalclaw.planning import runner
 
     files_dir = _loop_folder(loop)
@@ -191,6 +202,8 @@ async def _run_pass(
         # (step_artifact.json) routinely has the planner re-create the decomposition
         # file (plan_steps.json) while it works.
         extra_sentinels=(STEPS_SENTINEL, ARTIFACT_SENTINEL),
+        posture=posture.of(loop),
+        granted=loop.id in _LOOP_GRANTS,
     )
 
 
