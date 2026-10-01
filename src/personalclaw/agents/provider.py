@@ -219,6 +219,11 @@ class AgentProvider(ABC):
     @abstractmethod
     async def reject_tool(self, request_id: str | int) -> None: ...
 
+    #: Whether this runtime tells its model why the host refused a call nobody was asked about
+    #: (``refuse_tool(request_id, reason, kind=...)``), rather than that the call was declined.
+    #: An agent CLI's permission answer carries no reason, so for it a refusal is a reject.
+    carries_refusal_reasons: bool = False
+
     # ── status / control (default no-ops; ACP + native override) ──
     def context_usage_pct(self) -> float | None:
         """Unknown by default — a provider that measures nothing reports nothing."""

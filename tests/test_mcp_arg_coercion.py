@@ -1,16 +1,19 @@
-"""Schema-driven numeric-arg coercion for MCP tool calls.
+"""Schema-driven arg coercion for MCP tool calls.
 
 A model (notably Claude-on-Bedrock via Converse) sometimes emits a numeric tool
 argument as a STRING ("128") even when the tool's inputSchema types the field as
-number/integer; a strict MCP server then rejects the call with -32602. The MCP
-client coerces such values back to numbers, driven by the tool's inputSchema.
+number/integer, or an array, an object or a boolean as its JSON TEXT; a strict MCP
+server then rejects the call with -32602. The MCP client turns such a value back into
+the type the schema declares, once, and only where the field takes no string at all.
 
 These test the PURE helper (no live server / SDK needed), so they run everywhere.
 """
 
 from __future__ import annotations
 
-from personalclaw.mcp_client import _coerce_args_to_schema, _schema_numeric_kind
+import json
+
+from personalclaw.mcp_client import _coerce_args_to_schema, _schema_kind
 
 _SUM_SCHEMA = {
     "type": "object",
@@ -80,11 +83,59 @@ def test_empty_or_missing_schema_returns_args_unchanged():
     assert _coerce_args_to_schema({"a": "1"}, {"properties": {}}) == {"a": "1"}
 
 
-def test_schema_numeric_kind_classification():
-    assert _schema_numeric_kind({"type": "integer"}) == "integer"
-    assert _schema_numeric_kind({"type": "number"}) == "number"
-    assert _schema_numeric_kind({"type": "string"}) is None
-    assert _schema_numeric_kind({"type": ["number", "null"]}) == "number"
-    assert _schema_numeric_kind({"type": ["string", "number"]}) is None
-    assert _schema_numeric_kind({"anyOf": [{"type": "integer"}]}) is None
-    assert _schema_numeric_kind("nonsense") is None
+def test_schema_kind_classification():
+    assert _schema_kind({"type": "integer"}) == "integer"
+    assert _schema_kind({"type": "number"}) == "number"
+    assert _schema_kind({"type": "string"}) is None
+    assert _schema_kind({"type": ["number", "null"]}) == "number"
+    assert _schema_kind({"type": ["string", "number"]}) is None
+    assert _schema_kind({"anyOf": [{"type": "integer"}]}) is None
+    assert _schema_kind("nonsense") is None
+    assert _schema_kind({"type": "array"}) == "array"
+    assert _schema_kind({"type": "object"}) == "object"
+    assert _schema_kind({"type": "boolean"}) == "boolean"
+    assert _schema_kind({"type": ["array", "string"]}) is None
+
+
+_FILES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "paths": {"type": "array", "items": {"type": "string"}},
+        "options": {"type": "object"},
+        "recursive": {"type": "boolean"},
+        "note": {"type": "string"},
+    },
+}
+
+
+def test_a_json_array_written_as_text_is_decoded_once_where_the_schema_wants_an_array():
+    out = _coerce_args_to_schema(
+        {"paths": '["daily/today.md", "projects/launch.md"]'}, _FILES_SCHEMA
+    )
+    assert out == {"paths": ["daily/today.md", "projects/launch.md"]}
+
+
+def test_a_json_object_written_as_text_is_decoded_where_the_schema_wants_an_object():
+    out = _coerce_args_to_schema({"options": '{"depth": 2}'}, _FILES_SCHEMA)
+    assert out == {"options": {"depth": 2}}
+
+
+def test_a_boolean_written_as_text_is_decoded_where_the_schema_wants_a_boolean():
+    out = _coerce_args_to_schema({"recursive": "true"}, _FILES_SCHEMA)
+    assert out == {"recursive": True}
+    assert _coerce_args_to_schema({"recursive": "false"}, _FILES_SCHEMA) == {"recursive": False}
+
+
+def test_text_that_is_not_json_of_the_declared_type_is_left_as_is():
+    """Left for the schema check and the server to refuse: a plain path, the JSON text of
+    another type, and an array encoded twice (decoded once, it is still text)."""
+    for paths in ("daily/today.md", '{"a": 1}', json.dumps('["a.md"]'), "[unclosed", "yes"):
+        assert _coerce_args_to_schema({"paths": paths}, _FILES_SCHEMA) == {"paths": paths}
+    for flag in ("yes", "1", "True", '"true"'):
+        assert _coerce_args_to_schema({"recursive": flag}, _FILES_SCHEMA) == {"recursive": flag}
+
+
+def test_a_field_that_takes_text_is_never_decoded():
+    assert _coerce_args_to_schema({"note": '["a"]'}, _FILES_SCHEMA) == {"note": '["a"]'}
+    schema = {"properties": {"x": {"type": ["array", "string"]}}}
+    assert _coerce_args_to_schema({"x": '["a"]'}, schema) == {"x": '["a"]'}

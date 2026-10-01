@@ -30,14 +30,14 @@ Three things live here, one per clause of the change:
    proven to match nothing, and the neighbouring sensitive-path guard is proven NOT to be
    the control that fires — otherwise this file would be silently testing that instead.
 
-**Known gap, deliberately pinned rather than papered** (see
-:meth:`TestDenyPrecedesTheApprovalGate.test_command_denylist_is_enforced_below_the_gate`):
-the *command*-level baseline screen lives inside the bash tool
-(``builtin_tools.py``), which is BELOW the runtime's approval gate. It is unconditional
-and precedes the spawn, so there is no execution bypass — the matrix proves that. But a
-baseline-denied command is still put in front of a human as an approvable request before
-being refused. That rail records today's ordering so the gap is visible rather than
-assumed; it is a legibility/audit defect, not a hole.
+**The command screen is the tool's, and it speaks before anyone is asked** (see
+:meth:`TestDenyPrecedesTheApprovalGate.test_the_runtime_asks_the_tool_and_keeps_no_copy_of_its_screen`):
+the *command*-level baseline screen lives inside the bash tool (``builtin_tools.py``),
+unconditional and ahead of the spawn, so there is no execution bypass — the matrix proves
+that. The tool declares it as its pre-flight check (``ToolProvider.preflight``), which the
+runtime asks before it puts a call to anyone, so a baseline-denied command is refused
+without a human ever being shown it as an approvable request. The runtime holds no copy of
+the screen: it asks the tool.
 """
 
 from __future__ import annotations
@@ -296,16 +296,25 @@ class TestApprovalModeMatrix:
     ):
         """The ``default`` cell's own vacuity check.
 
-        ``default`` is only interesting if the gate actually fired and the driver actually
-        said yes. If bash stopped declaring ``requires_approval=True``, no prompt would
-        surface and the ``default`` cell would silently degrade into a copy of ``auto``.
+        ``default`` is only interesting if the gate actually fires and the driver actually says
+        yes. If bash stopped declaring ``requires_approval=True``, no prompt would surface and
+        the ``default`` cell would silently degrade into a copy of ``auto``. So the benign
+        command is asked about, approved and run; the baseline command, which no answer could
+        let run, is refused before anyone is asked (the tool's pre-flight), never spawned.
         """
+        seen, spy = await drive_bash(
+            BENIGN_COMMAND, approval_mode="default", tmp_path=tmp_path, monkeypatch=monkeypatch
+        )
+        assert EVENT_PERMISSION_REQUEST in [e.kind for e in seen], "default mode never prompted"
+        assert len(spy.calls) == 1, "the approved benign command never reached the spawn"
+
         seen, spy = await drive_bash(
             BASELINE_COMMAND, approval_mode="default", tmp_path=tmp_path, monkeypatch=monkeypatch
         )
-        kinds = [e.kind for e in seen]
-        assert EVENT_PERMISSION_REQUEST in kinds, "default mode never prompted — cell is vacuous"
-        assert DENY_MARKER in tool_output_of(seen), "an APPROVED baseline command was not refused"
+        assert EVENT_PERMISSION_REQUEST not in [
+            e.kind for e in seen
+        ], "a baseline-denied command was put to a human as an approvable request"
+        assert DENY_MARKER in tool_output_of(seen), "a baseline command was not refused"
         assert spy.calls == []
 
     @pytest.mark.asyncio
@@ -577,55 +586,51 @@ class TestDenyPrecedesTheApprovalGate:
         await asyncio.wait_for(pump(), timeout=20)
         assert tool.invoked == [{}], "the fixture cannot run the tool at all — rails are vacuous"
 
-    def test_command_denylist_is_enforced_below_the_gate(self):
-        """Pins the KNOWN GAP so it stays visible.
-
-        The *command*-level baseline screen (``_denied_bash_reason``) lives inside the bash
-        tool, i.e. below the runtime's approval gate. That is fail-closed — the matrix
-        above proves no mode can execute the command — but it means a baseline-denied
-        command is surfaced as an approvable request first, and under ``--approval yolo``
-        the gateway writes a ``cli_approval_auto_approve`` outcome=ok SEL row for a command
-        that then gets refused.
-
-        This rail asserts today's shape, so moving the screen up to ``_guard_and_invoke``
-        (the fix) reds HERE and forces the docstring above and the plan's execution log to
-        be updated together, rather than the gap quietly persisting.
-        """
+    def test_the_runtime_asks_the_tool_and_keeps_no_copy_of_its_screen(self):
+        """The command-level baseline screen (``_denied_bash_reason``) is the bash tool's. The
+        runtime reaches it before the approval gate by asking the tool (``_preflight`` →
+        ``ToolProvider.preflight``), never by calling the screen itself: a second copy in the
+        pipeline would be a policy that drifts from the one the tool enforces when it runs."""
         runtime_fn = _guard_and_invoke_node()
-        assert _first_call_line(runtime_fn, "denied_command_reason") is None, (
-            "the command-level baseline screen has moved INTO _guard_and_invoke (above the "
-            "approval gate). That is the improvement SH-7 recommended: delete this rail, "
-            "add a structural deny-before-gate assertion for it alongside is_denied, and "
-            "update the KNOWN GAP note in this module's docstring."
-        )
+        assert _first_call_line(runtime_fn, "denied_command_reason") is None
         assert _first_call_line(runtime_fn, "_denied_bash_reason") is None
+        assert (
+            _first_call_line(runtime_fn, "_preflight") is not None
+        ), "the approval branch no longer asks the tool what it refuses before the ask"
 
     def test_the_bash_tool_screens_before_it_spawns(self):
-        """The ordering that DOES hold at the command level: inside the bash handler the
-        denylist screen precedes ``create_subprocess_limited``. Moving the screen below the
-        spawn is the inversion that would actually execute the command, and it reds here."""
+        """The ordering that holds at the command level: the function that spawns the command
+        screens it first (``_bash_refusal``, the screen the tool's pre-flight runs too), and that
+        screen is where the denylist is read. Moving the screen below the spawn is the inversion
+        that would actually execute the command, and it reds here."""
         source = BUILTIN_SRC.read_text(encoding="utf-8")
         tree = ast.parse(source)
+        functions = [
+            n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        screen_fn = next((n for n in functions if n.name == "_bash_refusal"), None)
+        assert screen_fn is not None and _first_call_line(
+            screen_fn, "_denied_bash_reason"
+        ), "the bash screen no longer reads the denylist"
         handler = next(
             (
                 n
-                for n in ast.walk(tree)
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and _first_call_line(n, "_denied_bash_reason") is not None
+                for n in functions
+                if _first_call_line(n, "_bash_refusal") is not None
                 and _first_call_line(n, "create_subprocess_limited") is not None
             ),
             None,
         )
         assert handler is not None, (
             "no function in builtin_tools.py both screens the command and spawns it — the "
-            "bash denylist screen and the spawn are no longer in the same body, so their "
-            "order is no longer verifiable here"
+            "bash screen and the spawn are no longer in the same body, so their order is no "
+            "longer verifiable here"
         )
-        screen = _first_call_line(handler, "_denied_bash_reason")
+        screen = _first_call_line(handler, "_bash_refusal")
         spawn = _first_call_line(handler, "create_subprocess_limited")
         assert screen is not None and spawn is not None
         assert screen < spawn, (
             f"DENY-AFTER-SPAWN ORDERING REGRESSION in {BUILTIN_SRC.name}::{handler.name}: the "
-            f"denylist screen is at line {screen} but the subprocess spawn is at line {spawn}. "
+            f"screen is at line {screen} but the subprocess spawn is at line {spawn}. "
             f"A baseline-denied command would EXECUTE before being screened."
         )

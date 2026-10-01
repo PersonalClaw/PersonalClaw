@@ -1364,6 +1364,76 @@ def validated_tool_names() -> frozenset[str]:
     )
 
 
+def tool_field_schema(name: str) -> ToolSchema | None:
+    """The field schema the in-process tool *name* is validated with: its entry in the one
+    dispatch map its module consults (the maps name each tool once), or None for none."""
+    for registry in (MCP_CORE_SCHEMAS, MCP_WORKFLOW_SCHEMAS, MCP_AUTOMATION_SCHEMAS):
+        if name in registry:
+            return registry[name]
+    return None
+
+
+#: The JSON type each Python type a field spec checks is offered as.
+_JSON_TYPES: dict[type, str] = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+    list: "array",
+    dict: "object",
+}
+
+
+def offered_schema(input_schema: Any, schema: ToolSchema | None) -> Any:
+    """*input_schema* with what *schema*'s validator enforces written into it, so the schema a
+    model is offered says what a call must be: each field's maximum length, allowed values, numeric
+    bounds and item limits, and the fields it requires. Generated from the field specs
+    :func:`validate_tool_args` runs, so the two cannot drift; where both say something, the
+    validator's is what is offered. A constraint is written only on a field the schema names, and
+    only where the field's declared JSON type is one the spec checks (a list a schema declares as
+    JSON text gets no item limit). A spec's pattern is not offered: its dialect is Python's."""
+    if not isinstance(input_schema, dict) or schema is None:
+        return input_schema
+    import copy
+
+    out = copy.deepcopy(input_schema)
+    props = out.get("properties")
+    if not isinstance(props, dict):
+        return out
+    required = list(out.get("required") or [])
+    for spec in schema.fields:
+        prop = props.get(spec.name)
+        if not isinstance(prop, dict):
+            continue
+        if spec.required and spec.name not in required:
+            required.append(spec.name)
+        kind = prop.get("type")
+        checked = spec.type if isinstance(spec.type, tuple) else (spec.type,)
+        if kind not in {_JSON_TYPES.get(t) for t in checked} and not (
+            kind == "number" and int in checked
+        ):
+            continue
+        if kind == "string" and spec.max_len:
+            prop["maxLength"] = spec.max_len
+        # An empty value says nothing a field left out does not, and no portable enum holds one.
+        if kind == "string" and (allowed := sorted(v for v in spec.allowed or () if v)):
+            prop["enum"] = allowed
+        if kind in ("integer", "number"):
+            if spec.min_val is not None:
+                prop["minimum"] = spec.min_val
+            if spec.max_val is not None:
+                prop["maximum"] = spec.max_val
+        if kind == "array":
+            if spec.max_items:
+                prop["maxItems"] = spec.max_items
+            items = prop.get("items")
+            if spec.item_max_len and isinstance(items, dict) and items.get("type") == "string":
+                items["maxLength"] = spec.item_max_len
+    if required:
+        out["required"] = required
+    return out
+
+
 # ── Response Schemas ──
 
 

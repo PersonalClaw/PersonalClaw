@@ -38,7 +38,9 @@ from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_defini
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions
 from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text
-from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal, store_named_in
+from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal
+from personalclaw.file_scope import refusal as scope_refusal
+from personalclaw.file_scope import store_named_in
 from personalclaw.file_view import BINARY_SNIFF_BYTES, is_binary
 from personalclaw.knowledge_providers.dir_source import note_path
 from personalclaw.security import (
@@ -869,26 +871,48 @@ class NativeBuiltinToolProvider(ToolProvider):
             result = await handler(arguments)
             self._read_gate_observe_write(tool_name, arguments, result)
             return result
-        except ValueError as exc:  # confinement / arg errors → surface to model
-            hint = exc.hint if isinstance(exc, OutOfScope) else ""
-            return ToolResult(success=False, error=str(exc), recovery_hints=[hint] if hint else [])
-        except KeyError as exc:  # a required argument was omitted
-            return ToolResult(
-                success=False,
-                error=f"missing required argument: {exc}",
-                recovery_hints=[
-                    f"Provide the {exc} argument; see the tool's parameter schema for required fields."  # noqa: E501
-                ],
+        except Exception as exc:  # noqa: BLE001 - every failure is an answer the model reads
+            return self._failure(tool_name, exc)
+
+    async def preflight(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult | None:
+        """What :meth:`invoke` refuses before anything is touched, in its order: where a path
+        reaches (``file_scope.refusal``, the check every file tool makes), the read gate, then the
+        tool's own check (``_p_<tool>``, which its handler runs first too). A path refused gets the
+        tool's sentence and hint, an argument left out invoke's answer; else no verdict."""
+        check = getattr(self, f"_p_{tool_name}", None)
+        if getattr(self, f"_t_{tool_name}", None) is None:
+            return None
+        try:
+            outside = scope_refusal(
+                tool_name,
+                arguments,
+                cwd=self._cwd,
+                extra_roots=self._extra_roots,
+                reads=self._read_roots,
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("builtin tool %s failed", tool_name, exc_info=True)
-            return ToolResult(
-                success=False,
-                error=f"{type(exc).__name__}: {exc}",
-                recovery_hints=[
-                    "Check the arguments against the tool's parameter schema and retry."
-                ],
-            )
+            if outside is not None:
+                return self._failure(tool_name, outside)
+            gated = self._read_gate_refusal(tool_name, arguments)
+            return gated if gated is not None or check is None else check(arguments)
+        except (ValueError, KeyError) as exc:
+            return self._failure(tool_name, exc)
+
+    @staticmethod
+    def _failure(tool_name: str, exc: Exception) -> ToolResult:
+        """The answer to a call whose check or handler raised: what was wrong, and what to do."""
+        error, hints = f"{type(exc).__name__}: {exc}", []
+        if isinstance(exc, ValueError):  # confinement / arg errors → surface to model
+            error = str(exc)
+            hints = [exc.hint] if isinstance(exc, OutOfScope) and exc.hint else []
+        elif isinstance(exc, KeyError):  # a required argument was omitted
+            error = f"missing required argument: {exc}"
+            hints = [
+                f"Provide the {exc} argument; see the tool's parameter schema for required fields."
+            ]
+        else:
+            logger.debug("builtin tool %s failed", tool_name, exc_info=exc)
+            hints = ["Check the arguments against the tool's parameter schema and retry."]
+        return ToolResult(success=False, error=error, recovery_hints=hints)
 
     # ── tool-output retrieval (OP2): pull the full raw of a projected result ──
     async def _t_tool_result_get(self, a: dict) -> ToolResult:
@@ -1078,22 +1102,29 @@ class NativeBuiltinToolProvider(ToolProvider):
         except Exception:  # noqa: BLE001
             logger.debug("checkpoint pre-edit skipped for %s", path, exc_info=True)
 
+    def _p_write_file(self, a: dict) -> ToolResult | None:
+        """What ``write_file`` refuses first (:meth:`preflight`), once its path is in reach: no
+        content."""
+        if a.get("content") is not None:
+            return None
+        # Absent (or null) is not an empty file. This tool replaces the WHOLE file, and a call
+        # that carried no text used to write "" (or "None") over it.
+        return ToolResult(
+            success=False,
+            error=(
+                "write_file needs content: the complete new text of the file. "
+                f"Nothing was written to {a['path']}."
+            ),
+            recovery_hints=[
+                "Pass content with the file's whole text, or use edit_file to change part of it."
+            ],
+        )
+
     async def _t_write_file(self, a: dict) -> ToolResult:
         scope = self.file_scope()
         path = self._resolve(str(a["path"]), scope, change=True)
-        if a.get("content") is None:
-            # Absent (or null) is not an empty file. This tool replaces the WHOLE file, and a call
-            # that carried no text used to write "" (or "None") over it.
-            return ToolResult(
-                success=False,
-                error=(
-                    "write_file needs content: the complete new text of the file. "
-                    f"Nothing was written to {a['path']}."
-                ),
-                recovery_hints=[
-                    "Pass content with the file's whole text, or use edit_file to change part of it."  # noqa: E501
-                ],
-            )
+        if (refused := self._p_write_file(a)) is not None:
+            return refused
         content = str(a["content"])
         self._checkpoint_pre_edit(path, scope)
         written = content
@@ -1151,9 +1182,27 @@ class NativeBuiltinToolProvider(ToolProvider):
             + _marker_note(content, written, before),
         )
 
+    def _p_edit_file(self, a: dict) -> ToolResult | None:
+        """What ``edit_file`` refuses first (:meth:`preflight`), once its path is in reach: an edit
+        that cannot change the file as asked: an EMPTY old_str (replace("", new) inserts `new`
+        between every char) or old==new (an "Edited" that changed nothing, so the worker would
+        believe it made an edit it didn't)."""
+        old, new = str(a["old_str"]), str(a["new_str"])
+        if old == "":
+            error = "old_str is empty"
+            hint = "old_str must be the exact existing text to replace. To create a file or append, use write_file."  # noqa: E501
+        elif old == new:
+            error = "old_str and new_str are identical (no change)"
+            hint = "The file already contains new_str — no edit needed. If you meant a different change, set old_str to the current text."  # noqa: E501
+        else:
+            return None
+        return ToolResult(success=False, error=error, recovery_hints=[hint])
+
     async def _t_edit_file(self, a: dict) -> ToolResult:
         scope = self.file_scope()
         path = self._resolve(str(a["path"]), scope, change=True)
+        if (refused := self._p_edit_file(a)) is not None:
+            return refused
         old, new = str(a["old_str"]), str(a["new_str"])
         replace_all = bool(a.get("replace_all"))
         self._checkpoint_pre_edit(path, scope)
@@ -1163,14 +1212,6 @@ class NativeBuiltinToolProvider(ToolProvider):
             # caller maps to a recovery hint without re-deriving the failure mode.
             if not path.is_file():
                 return False, f"not a file: {a['path']}"
-            # An EMPTY old_str is meaningless and dangerous: str.count("") = len+1 and
-            # replace("", new) inserts `new` between every char (file corruption). And a
-            # no-op old==new would report "Edited" success while changing nothing, so the
-            # worker would believe it made an edit it didn't. Reject both up front.
-            if old == "":
-                return False, "old_str is empty"
-            if old == new:
-                return False, "old_str and new_str are identical (no change)"
             text = path.read_text(encoding="utf-8")
             # Found and replaced in the file as the agent was shown it, masked
             # (`format_tool_result`), and mapped back onto the stored bytes, so a value hidden
@@ -1202,10 +1243,6 @@ class NativeBuiltinToolProvider(ToolProvider):
             hint = "Use glob or list_dir to confirm the path, or write_file to create it first."
         elif "not unique" in msg:
             hint = "Add surrounding lines to old_str so it matches exactly once, or pass replace_all=true to change every occurrence."  # noqa: E501
-        elif msg == "old_str is empty":
-            hint = "old_str must be the exact existing text to replace. To create a file or append, use write_file."  # noqa: E501
-        elif "identical" in msg:
-            hint = "The file already contains new_str — no edit needed. If you meant a different change, set old_str to the current text."  # noqa: E501
         else:  # old_str not found
             hint = "Read the file first to copy the exact text (including whitespace) you want to replace."  # noqa: E501
         return ToolResult(success=False, error=msg, recovery_hints=[hint])
@@ -1447,21 +1484,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             session_key=self._session_key,
         )
 
-    async def _t_bash(self, a: dict, *, timeout: float | None = None) -> ToolResult:
-        from personalclaw import security
-        from personalclaw.sandbox import wrap_argv
-
-        # Read the module global at CALL time (not as a default arg, which binds at
-        # def-time) so a test monkeypatching _BASH_TIMEOUT still takes effect.
-        if timeout is None:
-            # Agent-settable timeout (bash is the primary env interface — a slow test
-            # suite/build needs more than the default). Capped so it can't wedge a
-            # background turn indefinitely. Invalid/:absent → the default.
-            try:
-                requested = float(a.get("timeout") or _BASH_TIMEOUT)
-            except (TypeError, ValueError):
-                requested = _BASH_TIMEOUT
-            timeout = max(1.0, min(requested, _BASH_TIMEOUT_MAX))
+    def _bash_command(self, a: dict) -> tuple[str, list[str]] | ToolResult:
+        """The command a ``bash`` call runs and every value it is handed (masked out of what the
+        model sees), or the refusal of a reference that names nothing stored."""
         # A credential is named, never written: `{{secret:NAME}}` is filled in here, as the command
         # runs, from what the owner stored in Settings → Secrets (`triggers.secrets.resolve`, the
         # resolution a trigger's action gets at dispatch). The approval card shows the command as
@@ -1489,6 +1514,12 @@ class NativeBuiltinToolProvider(ToolProvider):
                 ],
             )
         handed.extend(_environment_credentials())
+        return command, handed
+
+    def _bash_refusal(self, command: str, handed: list[str]) -> ToolResult | None:
+        """What the shell refuses to run, judged on the command that would RUN; None to run it."""
+        from personalclaw import security
+
         # App-level guards before any execution, judged on the command that will RUN, so a value a
         # reference fills in cannot carry a sensitive path or a denied pattern past them:
         # 1. sensitive credential-path access (is_sensitive_bash_command), with a relative path
@@ -1517,7 +1548,8 @@ class NativeBuiltinToolProvider(ToolProvider):
                 ],
             )
         # What runs as the owner, and what they allowed (`owner_only`): refused here in words, and
-        # fenced by the sandbox below, which refuses the write whatever this reading misses.
+        # fenced by the sandbox `_t_bash` runs it in, which refuses the write whatever this reading
+        # misses.
         from personalclaw import owner_only
         from personalclaw.task_modes import is_read_only_bash
 
@@ -1553,7 +1585,33 @@ class NativeBuiltinToolProvider(ToolProvider):
                 error=security.redact_known_values(offer.reason, handed),
                 recovery_hints=[trigger_handoff.HANDOFF_HINT],
             )
+        return None
 
+    def _p_bash(self, a: dict) -> ToolResult | None:
+        """What ``bash`` refuses first (:meth:`preflight`), judged as :meth:`_t_bash` judges it."""
+        resolved = self._bash_command(a)
+        return resolved if isinstance(resolved, ToolResult) else self._bash_refusal(*resolved)
+
+    async def _t_bash(self, a: dict, *, timeout: float | None = None) -> ToolResult:
+        from personalclaw import security
+        from personalclaw.sandbox import wrap_argv
+
+        # Read the module global at CALL time (not as a default arg, which binds at
+        # def-time) so a test monkeypatching _BASH_TIMEOUT still takes effect.
+        if timeout is None:
+            # Agent-settable timeout (bash is the primary env interface — a slow test
+            # suite/build needs more than the default). Capped so it can't wedge a
+            # background turn indefinitely. Invalid/:absent → the default.
+            try:
+                requested = float(a.get("timeout") or _BASH_TIMEOUT)
+            except (TypeError, ValueError):
+                requested = _BASH_TIMEOUT
+            timeout = max(1.0, min(requested, _BASH_TIMEOUT_MAX))
+        if isinstance(resolved := self._bash_command(a), ToolResult):
+            return resolved
+        command, handed = resolved
+        if (refused := self._bash_refusal(command, handed)) is not None:
+            return refused
         argv = ["bash", "-lc", command]
         wrapped, cleanup = wrap_argv(argv, mode=self._sandbox_mode)
         try:

@@ -29,6 +29,7 @@ until its owner presses Retry or its definition changes.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -122,12 +123,16 @@ def declared_risk(server: str, tool: McpToolSpec, *, trusted: bool | None = None
 _INT_LITERAL_RE = re.compile(r"^-?\d+$")
 _NUM_LITERAL_RE = re.compile(r"^-?\d+(\.\d+)?([eE][+-]?\d+)?$")
 
+#: The kinds a field's JSON TEXT is decoded into, once, when the schema wants exactly that kind:
+#: the same models write an array, an object or a boolean as its JSON text ("[\"a.md\"]").
+_JSON_KINDS: dict[str, type] = {"boolean": bool, "array": list, "object": dict}
 
-def _schema_numeric_kind(prop_schema: object) -> str | None:
-    """Return "integer"/"number" iff ``prop_schema`` types the field as EXACTLY
-    that numeric kind — i.e. it permits no string. A ``type`` that is a list
-    (e.g. ``["integer", "null"]``) coerces; one that also allows ``"string"``
-    (``["string", "integer"]``) does NOT. anyOf/oneOf/$ref branches are treated
+
+def _schema_kind(prop_schema: object) -> str | None:
+    """The kind ``prop_schema`` types a field as when it permits no string: ``integer``,
+    ``number``, ``boolean``, ``array`` or ``object``. A ``type`` that is a list
+    (e.g. ``["integer", "null"]``) has one; one that also allows ``"string"``
+    (``["string", "integer"]``) has none. anyOf/oneOf/$ref branches are treated
     as "do not coerce" (unknown shape → leave the value alone)."""
     if not isinstance(prop_schema, dict):
         return None
@@ -137,22 +142,29 @@ def _schema_numeric_kind(prop_schema: object) -> str | None:
     types = {t} if isinstance(t, str) else set(t) if isinstance(t, list) else set()
     if "string" in types:
         return None
-    if "integer" in types:
-        return "integer"
-    if "number" in types:
-        return "number"
-    return None
+    return next((k for k in ("integer", "number", *_JSON_KINDS) if k in types), None)
+
+
+def _decoded(text: str, kind: str) -> Any:
+    """*text* decoded as JSON when it is the text of exactly a *kind* value, else None. Decoded
+    once: an array encoded twice is still text after one decode, and is left for the server."""
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    return value if type(value) is _JSON_KINDS[kind] else None
 
 
 def _coerce_args_to_schema(
     arguments: dict[str, Any], input_schema: dict[str, Any] | None
 ) -> dict[str, Any]:
-    """Coerce numeric-looking STRING args back to numbers per the tool's
-    inputSchema. Only top-level properties are handled (nested object/array
-    numerics are a known, accepted limitation). Non-string values, string-typed
-    fields, and strings that don't strictly match a numeric literal are left
-    untouched, so a genuinely bad value still reaches the server as-is (its own
-    -32602 then reports the real error)."""
+    """Turn a STRING arg back into the type the tool's inputSchema declares for it: a
+    numeric-looking string into a number, and the JSON text of an array, an object or a
+    boolean into that value. Only top-level properties are handled (nested values are a
+    known, accepted limitation), and only a field that takes no string at all. Non-string
+    values, string-typed fields, and strings that are not strictly a value of the declared
+    kind are left untouched, so a genuinely bad value still reaches the server's own check
+    (and :func:`argument_refusal` names it before anyone is asked)."""
     if not isinstance(input_schema, dict) or not isinstance(arguments, dict):
         return arguments
     props = input_schema.get("properties")
@@ -162,12 +174,30 @@ def _coerce_args_to_schema(
     for key, val in arguments.items():
         if not isinstance(val, str):
             continue
-        kind = _schema_numeric_kind(props.get(key))
+        kind = _schema_kind(props.get(key))
         if kind == "integer" and _INT_LITERAL_RE.match(val):
             out[key] = int(val)
         elif kind == "number" and _NUM_LITERAL_RE.match(val):
             out[key] = float(val)
+        elif kind in _JSON_KINDS and (decoded := _decoded(val, kind)) is not None:
+            out[key] = decoded
     return out
+
+
+def argument_refusal(tool: str, arguments: dict[str, Any], input_schema: Any) -> str:
+    """Why an MCP server refuses *tool* called with *arguments* whatever anyone answers: an
+    argument whose type its *input_schema* does not declare, judged on the arguments as
+    :meth:`McpServerConn.call_tool` sends them (:func:`_coerce_args_to_schema`). The schema is
+    the server's validator, so a type it does not declare is refused there. ``""`` when the
+    schema admits them, or cannot be checked."""
+    from personalclaw.tool_providers.arguments import mistyped_arguments, mistyped_arguments_note
+
+    if not isinstance(input_schema, dict):
+        return ""
+    problems = mistyped_arguments(_coerce_args_to_schema(arguments, input_schema), input_schema)
+    if not problems:
+        return ""
+    return mistyped_arguments_note(tool, problems, input_schema)
 
 
 class McpServerConn:

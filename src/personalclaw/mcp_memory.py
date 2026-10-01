@@ -337,6 +337,14 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
     return args
 
 
+def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
+    """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
+    call, and arguments the tool's schema refuses (``mcp_shared.preflight_refusal``)."""
+    from personalclaw.mcp_shared import preflight_refusal
+
+    return preflight_refusal(name, raw_args, _validate_args)
+
+
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 

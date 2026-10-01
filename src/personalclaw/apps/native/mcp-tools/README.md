@@ -13,7 +13,10 @@ exposes nothing an agent can call.
 With no server configured, it serves no tools. What a tool is taken to do comes from the
 server's own annotations, never from the tool's name, and a read-only label counts only from a
 server you trust on the Tools page. A tool it labels read-only then asks nobody, like every read;
-every other tool asks before it acts. To stop agents using
+every other tool asks before it acts. A call whose arguments are not of the types the tool's
+input schema declares is refused with the reason before you are asked, since the server would
+refuse it whatever you answered; an array, an object or a true/false the agent wrote as text is
+read as that value where the schema wants exactly that. To stop agents using
 MCP tools, remove or disable the servers, or switch this provider off on the Tools page.
 
 ## What this is

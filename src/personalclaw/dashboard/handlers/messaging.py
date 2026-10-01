@@ -544,7 +544,13 @@ async def api_send_message(request: web.Request) -> web.Response:
     A channel or user id sent without ``via`` goes out on the channel it belongs to
     (``channel_delivery.channel_of_id``). One that more than one channel set up here could have
     issued, or none, is refused with the channels to choose from, and nothing is sent: it used to
-    go to whichever channel sorted first, which posted another platform's id there."""
+    go to whichever channel sorted first, which posted another platform's id there.
+
+    ``dry_run: true`` asks the question without sending: every refusal answers as it would, with
+    ``"dry_run": true`` added, and a message that would go out answers ``{"ok": true, "dry_run":
+    true}`` with nothing sent, injected, noted or put in the Inbox. The agent's ``notify`` asks it
+    before the owner is asked to approve a message, so one that cannot go out is refused before
+    anyone is asked."""
     from personalclaw.channel_delivery import (
         channel_of_id,
         channels_taking,
@@ -572,13 +578,16 @@ async def api_send_message(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+    # A check (`dry_run`) says so in every answer it gives, a refusal included, so whoever asked
+    # can tell the route's answer to the check from a request that never reached it.
+    checked = {"dry_run": True} if body.get("dry_run") is True else {}
     text = body.get("text", "").strip()
     if not text:
-        return web.json_response({"error": "text required"}, status=400)
+        return web.json_response({"error": "text required", **checked}, status=400)
     title = body.get("title", "Agent Message")
     blocks = body.get("blocks")
     if blocks and not isinstance(blocks, list):
-        return web.json_response({"error": "blocks must be an array"}, status=400)
+        return web.json_response({"error": "blocks must be an array", **checked}, status=400)
 
     target_channel = body.get("channel", "").strip()
     target_user = body.get("user", "").strip()
@@ -588,29 +597,41 @@ async def api_send_message(request: web.Request) -> web.Response:
         unfurl_media is not None and not isinstance(unfurl_media, bool)
     ):
         return web.json_response(
-            {"error": "unfurl_links and unfurl_media must be booleans"}, status=400
+            {"error": "unfurl_links and unfurl_media must be booleans", **checked}, status=400
         )
 
     thread_ts = body.get("thread_ts")
     if thread_ts is not None:
         if not isinstance(thread_ts, str) or not re.match(r"^\d+\.\d+$", thread_ts):
             return web.json_response(
-                {"error": "thread_ts must be a channel timestamp string like '1712793600.123456'"},
+                {
+                    "error": "thread_ts must be a channel timestamp string like "
+                    "'1712793600.123456'",
+                    **checked,
+                },
                 status=400,
             )
     reply_broadcast = body.get("reply_broadcast")
     if reply_broadcast is not None and not isinstance(reply_broadcast, bool):
-        return web.json_response({"error": "reply_broadcast must be a boolean"}, status=400)
+        return web.json_response(
+            {"error": "reply_broadcast must be a boolean", **checked}, status=400
+        )
     if reply_broadcast and not thread_ts:
-        return web.json_response({"error": "reply_broadcast requires thread_ts"}, status=400)
+        return web.json_response(
+            {"error": "reply_broadcast requires thread_ts", **checked}, status=400
+        )
 
     # Fail fast: mutual exclusion before any redaction/regex work
     if target_channel and target_user:
-        return web.json_response({"error": "specify channel or user, not both"}, status=400)
+        return web.json_response(
+            {"error": "specify channel or user, not both", **checked}, status=400
+        )
 
     named = body.get("via")
     if named is not None and not isinstance(named, str):
-        return web.json_response({"error": "via must be a chat channel's name"}, status=400)
+        return web.json_response(
+            {"error": "via must be a chat channel's name", **checked}, status=400
+        )
     if named and named.strip():
         from personalclaw.channel_delivery import named_chat_channel
 
@@ -618,14 +639,16 @@ async def api_send_message(request: web.Request) -> web.Response:
         if problem:
             # 200 with the sentence, not an error status: the MCP tool reads this body, and an
             # error status reaches it only as its status line. Nothing was sent anywhere.
-            return web.json_response({"ok": False, "error": problem, "channel": False})
+            return web.json_response({"ok": False, "error": problem, "channel": False, **checked})
 
     # Validate format first, then redact. Only the shape every id shares: which channel an id
     # belongs to, and whether it is one of that channel's, the channels answer below.
     for label, value in (("channel", target_channel), ("user", target_user)):
         problem = id_problem(value) if value else ""
         if problem:
-            return web.json_response({"error": f"invalid {label} id: {problem}"}, status=400)
+            return web.json_response(
+                {"error": f"invalid {label} id: {problem}", **checked}, status=400
+            )
     if (target_channel or target_user) and not via:
         via, problem = channel_of_id(target_channel or target_user, user=not target_channel)
         if problem and target_user and not channels_taking(target_user, user=True):
@@ -634,11 +657,11 @@ async def api_send_message(request: web.Request) -> web.Response:
             problem = ""
         if problem:
             # 200 with the sentence, like a `via` naming no channel: nothing was sent anywhere.
-            return web.json_response({"ok": False, "error": problem, "channel": False})
+            return web.json_response({"ok": False, "error": problem, "channel": False, **checked})
     elif target_channel:
         problem = target_problem(via, target_channel)
         if problem:
-            return web.json_response({"ok": False, "error": problem, "channel": False})
+            return web.json_response({"ok": False, "error": problem, "channel": False, **checked})
 
     # Redact after format validation
     if target_channel:
@@ -670,7 +693,8 @@ async def api_send_message(request: web.Request) -> web.Response:
             {
                 "error": f"channel {target_channel} is not in the channel app's tracked "
                 "channels. Add it in the channel app's settings (tracking channels "
-                "via /personalclaw #channel or the app config)."
+                "via /personalclaw #channel or the app config).",
+                **checked,
             },
             status=403,
         )
@@ -684,8 +708,13 @@ async def api_send_message(request: web.Request) -> web.Response:
             resources=f"target_user={target_user}",
         )
         return web.json_response(
-            {"error": "user not in allowlist — add them in the channel app's settings"}, status=403
+            {"error": "user not in allowlist — add them in the channel app's settings", **checked},
+            status=403,
         )
+
+    if checked:
+        # Past every refusal, before the first send: the check `notify` makes ends here.
+        return web.json_response({"ok": True, **checked})
 
     sent_channel = False
     channel_ts: str | None = None

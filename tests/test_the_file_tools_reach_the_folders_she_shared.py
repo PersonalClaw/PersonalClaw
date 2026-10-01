@@ -101,7 +101,7 @@ def test_a_note_in_a_knowledge_source_is_read(home):
         result = _call(home, "read_file", path=path)
         assert result.success, (path, result.error)
         assert _NOTE in result.output
-        assert refusal("read_file", {"path": path}, cwd=home.ws) == ""
+        assert refusal("read_file", {"path": path}, cwd=home.ws) is None
 
 
 def test_the_folder_lists_and_searches_as_the_source_shares_it(home):
@@ -177,7 +177,7 @@ def test_a_read_outside_every_place_is_refused(home):
         assert not result.success, name
         assert "not for the agent" not in (result.output or "")
         assert "outside every folder the file tools reach" in result.error
-        assert refusal(name, arguments, cwd=home.ws) == result.error
+        assert str(refusal(name, arguments, cwd=home.ws)) == result.error
 
 
 def test_a_climb_or_a_link_out_of_a_source_is_refused(home):
@@ -191,7 +191,7 @@ def test_a_climb_or_a_link_out_of_a_source_is_refused(home):
         result = _call(home, "read_file", path=path)
         assert not result.success, path
         assert "outside every folder the file tools reach" in result.error, result.error
-        assert refusal("read_file", {"path": path}, cwd=home.ws), path
+        assert refusal("read_file", {"path": path}, cwd=home.ws) is not None, path
 
     listing = _call(home, "list_dir", path="~/Notes/Daily")
     assert "linked.md" not in listing.output and "elsewhere" not in listing.output
@@ -219,7 +219,7 @@ def test_a_source_is_never_changed(home):
         result = _call(home, name, **arguments)
         assert not result.success, name
         assert "which the file tools read and never change" in result.error
-        assert refusal(name, arguments, cwd=home.ws) == result.error
+        assert str(refusal(name, arguments, cwd=home.ws)) == result.error
     assert note.read_text(encoding="utf-8") == before
     assert not (home.daily / "new.md").exists()
 
@@ -249,7 +249,7 @@ def test_an_allowed_working_directory_is_read_and_changed(home):
     written = _call(home, "write_file", path="~/src/app/util.py", content="X = 1\n")
     assert written.success, written.error
     assert (home.code / "util.py").read_text(encoding="utf-8") == "X = 1\n"
-    assert refusal("write_file", {"path": "~/src/app/util.py"}, cwd=home.ws) == ""
+    assert refusal("write_file", {"path": "~/src/app/util.py"}, cwd=home.ws) is None
 
 
 def test_a_rewind_restores_a_change_in_an_allowed_folder(home):
@@ -286,7 +286,7 @@ def test_a_change_outside_the_workspace_and_allowed_folders_is_refused(home):
         result = _call(home, "write_file", **arguments)
         assert not result.success, path
         assert "outside every folder the file tools may change" in result.error
-        assert refusal("write_file", arguments, cwd=home.ws) == result.error
+        assert str(refusal("write_file", arguments, cwd=home.ws)) == result.error
     assert (home.private / "diary.md").read_text(encoding="utf-8") == "not for the agent\n"
 
 
@@ -369,7 +369,7 @@ def test_the_librarys_own_database_is_not_a_file_to_the_tools(home):
         assert not result.success, name
         assert "PersonalClaw's own knowledge store" in result.error
         assert "knowledge_search" in result.recovery_hints[0]
-        assert refusal(name, arguments, cwd=home.ws) == result.error
+        assert str(refusal(name, arguments, cwd=home.ws)) == result.error
     assert database.stat().st_size > 1
 
 

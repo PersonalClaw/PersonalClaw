@@ -1,5 +1,6 @@
-"""The sentences a chat turn ends on when its agent or its owner, not a fault, ended it — and the
-record of what a Deny answered the agent with.
+"""The sentences a chat turn ends on when its agent or its owner, not a fault, ended it — and how a
+refused call is answered: what the model is told, and the record of what a Deny answered the agent
+with.
 
 Product copy the chat runner (`chat_runner.run_chat`) puts where the conversation is. An agent
 CLI is named by its runtime (``acp:<cli>``), as the image-input sentence names it
@@ -9,8 +10,38 @@ CLI is named by its runtime (``acp:<cli>``), as the image-input sentence names i
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterable
+from typing import Any
 
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+#: What the model is told of an approval that ended with no answer: nobody declined it.
+UNANSWERED = {"expired": "no one answered in time", "cancelled": "the turn was stopped"}
+#: ...of a call refused because the run is unattended, and because its pre-tool hook failed.
+UNATTENDED = "the run is unattended: no one to approve"
+HOOK_FAILED = "its pre-tool hook failed to run"
+
+
+async def refuse(
+    client: Any, request_id: object, ended_as: str = "rejected", *, why: str = "", kind: str = ""
+) -> None:
+    """Refuse a pending call without running it. A refusal nobody answered (*why*: a screen, of
+    ``security.DENY_KIND_*`` *kind*) and an approval that ended unanswered (*ended_as*
+    ``expired``/``cancelled``) are told to the model as what they are, never as her decline, by a
+    runtime that carries a reason (``AgentProvider.carries_refusal_reasons``); any other runtime's
+    answer is a reject, in its own words."""
+    if not why and ended_as in UNANSWERED:
+        why, kind = UNANSWERED[ended_as], "user"
+    if why and getattr(client, "carries_refusal_reasons", False) is True:
+        await client.refuse_tool(request_id, why, kind=kind or "policy")
+    else:
+        await client.reject_tool(request_id)
+
+
+def blocked_reason(hook_results: Iterable[str]) -> str:
+    """Why a pre-tool hook blocked a call: the text of its ``BLOCKED:`` line, else "policy hook"."""
+    line = next((r for r in hook_results if r.startswith("BLOCKED:")), "")
+    return line.removeprefix("BLOCKED:").strip() or "policy hook"
 
 
 def _sentence_case(agent: str) -> str:

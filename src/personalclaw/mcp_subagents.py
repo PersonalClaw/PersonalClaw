@@ -17,7 +17,7 @@ import time
 from typing import Any
 
 from personalclaw.mcp_core import _get, _post, _resolve_session_key
-from personalclaw.tool_providers.base import tool_failure
+from personalclaw.tool_providers.base import ToolFailure, tool_failure
 from personalclaw.workflows import batch_compile
 from personalclaw.workflows.batch_compile import LeafTask
 
@@ -84,6 +84,64 @@ def _findings_report(result: batch_compile.CompileResult) -> str:
     return tool_failure("\n".join(lines))
 
 
+def _requested(args: dict[str, Any]) -> tuple[list[tuple[str, dict[str, Any]]], list[str]] | Any:
+    """``(leaf specs, agents)`` a ``subagent_run`` call asks for, or why it asks for nothing that
+    can start: no task, or an ``agents`` list that does not match its tasks."""
+    tasks = args.get("tasks")
+    task = args.get("task")
+    # Support both single task and batch tasks. A batch item may be a plain string (the legacy
+    # shape) or a contract object — `_leaf_specs` normalizes both to (text, spec) so the compile
+    # path sees one shape.
+    if tasks and isinstance(tasks, list):
+        leaf_specs = _leaf_specs(tasks)
+    elif task:
+        leaf_specs = [(str(task), {})]
+    else:
+        return tool_failure("task or tasks is required")
+    agents_list = [str(a) for a in args.get("agents") or []]
+    if agents_list and len(agents_list) != len(leaf_specs):
+        return tool_failure(
+            f"agents length ({len(agents_list)}) must match tasks length ({len(leaf_specs)})"
+        )
+    return leaf_specs, agents_list
+
+
+def _compile(
+    leaf_specs: list[tuple[str, dict[str, Any]]],
+    *,
+    agent: str,
+    agents_list: list[str],
+    depth: int,
+    name: str,
+) -> tuple[list[LeafTask], batch_compile.CompileResult]:
+    """The batch's leaves and what the compiler makes of them (`batch_compile.compile_batch`)."""
+    leaves = [
+        _to_leaf(text, spec, agents_list[i] if i < len(agents_list) else agent)
+        for i, (text, spec) in enumerate(leaf_specs)
+    ]
+    return leaves, batch_compile.compile_batch(leaves, depth=depth, run_name=name)
+
+
+def _spawn_refusal(args: dict[str, Any]) -> Any:
+    """What ``subagent_run`` refuses before it starts anything, whatever anyone answers: a call
+    that asks for nothing that can start (:func:`_requested`), and a batch that does not compile,
+    in the compiler's own findings. None for a call it starts."""
+    requested = _requested(args)
+    if isinstance(requested, ToolFailure):
+        return requested
+    leaf_specs, agents_list = requested
+    if len(leaf_specs) < batch_compile.COMPILE_THRESHOLD:
+        return None
+    _, result = _compile(
+        leaf_specs,
+        agent=str(args.get("agent") or ""),
+        agents_list=agents_list,
+        depth=_wf_depth(),
+        name=_batch_def_name(),
+    )
+    return None if result.compiled and result.ok else _findings_report(result)
+
+
 def _run_compiled_batch(
     leaf_specs: list[tuple[str, dict[str, Any]]],
     *,
@@ -101,12 +159,10 @@ def _run_compiled_batch(
     path every other workflow run already uses. Per-branch retry is likewise the existing
     `run-from` route over the compiled node ids.
     """
-    leaves = [
-        _to_leaf(text, spec, agents_list[i] if i < len(agents_list) else agent)
-        for i, (text, spec) in enumerate(leaf_specs)
-    ]
     name = _batch_def_name()
-    result = batch_compile.compile_batch(leaves, depth=depth, run_name=name)
+    leaves, result = _compile(
+        leaf_specs, agent=agent, agents_list=agents_list, depth=depth, name=name
+    )
     if not result.compiled or not result.ok:
         return _findings_report(result)
 
@@ -324,20 +380,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         args = validate_tool_args(args, SPAWN_RUN_SCHEMA)
 
-        tasks = args.get("tasks")
-        task = args.get("task")
-
-        # Support both single task and batch tasks. A batch item may be a plain string (the
-        # legacy shape) or a contract object — `_leaf_specs` normalizes both to (text, spec)
-        # so the compile path below sees one shape.
-        if tasks and isinstance(tasks, list):
-            leaf_specs = _leaf_specs(tasks)
-            task_list = [text for text, _ in leaf_specs]
-        elif task:
-            leaf_specs = [(str(task), {})]
-            task_list = [str(task)]
-        else:
-            return tool_failure("task or tasks is required")
+        requested = _requested(args)
+        if isinstance(requested, ToolFailure):
+            return requested
+        leaf_specs, agents_list = requested
+        task_list = [text for text, _ in leaf_specs]
 
         # Read parent session key so completions inject back into this session.
         parent_session = _resolve_session_key()
@@ -345,13 +392,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # Fire-and-forget — gateway's SubagentManager queues excess tasks
         # and auto-spawns them as sessions free up.
         agent = args.get("agent") or ""
-        agents_list = args.get("agents") or []
         max_turns = args.get("max_turns") or 0
         cwd = args.get("cwd") or ""
-        if agents_list and len(agents_list) != len(task_list):
-            return tool_failure(
-                f"agents length ({len(agents_list)}) must match tasks length ({len(task_list)})"
-            )  # noqa: E501
 
         # N>=2 is a BATCH: compiled to one `parallel[stage...]` run rather than N independent
         # fire-and-forget spawns. The difference is not cosmetic — N spawns have no run record, so
@@ -362,7 +404,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return _run_compiled_batch(
                 leaf_specs,
                 agent=agent,
-                agents_list=[str(a) for a in agents_list],
+                agents_list=agents_list,
                 parent_session=parent_session,
                 depth=_wf_depth(),
                 cwd=cwd,
@@ -471,6 +513,18 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if schema:
         return validate_tool_args(args, schema)
     return args
+
+
+def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
+    """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
+    call and arguments the tool's schema refuses (``mcp_shared.admitted_arguments``), then for
+    ``subagent_run`` what it refuses before starting anything (:func:`_spawn_refusal`)."""
+    from personalclaw.mcp_shared import admitted_arguments
+
+    args = admitted_arguments(name, raw_args, _validate_args)
+    if isinstance(args, ToolFailure):
+        return args
+    return _spawn_refusal(args) if name == "subagent_run" else None
 
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:

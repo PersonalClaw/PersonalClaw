@@ -414,33 +414,34 @@ def refusal(
     cwd: str | os.PathLike | None,
     extra_roots: Iterable[str | os.PathLike] = (),
     reads: Iterable[str | os.PathLike] = (),
-) -> str:
-    """The sentence a native file tool's call is refused with, or ``""`` when it is in scope.
+) -> OutOfScope | None:
+    """Why a native file tool's call is refused (its sentence, and the hint the tool gives with
+    it), or ``None`` when it is in scope.
 
     Decided from the call's arguments, the session's folder (*cwd*, the *extra_roots* a worker is
     given and the folders its work *reads*) and the owner's settings alone, so a caller can ask it
     before an approval is asked for: a call this refuses would be refused by the tool after any
-    approval. ``""`` as well for a tool that names no path here, for a missing required argument
+    approval. ``None`` as well for a tool that names no path here, for a missing required argument
     (the tool's own error says so) and for a session with no folder (the tool decides)."""
     shape = PATH_TOOLS.get(tool_name)
     if shape is None or not cwd or not isinstance(arguments, dict):
-        return ""
+        return None
     arg, change, default = shape
     pattern_arg = PATTERN_ARGS.get(tool_name)
     if pattern_arg and (
         leaves := pattern_refusal(pattern_arg, str(arguments.get(pattern_arg) or ""))
     ):
-        return str(leaves)
+        return leaves
     raw = arguments.get(arg)
     if raw in (None, ""):
         if default is None:
-            return ""
+            return None
         raw = default
     try:
         FileScope([cwd, *extra_roots], reads=reads).resolve(str(raw), change=change)
     except OutOfScope as refused:
-        return str(refused)
-    return ""
+        return refused
+    return None
 
 
 def file_places_note(tool_index: Mapping[str, Any]) -> str:

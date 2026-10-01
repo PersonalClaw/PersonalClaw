@@ -2793,10 +2793,10 @@ async def run_chat(
         except Exception:
             logger.debug("Mirror tool task failed", exc_info=True)
 
-    async def _refuse_call(event: Any, ended_as: str = "rejected") -> None:
-        """Refuse *event*'s call without running it, and end its progress line on the channel
-        with how (*ended_as*: ``rejected``, or how its approval ended without an answer)."""
-        await client.reject_tool(event.request_id)
+    async def _refuse_call(event: Any, ended_as: str = "rejected", **screen: str) -> None:
+        """Refuse *event*'s call without running it (``turn_endings.refuse``, with a *screen*'s
+        ``why`` and ``kind``), and end its progress line on the channel with how (*ended_as*)."""
+        await turn_endings.refuse(client, event.request_id, ended_as, **screen)
         await _end_mirror_line(event.tool_call_id or "", ended_as)
 
     # Read by the finally's done-branch (maybe_offer_check_work), which runs on EVERY
@@ -4272,7 +4272,7 @@ async def run_chat(
                     builds=bool(getattr(event, "builds", False)),
                 )
                 if _tm_deny:
-                    await _refuse_call(event)
+                    await _refuse_call(event, why=_tm_deny)
                     _title, _ = redact_exfiltration_urls(event.title)
                     _title, _ = redact_credentials(_title)
                     session.append("tool", f"{_title} ({_tm_deny})", "msg msg-tool")
@@ -4305,8 +4305,8 @@ async def run_chat(
                             _cmd_probe, cwd=_file_change_base(session)
                         )
                         if _cmd_verdict.action == TOOL_DENY:
-                            await _refuse_call(event)
                             _cmd_reason = getattr(_cmd_verdict, "reason", "") or "security policy"
+                            await _refuse_call(event, why=_cmd_reason)
                             session.append(
                                 "tool",
                                 f"{event.title} (blocked: {_cmd_reason})",
@@ -4329,12 +4329,11 @@ async def run_chat(
                         event.title, cwd=_file_change_base(session)
                     )
                     if tool_result.action == TOOL_DENY:
-                        await _refuse_call(event)
                         # Carry the deny reason into the transcript so it's visible
-                        # why the call was blocked (recoverable hook policy). The
-                        # backend's own loop feeds the model its tool_result; this
-                        # is the user-facing record.
+                        # why the call was blocked (recoverable hook policy), and to the
+                        # model as the call's result.
                         _deny_reason = getattr(tool_result, "reason", "") or "policy hook"
+                        await _refuse_call(event, why=_deny_reason, kind="hook")
                         session.append(
                             "tool", f"{event.title} (blocked: {_deny_reason})", "msg msg-tool"
                         )
@@ -4361,7 +4360,7 @@ async def run_chat(
                         try:
                             validated_tool = _validate_tool_name(event.title, event.tool_kind)
                         except ValueError as e:
-                            await _refuse_call(event)
+                            await _refuse_call(event, why=f"invalid tool name: {e}")
                             session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
                             sel().log_tool_invocation(
                                 session_key=session_key,
@@ -4409,7 +4408,7 @@ async def run_chat(
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
-                        await _refuse_call(event)
+                        await _refuse_call(event, why=f"invalid tool name: {e}")
                         session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4434,7 +4433,7 @@ async def run_chat(
                             tool_input=_parsed_input,
                         )
                     except Exception as hook_exc:
-                        await _refuse_call(event)
+                        await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
                         session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4449,9 +4448,8 @@ async def run_chat(
                         )
                         continue
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                        await _refuse_call(event)
-                        _blk = next((r for r in pre_hook_results if r.startswith("BLOCKED:")), "")
-                        _blk_reason = _blk.removeprefix("BLOCKED:").strip() or "policy hook"
+                        _blk_reason = turn_endings.blocked_reason(pre_hook_results)
+                        await _refuse_call(event, why=_blk_reason, kind="hook")
                         session.append(
                             "tool", f"{event.title} (hook blocked: {_blk_reason})", "msg msg-tool"
                         )
@@ -4509,7 +4507,7 @@ async def run_chat(
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
-                        await _refuse_call(event)
+                        await _refuse_call(event, why=f"invalid tool name: {e}")
                         session.append(
                             "tool",
                             f"{event.title} (invalid: {e})",
@@ -4565,7 +4563,7 @@ async def run_chat(
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
-                        await _refuse_call(event)
+                        await _refuse_call(event, why=f"invalid tool name: {e}")
                         session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4593,7 +4591,7 @@ async def run_chat(
                                 tool_input=_parsed_input,
                             )
                         except Exception as hook_exc:
-                            await _refuse_call(event)
+                            await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
                             session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
                             sel().log_tool_invocation(
                                 session_key=session_key,
@@ -4608,7 +4606,8 @@ async def run_chat(
                             )
                             continue
                         if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                            await _refuse_call(event)
+                            _blk_reason = turn_endings.blocked_reason(pre_hook_results)
+                            await _refuse_call(event, why=_blk_reason, kind="hook")
                             session.append("tool", f"{event.title} (hook blocked)", "msg msg-tool")
                             sel().log_tool_invocation(
                                 session_key=session_key,
@@ -4721,7 +4720,7 @@ async def run_chat(
                 # only ever turn a two-hour park into an immediate denial — it can
                 # never turn a denial into an approval.
                 if _unattended_turn:
-                    await _refuse_call(event)
+                    await _refuse_call(event, why=turn_endings.UNATTENDED, kind="user")
                     _ff_title, _ = redact_exfiltration_urls(event.title)
                     _ff_title, _ = redact_credentials(_ff_title)
                     session.append(
@@ -4899,7 +4898,7 @@ async def run_chat(
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
-                        await _refuse_call(event)
+                        await _refuse_call(event, why=f"invalid tool name: {e}")
                         session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4924,7 +4923,7 @@ async def run_chat(
                             tool_input=_parsed_input,
                         )
                     except Exception as hook_exc:
-                        await _refuse_call(event)
+                        await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
                         session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4939,9 +4938,8 @@ async def run_chat(
                         )
                         break
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                        await _refuse_call(event)
-                        _blk = next((r for r in pre_hook_results if r.startswith("BLOCKED:")), "")
-                        _blk_reason = _blk.removeprefix("BLOCKED:").strip() or "policy hook"
+                        _blk_reason = turn_endings.blocked_reason(pre_hook_results)
+                        await _refuse_call(event, why=_blk_reason, kind="hook")
                         session.append(
                             "tool", f"{event.title} (hook blocked: {_blk_reason})", "msg msg-tool"
                         )

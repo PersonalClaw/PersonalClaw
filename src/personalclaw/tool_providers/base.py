@@ -309,6 +309,21 @@ class ToolProvider(ABC):
         """Execute a tool with the given arguments."""
         ...
 
+    async def preflight(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult | None:
+        """The refusal :meth:`invoke` would give this call whatever anyone answers, or None.
+
+        The runtime asks this before it puts a call to the owner, so a call the tool will refuse
+        (a path it does not reach, an argument it does not take, a change only the owner may
+        make) is answered at once with the tool's own reason, and nobody is asked to approve
+        something that cannot run. Declare here exactly what :meth:`invoke` refuses first, by
+        calling the same check from both, so the two answers cannot drift: :meth:`invoke` still
+        checks when it runs, since what it checks may change while an approval waits.
+
+        Change nothing, and send nothing anywhere. A failed :class:`ToolResult` is the refusal;
+        None, or a check that cannot be made, refuses nothing. The default declares nothing.
+        """
+        return None
+
     @property
     def connected(self) -> bool:
         return True

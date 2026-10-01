@@ -116,6 +116,7 @@ class InProcessMcpToolProvider(ToolProvider):
             RiskLevel,
             risk_from_annotations,
         )
+        from personalclaw.validation import offered_schema, tool_field_schema
 
         raw = await asyncio.get_event_loop().run_in_executor(None, _list_tools)
         defs: list[ToolDefinition] = []
@@ -127,6 +128,8 @@ class InProcessMcpToolProvider(ToolProvider):
                 or {"type": "object", "properties": {}}
             )
             name = str(tool.get("name", ""))
+            # What the tool's validator enforces is what the model is offered (`offered_schema`).
+            params = offered_schema(params, tool_field_schema(name))
             # Each tool dict DECLARES what a call does, in the MCP spec's own words
             # (`annotations.readOnlyHint` / `destructiveHint`) — the same declaration an ACP CLI
             # reads when the `mcp-core` server lists it. These modules are PersonalClaw's own, so
@@ -191,6 +194,24 @@ class InProcessMcpToolProvider(ToolProvider):
             logger.debug("in-process tool %s failed: %s", tool_name, exc, exc_info=True)
             return ToolResult(success=False, error=str(exc))
 
+    async def preflight(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult | None:
+        """What the module declares its tools refuse before anyone is asked (its ``_preflight``,
+        usually ``mcp_shared.preflight_refusal`` over its own argument validation); None for a
+        module that declares nothing. Run off the event loop under this call's context, as a call
+        is, since a check may ask the gateway."""
+        import contextvars
+
+        declared = getattr(self._import_module(), "_preflight", None)
+        if declared is None:
+            return None
+        ctx = contextvars.copy_context()
+        refused = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: ctx.run(declared, tool_name, arguments)
+        )
+        if not isinstance(refused, ToolFailure):
+            return None
+        return ToolResult(success=False, error=refused.reason)
+
 
 def _owner_notice_args(declared: Any) -> tuple[str, ...]:
     """The arguments a tool dict declares a call may carry and still only tell the owner
@@ -198,6 +219,39 @@ def _owner_notice_args(declared: Any) -> tuple[str, ...]:
     if not isinstance(declared, (list, tuple)):
         return ()
     return tuple(str(a) for a in declared if isinstance(a, str) and a)
+
+
+def observed(result: ToolResult, meta_sink: dict) -> str:
+    """A provider's result as the model is handed it (:func:`format_tool_result`), with its typed
+    metadata filled into *meta_sink* for the tool card: what it carried, whether it was cut, and,
+    for a failure, the bit that says so, its hints and its WHAT/WHY/FIX envelope."""
+    # Capture the result's typed metadata (content_type / raw_ref / truncated)
+    # for the TOOL_RESULT event — the string return loses it otherwise. Filled into
+    # the CALLER's sink so the value belongs to this dispatch and cannot be read by a
+    # concurrent sibling's result card.
+    meta = dict(getattr(result, "metadata", {}) or {})
+    if getattr(result, "truncated", False):
+        meta["truncated"] = True
+        if getattr(result, "original_length", None) is not None:
+            meta["original_length"] = result.original_length
+    # TC5: carry recovery_hints (concrete next-steps on failure) so the tool card
+    # can surface them — the contract has them, they were dropped at the WS boundary.
+    # Also carry the success flag so the card can color-code a failed call (a
+    # green "done" check on a failed tool is misleading). Only stamp on FAILURE —
+    # absence means success, so existing/ACP results render exactly as before.
+    if not getattr(result, "success", True):
+        meta["ok"] = False
+        hints = getattr(result, "recovery_hints", None)
+        if hints:
+            meta["recovery_hints"] = list(hints)
+        # Carry the WHAT/WHY/FIX envelope structurally so
+        # the tool card can render coded rows + did-you-mean suggestions (the
+        # string form already went to the model via format_tool_result).
+        agent_error = getattr(result, "agent_error", None)
+        if agent_error is not None:
+            meta["agent_error"] = agent_error.to_dict()
+    meta_sink.update(meta)
+    return format_tool_result(result)
 
 
 def format_tool_result(result: ToolResult) -> str:

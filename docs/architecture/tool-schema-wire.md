@@ -85,17 +85,68 @@ untyped value, a multi-type union — is not repairable, so the tool is left out
 
 ## A call is checked against what its tool declares
 
-A call to a tool that asks before it runs is checked for the arguments that tool's input schema
-requires before anyone is asked (`tool_providers/arguments.missing_arguments`, from
-`NativeAgentRuntime._guard_and_invoke`). A call missing one is answered at once with what is
-missing and the schema itself, and marked `not_run: missing_arguments`: approving it could run
-nothing, and the identical retry would ask again. The check reads the schema the tool DECLARED,
-never the repaired copy above. It refuses only a missing required argument, the one failure every
-tool that declares the schema refuses: a server built on a lax validator takes `"true"` for a
-boolean, the MCP client turns a number sent as text back into a number, and a built-in tool takes
-an object where it declares JSON text, so any other mismatch is the tool's to judge. It runs none
-of the schema's patterns, and a schema it cannot read (or one pointing at a document it will not
-fetch) refuses nothing.
+A call to a tool that asks before it runs is checked before anyone is asked, in one place every
+approval passes (`NativeAgentRuntime._preflight`, from `_guard_and_invoke`, past the deny-list,
+task mode, tool grants and hooks), so no surface (the web chat, a chat channel, the phone, a
+subagent's parent) is asked about a call that cannot run. Two checks:
+
+- **The arguments its input schema requires** (`tool_providers/arguments.missing_arguments`). A
+  call missing one is answered at once with what is missing and the schema itself, and marked
+  `not_run: missing_arguments`: approving it could run nothing, and the identical retry would ask
+  again. The check reads the schema the tool DECLARED, never the repaired copy above. It refuses
+  only a missing required argument, the one failure every tool that declares the schema refuses: a
+  server built on a lax validator takes `"true"` for a boolean, the MCP client turns a number sent
+  as text back into a number, and a built-in tool takes an object where it declares JSON text, so
+  any other mismatch is the tool's to judge. It runs none of the schema's patterns, and a schema it
+  cannot read (or one pointing at a document it will not fetch) refuses nothing.
+- **What the tool declares it refuses** (`ToolProvider.preflight`): the refusal its `invoke` would
+  give the call whatever anyone answers, from the same check `invoke` runs first, so the two cannot
+  drift. The answer is the tool's own error and hint, marked `not_run: refused_by_tool`. The file
+  tools declare where a path reaches (`_resolve`, the containment every file tool uses), a write
+  with no content, an edit that changes nothing and the pre-edit read gate; the shell declares a
+  `{{secret:NAME}}` nothing stored fills, a credential path, a denied pattern, what only the owner
+  may change and a system-scheduler write; each in-process tool module declares a tool its leaf may
+  not call and the arguments its schema refuses (`mcp_shared.preflight_refusal`), and `subagent_run`
+  adds what it refuses before starting anything: no task, an `agents` list that does not match its
+  tasks, and a batch the compiler refuses, in the compiler's findings
+  (`mcp_subagents._spawn_refusal`, calling `batch_compile.compile_batch`); an MCP server's tool
+  declares the types its input schema refuses, since that schema is the server's validator
+  (`mcp_client.argument_refusal`, from the `mcp-tools` provider): judged with `type` alone (no
+  pattern, enum or format, no `anyOf` branch, no closed-object rule), on the arguments as the client
+  sends them, which turns a numeric string, or the JSON text of an array, an object or a boolean,
+  into that value once where the field takes no string at all; and `notify` and `notify_attachment`
+  declare what their send refuses: the gateway is asked with `/api/send-message`'s `dry_run`, which
+  answers every refusal as sending would, marked as the check's, and sends nothing, and the file is
+  read and checked as the send reads it. A check that cannot be made (the gateway unreachable, a
+  check that raises) refuses nothing, and the call is asked about as before. `invoke` still checks
+  when it runs, since what it checks may change while an approval waits.
+
+Whatever refuses a call, the model is told why in the refuser's words, and only your Deny is told
+as a decline. The runtime's own gates and the checks above answer with their reason. A screen the
+chat runner applies to an approval request (a hook, the deny-list, the session's mode, a tool name
+it will not record, an unattended run with nobody to ask) refuses with its reason
+(`turn_endings.refuse`, which hands the runtime `refuse_tool(request_id, reason, kind=...)`), and
+so does an approval that ended unanswered ("no one answered in time", "the turn was stopped"); the
+runtime words it as `security.classify_denial` words that kind. A runtime says it can carry a reason (`AgentProvider.carries_refusal_reasons`,
+the native runtime's); an agent CLI's permission answer has no room for one, so there such a
+refusal is a reject, in the CLI's own words.
+
+## An in-process tool is offered what its validator enforces
+
+PersonalClaw's own in-process tools validate their arguments with field specs
+(`validation.validate_tool_args`, from the one dispatch map each tool is in,
+`validation.tool_field_schema`). The schema each is offered is generated from the same specs
+(`validation.offered_schema`), on both surfaces a model reads: the native loop's catalog
+(`InProcessMcpToolProvider.list_tools`) and the MCP server an agent CLI lists
+(`mcp_core._aggregated_list_tools`). So a field's maximum length, its allowed values, a number's
+bounds, a list's item limits and the fields a call requires are in the schema the model is
+offered, and a call over one is refused before anyone is asked, with the validator's own words.
+Where the hand-written schema and the spec both say something, the spec's is offered. A
+constraint is written only on a field the schema names and only where its declared JSON type is
+one the spec checks, so a list declared as JSON text gets no item limit; an empty allowed value
+is left out of an enum (leaving the field out says the same); a spec's pattern is not offered,
+since its dialect is Python's. `tests/test_a_call_its_tool_will_refuse_asks_nobody.py` holds
+every in-process tool to it on both surfaces.
 
 ## Free-form values travel as JSON text
 

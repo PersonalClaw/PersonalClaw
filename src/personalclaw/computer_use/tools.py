@@ -311,6 +311,19 @@ def _render_error(error: Any) -> str:
     return tool_failure(f"{error}")
 
 
+def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """The arguments as they came: the gateway's dispatch validates each action's own."""
+    return args
+
+
+def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
+    """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
+    call (``mcp_shared.preflight_refusal``)."""
+    from personalclaw.mcp_shared import preflight_refusal
+
+    return preflight_refusal(name, raw_args, _validate_args)
+
+
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     """Category entry point, wrapped in the shared logging/validation seam."""
     from personalclaw.mcp_shared import call_tool_with_logging
@@ -318,7 +331,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     return call_tool_with_logging(
         name,
         raw_args,
-        lambda _name, args: args,
+        _validate_args,
         _call_tool_inner,
         session_key="mcp_computer_use",
         downstream_service="personalclaw-computer-use",

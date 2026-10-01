@@ -91,8 +91,9 @@ TOOL_META_REFUSED_BY = "refused_by"
 #: reason that is not a gate's refusal: ``stopped`` (a stop reached it first),
 #: ``unreadable_arguments`` (nothing to run it with), ``missing_arguments`` (it lacks an argument
 #: its tool's declared input schema requires, so it was answered before anyone was asked to approve
-#: it), ``failed_predecessor`` (an earlier call on the same resource failed, so its state is
-#: unknown).
+#: it), ``refused_by_tool`` (its tool declares it refuses the call whatever anyone answers,
+#: ``ToolProvider.preflight``, so it too was answered before anyone was asked),
+#: ``failed_predecessor`` (an earlier call on the same resource failed, so its state is unknown).
 TOOL_META_NOT_RUN = "not_run"
 
 

@@ -21,9 +21,10 @@ firing is an injected callable so the package stays free of any
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from personalclaw import cancellation
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
-from personalclaw.agents.native.approval import REJECT, ApprovalGate
+from personalclaw.agents.native.approval import REJECT, ApprovalGate, refusal_of
 from personalclaw.agents.native.catalog_refresh import CatalogRefresh
 from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
 from personalclaw.agents.native.failover import (
@@ -44,7 +45,7 @@ from personalclaw.agents.native.owed_reply import OwedReply, owed_note_message
 from personalclaw.agents.native.tool_names import name_census
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
-    format_tool_result,
+    observed,
     read_tool_arguments,
     tool_definitions_to_openai_schema,
 )
@@ -94,7 +95,7 @@ from personalclaw.llm.prompt_cache import (
     turn_note_message,
 )
 from personalclaw.tool_providers.arguments import missing_arguments, missing_arguments_note
-from personalclaw.tool_providers.base import RiskLevel, only_tells_the_owner
+from personalclaw.tool_providers.base import RiskLevel, ToolResult, only_tells_the_owner
 from personalclaw.tool_providers.portable_schema import (
     ToolSchemaRejected,
     tools_named_in_rejection,
@@ -314,7 +315,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._tool_schema: list[dict] = []
         self._tool_index: dict[str, "ToolProvider"] = {}
         # tool name → the input schema its provider declared, before the portable repair the model
-        # is shown (`_refuse_missing_arguments` checks a call against what the tool requires).
+        # is shown (`_preflight` checks a call against what the tool requires).
         self._tool_input_schemas: dict[str, Any] = {}
         # Fallback name resolver (provider-agnostic): sanitized(real_name)->real_name,
         # populated ONLY for names that need rewriting AND sanitize uniquely (no
@@ -1869,11 +1870,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     result_str = "Error: cancelled"
                     meta.update(_FAILED)
                 elif decision == REJECT:
-                    # Recoverable: feed back WHY + adapt-don't-repeat guidance so
-                    # the model doesn't silently stall on an unattended surface.
-                    _, result_str = security.classify_denial(
-                        security.DENY_KIND_USER, "the user declined this tool call", tool_name
-                    )
+                    # Recoverable: WHY + adapt-don't-repeat guidance. A host's own refusal
+                    # (`refuse_tool`) is told as its reason, never as the user's decline.
+                    _, result_str = security.classify_denial(*refusal_of(decision), tool_name)
                     meta.update(_FAILED)
                 else:
                     result_str = await self._invoke(tool_name, args, meta_sink=meta)
@@ -2043,9 +2042,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         if (gone := self._no_longer_offered(tool_name, meta)) is not None:
             return gone
         if self._requires_approval(tool_name):
-            # A call missing what its tool requires is answered with why before anyone is asked:
-            # approving it could run nothing, and the identical retry would ask again.
-            refused = self._refuse_missing_arguments(tool_name, args, meta)
+            # A call its tool will refuse is answered with why before anyone is asked: approving
+            # it could run nothing, and the identical retry would ask again.
+            refused = await self._preflight(tool_name, args, meta)
             return _NEEDS_APPROVAL if refused is None else refused
         if self._asks_first(tool_name):
             # The tool asks before it runs, and the session's approval policy answered for it.
@@ -2054,16 +2053,29 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             meta[TOOL_META_APPROVAL_WAIVED] = True
         return await self._invoke(tool_name, args, meta_sink=meta)
 
-    def _refuse_missing_arguments(self, tool_name: str, args: dict, meta: dict) -> str | None:
-        """The answer to a call missing an argument its tool's declared input schema requires,
-        marked not run in *meta*; None when it has them, or when the schema cannot be checked."""
-        problems = missing_arguments(args, self._tool_input_schemas.get(tool_name))
-        if not problems:
+    async def _preflight(self, tool_name: str, args: dict, meta: dict) -> str | None:
+        """The answer to a call refused whatever the owner answers, given before anyone is asked
+        and marked not run in *meta*; None to ask. The one place every approval passes, so no
+        surface is asked about a call that cannot run: the arguments its declared input schema
+        requires (``missing_arguments``), then what the tool declares it refuses
+        (``ToolProvider.preflight``). A check that cannot be made refuses nothing."""
+        refused, why = None, "missing_arguments"
+        if problems := missing_arguments(args, self._tool_input_schemas.get(tool_name)):
+            shown = next((t for t in self._tool_defs if t.name == tool_name), None)
+            note = missing_arguments_note(tool_name, problems, getattr(shown, "parameters", None))
+            refused = ToolResult(success=False, error=note)
+        elif (prov := self._tool_index.get(tool_name)) is not None:
+            why = "refused_by_tool"
+            try:
+                with self._dispatch_scope():
+                    refused = await prov.preflight(tool_name, args)
+            except Exception:  # noqa: BLE001 - a check that cannot be made refuses nothing
+                logger.warning("native: %s's pre-flight failed; asking", tool_name, exc_info=True)
+        if not isinstance(refused, ToolResult) or refused.success:
             return None
-        meta.update(_FAILED)
-        meta[TOOL_META_NOT_RUN] = "missing_arguments"
-        shown = next((t for t in self._tool_defs if t.name == tool_name), None)
-        return missing_arguments_note(tool_name, problems, getattr(shown, "parameters", None))
+        observation = observed(refused, meta)
+        meta[TOOL_META_NOT_RUN] = why
+        return observation
 
     @staticmethod
     def _unknown_tool(tool_name: str, meta: dict) -> str:
@@ -2160,6 +2172,14 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # the query phrasing drifts. Cheap insurance against the cardinal failure.
         if self._tool_retriever is not None:
             self._tool_retriever.mark_used(tool_name)
+        with self._dispatch_scope():
+            result = await prov.invoke(tool_name, args)
+        return observed(result, meta_sink)
+
+    @contextlib.contextmanager
+    def _dispatch_scope(self) -> Iterator[None]:
+        """This session, its workspace and its leaf, bound for a provider answering a call
+        (``_invoke``) and its pre-flight check (``_preflight``) alike."""
         # Bind this turn's session key for in-process tools (e.g. subagent_run) so a
         # subagent spawned here resolves THIS session as its parent and inherits
         # its trust/auto-approve. The native loop runs inside the gateway with no
@@ -2191,40 +2211,13 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # directly off the instance — the contextvar only carries it downward.
         cancel_token = cancellation.bind_scope(self._cancel)
         try:
-            result = await prov.invoke(tool_name, args)
+            yield
         finally:
             cancellation.reset_scope(cancel_token)
             mcp_shared.reset_leaf_lineage(lineage_token)
             mcp_core.reset_current_session_key(token)
             mcp_core.reset_current_agent_id(agent_token)
             _bt.reset_tool_context(ctx_tokens)
-        # Capture the result's typed metadata (content_type / raw_ref / truncated)
-        # for the TOOL_RESULT event — the string return loses it otherwise. Filled into
-        # the CALLER's sink so the value belongs to this dispatch and cannot be read by a
-        # concurrent sibling's result card.
-        meta = dict(getattr(result, "metadata", {}) or {})
-        if getattr(result, "truncated", False):
-            meta["truncated"] = True
-            if getattr(result, "original_length", None) is not None:
-                meta["original_length"] = result.original_length
-        # TC5: carry recovery_hints (concrete next-steps on failure) so the tool card
-        # can surface them — the contract has them, they were dropped at the WS boundary.
-        # Also carry the success flag so the card can color-code a failed call (a
-        # green "done" check on a failed tool is misleading). Only stamp on FAILURE —
-        # absence means success, so existing/ACP results render exactly as before.
-        if not getattr(result, "success", True):
-            meta["ok"] = False
-            hints = getattr(result, "recovery_hints", None)
-            if hints:
-                meta["recovery_hints"] = list(hints)
-            # Carry the WHAT/WHY/FIX envelope structurally so
-            # the tool card can render coded rows + did-you-mean suggestions (the
-            # string form already went to the model via format_tool_result).
-            agent_error = getattr(result, "agent_error", None)
-            if agent_error is not None:
-                meta["agent_error"] = agent_error.to_dict()
-        meta_sink.update(meta)
-        return format_tool_result(result)
 
     # Synthetic runtime meta-tools (not in _tool_defs): pure, side-effect-free
     # discovery answered by the runtime itself → never gated, never dispatched to a
@@ -2318,6 +2311,14 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
     async def reject_tool(self, request_id: str | int) -> None:
         self._approval.reject(str(request_id))
+
+    carries_refusal_reasons = True
+
+    async def refuse_tool(
+        self, request_id: str | int, reason: str, *, kind: str = "policy"
+    ) -> None:
+        """Refuse a pending call for the host's own *reason*, which is what the model is told."""
+        self._approval.refuse(str(request_id), reason, kind)
 
     # ── status / control ──
     def context_usage_pct(self) -> float | None:

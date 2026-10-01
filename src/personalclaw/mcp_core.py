@@ -44,6 +44,7 @@ from personalclaw.tool_providers.base import (
     BUILDS_META_KEY,
     PROPOSES_META_KEY,
     TELLS_OWNER_META_KEY,
+    ToolFailure,
     tool_failure,
 )
 
@@ -1102,6 +1103,123 @@ def _load_skill_resource(args: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+def _message_payload(args: dict[str, Any]) -> dict[str, Any] | ToolFailure:
+    """What ``notify`` asks the gateway to send (``/api/send-message``), from its arguments; or
+    the refusal of a ``session`` it cannot route by."""
+    payload: dict[str, Any] = {"text": args["text"], "title": args.get("title", "Agent Message")}
+    if args.get("blocks"):
+        payload["blocks"] = args["blocks"]
+    if args.get("channel"):
+        payload["channel"] = args["channel"]
+    if args.get("user"):
+        payload["user"] = args["user"]
+    if args.get("via"):
+        payload["via"] = args["via"]
+    if "unfurl_links" in args:
+        payload["unfurl_links"] = args["unfurl_links"]
+    if "unfurl_media" in args:
+        payload["unfurl_media"] = args["unfurl_media"]
+    if args.get("thread_ts"):
+        payload["thread_ts"] = args["thread_ts"]
+    if args.get("reply_broadcast"):
+        payload["reply_broadcast"] = args["reply_broadcast"]
+    # ───────────────────────────────────────────────────────────────
+    # Cron delivery contract (see messaging.py:api_send_message for the
+    # full version). Default for cron callers that didn't set any of
+    # session/channel/user: auto-apply session="origin" so the message
+    # injects into the spawning chat. Explicit session="channel" opts out
+    # and routes to the owner's messaging channel. Explicit channel/user/via
+    # always wins.
+    # ───────────────────────────────────────────────────────────────
+    session = args.get("session")
+    caller_session_env = os.environ.get("PERSONALCLAW_SESSION_KEY", "")
+    if (
+        not session
+        and not args.get("channel")
+        and not args.get("user")
+        and not args.get("via")
+        and caller_session_env.startswith("cron:")
+    ):
+        session = "origin"
+    if session:
+        if session not in ("origin", "channel"):
+            return tool_failure('session must be "origin" or "channel".')
+        payload["session"] = session
+        caller_session = _resolve_session_key()
+        if caller_session.startswith("cron:"):
+            payload["caller_session"] = caller_session
+    return payload
+
+
+def _message_refusal(args: dict[str, Any]) -> ToolFailure | None:
+    """The gateway's refusal of this message, asked without sending it (``dry_run``): a chat
+    channel not set up here, an id no channel here issued, a channel not tracked, a user who is
+    not the owner. None when it would go out, and when the gateway could not say: only an answer
+    marked as the check's (``"dry_run": true``) is one, never a request that did not reach it."""
+    payload = _message_payload(args)
+    if isinstance(payload, ToolFailure):
+        return payload
+    resp = _post("/api/send-message", {**payload, "dry_run": True})
+    if resp.get("dry_run") is not True or resp.get("ok") is True:
+        return None
+    return tool_failure(str(resp.get("error") or resp))
+
+
+def _read_attachment(args: dict[str, Any]) -> bytes | tuple[str, ToolFailure]:
+    """The bytes ``notify_attachment`` sends, read once and checked; or why it refuses the file, as
+    the audit's code and the tool's answer: a control character in its path, a path no file
+    surface may read or a file too large, a name or a text that carries a secret, a file that is
+    not UTF-8 text. The handler sends exactly the bytes this checked."""
+    from personalclaw.file_roots import control_character_in
+    from personalclaw.hooks import FileTooLargeError, safe_read_file_bytes
+    from personalclaw.security import redact
+
+    src = Path(args.get("path", ""))
+    # The copy in the outbox keeps the source's name, so a name no file surface takes is
+    # refused here too (`file_roots.CONTROL_CHARS`).
+    bad = control_character_in(str(args.get("path", "")))
+    if bad:
+        return f"control_character: {bad}", tool_failure(
+            f"the path has a control character ({bad}) in it; rename the file without it first"
+        )
+    try:
+        raw = safe_read_file_bytes(str(src))
+    except FileTooLargeError as e:
+        return f"file_too_large: {e}", tool_failure(f"{e}")
+    if raw is None:
+        return f"path_not_allowed: {src}", tool_failure(f"file not found or access denied: {src}")
+    if redact(src.name) != src.name:
+        return f"sensitive_filename: {redact(src.name)}", tool_failure(
+            "filename contains sensitive content. Rename the file first."
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "not_utf8", tool_failure("only UTF-8 text files are supported")
+    if redact(text) != text:
+        return "sensitive_content_detected", tool_failure(
+            "file content contains sensitive data; send aborted"
+        )
+    return raw
+
+
+def _preflight(name: str, raw_args: dict[str, Any]) -> ToolFailure | None:
+    """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
+    call and arguments the tool's schema refuses (``mcp_shared.admitted_arguments``), then for a
+    message or a file for the owner what its send refuses, asked without sending anything."""
+    from personalclaw.mcp_shared import admitted_arguments
+
+    args = admitted_arguments(name, raw_args, _validate_args)
+    if isinstance(args, ToolFailure):
+        return args
+    if name == "notify":
+        return _message_refusal(args)
+    if name == "notify_attachment":
+        read = _read_attachment(args)
+        return read[1] if isinstance(read, tuple) else None
+    return None
+
+
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
 
@@ -1313,49 +1431,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         )
 
     if name == "notify":
-        text = args["text"]
-        title = args.get("title", "Agent Message")
-        payload = {"text": text, "title": title}
-        if args.get("blocks"):
-            payload["blocks"] = args["blocks"]
-        if args.get("channel"):
-            payload["channel"] = args["channel"]
-        if args.get("user"):
-            payload["user"] = args["user"]
-        if args.get("via"):
-            payload["via"] = args["via"]
-        if "unfurl_links" in args:
-            payload["unfurl_links"] = args["unfurl_links"]
-        if "unfurl_media" in args:
-            payload["unfurl_media"] = args["unfurl_media"]
-        if args.get("thread_ts"):
-            payload["thread_ts"] = args["thread_ts"]
-        if args.get("reply_broadcast"):
-            payload["reply_broadcast"] = args["reply_broadcast"]
-        # ───────────────────────────────────────────────────────────────
-        # Cron delivery contract (see messaging.py:api_send_message for the
-        # full version). Default for cron callers that didn't set any of
-        # session/channel/user: auto-apply session="origin" so the message
-        # injects into the spawning chat. Explicit session="channel" opts out
-        # and routes to the owner's messaging channel. Explicit channel/user/via
-        # always wins.
-        # ───────────────────────────────────────────────────────────────
-        caller_session_env = os.environ.get("PERSONALCLAW_SESSION_KEY", "")
-        if (
-            not args.get("session")
-            and not args.get("channel")
-            and not args.get("user")
-            and not args.get("via")
-            and caller_session_env.startswith("cron:")
-        ):
-            args = {**args, "session": "origin"}
-        if args.get("session"):
-            if args["session"] not in ("origin", "channel"):
-                return tool_failure('session must be "origin" or "channel".')
-            payload["session"] = args["session"]
-            caller_session = _resolve_session_key()
-            if caller_session.startswith("cron:"):
-                payload["caller_session"] = caller_session
+        payload = _message_payload(args)
+        if isinstance(payload, ToolFailure):
+            return payload
         resp = _post("/api/send-message", payload)
         if not resp.get("ok"):
             # A refusal says so by its type; the gateway's sentence, when it sent one, is the
@@ -1369,92 +1447,38 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # Explicit session="channel" is the opt-out, not a failure — surface
         # the actual outcome (channel delivery + notification) instead of the
         # "session unavailable" fallback message.
-        if args.get("session") == "channel":
+        if payload.get("session") == "channel":
             ts = resp.get("ts", "")
             if resp.get("channel"):
                 return f"Message sent to channel. ts={ts}" if ts else "Message sent to channel."
             return "Message delivered as dashboard notification (channel unavailable)."
-        if args.get("session"):
+        if payload.get("session"):
             return "Session injection unavailable — target session not found or caller is not a cron. Message delivered normally."  # noqa: E501
         ts = resp.get("ts", "")
         return f"Message sent. ts={ts}" if ts else "Message sent."
 
     if name == "notify_attachment":
         import uuid
-        from pathlib import Path
 
         from personalclaw.config.loader import outbox_dir
-        from personalclaw.file_roots import control_character_in
-        from personalclaw.hooks import FileTooLargeError, safe_read_file_bytes
         from personalclaw.security import redact
         from personalclaw.sel import sel
 
         src = Path(args.get("path", ""))
         desc = redact(args.get("description", ""))
-        # The copy in the outbox keeps the source's name, so a name no file surface takes is
-        # refused here too (`file_roots.CONTROL_CHARS`).
-        bad = control_character_in(str(args.get("path", "")))
-        if bad:
+        read = _read_attachment(args)
+        if isinstance(read, tuple):
+            code, refused = read
             sel().log_tool_invocation(
                 session_key="mcp_core",
                 source="mcp",
                 tool_name="notify_attachment",
                 outcome="denied",
-                error=f"control_character: {bad}",
+                error=code,
             )
-            return tool_failure(
-                f"the path has a control character ({bad}) in it; rename the file without it first"
-            )
-        try:
-            raw = safe_read_file_bytes(str(src))
-        except FileTooLargeError as e:
-            sel().log_tool_invocation(
-                session_key="mcp_core",
-                source="mcp",
-                tool_name="notify_attachment",
-                outcome="denied",
-                error=f"file_too_large: {e}",
-            )
-            return tool_failure(f"{e}")
-        if raw is None:
-            sel().log_tool_invocation(
-                session_key="mcp_core",
-                source="mcp",
-                tool_name="notify_attachment",
-                outcome="denied",
-                error=f"path_not_allowed: {src}",
-            )
-            return tool_failure(f"file not found or access denied: {src}")
+            return refused
+        raw = read
         clean_name = src.name
-        if redact(clean_name) != clean_name:
-            sel().log_tool_invocation(
-                session_key="mcp_core",
-                source="mcp",
-                tool_name="notify_attachment",
-                outcome="denied",
-                error=f"sensitive_filename: {redact(clean_name)}",
-            )
-            return tool_failure("filename contains sensitive content. Rename the file first.")
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            sel().log_tool_invocation(
-                session_key="mcp_core",
-                source="mcp",
-                tool_name="notify_attachment",
-                outcome="denied",
-                error="not_utf8",
-            )
-            return tool_failure("only UTF-8 text files are supported")
-        if redact(text) != text:
-            sel().log_tool_invocation(
-                session_key="mcp_core",
-                source="mcp",
-                tool_name="notify_attachment",
-                outcome="denied",
-                error="sensitive_content_detected",
-            )
-            return tool_failure("file content contains sensitive data; send aborted")
         dest = outbox_dir() / clean_name
         try:
             with dest.open("xb") as f:
@@ -1928,13 +1952,26 @@ _AGGREGATED_CATEGORY_MODULES = (
 
 
 def _aggregated_list_tools() -> list[dict[str, Any]]:
-    """Core tools + every aggregated category's tools (the ACP MCP-server surface)."""
+    """Core tools + every aggregated category's tools (the ACP MCP-server surface), each offered
+    with what its validator enforces (`validation.offered_schema`), as the native loop offers it."""
     import importlib
+
+    from personalclaw.validation import offered_schema, tool_field_schema
 
     tools = list(_list_tools())
     for mod_path in _AGGREGATED_CATEGORY_MODULES:
         tools.extend(importlib.import_module(mod_path)._list_tools())
-    return tools
+    return [
+        (
+            {
+                **tool,
+                "inputSchema": offered_schema(tool["inputSchema"], tool_field_schema(tool["name"])),
+            }
+            if "inputSchema" in tool
+            else tool
+        )
+        for tool in tools
+    ]
 
 
 def own_tool(name: str) -> dict[str, Any] | None:

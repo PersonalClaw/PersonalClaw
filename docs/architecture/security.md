@@ -409,7 +409,8 @@ reach and where the owner adds one. An entry naming the filesystem root or a sys
 place, and neither is a source its own provider would refuse to poll. A folder taken out of the
 setting, or a source paused or pointed elsewhere, is out of reach at the next call.
 `file_scope.refusal` answers from a call's arguments, the session's folder and the settings alone,
-so the decision can be made before an approval is asked for. Each turn the native loop tells the
+and the file tools' pre-flight asks it (`ToolProvider.preflight`), so a call it refuses is answered
+with its reason and hint before anyone is asked to approve it. Each turn the native loop tells the
 model which folders it reaches beyond the workspace (the `[file places]` note), and when it has the
 knowledge tools, to search the library first.
 

@@ -6268,6 +6268,15 @@
   },
   "kind": "dataclass"
  },
+ "personalclaw.sdk.mcp.argument_refusal": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "tool"},
+   {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "arguments"},
+   {"annotation": "Any", "kind": "positional_or_keyword", "name": "input_schema"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.mcp.declared_risk": {
   "kind": "function",
   "params": [
@@ -8981,7 +8990,15 @@
     "params": [],
     "returns": "list[ToolDefinition]"
    },
-   "name": {"kind": "property", "returns": "str", "settable": false}
+   "name": {"kind": "property", "returns": "str", "settable": false},
+   "preflight": {
+    "kind": "async method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "tool_name"},
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "arguments"}
+    ],
+    "returns": "ToolResult | None"
+   }
   }
  },
  "personalclaw.sdk.tool.ToolResult": {

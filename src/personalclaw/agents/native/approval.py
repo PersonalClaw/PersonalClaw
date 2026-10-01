@@ -20,6 +20,30 @@ APPROVE = "approve"
 REJECT = "reject"
 
 
+class Refusal(str):
+    """A REJECT a host gave before anyone was asked (a hook, the task mode, the deny-list), for a
+    reason no answer could change. It equals :data:`REJECT`, and carries the reason and its kind
+    (``security.DENY_KIND_*``), so the model is told why instead of that the user declined."""
+
+    reason: str
+    kind: str
+
+    def __new__(cls, reason: str, kind: str) -> "Refusal":
+        self = super().__new__(cls, REJECT)
+        self.reason, self.kind = reason, kind
+        return self
+
+
+def refusal_of(decision: str) -> tuple[str, str]:
+    """``(kind, reason)`` a rejected call is told: the host's own reason for a :class:`Refusal`,
+    and the user's decline for every other REJECT."""
+    if isinstance(decision, Refusal) and decision.reason:
+        return decision.kind, decision.reason
+    from personalclaw import security
+
+    return security.DENY_KIND_USER, "the user declined this tool call"
+
+
 class ApprovalGate:
     """One gate per native session; one pending Future per in-flight request."""
 
@@ -69,6 +93,10 @@ class ApprovalGate:
 
     def reject(self, request_id: str) -> bool:
         return self.resolve(request_id, REJECT)
+
+    def refuse(self, request_id: str, reason: str, kind: str) -> bool:
+        """Reject a pending request for a host's own *reason* (:class:`Refusal`)."""
+        return self.resolve(request_id, Refusal(reason, kind))
 
     def cancel_all(self) -> None:
         """Reject every pending request (session shutdown / cancel)."""

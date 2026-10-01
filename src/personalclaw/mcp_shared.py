@@ -440,6 +440,61 @@ def _leaf_is_read_only() -> bool:
     return leaf_value(LEAF_READ_ONLY_KEY) == "1"
 
 
+def _admission(
+    name: str,
+    raw_args: dict[str, Any],
+    validate_fn: Callable[[str, dict[str, Any]], dict[str, Any]],
+) -> tuple[dict[str, Any] | None, str, str]:
+    """``(arguments, "", "")`` for a call an in-process tool runs with these arguments, or
+    ``(None, outcome, reason)`` for one it refuses before running anything: ``denied`` for a tool
+    this leaf may not call, ``failed`` for arguments its schema refuses."""
+    from personalclaw.validation import ValidationError
+
+    # The `__wf_depth` tool-handler seam. EVERY in-process MCP tool call funnels through this
+    # function, which is why the capability posture is enforced here and nowhere else: a filtered
+    # tool list computed at compile time would be a control that looks like enforcement while the
+    # handler still answered the call (`leaf_tool_posture`'s own docstring says so). Denial is
+    # checked BEFORE arg validation so a malformed call to a denied tool is refused as denied
+    # rather than as malformed — the more specific and more security-relevant of the two answers.
+    denial = leaf_tool_denial(name)
+    if denial:
+        return None, "denied", denial
+    try:
+        return validate_fn(name, raw_args), "", ""
+    except ValidationError as e:
+        return None, "failed", str(e)
+
+
+def admitted_arguments(
+    name: str,
+    raw_args: dict[str, Any],
+    validate_fn: Callable[[str, dict[str, Any]], dict[str, Any]],
+) -> Any:
+    """The arguments :func:`call_tool_with_logging` runs this call with, or the
+    :class:`~personalclaw.tool_providers.base.ToolFailure` it answers the call with before running
+    anything. Asked of a call before anyone is asked to approve it (an in-process module's
+    ``_preflight``), so nothing is logged: the call is audited where it is decided."""
+    from personalclaw.tool_providers.base import tool_failure
+
+    args, _outcome, reason = _admission(name, raw_args, validate_fn)
+    return tool_failure(reason) if args is None else args
+
+
+def preflight_refusal(
+    name: str,
+    raw_args: dict[str, Any],
+    validate_fn: Callable[[str, dict[str, Any]], dict[str, Any]],
+) -> Any:
+    """What :func:`call_tool_with_logging` refuses of this call before running anything, given the
+    module's own *validate_fn*, as a :class:`~personalclaw.tool_providers.base.ToolFailure`; None
+    for a call it runs. An in-process tool module's ``_preflight`` is this, over its validation;
+    ``InProcessMcpToolProvider.preflight`` asks it before the call is put to anyone."""
+    from personalclaw.tool_providers.base import ToolFailure
+
+    checked = admitted_arguments(name, raw_args, validate_fn)
+    return checked if isinstance(checked, ToolFailure) else None
+
+
 def call_tool_with_logging(
     name: str,
     raw_args: dict[str, Any],
@@ -460,40 +515,19 @@ def call_tool_with_logging(
     """
     from personalclaw.sel import sel
     from personalclaw.tool_providers.base import ToolFailure, tool_failure
-    from personalclaw.validation import ValidationError
 
-    # The `__wf_depth` tool-handler seam. EVERY in-process MCP tool call funnels through this
-    # function, which is why the capability posture is enforced here and nowhere else: a filtered
-    # tool list computed at compile time would be a control that looks like enforcement while the
-    # handler still answered the call (`leaf_tool_posture`'s own docstring says so). Denial is
-    # checked BEFORE arg validation so a malformed call to a denied tool is refused as denied
-    # rather than as malformed — the more specific and more security-relevant of the two answers.
-    denial = leaf_tool_denial(name)
-    if denial:
+    args, outcome, reason = _admission(name, raw_args, validate_fn)
+    if args is None:
         sel().log_tool_invocation(
             session_key=session_key,
             source="mcp",
             tool_name=name,
             tool_kind=session_key,
-            outcome="denied",
+            outcome=outcome,
             downstream_service=downstream_service,
-            error=denial,
+            error=reason,
         )
-        return tool_failure(denial)
-
-    try:
-        args = validate_fn(name, raw_args)
-    except ValidationError as e:
-        sel().log_tool_invocation(
-            session_key=session_key,
-            source="mcp",
-            tool_name=name,
-            tool_kind=session_key,
-            outcome="failed",
-            downstream_service=downstream_service,
-            error=str(e),
-        )
-        return tool_failure(str(e))
+        return tool_failure(reason)
 
     result = inner_fn(name, args)
     outcome = "failed" if isinstance(result, ToolFailure) else "completed"
