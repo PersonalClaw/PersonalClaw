@@ -27,6 +27,7 @@ import json
 import logging
 from typing import Any
 
+from personalclaw.agents.native.tool_names import model_safe_name
 from personalclaw.tool_providers.base import (
     ToolDefinition,
     ToolFailure,
@@ -41,11 +42,17 @@ def tool_definitions_to_openai_schema(tools: list[ToolDefinition]) -> list[dict]
     """Convert ``ToolDefinition``s into the OpenAI ``tools`` array shape.
 
     Each becomes ``{"type": "function", "function": {name, description,
-    parameters}}``. ``parameters`` defaults to an empty-object schema when the
-    tool declares none, because some endpoints reject a missing schema: OpenRouter's
-    and Mistral's request contracts both declare ``parameters`` required. Omitting it
-    is not the portable form, even though Gemini's native API documents it (see
-    :mod:`personalclaw.tool_providers.portable_schema`).
+    parameters}}``, for definitions the tool seam has already made valid for every provider
+    (:func:`personalclaw.tool_providers.portable_schema.offered_tool_definitions`):
+
+    * ``name`` is the tool's model-safe form (:func:`.tool_names.model_safe_name`), the one name
+      every provider accepts; dispatch maps it back to the real tool.
+    * ``description`` is never empty: a tool whose source gave none carries one the seam wrote
+      from its name and inputs, because Converse refuses an empty one.
+    * ``parameters`` defaults to an empty-object schema when the tool declares none, because
+      some endpoints reject a missing schema: OpenRouter's and Mistral's request contracts both
+      declare ``parameters`` required. Omitting it is not the portable form, even though
+      Gemini's native API documents it.
     """
     schema: list[dict] = []
     for t in tools:
@@ -54,8 +61,8 @@ def tool_definitions_to_openai_schema(tools: list[ToolDefinition]) -> list[dict]
             {
                 "type": "function",
                 "function": {
-                    "name": t.name,
-                    "description": t.description or "",
+                    "name": model_safe_name(t.name),
+                    "description": t.description,
                     "parameters": params,
                 },
             }
@@ -132,7 +139,11 @@ class InProcessMcpToolProvider(ToolProvider):
             defs.append(
                 ToolDefinition(
                     name=name,
-                    description=str(tool.get("description", "")),
+                    # A missing description stays missing (never the text "None"): the tool
+                    # seam writes one from the name and inputs.
+                    description=(
+                        tool["description"] if isinstance(tool.get("description"), str) else ""
+                    ),
                     provider=self.name,
                     parameters=params,
                     # A declared read asks nobody, as every read PersonalClaw defines in Python

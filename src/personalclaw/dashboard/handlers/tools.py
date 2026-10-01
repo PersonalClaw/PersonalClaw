@@ -132,6 +132,7 @@ async def api_tools_list(request: web.Request) -> web.Response:
     disabled_provs = tool_prefs.load_disabled_providers()
 
     from personalclaw.tool_providers.groups import CORE_GROUP, group_name_for_provider
+    from personalclaw.tool_providers.portable_schema import derived_description, has_description
 
     def _group_of(name: str, provider: str) -> str:
         # Mirrors tool_providers.groups.group_of_tool over the catalog's (name,
@@ -161,6 +162,10 @@ async def api_tools_list(request: web.Request) -> web.Response:
         if key in seen or not name:
             return
         seen.add(key)
+        if not has_description(description):
+            # What a model is shown for a tool its source left undescribed — the same text, which
+            # says that no description came with it.
+            description = derived_description(name, parameters)
         locked = tool_prefs.is_locked(name)
         prov_off = provider in disabled_provs
         tools_out.append(

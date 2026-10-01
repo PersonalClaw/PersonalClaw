@@ -1,8 +1,8 @@
 # Tool-schema wire fidelity
 
-What happens to a tool's **parameter schema** between its `ToolDefinition` and the model
-provider. The invariant this page (and the rail, `tests/test_tool_schema_portability.py`)
-protects: **no model request carries a tool schema a mainstream provider can reject, so one
+What happens to a tool's **parameter schema** and **description** between its `ToolDefinition`
+and the model provider. The invariant this page (and the rail, `tests/test_tool_schema_portability.py`)
+protects: **no model request carries a tool definition a mainstream provider can reject, so one
 tool can never take down a turn.** The sibling page for tool *names* is
 [tool-name-wire.md](tool-name-wire.md).
 
@@ -50,7 +50,20 @@ Deliberately not encoded:
   reproduction of that turn also carries the argument-less `memory_list`. A route found to
   enforce the native rule is fixed in its own adapter.
 - OpenAI *strict mode*'s every-property-required and `additionalProperties: false` rules
-  (`strict` is never sent), and tool-name rules.
+  (`strict` is never sent). Tool-name rules are [tool-name-wire.md](tool-name-wire.md)'s.
+
+## A description is never empty
+
+Converse declares `toolSpec.description` with a minimum length of 1, and the AWS client refuses a
+request carrying `""` before anything is sent: one MCP server listing a tool with no description
+failed every Bedrock turn. The seam (row 3 below) therefore offers a tool whose source gave no
+description, or only whitespace, with one written from what is known
+(`portable_schema.derived_description`): the tool's real name, which for an external MCP tool
+carries its server's name, that no description came with it, and its declared inputs, each with its
+type, whether it is required and the first line of its own description (the first 12 inputs, each
+line cut short). It logs once per process, naming the app and the tool. The Tools page shows the
+same text, so the page and the model never disagree about what a tool is. Built-in tools describe
+themselves as declared (`tests/test_tool_schema_portability.py`).
 
 ## The wire map
 
@@ -58,9 +71,9 @@ Deliberately not encoded:
 |---|-----|--------------|-------|
 | 1 | Built-in declaration | must satisfy the profile **as declared** — never lean on a repair | rail: `tests/test_tool_schema_portability.py` |
 | 2 | Registration | an app's tool provider is registered with the app's name, so later lines can name it | `tool_providers/registry.register_provider(…, app=…)`, `providers/registry.ToolTypeHandler` |
-| 3 | Assembly — **the tool seam** | every tool, built-in or app, is conformed: a portable tool passes unchanged, a repairable one is repaired, an unrepairable one stays out of the schema **and** the dispatch index. One log line per tool per process names the app, the tool and the defect | `NativeAgentRuntime.start` → `portable_schema.offered_tool_definitions` |
-| 4 | Serialization | every function carries a `parameters` schema; a tool that takes no arguments sends the empty object schema (see "not encoded" above). An adapter whose API shapes schemas differently maps it there | `agents/native/tools.tool_definitions_to_openai_schema`; `llm/anthropic._translate_tools` |
-| 5 | The catalog | a tool that cannot be offered stays in the Tools page's catalog but is recorded as a load failure, so the page says why the model never sees it | `tool_providers/registry.list_all_tools` |
+| 3 | Assembly — **the tool seam** | every tool, built-in or app, is conformed: a portable tool passes unchanged, a repairable one is repaired, an undescribed one gets a written description, and one with no name or an unrepairable schema stays out of the schema **and** the dispatch index. Then the name census leaves out a tool whose model-safe name another tool already has ([tool-name-wire.md](tool-name-wire.md)). One log line per tool per process names the app, the tool and the defect | `NativeAgentRuntime._build_catalog` → `portable_schema.offered_tool_definitions`, then `tool_names.build_sanitized_index` |
+| 4 | Serialization | every function carries its model-safe name, a non-empty description and a `parameters` schema; a tool that takes no arguments sends the empty object schema (see "not encoded" above). An adapter whose API shapes schemas differently maps it there | `agents/native/tools.tool_definitions_to_openai_schema`; `llm/anthropic._translate_tools` |
+| 5 | The catalog | a tool that cannot be offered stays in the Tools page's catalog but is recorded as a load failure, so the page says why the model never sees it; a tool with no description is listed with the one models are shown | `tool_providers/registry.list_all_tools`, `dashboard/handlers/tools.api_tools_list` |
 | 6 | A rejection anyway | the error is mapped back to the tool this request sent (an index is only trusted when the property the error names is one that tool declares), raised as `ToolSchemaRejected` — one sentence naming the tool as PersonalClaw's bug, plus (unless the tool is core-locked) the way to keep going: turn it off and send the message again, since an open session rebuilds its toolset at the next turn when the tools change — and not retried | `portable_schema.tools_named_in_rejection`, `agents/native/runtime.py`, `llm_helpers.humanize_provider_error` |
 
 **What "repairable" means.** A repair never changes what the tool accepts: it drops a keyword

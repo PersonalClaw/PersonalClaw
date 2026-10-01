@@ -34,6 +34,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw import mcp_client
+from personalclaw.agents.native.tool_names import model_safe_name
 from personalclaw.config.secret_refs import write_mcp_document
 from personalclaw.mcp_client import McpToolSpec
 from personalclaw.tool_providers import registry as tool_registry
@@ -170,8 +171,13 @@ async def _world(tmp_path: Path, monkeypatch) -> AsyncIterator[World]:
         yield World(http, conn, workspace, home)
 
 
+def _sent(name: str) -> str:
+    """The name a model request carries for the tool called *name* (its model-safe form)."""
+    return model_safe_name(name)
+
+
 class Turn(NamedTuple):
-    offered: list[str]  # the tool names the model was offered
+    offered: list[str]  # the tool names the model was offered, as the request names them
     outputs: list[str]  # each tool result, as the model read it
     metas: list[dict]  # each tool result's tool_meta, as the tool card reads it
     asked: list[str]  # the tools the turn asked you to approve
@@ -251,8 +257,10 @@ async def test_an_agent_is_not_offered_a_tool_switched_off_and_cannot_call_it(
 
         turn = await _agent(w, f"mcp/{SERVER}/hello")
 
-        assert f"mcp/{SERVER}/hello" not in turn.offered, "the model was offered a tool that is off"
-        assert f"mcp/{SERVER}/goodbye" in turn.offered
+        assert (
+            _sent(f"mcp/{SERVER}/hello") not in turn.offered
+        ), "the model was offered a tool that is off"
+        assert _sent(f"mcp/{SERVER}/goodbye") in turn.offered
         assert w.conn.calls == [], "the server received a call to a tool that is off"
         assert turn.metas[0].get("ok") is False, turn
 
@@ -313,7 +321,9 @@ async def test_the_switch_writes_the_name_the_server_gives_its_tool(tmp_path, mo
         assert w.disabled_tools() == ["hello"]
         assert (await w.row(f"mcp/{SERVER}/hello"))["disabled"] is True
         assert (await w.invoke(f"mcp/{SERVER}/hello"))[0] == 403
-        assert f"mcp/{SERVER}/hello" not in (await _agent(w, f"mcp/{SERVER}/goodbye")).offered
+        assert (
+            _sent(f"mcp/{SERVER}/hello") not in (await _agent(w, f"mcp/{SERVER}/goodbye")).offered
+        )
 
 
 @pytest.mark.asyncio
@@ -360,7 +370,7 @@ async def test_a_tool_left_on_is_offered_callable_and_shown_on(tmp_path, monkeyp
         turn = await _agent(w, f"mcp/{SERVER}/goodbye", policy="")
         status, body = await w.invoke(f"mcp/{SERVER}/goodbye")
 
-        assert f"mcp/{SERVER}/goodbye" in turn.offered
+        assert _sent(f"mcp/{SERVER}/goodbye") in turn.offered
         assert turn.asked == [f"mcp/{SERVER}/goodbye"]
         assert turn.outputs[0] == "the server ran goodbye" and "ok" not in turn.metas[0]
         assert (status, body.get("output")) == (200, "the server ran goodbye"), body

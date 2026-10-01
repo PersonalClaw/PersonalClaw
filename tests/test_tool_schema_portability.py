@@ -9,12 +9,14 @@ The rail builds the tool list the way a chat turn does —
 :func:`provider_bridge._build_native_runtime` over the bundled apps' registered providers — and
 checks it against the portable profile
 (:mod:`personalclaw.tool_providers.portable_schema`) twice: every schema AS DECLARED (a built-in
-must never lean on the seam's repairs), and every ``tools=`` payload a real turn hands the model.
+must never lean on the seam's repairs), and every ``tools=`` payload a real turn hands the model,
+whose names must also be ones every provider accepts and whose descriptions must not be empty.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 import pytest
@@ -100,11 +102,25 @@ def _turn_payload(runtime, model, message: str = "hello") -> list[dict[str, Any]
     return payload
 
 
+#: The tool name every mainstream provider accepts: Converse and OpenAI take at most 64 of these
+#: characters, the Messages API 128.
+_WIRE_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
 def _wire_problems(payload: list[dict[str, Any]]) -> list[str]:
     problems: list[str] = []
+    names = [str((entry.get("function") or {}).get("name", "")) for entry in payload]
+    problems += [
+        f"{n}: named twice in one request" for n in sorted(set(names)) if names.count(n) > 1
+    ]
     for entry in payload:
         fn = entry.get("function") or {}
         name = fn.get("name", "?")
+        if not _WIRE_NAME.fullmatch(str(name)):
+            problems.append(f"{name}: a name outside [a-zA-Z0-9_-]{{1,64}}")
+        description = fn.get("description")
+        if not (isinstance(description, str) and description.strip()):
+            problems.append(f"{name}: an empty description, which Converse refuses")
         params = fn.get("parameters")
         if not isinstance(params, dict):
             problems.append(f"{name}: carries no `parameters` schema, which OpenRouter requires")
@@ -132,7 +148,8 @@ class TestTheRail:
         )
 
     def test_the_seam_changes_no_built_in_tool(self, bundled_tool_registry, monkeypatch, tmp_path):
-        """The runtime offers every declared tool unchanged: no built-in leans on a repair.
+        """The runtime offers every declared tool unchanged: no built-in leans on a repair, and
+        every one describes itself.
 
         Compared by VALUE: the built-in providers build fresh definitions on every listing, so
         identity would call every one of them altered.
@@ -144,6 +161,8 @@ class TestTheRail:
         assert set(offered) == set(declared), sorted(set(declared) ^ set(offered))
         altered = [n for n, t in offered.items() if t.parameters != declared[n].parameters]
         assert not altered, f"the seam had to repair built-in schemas: {altered}"
+        undescribed = [n for n, t in offered.items() if t.description != declared[n].description]
+        assert not undescribed, f"the seam had to describe built-in tools: {undescribed}"
 
     def test_a_full_turn_sends_only_portable_schemas(
         self, bundled_tool_registry, monkeypatch, tmp_path

@@ -1,11 +1,10 @@
-"""MCP tool-name wire fidelity (research draft T00).
+"""MCP tool-name wire fidelity.
 
 The wire map lives in docs/architecture/tool-name-wire.md. These tests are its
-rail: the full shipped tool census round-trips across the one transform we do
-not control (the provider's model-safe rewrite, mirrored by
-``_sanitized_tool_key``), the lossy collision case is loud and kept out of the
-shipped census, and the draft's failing turn shape — a later turn referencing a
-tool by the rewritten form — dispatches to the real tool.
+rail: the full shipped tool census round-trips across the one transform a name
+takes on the wire (its model-safe form, ``model_safe_name``, which every request
+carries), a form two tools share is reported and kept out of the shipped census,
+and a later turn referencing a tool by either form dispatches to the real tool.
 """
 
 from __future__ import annotations
@@ -15,7 +14,12 @@ import asyncio
 import pytest
 
 from personalclaw.agents.native.runtime import NativeAgentRuntime
-from personalclaw.agents.native.tool_names import _sanitized_tool_key, build_sanitized_index
+from personalclaw.agents.native.tool_names import (
+    build_sanitized_index,
+    left_out,
+    model_safe_name,
+    name_census,
+)
 
 # ── the pure function's contract ──────────────────────────────────────────────
 
@@ -32,9 +36,24 @@ class TestBuildSanitizedIndex:
         assert collisions == {"mcp_a_b": ["mcp/a/b", "mcp/a_b", "mcp_a/b"]}
 
     def test_never_shadows_a_real_exact_name(self) -> None:
-        # "mcp/x" sanitizes to "mcp_x", which IS a real tool — no remap.
-        healing, _ = build_sanitized_index(["mcp/x", "mcp_x"])
+        # "mcp/x" sanitizes to "mcp_x", which IS a real tool — no remap, and a request can carry
+        # only one of them: the one already named that way.
+        healing, collisions = build_sanitized_index(["mcp/x", "mcp_x"])
         assert "mcp_x" not in healing
+        assert collisions == {"mcp_x": ["mcp/x", "mcp_x"]}
+        assert left_out(collisions) == {"mcp/x": "mcp_x"}
+
+    def test_every_name_in_a_shared_form_is_left_out_when_none_is_the_form(self) -> None:
+        _, collisions = build_sanitized_index(["mcp/a/b", "mcp/a_b"])
+        assert left_out(collisions) == {"mcp/a/b": "mcp_a_b", "mcp/a_b": "mcp_a_b"}
+
+    def test_the_census_leaves_out_a_clash_and_a_name_the_runtime_answers(self) -> None:
+        healing, unroutable = name_census(
+            ["mcp/a/b", "mcp/a_b", "mcp/ok/c", "tool_search", "tool/schema"],
+            taken={"tool_search", "tool_schema"},
+        )
+        assert unroutable == {"mcp/a/b", "mcp/a_b", "tool_search", "tool/schema"}
+        assert healing == {"mcp_ok_c": "mcp/ok/c"}
 
     def test_legal_names_need_no_entry(self) -> None:
         healing, collisions = build_sanitized_index(["alpha", "beta_2", "g-tool"])
@@ -82,7 +101,7 @@ def _offline_census() -> list[str]:
 class TestTheCensusRail:
     def test_census_is_nontrivial_and_collision_free(self) -> None:
         """The rail: a new tool whose name collides under the model-safe form
-        would ship an unhealable rewrite — fail here instead."""
+        would be left out of every request — fail here instead."""
         names = _offline_census()
         assert len(names) >= 40, f"census suspiciously small ({len(names)}) — bootstrap broke?"
         _, collisions = build_sanitized_index(names)
@@ -99,7 +118,7 @@ class TestTheCensusRail:
         healing, _ = build_sanitized_index(names)
         unhealable = []
         for real in names:
-            key = _sanitized_tool_key(real)
+            key = model_safe_name(real)
             resolved = real if key == real else healing.get(key)
             if resolved != real:
                 unhealable.append((real, key, resolved))
@@ -112,15 +131,15 @@ class TestTheCensusRail:
 class TestTurnBoundary:
     @pytest.mark.asyncio
     async def test_later_turn_calling_the_rewritten_form_dispatches_real_tool(self):
-        """Turn 1 calls the real name; turn 2 references the same tool by its
-        provider-rewritten form (as a model replaying history does). Both must
-        dispatch to the real tool — the T00 failing shape."""
+        """Turn 1 calls the real name (as a model reading the tool catalog may);
+        turn 2 references the same tool by the model-safe form the request named it
+        by. Both must dispatch to the real tool."""
         from test_native_runtime import _defn, _drain, _McpTool, _ScriptedModel
 
         from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TOOL_CALL, AgentEvent
 
         real = "mcp/everything/echo"
-        rewritten = _sanitized_tool_key(real)
+        rewritten = model_safe_name(real)
         assert rewritten != real
         model = _ScriptedModel(
             [

@@ -36,7 +36,7 @@ from personalclaw.agents.native.catalog_refresh import CatalogRefresh
 from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
 from personalclaw.agents.native.failover import FAILOVER_MODES
 from personalclaw.agents.native.owed_reply import OwedReply, owed_note_message
-from personalclaw.agents.native.tool_names import build_sanitized_index
+from personalclaw.agents.native.tool_names import name_census
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
     format_tool_result,
@@ -506,6 +506,15 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 defs = [t for t in defs if not is_interactive_tool(t)]
                 index = {n: p for n, p in index.items() if n not in stripped}
                 logger.info("native: unattended run — stripped interactive tools %s", stripped)
+        # THE NAME CENSUS (docs/architecture/tool-name-wire.md): a request names each tool by its
+        # model-safe form, and _resolve_name maps that form back. A tool whose form another tool,
+        # or one of the runtime's own, already has is left out, with a line naming it.
+        sanitized, unroutable = name_census(index, taken=self._META_TOOLS)
+        if unroutable:
+            defs = [t for t in defs if t.name not in unroutable]
+            index = {n: p for n, p in index.items() if n not in unroutable}
+            provider_of = {n: p for n, p in provider_of.items() if n not in unroutable}
+        self._tool_sanitized_index = sanitized
         self._tool_defs = defs
         self._tool_index = index
         self._tool_input_schemas = declared
@@ -522,23 +531,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # SCHEMA ASSEMBLY (group filter → serialization) — factored out so a group
         # change can re-run it without re-discovering providers.
         self._assemble_schema()
-        # Sanitized-name fallback (provider-agnostic reverse-map insurance) — see
-        # build_sanitized_index for the policy and the wire map
-        # (docs/architecture/tool-name-wire.md) for the end-to-end picture. Built
-        # once here so dispatch stays a dict lookup; consulted by _resolve_name.
-        sanitized, collisions = build_sanitized_index(index)
-        for key, reals in collisions.items():
-            # The one lossy spot on the name wire, and it must never be silent:
-            # these tools stay callable by their EXACT names, but a provider
-            # rewrite of any of them cannot be healed. The census rail test
-            # keeps shipped tool names out of this branch.
-            logger.warning(
-                "native: tool names %s collide under the model-safe form %r — "
-                "a provider-rewritten call to it cannot be healed; rename one",
-                reals,
-                key,
-            )
-        self._tool_sanitized_index = sanitized
         # Risk-level map: dry-run observe-mode intercepts non-SAFE tools (T9), and
         # the permission-request event carries a tool's declared risk to the gate.
         # Built once here so the hot path is a dict lookup.
@@ -1162,7 +1154,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         # identical request fails identically, so there is no retry, and the
                         # raw dump is replaced by a sentence naming the tool (the seam should
                         # have kept it out — so it is PersonalClaw's bug, and says so).
-                        rejected = tools_named_in_rejection(str(exc), tools_kwarg or [])
+                        named = tools_named_in_rejection(str(exc), tools_kwarg or [])
+                        rejected = [self._resolve_name(n) for n in named]  # the real tools
                         if rejected:
                             from personalclaw.tool_providers import tool_prefs
 

@@ -76,14 +76,26 @@ Deliberately NOT encoded:
 * OpenAI *strict mode*'s every-property-required and ``additionalProperties: false`` rules
   (PersonalClaw never sends ``strict``, and meeting them would make every optional argument
   mandatory).
-* Tool NAME rules (``docs/architecture/tool-name-wire.md`` owns the name wire), and size or depth
-  ceilings beyond the walk's own safety bounds.
+* Size or depth ceilings beyond the walk's own safety bounds.
 
 Built-in tools must satisfy the profile AS DECLARED (``tests/test_tool_schema_portability.py`` is
 the rail). A tool from an installed app is conformed at the tool seam instead
 (:func:`offered_tool_definitions`): what can be fixed without changing what the tool accepts is
 repaired, anything else excludes that one tool from model requests, and either way ONE log line
 names the app and the tool — so a sloppy app schema can never take down a turn.
+
+The seam holds the rest of a tool definition to what every provider documents, the same way:
+
+* **A description is never empty.** Converse declares ``toolSpec.description`` with a minimum
+  length of 1, and the AWS client refuses a request carrying ``""`` before anything is sent, so one
+  MCP server listing a tool with no description failed every Bedrock turn. A tool whose source gave
+  none (or only whitespace) is offered with one written from what is known, its name and its inputs
+  (:func:`derived_description`), which says that its source gave none. The Tools page shows the
+  same text.
+* **A tool has a name.** One with none cannot be called, so it is left out.
+* **Names travel in the model-safe form** every provider accepts (``[a-zA-Z0-9_-]``, at most 64);
+  ``docs/architecture/tool-name-wire.md`` owns that hop, including the census step that leaves out
+  a tool whose form another tool of the same request already has.
 """
 
 from __future__ import annotations
@@ -592,45 +604,131 @@ def exclusion_reason(conformance: Conformance) -> str:
     return "; ".join(issue.render() for issue in conformance.blocking)
 
 
+def _first_report(key: tuple[str, str, str]) -> bool:
+    first = key not in _reported
+    _reported.add(key)
+    return first
+
+
 def offered_tool_definitions(
     tools: Iterable[ToolDefinition], *, provider: str, app: str = ""
 ) -> list[ToolDefinition]:
-    """The tools a model request may carry, each with a portable schema.
+    """The tools a model request may carry, each valid for every provider.
 
-    A tool already inside the profile passes through unchanged (the same object). One that only
-    needed repairs is replaced by a copy carrying the repaired schema; one that cannot be repaired
-    is left out. Each repair or exclusion is logged ONCE per process, naming the app and the tool —
-    the author's signal, and the operator's answer to "why can the model not see this tool".
+    A tool already valid passes through unchanged (the same object). One that only needed
+    repairs is replaced by a copy carrying the repaired schema and, when its source gave no
+    description, a description written from its name and inputs. One that cannot be made valid
+    (no name, or a schema with no portable form) is left out. Each repair or exclusion is logged
+    ONCE per process, naming the app and the tool — the author's signal, and the operator's answer
+    to "why can the model not see this tool". Names are checked across the whole request after
+    this, where a clash between two tools can be seen (``agents/native/tool_names.py``).
     """
     offered: list[ToolDefinition] = []
     for tool in tools:
-        verdict = conform_parameters(tool.parameters)
-        if not verdict.issues:
-            offered.append(tool)
-            continue
-        key = (provider, tool.name, json.dumps([dataclasses.astuple(i) for i in verdict.issues]))
-        first = key not in _reported
-        _reported.add(key)
-        if verdict.parameters is None:
-            if first:
+        if not (isinstance(tool.name, str) and tool.name.strip()):
+            if _first_report((provider, "", "no name")):
                 logger.warning(
-                    "tool schema: %s tool %r is NOT offered to models, because its parameter "
-                    "schema has no portable form: %s. The tool's author has to fix the schema.",
+                    "tool: %s offers a tool that has no name, so it is NOT offered to models. "
+                    "The tool's author has to name it.",
                     _origin(provider, app),
-                    tool.name,
-                    exclusion_reason(verdict),
                 )
             continue
-        if first:
-            logger.warning(
-                "tool schema: %s tool %r was repaired before being offered to models: %s. The "
-                "tool's author should declare a portable schema.",
-                _origin(provider, app),
-                tool.name,
-                "; ".join(i.render() for i in verdict.issues),
-            )
-        offered.append(dataclasses.replace(tool, parameters=verdict.parameters))
+        verdict = conform_parameters(tool.parameters)
+        changes: dict[str, Any] = {}
+        if verdict.issues:
+            issues = json.dumps([dataclasses.astuple(i) for i in verdict.issues])
+            first = _first_report((provider, tool.name, issues))
+            if verdict.parameters is None:
+                if first:
+                    logger.warning(
+                        "tool schema: %s tool %r is NOT offered to models, because its parameter "
+                        "schema has no portable form: %s. The tool's author has to fix the schema.",
+                        _origin(provider, app),
+                        tool.name,
+                        exclusion_reason(verdict),
+                    )
+                continue
+            if first:
+                logger.warning(
+                    "tool schema: %s tool %r was repaired before being offered to models: %s. "
+                    "The tool's author should declare a portable schema.",
+                    _origin(provider, app),
+                    tool.name,
+                    "; ".join(i.render() for i in verdict.issues),
+                )
+            changes["parameters"] = verdict.parameters
+        if not has_description(tool.description):
+            changes["description"] = derived_description(tool.name, tool.parameters)
+            if _first_report((provider, tool.name, "no description")):
+                logger.warning(
+                    "tool description: %s tool %r came with no description, so models are shown "
+                    "one written from its name and inputs. The tool's author should describe it.",
+                    _origin(provider, app),
+                    tool.name,
+                )
+        offered.append(dataclasses.replace(tool, **changes) if changes else tool)
     return offered
+
+
+# ── a tool with no description ──────────────────────────────────────────────
+
+#: How much of an input list a written description carries: the first inputs, each with the first
+#: line of its own description cut short, so a wide schema cannot make the description the bulk of
+#: the request.
+_SUMMARY_INPUTS = 12
+_SUMMARY_TEXT = 60
+_SUMMARY_KEY = 64
+
+
+def has_description(text: Any) -> bool:
+    """Whether a tool's source described it: a string with something other than whitespace."""
+    return isinstance(text, str) and bool(text.strip())
+
+
+def _kind(schema: Any) -> str:
+    declared = schema.get("type") if isinstance(schema, dict) else None
+    if isinstance(declared, str):
+        return declared
+    if isinstance(declared, list):
+        kinds = [k for k in declared if isinstance(k, str) and k != "null"]
+        if kinds:
+            return " or ".join(kinds)
+    return "value"
+
+
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def derived_description(name: str, parameters: Any) -> str:
+    """The description a tool is offered with when its source gave none.
+
+    Only what is known, and true: the tool's real name (an external MCP tool's carries its server's
+    name), that no description came with it, and its declared inputs — each one's type, whether it
+    is required, and the first line of its own description. Read from the schema AS DECLARED, so
+    the Tools page and the model see the same text.
+    """
+    head = (
+        f"{json.dumps(name, ensure_ascii=False)} came with no description, so this one is "
+        "written from its name and inputs."
+    )
+    props = parameters.get("properties") if isinstance(parameters, dict) else None
+    if not isinstance(props, dict) or not props:
+        return f"{head} It takes no arguments."
+    raw_required = parameters.get("required")
+    required = (
+        {r for r in raw_required if isinstance(r, str)} if isinstance(raw_required, list) else set()
+    )
+    parts: list[str] = []
+    for key, schema in list(props.items())[:_SUMMARY_INPUTS]:
+        flag = ", required" if key in required else ""
+        label = f"{_cut(str(key), _SUMMARY_KEY)} ({_kind(schema)}{flag})"
+        text = schema.get("description") if isinstance(schema, dict) else None
+        line = text.strip().split("\n", 1)[0].strip() if isinstance(text, str) else ""
+        parts.append(f"{label} — {_cut(line, _SUMMARY_TEXT)}" if line else label)
+    more = len(props) - _SUMMARY_INPUTS
+    tail = f"; and {more} more" if more > 0 else ""
+    return f"{head} It takes: " + "; ".join(parts) + tail + "."
 
 
 # ── a provider refusing a tool definition ────────────────────────────────────

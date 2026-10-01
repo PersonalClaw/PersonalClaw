@@ -720,10 +720,12 @@ async def list_all_tools() -> list[ToolDefinition]:
     it contributes nothing to an agent. A provider that raises while listing its tools is recorded
     as a load failure (operator-visible via :func:`get_load_failures`) rather than silently
     dropped, and the remaining providers still contribute. So is a tool whose
-    schema has no portable form: it stays in this catalog (the Tools page can
-    still show and invoke it), but no model request carries it, and the page
-    has to be able to say why.
+    schema has no portable form, or whose name is sent to models in a form another
+    tool already has: it stays in this catalog (the Tools page can still show and
+    invoke it), but no model request carries it, and the page has to be able to
+    say why.
     """
+    from personalclaw.agents.native.tool_names import build_sanitized_index, left_out
     from personalclaw.tool_providers.portable_schema import (
         conform_parameters,
         exclusion_reason,
@@ -749,4 +751,18 @@ async def list_all_tools() -> list[ToolDefinition]:
                 "not offered to models because the parameter schema has no portable form: "
                 + "; ".join(unofferable),
             )
+    # A request names each tool by its model-safe form, so a tool whose form another tool already
+    # has is left out of every request (agents/native/tool_names.py); the page says so too.
+    unroutable = left_out(build_sanitized_index(t.name for t in all_tools)[1])
+    shared: dict[str, list[str]] = {}
+    for t in all_tools:
+        form = unroutable.get(t.name)
+        if form is not None:
+            shared.setdefault(t.provider, []).append(f"{t.name} (sent as {form!r})")
+    for provider, names in shared.items():
+        record_failure(
+            provider,
+            "not offered to models because another tool is sent to them under the same name: "
+            + "; ".join(names),
+        )
     return all_tools

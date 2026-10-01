@@ -240,7 +240,9 @@ async def test_an_mcp_server_added_while_a_chat_is_open_reaches_its_next_turn(ho
     tool_registry.register_provider(_McpServers("mcp", ""), app="mcp-tools")
     runtime, chat = await _open_chat(monkeypatch)
     await _turn(runtime, chat)
-    assert not any(n.startswith("mcp/") for n in chat.offered[-1])
+    # A request names an MCP tool by its model-safe form (``mcp/notes/read_note`` travels as
+    # ``mcp_notes_read_note``).
+    assert not any(n.startswith("mcp_") for n in chat.offered[-1])
 
     servers["notes"] = ["read_note"]
     write_mcp_document(
@@ -248,7 +250,7 @@ async def test_an_mcp_server_added_while_a_chat_is_open_reaches_its_next_turn(ho
     )
     await _turn(runtime, chat)
 
-    assert "mcp/notes/read_note" in chat.offered[-1], json.dumps(chat.offered[-1])
+    assert "mcp_notes_read_note" in chat.offered[-1], json.dumps(chat.offered[-1])
 
 
 @pytest.mark.asyncio
