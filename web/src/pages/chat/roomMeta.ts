@@ -243,7 +243,9 @@ function memberState(
 export function memberModelLabel(binding?: RoomMemberBinding): string {
   if (!binding) return ''
   if (!binding.configured) return 'No agent by this name is configured'
-  if (!binding.model) return 'Default model'
+  // An agent CLI picks its own model unless the binding names one; "Default model" would say the
+  // chat's use-case model answers, which it never does for a member on a CLI.
+  if (!binding.model) return binding.provider?.startsWith('acp:') ? 'Chosen by its CLI' : 'Default model'
   // A pin that cannot run is still the member's choice, and still what the panel shows — with
   // what that means, because its turns are answered by another model meanwhile.
   if (binding.model_unavailable) return `${binding.model} · unavailable — answering on the chat model`

@@ -38,7 +38,12 @@ const NATIVE_EFFORTS: { value: string; label: string }[] = [
  *  in the app agree instead of one being precise and the other mute. Sighted users see no change —
  *  the dimension is already obvious from position and icon on screen, which is exactly why the
  *  visible label spends its width on the value. */
-function PillButton({ icon, label, dimension, open, toggle }: { icon: React.ReactNode; label: string; dimension: string; open: boolean; toggle: () => void }) {
+export function PillButton({ icon, label, dimension, open, toggle, wide = false }: {
+  icon: React.ReactNode; label: string; dimension: string; open: boolean; toggle: () => void
+  /** Room for a two-part value ("Codex · Careful coder", or one marked unavailable) that the
+   *  standard width would cut to its first word. */
+  wide?: boolean
+}) {
   return (
     <motion.button
       type="button" onClick={toggle} aria-expanded={open}
@@ -47,7 +52,7 @@ function PillButton({ icon, label, dimension, open, toggle }: { icon: React.Reac
       aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
       whileTap={{ scale: 1 - expr(0.04, 0.3) }} transition={spring.spatialFast}
       data-type="label-s"
-      className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors max-w-[160px]',
+      className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors', wide ? 'max-w-[16rem]' : 'max-w-[160px]',
         open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high')}
       style={fvs(470)}
     >
@@ -63,7 +68,7 @@ function PillButton({ icon, label, dimension, open, toggle }: { icon: React.Reac
 /** Trim boilerplate governance suffixes that runtime-provided agents append to
  *  their descriptions (e.g. "DO NOT EDIT MANUALLY") so the picker hint shows
  *  only the meaningful part. */
-function cleanAgentHint(desc?: string): string {
+export function cleanAgentHint(desc?: string): string {
   return (desc ?? '').replace(/\s*--\s*⚠️[^]*$/u, '').replace(/\s*\(?\[?DO NOT (UPDATE|EDIT)[^]*$/i, '').trim()
 }
 

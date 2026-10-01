@@ -19,6 +19,8 @@ import { ComposerNoticeLine, useComposerNotice } from '../../ui/composer/Compose
 import { classifyFailure } from './classifyFailure'
 import type { ComposerControls } from '../../ui/composer/types'
 import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
+import { LoopRuntimePill } from './LoopRuntimePill'
+import { ON_PERSONALCLAW, runtimeFields, type LoopRuntime } from './loopRuntime'
 
 /** The ONE Loop front door — a single composer with a kind slider (General / Goal /
  *  Code / Design) + an optional project chooser. The slider drives which kind is
@@ -71,7 +73,7 @@ function designInputType(name: string): string {
 /** Accept filter for the design attachment picker. */
 const DESIGN_ACCEPT = '.png,.jpg,.jpeg,.gif,.webp,.svg,.avif,.bmp,.mp4,.mov,.webm,.m4v,.html,.htm,.jsx,.tsx,.js,.ts,.md'
 
-export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKind, initialWorkspace, initialTask, initialAttended, initialCodebase }: {
+export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKind, initialWorkspace, initialTask, initialAttended, initialCodebase, initialRuntime }: {
   // Hand the CREATE RESPONSE + its kind to the host, which routes into the kind's
   // planning walkthrough (non-minimal rigor) or straight to the cockpit.
   //
@@ -88,11 +90,12 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   initialKind?: LoopKind
   initialWorkspace?: string
   // What was typed for a loop whose planning was cancelled to edit it ("Cancel and edit the
-  // task"): its task, its Mode and the codebase path typed for it come back with it
-  // (`editTask.composerRouteFor`).
+  // task"): its task, its Mode, the codebase path typed for it and what it runs on come back
+  // with it (`editTask.composerRouteFor`).
   initialTask?: string
   initialAttended?: boolean
   initialCodebase?: string
+  initialRuntime?: LoopRuntime
 }) {
   const composerRef = useRef<HTMLDivElement>(null)
   const [kind, setKind] = useState<LoopKind>(initialKind ?? 'goal')
@@ -101,6 +104,10 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   const [busy, setBusy] = useState(false)
   const [granularity, setGranularity] = useState<Granularity>('balanced')
   const [attended, setAttended] = useState(!!initialAttended)
+  // What the loop's planner and workers run on — PersonalClaw unless she picks an agent CLI here.
+  // Settings → Agent defaults' Default agent is a CHAT's default and never reaches a loop: a loop
+  // moves onto another program only when it is chosen for that loop.
+  const [runtime, setRuntime] = useState<LoopRuntime>(initialRuntime ?? ON_PERSONALCLAW)
   // Scratch-workspace lifecycle: when on, the loop's own dir is reclaimed after it
   // completes (its report is graduated to Artifacts first). Off = keep (default).
   const [scratch, setScratch] = useState(false)
@@ -219,6 +226,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
         attended,
         auto_teardown_on_complete: scratch,
         project_id: projectId,
+        ...runtimeFields(runtime),
         // A Code loop on a brownfield project inherits the project's bound codebase
         // (reuse-workspace); else the user's typed brownfield path; else the workspace
         // is picked later on Plan Review (only reachable at non-minimal rigor).
@@ -368,6 +376,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
               onTranscribe={transcribe}
               onMicError={notice.showError}
               onFocusChange={setFocused}
+              hostPills={<LoopRuntimePill value={runtime} onChange={setRuntime} />}
             />
             {/* Reuse-codebase: the Code loop inherits the picked project's workspace. */}
             {kind === 'code' && inheritedWs && (

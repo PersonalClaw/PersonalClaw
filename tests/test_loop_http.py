@@ -392,7 +392,21 @@ class TestCreate:
 
     def test_create_rejects_unknown_worker_agent(self, state):
         # the agent-existence check must actually fire (it was a silent no-op via a
-        # bad import) — a bogus native agent is rejected; acp + default pass.
+        # bad import) — a bogus native agent is rejected; an agent CLI set up here + default
+        # pass.
+        from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
+        from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+        get_default_registry().register_entry(
+            ProviderEntry(
+                name="acp:some-cli",
+                type=ACP_AGENT_CAPABILITY.type,
+                model="",
+                options={"command": ["/nonexistent/pc-fixture-cli"], "dialect": "default"},
+                credential=None,
+                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+            )
+        )
         r = _run(
             H.api_loop_create(
                 _req(
@@ -417,13 +431,13 @@ class TestCreate:
                     body={
                         "kind": "goal",
                         "task": "investigate the latency regression",
-                        "provider": "acp:claude-code",
+                        "provider": "acp:some-cli",
                         "agent": "whatever",
                     },
                 )
             )
         )
-        assert r2.status == 201  # acp runtime accepted on the provider alone
+        assert r2.status == 201  # an agent CLI set up here is accepted on the provider alone
 
     def test_create_allows_nonexistent_workspace_as_draft(self, state):
         # a not-yet-existing workspace is a warning, not a block — the draft creates and

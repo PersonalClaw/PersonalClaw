@@ -39,6 +39,9 @@ import { SearchField } from '../../ui/SearchField'
 import { DiffView } from './DiffView'
 import { WorkspacePicker } from './WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
+import { useRuntimeGroups } from '../../lib/agents'
+import { LoopRunsOn } from '../loop/LoopRuntimePill'
+import { runtimeFields, runtimeOf, showRuntime, type LoopRuntime } from '../loop/loopRuntime'
 import { FileTree } from '../files/browse/FileTree'
 import { FileViewer, type ArtifactCopy, type FileViewerHandle, type SaveAsArtifact } from '../files/browse/FileViewer'
 import type { DraftEntry } from '../../ui/content/ContentSurface'
@@ -313,6 +316,8 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   // rail's answer panel is off screen (`CodeToast`): over the panel, it covered the very
   // buttons it pointed at.
   const [toast, setToast] = useState<CodeToastState | null>(null)
+  // The agent CLIs set up here, to say when the one this project runs on can't run it now.
+  const { groups: runtimes, loaded: runtimesLoaded } = useRuntimeGroups()
   const [answerOnScreen, setAnswerOnScreen] = useState(false)
   // The toast's Respond: bring the rail's answer panel on screen (it may be collapsed, or a
   // task's detail open in its place) and put the cursor in its steer box. Held until the panel
@@ -561,6 +566,9 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   const fileRoot = ws || p.files_dir || ''
   const active = p.status === 'running'
   const missingCommands = missingCommandNotices(p.command_runnability)
+  const runsOn = showRuntime(runtimeOf(p), runtimesLoaded ? runtimes : undefined)
+  // What it runs on is part of the spec, so it can change until the project starts.
+  const runtimeEditable = LOOP_ACTION_SOURCE_STATUSES.start.has(p.status)
   const missingBuild = missingCommands.find((notice) => notice.key === 'verify_command')
   const missingTest = missingCommands.find((notice) => notice.key === 'test_command')
 
@@ -579,6 +587,13 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       setToast({ kind: 'error', text: `Couldn't ${action} this project: ${(e as Error).message || 'unknown error'}` })
       load()
     } finally { setActing(false) }
+  }
+  // Move a project that hasn't started onto another runtime — the recourse when the one it was
+  // created on isn't ready. Reported, never swallowed: the chip would otherwise show a runtime the
+  // project is not on.
+  async function moveRuntime(rt: LoopRuntime) {
+    try { setProject(loopToCodeProject(await api.updateULoop(id, runtimeFields(rt)))); setToast(null) }
+    catch (e) { setToast({ kind: 'error', text: `Couldn't change what this project runs on: ${(e as Error).message || 'unknown error'}` }) }
   }
   // Run the project's configured build/test command in the cockpit terminal — the
   // command the user already set (+ the supervisor gates on) shouldn't have to be
@@ -730,7 +745,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           <HeaderControl icon={Trash2} label="Delete project" danger priority="low" onClick={() => { void del() }} />
         </HeaderActions>} />
 
-      <CockpitMeta project={p} onOpenProject={onOpenProject} />
+      <CockpitMeta project={p} onOpenProject={onOpenProject} onRuntimeChange={runtimeEditable ? moveRuntime : undefined} />
 
       {/* Expandable prompt bar (item 14 / Gap 2) — first line collapsed, full on expand. */}
       <CockpitPromptBar prompt={p.task || ''} />
@@ -749,6 +764,23 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
               </span>
             ))}{' '}
             Edit the stored {missingCommands.length === 1 ? 'command' : 'commands'} before resuming.
+          </span>
+        </motion.div>
+      )}
+
+      {/* The agent CLI this project runs on can't run it now: said where she is looking, with what
+          she can do about it — before launch, choose another under Runs on. */}
+      {runsOn.unavailable && !TERMINAL_STATUSES.has(p.status) && (
+        <motion.div variants={messageEnter} initial="initial" animate="animate"
+          role="status" data-type="body-s"
+          className="flex shrink-0 items-start gap-s border-b border-outline-variant/40 px-l py-s"
+          style={WARN_STRIP}>
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <span>
+            {runsOn.unavailable}{' '}
+            {runtimeEditable
+              ? 'Choose another runtime under Runs on, or get it ready, then start it.'
+              : 'Its workers run there, so their turns can fail until it is ready again.'}
           </span>
         </motion.div>
       )}
@@ -894,7 +926,12 @@ function StageTrail({ project }: { project: CodeProject }) {
  *  is which facts this strip states, and asserting that on the rendered component beats asserting
  *  it on the 3400-line page's source — mounting the whole cockpit would need the chat socket, the
  *  run stream and a dozen endpoints, and would test the mocks. */
-export function CockpitMeta({ project: p, onOpenProject }: { project: CodeProject; onOpenProject?: (projectId: string) => void }) {
+export function CockpitMeta({ project: p, onOpenProject, onRuntimeChange }: {
+  project: CodeProject
+  onOpenProject?: (projectId: string) => void
+  /** Given while the project's spec can still change: "Runs on" is then the picker. */
+  onRuntimeChange?: (rt: LoopRuntime) => void
+}) {
   // The Folder chip represents the BOUND workspace only — NOT the engine files dir.
   // A no-workspace project's files_dir is internal bookkeeping (~/.personalclaw/loop/
   // <id>), so falling back to it rendered a folder chip labeled with the loop-id hash
@@ -975,39 +1012,39 @@ export function CockpitMeta({ project: p, onOpenProject }: { project: CodeProjec
       {/* Phase-execution status — moved here from beside the title (item 14) so the
           status bar is the single place to read where the run is. */}
       <StageTrail project={p} />
-      {/* Workspace · project · cycles all float to the far RIGHT edge (ml-auto pushes the
-          whole group). The project chip is interactive (deep-links to the Project). */}
-      {(wsBase || showProj || cyclesText) && (
-        <span className="ml-auto inline-flex min-w-0 shrink-0 items-center gap-3">
-          {wsBase && (
-            <span className="inline-flex shrink-0 items-center gap-1" title={ws}>
-              <Folder size={11} className="shrink-0 opacity-70" />
-              <span className="max-w-[220px] truncate font-mono">{wsBase}</span>
+      {/* Runs on · workspace · project · cycles all float to the far RIGHT edge (ml-auto pushes
+          the whole group). The project chip is interactive (deep-links to the Project). "Runs on"
+          is always said, since PersonalClaw and an agent CLI are different programs doing her work. */}
+      <span className="ml-auto inline-flex min-w-0 shrink-0 items-center gap-3">
+        <LoopRunsOn loop={p} onChange={onRuntimeChange} />
+        {wsBase && (
+          <span className="inline-flex shrink-0 items-center gap-1" title={ws}>
+            <Folder size={11} className="shrink-0 opacity-70" />
+            <span className="max-w-[220px] truncate font-mono">{wsBase}</span>
+          </span>
+        )}
+        {showProj && (
+          onOpenProject ? (
+            <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
+              className="inline-flex min-w-0 items-center gap-1 text-on-surface-var hover:text-primary">
+              <FolderKanban size={11} className="shrink-0 text-primary" />
+              <span className="max-w-[180px] truncate">{projName}</span>
+            </button>
+          ) : (
+            <span className="inline-flex min-w-0 items-center gap-1" title={`Project: ${projName}`}>
+              <FolderKanban size={11} className="shrink-0 text-primary" />
+              <span className="max-w-[180px] truncate">{projName}</span>
             </span>
-          )}
-          {showProj && (
-            onOpenProject ? (
-              <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
-                className="inline-flex min-w-0 items-center gap-1 text-on-surface-var hover:text-primary">
-                <FolderKanban size={11} className="shrink-0 text-primary" />
-                <span className="max-w-[180px] truncate">{projName}</span>
-              </button>
-            ) : (
-              <span className="inline-flex min-w-0 items-center gap-1" title={`Project: ${projName}`}>
-                <FolderKanban size={11} className="shrink-0 text-primary" />
-                <span className="max-w-[180px] truncate">{projName}</span>
-              </span>
-            )
-          )}
-          {cyclesText && (
-            <span className="inline-flex shrink-0 items-center gap-1"
-              title={cap > 0 ? `${cycles} of ${withArticle(`${cap}-cycle`)} budget run` : `${cycles} cycles run (uncapped)`}>
-              <Repeat size={11} className="shrink-0 opacity-70" />
-              <span className="font-mono">{cyclesText}</span>
-            </span>
-          )}
-        </span>
-      )}
+          )
+        )}
+        {cyclesText && (
+          <span className="inline-flex shrink-0 items-center gap-1"
+            title={cap > 0 ? `${cycles} of ${withArticle(`${cap}-cycle`)} budget run` : `${cycles} cycles run (uncapped)`}>
+            <Repeat size={11} className="shrink-0 opacity-70" />
+            <span className="font-mono">{cyclesText}</span>
+          </span>
+        )}
+      </span>
       {/* The original task/prompt is NOT shown here — it has its own dedicated,
           expandable CockpitPromptBar ("Prompt") rendered immediately below this strip. */}
     </div>

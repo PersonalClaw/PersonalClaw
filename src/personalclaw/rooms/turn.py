@@ -164,11 +164,37 @@ async def member_session(
         raise RoomError("room_archived", f"Room {room_id!r} is archived.")
 
     key = session_key(room_id, member_name)
-    provider, is_new, resumed = await sessions.get_or_create(key, agent=member.name)
+    agent, runtime = member_runtime(member.name)
+    if runtime:
+        provider, is_new, resumed = await sessions.get_or_create(
+            key, agent=agent, provider_kind=runtime
+        )
+    else:
+        provider, is_new, resumed = await sessions.get_or_create(key, agent=agent)
     try:
         yield HeldSession(provider, remembers=bool(resumed or not is_new))
     finally:
         sessions.release(key)
+
+
+def member_runtime(member_name: str) -> tuple[str, str]:
+    """How *member_name*'s session is opened, as ``(agent, runtime)``: on PersonalClaw by its
+    binding's name (``runtime`` empty), or on the agent CLI its binding names, as the agent that
+    CLI offered — the way a chat bound to that binding opens (``chat_runner``: the runtime as
+    ``provider_kind``, the CLI's own agent as ``agent``).
+
+    A binding on a CLI (``provider: acp:<cli>``, saved by the member picker for an agent the CLI
+    lists) was opened by its NAME alone, so the CLI was asked for a mode named after the binding
+    instead of the agent that was picked, and which program answered was left to the model axis'
+    fallback. A binding that is gone opens by name, as before, and the bridge says what is missing.
+    """
+    from personalclaw.config import loader as config_loader
+
+    profile = config_loader.AppConfig.load().agents.get(member_name)
+    runtime = str(getattr(profile, "provider", "") or "") if profile is not None else ""
+    if not runtime.startswith("acp:"):
+        return member_name, ""
+    return str(getattr(profile, "provider_agent", "") or "") or member_name, runtime
 
 
 # ── who was named ──────────────────────────────────────────────────────────

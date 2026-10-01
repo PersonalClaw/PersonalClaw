@@ -5,8 +5,9 @@ unstartable config. The SHARED spine checks (task length, cycle budget, workspac
 path safety, agent existence) live here; each kind contributes its own checks via an
 optional ``validate_config(body) -> (errors, warnings)`` strategy method (goal type/
 granularity + verify-command screening; code entry-stage + brownfield workspace). The
-union folds the legacy loops + code validators onto the one entity. Free of the agent
-registry — the HTTP layer passes ``agent_exists`` — so it stays import-light + testable.
+union folds the legacy loops + code validators onto the one entity. A native worker agent's
+existence is the HTTP layer's to say (it passes ``agent_exists``); the agent CLI a loop runs on
+is checked here (:func:`runtime_errors`), against the runtimes registered when it is asked.
 """
 
 from __future__ import annotations
@@ -154,15 +155,107 @@ def numeric_and_boolean_field_errors(config: dict, *, present_only: bool = False
     return errors
 
 
+def _runtime_entry(provider: str):
+    """The registered agent-runtime entry named *provider*, or ``None`` when none is set up."""
+    from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
+    from personalclaw.llm.registry import get_default_registry
+
+    try:
+        entry = get_default_registry().get_entry(provider)
+    except Exception:
+        return None
+    return entry if entry.type == ACP_AGENT_CAPABILITY.type else None
+
+
+def runtime_errors(config: dict, *, kind: str) -> list[str]:
+    """What is wrong with the agent CLI *config* asks its loop to run on, or ``[]``.
+
+    ``provider`` empty runs the loop on PersonalClaw, its kind's own worker. Otherwise it names
+    an agent CLI (``acp:<cli>``) its app registered here, and ``provider_agent`` the agent that CLI
+    offered (empty for one that offers a single agent). A name that is not set up here is refused
+    now, not stored to fail on the worker's first turn — and a ``provider`` that is not an
+    ``acp:`` runtime at all is refused too, because the worker would run on PersonalClaw while the
+    loop said it runs elsewhere. A kind whose loop runs as a workflow has no worker session to
+    put on a CLI, so the choice is refused rather than dropped.
+    """
+    from personalclaw.validation import _AGENT_NAME_RE
+
+    provider = str(config.get("provider") or "").strip()
+    agent = str(config.get("provider_agent") or "").strip()
+    if not provider:
+        if agent:
+            return [f"{agent!r} names an agent CLI's agent, but no agent CLI to run it on."]
+        return []
+    if not provider.startswith("acp:"):
+        return [
+            f"{provider!r} isn't an agent runtime: a loop runs on PersonalClaw, or on an agent "
+            "CLI set up under Settings → Providers."
+        ]
+    entry = _runtime_entry(provider)
+    if entry is None:
+        return [
+            f"The agent CLI {provider!r} isn't set up here: install or enable its agent app, "
+            "or run the loop on PersonalClaw."
+        ]
+    from personalclaw.agents.runtime_tests import runtime_label
+
+    label = runtime_label(entry)
+    if agent and not _AGENT_NAME_RE.match(agent):
+        return [f"{agent!r} isn't an agent name: choose one of the agents {label} offers."]
+    from personalclaw.workflows.service import PORTED_LOOP_KINDS
+
+    if kind in PORTED_LOOP_KINDS:
+        return [
+            f"A {kind} loop runs as a workflow, which can't be put on one agent CLI, so it "
+            f"can't run on {label}. Choose PersonalClaw to start it."
+        ]
+    return []
+
+
+def runtime_blocker(loop) -> str | None:
+    """Why *loop* can't start on the agent CLI it runs on, or ``None``.
+
+    A loop on PersonalClaw has nothing to wait for. One on an agent CLI starts only when that CLI
+    is ready as the user's last Test of it found (``agents/runtime_tests.readiness``, which starts
+    nothing): starting it otherwise would arm workers whose every turn fails, unattended."""
+    provider = str(getattr(loop, "provider", "") or "")
+    if not provider:
+        return None
+    wrong = runtime_errors(
+        {"provider": provider, "provider_agent": getattr(loop, "provider_agent", "")},
+        kind=str(getattr(loop, "kind", "") or ""),
+    )
+    if wrong:
+        return wrong[0]
+    from personalclaw.agents import runtime_tests
+
+    entry = _runtime_entry(provider)
+    readiness = runtime_tests.readiness(entry)
+    if readiness.get("ready"):
+        return None
+    label = runtime_tests.runtime_label(entry)
+    why = str(readiness.get("detail") or readiness.get("state") or "not ready").strip().rstrip(".")
+    return (
+        f"This loop runs on {label}, which isn't ready: {why}. Get it ready, or choose "
+        "another runtime for the loop, then start it."
+    )
+
+
 def spec_edit_errors(
-    body: dict, *, kind: str, existing_kind_config: dict | None = None
+    body: dict,
+    *,
+    kind: str,
+    existing_kind_config: dict | None = None,
+    existing_runtime: dict | None = None,
 ) -> list[str]:
     """Security-relevant checks for a PUT spec edit — mirrors the create gate so an
     edit can't smuggle in what create rejects (a sensitive/relative workspace_dir, or
     a destructive verify/test command). Only fields present in ``body`` are checked.
     A flat ``verify_command``/``test_command`` or a whole ``kind_config`` patch both
     route through the kind's ``validate_config`` (errors only — warnings don't block
-    an edit). ``existing_kind_config`` lets the kind see the merged config."""
+    an edit). ``existing_kind_config`` lets the kind see the merged config, and
+    ``existing_runtime`` (the stored ``provider``/``provider_agent``) the runtime an edit of
+    either one leaves the loop on."""
     from personalclaw.loop import kinds
 
     kinds.ensure_loaded()
@@ -179,6 +272,9 @@ def spec_edit_errors(
         errors.extend(
             workspace_dir_errors(str(body.get("workspace_dir") or ""), require_exists=False)
         )
+    if "provider" in body or "provider_agent" in body:
+        runtime = {**(existing_runtime or {}), **body}
+        errors.extend(runtime_errors(runtime, kind=kind))
     # Screen commands via the kind. Build a config view: the patch's kind_config (or
     # flat command fields) merged over the existing config so a partial patch is judged
     # in context. Only command/stage validity errors block; warnings are advisory.
@@ -282,6 +378,7 @@ def validate(config: dict, *, agent_exists: bool = True) -> ValidationResult:
     # Kind-specific checks (goal type/granularity + verify-command screening; code
     # entry-stage + brownfield workspace requirement) — the kind owns them.
     kind = str(config.get("kind", "goal")).strip().lower() or "goal"
+    errors.extend(runtime_errors(config, kind=kind))
     strat = kinds.get_or_none(kind)
     hook = getattr(strat, "validate_config", None) if strat else None
     if hook is not None:

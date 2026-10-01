@@ -123,6 +123,9 @@ export interface ComposerProps {
     agentDefault: boolean
     onSelect: (choice: '' | 'on' | 'off') => void
   }
+  /** Pills a host owns, drawn in the toolbar after the built-in ones — a choice that belongs to
+   *  what the host creates rather than to a conversation (the loop composer's "Runs on"). */
+  hostPills?: ReactNode
   /** When true, the send button becomes a "queue" affordance — the host runs the
    *  message after the in-flight turn finishes instead of dropping it. */
   canQueue?: boolean

@@ -14,14 +14,17 @@ import { spring } from '../../design/motion'
 import { api, SDLC_STAGES, sdlcStageLabel, type Loop, type CodeStage, type PlanStep, type SkillItem, type SkillSearchResult, type WorkflowDefStub } from '../../lib/api'
 import { HELD_CHANGE_REASON, rebaseRecord, sameDocument, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { useRuntimeGroups } from '../../lib/agents'
 import type { CodeDraft } from './codeDraft'
 import { WorkspacePicker } from './WorkspacePicker'
+import { LoopRuntimePill } from '../loop/LoopRuntimePill'
+import { ON_PERSONALCLAW, runtimeFields, runtimeOf, showRuntime, type LoopRuntime } from '../loop/loopRuntime'
 
 // Code-kind field accessors over the unified Loop (entry_stage/project_kind/
 // verify_command/test_command live in kind_config; the stage list is `plan`).
 const kc = (p: Loop) => (p.kind_config || {}) as Record<string, unknown>
 
-/** What the launch writes: the stage plan, the drive mode and the capability lists. */
+/** What the launch writes: the stage plan, the drive mode, the capability lists and what it runs on. */
 type LaunchSpec = Record<string, unknown>
 
 /** Everything on this screen that a launch writes. */
@@ -30,6 +33,7 @@ interface LaunchFields {
   autopilot: boolean
   skillIds: Set<string>
   workflowIds: Set<string>
+  runtime: LoopRuntime
 }
 
 /** The project as stored, as this screen's fields: what the screen is painted with — on arrival, and
@@ -40,6 +44,7 @@ function fieldsOf(p: Loop): LaunchFields {
     autopilot: p.autopilot !== false,
     skillIds: new Set(p.skill_ids ?? []),
     workflowIds: new Set(p.workflow_ids ?? []),
+    runtime: runtimeOf(p),
   }
 }
 
@@ -61,7 +66,7 @@ function launchSpec(f: LaunchFields): LaunchSpec {
       task_list_name: (s.task_list_name || s.title || s.stage || '').trim(),
       tasks: (s.tasks ?? []).filter((t) => (t.title || '').trim()),
     }))
-  return { plan, autopilot: f.autopilot, skill_ids: [...f.skillIds], workflow_ids: [...f.workflowIds] }
+  return { plan, autopilot: f.autopilot, skill_ids: [...f.skillIds], workflow_ids: [...f.workflowIds], ...runtimeFields(f.runtime) }
 }
 
 /** The project as read, in the launch write's own shape, with the revision the same read reported —
@@ -103,6 +108,10 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
   // How execution is driven once launched (the vision's explicit choice): autopilot
   // = the system queues + drives the phased tasks; one-by-one = the user queues each.
   const [autopilot, setAutopilot] = useState(true)
+  // What the loop's planner and workers run on — chosen in the composer, changeable here until launch.
+  const [runtime, setRuntime] = useState<LoopRuntime>(ON_PERSONALCLAW)
+  const { groups: runtimes, loaded: runtimesLoaded } = useRuntimeGroups()
+  const runsOn = showRuntime(runtime, runtimesLoaded ? runtimes : undefined)
   // The non-decomposition artifacts the user shaped in the walkthrough (problem
   // framing, requirements, design, …) — surfaced read-only here so the context the
   // user just approved carries into Plan Review instead of being dropped. The
@@ -150,7 +159,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
   function paint(p: Loop) {
     const f = fieldsOf(p)
     setProject(p)
-    setStages(f.stages); setAutopilot(f.autopilot); setSkillIds(f.skillIds); setWorkflowIds(f.workflowIds)
+    setStages(f.stages); setAutopilot(f.autopilot); setSkillIds(f.skillIds); setWorkflowIds(f.workflowIds); setRuntime(f.runtime)
     setBase(launchSpecOf(p))
   }
 
@@ -242,7 +251,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
   // Persist the edited stage plan (cleaned — `launchSpec`) over `from`; `start` follows it.
   async function saveAndStart(from: Revisioned<LaunchSpec>) {
     setLaunching(true); setError(null)
-    const mine = launchSpec({ stages, autopilot, skillIds, workflowIds })
+    const mine = launchSpec({ stages, autopilot, skillIds, workflowIds, runtime })
     try {
       if (!(await guard.save(from, mine, rebaseRecord(from.value, mine)))) setLaunching(false)
     } catch (e) {
@@ -376,6 +385,15 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                       </span>
                     </button>
                   </div>
+                  <div className="flex flex-wrap items-center gap-s border-t border-outline-variant/30 pt-s">
+                    <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>Runs on</span>
+                    <LoopRuntimePill value={runtime} onChange={setRuntime} />
+                  </div>
+                  {runsOn.unavailable && (
+                    <p role="alert" data-type="caption" style={{ color: 'var(--color-warn)' }}>
+                      {runsOn.unavailable} Choose another runtime, or get it ready, to launch.
+                    </p>
+                  )}
                 </div>
               </HeldChange>
 
@@ -392,8 +410,8 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                     enabled and relabel it to OPEN the picker, so the missing binding is
                     fixable in one click. dup-collision still hard-disables. */}
                 <span title={dupStages.length > 0 ? `Resolve the colliding stage${dupStages.length === 1 ? '' : 's'} (${dupStages.join(', ')}) before launching — each needs a distinct type or title.` : needsWorkspace ? 'This brownfield project needs a workspace folder — choosing one starts it.' : undefined}>
-                  <Button size="md" onClick={launch} loading={launching} disabled={launching || dupStages.length > 0 || held}
-                    disabledReason={launching ? undefined : held ? HELD_CHANGE_REASON : dupStages.length > 0 ? 'Two stages share a name — rename one first' : undefined}>
+                  <Button size="md" onClick={launch} loading={launching} disabled={launching || dupStages.length > 0 || held || !!runsOn.unavailable}
+                    disabledReason={launching ? undefined : held ? HELD_CHANGE_REASON : dupStages.length > 0 ? 'Two stages share a name — rename one first' : runsOn.unavailable || undefined}>
                     {needsWorkspace ? <FolderOpen size={15} /> : <Rocket size={15} />} {launching ? 'Launching…' : needsWorkspace ? 'Choose workspace & launch' : 'Launch'}
                   </Button>
                 </span>

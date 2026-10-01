@@ -118,7 +118,8 @@ def _agent_exists(body: dict) -> bool:
     """True if the chosen worker agent resolves. A loop worker is either a native
     agent (``agent`` = a key in the agent pool) or a discovered ACP agent bound to an
     ``acp:<cli>`` runtime (accepted on the runtime alone — ``provider_agent`` is
-    optional, e.g. claude-code's effort rungs leave it empty). An empty ``agent``
+    optional, e.g. claude-code's effort rungs leave it empty — and whether that runtime
+    is set up here is ``validation.runtime_errors``'s to say). An empty ``agent``
     means the kind's default worker (always seeded), applied at launch."""
     if str(body.get("provider", "")).startswith("acp:"):
         return True
@@ -871,7 +872,13 @@ async def api_loop_update(request: web.Request) -> web.Response:
         if not isinstance(effective_cfg, dict):
             effective_cfg = existing.kind_config or {}
         edit_errs = validation.spec_edit_errors(
-            spec, kind=existing.kind, existing_kind_config=effective_cfg
+            spec,
+            kind=existing.kind,
+            existing_kind_config=effective_cfg,
+            existing_runtime={
+                "provider": existing.provider,
+                "provider_agent": existing.provider_agent,
+            },
         )
         if edit_errs:
             return web.json_response(
@@ -934,14 +941,15 @@ async def api_loop_action(request: web.Request) -> web.Response:
     refusal = _refuse_source_state(action, loop.status, ACTION_SOURCE_STATES[action])
     if refusal is not None:
         return refusal
-    # Launch-time re-validation: a kind may block start (e.g. a brownfield code loop
-    # with no bound workspace). Generic — the rule lives in the strategy, not here.
-    # Only on a fresh start (resume of a paused, already-launched loop is exempt).
+    # Launch-time re-validation: the agent CLI the loop runs on must be ready, and a kind may
+    # block start (e.g. a brownfield code loop with no bound workspace) — that rule lives in the
+    # strategy, not here. Only on a fresh start (resume of a paused, already-launched loop is
+    # exempt).
     if action == "start":
         kinds.ensure_loaded()
         strat = kinds.get_or_none(loop.kind)
         blocker = getattr(strat, "launch_blocker", None)
-        reason = blocker(loop) if blocker else None
+        reason = validation.runtime_blocker(loop) or (blocker(loop) if blocker else None)
         if reason:
             return web.json_response({"error": reason}, status=422)
     state = request.app["state"]

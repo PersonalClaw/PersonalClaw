@@ -20,6 +20,9 @@ import {
   type RoomMemberView,
 } from './roomMeta'
 import type { RoomDetail, RoomListenPolicy, SavedAgent } from '../../lib/api'
+import { bindableProfileName, ensureBindableAgentName, useRuntimeGroups } from '../../lib/agents'
+import { providerMeta } from '../agents/agentMeta'
+import { notReadyWhy } from '../loop/loopRuntime'
 
 /** Per-member status, and the roster controls (`AGENT-ROOMS` C9 / `AR-8`).
  *
@@ -115,7 +118,7 @@ export function RoomMembersPanel({ detail, agents, agentsError, onRetryAgents, b
         <EmptyState
           icon={UserPlus}
           title="No members yet"
-          hint="A member is one of your configured agents, with a role and a listen policy. Add two and they can argue in front of you."
+          hint="A member is one of your agents, or an agent a ready agent CLI offers, with a role and a listen policy. Add two and they can argue in front of you."
           action={detail.room.archived ? undefined : { label: 'Add a member', onClick: () => setAdding(true), icon: UserPlus }}
         />
       ) : (
@@ -247,6 +250,12 @@ function pickerPlaceholder(agents: SavedAgent[] | undefined, agentsError: unknow
 
 /** Add a member: which binding, what role, and how it listens.
  *
+ *  The picker offers the same catalog the chat's agent picker does: the configured agents, and the
+ *  agents each ready agent CLI listed at its last Test (`useRuntimeGroups`). Picking a CLI's agent
+ *  saves the binding the chat's agent defaults use for it (`ensureBindableAgentName`: its runtime
+ *  and the agent it offered), and the member is that binding, so its session runs on the CLI
+ *  (`rooms/turn.member_runtime`). A CLI that is not ready is listed, off, with why.
+ *
  *  The binding is a PICKER over the configured agents rather than a free-text field, because
  *  the backend fails closed on an unknown name (`room_member_unknown_agent`) — offering a text
  *  box would be offering a refusal. Already-added agents are present but disabled with the
@@ -274,6 +283,7 @@ function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd,
   onAdd: (body: { name: string; role_blurb: string; listen_policy: RoomListenPolicy }) => void
   onCancel: () => void
 }) {
+  const { groups: runtimes, loaded: runtimesLoaded } = useRuntimeGroups()
   const options = useMemo(() => {
     const rows = (agents ?? []).map((a) => ({
       value: a.name,
@@ -281,13 +291,54 @@ function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd,
       disabled: taken.includes(a.name),
       title: taken.includes(a.name) ? 'Already a member of this room' : a.description || undefined,
     }))
+    // Until the configured agents are read, a CLI agent's saved binding cannot be told apart from
+    // a new one, so the CLIs wait for that read too.
+    if (agents === undefined || !runtimesLoaded) return rows
+    const saved = new Set(agents.map((a) => a.name))
+    for (const g of runtimes) {
+      const cli = providerMeta(g.providerId).label
+      if (!g.ready || g.failure) {
+        rows.push({
+          value: `unavailable:${g.providerId}`,
+          label: g.failure ? `${cli} — its agents could not be listed` : `${cli} — can’t join now: ${notReadyWhy(g)}`,
+          disabled: true,
+          title: g.failure || notReadyWhy(g),
+        })
+        continue
+      }
+      for (const a of g.agents) {
+        const binding = bindableProfileName(g.providerId, a)
+        // Its binding is already saved, so it is listed above under that name.
+        if (saved.has(binding)) continue
+        rows.push({
+          value: a.id,
+          label: a.name && a.name !== cli ? `${cli} · ${a.name}` : cli,
+          disabled: taken.includes(binding),
+          title: taken.includes(binding) ? 'Already a member of this room' : `Runs on ${cli}${a.description ? ` — ${a.description}` : ''}`,
+        })
+      }
+    }
     return rows
-  }, [agents, taken])
+  }, [agents, taken, runtimes, runtimesLoaded])
   const firstFree = options.find((o) => !o.disabled)?.value ?? ''
   const [name, setName] = useState(firstFree)
   const [blurb, setBlurb] = useState('')
   const [policy, setPolicy] = useState<RoomListenPolicy>('all')
+  // Saving a CLI agent's binding before the member is added: its own wait, and its own failure.
+  const [binding, setBinding] = useState(false)
+  const [bindErr, setBindErr] = useState('')
   const chosen = name || firstFree
+  async function add() {
+    setBindErr('')
+    setBinding(true)
+    try {
+      const discovered = Object.fromEntries(runtimes.map((g) => [g.providerId, g.agents]))
+      const member = await ensureBindableAgentName(chosen, discovered)
+      onAdd({ name: member, role_blurb: blurb.trim(), listen_policy: policy })
+    } catch (e) {
+      setBindErr(`Couldn't save that agent as a binding, so it was not added: ${(e as Error).message || 'unknown error'}`)
+    } finally { setBinding(false) }
+  }
   // 🪤 `options.length > 0` is load-bearing: `[].every(…)` is VACUOUSLY TRUE, so a user with no
   // agents at all was told "Every agent you have configured is already in this room" — a sentence
   // about a set that is empty — and the `No agents configured` placeholder below was unreachable.
@@ -310,7 +361,7 @@ function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd,
         <div className="mt-s flex flex-col gap-m">
           <Field
             label="Agent"
-            hint="One of your configured agents. It keeps its own provider session."
+            hint="One of your agents, or an agent a ready agent CLI offers. It keeps its own provider session."
             right={agentsError && onRetryAgents ? (
               <Button size="xs" variant="ghost" onClick={onRetryAgents}>Retry</Button>
             ) : undefined}>
@@ -325,6 +376,7 @@ function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd,
                 {agentsError instanceof Error ? agentsError.message : 'The agent list could not be read.'}
               </FieldError>
             ) : null}
+            {bindErr ? <FieldError className="mt-xs">{bindErr}</FieldError> : null}
           </Field>
           <Field label="Role" hint="One line. It rides along with every line this member writes, so the others can read its position next to the role it argues from.">
             <TextInput
@@ -347,11 +399,11 @@ function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd,
           <div className="flex items-center gap-s">
             <Button
               size="sm"
-              loading={busy}
+              loading={busy || binding}
               loadingLabel="Adding the member"
               disabled={!chosen}
               disabledReason="Pick which agent joins the room"
-              onClick={() => onAdd({ name: chosen, role_blurb: blurb.trim(), listen_policy: policy })}>
+              onClick={() => { void add() }}>
               <Plus size={14} aria-hidden /> Add to the room
             </Button>
             <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>

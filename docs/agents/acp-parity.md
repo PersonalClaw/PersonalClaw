@@ -3,6 +3,13 @@
 PersonalClaw can run a turn on an external coding CLI over the Agent Client Protocol (ACP)
 instead of on its own native runtime. This document states, per provider, what that costs.
 
+A chat is put on a CLI with the composer's agent picker; a loop with the loop composer's
+**Runs on**, which Plan Review can change until launch
+([loops.md](../architecture/loops.md#what-a-loop-runs-on)); a room member with Rooms › Members ›
+Add a member, which lists the agents each ready CLI offers and saves the binding a chat's agent
+defaults use for one (`provider: acp:<cli>` and its `provider_agent`). The member's session opens
+on that CLI as that agent (`rooms/turn.member_runtime`).
+
 ## How to read this
 
 **ACP providers are not at native parity, and this document exists because the gap is

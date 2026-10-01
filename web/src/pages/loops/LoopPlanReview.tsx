@@ -23,6 +23,9 @@ import { QuestionSlider } from './QuestionSlider'
 import { PlanStreamReview } from './PlanStreamReview'
 import type { SliderQuestion } from './sliderState'
 import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
+import { useRuntimeGroups } from '../../lib/agents'
+import { LoopRuntimePill } from '../loop/LoopRuntimePill'
+import { ON_PERSONALCLAW, runtimeFields, runtimeOf, showRuntime, type LoopRuntime } from '../loop/loopRuntime'
 
 const GOAL_TYPES: { id: GoalType; label: string }[] = [
   { id: 'verifiable', label: 'Verifiable' },
@@ -80,6 +83,7 @@ interface LaunchFields {
   phases: PlanPhase[]
   grillPhases: GrillPhase[] | null
   answers: Record<string, string>
+  runtime: LoopRuntime
 }
 
 /** The loop as stored, as this screen's fields: what the screen is painted with — on arrival, and
@@ -105,6 +109,7 @@ function fieldsOf(raw: Loop): LaunchFields {
     // (+ prior phase_answers) without a re-fetch.
     grillPhases: grill && grill.length ? grill : null,
     answers: (kc.phase_answers as Record<string, string> | null | undefined) ?? {},
+    runtime: runtimeOf(raw),
   }
 }
 
@@ -170,6 +175,8 @@ function launchSpec(f: LaunchFields, name: string, task: string): LaunchSpec {
     // Capabilities the user confirmed → injected actively each cycle. Flat ids = the always-on
     // baseline; per-phase ids ride in kind_config.execution_plan.
     skill_ids: [...f.skillIds], workflow_ids: [...f.workflowIds],
+    // What its planner and workers run on — spine fields, both always sent (`runtimeFields`).
+    ...runtimeFields(f.runtime),
     // Unified update: spine fields at top level, goal-specific in kind_config
     // (goal_type/sub_goals/granularity/verify_command/execution_plan). Flat goal
     // fields would be dropped by update_spec, so they MUST go through kind_config.
@@ -301,6 +308,10 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   // Saved agent definitions — for the per-phase agent dropdown (replaces the
   // freeform text box); the planner's suggested agent_name is pre-selected.
   const [agentNames, setAgentNames] = useState<string[]>([])
+  // What the loop's planner and workers run on — chosen in the composer, changeable here until launch.
+  const [runtime, setRuntime] = useState<LoopRuntime>(ON_PERSONALCLAW)
+  const { groups: runtimes, loaded: runtimesLoaded } = useRuntimeGroups()
+  const runsOn = showRuntime(runtime, runtimesLoaded ? runtimes : undefined)
 
   // The loop as stored, painted: EVERYTHING the launch writes seeded from it, with the launch's base
   // derived from the same read — so a Launch the user changed nothing on writes the loop as it was
@@ -311,7 +322,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     setLoop(loopToGoalLoop(raw)); setBase(launchSpecOf(raw))
     setTitle(f.title); setSubGoals(f.subGoals); setGoalType(f.goalType); setVerifyCommand(f.verifyCommand)
     setSkillIds(f.skillIds); setWorkflowIds(f.workflowIds); setPhases(f.phases)
-    setGrillPhases(f.grillPhases); setAnswers(f.answers)
+    setGrillPhases(f.grillPhases); setAnswers(f.answers); setRuntime(f.runtime)
   }
 
   useEffect(() => {
@@ -427,7 +438,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
         taskText = `${loop.goal}\n\nClarifications:\n${answered.map((x) => `- ${x.q.prompt} → ${x.a}`).join('\n')}`
       }
       const mine = launchSpec(
-        { title, subGoals, goalType, verifyCommand, skillIds, workflowIds, phases, grillPhases, answers },
+        { title, subGoals, goalType, verifyCommand, skillIds, workflowIds, phases, grillPhases, answers, runtime },
         loop.name, taskText,
       )
       // 🔴 NO LONGER `.catch(() => {})`. A spec write that failed was swallowed and the loop started
@@ -491,7 +502,11 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
                   installedSkills={installedSkills} installedWorkflows={installedWorkflows}
                   phases={phases}
                   planReview={streamingPlan ? <PlanStreamReview buffer={review.buffer} complete={review.complete} names={review.names} goal={loop.goal} /> : null}
-                  answered={questions.filter((q) => (answers[q.id] ?? '').trim()).length} totalQ={questions.length} />
+                  answered={questions.filter((q) => (answers[q.id] ?? '').trim()).length} totalQ={questions.length}
+                  // Edits what a Launch writes, so it is held with the other edits while a refused
+                  // launch waits on the notice.
+                  runsOn={<HeldChange guard={guard}><LoopRuntimePill value={runtime} onChange={setRuntime} /></HeldChange>}
+                  unavailable={runsOn.unavailable} />
               ) : (
                 // The steps that edit what a Launch writes — the sub-goals, the goal type and its
                 // check, the capabilities, the phase plan, the answers — off while a refused launch is
@@ -603,7 +618,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
               // a hand-rolled `loadingLabel`. The verb is kept rather than faded: launching a loop is
               // the last confirmation in a multi-step review, so "still going" has to stay legible.
               <Button onClick={launch} loading={launching} loadingLabel="Launching…"
-                disabled={held} disabledReason={HELD_REASON}><Play size={16} /> Launch</Button>
+                disabled={held || !!runsOn.unavailable} disabledReason={held ? HELD_REASON : runsOn.unavailable}><Play size={16} /> Launch</Button>
             ) : (
               <Button size="sm" onClick={() => setStep((s) => s + 1)}>
                 {onOverview ? 'Capabilities'
@@ -961,13 +976,16 @@ function PlanStep({ phases, setPhases, skills, workflows, agentNames }: {
   )
 }
 
-function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, workflowIds, installedSkills, installedWorkflows, phases, answered, totalQ, planReview }: {
+function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, workflowIds, installedSkills, installedWorkflows, phases, answered, totalQ, planReview, runsOn, unavailable }: {
   loop: GoalLoop; title: string; goalType: GoalType; subGoals: string[]
   verifyCommand: string; skillIds: string[]; workflowIds: string[]
   installedSkills: SkillItem[]; installedWorkflows: WorkflowDefStub[]
   phases: PlanPhase[]; answered: number; totalQ: number
   /** The streaming multi-view plan render, when the planner is emitting a live spec (else null). */
   planReview?: React.ReactNode
+  /** The "Runs on" control, and why the runtime it shows can't run the loop now ('' when it can). */
+  runsOn: React.ReactNode
+  unavailable: string
 }) {
   const typeLabel = GOAL_TYPES.find((t) => t.id === goalType)?.label ?? goalType
   const granularityLabel = loop.granularity.charAt(0).toUpperCase() + loop.granularity.slice(1)
@@ -990,6 +1008,12 @@ function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, 
         <div>Type: <span className="text-on-surface-var">{typeLabel}</span> · Mode: <span className="text-on-surface-var" title={loopModeMeaning(!!loop.attended)}>{loopModeLabel(!!loop.attended)}</span> · Granularity: <span className="text-on-surface-var">{granularityLabel}</span></div>
         {goalType === 'verifiable' && verifyCommand.trim() && (
           <div>Verify: <code className="text-on-surface-var font-mono">{verifyCommand.trim()}</code></div>
+        )}
+        <div className="flex flex-wrap items-center gap-xs">Runs on: {runsOn}</div>
+        {unavailable && (
+          <p role="alert" style={{ color: 'var(--color-warn)' }}>
+            {unavailable} Choose another runtime, or get it ready, to launch.
+          </p>
         )}
         {totalQ > 0 && <div>Questions answered: <span className="text-on-surface-var">{answered}/{totalQ}</span> <span className="opacity-70">(the rest I’ll investigate)</span></div>}
       </div>

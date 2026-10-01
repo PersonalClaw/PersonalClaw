@@ -29,6 +29,8 @@ import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { copyText } from '../../app/clipboard'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
+import { LoopRunsOn } from '../loop/LoopRuntimePill'
+import { runtimeFields, type LoopRuntime } from '../loop/loopRuntime'
 
 export type Scheme = 'light' | 'dark'
 type Tab = 'tokens' | 'canvas' | 'palette' | 'contrast' | 'exports'
@@ -208,6 +210,12 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
     if (!(await reportingWrite(`${a} this loop`, () => api.uLoopAction(id, a)))) return
     loadLoop()
   }
+  // Move a loop that hasn't started onto another runtime — the recourse when the one it was created
+  // on isn't ready. Data-driven like every action here: the chip re-renders from the refetch.
+  async function moveRuntime(rt: LoopRuntime) {
+    if (!(await reportingWrite('change what this loop runs on', () => api.updateULoop(id, runtimeFields(rt))))) return
+    loadLoop()
+  }
   // 🔑 A FAILED NUDGE USED TO DESTROY THE MESSAGE. `nudgeText` lives only in this component, so
   // clearing it on failure threw away what the user typed AND did not deliver it — strictly worse than
   // "nothing happened", because there is nothing left to retry with. The text and the open panel now
@@ -375,6 +383,8 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
             <FolderKanban size={11} /><span className="truncate max-w-[14rem]">{projName}</span>
           </button>
         )}
+        {/* What its planner and workers run on — before launch, the picker. */}
+        <LoopRunsOn loop={loop} onChange={canAct('start') ? moveRuntime : undefined} />
         <div data-type="caption" className="ml-auto inline-flex items-center rounded-md bg-surface-container p-0.5">
           {(['light', 'dark'] as Scheme[]).map((s) => (
             <button key={s} type="button" onClick={() => setScheme(s)}

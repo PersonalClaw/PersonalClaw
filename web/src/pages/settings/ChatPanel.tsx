@@ -553,7 +553,12 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
                   options={[{ value: '', label: '— default —' }, ...agentOptions,
                     ...(session.pool_agent && !agentOptions.some((o) => o.value === session.pool_agent) ? [{ value: String(session.pool_agent), label: String(session.pool_agent), group: 'Current' }] : [])]}
                   placeholder="— default —" emptyText="No agents"
-                  onChange={async (v) => { const name = v ? await ensureBindableAgentName(v, discovered) : ''; patch('pool_agent', name) }} />
+                  onChange={async (v) => {
+                    let name = ''
+                    try { name = v ? await ensureBindableAgentName(v, discovered) : '' }
+                    catch (e) { notify(`Couldn't save that agent as a binding: ${String((e as Error)?.message || e)}`, 'error'); return }
+                    patch('pool_agent', name)
+                  }} />
               </div>
             </Row>
             <NumberRow label="Warm pool TTL" hint="Recycle a warm session after this long unused." value={Number(session.pool_ttl_secs ?? 1800)} min={0} max={7200} step={60} suffix="s" onCommit={(n, l) => patch('pool_ttl_secs', n, undefined, l)} saved={saved} />

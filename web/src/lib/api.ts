@@ -8387,9 +8387,10 @@ export const api = {
   grillTree: (id: string) => post<GrillTreeResult>(`/api/loops/${encodeURIComponent(id)}/grill-tree`, {}),
   validateULoop: (body: Record<string, unknown>) => post<LoopValidation>('/api/loops/validate', body),
   createULoop: (body: Record<string, unknown>) => post<Loop>('/api/loops', body),
-  // A rename or a workspace re-bind: the one value it names, so no revision. A write carrying the
-  // plan, a capability list or `kind_config` replaces those from the caller's copy — `saveULoopSpec`.
-  updateULoop: (id: string, body: { name?: string; workspace_dir?: string }) => put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body),
+  // A rename, a workspace re-bind or what the loop runs on: the values it names, so no revision. A
+  // write carrying the plan, a capability list or `kind_config` replaces those from the caller's
+  // copy — `saveULoopSpec`.
+  updateULoop: (id: string, body: { name?: string; workspace_dir?: string; provider?: string; provider_agent?: string }) => put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body),
   // A spec write built from the loop this page read — Plan Review's launch, the design cockpit's
   // token overrides — so it names that read's revision (`Loop.revision`). The planner's finalize or
   // another tab may have written the spec since; that copy is refused with `409 stale_write`.

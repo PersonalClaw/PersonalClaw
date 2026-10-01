@@ -332,7 +332,7 @@ export function RoomView({ roomId, navigate, setQuery }: {
                 icon={ROOM_ICON}
                 title={room.members.length === 0 ? 'Add two members and start the argument' : 'Say something to start'}
                 hint={room.members.length === 0
-                  ? 'A room needs members before anyone can answer. Each one is a configured agent with its own role, its own provider session and its own tool reach.'
+                  ? 'A room needs members before anyone can answer. Each one is one of your agents, or an agent a ready agent CLI offers, with its own role, its own provider session and its own tool reach.'
                   : 'Write a message. Everyone listening answers in turn, and you can call on one member directly by writing @its-name.'}
                 action={room.members.length === 0
                   ? { label: 'Open members', onClick: () => setMembersOpen(true), icon: Users }

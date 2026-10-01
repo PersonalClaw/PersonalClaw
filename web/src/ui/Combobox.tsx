@@ -30,7 +30,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
   // agent" under a `Row`, `ActionConfig`'s "Action" under a `ui/forms` Field, and `ChatPanel`'s
   // "Warm pool agent" under a `Row` (that one only renders once the warm pool size is above 0).
   // Measured live before this, the trigger carried no `aria-describedby` on any of them; after,
-  // #/settings/agent resolves to "Used for every new session." and #/triggers/new to "What runs
+  // #/settings/agent resolves to "Used for every new chat." and #/triggers/new to "What runs
   // when this trigger fires. Provided by a registered action provider." The expanded search input
   // deliberately does NOT claim it: it is a transient filter inside the popup, and describing both
   // would announce the same sentence twice in one interaction.

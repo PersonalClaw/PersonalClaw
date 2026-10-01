@@ -1,5 +1,5 @@
-import { api, type SavedAgent, type AgentProvider, type DiscoveredAgent } from '../../lib/api'
-import { loadAcpDiscovered } from '../../lib/agents'
+import { api, type SavedAgent } from '../../lib/api'
+import { loadRuntimeGroups, type RuntimeGroup } from '../../lib/agents'
 import { useQuery, invalidateKeys } from '../../lib/data'
 
 /** A provider group for the Agents list. Native agents are PClaw-owned and fully
@@ -11,16 +11,8 @@ export interface NativeGroup {
   agents: SavedAgent[]
   defaultAgent: string
 }
-export interface DiscoveredGroup {
+export interface DiscoveredGroup extends RuntimeGroup {
   kind: 'discovered'
-  providerId: string        // "acp:claude-code"
-  ready: boolean
-  /** The runtime's readiness state — `untested` is installed and never started, not broken. */
-  state: string
-  detail: string
-  agents: DiscoveredAgent[]
-  /** Why this ready runtime's agents could not be listed, or `''`. Set, `agents` says nothing. */
-  failure: string
 }
 export type AgentGroup = NativeGroup | DiscoveredGroup
 
@@ -51,15 +43,8 @@ async function fetchAgentGroups(): Promise<AgentGroup[]> {
     defaultAgent: nat.value.default_agent,
   }]
   if (provs.status === 'fulfilled') {
-    const acp = provs.value.filter((p: AgentProvider) => p.type !== 'native')
-    // discover agents for READY providers (unready ones still shown as a group)
-    const discovered = await loadAcpDiscovered(acp.filter((p) => p.ready))
-    for (const p of acp) {
-      out.push({
-        kind: 'discovered', providerId: p.provider_id, ready: p.ready, state: p.state, detail: p.detail,
-        agents: discovered.agents[p.provider_id] ?? [], failure: discovered.failed[p.provider_id] ?? '',
-      })
-    }
+    // Every runtime is a group — an unready one too, with why — and only a ready one lists agents.
+    for (const g of await loadRuntimeGroups(provs.value)) out.push({ kind: 'discovered', ...g })
   }
   return out
 }

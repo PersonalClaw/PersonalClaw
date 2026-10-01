@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A loop can run on an agent CLI you have set up: the loop composer's Runs on picks PersonalClaw or one of the agents a ready CLI offers, Plan Review and the page of a loop that hasn't started change it, a CLI that isn't ready is shown with why, and a loop on a CLI that isn't set up or isn't ready is refused with that reason instead of failing on its first turn. Settings → Agent defaults' Default agent now says it is a chat's default, which loops don't use.**
+- **A room member can be an agent CLI's agent: Add a member lists the agents each ready CLI offers (a CLI that isn't ready is listed with why), and the member's turns run on that CLI as that agent rather than asking it for a mode named after the binding.**
 - **A chat channel app can say whether it carries groups, and how someone it pairs sends their code: `ChannelCapabilities.groups` and `ChannelTransportProvider.sender_pairing_hint()` (SDK additions, used by `*-channel`).**
 - **Settings → Speech & Transcription shows which ffmpeg PersonalClaw runs, or where it looked when there is none; a long recording sent whole and a video whose sound could not be read say so too.**
 - **An agent can read what is waiting in your Inbox (`inbox_list`), so a Morning briefing that asks about your Inbox can answer.**

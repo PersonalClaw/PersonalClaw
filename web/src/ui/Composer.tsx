@@ -32,7 +32,7 @@ export function Composer({
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, contextPct, contextWindow, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
-  naturalVoice, sendHeldReason,
+  naturalVoice, sendHeldReason, hostPills,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -160,6 +160,7 @@ export function Composer({
           Always rendered when present, including in its off state, so a prose change
           is attributable to a control the owner can see. */}
       {naturalVoice && <NaturalVoicePill {...naturalVoice} />}
+      {hostPills}
     </div>
   )
 

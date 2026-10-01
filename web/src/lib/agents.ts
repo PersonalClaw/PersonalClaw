@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type AgentProvider, type DiscoveredAgent, type ModelItem } from './api'
+import { useQuery } from './data'
 
 /** Single source of truth for "what agents can the system run". The genuinely
  *  shared piece is the ACP discovery loop (filter ready ACP runtimes → fetch
@@ -36,6 +37,38 @@ export async function loadAcpDiscovered(providers: AgentProvider[]): Promise<Acp
     else found.failed[p.provider_id] = r.reason instanceof Error ? r.reason.message : String(r.reason)
   })
   return found
+}
+
+/** One agent CLI runtime set up here, as a picker or a page shows it: whether it is ready, and why
+ *  not, and the agents its last Test listed. `failure` set means its agents are unknown — never
+ *  that it offers none. */
+export interface RuntimeGroup {
+  providerId: string        // "acp:<cli>"
+  ready: boolean
+  /** The runtime's readiness state — `untested` is installed and never started, not broken. */
+  state: string
+  detail: string
+  agents: DiscoveredAgent[]
+  failure: string
+}
+
+/** Every agent CLI runtime among *providers* — the ready ones with their agents, the rest with why
+ *  they are not ready. Starts nothing: each list is the one the runtime's last Test recorded. */
+export async function loadRuntimeGroups(providers: AgentProvider[]): Promise<RuntimeGroup[]> {
+  const acp = providers.filter((p) => p.type !== 'native')
+  const discovered = await loadAcpDiscovered(acp)
+  return acp.map((p) => ({
+    providerId: p.provider_id, ready: p.ready, state: p.state, detail: p.detail,
+    agents: discovered.agents[p.provider_id] ?? [], failure: discovered.failed[p.provider_id] ?? '',
+  }))
+}
+
+/** Hook: the agent CLI runtimes set up here (`loadRuntimeGroups`). `loaded` is false until the read
+ *  has produced a value, and `error` is its rejection — so "none set up" is said only when it was
+ *  read, never over a read that failed or has not landed. */
+export function useRuntimeGroups(): { groups: RuntimeGroup[]; loaded: boolean; error: unknown; reload: () => void } {
+  const { data, error, refresh } = useQuery('agents:runtimes', async () => loadRuntimeGroups(await api.agentProviders()))
+  return { groups: data ?? [], loaded: data !== undefined, error, reload: refresh }
 }
 
 /** A flat, grouped agent option — native agents + ACP-discovered agents. */
@@ -85,13 +118,25 @@ export function useAgentCatalog(opts: { native?: 'saved' | 'installed' } = {}): 
   return { options, loading, discovered }
 }
 
+/** The saved-profile name a discovered ACP agent is bound under (`ensureBindableAgentName`).
+ *  Deterministic, so re-selecting the same agent reuses the profile, and a picker can tell that a
+ *  saved binding already IS this agent. */
+export function bindableProfileName(providerId: string, agent: DiscoveredAgent): string {
+  return `${providerId}-${agent.provider_agent || agent.name}`
+    .replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
+}
+
 /** Ensure a SAVED agent profile exists for a discovered ACP agent, returning
- *  its profile name. Persistent bindings (default_agent / pool_agent) resolve a
+ *  its profile name. Persistent bindings (default_agent / pool_agent / a room member) resolve a
  *  saved profile name — an ephemeral discovered agent has none — so we
  *  materialize a tiny profile (provider + provider_agent) that resolve_agent_
  *  bindings can bind exactly like a chat session does. Idempotent: reuses an
  *  existing profile with the same provider+provider_agent. `value` is the
- *  AgentOption value: a native name, or a discovered id "acp:<cli>/<modeId>". */
+ *  AgentOption value: a native name, or a discovered id "acp:<cli>/<modeId>".
+ *
+ *  A profile that could not be saved REJECTS, with the server's reason. It used to be swallowed,
+ *  so the caller went on to bind a name nothing had saved, and was refused for a missing binding
+ *  that hid why it was missing. */
 export async function ensureBindableAgentName(value: string, discovered: Record<string, DiscoveredAgent[]>): Promise<string> {
   // Native agent (not an acp: id) → the value IS the profile name.
   if (!value.startsWith('acp:')) return value
@@ -102,15 +147,13 @@ export async function ensureBindableAgentName(value: string, discovered: Record<
   }
   if (!found) return value  // unknown — leave as-is (backend will warn/fallback)
   const { providerId, agent } = found
-  // Deterministic profile name so re-selecting the same agent reuses the profile.
-  const profileName = `${providerId}-${agent.provider_agent || agent.name}`
-    .replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
+  const profileName = bindableProfileName(providerId, agent)
   const existing = await api.agents().then((d) => d.agents.find((p) => p.name === profileName)).catch(() => undefined)
   if (!existing) {
     await api.createAgent({
       name: profileName, provider: providerId, provider_agent: agent.provider_agent,
       description: `${agent.name} (${providerId})`,
-    }).catch(() => {})
+    })
   }
   return profileName
 }

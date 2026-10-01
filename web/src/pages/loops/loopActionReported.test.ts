@@ -44,7 +44,8 @@ const SECTION = F('loop/LoopSection.tsx')
 const WRITES: Array<[string, string, string[]]> = [
   // The token edits write through `saveULoopSpec`: they name the revision of the copy they were built
   // from (`lib/staleWrite.ts`), where the old `updateULoop` wrote over whatever was stored.
-  ['loops/DesignCockpitPage.tsx', COCKPIT, ['uLoopAction', 'uLoopNudge', 'saveULoopSpec']],
+  // `updateULoop` moves a loop that hasn't started onto another runtime ("Runs on").
+  ['loops/DesignCockpitPage.tsx', COCKPIT, ['uLoopAction', 'uLoopNudge', 'saveULoopSpec', 'updateULoop']],
   // deleteULoop joined in AUD-A11: the list's delete hand-rolled its own notify() while
   // every other write in the same file rode reportingWrite.
   ['loops/LoopsListPage.tsx', LIST, ['uLoopAction', 'deleteULoop']],
@@ -83,9 +84,9 @@ describe('a loop action that fails tells the user', () => {
         expect(strip(raw), `${name} should still perform api.${call}`).toContain(`api.${call}(`)
       }
     }
-    // Eight call sites across the three files: 4 cockpit, 2 list (act + delete), 2 section.
+    // Nine call sites across the three files: 5 cockpit, 2 list (act + delete), 2 section.
     const total = WRITES.reduce((n, [, raw]) => n + [...strip(raw).matchAll(/reportingWrite\(/g)].length, 0)
-    expect(total, 'every write routed through the reporter').toBe(8)
+    expect(total, 'every write routed through the reporter').toBe(9)
   })
 
   it('EVERY write in the two refetching files is gated — not just the ones that already are', () => {

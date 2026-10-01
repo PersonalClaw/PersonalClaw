@@ -48,6 +48,8 @@ import { loopStatusLabel, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES,
 import { modelIdOf } from '../../lib/modelRef'
 import { notify } from '../../app/appSdk'
 import { copyText } from '../../app/clipboard'
+import { LoopRunsOn } from '../loop/LoopRuntimePill'
+import { runtimeFields, type LoopRuntime } from '../loop/loopRuntime'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
 function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null {
@@ -568,6 +570,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     } finally { renameInFlight.current = false }
   }
 
+  // Move a loop that hasn't started onto another runtime — the recourse when the one it was created
+  // on isn't ready. Reported, never swallowed: the chip would otherwise show a runtime the loop is
+  // not on.
+  async function moveRuntime(rt: LoopRuntime) {
+    try { setC(loopToGoalLoop(await api.updateULoop(id, runtimeFields(rt)))) }
+    catch (e) { notify(`Couldn't change what this loop runs on: ${String((e as Error)?.message || e)}`, 'error') }
+  }
+
   // Role-phased plan (planner/quorum): the phase the upcoming/current cycle is
   // in, so the cockpit can show "Phase 2/4 · news" and highlight it in the list.
   const execPlan = (c.execution_plan ?? []) as Record<string, unknown>[]
@@ -649,7 +659,11 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       {wsDir
         ? <MetaPill icon={<FolderOpen size={11} />} text={wsDir.split('/').pop() || wsDir} title={`Workspace: ${wsDir}`} />
         : c.work_dir && <MetaPill icon={<FolderOpen size={11} />} text={c.work_dir.split('/').pop() || c.work_dir} title={`Works in: ${c.work_dir}`} />}
-      <MetaPill icon={<Bot size={11} />} text={c.agent || 'default'} title="Worker agent" />
+      {/* What its planner and workers run on — before launch, the picker. A native worker agent the
+          loop names (one the API set) is that agent, on PersonalClaw. */}
+      {!c.provider && c.agent
+        ? <MetaPill icon={<Bot size={11} />} text={c.agent} title="Worker agent — runs on PersonalClaw" />
+        : <LoopRunsOn loop={c} onChange={LOOP_ACTION_SOURCE_STATUSES.start.has(c.status) ? moveRuntime : undefined} />}
       {modelLabel && <MetaPill icon={<Cpu size={11} />} text={modelLabel} title={c.model} />}
       <MetaPill text={loopModeLabel(c.attended)} title={loopModeMeaning(c.attended)} />
       {(c as { kind?: string }).kind === 'goal' && <>

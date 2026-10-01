@@ -18,7 +18,7 @@ import { setAgentYolo } from './agentYolo'
 // (types + ranges are the server's truth; we surface the same bounds).
 type AgentCfg = Record<string, unknown>
 
-/** Agent defaults — the default agent for new sessions + the agent-execution
+/** Agent defaults — the default agent for new chats + the agent-execution
  *  config (approval, subagents, advanced). Each control PATCHes a single
  *  allowlisted path via /api/config/personalclaw. Session/warm-pool settings
  *  live under Chat. */
@@ -62,7 +62,9 @@ export function AgentDefaultsPanel() {
   // then sets default_agent to that profile name (persistent bindings resolve a
   // saved profile, not an ephemeral discovered agent).
   const onPickDefault = async (value: string) => {
-    const name = await ensureBindableAgentName(value, discovered)
+    let name: string
+    try { name = await ensureBindableAgentName(value, discovered) }
+    catch (e) { notify(`Couldn't save that agent as a binding: ${String((e as Error)?.message || e)}`, 'error'); return }
     const prev = defaultAgent
     setDefaultAgent(name)
     api.setDefaultAgent(name).catch((e) => {
@@ -123,9 +125,12 @@ export function AgentDefaultsPanel() {
 
   return (
     <div>
-      <PanelHeader title="Agent defaults" hint="The default agent for new sessions and how agents execute — approval, subagents, and advanced safety knobs. New sessions inherit these unless overridden." />
+      <PanelHeader title="Agent defaults" hint="The default agent for new chats and how agents execute — approval, subagents, and advanced safety knobs. New sessions inherit these unless overridden." />
 
-      <Section title="Default agent" hint="Which agent definition serves a new chat when none is chosen. Native agents and connected ACP-runtime agents are both selectable.">
+      {/* A chat's default only. A loop runs on what its own composer's "Runs on" picks (PersonalClaw
+          unless an agent CLI is chosen there): moving every new loop onto another program because a
+          chat default changed would hand her unattended work to a CLI she never picked for it. */}
+      <Section title="Default agent" hint="Which agent definition serves a new chat when none is chosen. Native agents and connected ACP-runtime agents are both selectable. Loops don't use it: a loop runs on what you pick under Runs on when you create it.">
         <DefaultAgentRow options={agentOptions} value={defaultAgent} onChange={onPickDefault} onRetry={refresh} />
       </Section>
 
@@ -208,7 +213,7 @@ function DefaultAgentRow({ options, value, onChange, onRetry }: { options: Agent
   if (value === null) {
     return (
       <RowGroup>
-        <Row label="Default agent" hint="Used for every new session.">
+        <Row label="Default agent" hint="Used for every new chat.">
           <InlineError icon onRetry={onRetry}>Couldn't read the default agent, so it can't be changed until a retry succeeds.</InlineError>
         </Row>
       </RowGroup>
@@ -221,7 +226,7 @@ function DefaultAgentRow({ options, value, onChange, onRetry }: { options: Agent
     : [{ value, label: value, group: 'Current' }, ...options]
   return (
     <RowGroup>
-      <Row label="Default agent" hint="Used for every new session.">
+      <Row label="Default agent" hint="Used for every new chat.">
         <div className="flex items-center gap-2">
           <SavedToast show={saved} />
           <div className="w-56">

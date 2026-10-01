@@ -60,6 +60,33 @@ place, for every kind at once.
 | `goal:open_ended`, `research:open_ended` | `judge_assessment` (ground truth: `REPORT.md` / `RESEARCH.md`) |
 | `goal:monitor`, `research:monitor` | `never` — only a user Stop (or the budget, counted as a clean stop) ends it |
 
+## What a loop runs on
+
+A loops-table loop's planner and workers run on PersonalClaw, its kind's own worker agent, unless
+it is put on an agent CLI. Two spine fields say which: `provider` (the CLI's runtime id,
+`acp:<cli>`) and `provider_agent` (the agent that CLI offered, its ACP mode id; empty for a CLI
+that offers one). `loop/manager.py` binds them onto the stage worker and every per-task worker the
+way the chat's agent picker binds a chat, and `loop/plan_walkthrough.py` onto the planner. The
+supervisor's judge still runs on the model its use case binds (`loops.judge_use_case`).
+
+- **Choosing.** The loop composer's **Runs on** pill sends both fields with the create. Plan Review
+  changes them until launch, and so does the Runs on chip on the page of a loop that
+  has not started. The picker lists every agent CLI set up here (`GET /api/agent-providers`), each
+  ready one with the agents its last Test listed; one that is not ready is shown with why and
+  cannot be picked, and a page names a loop's runtime as unavailable when it is no longer set up,
+  no longer ready, or no longer lists the chosen agent (`web/src/pages/loop/loopRuntime.ts`).
+- **Refused, not stored.** `POST /api/loops`, `POST /api/loops/validate` and a pre-launch
+  `PUT /api/loops/{id}` refuse a `provider` that is not an `acp:<cli>` runtime registered here, a
+  malformed `provider_agent`, and a `provider_agent` with no `provider`
+  (`loop/validation.runtime_errors`). A `general` loop runs as a workflow, which cannot be put on
+  one agent CLI, so it refuses a runtime too rather than dropping it.
+- **Starting.** `PATCH /api/loops/{id} {action: start}` (and the agent's start tools) refuse a loop
+  whose CLI is not ready as the user's last Test of it found, with the CLI's own reason
+  (`loop/validation.runtime_blocker`, which starts nothing). The loop stays `ready`. A resume is not
+  re-checked, as with the kind's own launch blockers.
+- **Not the chat default.** Settings → Agent defaults' Default agent is a chat's default and never
+  reaches a loop: a loop moves onto another program only when it is chosen for that loop.
+
 ## One listing, two homes
 
 A kind in `workflows/service.py:PORTED_LOOP_KINDS` (today `general`) no longer writes a

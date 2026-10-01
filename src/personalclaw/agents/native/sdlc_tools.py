@@ -52,8 +52,9 @@ def _svc():
 
 def _agent_exists(body: dict) -> bool:
     """Mirror the HTTP layer's worker-agent resolution (loop_routes._agent_exists):
-    an acp:<cli> runtime is accepted on the runtime alone; an empty agent means the
-    kind default (always seeded); else the name must be in the agent pool."""
+    an acp:<cli> runtime is accepted on the runtime alone (``validation.runtime_errors``
+    checks it is set up here); an empty agent means the kind default (always seeded);
+    else the name must be in the agent pool."""
     from personalclaw.config.loader import AppConfig
 
     if str(body.get("provider", "")).startswith("acp:"):
@@ -94,6 +95,16 @@ async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult
         # the cost estimate matters MOST here, and a UI-created project started via chat
         # never saw the create-time relay. RESUME skips re-validation, so no warnings there.
         launch_warnings = list(v.warnings)
+        not_ready = validation.runtime_blocker(loop)
+        if not_ready:
+            return ToolResult(
+                success=False,
+                error=not_ready,
+                recovery_hints=[
+                    "Tell the user which agent CLI isn't ready; they Test it under Settings → "
+                    "Providers, or choose another runtime for the loop."
+                ],
+            )
         kinds.ensure_loaded()
         strat = kinds.get_or_none(loop.kind)
         blocker = getattr(strat, "launch_blocker", None) if strat else None

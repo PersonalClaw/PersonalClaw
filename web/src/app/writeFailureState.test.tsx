@@ -315,10 +315,8 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // (`pages/apps/installConsent.useAppInstall`), whose confirm reports its own failure inside the
   // dialog beside the button that was pressed, and the scanner credits it there — so the shape no
   // longer exists at any call site, rather than being excused at nine.
-  // (a) `createAgent` inside the ACP agent-adoption helper. It returns the profile name regardless,
-  // so a failed create yields a session bound to a profile that does not exist. A library module with
-  // no surface; the remedy is to propagate to the picker that called it.
-  'lib/agents.ts': 1,
+  // `lib/agents.ts` (1) is GONE: `ensureBindableAgentName` used to swallow a failed `createAgent` and
+  // return the profile name anyway. It propagates now, and each picker that calls it says why.
   // 9: the side-chat open, the title regen, three optimistic organise writes (pin/folder/
   // never-archive), the `/optimize` fall-through, the `/undo` fall-through, and the two auto-nudge
   // controls. The two tag writes left this list when they became one-tag edits that report a refusal.
@@ -574,12 +572,13 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     expect(W.size, 'no write methods parsed out of lib/api.ts').toBeGreaterThan(300)
     const c = census()
     // 30 → 29: the Knowledge page's re-embed trigger ("surfaced by reload") is gone. Its chip starts
-    // the one embedding re-index now and renders that job's refusal and progress.
-    expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(29)
+    // the one embedding re-index now and renders that job's refusal and progress. 29 → 28:
+    // `lib/agents.ensureBindableAgentName` no longer swallows a binding it could not save.
+    expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(28)
     // Lowered by exactly the sites fixed since it was measured (ChatPage's two tag writes,
-    // LoopPlanReview's swallowed spec save and the lifecycle-hook toggle among them, and the
-    // Knowledge page's re-embed trigger: 48 → 47).
-    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(47)
+    // LoopPlanReview's swallowed spec save and the lifecycle-hook toggle among them, the
+    // Knowledge page's re-embed trigger: 48 → 47, and the binding save above: 47 → 46).
+    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(46)
 
     const kinds = (src: string) => silentSites(src, W).map((s) => s.split(':')[0])
     const n = (src: string) => kinds(src).length
