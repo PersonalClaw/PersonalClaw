@@ -32,6 +32,10 @@ export interface ToolSegment {
   recoveryHints?: string[] // TC5: concrete next-steps on a failed tool call
   agentError?: AgentError  // Coded WHAT/WHY/FIX envelope on a failed call
   ok?: boolean            // tool-call outcome — only present (false) when it FAILED, for color-coding
+  /** The call ran without anyone asking her: the agent CLI ran it on its own, with no approval
+   *  request. The gateway's sentence saying so and why (`ungated_call_note`), from the live
+   *  card's `tool_call` update frame or the persisted row's `meta.ungated`. */
+  ungated?: string
 }
 
 /** The structured error envelope carried on a failed
@@ -71,6 +75,9 @@ export interface ApprovalSegment {
   // explicitly and renders an unknown value honestly rather than as a denial.
   // Absent = still pending → the actionable card.
   resolved?: string
+  // What PersonalClaw answered the agent with when it refused the call — the agent's own option
+  // ("Answered “No”") — from the line the gateway writes for the refused step (`foldStepLine`).
+  detail?: string
 }
 
 /** Coarse activity line — the native loop emits `activity_event {kind,text}`
@@ -378,6 +385,11 @@ export function failedStepCount(work: Segment[]): number {
   return work.filter((s) => (s.kind === 'tool' && s.ok === false) || s.kind === 'error').length
 }
 
+/** How many of a turn's steps the agent CLI ran without asking her (`ToolSegment.ungated`). */
+export function unaskedStepCount(work: Segment[]): number {
+  return work.filter((s) => s.kind === 'tool' && !!s.ungated).length
+}
+
 /** A subagent spawned during this session — driven by the subagent_spawn /
  *  subagent_tool / subagent_done WS events (fire-and-forget async subagents).
  *  Shown as live cards in the activity panel's Subagents tab. */
@@ -451,7 +463,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; learned?: LearnedRecord[] } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; learned?: LearnedRecord[]; ungated?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -479,6 +491,25 @@ function recollapsePastes(content: string, pastes: { seq: number; lines: number;
 }
 const markerForSeq = (seq: number) => `[Paste #${seq}]`
 
+/** Fold a line the gateway wrote about a step (a `tool` row with no call id) into the turn's
+ *  steps, the same way live and after a reload. It is no step of its own. The one it can add to
+ *  is the approval it follows: a refused approval's line says how the call ended, which the
+ *  approval's own row already says, and may name the agent's option the refusal was sent as
+ *  (`meta.detail`), which goes on the approval's line. */
+export function foldStepLine(segs: Segment[], meta: { detail?: unknown } | undefined): Segment[] {
+  const last = segs[segs.length - 1]
+  const detail = typeof meta?.detail === 'string' ? meta.detail.trim() : ''
+  if (!detail || last?.kind !== 'approval') return segs
+  return [...segs.slice(0, -1), { ...last, detail }]
+}
+
+/** The sentence saying a call ran without anyone asking her (`ToolSegment.ungated`), or nothing.
+ *  The live frame and the persisted row both carry it as a string; anything else says nothing. */
+export function ungatedOf(src: { ungated?: unknown } | undefined): string | undefined {
+  const note = src?.ungated
+  return typeof note === 'string' && note.trim() ? note : undefined
+}
+
 /** Resolve a tool name: prefer meta.tool, else the turn content. Also strips any
  *  leading pictographic + space so sessions persisted before the status-sentinel
  *  removal (which prefixed tool content with a status glyph) still render clean. */
@@ -487,10 +518,11 @@ function toolName(meta: HistMsg['meta'], content: string): string {
 }
 
 /** Build the turn/segment model from persisted history so a refreshed / revisited
- *  / streaming-done session renders IDENTICALLY to a live one — tool calls become
- *  ToolSegments (deduped by tool_call_id, call+result merged in place), permission
- *  rows become resolved ApprovalSegments, text stays text. A `tool`-role turn's
- *  name comes from meta.tool (or its content); see toolName.
+ *  / streaming-done session renders IDENTICALLY to a live one (`liveToolFrames` is the
+ *  live half) — tool calls become ToolSegments (deduped by tool_call_id, call+result
+ *  merged in place), permission rows become resolved ApprovalSegments, text stays text,
+ *  and a line the gateway wrote about a step is no step of its own (see the `tool`
+ *  branch). A `tool`-role turn's name comes from meta.tool (or its content); see toolName.
  *
  *  The native ReAct loop re-injects the SAME user prompt each cycle, so history
  *  reads `user, tool, user, tool, assistant` — we collapse those repeats (a user
@@ -513,6 +545,9 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
   // Backend visible-list cursor. Advances for EVERY user/assistant message — including
   // a collapsed re-injection that produces no turn — because the backend counts it.
   let visible = -1
+  // Whether the turn being read is one the gateway ran: it holds a call row carrying its call's
+  // id, or an approval. That decides what a `tool` row with no id is (see the `tool` branch).
+  let ranHere = false
 
   // The skills that joined a turn ride the message that started it (`joinedSkillsOf`), and are
   // shown on the answer that follows it.
@@ -560,6 +595,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       ut.visibleIndex = visible
       turns.push(ut)
       lastUserText = text; assistantTextSinceUser = false
+      ranHere = false
     } else if (m.role === 'assistant') {
       visible += 1
       const at = lastAssistant()
@@ -604,7 +640,22 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       }
       assistantTextSinceUser = true
     } else if (m.role === 'tool') {
-      const id = m.meta?.tool_call_id || `auto-${turns.length}-${lastAssistant().segments.length}`
+      const callId = m.meta?.tool_call_id
+      // The gateway writes every call with its id. A row without one, in a turn it ran, is a
+      // line it wrote ABOUT a step: how the step's approval ended ("… (rejected)", which the
+      // approval's own row already says), why a gate refused the call, a loop-breaker warning.
+      // The live page draws no card for any of them, so a reload draws none either; each folds
+      // as it does live (`foldStepLine`). Read as a call, each was a fake step: an extra row
+      // titled with the line's own words put through the tool-name humanizer, reading
+      // "completed". An imported conversation's call lines carry no ids at all, so in its turns
+      // they are still its calls.
+      if (!callId && ranHere) {
+        const at = lastAssistant()
+        at.segments = foldStepLine(at.segments, m.meta)
+        continue
+      }
+      if (callId) ranHere = true
+      const id = callId || `auto-${turns.length}-${lastAssistant().segments.length}`
       const existing = toolIndex.get(id)
       if (existing) {  // result/completion update for an already-seen call → merge
         if (m.meta?.output != null) existing.output = m.meta.output
@@ -622,8 +673,10 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
         if (m.meta?.recovery_hints?.length) existing.recoveryHints = m.meta.recovery_hints
         if (m.meta?.agent_error) existing.agentError = m.meta.agent_error
         if (m.meta?.ok === false) existing.ok = false
+        const ungated = ungatedOf(m.meta)
+        if (ungated) existing.ungated = ungated
       } else {
-        const seg: ToolSegment = { kind: 'tool', id, tool: toolName(m.meta, m.content), detail: m.meta?.detail, toolKind: m.meta?.kind, input: m.meta?.input, output: m.meta?.output, purpose: m.meta?.purpose, done: !!m.meta?.done, contentType: m.meta?.content_type, rawRef: m.meta?.raw_ref, truncated: m.meta?.truncated, originalLength: m.meta?.original_length, recoveryHints: m.meta?.recovery_hints, agentError: m.meta?.agent_error, ok: m.meta?.ok === false ? false : undefined }
+        const seg: ToolSegment = { kind: 'tool', id, tool: toolName(m.meta, m.content), detail: m.meta?.detail, toolKind: m.meta?.kind, input: m.meta?.input, output: m.meta?.output, purpose: m.meta?.purpose, done: !!m.meta?.done, contentType: m.meta?.content_type, rawRef: m.meta?.raw_ref, truncated: m.meta?.truncated, originalLength: m.meta?.original_length, recoveryHints: m.meta?.recovery_hints, agentError: m.meta?.agent_error, ok: m.meta?.ok === false ? false : undefined, ungated: ungatedOf(m.meta) }
         toolIndex.set(id, seg)
         lastAssistant().segments.push(seg)
       }
@@ -639,6 +692,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // reloaded transcript re-armed live Allow/Deny buttons for a call that had already
       // run. approvalOutcome() owns interpreting the value, in one place, for both paths.
       const resolved = m.meta?.resolved || undefined
+      ranHere = true
       // The risk and the radius are decoded, never cast: a row another build wrote can carry
       // a level or a shape this one cannot read, and that must be no claim at all.
       lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: approvalRiskOf(m.meta?.risk), blastRadius: blastRadiusOf(m.meta?.blast_radius), grantAgent: m.meta?.grant_agent, resolved })

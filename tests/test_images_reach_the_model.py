@@ -392,7 +392,7 @@ async def test_the_route_answers_for_a_composer_with_no_session(tmp_path, regist
         ).json()
     assert ok["accepted"] is True and ok["reason"] == ""
     assert acp["accepted"] is False
-    assert acp["reason"] == "claude-code can't be handed an image."
+    assert acp["reason"] == "Claude Code can't be handed an image."
 
 
 # ── each wire's translation of the neutral part ───────────────────────────────

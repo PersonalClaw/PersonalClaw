@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { ChevronRight, Loader2, Check, Zap, Maximize2, Lightbulb, AlertTriangle } from 'lucide-react'
+import { ChevronRight, Loader2, Check, Zap, Maximize2, Lightbulb, AlertTriangle, ShieldAlert } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { spring } from '../../design/motion'
 import type { ToolSegment } from './chatTypes'
@@ -11,7 +11,11 @@ import { requestToolResultFull } from './toolResultBridge'
  *  cards stay scannable when many tools are in play; the agent's refined summary
  *  (the command, the file+range, …) follows as muted secondary detail. Expands
  *  to the full input + result. Pending while tool_result hasn't landed; ✓ when
- *  done. Subagent spawns render the same way. */
+ *  done. Subagent spawns render the same way.
+ *
+ *  A call the agent CLI ran without anyone asking her (`seg.ungated`) never reads like one she
+ *  approved: the gateway's sentence saying so, and why, sits on the card in plain sight, whether
+ *  the card is open or not, and in its accessible name. */
 export function ToolCard({ seg }: { seg: ToolSegment }) {
   const [open, setOpen] = useState(false)
   const Icon = iconForTool(seg)
@@ -20,7 +24,8 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
   // Screen-reader label: the status + tool + detail are conveyed only by icon
   // and visual layout, so spell them out for the disclosure button.
   const status = seg.done ? (seg.ok === false ? 'failed' : 'completed') : 'running'
-  const srLabel = `Tool ${label}${detail ? ` ${detail}` : ''} — ${status}${seg.auto ? ', auto-approved' : ''}. ${open ? 'Collapse' : 'Expand'} details`
+  const unasked = seg.ungated ? `, ${seg.ungated.charAt(0).toLowerCase()}${seg.ungated.slice(1).replace(/\.$/, '')}` : ''
+  const srLabel = `Tool ${label}${detail ? ` ${detail}` : ''} — ${status}${seg.auto ? ', auto-approved' : ''}${unasked}. ${open ? 'Collapse' : 'Expand'} details`
 
   return (
     <div className="my-1 overflow-hidden border border-outline-variant/40 bg-surface-low/40"
@@ -49,6 +54,13 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
             : <Check size={14} className="shrink-0" aria-hidden style={{ color: 'var(--color-ok)' }} />
           : <Loader2 size={13} className="shrink-0 animate-spin text-on-surface-low" aria-hidden />}
       </button>
+      {seg.ungated && (
+        <p data-type="caption"
+          className="flex items-start gap-xs border-t border-outline-variant/30 px-m py-xs text-warning">
+          <ShieldAlert size={12} className="mt-0.5 shrink-0" aria-hidden />
+          <span>{seg.ungated}</span>
+        </p>
+      )}
 
       <AnimatePresence initial={false}>
         {open && (

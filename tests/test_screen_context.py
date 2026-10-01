@@ -786,7 +786,7 @@ class TestRunnerDelivery:
         client.provider_id = "acp:claude-code"
         verdict = await chat_runner._turn_image_input(client)
         assert verdict.accepted is False
-        assert verdict.reason == "claude-code can't be handed an image."
+        assert verdict.reason == "Claude Code can't be handed an image."
 
     @pytest.mark.asyncio
     async def test_description_uses_the_image_modality_binding_not_the_chat_model(self):

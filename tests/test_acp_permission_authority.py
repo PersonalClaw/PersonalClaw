@@ -379,7 +379,11 @@ async def _drive(state, session, *, answer=None, sel_mock=None):
                 await asyncio.sleep(0.01)
 
         asyncio.get_event_loop().create_task(_answer())
-    with patch("personalclaw.dashboard.chat_runner.sel", sel_mock or MagicMock()):
+    audit = sel_mock or MagicMock()
+    with (
+        patch("personalclaw.dashboard.chat_runner.sel", audit),
+        patch("personalclaw.dashboard.ungated_calls.sel", audit),
+    ):
         await run_chat(state, session, "hello")
 
 
@@ -624,8 +628,10 @@ class TestUngatedResidue:
         )
         await _drive(state, session)
         client.cancel.assert_awaited_once()
-        assert any("ungated" in t for t in _tool_texts(session)), _tool_texts(session)
-        assert any("turn stopped" in t for t in _tool_texts(session)), _tool_texts(session)
+        # Said on the call's own row, which a reload rebuilds its card from — no row of its own.
+        (note,) = [m["meta"]["ungated"] for m in session.messages if m.get("role") == "tool"]
+        assert note.startswith("Ran without asking you"), note
+        assert note.endswith("Ask mode allows no changes, so the turn was stopped."), note
 
     @pytest.mark.asyncio
     async def test_a_gated_tool_is_never_reported_as_ungated(self, tmp_path):
@@ -752,10 +758,10 @@ class TestUnacceptedResidualStaysLoud:
     @pytest.mark.asyncio
     async def test_a_declared_but_unaccepted_hole_keeps_every_signal(self, tmp_path):
         """claude-code's ungated ``Terminal`` IS in the registry — so it is not a NEW
-        hole — and is unaccepted, so nothing goes quiet: the ``(ungated: …)``
-        transcript line, the plain ``ungated`` audit row with its generic reason, the
-        ``ungated_declared=False`` marker, and the abort of a destructive tool that
-        ran under ask mode with no card."""
+        hole — and is unaccepted, so nothing goes quiet: the mark on the call's row
+        saying its own settings allowed it, the plain ``ungated`` audit row with its
+        generic reason, the ``ungated_declared=False`` marker, and the abort of a
+        destructive tool that ran under ask mode with no card."""
         declared = not_gateable_entry("claude-code", "Terminal")
         assert declared is not None  # precondition, not luck: the registry DOES hold it
         assert declared.state is ResidualState.UNACCEPTED
@@ -766,10 +772,11 @@ class TestUnacceptedResidualStaysLoud:
         texts = self._activity(state)
         assert any("Ran without host approval" in t for t in texts), texts
         assert not any("Not gated by host" in t for t in texts), texts
-        assert any("(ungated:" in t for t in _tool_texts(session)), _tool_texts(session)
-        assert any("turn stopped" in t for t in _tool_texts(session)), _tool_texts(session)
+        (meta,) = self._tool_meta(session)
+        assert "own settings" in meta["ungated"], meta
+        assert "so the turn was stopped" in meta["ungated"], meta
         client.cancel.assert_awaited_once()
-        assert any(m.get("ungated_declared") is False for m in self._tool_meta(session))
+        assert meta["ungated_declared"] is False
         rows = _ungated_audit_rows(sel_mock)
         assert [r["outcome"] for r in rows] == ["ungated"], rows
         assert rows[0]["metadata"]["reason"] == ("no session/request_permission for this tool_call")
@@ -795,9 +802,11 @@ class TestUnacceptedResidualStaysLoud:
         texts = self._activity(state)
         assert any("Not gated by host" in t for t in texts), texts
         assert not any("Ran without host approval" in t for t in texts), texts
-        assert not any("(ungated:" in t for t in _tool_texts(session)), _tool_texts(session)
+        (meta,) = self._tool_meta(session)
+        assert "never asks about this tool" in meta["ungated"], meta
+        assert "own settings" not in meta["ungated"], meta
         client.cancel.assert_not_awaited()
-        assert any(m.get("ungated_declared") is True for m in self._tool_meta(session))
+        assert meta["ungated_declared"] is True
         rows = _ungated_audit_rows(sel_mock)
         assert [r["outcome"] for r in rows] == ["ungated_declared"], rows
         assert "claude-code runs its shell tool" in rows[0]["metadata"]["reason"]

@@ -78,6 +78,7 @@ from personalclaw.dashboard.state import (
     resolve_effective_risk,
     tool_input_to_str,
 )
+from personalclaw.dashboard.ungated_calls import report_ungated_call
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
     WARN_THRESHOLD,
@@ -136,7 +137,7 @@ from personalclaw.security import (
 from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
-from personalclaw.task_modes import REPORTED_READ_KINDS, declared_level
+from personalclaw.task_modes import declared_level
 from personalclaw.usage_ledger import Attribution, recorder
 from personalclaw.validation import ValidationError, validate_ask_user_question
 
@@ -163,10 +164,10 @@ logger = logging.getLogger(__name__)
 _SKILL_USED_STATES = (SkillLoadState.ADMITTED.value, SkillLoadState.REDUCED.value)
 
 #: How a tool call that needed approval and did not run is named in its transcript row, by how
-#: its approval ended. The chat's steps summary ("Worked through N steps · …") names each step by
-#: this row, so the words are product copy. `expired` says what the Inbox note for it says
-#: ("Denied, no answer: <tool>", `auto_denials.py`): the window closed with nobody
-#: there, which is not a Deny.
+#: its approval ended: the chat's record of the step, which its export carries. The chat page shows
+#: the step by its approval's own line instead (`hydrateTurns`), which says the same in its words
+#: and takes this row's ``detail``. `expired` says what the Inbox note for it says ("Denied, no
+#: answer: <tool>", `auto_denials.py`): the window closed with nobody there, which is not a Deny.
 _UNRUN_STEP_WORDS = {
     "rejected": "rejected",
     "expired": "denied, no answer",
@@ -2041,117 +2042,6 @@ def _inject_investigate_context(
         "instructions — it is a point-in-time snapshot from the owning store.\n\n"
     )
     return f"{header}{fenced}\n\n---\n\n{message}"
-
-
-def _report_ungated_tool_call(
-    state: DashboardState,
-    session: _ChatSession,
-    *,
-    session_key: str,
-    acp_cli: str,
-    title: str,
-    tool_kind: str,
-    tool_input: str,
-    request_id: str,
-    declared: str = "",
-) -> str:
-    """Surface an ACP tool call the host was never asked about; return an abort reason.
-
-    §2.2's honest half (`G27`). An ACP CLI chooses which of its tools request
-    permission, so the host's gate is opt-in *by the CLI*. When a tool result lands
-    for a call that never reached the gate, the tool already ran — there is nothing
-    left to block. What is still available, and what the finding actually asked for,
-    is a positive mechanism:
-
-    * an **accepted** entry in the per-provider not-gateable registry means this hole
-      is written down AND blessed — surfaced, not silent, but not treated as a new
-      incident;
-    * everything else is the dangerous case, and that includes a residual which is
-      measured but *not* accepted (``entry.accepted`` False). It is surfaced in the
-      transcript (not just the activity feed), audited as ``ungated``, and — when it
-      is a mutation under a read-only posture — aborts the turn, so the model cannot
-      chain further ungated mutations behind a gate that was never consulted.
-      Writing a hole down is never a way to silence it.
-
-    ``declared`` is the declaration the call carried, which only a call to PersonalClaw's own
-    ``personalclaw-core`` tools has (``acp.mcp_servers.core_tool_declaration``).
-
-    Returns the abort reason, or ``""`` to continue the turn.
-    """
-    entry = acp_permission_authority.not_gateable_entry(acp_cli, title)
-    # Declared is not excused: only an ACCEPTED residual may quiet the signal.
-    excused = entry is not None and entry.accepted
-    risk = resolve_effective_risk(declared, title, tool_kind, tool_input)
-    # The call already ran, so the only question left is whether it CHANGED something under
-    # a read-only posture. The evidence is what the tool declares (one of our own), a
-    # read-only shell command, or a call the CLI reported with a read kind. The kind decides
-    # only whether the turn stops, never whether anything runs (`REPORTED_READ_KINDS`).
-    reported_read = risk == "safe" or (tool_kind or "").lower() in REPORTED_READ_KINDS
-    task_mode = getattr(session, "_task_mode", "agent")
-    _title, _ = redact_exfiltration_urls(title or "?")
-    _title, _ = redact_credentials(_title)
-    abort = ""
-    if not excused and not reported_read and task_mode in ("ask", "plan"):
-        abort = (
-            f"{_title} ran without a host approval request under {task_mode} mode "
-            f"({acp_cli} never asked) — turn stopped"
-        )
-    # Mark the already-appended tool row so the absence of a card is inspectable
-    # after the fact, not only live in the activity feed.
-    for m in reversed(session.messages):
-        if m.get("role") == "tool" and m.get("meta", {}).get("tool_call_id") == request_id:
-            _meta = m.setdefault("meta", {})
-            _meta["ungated"] = True
-            _meta["ungated_declared"] = excused
-            break
-    state.broadcast_ws(
-        "activity_event",
-        {
-            "session": session.key,
-            "kind": "permission",
-            "text": (
-                f"Not gated by host: {_title} — documented {acp_cli} limitation"
-                if excused
-                else f"Ran without host approval: {_title} ({acp_cli} never asked)"
-            ),
-        },
-    )
-    if not excused:
-        session.append(
-            "tool",
-            f"{_title} (ungated: {acp_cli} executed it without asking the host)",
-            "msg msg-tool",
-        )
-    try:
-        sel().log_tool_invocation(
-            session_key=session_key,
-            agent=_agent_label(session),
-            source="dashboard",
-            tool_name=title,
-            tool_kind=tool_kind,
-            outcome="ungated_declared" if excused else "ungated",
-            request_id=request_id,
-            metadata={
-                "risk": risk,
-                "provider": acp_cli,
-                "task_mode": task_mode,
-                "reason": (
-                    entry.reason
-                    if excused and entry is not None
-                    else "no session/request_permission for this tool_call"
-                ),
-                **({"aborted_turn": True} if abort else {}),
-            },
-        )
-    except Exception:
-        logger.warning("SEL audit failed for ungated ACP tool call", exc_info=True)
-    if abort:
-        session.append("tool", abort, "msg msg-tool")
-        state.broadcast_ws(
-            "activity_event",
-            {"session": session.key, "kind": "permission", "text": abort},
-        )
-    return abort
 
 
 async def _abort_acp_turn(client: object, why: str) -> None:
@@ -4123,9 +4013,10 @@ async def run_chat(
                     _ung_title, _ung_kind, _ung_input, _ung_declared = _ungated_candidates.pop(
                         event.tool_call_id
                     )
-                    _abort = _report_ungated_tool_call(
+                    _abort = report_ungated_call(
                         state,
                         session,
+                        agent=_agent_label(session),
                         session_key=session_key,
                         acp_cli=_acp_cli,
                         title=_ung_title or _tool_name,
@@ -4993,9 +4884,9 @@ async def run_chat(
                     # `cancelled` is the turn being stopped while it waited (see
                     # `DashboardState.cancel_approval`), and `expired` is its window closing with
                     # nobody there. Neither is a person's Deny, so neither is written up as one:
-                    # not in the transcript row, which the steps summary names the step by, not in
-                    # the audit row, whose Denied filter would otherwise return it, and not on the
-                    # channel's progress line.
+                    # not in the transcript row, the chat's record of the step, not in the audit
+                    # row, whose Denied filter would otherwise return it, and not on the channel's
+                    # progress line.
                     ended_as = (
                         "cancelled"
                         if outcome == "cancelled"

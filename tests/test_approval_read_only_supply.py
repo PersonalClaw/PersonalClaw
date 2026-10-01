@@ -228,9 +228,9 @@ class TestBothPermissionSurfacesAgree:
     #: the one segment adapter, `approvalSegment.ts`.
     READERS = [
         "app/useApprovalToasts.ts",
-        "pages/ChatPage.tsx",
         "pages/chat/approvalSegment.ts",
         "pages/chat/chatTypes.ts",
+        "pages/chat/liveToolFrames.ts",
         "pages/companion/CompanionPage.tsx",
     ]
 

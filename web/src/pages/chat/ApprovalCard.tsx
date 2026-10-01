@@ -244,7 +244,7 @@ export function ApprovalCard({
     return (
       <div data-type="caption" className="my-1 flex items-center gap-1.5" style={{ color: tone }}>
         <Icon size={13} aria-hidden />
-        <span>{seg.tool} — {label}</span>
+        <span>{seg.tool} — {label}{seg.detail ? ` · ${seg.detail}` : ''}</span>
       </div>
     )
   }

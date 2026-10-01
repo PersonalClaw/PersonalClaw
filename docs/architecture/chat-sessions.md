@@ -142,6 +142,17 @@ chat, channel thread, loop worker, webhook, subagent).
   marker goes to live readers only (`signal_done`). An approval is written once
   it is decided. The save records `message_count` in the metadata line, which
   `ConversationLog.list_sessions` serves as the chat list's count.
+- **A reload shows the turn the live page showed.** The page builds a turn's
+  steps from the gateway's frames (`web/src/pages/chat/liveToolFrames.ts`) and a
+  reload rebuilds them from the persisted rows (`hydrateTurns`), so what one
+  shows the other must. A call's row carries its call's id; a `tool` row without
+  one, in a turn the gateway ran, is a line it wrote ABOUT a step (how its
+  approval ended, why a gate refused it, a loop-breaker warning), which the live
+  page draws no card for, and neither does a reload (`foldStepLine`: a refused
+  approval's line puts the agent's option the refusal was sent as on the
+  approval's own line). An imported conversation's call lines carry no ids at
+  all and stay its calls. A call an agent CLI ran without asking is said on its
+  own card (`docs/architecture/security.md`), never on a row of its own.
 - **Who started a conversation.** `_ChatSession.created_by_app` is the app whose
   token started it, or empty for yours, and it is the one thing an app's reach
   into a conversation is decided on (`apps/permissions.ROUTE_AUTHZ` rows that

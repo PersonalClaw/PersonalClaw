@@ -515,6 +515,14 @@ from nothing else except a shell command's own text:
   not shown the shell (`rooms.posture.member_tool_refusal`). A subagent whose every call was
   refused did nothing it was asked, so it ends not done, naming the tools and why
   (`subagent_tier.refused_every_call`), and the workflow step it ran for fails as a refusal.
+- **A call an ACP CLI ran without asking is said on its own card** (`dashboard/ungated_calls.py`).
+  The CLI decides which of its calls ask first, so one its own settings allow runs with no approval
+  request and the host learns of it when its result lands. Its card says so, live and after a reload
+  ("Ran without asking you — allowed by Claude Code's own settings.", or "… never asks about this
+  tool." for an accepted residual, `acp.permission_authority.ungated_call_note`), and so does the
+  chat's export. The folded work counts such steps, the audit
+  row reads `ungated`, and one log line names the runtime and the tool (WARNING; INFO for an
+  accepted residual), never the call's arguments.
 
 ## Governance ceiling (`guardrails/ceiling.py`)
 

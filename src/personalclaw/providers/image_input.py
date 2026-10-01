@@ -153,7 +153,9 @@ def agent_takes_no_images(label: str) -> ImageInput:
 def agent_label(runtime_id: str) -> str:
     """A person's name for the agent runtime ``runtime_id`` (``acp:claude-code``), or ``""``.
 
-    The runtime entry's own ``runtime_label`` when it has one, else the id after ``acp:``.
+    The runtime entry's own ``runtime_label`` when it has one, else the display name of the app
+    that registered it (the Store's name for it, "Claude Code"), else the id after ``acp:`` in
+    title case (``kiro-cli`` → "Kiro Cli") — never the bare id, which is no one's name for it.
     """
     rid = (runtime_id or "").strip()
     if not rid:
@@ -161,10 +163,19 @@ def agent_label(runtime_id: str) -> str:
     try:
         from personalclaw.llm.registry import get_default_registry
 
-        label = str(get_default_registry().get_entry(rid).options.get("runtime_label") or "")
+        options = get_default_registry().get_entry(rid).options
     except Exception:  # noqa: BLE001 — an unregistered runtime is named by its id
-        label = ""
-    return label.strip() or rid.split(":", 1)[-1]
+        options = {}
+    label = str(options.get("runtime_label") or "").strip()
+    if not label and options.get("extension"):
+        from personalclaw.providers.registry import get_provider_registry
+
+        app = get_provider_registry().get(str(options["extension"]))
+        label = str(getattr(getattr(app, "manifest", None), "displayName", "") or "").strip()
+    if label:
+        return label
+    cli = rid.split(":", 1)[-1]
+    return " ".join(w.capitalize() for w in cli.replace("_", "-").split("-") if w) or cli
 
 
 async def image_input(served_ref: str) -> ImageInput:

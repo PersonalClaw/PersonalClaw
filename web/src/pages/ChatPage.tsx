@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle, Send } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, ArrowLeft, ArrowRight, ArrowUp, GripVertical, Bot, ShieldCheck, ShieldAlert, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, ListTree, Scissors, Shuffle, Send } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -84,10 +84,10 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
-import { approvalRiskOf, blastRadiusOf } from './chat/approvalMeta'
+import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
@@ -1460,6 +1460,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             const last = segs[segs.length - 1]
             return last?.kind === 'text' && last.text === text ? segs : [...segs, { kind: 'text', text }]
           })
+        } else if (d.role === 'tool' && !(d.meta as { tool_call_id?: string } | undefined)?.tool_call_id) {
+          // A line the gateway wrote about a step, folded as a reload folds it (`foldStepLine`).
+          // A call's own row is drawn from its `tool_call` frames, never from this one.
+          patchLastAssistant((segs) => foldStepLine(segs, d.meta as { detail?: unknown } | undefined))
         }
         break
       }
@@ -1499,64 +1503,23 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         patchLastAssistant(textRun.activity(text, kind, origin, ref))
         break
       }
-      case 'tool_call': {
+      // The turn's steps, as the shared reducers apply each frame (`liveToolFrames`) — the live
+      // half of what `hydrateTurns` rebuilds after a reload, so the two read the same.
+      case 'tool_call':
         endTextRun()  // land any buffered text before the tool card
-        const id = String(d.tool_call_id ?? '')
-        patchLastAssistant((segs) => {
-          // a tool_call_update (resolved input/title) refines the existing card
-          // in place rather than pushing a duplicate — agents stream the real
-          // args after an initially-empty tool_call frame.
-          const existing = segs.find((sg) => sg.kind === 'tool' && sg.id === id) as ToolSegment | undefined
-          if (existing) {
-            // keep the STABLE tool name; the update carries the refined summary
-            // (command/file) as `detail` + the resolved input.
-            if (d.input_preview) existing.input = String(d.input_preview)
-            if (d.input !== undefined && d.input !== null) existing.inputObj = d.input
-            if (d.detail) existing.detail = String(d.detail)
-            if (d.tool && !d.update) existing.tool = String(d.tool)
-            return [...segs]
-          }
-          segs.push({ kind: 'tool', id, tool: String(d.tool ?? 'tool'), detail: d.detail ? String(d.detail) : undefined,
-            toolKind: String(d.kind ?? ''), input: String(d.input_preview ?? ''),
-            inputObj: (d.input !== undefined && d.input !== null) ? d.input : undefined,
-            purpose: String(d.purpose ?? ''), auto: !!d.auto, done: false })
-          return segs
-        })
+        patchLastAssistant((segs) => applyToolCallFrame(segs, d))
         break
-      }
       case 'tool_result':
-        patchLastAssistant((segs) => segs.map((sg) =>
-          sg.kind === 'tool' && sg.id === String(d.tool_call_id ?? '')
-            ? { ...sg, output: String(d.output ?? ''), done: true,
-                contentType: d.content_type ? String(d.content_type) : sg.contentType,
-                rawRef: d.raw_ref ? String(d.raw_ref) : sg.rawRef,
-                truncated: d.truncated != null ? !!d.truncated : sg.truncated,
-                originalLength: d.original_length != null ? Number(d.original_length) : sg.originalLength,
-                recoveryHints: Array.isArray(d.recovery_hints) && d.recovery_hints.length
-                  ? (d.recovery_hints as string[]) : sg.recoveryHints,
-                agentError: d.agent_error ? (d.agent_error as ToolSegment['agentError']) : sg.agentError,
-                ok: d.ok === false ? false : sg.ok }
-            : sg))
+        patchLastAssistant((segs) => applyToolResultFrame(segs, d))
         break
       case 'approval':
         endTextRun()  // land buffered text before the approval card
-        patchLastAssistant((segs) => {
-          // The card addresses the call by the CHAT's own id — what the transcript rehydrates
-          // as `approval_id` and what the approve route takes. `d.id` is the registry id every
-          // other surface uses, unique across chats (a chat's id is unique only inside it).
-          const id = String(d.request_id ?? '')
-          if (segs.some((sg) => sg.kind === 'approval' && sg.id === id)) return segs
-          segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: approvalRiskOf(d.risk), blastRadius: blastRadiusOf(d.blast_radius), grantAgent: d.grant_agent ? String(d.grant_agent) : '' })
-          return segs
-        })
+        patchLastAssistant((segs) => applyApprovalFrame(segs, d))
         break
       case 'approval_resolved':
         // Matched by the chat's own id, like the card was created; the session gate above has
         // already dropped a frame for another chat, which may be waiting on the same bare id.
-        // `outcome` is how it ENDED (approved / rejected / expired / cancelled): a stopped turn
-        // is not a Deny, and the card says which, in the words the transcript row will use.
-        setTurns((prev) => prev.map((t) => ({ ...t, segments: t.segments.map((sg) =>
-          sg.kind === 'approval' && sg.id === String(d.request_id ?? '') ? { ...sg, resolved: String(d.outcome ?? '') } as ApprovalSegment : sg) })))
+        setTurns((prev) => prev.map((t) => ({ ...t, segments: applyApprovalResolved(t.segments, d) })))
         break
       case 'chat_segment': endTextRun(); break
       // Whether the running turn takes a steer, said when the turn wires its runtime.
@@ -4674,6 +4637,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   )]
   const workSegs = lastProcessIdx >= 0 ? segments.slice(0, lastProcessIdx + 1) : []
   const failedCount = failedStepCount(workSegs)
+  const unaskedCount = unaskedStepCount(workSegs)
   const finalSegs = (lastProcessIdx >= 0 ? segments.slice(lastProcessIdx + 1) : segments).filter((s) => s.kind === 'text')
 
   // An SDLC create/start/status segment becomes a LIVE progress card that must stay
@@ -4699,7 +4663,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     <>
       {workNodes.length > 0 && (
         collapseWork
-          ? <AgentWork stepCount={stepCount} toolNames={toolNames} failedCount={failedCount}>{workNodes}</AgentWork>
+          ? <AgentWork stepCount={stepCount} toolNames={toolNames} failedCount={failedCount} unaskedCount={unaskedCount}>{workNodes}</AgentWork>
           : <div className="flex flex-col gap-1">{workNodes}</div>
       )}
       {/* Live SDLC progress cards stay at the top level, always visible — never
@@ -4743,8 +4707,10 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
  *  duplicated each card's own status glyph.)
  *
  *  The failure count sits before the tool names and never truncates: the reply below
- *  can say the work succeeded when a step did not, and the fold is where that shows. */
-function AgentWork({ stepCount, toolNames, failedCount, children }: { stepCount: number; toolNames: string[]; failedCount: number; children: React.ReactNode }) {
+ *  can say the work succeeded when a step did not, and the fold is where that shows. The count
+ *  of steps the agent CLI ran without asking her sits beside it for the same reason: folded, the
+ *  cards that say so are out of sight. */
+function AgentWork({ stepCount, toolNames, failedCount, unaskedCount, children }: { stepCount: number; toolNames: string[]; failedCount: number; unaskedCount: number; children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
   const summary = toolNames.length
     ? `${toolNames.slice(0, 3).join(', ')}${toolNames.length > 3 ? ` +${toolNames.length - 3} more` : ''}`
@@ -4763,6 +4729,11 @@ function AgentWork({ stepCount, toolNames, failedCount, children }: { stepCount:
         {!open && failedCount > 0 && (
           <span className="inline-flex shrink-0 items-center gap-xs text-danger" style={fvs(550)}>
             · <AlertTriangle size={12} aria-hidden /> {failedCount} failed
+          </span>
+        )}
+        {!open && unaskedCount > 0 && (
+          <span className="inline-flex shrink-0 items-center gap-xs text-warning" style={fvs(550)}>
+            · <ShieldAlert size={12} aria-hidden /> {unaskedCount} ran without asking you
           </span>
         )}
         {!open && summary && <span className="min-w-0 truncate text-on-surface-low/60">· {summary}</span>}

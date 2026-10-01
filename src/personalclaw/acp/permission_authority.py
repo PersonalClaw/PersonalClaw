@@ -34,13 +34,14 @@ This module owns the three host-side answers:
      gated_universally` is True: everything this provider does reaches the gate.
    * *measured, residual non-empty and ACCEPTED* (``state=ACCEPTED``) — a known
      upstream limitation we have blessed. The host may go quiet about it: the
-     transcript says "documented limitation" and SEL records
-     ``ungated_declared``.
+     call's card says the CLI never asks about that tool, the activity line says
+     "documented limitation", and SEL records ``ungated_declared``.
    * *measured, residual non-empty and NOT accepted* (``state=UNACCEPTED``, the
      default) — the host cannot gate it and we have **not** blessed it. It stays
-     exactly as loud as an undeclared hole: the ``(ungated: …)`` transcript line,
-     the plain ``ungated`` SEL outcome, and the turn abort for a non-safe mutation
-     under ask/plan. Writing a hole down must never be a way to silence it.
+     exactly as loud as an undeclared hole: the call's card says the CLI's own
+     settings allowed it (:func:`ungated_call_note`), the plain ``ungated`` SEL
+     outcome, and the turn abort for a non-safe mutation under ask/plan. Writing a
+     hole down must never be a way to silence it.
 
    Only the accepted state excuses the absence of a card, so consumers ask
    :func:`not_gateable_entry` whether a residual is *declared* and
@@ -495,3 +496,20 @@ def not_gateable_entry(provider: str, title: str) -> NotGateable | None:
 def coverage_for(provider: str) -> ProviderCoverage | None:
     """The measured coverage statement for a provider, or None if unmeasured."""
     return NOT_GATEABLE.get(normalize_provider(provider))
+
+
+def ungated_call_note(agent: str, *, excused: bool, stopped_in: str = "") -> str:
+    """What the chat says on the row of a call ``agent`` ran without asking the host first.
+
+    Product copy, shown on the call's own card live and after a reload, so it says what happened
+    and why in her words: the agent ran it without asking her, because its own settings allowed
+    it, or, for an accepted residual (``excused``), because it never asks about that tool. When
+    the call changed something under a read-only task mode (``stopped_in``, ``"ask"`` or
+    ``"plan"``) the turn was stopped for it, and the note says that too.
+    """
+    who = agent.strip() or "The agent"
+    why = f"{who} never asks about this tool" if excused else f"allowed by {who}'s own settings"
+    note = f"Ran without asking you — {why}."
+    if stopped_in:
+        note += f" {stopped_in.capitalize()} mode allows no changes, so the turn was stopped."
+    return note

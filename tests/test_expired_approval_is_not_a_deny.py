@@ -1,11 +1,11 @@
 """An approval nobody answered is not a Deny — in the chat's steps and the audit log either.
 
-The chat's "Worked through N steps" summary names each step by its transcript row. When an
+The chat records each step it did not run by a transcript row (what its export carries). When an
 approval's window closed with nobody there, the runner wrote that row as ``bash (rejected)`` and
 audited the call as ``rejected``: it treated the timeout as a refusal. #3698's Inbox note says what
 happened ("Denied, no answer: bash"), and the approval card says "not run — no answer in time", so
-the same call read three ways, and the steps line and the audit log's Denied filter both claimed a
-decision nobody made. The audit families already leave ``expired`` out of Denied for exactly this
+the same call read three ways, and the step's record and the audit log's Denied filter both claimed
+a decision nobody made. The audit families already leave ``expired`` out of Denied for exactly this
 reason (``sel.AUDIT_OUTCOME_FAMILIES``).
 
 The runner refuses the rest of a refused batch without asking again. After an expiry those calls
@@ -35,7 +35,7 @@ def audit(monkeypatch) -> list:
 
 
 def _steps(session) -> list[str]:
-    """The transcript rows the steps summary names, in order."""
+    """The transcript rows that record the steps, in order."""
     return [m["content"] for m in session.messages if m.get("role") == "tool"]
 
 

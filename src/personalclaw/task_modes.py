@@ -243,9 +243,9 @@ SHELL_TITLE_PREFIXES: tuple[str, ...] = ("running: ",)
 #: The ACP tool kinds a CLI REPORTS for a call that reads (``tool_call.kind``). A report, not a
 #: declaration: nothing admits a call because of it — a CLI-labelled "read" must not turn a
 #: deny-by-default gate into an allow. One question reads it, after the fact: when an
-#: ACP CLI ran a tool without asking the host (``chat_runner._surface_ungated_call``), was that
-#: a mutation under a read-only posture? The call has already run, so the kind decides only
-#: whether the turn stops, never whether anything runs.
+#: ACP CLI ran a tool without asking the host (``dashboard.ungated_calls.report_ungated_call``),
+#: was that a mutation under a read-only posture? The call has already run, so the kind decides
+#: only whether the turn stops, never whether anything runs.
 REPORTED_READ_KINDS: frozenset[str] = frozenset({"read", "fetch", "search", "think"})
 
 

@@ -93,6 +93,11 @@ def _content_messages(messages: list[dict]) -> list[dict]:
         if not content.strip():
             continue
         entry: dict[str, Any] = {"role": role, "content": content}
+        # A call its agent CLI ran without asking her says so in her record of it too, in the
+        # words its card uses (`dashboard.ungated_calls.report_ungated_call`).
+        unasked = (msg.get("meta") or {}).get("ungated") if role == "tool" else None
+        if isinstance(unasked, str) and unasked.strip():
+            entry["ungated"] = redact_field(unasked)
         speaker = speaker_of(msg)
         if speaker:
             entry["speaker"] = redact_field(speaker)
@@ -164,6 +169,8 @@ def render_markdown(
         lines.append("")
         for para in str(msg["content"]).split("\n"):
             lines.append(f"> {para}" if para.strip() else ">")
+        if msg.get("ungated"):
+            lines.extend([">", f"> {msg['ungated']}"])
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
