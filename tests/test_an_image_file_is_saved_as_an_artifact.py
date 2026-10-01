@@ -46,7 +46,7 @@ def provider(places):
         yield prov
 
 
-def _save(body: dict) -> tuple[int, dict]:
+def _save(body: dict, headers: dict[str, str] | None = None) -> tuple[int, dict]:
     async def drive() -> tuple[int, dict]:
         app = web.Application()
         state = MagicMock()
@@ -57,7 +57,9 @@ def _save(body: dict) -> tuple[int, dict]:
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
-            resp = await client.post("/api/artifacts", json={"source": "manual", **body})
+            resp = await client.post(
+                "/api/artifacts", json={"source": "manual", **body}, headers=headers or {}
+            )
             return resp.status, await resp.json()
         finally:
             await client.close()
@@ -201,3 +203,43 @@ class TestOnlyAFileInAPlaceFilesOpensIsRead:
         status, body = asyncio.run(drive())
         assert status == 201, body
         assert (body["kind"], body["content"]) == ("markdown", "# Notes\n")
+
+
+class TestASaveWhoseArtifactIsGoneIsNotFound:
+    """A re-save finds its artifact by the file, and the artifact can be gone by the time it is
+    read or bumped (a delete in another tab, or by an agent). That answers ``404 not_found``,
+    never a 200 ``{}``: an empty body as success names no artifact, so the caller took it as saved.
+    """
+
+    def test_an_unchanged_image(self, places, provider, monkeypatch) -> None:
+        _home, ws, _ = places
+        receipt = _file(ws, "receipt.png", _PNG)
+        first = _save({"name": "Receipt", "kind": "image", "source_path": str(receipt)})[1]
+        monkeypatch.setattr(provider, "get", lambda *_a, **_k: None)
+
+        status, body = _save({"name": "Receipt", "kind": "image", "source_path": str(receipt)})
+        assert status == 404 and body["error"]["code"] == "not_found", body
+        assert first["slug"] in body["error"]["message"]
+
+    @pytest.mark.parametrize("content", [None, "# Notes, revised\n"], ids=["as-it-is", "bumped"])
+    def test_a_text_file(self, places, provider, monkeypatch, content) -> None:
+        from personalclaw.file_view import read_head, whole_text
+        from personalclaw.stale_write import revision_of
+
+        _home, ws, _ = places
+        notes = ws / "notes.md"
+        notes.write_text("# Notes\n", encoding="utf-8")
+        save = {"name": "Notes", "kind": "markdown", "source_path": str(notes)}
+
+        def read_at() -> dict[str, str]:
+            return {"If-Match": revision_of(whole_text(read_head(str(notes))))}
+
+        status, first = _save(save, read_at())
+        assert status == 201, first
+        monkeypatch.setattr(provider, "get", lambda *_a, **_k: None)
+        monkeypatch.setattr(provider, "update", lambda *_a, **_k: None)
+
+        again = save if content is None else {**save, "content": content}
+        status, body = _save(again, read_at())
+        assert status == 404 and body["error"]["code"] == "not_found", body
+        assert first["slug"] in body["error"]["message"]

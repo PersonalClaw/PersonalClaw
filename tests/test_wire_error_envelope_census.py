@@ -281,7 +281,18 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: rows the flat census already counts, and
 #: ``test_the_composer_bodies_admitted_at_218_are_still_the_ones_counted`` pins all seven by
 #: handler, so one leaving cannot hand its slot to a new row elsewhere. MAIN-RELATIVE.
-UNRESOLVED_PAYLOAD_CEILING = 218
+#: 218 → **217**: saving an image or PDF file as an artifact (``_save_file_copy`` in
+#: ``artifacts/handlers.py``) landed three unresolved rows with no row here, so the tree measured
+#: 221 against 218: its dedup, bump and create answers, each a ``_serialize(...)`` body, the first
+#: ``... if unchanged else {}``. The artifact-save route now answers success from ONE place for
+#: every kind: ``_save_file_copy`` and ``_save_text`` return the refusal or the saved artifact and
+#: its status, and ``api_artifacts_create`` serialises it. That folds those three and the text
+#: save's two (its create, and its ``... if updated else {}`` answer for a file saved before) into
+#: one row: 221 − 4 = 217.
+#: Both ``else {}`` branches were errors answered as success (an artifact gone since the lookup came
+#: back as a 200 ``{}``) and are ``not_found`` 404s through :func:`json_error` now, so no flat body
+#: was added and ``FLAT_BASELINE`` stays. Shrink-only, so the ceiling follows the count down.
+UNRESOLVED_PAYLOAD_CEILING = 217
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites

@@ -241,7 +241,7 @@ def _save_file_copy(
     content: str | None,
     source_path: str,
     session_id: str | None,
-) -> web.Response:
+) -> web.Response | tuple[Artifact, int]:
     """``POST /api/artifacts`` for a binary kind: the artifact is a COPY of an image or PDF file.
 
     A JSON body cannot carry bytes, so the body is the file's (``source_path``), admitted like a
@@ -250,6 +250,8 @@ def _save_file_copy(
     Nothing is written to the file, so the request names no revision of it. Saving the same file
     again adds its next version when its bytes changed and answers the artifact as it is when they
     did not, as a text file's re-save bumps its artifact rather than making a second one.
+
+    Returns the refusal, or the saved artifact and its status for the route to answer with.
     """
     from personalclaw.apps.permissions import request_app
     from personalclaw.artifacts import file_copy
@@ -293,11 +295,11 @@ def _save_file_copy(
     if existing is not None:
         current = prov.raw_bytes(existing.slug)
         if current is not None and current[0] == data:
-            _audit(request, "artifact.create", "deduped", f"slug={existing.slug}")
             unchanged = prov.get(existing.slug)
-            return web.json_response(
-                _serialize(unchanged, include_content=True) if unchanged else {}, status=200
-            )
+            if unchanged is None:
+                return json_error("not_found", message=f"no artifact {existing.slug!r}", status=404)
+            _audit(request, "artifact.create", "deduped", f"slug={existing.slug}")
+            return unchanged, 200
         try:
             updated = prov.update_binary(
                 existing.slug, data=data, mime=mime, actor="user", session_id=session_id
@@ -320,7 +322,7 @@ def _save_file_copy(
             "ok",
             f"slug={updated.slug} version={updated.version} bytes={len(data)} mime={mime}",
         )
-        return web.json_response(_serialize(updated, include_content=True), status=200)
+        return updated, 200
     if "project_id" in body:
         project_id = str(body.get("project_id", "")).strip()
     else:
@@ -339,7 +341,7 @@ def _save_file_copy(
         source_path=canonical,
     )
     _audit(request, "artifact.create", "ok", f"slug={art.slug} bytes={len(data)} mime={mime}")
-    return web.json_response(_serialize(art, include_content=True), status=201)
+    return art, 201
 
 
 async def api_artifacts_create(request: web.Request) -> web.Response:
@@ -374,10 +376,9 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    # Shared validator, this door's envelope. This handler's other ten refusals are all flat
-    # (`unknown provider`, `read-only`, `invalid slug`, `slug already exists`, …) and it calls
-    # `json_error` nowhere, so a nested answer for `name` alone would split one endpoint across
-    # two shapes. Only the wrapper is local; the type rule is the shared one.
+    # Shared validator, this door's envelope. Most of its text save's refusals are flat (`unknown
+    # provider`, `read-only`, `invalid slug`, `slug already exists`, …), so the `name` refusal
+    # answers in their shape. Only the wrapper is local; the type rule is the shared one.
     try:
         name = require_string(body, "name")
         # 🔴 ABSENT (or null) IS NO TEXT, NOT AN EMPTY BODY. Read as "" it was written through to
@@ -391,17 +392,40 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     source_path = str(body.get("source_path", "")).strip()
     session_id = _session_key(request)
     kind = str(body.get("kind", "widget"))
-    if is_binary_kind(kind):
-        return _save_file_copy(
-            request,
-            prov,
-            body,
-            name=name,
-            kind=kind,
-            content=content,
-            source_path=source_path,
-            session_id=session_id,
-        )
+    save = _save_file_copy if is_binary_kind(kind) else _save_text
+    saved = save(
+        request,
+        prov,
+        body,
+        name=name,
+        kind=kind,
+        content=content,
+        source_path=source_path,
+        session_id=session_id,
+    )
+    if isinstance(saved, web.Response):
+        return saved
+    art, status = saved
+    # One answer for every kind: the artifact as saved, 201 when it is new and 200 when the save
+    # answered with, or bumped, the one already there.
+    return web.json_response(_serialize(art, include_content=True), status=status)
+
+
+def _save_text(
+    request: web.Request,
+    prov: Any,
+    body: dict[str, Any],
+    *,
+    name: str,
+    kind: str,
+    content: str | None,
+    source_path: str,
+    session_id: str | None,
+) -> web.Response | tuple[Artifact, int]:
+    """``POST /api/artifacts`` for a text kind (see :func:`api_artifacts_create`).
+
+    Returns the refusal, or the saved artifact and its status for the route to answer with.
+    """
     if source_path:
         # FIRST, before anything opens the file: a refused pointer is never read, so neither its
         # existence nor its content shows through the revision check below, and it cannot bump an
@@ -430,7 +454,7 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
                 # No text to bump it with: the artifact that already points at this file is the
                 # answer, as it is, and neither it nor the file is written.
                 updated = prov.get(existing.slug)
-                _audit(request, "artifact.create", "deduped", f"slug={existing.slug}")
+                operation, outcome = "artifact.create", "deduped"
             else:
                 try:
                     updated = prov.update(
@@ -442,10 +466,12 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
                     )
                 except MaskConflict as exc:
                     return web.json_response({"error": str(exc)}, status=409)
-                _audit(request, "artifact.update", "ok", f"slug={existing.slug}")
-            return web.json_response(
-                _serialize(updated, include_content=True) if updated else {}, status=200
-            )
+                operation, outcome = "artifact.update", "ok"
+            if updated is None:
+                # Gone since the lookup: there is no artifact to answer with, or to bump.
+                return json_error("not_found", message=f"no artifact {existing.slug!r}", status=404)
+            _audit(request, operation, outcome, f"slug={existing.slug}")
+            return updated, 200
 
     requested_slug = str(body.get("slug", "")).strip() or None
     if requested_slug:
@@ -501,7 +527,7 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     except (ValueError, PermissionError) as e:
         return web.json_response({"error": str(e)}, status=400)
     _audit(request, "artifact.create", "ok", f"slug={art.slug}")
-    return web.json_response(_serialize(art, include_content=True), status=201)
+    return art, 201
 
 
 async def api_artifact_detail(request: web.Request) -> web.Response:

@@ -148,6 +148,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Saving a file as an artifact again while its artifact is being deleted answers that the artifact is not found (404 `not_found`) instead of an empty success.**
 - **Audio transcribes in the container image again: the image and the desktop app install exactly the dependency versions the tests ran (`uv.lock`) instead of the newest each range allows, and `personalclaw[stt]` keeps PyAV below 19, whose `av.open` faster-whisper cannot call.**
 - **Files › Go to path opens a file given its path, on the folder that holds it, reads a relative path against the folder it shows, and offers files as well as folders.**
 - **A loop that stops at the budget it was given says "Stopped at its budget" on its run page, the Workflows list and the chat card, ends with its budget sentence instead of naming its template's loop as escalated, and is never told its workflow fails the same way until a step changes.**
