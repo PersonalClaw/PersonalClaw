@@ -362,6 +362,15 @@ class ModelProvider(ABC):
         to its own wire (Anthropic ``image`` blocks, Ollama's ``images`` array, Bedrock
         Converse ``image`` blocks; OpenAI's wire is the neutral shape itself).
 
+        A ``role: "system"`` message can come after the first turn. One carrying
+        :data:`~personalclaw.llm.prompt_cache.VOLATILE_KEY` is the runtime's per-turn note (the
+        tool catalog), which changes every turn and arrives fenced as the runtime's: the model
+        must read it as an instruction, never as the user's words, and it must follow every
+        cache checkpoint. A wire that takes a system message anywhere sends it where it is; a
+        wire whose system prompt is out of band (Anthropic, Bedrock Converse) carries it as a
+        text block on the last user turn, never as a turn of its own. ``VOLATILE_KEY``'s
+        definition is the whole contract.
+
         Default implementation: a convenience adapter over the simple-prompt
         ``stream(str)`` API — it sends the last user message's text. Concrete completion
         adapters (openai / anthropic / ollama / vllm / bedrock) override this with

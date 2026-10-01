@@ -31,9 +31,15 @@ from typing import Any
 
 import pytest
 
-from personalclaw.llm.anthropic import _VOLATILE_MESSAGE_KEY, _translate_messages
+from personalclaw.llm.anthropic import _translate_messages
 from personalclaw.llm.credentials import Credential
-from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache, mark_cacheable_prefix
+from personalclaw.llm.prompt_cache import (
+    CACHE_HINT_KEY,
+    VOLATILE_KEY,
+    PromptCache,
+    mark_cacheable_prefix,
+    system_note_text,
+)
 
 _EPHEMERAL = {"type": "ephemeral"}
 
@@ -183,15 +189,23 @@ def test_hint_on_the_volatile_note_is_ignored():
     """Per-turn content is not cacheable: a breakpoint there guarantees a miss."""
     messages = [
         {"role": "user", "content": "stable"},
-        _hint({"role": "system", "content": "turn note", _VOLATILE_MESSAGE_KEY: True}),
+        _hint({"role": "system", "content": "turn note", VOLATILE_KEY: True}),
     ]
 
     system, out = _translate_messages(messages)
 
     assert system == ""
     assert _markers(out) == []
-    # PCS-1 relocation still holds: the note ships, at the tail.
-    assert out[-1] == {"role": "user", "content": "turn note"}
+    # PCS-1 relocation still holds: the note ships, at the tail of the last user turn.
+    assert out == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "stable"},
+                {"type": "text", "text": "turn note"},
+            ],
+        }
+    ]
 
 
 def test_generation_never_reaches_the_wire():
@@ -405,6 +419,40 @@ async def test_block_shaped_system_reaches_the_wire(fake_anthropic_module):
     ]
     assert kwargs["messages"] == []
     assert _markers(kwargs) == [_EPHEMERAL]
+
+
+@pytest.mark.asyncio
+async def test_the_request_built_after_a_tool_result_ends_on_that_turn(fake_anthropic_module):
+    """The request ``complete`` hands the SDK for the turn this went wrong in — she asked, the
+    model called a tool, the result came back — marked the way the loop marks it. The breakpoint
+    is on the tool call; the turn's note follows it, outside the cached prefix, inside the tool
+    result's turn. It is no turn of its own: there it was the newest thing "the user" said, and a
+    model answered it in the chat."""
+    note = system_note_text("[tool catalog] listed tools")  # as the loop writes it
+    history = mark_cacheable_prefix(
+        [
+            {"role": "user", "content": "Remember: never quote consignee names."},
+            {"role": "system", "content": note, VOLATILE_KEY: True},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "c1", "function": {"name": "remember", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "Saved."},
+        ],
+        PromptCache.EXPLICIT,
+    )
+    assert CACHE_HINT_KEY in history[2]  # the loop's breakpoint: the last stable message
+
+    sent = (await _capture_kwargs(history))["messages"]
+
+    assert [m["role"] for m in sent] == ["user", "assistant", "user"]
+    assert _markers(sent[1]) == [_EPHEMERAL]
+    assert sent[2]["content"] == [
+        {"type": "tool_result", "tool_use_id": "c1", "content": "Saved."},
+        {"type": "text", "text": note},
+    ]
+    assert sent[0] == {"role": "user", "content": "Remember: never quote consignee names."}
 
 
 # ── T2.5 rails sweep: vendor cache syntax lives in ONE core module ───────────

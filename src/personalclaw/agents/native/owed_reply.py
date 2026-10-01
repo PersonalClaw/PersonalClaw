@@ -16,6 +16,7 @@ rides every attempt of that one inference and never enters the history.
 from __future__ import annotations
 
 from personalclaw.llm.events import AgentEvent, is_length_stop
+from personalclaw.llm.prompt_cache import VOLATILE_KEY
 
 #: What the model is told, once, when it ran tools for a turn and then stopped without writing a
 #: word back. "What stopped you" is there because a model that went quiet was often stuck, and
@@ -33,7 +34,7 @@ LOOP_SURFACE = "loops"
 
 def owed_note_message() -> dict:
     """The request's tail message that asks for the reply: volatile, so no history keeps it."""
-    return {"role": "user", "content": ANSWER_OWED_NOTE, "_volatile": True}
+    return {"role": "user", "content": ANSWER_OWED_NOTE, VOLATILE_KEY: True}
 
 
 class OwedReply:

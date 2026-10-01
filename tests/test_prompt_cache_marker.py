@@ -27,13 +27,14 @@ from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
 from personalclaw.llm import prompt_cache as pc_module
-from personalclaw.llm.anthropic import _VOLATILE_MESSAGE_KEY, _translate_messages
+from personalclaw.llm.anthropic import _translate_messages
 from personalclaw.llm.base import ModelProvider
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
 from personalclaw.llm.prompt_cache import (
     CACHE_HINT_KEY,
+    VOLATILE_KEY,
     PromptCache,
     effective_cache_mode,
     mark_cacheable_prefix,
@@ -459,17 +460,18 @@ def test_ordering_repairs_are_not_gated_by_the_switch(cache_switch, tmp_path):
     assert AppConfig.load().agent.prompt_cache_enabled is False  # the switch really is off
 
     # Stable assembled context still leads; the volatile per-turn note still
-    # rides at the TAIL rather than being hoisted into the out-of-band system=.
+    # rides at the TAIL (the last user turn's) rather than being hoisted into the
+    # out-of-band system=.
     system, out = _translate_messages(
         [
             {"role": "system", "content": "stable assembled context"},
             {"role": "user", "content": "hello"},
-            {"role": "system", "content": "per-turn tool catalog", _VOLATILE_MESSAGE_KEY: True},
+            {"role": "system", "content": "per-turn tool catalog", VOLATILE_KEY: True},
         ]
     )
     assert system == "stable assembled context"
     assert "per-turn tool catalog" not in system
-    assert out[-1] == {"role": "user", "content": "per-turn tool catalog"}
+    assert out[-1]["content"][-1] == {"type": "text", "text": "per-turn tool catalog"}
 
     # The assembled context still ENDS with the date line.
     ctx = ContextBuilder(
@@ -608,3 +610,15 @@ def test_the_marker_key_is_on_the_app_facing_sdk_facade():
         "CACHE_HINT_KEY must be in personalclaw.sdk.model.__all__ — an app's provider "
         "reads it to translate the marker into its own wire form (PCS-8)."
     )
+
+
+def test_the_volatile_marker_is_on_the_app_facing_sdk_facade():
+    """An app whose provider owns its wire (Bedrock's Converse) finds the runtime's per-turn note
+    by ``VOLATILE_KEY`` to place it on the last user turn. It comes from the SDK and is the neutral
+    definition, not a hand-copied string that could drift from it."""
+    from personalclaw.llm import prompt_cache as neutral
+    from personalclaw.sdk import model as sdk_model
+    from personalclaw.sdk.model import VOLATILE_KEY as sdk_volatile_key
+
+    assert sdk_volatile_key is neutral.VOLATILE_KEY == VOLATILE_KEY
+    assert "VOLATILE_KEY" in sdk_model.__all__

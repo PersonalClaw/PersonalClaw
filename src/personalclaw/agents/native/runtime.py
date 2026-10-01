@@ -88,9 +88,11 @@ from personalclaw.llm.events import (
     is_length_stop,
 )
 from personalclaw.llm.prompt_cache import (
+    VOLATILE_KEY,
     PromptCache,
     effective_cache_mode,
     mark_cacheable_prefix,
+    turn_note_message,
 )
 from personalclaw.tool_providers.arguments import missing_arguments, missing_arguments_note
 from personalclaw.tool_providers.base import RiskLevel, only_tells_the_owner
@@ -918,16 +920,13 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # as its own — a request that grew by a whole catalog a turn and said nothing new.
         self._messages[:] = [m for m in self._messages if not _is_turn_note(m)]
         if turn_note:
-            # SYSTEM role: this is runtime metadata, not something the user said.
-            # Tagged VOLATILE (PCS-1 / F1): the turn_note carries the per-turn tool
-            # catalog + group stubs, so its content CHANGES every turn. Prompt caches
-            # match on an EXACT prefix, so a provider that hoists system content to the
-            # head of the served prompt (Anthropic's out-of-band ``system=``) would put
-            # this volatile string AHEAD of the stable assembled context and break the
-            # cacheable prefix. The neutral ``_volatile`` marker tells such a provider to
-            # deliver this note at the TAIL of the message list instead, so the stable
-            # context leads. Providers that don't cache simply ignore the extra key.
-            self._messages.append({"role": "system", "content": turn_note, "_volatile": True})
+            # SYSTEM role: runtime metadata, not something the user said. VOLATILE because
+            # the tool catalog + group stubs change every turn and prompt caches match an EXACT
+            # prefix, so a provider whose system prompt leads the served prompt (Anthropic's
+            # ``system=``) carries the note on the request's last user turn, after every cache
+            # checkpoint, never as a turn of its own (a model answers that as the user's). Fenced
+            # as the runtime's (``system_note_text``), so it reads as such wherever it lands.
+            self._messages.append(turn_note_message(turn_note))
         agg_in = agg_out = 0
         # The prompt-cache halves of the served prompt, accumulated over the turn's
         # inferences exactly like ``agg_in`` beside them. They have to travel together:
@@ -1215,7 +1214,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                             # never ahead of the stable cacheable prefix.
                             msgs = [
                                 *msgs,
-                                {"role": "user", "content": note, "_volatile": True},
+                                {"role": "user", "content": note, VOLATILE_KEY: True},
                             ]
                         await asyncio.sleep(_INFERENCE_RETRY_BACKOFF_SECS)
                         assistant_text = ""
@@ -2684,7 +2683,7 @@ def _n_tools(n: int) -> str:
 def _is_turn_note(message: dict) -> bool:
     """Whether *message* is a turn's tool note (``stream`` puts one in the history per turn): the
     one system message the loop marks volatile, because its content changes every turn."""
-    return message.get("role") == "system" and bool(message.get("_volatile"))
+    return message.get("role") == "system" and bool(message.get(VOLATILE_KEY))
 
 
 def _short_json(value: Any) -> str:

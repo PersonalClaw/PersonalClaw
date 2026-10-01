@@ -39,7 +39,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.catalog import SAMPLING_PARAMETERS, refused_sampling
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.inflight import InFlightRequests
-from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
+from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, VOLATILE_KEY, PromptCache
 from personalclaw.llm.registry import CredentialMissing, require_model
 
 logger = logging.getLogger(__name__)
@@ -127,12 +127,6 @@ def _translate_tools(tools: list[dict]) -> list[dict]:
     return out
 
 
-# Neutral message-dict marker (PCS-1 / F1): a ``role: "system"`` message carrying
-# ``{_VOLATILE_MESSAGE_KEY: True}`` holds per-turn VOLATILE content (the native loop's
-# turn_note — tool catalog + group stubs — changes every turn). The writer is the native
-# runtime; this is its sole reader.
-_VOLATILE_MESSAGE_KEY = "_volatile"
-
 # Anthropic's wire form for a cache breakpoint. THIS FILE IS THE ONLY
 # PLACE IN CORE THAT MAY NAME IT — `llm/anthropic.py` is one of the two in-core
 # protocol clients enumerated in docs/architecture/provider-boundary.md, and the
@@ -199,20 +193,46 @@ def _translate_parts(content: list) -> list:
     return out
 
 
+def _lay_system_notes(out: list[dict], notes: list[str]) -> None:
+    """Append each volatile system note to the last user turn of ``out``, as a text block.
+
+    The turn keeps its own blocks first (Anthropic wants a turn's ``tool_result`` blocks ahead of
+    any text), so the notes end the request, past every cache breakpoint. A note arrives fenced as
+    the runtime's (``prompt_cache.system_note_text``) and is sent as it is. ``out`` holds only
+    dicts and lists the translation built, so nothing a caller passed in is mutated.
+    """
+    if not notes:
+        return
+    blocks = [{"type": "text", "text": note} for note in notes]
+    for msg in reversed(out):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            msg["content"] = [*content, *blocks]
+        else:
+            own = [{"type": "text", "text": str(content)}] if content else []
+            msg["content"] = [*own, *blocks]
+        return
+    out.append({"role": "user", "content": blocks})
+
+
 def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[dict]]:
     """Split OpenAI-shaped ``messages`` into ``(system_prompt, anthropic_messages)``.
 
     * ``role: "system"`` messages are concatenated into the returned system
       string (Anthropic carries the system prompt out-of-band, so it leads the
       served prompt) — UNLESS the message is tagged VOLATILE (see below).
-    * A ``role: "system"`` message tagged ``{_VOLATILE_MESSAGE_KEY: True}`` is NOT
-      hoisted into ``system=``. Anthropic serves ``system=`` ahead of ``messages[0]``,
-      so a per-turn-changing note there would break the cacheable EXACT prefix
-      (F1). Instead the note is relocated to the TAIL of the message list, carried
-      as a trailing ``{"role": "user", "content": <note>}`` (Anthropic has no
-      trailing-system concept). The stable assembled context — ``messages[0]``, a
-      user message — then leads. The note moves position, never existence: it still
-      reaches the model, just late. Multiple volatile notes ship once each, in order.
+    * A ``role: "system"`` message tagged :data:`~personalclaw.llm.prompt_cache.VOLATILE_KEY`
+      is NOT hoisted into ``system=``. Anthropic serves ``system=`` ahead of
+      ``messages[0]``, so a per-turn-changing note there would break the cacheable EXACT
+      prefix (F1). The Messages API has no system turn inside the conversation either, so
+      the note rides the way :data:`~personalclaw.llm.prompt_cache.VOLATILE_KEY` lays
+      down: one text block (its content, already fenced as the runtime's) appended to the
+      request's LAST user turn — after its ``tool_result`` blocks and after any cache
+      breakpoint — and never a user turn of its own, which the model reads as the newest
+      thing the user said and answers in the chat. Multiple volatile notes ship once each,
+      in order. A request with no user turn at all gets one carrying only the notes.
     * ``role: "assistant"`` with ``tool_calls`` becomes a content-block list
       mixing an optional leading ``text`` block and one ``tool_use`` block per
       call (``arguments`` JSON string parsed into the ``input`` dict).
@@ -251,9 +271,9 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
     """
     system_parts: list[str] = []
     out: list[dict] = []
-    # Volatile system notes, relocated to the tail after the loop (empty ⇒ the
+    # Volatile system notes, laid on the last user turn after the loop (empty ⇒ the
     # return is byte-for-byte the pre-PCS-1 behavior).
-    volatile_tail: list[dict] = []
+    volatile_notes: list[str] = []
     # True once a hoisted (non-volatile, non-empty) system message carried the neutral
     # cache hint. Only then does ``system=`` become block-shaped.
     system_hinted = False
@@ -264,12 +284,12 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
         hinted = CACHE_HINT_KEY in msg
 
         if role == "system":
-            if msg.get(_VOLATILE_MESSAGE_KEY):
-                # Volatile per-turn note → tail user message, not out-of-band system=.
-                # Never marked: its content changes every turn, so a breakpoint here
-                # would guarantee a miss.
+            if msg.get(VOLATILE_KEY):
+                # Volatile per-turn note → the last user turn's tail, not out-of-band
+                # system=. Never marked: its content changes every turn, so a breakpoint
+                # here would guarantee a miss.
                 if content:
-                    volatile_tail.append({"role": "user", "content": str(content)})
+                    volatile_notes.append(str(content))
             elif content:
                 # Stable system content → out-of-band system=, leads the prompt.
                 system_parts.append(str(content))
@@ -352,10 +372,11 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
             continue
         out.append({"role": role, "content": content})
 
-    # Deliver any volatile notes at the TAIL, in order — after the stable context
-    # so the served prompt's prefix stays stable across turns (F1). Empty when no
-    # message was tagged, keeping the untagged path byte-identical.
-    out.extend(volatile_tail)
+    # Deliver any volatile notes on the last user turn, in order — after the stable
+    # context and every breakpoint, so the served prompt's prefix stays stable across
+    # turns (F1). Empty when no message was tagged, keeping the untagged path
+    # byte-identical.
+    _lay_system_notes(out, volatile_notes)
 
     system_text = "\n\n".join(system_parts)
     if system_hinted:

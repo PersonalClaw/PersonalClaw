@@ -65,6 +65,7 @@ from personalclaw.llm.base import (
     ModelProvider,
     ModelSubstitution,
 )
+from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import served_on_this_machine
 
 if TYPE_CHECKING:
@@ -392,6 +393,29 @@ class ModelCallGuard(ModelProvider):
         report "no commands" for an agent that has them, and every slash command would
         silently degrade to text (`G4`)."""
         return bool(getattr(self._inner, "supports_native_commands", False))
+
+    @property
+    def prompt_cache(self) -> PromptCache:  # type: ignore[override]
+        """Explicit pass-through, the inner provider's own posture: the ABC's ``NONE`` default
+        answered for every guarded model, so the native loop placed no cache marker on any
+        metered turn (a loop's planner and workers, background work, workflows) and a model that
+        caches only on a marker, Bedrock's or Anthropic's, re-read its whole prompt every call."""
+        return getattr(self._inner, "prompt_cache", PromptCache.NONE)
+
+    @property
+    def compacts_in_process(self) -> bool:
+        """Explicit pass-through for the same reason as ``supports_native_commands``."""
+        return bool(getattr(self._inner, "compacts_in_process", False))
+
+    @property
+    def compacts_automatically(self) -> bool:
+        """Explicit pass-through for the same reason as ``supports_native_commands``."""
+        return bool(getattr(self._inner, "compacts_automatically", False))
+
+    @property
+    def keeps_cancelled_turns(self) -> bool:
+        """Explicit pass-through for the same reason as ``supports_native_commands``."""
+        return bool(getattr(self._inner, "keeps_cancelled_turns", False))
 
     @property
     def request_only(self) -> bool:  # type: ignore[override]

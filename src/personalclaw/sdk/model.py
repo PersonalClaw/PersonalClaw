@@ -89,7 +89,10 @@ from personalclaw.llm.openai import OpenAIProvider  # noqa: F401
 # core never learns that vendor's cache syntax. Core's own tests/test_apps_import_boundary.py
 # names this the prescribed fix: "If a symbol isn't on the SDK yet, the fix is to PROMOTE it
 # to a personalclaw.sdk submodule instead of reaching around the boundary."
-from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache  # noqa: F401
+# ``VOLATILE_KEY`` is the same app's other half: the marker on the runtime's per-turn system
+# note, which such a wire carries on the request's last user turn (its definition is the whole
+# placement contract, for every kind of wire).
+from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, VOLATILE_KEY, PromptCache  # noqa: F401
 from personalclaw.llm.registry import (  # noqa: F401
     CredentialMissing,
     ProviderEntry,
@@ -165,6 +168,10 @@ __all__ = [
     "StructuredOutput",
     "PromptCache",
     "CACHE_HINT_KEY",
+    # A provider whose wire has no system turn inside the conversation (Anthropic Messages,
+    # Bedrock Converse) carries the runtime's per-turn note on the request's last user turn,
+    # never as a turn of its own (`bedrock-models`).
+    "VOLATILE_KEY",
     "Credential",
     "get_default_registry",
     "ProviderEntry",

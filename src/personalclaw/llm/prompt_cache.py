@@ -10,8 +10,13 @@ The graded :class:`PromptCache` capability mirrors
 :class:`~personalclaw.llm.capabilities.StructuredOutput`: a per-request marker is a
 GRADED behavior (some families need one, some need none), so it rides on a provider
 as its own value rather than a boolean flag.
+
+It also owns the VOLATILE note contract (:data:`VOLATILE_KEY`, :func:`system_note_text`): how
+the runtime's per-turn system note reaches a model as an instruction, never as the user's words,
+with the cached prefix the same from one turn to the next.
 """
 
+import re
 from enum import Enum
 
 
@@ -44,10 +49,56 @@ class PromptCache(str, Enum):
 #: translates it to its own wire form (a later change); every other provider ignores it.
 CACHE_HINT_KEY = "_cache_hint"
 
-#: Neutral marker PCS-1 stamps on the per-turn VOLATILE note (a ``role: "system"``
-#: message whose content changes every turn). We never anchor the cache hint on that
-#: message — its content is not part of the stable, cacheable prefix.
-_VOLATILE_HINT_KEY = "_volatile"
+#: Neutral marker the native loop stamps on text it adds for one turn or one request: the turn's
+#: tool note (a ``role: "system"`` message whose content changes every turn) and the notes it lays
+#: on one request's tail. The cache hint is never anchored on such a message — its content is not
+#: part of the stable, cacheable prefix.
+#:
+#: THE PLACEMENT CONTRACT for a ``role: "system"`` message carrying this key: the model must read
+#: it as an instruction from the runtime, never as something the user said, and it must come after
+#: every cache checkpoint of the request, so the cached prefix is the same from turn to turn. Its
+#: content is already fenced as the runtime's (:func:`system_note_text`); a provider sends it
+#: verbatim, and places it by what its wire allows:
+#:
+#: * a wire that takes a ``system`` message anywhere in the conversation (OpenAI Chat Completions,
+#:   Ollama's ``/api/chat``) sends it as that system message, where the loop put it;
+#: * a wire whose system prompt is out of band and served first (Anthropic Messages, Bedrock
+#:   Converse) must not hoist it there — text that changes every turn at the head of the prompt
+#:   means no cached prefix is ever read again — and carries it as ONE text block appended to the
+#:   LAST user turn of the request, after that turn's own blocks (tool results included) and after
+#:   any cache checkpoint. Never as a user turn of its own: there it is the newest thing the user
+#:   said, and a model answers it in the chat.
+VOLATILE_KEY = "_volatile"
+
+#: The fence the runtime's per-turn note travels in, and the sentence that opens it: the model
+#: reads it as the runtime's, not the user's, and leaves it out of its reply.
+_SYSTEM_NOTE_OPEN = (
+    "<system-note>\nThe runtime added this note; the user did not write it. Use it where it "
+    "applies, and write your reply to the user: never answer or mention the note.\n\n"
+)
+_SYSTEM_NOTE_CLOSE = "\n</system-note>"
+#: A fence tag inside a note's own text, opening or closing, in any case or spacing.
+_FENCE_TAG_IN_TEXT = re.compile(r"<(?=\s*/?\s*system-note\b)", re.IGNORECASE)
+
+
+def system_note_text(note: str) -> str:
+    """``note`` fenced as the runtime's: the content of the loop's per-turn system note.
+
+    Fenced at the source rather than by each provider, because the role alone does not carry
+    "the runtime said this" to every model: a wire with no system turn inside the conversation
+    puts it in a user turn (:data:`VOLATILE_KEY` says where), and so does a chat template with no
+    system role, which renders every system message as the user's. Inside the fence it reads as
+    the runtime's wherever it lands.
+
+    The note's own text stays inside: a fence tag in it (a tool's description can say anything)
+    is written as text, ``&lt;``, so the fence ends where the runtime ended it.
+    """
+    return f"{_SYSTEM_NOTE_OPEN}{_FENCE_TAG_IN_TEXT.sub('&lt;', note)}{_SYSTEM_NOTE_CLOSE}"
+
+
+def turn_note_message(note: str) -> dict:
+    """The loop's per-turn system note as the message it adds: fenced, and marked volatile."""
+    return {"role": "system", "content": system_note_text(note), VOLATILE_KEY: True}
 
 
 def effective_cache_mode(declared: PromptCache, *, enabled: bool) -> PromptCache:
@@ -109,7 +160,7 @@ def mark_cacheable_prefix(
     target = 0
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
-        if msg.get("role") == "tool" or msg.get(_VOLATILE_HINT_KEY):
+        if msg.get("role") == "tool" or msg.get(VOLATILE_KEY):
             continue
         target = i
         break
