@@ -132,6 +132,19 @@ buttons on the last part. The same
 read composes a brief for an approval your own turn raised, so a channel that runs its own turns
 renders both from one place.
 
+### An approval prompt offers the brief's answers
+
+The brief's `answers` list is what the prompt offers, in order: one button each (or, on a channel
+with no buttons, one reply word each, `word`), labelled `label`, and nothing else. Core composes it
+per call, as the dashboard's approval card does: `Allow once` and `Deny` always, and `Allow for
+this chat` (`key` `trust`, the card's "This chat") when the prompt is asked in the chat that is
+asking and the call may not destroy anything. An answer with a `promise` is a standing one; the
+prompt says its promise beside it, so the owner reads what it does before pressing it. A press
+resolves the pending record's future with the pressed answer's `key`, and `request_approval`
+returns whether that answer's `ends` is `approved`. Core then decides it the way the card would:
+`trust` trusts that one chat, which its header shows and where the owner turns it off. Never add an
+answer of your own to a prompt core asks, and never drop one.
+
 ### An approval ends as PersonalClaw's do
 
 A prompt core asks through `request_approval` keeps no timer of its own: core resolves it with how
@@ -365,9 +378,10 @@ def test_channel_contract(fake_backend):
     )
 ```
 
-`press` is `async def press(pending, approve: bool) -> str`: given the pending record your
-`request_approval` handed `on_prompted`, it drives your OWN handler for the owner's Approve or
-Deny (a callback, an interaction, a reply) and returns what the presser was told. Drive the
+`press` is `async def press(pending, answer: str) -> str`: given the pending record your
+`request_approval` handed `on_prompted` and the `key` of one of the answers the prompt offers
+(`approved`, `trust`, `rejected`), it drives your OWN handler for the owner's press on that answer
+(a callback, an interaction, a reply) and returns what the presser was told. Drive the
 handler, not a fake's button: a fake that refuses a press on a message whose buttons are gone
 would hide the late press the clause is about. Wire the delivery with an owner, so it asks.
 
@@ -394,7 +408,7 @@ call it once per config if you have several.
 | fencing | tracked-group content comes back unfenced, the fence replaces rather than wraps the text, or your module never reads `verdict.fenced_text` |
 | delivery | `deliver_text` missing, or any SHOULD method absent while you passed a `delivery` |
 | streaming | `edits=True` and the trio is incomplete, the throttle fires more than once per your floor, `stop_stream` does not force-flush, or `append_stream_task` refuses a status in `TASK_STATUSES` — or `edits=False` and `start_stream` returned a non-empty ts |
-| approvals | with `press=`: the prompt hands core no pending record with a future, an ending other than `approved` returns anything but `False`, a press after an ending changes it or is not told how THAT approval ended, the owner's press does not answer it, or a cancelled wait swallows its cancellation |
+| approvals | with `press=`: the prompt hands core no pending record with a future, an ending other than `approved` returns anything but `False`, a press after an ending changes it or is not told how THAT approval ended, the owner's press on an offered answer does not resolve it with that answer's key or returns other than whether it approves, or a cancelled wait swallows its cancellation |
 | vendor completeness | **never fails** — warns; see below |
 
 If you cannot supply `min_edit_interval` + `clock`, the streaming clause degrades to

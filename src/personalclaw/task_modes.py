@@ -318,7 +318,8 @@ _RISK_ORDER = {"safe": 0, "caution": 1, "destructive": 2}
 UNCHECKED = "unchecked"
 
 #: The effective risks a gate treats as "may be destructive": a named confirmation on the Tools
-#: page, the card's standing grants withheld until the user unlocks them.
+#: page, the card's standing grants withheld until the user unlocks them, and a channel prompt's
+#: standing answer withheld (a prompt has no unlock, so such a call is answered once).
 MAY_DESTROY: frozenset[str] = frozenset({"destructive", UNCHECKED})
 
 

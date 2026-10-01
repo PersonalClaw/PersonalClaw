@@ -57,6 +57,59 @@ TASK_STATUSES: tuple[str, ...] = (
 APPROVAL_ENDINGS: tuple[str, ...] = ("approved", "rejected", "expired", "cancelled")
 
 
+@dataclass(frozen=True)
+class ApprovalAnswer:
+    """One answer an approval prompt offers the owner (:meth:`ChannelDelivery.request_approval`).
+
+    Core decides which answers a prompt offers and hands them over in the approval brief, so a
+    channel renders its buttons, or the words a reply answers with, from data and offers exactly
+    what the dashboard's approval card offers for that call.
+
+    ``key`` is the decision a press makes: the card's own verb (``approved``, ``trust``,
+    ``rejected``), which is what the prompt's pending future is resolved with. ``ends`` is how the
+    approval ends when it is given, one of ``approved``/``rejected``. ``word`` is the one word a
+    typed reply answers with, on a channel that has no buttons. ``promise`` is what the answer
+    remembers beyond this one call, in the dashboard card's words, and ``""`` for an answer that
+    remembers nothing: a prompt that offers a standing answer says what it does.
+    """
+
+    key: str
+    label: str
+    ends: str
+    word: str
+    promise: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        """The answer as the brief carries it."""
+        return {
+            "key": self.key,
+            "label": self.label,
+            "ends": self.ends,
+            "word": self.word,
+            "promise": self.promise,
+        }
+
+
+#: Approve this one call. Nothing is remembered: the next call asks again.
+ALLOW_ONCE = ApprovalAnswer("approved", "Allow once", "approved", "APPROVE")
+#: Approve this call, and every later one in the same chat, until the owner changes it back: the
+#: dashboard card's "This chat", the chat's Trust. Offered only by a prompt asked in that chat.
+ALLOW_FOR_THIS_CHAT = ApprovalAnswer(
+    "trust",
+    "Allow for this chat",
+    "approved",
+    "TRUST",
+    "Every tool in this chat runs without asking, until you change it back.",
+)
+#: Refuse this call. Nothing is remembered.
+DENY = ApprovalAnswer("rejected", "Deny", "rejected", "DENY")
+
+#: What a prompt offers when no answer reaches beyond the call: one with no chat behind it (a
+#: subagent, a trigger's run, a workflow step), one asked anywhere but in the chat that asks (as
+#: Home and the Inbox offer Approve and Deny alone), and a chat's call that may destroy something.
+ONE_CALL_ANSWERS: tuple[ApprovalAnswer, ...] = (ALLOW_ONCE, DENY)
+
+
 @runtime_checkable
 class ChannelDelivery(Protocol):
     """Outbound delivery a channel provides to the gateway. All text is PLAIN
@@ -213,7 +266,8 @@ class ChannelDelivery(Protocol):
     ) -> "bool | None":
         """Prompt the owner to approve a tool call on this channel.
 
-        Returns ``True`` (approved) / ``False`` (not approved), or ``None`` if the
+        Returns ``True`` when the approval ended approved (an answer whose ``ends`` is
+        ``"approved"``, or core's ``"approved"``) / ``False`` otherwise, or ``None`` if the
         channel can't prompt (no owner/channel) so the gateway falls back to the
         dashboard. Implementations own the channel-specific approval UI + the wait
         for the owner's response, and should coordinate with the dashboard via the
@@ -224,16 +278,34 @@ class ChannelDelivery(Protocol):
         ``loop “Fix the README”``, ``workflow “deep-research” · step “sweep”``): show it on the
         prompt as written, as text, since a chat's or a loop's name is in it.
 
+        **What it offers: the brief's answers.** The brief (below) carries ``answers``, the
+        answers this prompt offers, in order (:class:`ApprovalAnswer`, as dicts)::
+
+            [{"key": str,       # what a press resolves the pending future with
+              "label": str,     # the button's words, e.g. "Allow for this chat"
+              "ends": str,      # "approved" or "rejected": how the approval ends
+              "word": str,      # the word a typed reply answers with, e.g. "TRUST"
+              "promise": str}]  # what it remembers beyond this call, or ""
+
+        A prompt offers each of them, and nothing else: one button each (or one reply word
+        each), labelled with ``label``, and for an answer with a ``promise`` the prompt says
+        it, so the owner reads what a standing answer does before giving it. Core composes
+        the set for each call, as the dashboard's approval card does: "Allow for this chat"
+        only on a prompt asked in the chat that is asking, and never for a call that may
+        destroy something, so a channel neither adds an answer nor drops one.
+
         **How it ends.** The pending record carries a ``future``. The owner's press on this
-        channel resolves it with ``"approved"`` or ``"rejected"``. However else the approval ends,
+        channel resolves it with the ``key`` of the answer pressed, and only an offered key: a
+        press that names anything else answers nothing. However else the approval ends,
         core resolves it with how it ended (:data:`APPROVAL_ENDINGS`): ``"approved"``
         or ``"rejected"`` when it was answered somewhere else (the dashboard, the phone),
         ``"expired"`` when nobody answered inside the owner's window, ``"cancelled"`` when the
         work that asked stopped first. The wait keeps no clock of its own: the window is core's,
         up to a week, and core ends the wait however the approval ends, so a prompt that gave up
         on its own timer would say an approval had ended while it still waited. Once the future
-        resolves, the prompt says how it ended and takes its buttons off, and a press on it
-        after that is answered with that outcome rather than taken for an answer.
+        resolves, the prompt says how it ended (for a pressed answer, its ``ends``, and its
+        ``promise`` when it has one) and takes its buttons off, and a press on it after that is
+        answered with that ending rather than taken for an answer.
 
         **What the prompt shows: the approval brief.** ``event.tool_meta`` carries the
         core-composed brief under
@@ -248,14 +320,16 @@ class ChannelDelivery(Protocol):
              "risk": str,              # EFFECTIVE per-invocation risk (not the
                                        #   DECLARED event.risk_level)
              "summary": str,           # "Can: writes files · Risk: Caution", or ""
+             "answers": [...],         # what the prompt offers (above)
              "blastRadius": {"writes": bool, "network": bool,
                              "shell": bool, "readOnly": bool},   # optional
              "blastRadiusLine": str}                             # optional
 
         A prompt shows the tool, the arguments, the purpose and the summary line, which is
         what the dashboard's approval card shows, and splits like a reply when that is too
-        long for one message, the buttons on the last part. Every string is already masked
-        (:func:`~personalclaw.security.redact_field`), so a channel masks nothing itself.
+        long for one message, the buttons (the answers) on the last part. Every string is
+        already masked (:func:`~personalclaw.security.redact_field`), so a channel masks
+        nothing itself.
         Two rules for a renderer that reads the facets itself:
 
         * ``blastRadius``/``blastRadiusLine`` are ABSENT when nothing could be

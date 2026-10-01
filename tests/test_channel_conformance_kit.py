@@ -29,6 +29,7 @@ from personalclaw.channel_transports.base import (
 from personalclaw.sdk.channel import (
     CapturingState,
     ChannelContractError,
+    approval_brief_for,
     assert_channel_contract,
 )
 
@@ -753,38 +754,47 @@ _LATE = {
 
 
 class PromptingDelivery(GoodDelivery):
-    """Asks, waits for the approval to end however it ends, and answers a late press."""
+    """Asks, offering the brief's answers, waits for the approval to end however it ends, and
+    answers a late press."""
 
     def __init__(self, backend: _FakeBackend) -> None:
         super().__init__(backend)
         self.waiting: dict[str, _Pending] = {}
+        self.offered: dict[str, dict[str, str]] = {}
         self.ended: dict[str, str] = {}
+
+    def offers(self, event) -> list[dict[str, str]]:
+        return list(approval_brief_for(event)["answers"])
 
     async def request_approval(self, event, *, source, on_prompted=None, **kw):
         pending = _Pending(str(event.request_id))
         self.waiting[pending.request_id] = pending
-        await self.deliver_text("owner-dm", f"Approve {event.title}?")
+        self.offered = {a["key"]: a for a in self.offers(event)}
+        buttons = " / ".join(a["label"] for a in self.offered.values())
+        await self.deliver_text("owner-dm", f"Approve {event.title}? {buttons}")
         if on_prompted:
             on_prompted(pending)
         try:
             outcome = await pending.future
         finally:
             self.waiting.pop(pending.request_id, None)
-        self.ended[pending.request_id] = outcome
-        return outcome == "approved"
+        ending = self.offered[outcome]["ends"] if outcome in self.offered else outcome
+        self.ended[pending.request_id] = ending
+        return ending == "approved"
 
-    async def on_press(self, request_id: str, approve: bool) -> str:
+    async def on_press(self, request_id: str, answer: str) -> str:
         """The app's own press handler."""
         pending = self.waiting.get(request_id)
         if pending is None or pending.future.done():
             return _LATE.get(self.ended.get(request_id, ""), "No longer waiting.")
-        pending.future.set_result("approved" if approve else "rejected")
+        if answer in self.offered:
+            pending.future.set_result(answer)
         return ""
 
 
 def _press(delivery: PromptingDelivery):
-    async def press(pending, approve: bool) -> str:
-        return await delivery.on_press(pending.request_id, approve)
+    async def press(pending, answer: str) -> str:
+        return await delivery.on_press(pending.request_id, answer)
 
     return press
 
@@ -796,9 +806,44 @@ def _approvals(delivery: PromptingDelivery, **overrides):
 def test_a_delivery_whose_approvals_end_as_core_ends_them_passes():
     d = PromptingDelivery(_FakeBackend())
     assert_channel_contract(StreamingTransport(), **_approvals(d))
+    # Four endings core gives, then a press on each answer offered: once, this chat, deny.
     assert sorted(d.ended.values()) == sorted(
-        ["approved", "rejected", "expired", "cancelled", "approved", "rejected"]
+        ["approved", "rejected", "expired", "cancelled", "approved", "approved", "rejected"]
     )
+
+
+def test_a_prompt_that_offers_only_approve_and_deny_fails():
+    """A channel renders what the brief offers. One that keeps its own Approve/Deny drops "Allow
+    for this chat", the dashboard card's answer, and a press on it answers nothing."""
+
+    class TwoButtons(PromptingDelivery):
+        def offers(self, event):
+            return [a for a in super().offers(event) if a["key"] in ("approved", "rejected")]
+
+    d = TwoButtons(_FakeBackend())
+    with pytest.raises(
+        ChannelContractError, match=r"\[approvals\].*'Allow for this chat'.*MUST resolve"
+    ):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_a_standing_answer_read_as_not_approved_fails():
+    """ "Allow for this chat" approves this call too: a prompt that returns False for it would
+    leave the call it was pressed on unrun."""
+
+    class OnceOnly(PromptingDelivery):
+        async def request_approval(self, event, **kw):
+            approved = await super().request_approval(event, **kw)
+            return approved and self.pressed != "trust"
+
+        async def on_press(self, request_id, answer):
+            self.pressed = answer
+            return await super().on_press(request_id, answer)
+
+    d = OnceOnly(_FakeBackend())
+    d.pressed = ""
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*'Allow for this chat'.*True"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
 
 
 def test_without_a_press_the_endings_are_not_asserted():
@@ -859,10 +904,10 @@ def test_a_wait_with_a_clock_of_its_own_fails(monkeypatch):
 
 def test_a_late_press_taken_for_an_answer_fails():
     class Racy(PromptingDelivery):
-        async def on_press(self, request_id, approve):
+        async def on_press(self, request_id, answer):
             # Answers the record whatever state it is in: a press after the end raises.
             pending = self.waiting.get(request_id) or self._last
-            pending.future.set_result("approved" if approve else "rejected")
+            pending.future.set_result(answer)
             return "Recorded"
 
         async def request_approval(self, event, *, source, on_prompted=None, **kw):
@@ -879,8 +924,8 @@ def test_a_late_press_taken_for_an_answer_fails():
 
 def test_a_late_press_left_unanswered_fails():
     class Silent(PromptingDelivery):
-        async def on_press(self, request_id, approve):
-            await super().on_press(request_id, approve)
+        async def on_press(self, request_id, answer):
+            await super().on_press(request_id, answer)
             return ""
 
     d = Silent(_FakeBackend())
@@ -890,8 +935,8 @@ def test_a_late_press_left_unanswered_fails():
 
 def test_late_presses_told_alike_whatever_ended_fail():
     class OneAnswer(PromptingDelivery):
-        async def on_press(self, request_id, approve):
-            told = await super().on_press(request_id, approve)
+        async def on_press(self, request_id, answer):
+            told = await super().on_press(request_id, answer)
             return "This approval is closed." if told else ""
 
     d = OneAnswer(_FakeBackend())
@@ -905,11 +950,11 @@ def test_a_press_that_answers_nothing_fails(monkeypatch):
     monkeypatch.setattr(kit, "_APPROVAL_WAIT_SECS", 0.2)
 
     class Deaf(PromptingDelivery):
-        async def on_press(self, request_id, approve):
+        async def on_press(self, request_id, answer):
             pending = self.waiting.get(request_id)
             if pending is not None and not pending.future.done():
                 return ""  # the owner's press, dropped
-            return await super().on_press(request_id, approve)
+            return await super().on_press(request_id, answer)
 
     d = Deaf(_FakeBackend())
     with pytest.raises(ChannelContractError, match=r"\[approvals\].*MUST resolve the approval"):

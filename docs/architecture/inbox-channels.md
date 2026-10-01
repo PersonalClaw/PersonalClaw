@@ -295,6 +295,18 @@ to answer it instead. A press on the channel and an answer in the dashboard reso
 and however the approval ends, the channel's prompt is told how (`approved`, `rejected`, `expired`,
 `cancelled`), so it says so and takes its buttons off (`ChannelDelivery.request_approval`).
 
+**What a channel's prompt offers.** The answers the chat's card offers, decided by core and handed
+over in the brief (`DashboardApprovalState.channel_answers`, the vocabulary in
+`channel_delivery`): Allow once and Deny, and Allow for this chat, the card's "This chat", when the
+prompt is asked in the chat that is asking (the chat's own channel, in that chat), the call may not
+destroy anything (`task_modes.MAY_DESTROY`, where the card withholds its standing answers too) and
+the operator ceiling lets a chat's Trust stand. Everywhere else, like Home and the Inbox, it answers
+the call alone. A press of Allow for this chat decides through `decide_session_approval` with
+`trust`, exactly as the card's does: that chat is trusted, its header shows it, its next calls run
+without asking, and no other chat changes (`answer_on_channel`). An answer the prompt did not offer
+decides nothing. The card's "This agent" stays the card's: it saves a setting that outlives the
+chat.
+
 **How long it waits, and what a denial without an answer leaves.** Every approval that waits
 waits one window, the owner's `agent.approval_timeout_minutes` (Settings → Agent defaults →
 Approval wait; two hours by default, one minute to one week), read per approval by

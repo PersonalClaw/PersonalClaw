@@ -50,8 +50,9 @@ provider instance it drives the clauses the plan's §C4 names:
    channel's prompt): the prompt hands core a pending record whose future core resolves
    however the approval ends (``APPROVAL_ENDINGS``), and ``request_approval`` then returns
    ``True`` for ``approved`` alone; a press after each ending changes nothing and is told how
-   THAT approval ended; the owner's press answers it either way; and a wait whose work stops
-   lets the cancellation through.
+   THAT approval ended; the owner's press on each answer the brief offers (Allow once, Allow
+   for this chat, Deny) resolves it with that answer's key and returns whether that answer
+   approves; and a wait whose work stops lets the cancellation through.
 
 Failures name the violated obligation, not just the expression, because the reader is
 usually an app author who has never seen this file.
@@ -329,9 +330,11 @@ def assert_channel_contract(
         real reason to skip one arm rarely has a reason to skip the other, and a single
         suppressor would silence a seam nobody had thought about.
     :param press: how the owner answers this channel's approval prompt, as an async
-        ``press(pending, approve: bool) -> str``: given the pending record the delivery handed
-        ``on_prompted``, drive the app's OWN handler for the owner's Approve or Deny (a button
-        press, a reply), and return what the presser was told (``""`` when nothing was said).
+        ``press(pending, answer: str) -> str``: given the pending record the delivery handed
+        ``on_prompted`` and the ``key`` of one of the answers the prompt offers (``approved``,
+        ``trust``, ``rejected``), drive the app's OWN handler for the owner's press on that
+        answer (a button press, a reply), and return what the presser was told (``""`` when
+        nothing was said).
         Drive the handler rather than a fake's button: a fake that refuses a press on a message
         whose buttons are gone would hide the late press this clause is about. Required, with a
         ``delivery`` that can ask (its owner wired), to assert clause 10; the kit cannot press a
@@ -1027,8 +1030,16 @@ _approval_seq = itertools.count(1)
 _APPROVAL_WAIT_SECS = 5.0
 
 
+def _conformance_answers() -> tuple[Any, ...]:
+    """What the kit's approval offers: every answer a prompt core asks in its own chat can."""
+    from personalclaw.channel_delivery import ALLOW_FOR_THIS_CHAT, ALLOW_ONCE, DENY
+
+    return (ALLOW_ONCE, ALLOW_FOR_THIS_CHAT, DENY)
+
+
 def _conformance_approval_event() -> Any:
-    """An approval as core asks a channel for one: its brief stamped, as the dashboard shows it."""
+    """An approval as core asks a channel for one: its brief stamped, as the dashboard shows it,
+    offering every answer a prompt asked in its own chat can offer."""
     from types import SimpleNamespace
 
     from personalclaw.approval_brief import APPROVAL_BRIEF_META_KEY
@@ -1038,6 +1049,7 @@ def _conformance_approval_event() -> Any:
         "input": '{"path": "notes.txt"}',
         "purpose": "Save the meeting notes",
         "summary": "Can: writes files · Risk: Caution",
+        "answers": [answer.as_dict() for answer in _conformance_answers()],
     }
     return SimpleNamespace(
         request_id=f"conformance-approval-{next(_approval_seq)}",
@@ -1108,15 +1120,15 @@ def _outcome(future: "asyncio.Future[Any]") -> Any:
     return future.exception() or future.result()
 
 
-async def _pressed(press: Any, pending: Any, approve: bool, when: str) -> Any:
+async def _pressed(press: Any, pending: Any, answer: str, when: str) -> Any:
     """What the presser was told, the press itself failing named rather than erroring out."""
     try:
-        return await press(pending, approve)
+        return await press(pending, answer)
     except Exception as exc:  # noqa: BLE001 - the failure IS the finding, named
         _fail(
             "approvals",
-            f"the owner's {'Approve' if approve else 'Deny'} {when} raised {exc!r}: a press MUST "
-            "be answered, whatever it finds.",
+            f"the owner's press on {answer!r} {when} raised {exc!r}: a press MUST be answered, "
+            "whatever it finds.",
         )
 
 
@@ -1136,7 +1148,7 @@ async def _assert_approval_endings(delivery: Any, press: Any) -> None:
             f"an approval that ended {ending!r} MUST make request_approval return "
             f"{ending == 'approved'!r} (True for 'approved' alone); got {answer!r}.",
         )
-        told = await _pressed(press, pending, True, f"after the approval ended {ending!r}")
+        told = await _pressed(press, pending, "approved", f"after the approval ended {ending!r}")
         _require(
             _outcome(pending.future) == ending,
             clause,
@@ -1157,25 +1169,27 @@ async def _assert_approval_endings(delivery: Any, press: Any) -> None:
         f"endings were answered alike: {told_late!r}.",
     )
 
-    for approve, want in ((True, "approved"), (False, "rejected")):
+    for offered in _conformance_answers():
         pending, wait = await _asked(delivery)
-        await _pressed(press, pending, approve, "on a waiting prompt")
+        await _pressed(press, pending, offered.key, "on a waiting prompt")
         for _ in range(100):  # a press may resolve the record on the loop's next turn
             if pending.future.done():
                 break
             await asyncio.sleep(0.01)
         _require(
-            _outcome(pending.future) == want,
+            _outcome(pending.future) == offered.key,
             clause,
-            f"the owner's {'Approve' if approve else 'Deny'} MUST resolve the approval "
-            f"{want!r}; the record reads {_outcome(pending.future)!r}.",
+            f"the owner's press on {offered.label!r} MUST resolve the approval with that "
+            f"answer's key {offered.key!r}; the record reads {_outcome(pending.future)!r}. A "
+            "prompt offers every answer the brief carries (`answers`), and nothing else.",
         )
-        answer = await _ended(wait, f"the owner pressed {'Approve' if approve else 'Deny'}")
+        approves = offered.ends == "approved"
+        answer = await _ended(wait, f"the owner pressed {offered.label!r}")
         _require(
-            answer is approve,
+            answer is approves,
             clause,
-            f"after the owner's {want!r} press request_approval MUST return {approve!r}; "
-            f"got {answer!r}.",
+            f"after the owner's press on {offered.label!r} request_approval MUST return "
+            f"{approves!r}, whether that answer approves; got {answer!r}.",
         )
 
     pending, wait = await _asked(delivery)

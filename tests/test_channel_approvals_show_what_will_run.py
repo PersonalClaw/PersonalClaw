@@ -258,11 +258,26 @@ async def test_a_subagent_approval_hands_the_channel_its_masked_arguments(tmp_pa
 
 
 def test_a_channel_reads_the_brief_core_stamped():
+    from personalclaw.channel_delivery import ONE_CALL_ANSWERS
     from personalclaw.sdk.channel import approval_brief_for
 
-    stamped = {"tool": "t", "input": "i", "purpose": "p", "risk": "safe", "summary": "s"}
+    answers = [a.as_dict() for a in ONE_CALL_ANSWERS]
+    stamped = {
+        "tool": "t",
+        "input": "i",
+        "purpose": "p",
+        "risk": "safe",
+        "summary": "s",
+        "answers": answers,
+    }
     event = SimpleNamespace(title="other", tool_meta={APPROVAL_BRIEF_META_KEY: stamped})
     assert approval_brief_for(event) is stamped
+
+    # A stamped brief that offers nothing a prompt can press is composed again from the event.
+    for offers in (None, [], [{"key": "approved"}]):
+        partial = {**stamped, "answers": offers}
+        event = SimpleNamespace(title="other", tool_meta={APPROVAL_BRIEF_META_KEY: partial})
+        assert approval_brief_for(event)["answers"] == answers
 
 
 def test_a_channels_own_turn_gets_a_brief_composed_and_masked():

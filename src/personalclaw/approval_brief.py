@@ -62,6 +62,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from personalclaw.channel_delivery import ONE_CALL_ANSWERS, ApprovalAnswer
 from personalclaw.command_effects import CommandEffects
 from personalclaw.security import redact_field
 from personalclaw.task_modes import read_call, resolve_effective_risk, tool_input_to_str
@@ -371,14 +372,17 @@ def _brief(
     shown_input: str,
     shown_purpose: str,
     risk: str,
+    answers: tuple[ApprovalAnswer, ...],
 ) -> dict[str, Any]:
     """The brief's one shape. ``radius`` is what the call can touch; the ``shown_*`` strings are
-    what a channel prints, already masked by the caller."""
+    what a channel prints, already masked by the caller. ``answers`` is what the prompt offers
+    (``channel_delivery.ApprovalAnswer``), which its caller decided."""
     brief: dict[str, Any] = {
         "tool": shown_tool,
         "input": shown_input,
         "purpose": shown_purpose,
         "risk": risk,
+        "answers": [answer.as_dict() for answer in answers],
     }
     if radius is not None:
         brief["blastRadius"] = radius
@@ -424,17 +428,24 @@ def compose_approval_brief(event: Any) -> dict[str, Any] | None:
         shown_input=redact_field(tool_input_to_str(tool_input)),
         shown_purpose=redact_field(str(getattr(event, "tool_purpose", "") or "")),
         risk=reading.risk,
+        # An event alone is a call with no chat behind it that core knows of: a background
+        # origin's (the gateway's relay), or one a channel's own turn raised. Its prompt answers
+        # this call and nothing beyond it.
+        answers=ONE_CALL_ANSWERS,
     )
 
 
-def entry_approval_brief(entry: Mapping[str, Any]) -> dict[str, Any] | None:
+def entry_approval_brief(
+    entry: Mapping[str, Any], *, answers: tuple[ApprovalAnswer, ...] = ONE_CALL_ANSWERS
+) -> dict[str, Any] | None:
     """The brief for a pending approval the dashboard registered (its ``_approval_entry``).
 
     The entry's strings are the ones the dashboard's card shows, already masked, so they are
     carried as they are: masking them again would print something the card does not. So is its
     ``blast_radius``, composed when the approval was registered from the call's raw arguments.
     Its ``risk`` is the chat's effective risk; a background approval's entry has none, and gets
-    it the way :func:`compose_approval_brief` does."""
+    it the way :func:`compose_approval_brief` does. ``answers`` is what the registry offers for it
+    (``DashboardApprovalState.channel_answers``)."""
     tool = str(entry.get("tool") or "")
     if not tool:
         return None
@@ -447,6 +458,7 @@ def entry_approval_brief(entry: Mapping[str, Any]) -> dict[str, Any] | None:
         shown_input=shown_input,
         shown_purpose=str(entry.get("tool_purpose") or ""),
         risk=risk,
+        answers=answers,
     )
 
 
@@ -457,20 +469,39 @@ def approval_brief_for(event: Any) -> dict[str, Any] | None:
     from the event itself when the channel's own turn raised the approval. Either way every
     string in it is masked: ``tool``, ``input`` (the arguments, as the dashboard's card shows
     them), ``purpose`` and ``summary`` (what the call can touch, and its risk). A channel prints
-    those and masks nothing of its own. ``None`` when the event names no tool.
+    those and masks nothing of its own, and offers the ``answers`` it carries
+    (``ChannelDelivery.request_approval``). ``None`` when the event names no tool.
 
-    A stamped brief that lacks one of those four strings is not used: the prompt it made would
-    show less than the call, so the brief is composed from the event instead.
+    A stamped brief that lacks one of those four strings, or answers a prompt can offer, is not
+    used: the prompt it made would show less than the call, or offer nothing to press, so the
+    brief is composed from the event instead, which offers this call alone.
     """
     meta = getattr(event, "tool_meta", None)
     brief = meta.get(APPROVAL_BRIEF_META_KEY) if isinstance(meta, dict) else None
-    if isinstance(brief, dict) and all(isinstance(brief.get(k), str) for k in _SHOWN):
+    if (
+        isinstance(brief, dict)
+        and all(isinstance(brief.get(k), str) for k in _SHOWN)
+        and _offers_answers(brief.get("answers"))
+    ):
         return brief
     return compose_approval_brief(event)
 
 
 #: What a prompt shows, all of it in every brief :func:`_brief` makes.
 _SHOWN = ("tool", "input", "purpose", "summary")
+
+
+def _offers_answers(answers: object) -> bool:
+    """Whether *answers* is a list a prompt can offer: at least one answer, each with every
+    field of :class:`~personalclaw.channel_delivery.ApprovalAnswer` a string."""
+    fields = tuple(ApprovalAnswer.__dataclass_fields__)
+    return (
+        isinstance(answers, list)
+        and bool(answers)
+        and all(
+            isinstance(a, dict) and all(isinstance(a.get(f), str) for f in fields) for a in answers
+        )
+    )
 
 
 def attach_approval_brief(event: Any) -> dict[str, Any] | None:

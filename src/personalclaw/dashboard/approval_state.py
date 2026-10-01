@@ -30,6 +30,7 @@ from personalclaw.task_modes import read_call, tool_input_to_str
 from personalclaw.textfmt import clip_words
 
 if TYPE_CHECKING:
+    from personalclaw.channel_delivery import ApprovalAnswer
     from personalclaw.dashboard.state import _ChatSession
 
 logger = logging.getLogger(__name__)
@@ -975,23 +976,24 @@ class DashboardApprovalState:
     async def _approval_on_a_channel(
         self, approval_id: str, entry: dict[str, Any], providers: list[str]
     ) -> None:
-        """Ask on the first of *providers* that can: Approve/Deny where it has them, else a link.
+        """Ask on the first of *providers* that can: its answers where it has buttons, else a link.
 
         *providers* is :meth:`_asking_channels`: the channel the chat started on first, asked in
         that chat, since the person asking is there; then, with the ``channel_dm`` target, the
         owner's "Send approvals to" channel alone when they chose one, else every connected
         channel in name order, as ``channel_delivery.reach_owner`` tries them. The first one with
-        an owner id and a ``request_approval`` prompt asks, and a press there answers this
-        approval the way the dashboard's buttons do (:meth:`resolve_approval`). An answer given
-        anywhere else, and the approval expiring or being cancelled, close that prompt with how it
-        ended (:meth:`withdraw_approval`). When none of them can prompt, the owner gets a message
-        with the link to answer it instead, on the same channels.
+        an owner id and a ``request_approval`` prompt asks, offering what :meth:`channel_answers`
+        offers there, and a press there answers this approval the way the dashboard's buttons do
+        (:meth:`answer_on_channel`). An answer given anywhere else, and the approval expiring or
+        being cancelled, close that prompt with how it ended (:meth:`withdraw_approval`). When
+        none of them can prompt, the owner gets a message with the link to answer it instead, on
+        the same channels.
 
         The channel is handed a short token, not the approval id: a chat's id carries its session
         key, and a button's data has a size cap on some channels. It is handed the entry's brief
         too (``approval_brief.entry_approval_brief``), which is what its prompt shows: the tool,
-        its arguments and purpose as this entry holds them for the dashboard's card, and what the
-        call can touch."""
+        its arguments and purpose as this entry holds them for the dashboard's card, what the
+        call can touch, and the answers it offers."""
         import secrets
         from types import SimpleNamespace
 
@@ -999,23 +1001,25 @@ class DashboardApprovalState:
         from personalclaw.approval_brief import APPROVAL_BRIEF_META_KEY, entry_approval_brief
         from personalclaw.config.credentials import owner_id_for
 
-        brief = entry_approval_brief(entry)
-        event = SimpleNamespace(
-            request_id=secrets.token_hex(6),
-            title=str(entry.get("tool") or ""),
-            tool_input=str(entry.get("tool_input") or ""),
-            tool_purpose=str(entry.get("tool_purpose") or ""),
-            risk_level=str(entry.get("risk") or ""),
-            tool_meta={APPROVAL_BRIEF_META_KEY: brief} if brief else {},
-        )
         prompts: dict[str, Any] = self.__dict__.setdefault("_channel_prompts", {})
         session = str(entry.get("session") or "")
         origin = self.channel_provider_for(session) if session else ""
+        token = secrets.token_hex(6)
         for provider in providers:
             delivery = channel_delivery.delivery_for(provider)
             ask = getattr(delivery, "request_approval", None)
             if delivery is None or ask is None or not owner_id_for(provider):
                 continue
+            answers = self.channel_answers(entry, in_its_chat=provider == origin)
+            brief = entry_approval_brief(entry, answers=answers)
+            event = SimpleNamespace(
+                request_id=token,
+                title=str(entry.get("tool") or ""),
+                tool_input=str(entry.get("tool_input") or ""),
+                tool_purpose=str(entry.get("tool_purpose") or ""),
+                risk_level=str(entry.get("risk") or ""),
+                tool_meta={APPROVAL_BRIEF_META_KEY: brief} if brief else {},
+            )
             seen: dict[str, Any] = {}
 
             def _on_prompted(pending: Any, _seen: dict[str, Any] = seen) -> None:
@@ -1049,15 +1053,118 @@ class DashboardApprovalState:
             if approved is None and "pending" not in seen:
                 continue  # this channel could not prompt the owner; the next one may
             future = getattr(seen.get("pending"), "future", None)
-            pressed = future is not None and future.done() and not future.cancelled()
-            if pressed and approval_id in self._pending_approvals:
+            if (
+                future is not None
+                and future.done()
+                and not future.cancelled()
+                and approval_id in self._pending_approvals
+            ):
                 # The channel's app checked the press is its paired owner's (the contract of
-                # `ChannelDelivery.request_approval`), so this is you, on that channel.
-                self.resolve_approval(
-                    approval_id, bool(approved), by=approval_answer.on_channel(provider)
+                # `ChannelDelivery.request_approval`), so this is you, on that channel. The
+                # future holds the answer pressed, which says more than the yes/no returned.
+                self.answer_on_channel(
+                    approval_id,
+                    str(future.result()),
+                    offered=answers,
+                    by=approval_answer.on_channel(provider),
                 )
             return
         await self._approval_link_on_a_channel(approval_id, entry, providers)
+
+    def channel_answers(
+        self, entry: dict[str, Any], *, in_its_chat: bool
+    ) -> tuple["ApprovalAnswer", ...]:
+        """What a channel's prompt for *entry* offers: the dashboard card's answers, for that call.
+
+        Allow once and Deny always. "Allow for this chat" too, which is the card's "This chat"
+        (the chat's Trust), when all of these hold, and otherwise the prompt answers this call
+        alone:
+
+        * the approval is a chat's own, and the prompt is asked in that chat (*in_its_chat*: the
+          channel the chat started on, asking in it). Anywhere else "this chat" would name the
+          conversation the prompt is in rather than the one asking, and the surfaces outside a
+          chat (Home, the Inbox, the phone) offer Approve and Deny alone;
+        * the call may not destroy anything (``task_modes.MAY_DESTROY``): the card withholds its
+          standing answers on such a call until the owner unlocks them, and a prompt has no
+          unlock, so it offers what the card offers before one;
+        * the operator ceiling lets a chat's Trust stand, as the card's own route asks before it
+          grants it (``approval_grants.stands``): an answer that would be refused is not offered.
+
+        The card's "This agent" is not offered: it saves a setting on the agent that outlives the
+        chat, and the card says per agent whether it can, which is the card's to show.
+        """
+        from personalclaw import approval_grants
+        from personalclaw.channel_delivery import (
+            ALLOW_FOR_THIS_CHAT,
+            ALLOW_ONCE,
+            DENY,
+            ONE_CALL_ANSWERS,
+        )
+        from personalclaw.task_modes import MAY_DESTROY
+
+        session = self._sessions.get(str(entry.get("session") or ""))
+        its_own = session is not None and entry.get("id") == chat_approval_id(
+            session.key, str(entry.get("request_id") or "")
+        )
+        if (
+            not in_its_chat
+            or not its_own
+            or str(entry.get("risk") or "") in MAY_DESTROY
+            or not approval_grants.stands(approval_grants.TRUST, caller="channel", audit=False)
+        ):
+            return ONE_CALL_ANSWERS
+        return (ALLOW_ONCE, ALLOW_FOR_THIS_CHAT, DENY)
+
+    def answer_on_channel(
+        self,
+        approval_id: str,
+        answer: str,
+        *,
+        offered: tuple["ApprovalAnswer", ...],
+        by: Principal,
+    ) -> bool:
+        """Answer a pending approval with what the owner pressed on a channel's prompt.
+
+        *answer* is the ``key`` the prompt's future was resolved with, and only one of the
+        answers that prompt *offered* answers anything: any other value decides nothing and is
+        logged, so the approval keeps waiting where else it is listed. Allow once and Deny answer
+        it as the dashboard's Approve and Deny do (:meth:`resolve_approval`). "Allow for this chat"
+        answers it as the card's "This chat" does, through the same decision path
+        (:meth:`decide_session_approval` with ``trust``): the chat is trusted, its next calls run
+        without asking, its header shows it and the owner can turn it off there. Held to the
+        operator ceiling at the moment it is given, as the card's route holds it. Returns whether
+        the approval was answered.
+        """
+        from personalclaw import approval_grants
+        from personalclaw.channel_delivery import ALLOW_FOR_THIS_CHAT
+
+        chosen = next((a for a in offered if a.key == answer), None)
+        if chosen is None:
+            self._log.warning(
+                "approval %s: a channel answered %r, which its prompt did not offer; nothing "
+                "was decided",
+                approval_id,
+                answer[:40],
+            )
+            return False
+        if chosen != ALLOW_FOR_THIS_CHAT:
+            return self.resolve_approval(approval_id, chosen.ends == "approved", by=by)
+        if self.answer_refusal(approval_id, by) or self.refuse_ended_owner(approval_id):
+            return False
+        entry = self._pending_approvals.get(approval_id) or {}
+        session = self._sessions.get(str(entry.get("session") or ""))
+        request_id = str(entry.get("request_id") or "")
+        if session is None:
+            return False
+        held = session._approval_futures.get(request_id)
+        if held is None or held.done():
+            return False
+        if not approval_grants.stands(
+            approval_grants.TRUST, caller=by.label, subject=f"scope={chosen.key}"
+        ):
+            return False
+        self.decide_session_approval(session, request_id, chosen.key, by=by)
+        return True
 
     async def _approval_link_on_a_channel(
         self, approval_id: str, entry: dict[str, Any], providers: list[str]
@@ -1288,13 +1395,15 @@ class DashboardApprovalState:
             session=name,
         )
         self.push_sessions_update()
-        # SEL audit (best-effort — must not block the UI-unblocking path above)
+        # SEL audit (best-effort — must not block the UI-unblocking path above). It names who
+        # answered (you, or you on a channel), since every door decides through here.
         try:
             sel().log_api_access(
                 caller=f"dashboard:{name}",
                 operation=f"tool_approval:{original_action}",
                 outcome=resolved,
                 resources=request_id,
+                metadata={"decided_by": by.label},
             )
         except Exception:
             self._log.warning("SEL audit failed for approval %s", request_id, exc_info=True)

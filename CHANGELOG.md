@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A chat channel's approval offers what the chat's approval card offers: Allow once, Allow for this chat and Deny, from the answers core hands over in the approval brief (channel contract change, used by `*-channel`).**
 - **`SubagentInfo.refused` lists the calls an agent's own limits refused (an SDK addition no app has to change for).**
 - **A loop can run on an agent CLI you have set up: the loop composer's Runs on picks PersonalClaw or one of the agents a ready CLI offers, Plan Review and the page of a loop that hasn't started change it, a CLI that isn't ready is shown with why, and a loop on a CLI that isn't set up or isn't ready is refused with that reason instead of failing on its first turn. Settings → Agent defaults' Default agent now says it is a chat's default, which loops don't use.**
 - **A room member can be an agent CLI's agent: Add a member lists the agents each ready CLI offers (a CLI that isn't ready is listed with why), and the member's turns run on that CLI as that agent rather than asking it for a mode named after the binding.**
