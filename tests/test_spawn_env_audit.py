@@ -236,6 +236,7 @@ _GATEWAY_ENV: dict[str, str] = {
     ),
     "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::asyncio.create_subprocess_exec": "ffmpeg",
     "transcribe.py::_segment::asyncio.create_subprocess_exec": "ffmpeg",
+    "transcribe.py::audio_seconds::subprocess.run": "ffmpeg reads a recording's length",
     "voice_reply.py::stitch_wavs::asyncio.create_subprocess_exec": "ffmpeg wav stitch",
     "selfqa/evidence.py::_ffmpeg_ping::subprocess.run": "`ffmpeg -version`",
     "selfqa/evidence.py::_run_ffmpeg::subprocess.run": "ffmpeg contact sheet",

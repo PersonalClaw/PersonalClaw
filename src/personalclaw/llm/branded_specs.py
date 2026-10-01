@@ -59,7 +59,7 @@ class BrandedProviderSpec:
     # in USD per 1,000,000 tokens, where model_pattern is a model id or a glob
     # ("claude-sonnet-*"). Prices belong beside default_model/capabilities — the same place the
     # rest of an app's model facts live. Read by routing/rates.py:rate_for as the app-default
-    # tier for an entry of this type, under the user's ~/.personalclaw/model_rates.json overlay.
+    # tier for an entry of this type, under the prices the user sets (config.json model_prices).
     # A row may also name cache_read_per_mtok / cache_write_per_mtok; one that names neither
     # bills cached tokens as plain input. Empty means "this app declares no prices", which
     # resolves to a lower tier and never to a free model.

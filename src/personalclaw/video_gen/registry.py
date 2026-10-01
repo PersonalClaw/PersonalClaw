@@ -42,6 +42,13 @@ def get_provider(name: str) -> VideoGenProvider | None:
     return _providers.get(name)
 
 
+def registered(name: str) -> VideoGenProvider | None:
+    """The engine registered under *name* as the registry holds it now, building no adapter for
+    a config entry (:func:`get_provider` does): an app's own engine, as the local-model rule asks
+    (``providers.engines``), with no config read or credential resolved to answer."""
+    return _providers.get(name)
+
+
 _scanner_names: set[str] = set()
 """Provider names that were contributed by scanners (vs app-manifest/FAL bundles).
 Tracked so we can REMOVE stale ones when a config entry is deleted."""

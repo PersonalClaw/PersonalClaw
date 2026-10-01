@@ -10,7 +10,7 @@ from personalclaw import memory_writes, owed_chores
 from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
 from personalclaw.llm_helpers import (
     any_answer,
     failure_clause,
@@ -111,6 +111,8 @@ async def _stream_background_prompt(
                 say(event.text)
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 await client.reject_tool(event.request_id)
+            elif event.kind == EVENT_SPENT:
+                record(event)
             elif event.kind == EVENT_COMPLETE:
                 record(event)
                 break

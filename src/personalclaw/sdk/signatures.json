@@ -418,7 +418,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "snapshot_dir"},
     {"annotation": "DurabilityConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "durability"},
     {"annotation": "EvalsConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "evals"},
-    {"annotation": "ProactiveConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "proactive"}
+    {"annotation": "ProactiveConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "proactive"},
+    {"annotation": "ModelPricesConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "model_prices"}
    ],
    "returns": "None"
   },
@@ -1346,7 +1347,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "audit_ids"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "tells_owner"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"},
+    {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "charged"}
    ],
    "returns": "None"
   },

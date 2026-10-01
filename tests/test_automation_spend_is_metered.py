@@ -469,9 +469,12 @@ TOKENS_IN, TOKENS_OUT = 100_000, 10_000
 
 
 def _price(model: str) -> float:
-    from personalclaw.pricing import estimate_cost
+    """What the shipped table's row for *model* bills the call's tokens at."""
+    from personalclaw.pricing import price_row
 
-    return estimate_cost(model, input_tokens=TOKENS_IN, output_tokens=TOKENS_OUT)
+    row = price_row(model)
+    assert row is not None, f"premise: the shipped table prices {model}"
+    return round((TOKENS_IN * row.fields["in"] + TOKENS_OUT * row.fields["out"]) / 1e6, 6)
 
 
 class _Scripted:

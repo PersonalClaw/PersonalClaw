@@ -150,6 +150,7 @@ async def judge_verdict(prompt: str, *, loop_id: str) -> str:
     whichever axis the owner put it on (``provider_bridge.resolve_metered_model``): bound to Chat
     or Code, it used to be handed the native agent, with tools, and its calls counted nowhere."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+    from personalclaw.llm.events import EVENT_SPENT
     from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
     from personalclaw.loop.judge import judge_use_case
     from personalclaw.loop.manager import usage_key
@@ -178,6 +179,8 @@ async def judge_verdict(prompt: str, *, loop_id: str) -> str:
                         await provider.respond_permission(event, allow=False)  # type: ignore[attr-defined]  # noqa: E501
                     except Exception:
                         pass
+                elif event.kind == EVENT_SPENT:
+                    record(event)
                 elif event.kind == EVENT_COMPLETE:
                     record(event)
                     break

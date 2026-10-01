@@ -118,6 +118,13 @@ def get_provider(name: str) -> EmbeddingProvider | None:
     return _providers.get(name)
 
 
+def registered(name: str) -> EmbeddingProvider | None:
+    """The engine registered under *name* as the registry holds it now, building no adapter for
+    a config entry (:func:`get_provider` does): an app's own engine, as the local-model rule asks
+    (``providers.engines``), with no config read or credential resolved to answer."""
+    return _providers.get(name)
+
+
 def list_providers() -> list[EmbeddingProvider]:
     _ensure_scanned()
     return list(_providers.values())

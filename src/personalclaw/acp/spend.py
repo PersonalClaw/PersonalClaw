@@ -173,7 +173,9 @@ class AcpTurnMeter:
                         priced=price.priced,
                     )
                     charged = True
-                    event = naming_the_call(event, audit_id)
+                    # The turn's usage row is written from this event and takes this price, the
+                    # one charged above and recorded in the model-call log.
+                    event = naming_the_call(event, audit_id, price)
                 yield event
         finally:
             # A turn that ended without completing charged nothing: what it set aside is given

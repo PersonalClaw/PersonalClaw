@@ -24,7 +24,12 @@ from personalclaw.llm.base import (
     LLMEvent,
     ModelProvider,
 )
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, unasked_outcome, unasked_reason
+from personalclaw.llm.events import (
+    EVENT_MODEL_SUBSTITUTION,
+    EVENT_SPENT,
+    unasked_outcome,
+    unasked_reason,
+)
 from personalclaw.sel import sel as _sel
 
 _PROMPT_BUSY_RETRIES = 2
@@ -92,7 +97,9 @@ async def stream_and_collect(
         on_complete: Optional callback invoked with the terminal ``EVENT_COMPLETE``
             event (which carries the turn's token counts + cost) just before the
             text is returned — the seam the cost/token ledger's non-``run_chat``
-            write-sites use (COST-AND-TOKEN-OBSERVABILITY C2). Default ``None``
+            write-sites use (COST-AND-TOKEN-OBSERVABILITY C2). A turn that ends in an
+            error hands it its ``EVENT_SPENT`` instead, what the calls it made before
+            the error cost, and the error is raised after. Default ``None``
             leaves the streamed text byte-identical for every other caller. Never
             raises into the turn: a callback fault is swallowed.
         on_substitution: For a caller that shows it, the sentence a turn says when its
@@ -158,13 +165,14 @@ async def stream_and_collect(
                         request_id=str(event.tool_call_id or ""),
                         metadata={"reason": decided_by, "decided_by": decided_by},
                     )
-                elif event.kind == EVENT_COMPLETE:
+                elif event.kind in (EVENT_COMPLETE, EVENT_SPENT):
                     if on_complete is not None:
                         try:
                             on_complete(event)
                         except Exception:  # noqa: BLE001 — telemetry must never break a turn
                             logger.debug("stream_and_collect on_complete failed", exc_info=True)
-                    break
+                    if event.kind == EVENT_COMPLETE:
+                        break
             return result_text
         except AcpError as exc:
             if "already in progress" not in str(exc) or attempt >= _PROMPT_BUSY_RETRIES:
@@ -1319,6 +1327,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     from personalclaw.acp.errors import AcpTimeoutError
     from personalclaw.errors import ERROR_CODES, AgentError
     from personalclaw.guardrails.failure import (
+        BudgetExceededError,
         CircuitOpenError,
         FirstTokenTimeout,
         LocalModelBusy,
@@ -1341,7 +1350,8 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
             "The agent did not finish within the turn's time limit, so the turn was stopped. "
             "Try again; if it keeps happening, check the gateway log."
         )
-    if isinstance(exc, ToolSchemaRejected):
+    if isinstance(exc, (ToolSchemaRejected, BudgetExceededError)):
+        # A spend ceiling's refusal says which ceiling, what was spent, and how it is lifted.
         return exc.sentence()
     if isinstance(
         exc,

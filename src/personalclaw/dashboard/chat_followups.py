@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from personalclaw.dashboard.chat_title import keeps_to_its_own_model
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
 from personalclaw.llm_helpers import let_fail_over, say_background_substitution
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -221,6 +221,8 @@ async def _generate_followups(state: "DashboardState", session: "_ChatSession") 
                     say(event.text)
                 elif event.kind == EVENT_PERMISSION_REQUEST:
                     await client.reject_tool(event.request_id)
+                elif event.kind == EVENT_SPENT:
+                    record(event)
                 elif event.kind == EVENT_COMPLETE:
                     record(event)
                     break

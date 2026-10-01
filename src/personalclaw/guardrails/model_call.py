@@ -99,13 +99,15 @@ def new_audit_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
-def naming_the_call(event: LLMEvent, audit_id: str) -> LLMEvent:
+def naming_the_call(event: LLMEvent, audit_id: str, price: "CallPrice | None" = None) -> LLMEvent:
     """*event*, the call's terminal ``EVENT_COMPLETE``, naming the attempt that completed it
-    (``LLMEvent.audit_ids``). A copy, so the provider's own event stays as it made it; an event of
-    any other type passes through as it came."""
+    (``LLMEvent.audit_ids``) and what the guard priced it at (``LLMEvent.charged``), the one figure
+    the meter, the model-call log and the usage row written from the event all hold. A copy, so
+    the provider's own event stays as it made it; an event of any other type passes through as it
+    came."""
     if not isinstance(event, LLMEvent):
         return event
-    return replace(event, audit_ids=(*event.audit_ids, audit_id))
+    return replace(event, audit_ids=(*event.audit_ids, audit_id), charged=price)
 
 
 #: The longest a call waits for the calls running beside it to leave the room it needs under a
@@ -410,7 +412,10 @@ class ModelCallGuard(ModelProvider):
             messages, tools=tools, model=model, reasoning_effort=reasoning_effort
         )
         guarded = self._guarded(
-            inner, strategy="direct", prompt_chars=request_chars(messages, tools)
+            inner,
+            strategy="direct",
+            prompt_chars=request_chars(messages, tools),
+            model=model or "",
         )
         async for event in guarded:
             yield event
@@ -570,7 +575,12 @@ class ModelCallGuard(ModelProvider):
     # ── The guard pipeline (breaker → hard timeout → audit) ──────────────
 
     async def _guarded(
-        self, source: AsyncIterator[LLMEvent], *, strategy: str, prompt_chars: int
+        self,
+        source: AsyncIterator[LLMEvent],
+        *,
+        strategy: str,
+        prompt_chars: int,
+        model: str = "",
     ) -> AsyncIterator[LLMEvent]:
         """Drive ``source`` under the breaker, the spend ceilings and a cumulative wall-clock
         deadline, recording exactly one attempt row for the whole stream.
@@ -582,6 +592,12 @@ class ModelCallGuard(ModelProvider):
         A model on this machine is then asked for its turn (``local_queue.take_turn``), within the
         same deadline; the turn is held until the answer is complete.
 
+        *model* is the model the call asks for when it names one (the native loop passes its
+        agent's), else the one this guard was built for. That model is what the call is weighed,
+        priced, charged and recorded as: it is the model that answers. The price is computed once,
+        and the meter, the attempt row and the call's terminal event (``LLMEvent.charged``, which
+        the usage row is written from) all take that one figure.
+
         Success is recorded the moment ``EVENT_COMPLETE`` is observed — BEFORE it is
         yielded — because the canonical consumer (``stream_and_collect``) ``break``s
         on ``EVENT_COMPLETE`` rather than draining to ``StopAsyncIteration``: a guard
@@ -591,13 +607,16 @@ class ModelCallGuard(ModelProvider):
         COMPLETE event still records once at loop-exit.
         """
         audit_id = new_audit_id()
+        called = model or self._model
         self._refresh_budgets()
 
         # Breaker check BEFORE any prompt work: during an outage this refuses in
         # microseconds instead of stacking timeouts. HALF_OPEN admits one probe.
         if self._breaker.is_open():
             retry_after = self._breaker.retry_after()
-            self._audit(audit_id, 1, FailureMode.CIRCUIT_OPEN, 0.0, 0, 0, False, strategy)
+            self._audit(
+                audit_id, 1, FailureMode.CIRCUIT_OPEN, 0.0, 0, 0, False, strategy, model=called
+            )
             # aclose the source we won't consume, so its resources release.
             await self._aclose(source)
             raise CircuitOpenError(self._provider_name, retry_after)
@@ -609,7 +628,7 @@ class ModelCallGuard(ModelProvider):
             hold = (
                 await admit_call(
                     self._meter,
-                    call_cost(self._provider_name, self._model, prompt_chars=prompt_chars),
+                    call_cost(self._provider_name, called, prompt_chars=prompt_chars),
                     self._budget,
                     self._run_budget,
                 )
@@ -617,7 +636,9 @@ class ModelCallGuard(ModelProvider):
                 else None
             )
         except BudgetExceededError:
-            self._audit(audit_id, 1, FailureMode.BUDGET_EXCEEDED, 0.0, 0, 0, False, strategy)
+            self._audit(
+                audit_id, 1, FailureMode.BUDGET_EXCEEDED, 0.0, 0, 0, False, strategy, model=called
+            )
             await self._aclose(source)
             raise
         except asyncio.CancelledError:
@@ -635,7 +656,7 @@ class ModelCallGuard(ModelProvider):
                     turn = await take_turn(
                         self._queue_key,
                         provider=self._provider_name,
-                        model=self._model,
+                        model=called,
                         within=self._turn_wait(deadline, loop.time()),
                     )
                 except BaseException:
@@ -656,7 +677,7 @@ class ModelCallGuard(ModelProvider):
             substituted = self.substituted_for
             call = open_call(
                 self._provider_name,
-                self._model,
+                called,
                 temperature=self.sampling_temperature,
                 unsent=self.unsent_options,
                 substitution=substituted.sentence() if substituted is not None else "",
@@ -686,7 +707,7 @@ class ModelCallGuard(ModelProvider):
                         # events a provider might still emit.
                         tokens_in = int(getattr(event, "input_tokens", 0) or 0)
                         tokens_out = int(getattr(event, "output_tokens", 0) or 0)
-                        price = self._price(event)
+                        price = self._price(event, called)
                         self._record_success()
                         # Charge the DAY scope always, and the ambient RUN scope when one is
                         # bound. `charge` has accepted `run_key=` since guardrails landed
@@ -695,7 +716,7 @@ class ModelCallGuard(ModelProvider):
                         # Read from a ContextVar rather than a parameter because the guard is
                         # built by `provider_bridge` from provider config and has no run identity;
                         # threading one in would touch all 33 call sites reaching the bridge.
-                        self._charge(hold, tokens_in, tokens_out, price)
+                        self._charge(hold, tokens_in, tokens_out, price, called)
                         self._audit(
                             audit_id,
                             1,
@@ -706,6 +727,7 @@ class ModelCallGuard(ModelProvider):
                             True,
                             strategy,
                             price=price,
+                            model=called,
                         )
                         self._settle_call(call, tokens_in, tokens_out, price)
                         recorded = True
@@ -716,14 +738,23 @@ class ModelCallGuard(ModelProvider):
                         # The usage this event carries is this call's, and the row a caller writes
                         # from it (`usage_ledger.record_from_event`) keeps the id: that is the join
                         # that keeps the model-call census from counting the call a second time.
-                        event = naming_the_call(event, audit_id)
+                        # It keeps the price too, so the row holds the figure charged here.
+                        event = naming_the_call(event, audit_id, price)
                     yield event
             except TimeoutError:
                 self._record_failure()
                 await self._aclose(source)
                 if not recorded:
                     self._audit(
-                        audit_id, 1, FailureMode.TIMEOUT, now_ms() - started, 0, 0, False, strategy
+                        audit_id,
+                        1,
+                        FailureMode.TIMEOUT,
+                        now_ms() - started,
+                        0,
+                        0,
+                        False,
+                        strategy,
+                        model=called,
                     )
                     _mark(call, FAILED)
                 raise ModelCallTimeout(
@@ -755,6 +786,7 @@ class ModelCallGuard(ModelProvider):
                         tokens_out,
                         False,
                         strategy,
+                        model=called,
                     )
                     _mark(call, FAILED)
                 raise
@@ -763,9 +795,9 @@ class ModelCallGuard(ModelProvider):
             # record the (clean) outcome once here so a provider that omits COMPLETE is
             # still audited exactly once — and charged, as any call that completed is.
             if not recorded:
-                price = self._price(None)
+                price = self._price(None, called)
                 self._record_success()
-                self._charge(hold, tokens_in, tokens_out, price)
+                self._charge(hold, tokens_in, tokens_out, price, called)
                 self._audit(
                     audit_id,
                     1,
@@ -776,6 +808,7 @@ class ModelCallGuard(ModelProvider):
                     True,
                     strategy,
                     price=price,
+                    model=called,
                 )
                 self._settle_call(call, tokens_in, tokens_out, price)
         finally:
@@ -812,17 +845,22 @@ class ModelCallGuard(ModelProvider):
             _recheck_connection(self._provider_name)
 
     def _charge(
-        self, hold: Hold | None, tokens_in: int, tokens_out: int, price: "CallPrice"
+        self,
+        hold: Hold | None,
+        tokens_in: int,
+        tokens_out: int,
+        price: "CallPrice",
+        model: str,
     ) -> None:
-        """Charge one call that completed to the day's meter, and to the ambient run's when one
-        is bound, in place of what it set aside (``SpendMeter.settle``): a call nothing priced is
-        charged as one the dollar caps could not count, never as a free one. A call the ceilings
-        do not count (``counted``) is charged to neither."""
+        """Charge one call that completed, to *model*, to the day's meter, and to the ambient
+        run's when one is bound, in place of what it set aside (``SpendMeter.settle``): a call
+        nothing priced is charged as one the dollar caps could not count, never as a free one. A
+        call the ceilings do not count (``counted``) is charged to neither."""
         if not self._counted:
             return
         self._meter.settle(
             hold,
-            ref=f"{self._provider_name}:{self._model}",
+            ref=f"{self._provider_name}:{model}",
             tokens=tokens_in + tokens_out,
             answer_tokens=tokens_out,
             dollars=price.dollars,
@@ -830,13 +868,14 @@ class ModelCallGuard(ModelProvider):
             run_key=current_run_key() or None,
         )
 
-    def _price(self, event: LLMEvent | None) -> "CallPrice":
-        """What this call cost (``routing.rates.price_event``, the one pricing function): the
-        provider's reported cost, else its tokens at the effective rate for this entry and model,
-        else unpriced. A stream that ended with no terminal event reported nothing to price."""
+    def _price(self, event: LLMEvent | None, model: str) -> "CallPrice":
+        """What this call to *model* cost (``routing.rates.price_event``, the one pricing
+        function): the provider's reported cost, else its tokens at the effective rate for this
+        entry and model, else unpriced. A stream that ended with no terminal event reported
+        nothing to price."""
         from personalclaw.routing.rates import price_event
 
-        return price_event(event, provider=self._provider_name, model=self._model)
+        return price_event(event, provider=self._provider_name, model=model)
 
     def _settle_call(
         self,
@@ -871,15 +910,17 @@ class ModelCallGuard(ModelProvider):
         strategy: str,
         *,
         price: "CallPrice | None" = None,
+        model: str = "",
     ) -> None:
-        """Record one attempt. ``price`` is what a call that completed cost; ``None`` for an
-        attempt that sent nothing (a refusal) or failed, which added nothing: a known $0."""
+        """Record one attempt, of a call to *model* (this guard's own when it names none).
+        ``price`` is what a call that completed cost; ``None`` for an attempt that sent nothing
+        (a refusal) or failed, which added nothing: a known $0."""
         rec = AttemptRecord(
             audit_id=audit_id,
             ts=time.time(),
             use_case=self._use_case,
             provider=self._provider_name,
-            model=self._model,
+            model=model or self._model,
             attempt=attempt,
             failure_mode=mode.value,
             latency_ms=round(latency_ms, 1),

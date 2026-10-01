@@ -243,5 +243,6 @@ def test_the_runtime_names_both_cache_fields() -> None:
     from personalclaw.agents.native import runtime as rt
 
     text = Path(rt.__file__).read_text(encoding="utf-8")
-    assert text.count("cache_read_tokens=") == 3, "all three terminal events must carry it"
-    assert text.count("cache_creation_tokens=") == 3
+    # The three terminal events, and the one a turn ending in an error sends first (EVENT_SPENT).
+    assert text.count("cache_read_tokens=") == 4, "every event that carries usage must carry it"
+    assert text.count("cache_creation_tokens=") == 4

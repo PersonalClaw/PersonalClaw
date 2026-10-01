@@ -138,7 +138,7 @@ from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.task_modes import declared_level
-from personalclaw.usage_ledger import Attribution, recorder
+from personalclaw.usage_ledger import Attribution, recorder, spent_rows
 from personalclaw.validation import ValidationError, validate_ask_user_question
 
 if TYPE_CHECKING:
@@ -1858,7 +1858,7 @@ async def _describe_screen_frame(data_url: str, *, usage: Attribution) -> str:
     ]
     record = recorder(provider, usage)
     parts: list[str] = []
-    async for ev in provider.complete(messages):
+    async for ev in spent_rows(provider.complete(messages), record):
         if ev.kind == EVENT_TEXT_CHUNK:
             parts.append(getattr(ev, "text", "") or "")
         elif ev.kind == EVENT_COMPLETE:
@@ -3569,7 +3569,7 @@ async def run_chat(
             _acp_cli = _prov_id[4:]
         _turn_agent = turn_endings.serving_agent_name(client)
         running_turn.end_if_moved(session)  # nothing awaits from here to the runtime's prompt
-        async for event in event_stream:
+        async for event in spent_rows(event_stream, recorder(client, chat_usage(session))):
             # Heartbeat every 5s during long operations
             if time.time() - last_heartbeat > 5:
                 state.broadcast_ws("heartbeat", {"session": session.key, "ts": time.time()})

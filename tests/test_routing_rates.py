@@ -221,8 +221,7 @@ def test_builtin_table_is_the_last_tier_before_absent(tmp_path):
     rate = rate_for("some-cloud", priced, home=tmp_path)
 
     assert rate is not None and rate.source == "builtin"
-    expected_in = pricing.estimate_cost(priced, input_tokens=1_000_000)
-    assert rate.in_per_mtok == expected_in
+    assert rate.in_per_mtok == pricing._PRICES[priced]["in"]
 
 
 def test_app_default_beats_builtin(tmp_path, registered_pricing):
@@ -291,16 +290,18 @@ def test_editing_the_overlay_changes_the_answer_with_no_restart(tmp_path):
     assert rate_for("acme", "acme-large", home=tmp_path) == ModelRate(9.0, 9.0)
 
 
-def test_overlay_written_atomically_and_round_trips(tmp_path):
+def test_overlay_written_atomically_into_the_config_and_round_trips(tmp_path):
+    (tmp_path / "config.json").write_text('{"timezone": "Europe/Berlin"}', encoding="utf-8")
+
     path = save_overlay(
         {"acme:acme-large": {"in_per_mtok": 1.5, "out_per_mtok": 2.5}}, home=tmp_path
     )
 
-    assert path == tmp_path / "model_rates.json"
+    assert path == tmp_path / "config.json"
     on_disk = json.loads(path.read_text(encoding="utf-8"))
-    assert on_disk["version"] == rates_mod.RATES_VERSION
-    assert load_overlay(tmp_path)["rates"] == on_disk["rates"]
-    assert not list(tmp_path.glob("*.tmp*")), "atomic_write left a temp file behind"
+    assert on_disk["timezone"] == "Europe/Berlin"
+    assert load_overlay(tmp_path) == on_disk["model_prices"]["overrides"]
+    assert not list(tmp_path.glob("*.tmp*")), "the write left a temp file behind"
 
 
 def test_corrupt_overlay_fails_open_to_the_app_default(tmp_path, registered_pricing, caplog):
@@ -308,19 +309,21 @@ def test_corrupt_overlay_fails_open_to_the_app_default(tmp_path, registered_pric
     decision. This is the fail-open half of the precedence contract."""
     registered_pricing("acme", {"acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}})
     _configured("acme", "acme")
-    (tmp_path / "model_rates.json").write_text("{not json at all", encoding="utf-8")
+    (tmp_path / "config.json").write_text("{not json at all", encoding="utf-8")
 
     rate = rate_for("acme", "acme-large", home=tmp_path)
 
     assert rate == ModelRate(3.0, 15.0)
     assert rate is not None and rate.source == "app_default"
-    assert any("model_rates.json" in r.message for r in caplog.records)
+    assert any("config.json" in r.message for r in caplog.records)
 
 
 def test_overlay_missing_rates_object_fails_open(tmp_path, registered_pricing):
     registered_pricing("acme", {"acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}})
     _configured("acme", "acme")
-    (tmp_path / "model_rates.json").write_text('{"version": 1}', encoding="utf-8")
+    (tmp_path / "config.json").write_text(
+        '{"model_prices": {"overrides": ["acme:acme-large"]}}', encoding="utf-8"
+    )
 
     assert rate_for("acme", "acme-large", home=tmp_path) == ModelRate(3.0, 15.0)
 
@@ -333,7 +336,7 @@ def test_malformed_rate_row_is_not_a_free_model(tmp_path):
 
 
 def test_missing_overlay_reads_as_empty(tmp_path):
-    assert load_overlay(tmp_path) == {"version": rates_mod.RATES_VERSION, "rates": {}}
+    assert load_overlay(tmp_path) == {}
 
 
 def test_default_home_comes_from_config_dir(tmp_path, monkeypatch):
@@ -410,7 +413,7 @@ def test_a_rate_that_names_its_cache_rates_bills_by_them(tmp_path):
 
 def test_the_builtin_tier_bills_each_bucket_as_the_shipped_table_does(tmp_path):
     """The shipped table's cache rates survive the move behind the pricing function: every bucket
-    of a builtin-priced call costs what ``pricing.estimate_cost`` says it does."""
+    of a builtin-priced call costs what the shipped row says it does."""
     from personalclaw import pricing
 
     model = "claude-sonnet-4.6"
@@ -424,7 +427,17 @@ def test_the_builtin_tier_bills_each_bucket_as_the_shipped_table_does(tmp_path):
     price = price_call("some-cloud", model, home=tmp_path, **buckets)
 
     assert price.source == "builtin"
-    assert price.dollars == pricing.estimate_cost(model, **buckets)
+    row = pricing._PRICES[model]
+    assert price.dollars == round(
+        (
+            buckets["input_tokens"] * row["in"]
+            + buckets["output_tokens"] * row["out"]
+            + buckets["cache_read_tokens"] * row["cache_read"]
+            + buckets["cache_creation_tokens"] * row["cache_write"]
+        )
+        / 1e6,
+        6,
+    )
 
 
 def test_a_lookup_that_fails_is_unpriced_not_free(tmp_path, monkeypatch):

@@ -374,6 +374,7 @@ async def _complete(*, data_url: str, description: str) -> str:
     translates it into Ollama's ``images: [<base64>]``, and the hosted providers take it as-is.
     """
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
+    from personalclaw.llm.events import EVENT_SPENT
     from personalclaw.providers.image_input import resolve_image_reader
     from personalclaw.usage_ledger import UNATTENDED, recorder
 
@@ -397,6 +398,6 @@ async def _complete(*, data_url: str, description: str) -> str:
     async for event in provider.complete(messages):
         if event.kind == EVENT_TEXT_CHUNK:
             parts.append(getattr(event, "text", "") or "")
-        elif event.kind == EVENT_COMPLETE:
+        elif event.kind in (EVENT_COMPLETE, EVENT_SPENT):
             record(event)
     return "".join(parts).strip()

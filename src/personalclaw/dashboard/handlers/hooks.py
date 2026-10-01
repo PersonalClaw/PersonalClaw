@@ -413,6 +413,7 @@ async def _run_hook_inner(
     """
     from personalclaw.guardrails.policy import profile_for_session, tool_grants_held
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK  # noqa: F811
+    from personalclaw.llm.events import EVENT_SPENT
 
     # The headless profile, the operator's ceiling applied. Read before anything starts: a ceiling
     # that cannot be read raises here, and the turn fails closed.
@@ -452,6 +453,8 @@ async def _run_hook_inner(
         async for event in client.stream(full_message):
             if event.kind == EVENT_TEXT_CHUNK:
                 result_text += event.text
+            elif event.kind == EVENT_SPENT:
+                record(event)
             elif event.kind == EVENT_COMPLETE:
                 record(event)
                 break

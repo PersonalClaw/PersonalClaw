@@ -13,7 +13,7 @@ from aiohttp import web
 from personalclaw import memory_writes
 from personalclaw.context import ContextBuilder
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
 from personalclaw.llm_helpers import (
     failure_clause,
     is_model_call_failure,
@@ -291,6 +291,8 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
                             "decided_by": "suggestions_use_no_tools",
                         },
                     )
+                elif event.kind == EVENT_SPENT:
+                    record(event)
                 elif event.kind == EVENT_COMPLETE:
                     record(event)
                     break

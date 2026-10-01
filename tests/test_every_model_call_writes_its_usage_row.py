@@ -15,6 +15,12 @@ each wrote, and that the model-call census no longer counts the call.
 
 What the rail cannot see: a stream assigned to a name and iterated later. ``one_shot_completion``
 writes its own row, so its callers are not scanned.
+
+A turn that ends in an error has no ``EVENT_COMPLETE``: it sends ``EVENT_SPENT`` first, the usage of
+the calls it made before the error, and a third half reads that every site consuming a stream
+itself writes its row from that too (a collector does it for its callers). Without it the calls a
+turn made before a dollar cap stopped it reached the spend meter and the model-call log, and never
+Usage.
 """
 
 from __future__ import annotations
@@ -85,29 +91,34 @@ def _on_self(func: ast.expr) -> bool:
     return isinstance(target, ast.Call) and _name(target.func) == "super"
 
 
-def unrecorded_calls(source: str) -> tuple[list[str], list[str]]:
-    """``(every site, the sites that write no row)`` in *source*, each as its qualified name.
+#: What a site wraps its stream in to write the row of a turn that ends in an error from its
+#: ``EVENT_SPENT`` (``usage_ledger.spent_rows``): the stream inside it is still the site.
+_SPENT_WRAPPERS = {"spent_rows"}
 
-    A site writes its row when a function around it calls a writer (:data:`_WRITERS`), or, for
-    a collector, when it passes ``on_complete``.
-    """
+
+def _sites(source: str):
+    """Each place in *source* that consumes a model's stream: ``(qualified name, the functions
+    around it, the collector call or None for an ``async for`` over the stream itself, whether
+    the stream is wrapped in :data:`_SPENT_WRAPPERS`)``."""
     tree = ast.parse(source)
     parents: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
             parents[child] = node
-    sites: list[str] = []
-    missing: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.AsyncFor) and isinstance(node.iter, ast.Call):
-            func = node.iter.func
+            stream = node.iter
+            wrapped = _name(stream.func) in _SPENT_WRAPPERS and bool(stream.args)
+            if wrapped and isinstance(stream.args[0], ast.Call):
+                stream = stream.args[0]
+            func = stream.func
             if _name(func) not in _STREAMS or not isinstance(func, ast.Attribute):
                 continue
             if _on_self(func):
                 continue
             collect = None
         elif isinstance(node, ast.Call) and _name(node.func) in _COLLECTORS:
-            collect = node
+            collect, wrapped = node, False
         else:
             continue
         scopes: list[ast.AST] = []
@@ -117,11 +128,22 @@ def unrecorded_calls(source: str) -> tuple[list[str], list[str]]:
             if isinstance(cursor, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 scopes.append(cursor)
         qualname = ".".join(reversed([getattr(s, "name", "") for s in scopes])) or "<module>"
+        yield qualname, [s for s in scopes if not isinstance(s, ast.ClassDef)], collect, wrapped
+
+
+def unrecorded_calls(source: str) -> tuple[list[str], list[str]]:
+    """``(every site, the sites that write no row)`` in *source*, each as its qualified name.
+
+    A site writes its row when a function around it calls a writer (:data:`_WRITERS`), or, for
+    a collector, when it passes ``on_complete``.
+    """
+    sites: list[str] = []
+    missing: list[str] = []
+    for qualname, functions, collect, _wrapped in _sites(source):
         sites.append(qualname)
         if collect is not None:
             written = any(kw.arg == "on_complete" for kw in collect.keywords)
         else:
-            functions = [s for s in scopes if not isinstance(s, ast.ClassDef)]
             written = any(
                 isinstance(call, ast.Call) and _name(call.func) in _WRITERS
                 for scope in functions
@@ -208,6 +230,91 @@ def test_the_rail_passes_a_stream_whose_function_writes_its_row():
     )
     assert sites == ["chore.inner", "collect"]
     assert missing == []
+
+
+# ── a turn that ends in an error ─────────────────────────────────────────────────────────
+
+#: Sites that rightly never read ``EVENT_SPENT``, and why.
+SPENT_EXEMPT = {
+    ("dashboard/chat_utils.py", "stream_slash_command"): (
+        "yields the turn's events, this one among them, to the turn, which writes the turn's row"
+    ),
+    ("sdk/provider_helpers.py", "BrandedCatalog._probe_completion"): (
+        "a connection test that writes no row at all"
+    ),
+}
+
+
+def spent_unread(source: str) -> list[str]:
+    """The sites in *source* that consume a model's stream themselves and never read
+    ``EVENT_SPENT``, neither themselves nor through :data:`_SPENT_WRAPPERS`: a turn there that
+    ends in an error writes no row for the calls it made."""
+    return [
+        qualname
+        for qualname, functions, collect, wrapped in _sites(source)
+        if collect is None
+        and not wrapped
+        and not any(
+            _name(node) == "EVENT_SPENT"
+            for scope in functions
+            for node in ast.walk(scope)
+            if isinstance(node, (ast.Name, ast.Attribute))
+        )
+    ]
+
+
+def _spent_census() -> list[tuple[str, str]]:
+    unread: list[tuple[str, str]] = []
+    for path in sorted(SRC.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        rel = path.relative_to(SRC).as_posix()
+        unread.extend((rel, qualname) for qualname in spent_unread(path.read_text("utf-8")))
+    return unread
+
+
+def test_every_site_writes_its_row_for_a_turn_that_ends_in_an_error():
+    unexplained = [site for site in _spent_census() if site not in SPENT_EXEMPT]
+    assert not unexplained, (
+        "these write a usage row from a turn's EVENT_COMPLETE and none from the EVENT_SPENT a "
+        "turn ending in an error sends first, so the calls it made before the error are spend "
+        f"Settings → Usage cannot show. Write the row from it too: {unexplained}"
+    )
+
+
+def test_every_spent_exemption_still_names_a_site_that_reads_none():
+    stale = sorted(set(SPENT_EXEMPT) - set(_spent_census()))
+    assert not stale, f"the site reads EVENT_SPENT now, drop the exemption: {stale}"
+
+
+def test_the_spent_half_fails_a_site_that_reads_only_the_complete_event():
+    assert spent_unread(
+        "async def chore(client, prompt, record):\n"
+        "    async for event in client.stream(prompt):\n"
+        "        if event.kind == EVENT_COMPLETE:\n"
+        "            record(event)\n"
+        "async def kept(client, prompt, record):\n"
+        "    async for event in client.stream(prompt):\n"
+        "        if event.kind in (EVENT_COMPLETE, EVENT_SPENT):\n"
+        "            record(event)\n"
+        "async def wrapped(client, prompt, record):\n"
+        "    async for event in spent_rows(client.stream(prompt), record):\n"
+        "        if event.kind == EVENT_COMPLETE:\n"
+        "            record(event)\n"
+        "async def collect(client, prompt):\n"
+        "    return await stream_and_collect(client, prompt, on_complete=print)\n"
+    ) == ["chore"]
+
+
+def test_a_stream_wrapped_to_write_its_spent_row_is_still_a_site():
+    """Wrapping a stream in ``spent_rows`` must not hide it from the census: it is still a model's
+    stream, and still writes its row or is named."""
+    sites, missing = unrecorded_calls(
+        "async def chore(client, prompt, record):\n"
+        "    async for event in spent_rows(client.stream(prompt), record):\n"
+        "        pass\n"
+    )
+    assert (sites, missing) == (["chore"], ["chore"])
 
 
 # ── the rows, written ─────────────────────────────────────────────────────────────────────

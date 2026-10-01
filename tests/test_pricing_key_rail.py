@@ -15,7 +15,17 @@ import json
 from pathlib import Path
 
 from personalclaw import pricing
-from personalclaw.pricing import _canonical, estimate_cost, has_pricing
+from personalclaw.pricing import _candidates, price_row
+
+
+def has_pricing(model: str) -> bool:
+    return price_row(model) is not None
+
+
+def _in_per_mtok(model: str) -> float:
+    found = price_row(model)
+    return float(found.fields["in"]) if found is not None else 0.0
+
 
 SRC = Path(pricing.__file__).resolve().parent
 
@@ -57,8 +67,7 @@ class TestTheRail:
             "claude-opus-4-8",
             "global.anthropic.claude-opus-4-8",
         ):
-            cost = estimate_cost(form, input_tokens=1_000_000, output_tokens=0)
-            assert cost > 0.0, f"{form!r} priced at 0 — the ceiling is inert again"
+            assert _in_per_mtok(form) > 0.0, f"{form!r} priced at 0 — the ceiling is inert again"
 
     def test_no_row_prices_a_model_free_by_its_name(self) -> None:
         """The defect: an explicit zero row per open-weight family made the model free wherever
@@ -73,30 +82,28 @@ class TestTheRail:
 
 
 class TestTheNormalizationPin:
-    """Regression pins for _canonical — the dot/hyphen shim's exact contract."""
+    """Regression pins for _candidates — the dot/hyphen shim's exact contract."""
 
     def test_hyphenated_version_tail_re_dots(self) -> None:
-        assert _canonical("claude-opus-4-8") == "claude-opus-4.8"
+        assert "claude-opus-4.8" in _candidates("claude-opus-4-8")
 
     def test_provider_and_region_prefixes_strip(self) -> None:
-        assert _canonical("global.anthropic.claude-opus-4-8") == "claude-opus-4.8"
-        assert _canonical("us.anthropic.claude-3-7-sonnet-20250219-v1:0") == (
-            "claude-3-7-sonnet-20250219"
+        assert "claude-opus-4.8" in _candidates("global.anthropic.claude-opus-4-8")
+        assert "claude-3-7-sonnet-20250219" in _candidates(
+            "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
         )
+        assert "amazon.nova-pro-v1:0" in _candidates("us.amazon.nova-pro-v1:0")
 
     def test_a_date_suffix_is_not_a_version_tail(self) -> None:
         """8-digit dates must NOT be re-dotted — claude-sonnet-4-20250514 keys
         the table verbatim and must stay resolvable by the raw-first path."""
         assert has_pricing("claude-sonnet-4-20250514")
-        row_direct = estimate_cost("claude-sonnet-4-20250514", input_tokens=1_000_000)
-        assert row_direct > 0.0
+        assert _in_per_mtok("claude-sonnet-4-20250514") > 0.0
 
     def test_raw_id_always_wins_over_canonical(self) -> None:
         """An id that already keys the table resolves as itself — the shim only
         fires for ids the raw path cannot place."""
-        dotted = estimate_cost("claude-opus-4.7", input_tokens=1_000_000)
-        assert dotted > 0.0
+        assert _in_per_mtok("claude-opus-4.7") > 0.0
 
-    def test_unknown_model_still_costs_zero(self) -> None:
-        assert estimate_cost("totally-unknown-model-xyz", input_tokens=1_000_000) == 0.0
+    def test_unknown_model_has_no_row(self) -> None:
         assert not has_pricing("totally-unknown-model-xyz")

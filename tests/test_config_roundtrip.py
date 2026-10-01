@@ -278,6 +278,7 @@ _SECTIONS = [
     "proactive",
     "apps",
     "updates",
+    "model_prices",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,
@@ -366,6 +367,12 @@ _SPECIAL = {
     # updates.auto is enum-constrained (off|staged) — a generated "off-x" is coerced
     # back to `off`. `staged` is the real non-default that proves the field round-trips.
     ("updates", "auto"): "staged",
+    # model_prices.overrides maps a model key to its price row; load() keeps only object rows
+    # under non-empty keys (`config.pricing.price_overrides`), so supply one of each unit shape.
+    ("model_prices", "overrides"): {
+        "acme:frontier-9": {"in_per_mtok": 1.0, "out_per_mtok": 2.0, "recorded": "2026-10-01"},
+        "studio:flux-pro": {"unit": "image", "per_image": 0.05},
+    },
 }
 
 

@@ -181,7 +181,8 @@ class TranscriptionNode:
             # to this item's siblings when available, else globally top-weighted). No-op
             # for providers without supports_bias_terms.
             bias_terms = await _lexicon_bias_terms(ctx)
-            result = await transcribe_audio_detailed(audio, bias_terms=bias_terms)
+            # An import is unattended work whoever started it: held to the dollar caps.
+            result = await transcribe_audio_detailed(audio, bias_terms=bias_terms, unattended=True)
         except Exception as exc:
             # No transcript, and the sentence says why (speech-to-text off, no model, the
             # provider's own reason, or a provider that gave back nothing): the step FAILED.

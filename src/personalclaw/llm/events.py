@@ -28,6 +28,12 @@ EVENT_PERMISSION_REQUEST = "permission_request"
 #: gave up on the turn), ``text`` is the sentence saying why, for the surface to show; it is
 #: empty for every other ending.
 EVENT_COMPLETE = "complete"
+#: What a turn that is ending in an error had already spent: the usage of every model call of it
+#: that finished, sent just before the error is raised (``audit_ids`` and ``charged`` as an
+#: EVENT_COMPLETE carries them). The code that writes a turn's usage row writes it from this as it
+#: would from the turn's EVENT_COMPLETE, so a turn a dollar cap stopped part way is still in Usage
+#: for the calls it made. Not a terminal event: the error follows it. Only the native loop sends it.
+EVENT_SPENT = "spent"
 EVENT_COMPACTION_STATUS = "compaction_status"
 #: The ``text`` of a COMPACTION_STATUS a loop sends when it compacted its own history on its own,
 #: between two steps of a turn; ``title`` says how much, in ``/compact``'s words. Not
@@ -234,5 +240,13 @@ class AgentEvent:
     tells_owner: bool = False
     #: With ``builds`` and ``proposes``, what the tool's server labels it in its MCP annotations
     #: (``ToolDefinition.annotations``), which the approval prompt shows as the server's word.
-    #: Empty from a backend that says none. Last, so no field moves.
+    #: Empty from a backend that says none.
     annotations: dict[str, Any] = field(default_factory=dict)
+    #: On an EVENT_COMPLETE (or EVENT_SPENT), what the guarded model calls its usage came from
+    #: cost, as their guard priced each one when it was made (``guardrails.model_call``): the
+    #: figure it charged the spend meter and wrote to ``model_calls.jsonl``, a
+    #: :class:`~personalclaw.routing.rates.CallPrice`. The native loop sums its turn's. A usage row
+    #: takes it rather than pricing the usage again (``routing.rates.price_event``), so Usage, the
+    #: budget meter and the model-call log show one figure for one call. ``None`` when no guard
+    #: priced the usage, or only part of it. Last, so no field moves.
+    charged: Any = None

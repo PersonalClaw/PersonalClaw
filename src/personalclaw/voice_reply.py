@@ -113,13 +113,37 @@ async def _synthesize_chunk(
 
     ``speech_voice`` (the persona) is only meaningful to providers that accept
     one; Piper ignores the extra kwarg.
+
+    Metered by the characters it speaks (``guardrails.media_call``): held to the dollar caps
+    first when it is unattended work, and counted in Usage either way. A chunk a cap refuses is
+    not spoken: the refusal is logged and None returned, the answer this helper gives for any
+    failure.
     """
-    return await provider.synthesize(
-        text,
-        voice=voice,
-        speed=speed,
-        speech_voice=speech_voice,
-    )
+    from personalclaw.guardrails.budgets import BudgetConfigUnreadable
+    from personalclaw.guardrails.failure import BudgetExceededError
+    from personalclaw.guardrails.media_call import MediaCall, metered_media_call
+    from personalclaw.providers.engines import binding_name
+
+    try:
+        return await metered_media_call(
+            MediaCall(
+                provider=binding_name(provider),
+                model=voice,
+                unit="character",
+                quantity=len(text),
+            ),
+            lambda: provider.synthesize(
+                text,
+                voice=voice,
+                speed=speed,
+                speech_voice=speech_voice,
+            ),
+        )
+    except BudgetExceededError as refused:
+        logger.warning("voice_reply: not spoken: %s", refused.sentence())
+    except BudgetConfigUnreadable as unknown:
+        logger.warning("voice_reply: not spoken: %s", unknown)
+    return None
 
 
 async def synthesize_speech(

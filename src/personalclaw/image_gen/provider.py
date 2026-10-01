@@ -50,6 +50,14 @@ class ImageResult:
 class ImageGenProvider(ABC):
     """Provider interface for image generation + editing backends."""
 
+    #: True for a backend that sends each request to a model runtime at an address it names as
+    #: ``endpoint``, and that runtime runs the model where it is (a diffusion server). Such a
+    #: backend at an address on this machine runs its model here, and is priced at its known $0
+    #: (``providers.engines.runs_here``); at any other address it is billed as what serves it
+    #: bills. Default False: a backend that passes requests on to a hosted service, wherever it
+    #: sends them, runs nothing here.
+    hosts_model: bool = False
+
     @property
     @abstractmethod
     def name(self) -> str: ...

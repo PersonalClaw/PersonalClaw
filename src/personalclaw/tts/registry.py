@@ -375,20 +375,33 @@ async def route_synthesis(
     conditioning set MI-1 threaded into the ABC signature. A backend ignores any knob it
     does not use via ``**opts``, so piper/OpenAI are unchanged.
     """
+    from personalclaw.guardrails.media_call import MediaCall, metered_media_call
+    from personalclaw.providers.engines import binding_name
+
     provider: TtsProvider = params["provider"]
     guard_synthesis_capability(provider, params)
     voice = str(params.get("voice", "") or "")
     if not await can_speak(provider, voice):
         raise TtsNotReady(provider, voice)
-    return await provider.synthesize(
-        text,
-        voice=voice,
-        output_path=output_path,
-        speed=float(params.get("speed", 1.0) or 1.0),
-        speech_voice=str(params.get("speech_voice", "") or ""),
-        ref_audio=str(params.get("ref_audio", "") or ""),
-        ref_text=str(params.get("ref_text", "") or ""),
-        seed=int(params.get("seed", 0) or 0),
-        instruct=str(params.get("instruct", "") or ""),
-        design_params=dict(params.get("design_params") or {}),
+    # Metered by the characters it speaks: held to the dollar caps first when it is unattended
+    # work, and counted in Usage either way.
+    return await metered_media_call(
+        MediaCall(
+            provider=binding_name(provider),
+            model=voice,
+            unit="character",
+            quantity=len(text),
+        ),
+        lambda: provider.synthesize(
+            text,
+            voice=voice,
+            output_path=output_path,
+            speed=float(params.get("speed", 1.0) or 1.0),
+            speech_voice=str(params.get("speech_voice", "") or ""),
+            ref_audio=str(params.get("ref_audio", "") or ""),
+            ref_text=str(params.get("ref_text", "") or ""),
+            seed=int(params.get("seed", 0) or 0),
+            instruct=str(params.get("instruct", "") or ""),
+            design_params=dict(params.get("design_params") or {}),
+        ),
     )

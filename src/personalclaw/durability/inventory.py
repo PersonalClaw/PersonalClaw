@@ -1861,14 +1861,6 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_REPLACE_ONLY,
         help="pending routing proposals and the ones you rejected",
     ),
-    StateEntry(
-        id="model_rates",
-        kind=KIND_JSON_FILE,
-        path="model_rates.json",
-        domain=DOMAIN_CONFIG,
-        merge=MERGE_REPLACE_ONLY,
-        help="your corrections to model prices",
-    ),
     # The capture sessions: external coding agents' turns, screened for
     # credentials and fenced AT INGESTION (`inbound/capture_store.py`), which the learning
     # passes mine. User state in the same sense as `sessions`, and exported like it: the bytes

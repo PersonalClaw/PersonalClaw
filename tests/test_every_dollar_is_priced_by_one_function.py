@@ -3,9 +3,10 @@
 The spend guard's charge against the daily and per-run caps, an agent CLI's metered turn, the
 usage row the Usage page sums, a chat turn's cost and a subagent's: each priced from the shipped
 table alone (``pricing.estimate_cost``), while the rate table (``routing.rates``) knew three
-things that table cannot: a rate the owner set in ``model_rates.json``, a local model's known $0,
-and a rate the serving app declared. So a rate the owner set reached the router and nothing else.
-And a model the table has no row for counted as $0 against a dollar cap, with nothing saying so.
+things that table cannot: a rate the owner set (Settings → Usage → Model prices), a local
+model's known $0, and a rate the serving app declared. So a rate the owner set reached the router
+and nothing else. And a model the table has no row for counted as $0 against a dollar cap, with
+nothing saying so.
 
 Now each prices through ``routing.rates.price_call``, and a call nothing prices is charged as one
 the dollar caps could not count: the meter keeps a count of them, and the refusal, the verdict and
@@ -51,7 +52,8 @@ def _clear_rate_caches():
 
 
 def _owner_sets_a_rate() -> None:
-    """The owner prices the model in ``model_rates.json`` under the (test-isolated) home."""
+    """The owner prices the model (``config.json`` → ``model_prices``) under the (test-isolated)
+    home."""
     save_overlay({_MODEL: dict(_OWNER_RATE)})
 
 

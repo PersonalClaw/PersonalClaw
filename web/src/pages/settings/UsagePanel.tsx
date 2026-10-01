@@ -322,6 +322,26 @@ export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
 
 const KEY_HEADER = { model: 'Model', provider: 'Provider', source: 'Source' } as const
 
+/** What a row's calls used, as its Tokens cell reads it: its tokens, and how many images,
+ *  seconds of video, minutes of audio or characters of speech the calls billed by those were
+ *  billed for. Exported for test. */
+export function usedText(r: Pick<UsageAgg, 'input_tokens' | 'output_tokens' | 'units'>): string {
+  const tokens = (r.input_tokens || 0) + (r.output_tokens || 0)
+  const n = (v: number) => Number(v.toFixed(2)).toLocaleString()
+  const units = Object.entries(r.units ?? {}).filter(([, v]) => (v ?? 0) > 0).map(([unit, v]) => {
+    const q = v ?? 0
+    switch (unit) {
+      case 'image': return `${n(q)} ${q === 1 ? 'image' : 'images'}`
+      case 'second': return `${n(q)} s of video`
+      case 'minute': return `${n(q)} min of audio`
+      case 'character': return `${n(q)} characters`
+      default: return `${n(q)} ${unit}`
+    }
+  })
+  if (units.length === 0) return fmtTokens(tokens)
+  return tokens > 0 ? `${fmtTokens(tokens)} · ${units.join(' · ')}` : units.join(' · ')
+}
+
 function UsageTable({ rows, keyField, empty, error, onRetry }: {
   /** `undefined` is UNKNOWN — loading or failed. Never defaulted to `[]` by a caller. */
   rows: Array<UsageAgg & Record<string, string>> | undefined
@@ -360,7 +380,7 @@ function UsageTable({ rows, keyField, empty, error, onRetry }: {
           return (
             <tr key={label} className="text-on-surface-var">
               <Td pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 font-mono">{label}</Td>
-              <Td align="right" pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 tabular-nums">{fmtTokens((r.input_tokens || 0) + (r.output_tokens || 0))}</Td>
+              <Td align="right" pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 tabular-nums">{usedText(r)}</Td>
               <Td align="right" pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 tabular-nums">{r.priced ? fmtUsd(r.cost_usd) : 'unpriced'}</Td>
               <Td align="right" pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 tabular-nums text-on-surface-low">{r.priced ? `${share}%` : '—'}</Td>
             </tr>

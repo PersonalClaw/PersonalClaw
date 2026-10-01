@@ -55,6 +55,7 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
 
 async def _complete_text(use_case: str, prompt: str, images: list[str] | None) -> str:
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
+    from personalclaw.llm.events import EVENT_SPENT
     from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
     from personalclaw.usage_ledger import UNATTENDED, recorder
 
@@ -71,7 +72,7 @@ async def _complete_text(use_case: str, prompt: str, images: list[str] | None) -
             async for ev in provider.complete(messages):
                 if ev.kind == EVENT_TEXT_CHUNK:
                     parts.append(getattr(ev, "text", "") or "")
-                elif ev.kind == EVENT_COMPLETE:
+                elif ev.kind in (EVENT_COMPLETE, EVENT_SPENT):
                     record(ev)
         except Exception:
             partial[:] = parts

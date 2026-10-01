@@ -59,7 +59,13 @@ from pathlib import Path
 
 from personalclaw import spend_day
 from personalclaw.atomic_write import atomic_write
-from personalclaw.guardrails.failure import NO_ROOM, SPENT, UNPRICED, BudgetExceededError
+from personalclaw.guardrails.failure import (
+    NO_ROOM,
+    SPENT,
+    UNMEASURED,
+    UNPRICED,
+    BudgetExceededError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,14 +164,32 @@ class CallCost:
     used and cost today under. ``prompt_tokens`` is the size of its request (:func:`prompt_tokens`).
     ``rate`` is what the model costs, USD per 1,000,000 prompt and answer tokens, or ``None`` when
     nothing prices it; ``(0.0, 0.0)`` is a model known to cost nothing.
+
+    A call billed in another unit (an image, a second of video, a minute of audio, characters of
+    speech: ``routing.rates.UNITS``) names it as ``unit`` and uses no tokens. What it costs is
+    known before it starts, ``dollars``, and ``None`` when nothing prices it. ``measured`` is
+    False when how much of its unit the call is billed for cannot be known before it runs (a
+    recording whose length could not be read): a dollar ceiling cannot weigh it either.
+    ``unpriced_for`` names what of a model priced in its unit no price covers (an image at a size
+    beyond every price of it), so a refusal says that rather than that the model has no price.
     """
 
     ref: str
     prompt_tokens: int = 0
     rate: tuple[float, float] | None = None
+    unit: str = "token"
+    dollars: float | None = None
+    measured: bool = True
+    unpriced_for: str = ""
+
+    @property
+    def by_unit(self) -> bool:
+        return self.unit != "token"
 
     @property
     def free(self) -> bool:
+        if self.by_unit:
+            return self.dollars is not None and self.dollars <= 0.0
         return self.rate is not None and self.rate[0] <= 0.0 and self.rate[1] <= 0.0
 
 
@@ -366,12 +390,19 @@ class SpendMeter:
         """
         run = run if (run is not None and run_key) else Budget()
         with self._lock:
-            seen = self._seen_today().get(cost.ref)
-            answer = seen.answer_tokens if seen is not None else ANSWER_TOKENS_BEFORE_FIRST_CALL
-            tokens = max(0, int(cost.prompt_tokens)) + answer
+            seen = None if cost.by_unit else self._seen_today().get(cost.ref)
             dollars: float | None = None
-            if cost.rate is not None:
-                dollars = (cost.prompt_tokens * cost.rate[0] + answer * cost.rate[1]) / 1_000_000
+            if cost.by_unit:
+                # Billed by its unit: it uses no tokens, and its price for what it asks is known.
+                answer, tokens = 0, 0
+                dollars = cost.dollars
+            else:
+                answer = seen.answer_tokens if seen is not None else ANSWER_TOKENS_BEFORE_FIRST_CALL
+                tokens = max(0, int(cost.prompt_tokens)) + answer
+                if cost.rate is not None:
+                    dollars = (
+                        cost.prompt_tokens * cost.rate[0] + answer * cost.rate[1]
+                    ) / 1_000_000
             if seen is not None:
                 tokens = max(tokens, seen.tokens)
                 if dollars is not None:
@@ -386,7 +417,7 @@ class SpendMeter:
                 in_run = [h for h in self._holds.values() if h.run_key == run_key]
                 scopes.append(("run", run, run_total, in_run))
             for scope, budget, total, holds in scopes:
-                if budget.max_tokens > 0:
+                if budget.max_tokens > 0 and not cost.by_unit:
                     rooms.append(
                         _Room(
                             scope,
@@ -406,8 +437,10 @@ class SpendMeter:
                             float(budget.max_dollars),
                             float(total.dollars),
                             unpriced=total.unpriced,
-                            why=UNPRICED,
+                            why=UNPRICED if cost.measured else UNMEASURED,
                             ref=cost.ref,
+                            unit=cost.unit,
+                            unpriced_for=cost.unpriced_for,
                         )
                     rooms.append(
                         _Room(
@@ -426,7 +459,7 @@ class SpendMeter:
                 if room.spent >= room.limit - _EPSILON:
                     return room.refusal(SPENT, cost.ref)
             tightest = min(rooms, key=lambda room: room.slack)
-            first_call = seen is None
+            first_call = seen is None and not cost.by_unit
             if first_call and any(h.ref == cost.ref for h in self._holds.values()):
                 # Nothing knows yet what a call to this model costs: learn it from the one that is
                 # running before a second one runs beside it.

@@ -241,7 +241,7 @@ overspending quietly, and a dollar ceiling refuses each call that costs money on
 room for it, while calls to a model that costs nothing keep running. The day counter is
 persisted to `~/.personalclaw/spend.json` so it survives a restart, and its day is this
 machine's local day, the day Settings → Usage counts too. That is a genuine control.
-Four things about it are worth knowing *before* you point a goal loop at something and go to
+Five things about it are worth knowing *before* you point a goal loop at something and go to
 bed:
 
 - **All three default to zero, and zero means unlimited.** The dataclass says so in as
@@ -257,17 +257,33 @@ bed:
   are sitting in front of, but it means `max_dollars_per_day` is **not** a whole-install
   cap. Goal loops, cron fires and subagents are metered; typing into chat is not.
 - **The dollar ceiling is an estimate, not a bill.** A call costs what its provider reports,
-  else its tokens at its model's rate: one you set in **Settings → Usage → Model prices**, a
-  known $0 for a model this machine serves itself (a model server whose app runs the models it
-  serves where it is, such as Ollama, at an address on this machine, or the bundled offline
-  model), the rate its provider app declares, or the shipped price list (`price_call` in
-  `src/personalclaw/routing/rates.py`, which prices every dollar the caps and the Usage page
-  count). An OpenAI-compatible endpoint on this machine is not taken as free, because a proxy
-  there can answer for a paid cloud API: it is priced by its model's id, or has no price. A call
-  none of those prices is refused while a dollar ceiling is set, and the refusal says where to
-  price it; give it a price of $0 if it really costs nothing. With no dollar ceiling set such a
-  call runs, and the meter counts it as one its totals could not count. PersonalClaw never sees
-  your provider invoice, so an estimated ceiling cannot be an authoritative one.
+  else what it used at its model's rate, in the unit the model is billed in: tokens for a text
+  model, an image (by its size and quality) for an image model, a second of video, a minute of
+  audio for speech-to-text, characters for text-to-speech. The rate is one you set in
+  **Settings → Usage → Model prices**, a known $0 for a model this machine runs itself (a model
+  server whose app runs the models it serves where it is, such as Ollama, at an address on this
+  machine; the bundled offline model; and a speech, embedding or image engine whose models are
+  downloaded into PersonalClaw's home, or that runs them through a model server at an address on
+  this machine), the rate its provider app declares, or the shipped price list (`price_call` and
+  `price_units` in `src/personalclaw/routing/rates.py`, which price every dollar the caps and the
+  Usage page count). The shipped list is each model maker's published list price on the day it
+  was recorded, and Model prices says whose it is and when; the service that runs a model (a
+  cloud platform's inference profile, a reseller) may bill differently, and a price you set comes
+  first. A Bedrock inference profile (`global.`, `us.`, `eu.`, `apac.` …) is priced as its base
+  model. An OpenAI-compatible endpoint on this machine is not taken as free, because a proxy there
+  can answer for a paid cloud API: it is priced by its model's id, or has no price. A call none of
+  those prices is refused while a dollar ceiling is set, and the refusal says how to lift it: give
+  the model a price ($0 if it really costs nothing), or set the ceiling to 0. Raising the ceiling
+  does not help, since no ceiling can count a call it has no price for. With no dollar ceiling set
+  such a call runs, and the meter counts it as one its totals could not count. PersonalClaw never
+  sees your provider invoice, so an estimated ceiling cannot be an authoritative one.
+- **Images, video, transcription and speech are metered too.** Each goes through one metering
+  seam (`src/personalclaw/guardrails/media_call.py`): one an automation, a loop, a subagent or an
+  import makes is weighed against the dollar ceilings before it runs and charged after, one you
+  make yourself is not capped (as your chat is not), and every one is counted in Usage by its
+  images, seconds, minutes or characters. A transcription whose length cannot be read before it
+  runs cannot be weighed, so under a dollar ceiling it is refused unless its model costs nothing.
+  Embedding calls are not metered.
 - **It holds calls that run at the same time, as far as it can estimate them.** Before a call
   that costs money starts, it sets aside what it may cost: its prompt and an answer as long as
   the longest a call to that model has given today (4,096 tokens before the first), at its
@@ -288,25 +304,32 @@ renders as **unpriced**, never as `$0.00`, and any rollup containing one reports
 incomplete. So you can always answer "what did that cost me", and a model served on this
 machine costs nothing either way.
 
-To price a model the shipped list does not know, or correct one it has wrong, give it a price
-under **Settings → Usage → Model prices**. The section lists every model your uses are bound to,
-and every model spent on in the last 30 days, with the price its calls are counted at and where
-that comes from, and a model nothing prices says so. A price of $0 set for an instance's every
-model (`my-proxy:*`) declares that instance free. A price is set for a `provider:model` ref, a pattern of them (`anthropic:claude-*`), or
-a model id alone, which prices that model whoever serves it, this machine included; a rate is
-USD per million tokens for input and output, and optionally for cache reads and writes (unset,
-a cached token costs what an input token does). A price counts from the next call.
+Whatever provider and model you use, you can give it your own price under **Settings → Usage →
+Model prices**, and that includes overriding a price PersonalClaw knows: whoever runs a model may
+bill differently from its maker. The section lists every model your uses are bound to, and every
+model spent on in the last 30 days, with the price its calls are counted at and where that comes
+from: your price and the day you set it, the price its provider app declares, or PersonalClaw's
+table, which names whose list price it is and the day it was recorded. A model nothing prices
+says so. Under a price of yours it shows the default your price stands in front of, and **Reset
+to default** brings that back. A price of $0 set for an instance's every model (`my-proxy:*`)
+declares that instance free. A price is set for a `provider:model` ref, a pattern of them
+(`anthropic:claude-*`), or a model id alone, which prices that model whoever serves it, this
+machine included, in the unit the model is billed in (see above). A price counts from the next
+call.
 
-The prices are kept in `model_rates.json` in your PersonalClaw home, one row per key:
+Your prices are part of your configuration, `config.json` in your PersonalClaw home, under
+`model_prices`:
 
 ```json
-{"version": 1, "rates": {"my-gpu:qwen3:8b": {"in_per_mtok": 0.2, "out_per_mtok": 0.4},
-                         "claude-sonnet-*": {"in_per_mtok": 3, "out_per_mtok": 15,
-                                             "cache_read_per_mtok": 0.3}}}
+{"model_prices": {"overrides": {
+  "my-gpu:qwen3:8b": {"in_per_mtok": 0.2, "out_per_mtok": 0.4, "recorded": "2026-10-01"},
+  "claude-sonnet-*": {"in_per_mtok": 3, "out_per_mtok": 15, "cache_read_per_mtok": 0.3}}}}
 ```
 
-If that file cannot be read, no price in it is in effect, the section says why, and it refuses
-to save over it until the file is fixed or removed.
+Prices set in an earlier release were kept in `model_rates.json`; the gateway carries them into
+`config.json` the first time it starts (a price already there wins) and removes the file. If
+`config.json` cannot be read, no price you set is in effect, the section says why, and it refuses
+to save over the file until it is fixed.
 
 **What to do instead, if you stay:** set the ceilings before you leave anything running,
 and set a hard spend limit **at your provider** as the real backstop — that is the only cap

@@ -32,9 +32,12 @@ REFUSED = "connection refused by the model host"
 
 
 def _price(model: str) -> float:
-    from personalclaw.pricing import estimate_cost
+    """What the shipped table's row for *model* bills the call's tokens at."""
+    from personalclaw.pricing import price_row
 
-    return estimate_cost(model, input_tokens=TOKENS_IN, output_tokens=TOKENS_OUT)
+    row = price_row(model)
+    assert row is not None, f"premise: the shipped table prices {model}"
+    return round((TOKENS_IN * row.fields["in"] + TOKENS_OUT * row.fields["out"]) / 1e6, 6)
 
 
 class _Scripted:
@@ -234,7 +237,8 @@ def _owner_prices(ref: str) -> None:
 
 async def test_a_chat_turn_is_priced_at_the_rate_the_owner_set(world, tmp_path):
     """🔴 Red before: the chat priced its turn from the shipped table alone, so the rate the owner
-    set in ``model_rates.json`` reached neither the turn's cost line nor its usage row."""
+    set in Settings → Usage → Model prices reached neither the turn's cost line nor its usage
+    row."""
     world.active["chat"] = [UP_REF]
     _owner_prices(UP_REF)
     assert _OWNER_COST != _price("gpt-4o"), "premise: the two rates differ"

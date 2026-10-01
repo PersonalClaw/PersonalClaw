@@ -8,6 +8,7 @@ from aiohttp import web
 from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+from personalclaw.llm.events import EVENT_SPENT
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.usage_ledger import Attribution, recorder
 
@@ -127,6 +128,8 @@ async def handle_optimize(request: web.Request) -> web.Response:
                         text += event.text
                     elif event.kind == EVENT_PERMISSION_REQUEST:
                         await client.reject_tool(event.request_id)
+                    elif event.kind == EVENT_SPENT:
+                        record(event)
                     elif event.kind == EVENT_COMPLETE:
                         record(event)
                         break

@@ -31,7 +31,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_RESULT,
     ModelProvider,
 )
-from personalclaw.llm.events import unasked_outcome, unasked_reason
+from personalclaw.llm.events import EVENT_SPENT, unasked_outcome, unasked_reason
 from personalclaw.memory import MemoryStore
 from personalclaw.sel import sel
 
@@ -537,6 +537,8 @@ class EvalRunner:
                     request_id=str(event.tool_call_id or ""),
                     metadata={"reason": decided_by, "decided_by": decided_by},
                 )
+            elif event.kind == EVENT_SPENT:
+                record(event)
             elif event.kind == EVENT_COMPLETE:
                 record(event)
                 break

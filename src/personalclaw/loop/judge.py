@@ -422,6 +422,7 @@ async def _stream(judge, prompt: str, usage: Attribution) -> str:
     """Stream a prompt through the judge's provider and collect the text, writing the call's
     usage row for *usage*."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+    from personalclaw.llm.events import EVENT_SPENT
 
     provider = judge._provider
     if provider is None:
@@ -435,6 +436,8 @@ async def _stream(judge, prompt: str, usage: Attribution) -> str:
             # The judge has no write tools; reject anything it tries to call.
             if event.request_id:
                 await provider.reject_tool(event.request_id)
+        elif event.kind == EVENT_SPENT:
+            record(event)
         elif event.kind == EVENT_COMPLETE:
             record(event)
             break

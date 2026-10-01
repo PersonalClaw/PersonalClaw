@@ -1,5 +1,11 @@
 {
   "_comment": "Model → context window tokens. Shared by frontend (AgentsPage.tsx) and backend providers. Default fallback: 200,000.",
+  "claude-fable-5.1": 1000000,
+  "claude-fable-5": 1000000,
+  "claude-opus-5.5": 1000000,
+  "claude-opus-5": 1000000,
+  "claude-sonnet-5.5": 1000000,
+  "claude-sonnet-5": 1000000,
   "claude-opus-4.8": 1000000,
   "claude-opus-4-8": 1000000,
   "global.anthropic.claude-opus-4-8": 1000000,
@@ -35,5 +41,6 @@
   "us.anthropic.claude-sonnet-4-20250514-v1:0": 200000,
   "us.anthropic.claude-3-7-sonnet-20250219-v1:0": 200000,
   "amazon.nova-pro-v1:0": 300000,
-  "amazon.nova-lite-v1:0": 300000
+  "amazon.nova-lite-v1:0": 300000,
+  "amazon.titan-embed-text-v2:0": 8192
 }

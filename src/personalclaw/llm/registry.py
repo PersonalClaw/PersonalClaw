@@ -557,12 +557,19 @@ def served_on_this_machine(name: str) -> bool:
     (:attr:`ProviderCapability.in_process`), or the type runs the models it serves where its
     endpoint is (:attr:`ProviderCapability.hosts_model`) and the endpoint the entry sends to is
     on this machine. An entry of a type that passes requests on (an OpenAI-compatible endpoint),
-    an entry with no endpoint either way, a name no configured entry has, an endpoint anywhere
-    else, and an entry whose type is not registered (its app is not installed, so nothing says
-    what serves it) are not local.
+    an entry with no endpoint either way, an endpoint anywhere else, and an entry whose type is
+    not registered (its app is not installed, so nothing says what serves it) are not local.
+
+    A name no configured entry has may be a use-case engine an app registered (speech, embedding,
+    image): it is local by the same rule, from what the engine declares
+    (:func:`personalclaw.providers.engines.named_runs_here`), and a name nothing registered is not.
     """
     entry, capability = _entry_and_capability(name)
-    if entry is None or capability is None:
+    if entry is None:
+        from personalclaw.providers.engines import named_runs_here
+
+        return named_runs_here(name)
+    if capability is None:
         return False
     if capability.in_process:
         return True

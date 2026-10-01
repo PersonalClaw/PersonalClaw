@@ -1274,6 +1274,12 @@
     "type": "str"
   },
   {
+    "default": {},
+    "path": "model_prices.overrides",
+    "sensitive": false,
+    "type": "dict[str, dict[str, Any]]"
+  },
+  {
     "default": 200,
     "path": "observe_max_messages",
     "sensitive": false,

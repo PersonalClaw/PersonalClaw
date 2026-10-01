@@ -568,6 +568,47 @@ def _run_async(coro: Any) -> Any:
         return pool.submit(asyncio.run, coro).result()
 
 
+def _metered(
+    provider: Any,
+    model_id: str,
+    unit: str,
+    quantity: float | None,
+    make: Any,
+    session_key: str | None,
+    *,
+    size: str = "",
+) -> Any:
+    """Run *make* (a coroutine factory: the call to *provider*'s *model_id*) through the metering
+    seam every call billed by its unit goes through (``guardrails.media_call``): weighed against
+    the dollar caps first when it is unattended work, charged what it cost after, and counted in
+    Usage by how many images or seconds of video it made. Raises the seam's refusal."""
+    from personalclaw.guardrails.media_call import MediaCall, metered_media_call
+    from personalclaw.providers.engines import binding_name
+
+    call = MediaCall(
+        provider=binding_name(provider),
+        model=model_id,
+        unit=unit,
+        quantity=quantity,
+        size=size,
+    )
+    billed = len if unit == "image" else None
+    return _run_async(metered_media_call(call, make, session_key=session_key or "", billed=billed))
+
+
+def _refused(exc: BaseException) -> str | None:
+    """The sentence a spend ceiling refused a media call with, or None when *exc* is no such
+    refusal (it is then raised on)."""
+    from personalclaw.guardrails.budgets import BudgetConfigUnreadable
+    from personalclaw.guardrails.failure import BudgetExceededError
+
+    if isinstance(exc, BudgetExceededError):
+        return exc.sentence()
+    if isinstance(exc, BudgetConfigUnreadable):
+        return f"{exc}, so nothing was made."
+    return None
+
+
 class _MediaNotSaved(Exception):
     """A generated image or video that was made and could not be saved; its text is the sentence
     saying why, which the materializers' callers answer with."""
@@ -1005,17 +1046,37 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
                 tf.write(src_bytes)
                 src_path = tf.name
             try:
-                results = _run_async(
-                    provider.edit(prompt, source_image=src_path, model=model_id, size=size)
+                results = _metered(
+                    provider,
+                    model_id,
+                    "image",
+                    1,
+                    lambda: provider.edit(prompt, source_image=src_path, model=model_id, size=size),
+                    sk,
+                    size=size,
                 )
             finally:
                 with __import__("contextlib").suppress(OSError):
                     Path(src_path).unlink()
         else:
-            results = _run_async(provider.generate(prompt, model=model_id, size=size))
+            results = _metered(
+                provider,
+                model_id,
+                "image",
+                1,
+                lambda: provider.generate(prompt, model=model_id, size=size),
+                sk,
+                size=size,
+            )
     except ImageGenError as e:
         _audit("error", edit_slug, str(e))
         return tool_failure(f"{e}")
+    except Exception as e:
+        refusal = _refused(e)
+        if refusal is None:
+            raise
+        _audit("denied", edit_slug, refusal)
+        return tool_failure(refusal)
 
     if not results:
         _audit("error", edit_slug, "no image returned")
@@ -1137,17 +1198,28 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     aspect_ratio = str(args.get("aspect_ratio", "")).strip()
 
     try:
-        results = _run_async(
-            provider.generate(
+        results = _metered(
+            provider,
+            model_id,
+            "second",
+            duration_seconds,
+            lambda: provider.generate(
                 prompt,
                 model=model_id,
                 duration_seconds=duration_seconds,
                 aspect_ratio=aspect_ratio,
-            )
+            ),
+            sk,
         )
     except VideoGenError as e:
         _audit("error", "", str(e))
         return tool_failure(f"{e}")
+    except Exception as e:
+        refusal = _refused(e)
+        if refusal is None:
+            raise
+        _audit("denied", "", refusal)
+        return tool_failure(refusal)
 
     if not results:
         _audit("error", "", "no video returned")
@@ -1211,10 +1283,24 @@ def regenerate_image_at_slug(
     if resolved is None:
         return False, "no image-generation model is configured"
     provider, model_id = resolved
+    size = (size or "").strip()
     try:
-        results = _run_async(provider.generate(prompt, model=model_id, size=(size or "").strip()))
+        results = _metered(
+            provider,
+            model_id,
+            "image",
+            1,
+            lambda: provider.generate(prompt, model=model_id, size=size),
+            session_id,
+            size=size,
+        )
     except ImageGenError as e:
         return False, str(e)
+    except Exception as e:
+        refusal = _refused(e)
+        if refusal is None:
+            raise
+        return False, refusal
     if not results:
         return False, "the image provider returned no image"
     try:

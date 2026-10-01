@@ -539,6 +539,9 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     ),
     # Voice/transcribe — operator media (ffmpeg/whisper host tools), operator-initiated.
     "transcribe.py::_segment::asyncio.create_subprocess_exec": "host tool: transcription ffmpeg",
+    "transcribe.py::audio_seconds::subprocess.run": (
+        "host fact: ffmpeg reads a recording's length to price it (fixed `-i <file>` argv)"
+    ),
     "voice_reply.py::stitch_wavs::asyncio.create_subprocess_exec": "host tool: wav stitch ffmpeg",
     # The quality verifier runs an app bundle's OWN pytest to check a `tested: true`
     # declaration. Exempt on two grounds, and the second is the load-bearing one:

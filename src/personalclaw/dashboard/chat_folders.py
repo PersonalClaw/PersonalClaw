@@ -10,7 +10,7 @@ from aiohttp import web
 from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
 from personalclaw.llm_helpers import any_answer, let_fail_over, say_background_substitution
 from personalclaw.request_validation import (
     RequestValidationError,
@@ -66,6 +66,8 @@ async def _generate_folder_icon(state: DashboardState, folder: dict) -> None:
                 say(event.text)
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 await client.reject_tool(event.request_id)
+            elif event.kind == EVENT_SPENT:
+                record(event)
             elif event.kind == EVENT_COMPLETE:
                 record(event)
                 break

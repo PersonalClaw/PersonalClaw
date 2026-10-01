@@ -8,6 +8,7 @@ from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import BANNER, DATA_WARNING
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, ModelProvider
+from personalclaw.llm.events import EVENT_SPENT
 
 
 def config_path():
@@ -47,8 +48,9 @@ async def _send_and_print(provider: ModelProvider, message: str) -> None:
         async for event in provider.stream(message):
             if event.kind == EVENT_TEXT_CHUNK:
                 print(event.text, end="", flush=True)
-            elif event.kind == EVENT_COMPLETE:
-                # Per-turn cost/token ledger, CLI write-site.
+            elif event.kind in (EVENT_COMPLETE, EVENT_SPENT):
+                # Per-turn cost/token ledger, CLI write-site; a turn ending in an error says what
+                # its calls spent first (EVENT_SPENT), and the error follows.
                 from personalclaw.usage_ledger import record_from_event
 
                 _m = getattr(getattr(provider, "client", None), "_model", "") or ""
@@ -59,7 +61,8 @@ async def _send_and_print(provider: ModelProvider, message: str) -> None:
                     provider="acp",
                     model=_m if isinstance(_m, str) and _m != "auto" else "",
                 )
-                break
+                if event.kind == EVENT_COMPLETE:
+                    break
         print()  # final newline
     except AcpTimeoutError as e:
         if e.partial_output:

@@ -11,6 +11,7 @@ from personalclaw.llm.base import (
     EVENT_TEXT_CHUNK,
     ModelProvider,
 )
+from personalclaw.llm.events import EVENT_SPENT
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,8 @@ class LLMJudge:
                 )
                 if event.request_id:
                     await self._provider.reject_tool(event.request_id)
+            elif event.kind == EVENT_SPENT:
+                record(event)
             elif event.kind == EVENT_COMPLETE:
                 record(event)
                 break

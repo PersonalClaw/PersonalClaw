@@ -283,6 +283,17 @@ class OutputContractError(GuardError):
 SPENT = "spent"  # the ceiling is reached
 NO_ROOM = "no_room"  # what is spent and set aside leaves less than the call may use
 UNPRICED = "unpriced"  # a dollar ceiling cannot count a call to a model nothing prices
+#: a dollar ceiling cannot weigh a call billed by a unit (a minute of audio) whose amount is not
+#: known before it runs
+UNMEASURED = "unmeasured"
+
+#: What one of each unit a call can be billed in is, as a refusal names it.
+_UNIT_NOUNS = {
+    "image": "image",
+    "second": "second of video",
+    "minute": "minute of audio",
+    "character": "character it speaks",
+}
 
 
 class BudgetExceededError(GuardError):
@@ -293,9 +304,16 @@ class BudgetExceededError(GuardError):
     path) can explain exactly which ceiling bit. ``why`` says how: :data:`SPENT`, the ceiling is
     reached; :data:`NO_ROOM`, what is spent, plus what the calls running now have set aside
     (``held``), leaves less than this call to ``ref`` may use (``needed``); :data:`UNPRICED`, a
-    dollar ceiling cannot count a call to ``ref``, a model nothing prices. ``unpriced`` is how
-    many calls in that scope had no price, which a dollar total cannot count: the refusal says
-    so, rather than presenting what it counted as all that was spent.
+    dollar ceiling cannot count a call to ``ref``, a model nothing prices (or nothing prices for
+    ``unpriced_for``, an image at a size no price of it covers); :data:`UNMEASURED`,
+    a dollar ceiling cannot weigh a call to ``ref``, billed per ``unit``, because how much of it
+    the call is was not known before it ran. ``unpriced`` is how many calls in that scope had no
+    price, which a dollar total cannot count: the refusal says so, rather than presenting what it
+    counted as all that was spent.
+
+    The way out of a refusal for a model with no price is said in full (:meth:`fix`): give the
+    model a price, $0 when it costs nothing, or lift the dollar cap. Raising the cap is no way out:
+    a cap of any size cannot count a call it has no price for.
     """
 
     mode = FailureMode.BUDGET_EXCEEDED
@@ -312,6 +330,8 @@ class BudgetExceededError(GuardError):
         needed: float = 0.0,
         held: float = 0.0,
         ref: str = "",
+        unit: str = "token",
+        unpriced_for: str = "",
     ) -> None:
         self.scope = scope
         self.dimension = dimension
@@ -322,6 +342,8 @@ class BudgetExceededError(GuardError):
         self.needed = needed
         self.held = held
         self.ref = ref
+        self.unit = unit
+        self.unpriced_for = unpriced_for
         super().__init__(self._summary())
 
     def _summary(self) -> str:
@@ -329,6 +351,8 @@ class BudgetExceededError(GuardError):
         head = f"{self.scope} {self.dimension} budget"
         if self.why == UNPRICED:
             return f"{head} cannot count a call to {self.ref}: it has no price"
+        if self.why == UNMEASURED:
+            return f"{head} cannot weigh a call to {self.ref}: how much it is billed for is unknown"
         left_out = self._left_out()
         tail = f", {left_out}" if left_out else ""
         if self.why == NO_ROOM:
@@ -356,9 +380,16 @@ class BudgetExceededError(GuardError):
         which = "daily" if self.scope == "day" else "per-run"
         unit = "token" if self.dimension == "tokens" else "dollar"
         if self.why == UNPRICED:
+            priced = f" for {self.unpriced_for}" if self.unpriced_for else ""
             return (
-                f"{self.ref} has no price, so the {which} dollar budget cannot count what a call "
-                "to it would spend"
+                f"{self.ref} has no price{priced}, so the {which} dollar budget cannot count what "
+                "a call to it would spend"
+            )
+        if self.why == UNMEASURED:
+            return (
+                f"{self.ref} is billed per {_UNIT_NOUNS.get(self.unit, self.unit)}, and "
+                f"{self._unmeasured()} could not be read before the call, so the {which} dollar "
+                "budget cannot weigh what it would spend"
             )
         left_out = self._left_out()
         if self.why == NO_ROOM:
@@ -379,10 +410,33 @@ class BudgetExceededError(GuardError):
                 figure = f"{figure}, {left_out}"
         return f"the {which} {unit} budget is spent ({figure})"
 
+    def _unmeasured(self) -> str:
+        """What could not be read before a call billed by its unit, as a clause."""
+        return {
+            "minute": "how long this recording is",
+            "second": "how long this video is",
+        }.get(self.unit, "how much this call is")
+
+    def _lift(self) -> str:
+        """How the dollar cap that refused the call is lifted (raising it would not help)."""
+        if self.scope == "day":
+            return (
+                "set Max dollars / day to 0 in Settings → Guardrails to lift the daily dollar cap"
+            )
+        return "remove the dollar limit per run its automation sets"
+
     def fix(self) -> str:
         """Where the refusal is lifted, as a clause."""
         if self.why == UNPRICED:
-            return "set its price in Settings → Usage → Model prices, or $0 if it costs nothing"
+            return (
+                "set its price in Settings → Usage → Model prices ($0 if it costs nothing), or "
+                f"{self._lift()}"
+            )
+        if self.why == UNMEASURED:
+            return (
+                f"{self._lift()}, or set its price to $0 in Settings → Usage → Model prices if it "
+                "costs nothing"
+            )
         if self.scope == "day":
             return "it resets tomorrow, or raise it in Settings → Guardrails"
         return "raise it in Settings → Guardrails"
@@ -391,16 +445,24 @@ class BudgetExceededError(GuardError):
         """The refusal as a person reads it: which ceiling stopped the call, what was spent
         against it, and where it is changed."""
         reason = self.reason()
-        if self.why != UNPRICED:  # a model's ref opens an unpriced one, spelled as it is
+        if self.why not in (UNPRICED, UNMEASURED):  # a model's ref opens these, spelled as it is
             reason = reason[:1].upper() + reason[1:]
         return f"{reason}: {self.fix()}."
 
     def remedy(self) -> str:
         """What lifts the refusal, as a step's suggested fix reads it."""
         if self.why == UNPRICED:
+            priced = f" for {self.unpriced_for}" if self.unpriced_for else ""
             return (
-                f"{self.ref} has no price, so the {self.scope} dollar budget cannot count it; set "
-                "its price in Settings → Usage → Model prices, or $0 if it costs nothing"
+                f"{self.ref} has no price{priced}, so the {self.scope} dollar budget cannot count "
+                "it; set its price in Settings → Usage → Model prices ($0 if it costs nothing), "
+                f"or {self._lift()}"
+            )
+        if self.why == UNMEASURED:
+            return (
+                f"{self.ref} is billed per {_UNIT_NOUNS.get(self.unit, self.unit)} and "
+                f"{self._unmeasured()} is not known, so the {self.scope} dollar budget cannot "
+                f"weigh it; {self.fix()}"
             )
         state = "has no room for this call" if self.why == NO_ROOM else "is spent"
         return (

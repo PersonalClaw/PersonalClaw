@@ -40,9 +40,12 @@ SUMMARY = "the analyst argued the numbers; the skeptic doubted the premise"
 
 
 def _price() -> float:
-    from personalclaw.pricing import estimate_cost
+    """What the shipped table's row for the model bills the call's tokens at."""
+    from personalclaw.pricing import price_row
 
-    return estimate_cost(MODEL, input_tokens=TOKENS_IN, output_tokens=TOKENS_OUT)
+    row = price_row(MODEL)
+    assert row is not None, f"premise: the shipped table prices {MODEL}"
+    return round((TOKENS_IN * row.fields["in"] + TOKENS_OUT * row.fields["out"]) / 1e6, 6)
 
 
 class _Scripted:

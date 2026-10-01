@@ -143,8 +143,9 @@ def test_a_dollar_cap_refuses_a_call_it_could_not_count_and_says_where_to_price_
     assert sent == []
     assert refused.value.sentence() == (
         "relay:house-blend has no price, so the daily dollar budget cannot count what a call to "
-        "it would spend: set its price in Settings → Usage → Model prices, or $0 if it costs "
-        "nothing."
+        "it would spend: set its price in Settings → Usage → Model prices ($0 if it costs "
+        "nothing), or set Max dollars / day to 0 in Settings → Guardrails to lift the daily dollar "
+        "cap."
     )
 
 

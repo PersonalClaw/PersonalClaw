@@ -19,6 +19,7 @@ extracted to siblings when the file reached 5652 lines against an absolute 6000-
 * ``config/safety.py`` — egress, budget, breaker, autonomy, guardrails, auth, security, sandbox.
 * ``config/learning.py`` — loops, learning, feedback, planning, evals, proactive.
 * ``config/external_access.py`` — the external-access and capture surfaces.
+* ``config/pricing.py`` — the prices you set for models (``model_prices``).
 
 There is NO re-export shim: importers were updated in the same change, and the names imported
 below are imported because ``AppConfig`` actually uses them. ``AppConfig`` and its load mapping
@@ -68,6 +69,7 @@ from personalclaw.config.learning import (
     _judge_axis,
     _stagnation_window,
 )
+from personalclaw.config.pricing import ModelPricesConfig, price_overrides
 from personalclaw.config.safety import (
     AuthConfigSection,
     AutonomyConfig,
@@ -3765,6 +3767,14 @@ class AppConfig:
             "journal's default review horizon.",
         ),
     )
+    # Last, so no field before it moves.
+    model_prices: ModelPricesConfig = field(
+        default_factory=ModelPricesConfig,
+        metadata=_meta(
+            "Model prices",
+            "The prices you set for models, which win over every price PersonalClaw knows.",
+        ),
+    )
 
     def __post_init__(self) -> None:
         # The modeled document as it was LOADED, as JSON text so that an in-place edit of a
@@ -4880,6 +4890,7 @@ class AppConfig:
                     0, _safe_int(routing_data.get("reproposal_cooldown_days", 14), 14)
                 ),
             ),
+            model_prices=ModelPricesConfig(overrides=price_overrides(data.get("model_prices"))),
             guardrails=GuardrailsConfig(
                 budgets=BudgetConfig(
                     max_tokens_per_run=max(0, int(budgets_data.get("max_tokens_per_run", 0))),
@@ -5056,6 +5067,7 @@ class AppConfig:
             "security": asdict(self.security),
             "auth": asdict(self.auth),
             "guardrails": asdict(self.guardrails),
+            "model_prices": asdict(self.model_prices),
             "routing": asdict(self.routing),
             "resilience": asdict(self.resilience),
             "voice": asdict(self.voice),

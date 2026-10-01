@@ -33,6 +33,7 @@ from personalclaw import cancellation
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate, refusal_of
+from personalclaw.agents.native.attempt_audit import inference_attempt
 from personalclaw.agents.native.catalog_refresh import CatalogRefresh
 from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
 from personalclaw.agents.native.failover import (
@@ -58,7 +59,7 @@ from personalclaw.cancellation import (
     CancelScope,
 )
 from personalclaw.file_scope import file_places_note
-from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
+from personalclaw.guardrails.audit import now_ms, record_attempt
 from personalclaw.guardrails.failure import FailureMode, GuardError, correction_note, is_retryable
 from personalclaw.guardrails.loop_breaker import (
     WARN_THRESHOLD,
@@ -75,6 +76,7 @@ from personalclaw.llm.events import (
     EVENT_COMPLETE,
     EVENT_MODEL_SUBSTITUTION,
     EVENT_PERMISSION_REQUEST,
+    EVENT_SPENT,
     EVENT_TEXT_CHUNK,
     EVENT_THINKING_CHUNK,
     EVENT_TOOL_CALL,
@@ -94,6 +96,7 @@ from personalclaw.llm.prompt_cache import (
     mark_cacheable_prefix,
     turn_note_message,
 )
+from personalclaw.routing.rates import CallPrice, summed
 from personalclaw.tool_providers.arguments import missing_arguments, missing_arguments_note
 from personalclaw.tool_providers.base import RiskLevel, ToolResult, only_tells_the_owner
 from personalclaw.tool_providers.portable_schema import (
@@ -794,44 +797,17 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             return STOP_MAX_TOKENS
         return "end_turn"
 
-    def _audit_inference_attempt(
-        self,
-        mode: FailureMode,
-        *,
-        attempt: int,
-        started_ms: float,
-        passed: bool,
-        fallback: bool = False,
-    ) -> None:
-        """Record one loop-level inference attempt in the guard's audit shape.
-
-        ``fallback`` marks an attempt on a model the turn fell back to: strategy ``fallback``, and
-        ``degraded`` (a fallback ref served it), which is what the guard's own rows say for it.
-
-        Only exceptional attempts are recorded — every failed attempt, plus the
-        outcome of a retry — so the audit trail gains the retry story (#252's
-        "no audit" gap) without re-baselining the stats fold with a row for every
-        healthy native inference. Best-effort by contract: an audit failure must
-        never take down the turn it describes.
-        """
+    def _audit_inference_attempt(self, mode: FailureMode, **attempt: Any) -> None:
+        """Record one exceptional inference attempt (``attempt_audit.inference_attempt``).
+        Best-effort by contract: an audit failure must never take down the turn it describes."""
         try:
             record_attempt(
-                AttemptRecord(
-                    audit_id=f"native-{id(self):x}-{time.time_ns():x}",
-                    ts=now_ms(),
-                    use_case="native_loop",
-                    provider=type(self._model).__name__,
+                inference_attempt(
+                    mode,
+                    served_ref=self.served_model_ref,
                     model=self._definition.model or "",
-                    attempt=attempt,
-                    failure_mode=mode.value,
-                    latency_ms=max(0.0, now_ms() - started_ms),
-                    passed=passed,
-                    strategy="fallback" if fallback else ("retry" if attempt > 1 else "direct"),
-                    degraded=fallback and passed,
-                    # This row prices nothing and adds nothing: a failed attempt cost nothing,
-                    # and the call a passing one reports is counted where it was made (the
-                    # guard's own row on a metered axis, the turn's usage row otherwise).
-                    priced=True,
+                    runtime_id=id(self),
+                    **attempt,
                 )
             )
         except Exception:
@@ -934,6 +910,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # The guarded calls those sums came from (``AgentEvent.audit_ids``): the turn's usage row
         # names them, so the model-call census does not count this turn's inferences again.
         agg_audit_ids: list[str] = []
+        # What each inference was charged where it was made (``AgentEvent.charged``): the turn's
+        # usage row is their sum, not its tokens priced again (``routing.rates.summed``).
+        agg_charged: list[CallPrice | None] = []
         turns = 0
         # Turn telemetry (parity with ACP's last_prompt_stats): events observed
         # this prompt + total tool calls made. Surfaced on the terminal
@@ -983,6 +962,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         tool_call_count=agg_tool_calls,
                         served_model_ref=self.served_model_ref,
                         audit_ids=tuple(agg_audit_ids),
+                        charged=summed(agg_charged),
                     )
                     return
                 turns += 1
@@ -1258,6 +1238,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     agg_cache_creation += usage.cache_creation_tokens or 0
                     agg_cost += usage.cost_usd or 0.0
                     agg_audit_ids.extend(getattr(usage, "audit_ids", ()) or ())
+                    agg_charged.append(getattr(usage, "charged", None))
                     # ``is not None``, not truthiness: a provider reporting a real
                     # 0% must update the gauge, and only an absent report must not.
                     if usage.context_usage_pct is not None:
@@ -1324,6 +1305,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         # Read before the `finally` below puts the turn's own model back.
                         served_model_ref=self.served_model_ref,
                         audit_ids=tuple(agg_audit_ids),
+                        charged=summed(agg_charged),
                     )
                     return
 
@@ -1367,7 +1349,25 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 tool_call_count=agg_tool_calls,
                 served_model_ref=self.served_model_ref,
                 audit_ids=tuple(agg_audit_ids),
+                charged=summed(agg_charged),
             )
+        except Exception:
+            # A turn ending in an error has still spent what its finished calls cost (a dollar cap
+            # refusing the next call): said first, so its usage row is written for them too.
+            if agg_charged:
+                yield AgentEvent(
+                    kind=EVENT_SPENT,
+                    input_tokens=agg_in,
+                    output_tokens=agg_out,
+                    cache_read_tokens=agg_cache_read,
+                    cache_creation_tokens=agg_cache_creation,
+                    cost_usd=agg_cost,
+                    num_turns=turns,
+                    served_model_ref=self.served_model_ref,
+                    audit_ids=tuple(agg_audit_ids),
+                    charged=summed(agg_charged),
+                )
+            raise
         finally:
             # A fallback answered THIS turn only: the next one starts on the model it was chosen
             # for. Only while this turn is still the current one: a caller that stops reading at

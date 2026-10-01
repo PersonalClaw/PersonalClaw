@@ -9,6 +9,7 @@ No spawn recursion: subagents cannot spawn other subagents.
 
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import signal
@@ -58,6 +59,7 @@ from personalclaw.subagent_persistence import (
 from personalclaw.subagent_tier import tier_for
 from personalclaw.task_modes import declared_level
 from personalclaw.textfmt import extract_options
+from personalclaw.usage_ledger import spent_rows
 from personalclaw.validation import _AGENT_NAME_RE
 
 if TYPE_CHECKING:
@@ -2247,7 +2249,8 @@ class SubagentManager:
         # The calls that were ASKED about. Each is audited where it is answered, below; every
         # other call is audited once, at its result (`llm.events.unasked_outcome`).
         asked: set[str] = set()
-        async for event in client.stream(full_message):
+        spent = functools.partial(self._record_subagent_usage, info, session_key)
+        async for event in spent_rows(client.stream(full_message), spent):
             if event.kind == EVENT_TEXT_CHUNK:
                 result_text += event.text
                 write_result_chunk(info.id, event.text)

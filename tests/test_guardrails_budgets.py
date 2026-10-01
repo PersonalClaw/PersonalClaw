@@ -750,10 +750,10 @@ def test_remediation_binds_the_doctor_scope_its_own_cap_reads():
 class _PricedProvider(ModelProvider):
     """Emits a complete event whose tokens price to a real dollar amount.
 
-    Uses `gpt-4o` because `pricing.estimate_cost` returns 0.0 for an unpriced model — a fake with an
-    unpriced name spends $0.00 forever, and a cap test against zero spend passes for the wrong
-    reason. Measured that exact trap while writing this: the first probe's `model="m"` made a
-    correctly-wired cap look inert.
+    Uses `gpt-4o` because the shipped price table has a row for it and none for a made-up name — a
+    fake with an unpriced name spends $0.00 forever, and a cap test against zero spend passes for
+    the wrong reason. Measured that exact trap while writing this: the first probe's `model="m"`
+    made a correctly-wired cap look inert.
     """
 
     async def start(self):

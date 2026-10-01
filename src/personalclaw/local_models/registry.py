@@ -222,6 +222,13 @@ class _ManagerBackedLocalProvider(LocalModelProvider):
             return False
 
 
+def adapts_an_entry(provider: object) -> bool:
+    """Whether *provider* is core's download card for a configured model server
+    (:class:`_ManagerBackedLocalProvider`), whose models live wherever that server runs: its
+    entry, not the card, says whether they run on this machine."""
+    return isinstance(provider, _ManagerBackedLocalProvider)
+
+
 def register_config_model_managers() -> None:
     """Register every config.json model provider whose catalog is a ``ModelManager``
     (owns local model download/management — ollama) into the local-model registry, so

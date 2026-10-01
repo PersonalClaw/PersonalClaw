@@ -1,11 +1,12 @@
 """The prices model calls are counted at are set in Settings, one rate at a time.
 
-``model_rates.json`` holds the rate a model's calls are counted at by the daily and per-run dollar
-caps, the Usage page and cost-aware routing, and before this it could only be written by hand: the
-Usage page told the owner to edit a file in their home to price a model the caps could not count.
-``GET /api/models/rates`` reads what Settings → Usage → Model prices shows, ``PUT`` sets one rate
-and ``DELETE`` removes one. Every field the file holds is one the route sets, a price set here is
-the price the next call is charged at, and the routes are the owner's.
+Your prices (``config.json`` → ``model_prices.overrides``) are what a model's calls are counted at
+by the daily and per-run dollar caps, the Usage page and cost-aware routing, and before this they
+could only be written by hand: the Usage page told the owner to edit a file in their home to price
+a model the caps could not count. ``GET /api/models/rates`` reads what Settings → Usage → Model
+prices shows, ``PUT`` sets one rate and ``DELETE`` resets one. Every field a price holds is one the
+route sets (and the day it was set), a price set here is the price the next call is charged at,
+and the routes are the owner's.
 """
 
 from __future__ import annotations
@@ -76,7 +77,13 @@ async def _client() -> TestClient:
 
 
 def _stored(home) -> dict:
-    return json.loads((home / "model_rates.json").read_text(encoding="utf-8"))["rates"]
+    """Your prices as ``config.json`` holds them, without the day each was set."""
+    overrides = (
+        json.loads((home / "config.json").read_text(encoding="utf-8"))
+        .get("model_prices", {})
+        .get("overrides", {})
+    )
+    return {k: {f: v for f, v in row.items() if f != "recorded"} for k, row in overrides.items()}
 
 
 @pytest.mark.asyncio
@@ -114,7 +121,9 @@ async def test_a_price_set_here_is_stored_listed_and_charged(home, sel):
     assert _stored(home) == {
         _REF: {k: v for k, v in rate.items() if k != "key"},
     }
-    assert body["rates"] == [rate]
+    [listed] = body["rates"]
+    assert {k: v for k, v in listed.items() if k != "recorded"} == {**rate, "unit": "token"}
+    assert listed["recorded"], "the day it was set"
     [model] = body["models"]
     assert (model["priced"], model["source"], model["in_per_mtok"]) == (True, "overlay", 3.0)
     # The price the next call is charged at: the rate table reads it on the very next lookup.
@@ -180,7 +189,7 @@ async def test_a_rate_that_is_no_price_is_refused_and_nothing_is_written(home, r
 
     assert resp.status == 400
     assert said in body["error"]["message"]
-    assert not (home / "model_rates.json").exists()
+    assert _stored(home) == {}
 
 
 @pytest.mark.asyncio
@@ -197,7 +206,7 @@ async def test_a_rate_that_is_not_finite_is_refused(home):
         await c.close()
 
     assert resp.status == 400
-    assert not (home / "model_rates.json").exists()
+    assert _stored(home) == {}
 
 
 @pytest.mark.asyncio
@@ -219,9 +228,9 @@ async def test_a_price_is_removed_and_one_never_set_is_not_found(home, sel):
 
 
 @pytest.mark.asyncio
-async def test_a_price_file_that_cannot_be_read_is_said_and_never_overwritten(home):
-    broken = '{"rates": {"acme-cloud:acme-large": {"in_per_mtok": 3,'
-    (home / "model_rates.json").write_text(broken, encoding="utf-8")
+async def test_a_config_that_cannot_be_read_is_said_and_never_overwritten(home):
+    broken = '{"model_prices": {"overrides": {"acme-cloud:acme-large": {"in_per_mtok": 3,'
+    (home / "config.json").write_text(broken, encoding="utf-8")
     c = await _client()
     try:
         view = await (await c.get("/api/models/rates")).json()
@@ -232,10 +241,10 @@ async def test_a_price_file_that_cannot_be_read_is_said_and_never_overwritten(ho
     finally:
         await c.close()
 
-    assert "model_rates.json is not valid JSON" in view["unreadable"]
+    assert "config.json is not valid JSON" in view["unreadable"]
     assert resp.status == 409
     assert refused["error"]["code"] == "model_rates_unreadable"
-    assert (home / "model_rates.json").read_text(encoding="utf-8") == broken
+    assert (home / "config.json").read_text(encoding="utf-8") == broken
 
 
 @pytest.mark.parametrize("method", ["GET", "PUT", "DELETE"])

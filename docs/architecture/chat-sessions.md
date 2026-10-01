@@ -264,7 +264,14 @@ chat, channel thread, loop worker, webhook, subagent).
    the row keeps those ids, so the usage page's "Not included" census of
    `model_calls.jsonl` leaves out a call a row already counts: it states only the
    calls that wrote no row (a chat's title, a judge). `audit_ids` is an SDK
-   addition to `LLMEvent`, defaulted and last, which no app has to set. The next
+   addition to `LLMEvent`, defaulted, which no app has to set. The guard prices
+   each call once, at the model the call asked for, and stamps that price beside
+   the id (`LLMEvent.charged`, the figure it charged the spend meter and wrote to
+   `model_calls.jsonl`); the native loop sums its turn's, and the row takes the
+   sum rather than pricing the turn's tokens again, so Usage, the budget meter and
+   the call log hold one figure per call. A turn that ends in an error (a dollar
+   cap refusing its next call) first sends `EVENT_SPENT`, the usage of the calls it
+   made, and the writer of the turn's row writes it from that. The next
    turn starts on X again. When every model fails, the error names each one and why (`NoModelAnswered`, in a
    room's words on a room). Only a caller that says so asks for this
    (`NativeAgentRuntime.announce_failover`: the chat runner, a room through

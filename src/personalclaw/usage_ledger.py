@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from personalclaw import bounded_log, spend_day
 
@@ -71,6 +72,11 @@ class TurnUsage:
     # leave those calls out of its census of the log (``routing.usage.audit_census``). Empty for a
     # turn no guard wrapped (the interactive chat, an ACP agent CLI).
     audit_ids: list[str] = field(default_factory=list)
+    # A call billed in another unit than tokens (``routing.rates.UNITS``: an image, a second of
+    # video, a minute of audio, a character of speech) names it, and how many of it the call was
+    # billed for; its token counts are zero. ``""`` and 0 for a call billed by its tokens.
+    unit: str = ""
+    quantity: float = 0
 
 
 @dataclass(frozen=True)
@@ -118,6 +124,22 @@ def recorder(provider: object, who: Attribution) -> Callable[[object], None]:
             logger.debug("usage row for a %s call not written", who.source, exc_info=True)
 
     return record
+
+
+async def spent_rows(
+    events: AsyncIterator[Any], record: Callable[[object], None]
+) -> AsyncIterator[Any]:
+    """*events*, a turn's stream, each passed on as it came, with the usage row of a turn that
+    ends in an error written from the ``EVENT_SPENT`` it sends before the error (*record*, the
+    turn's row writer, :func:`recorder`): the calls the turn made are in Usage, as the meter and
+    the model-call log already hold them. A turn that completes writes its row from its
+    ``EVENT_COMPLETE``, where its consumer reads it."""
+    from personalclaw.llm.events import EVENT_SPENT
+
+    async for event in events:
+        if getattr(event, "kind", "") == EVENT_SPENT:
+            record(event)
+        yield event
 
 
 def _path() -> Path:
@@ -242,6 +264,43 @@ def record_from_event(
     )
 
 
+def record_units(
+    *,
+    source: str,
+    session_key: str,
+    provider: str,
+    model: str,
+    unit: str,
+    quantity: float,
+    cost_usd: float,
+    priced: bool,
+    local: bool,
+    duration_ms: int = 0,
+) -> None:
+    """Record one ledger row for a call billed by its unit (``guardrails.media_call``): an image,
+    a second of video, a minute of audio or the characters a voice spoke, priced by the one
+    pricing function for that unit (``routing.rates.price_units``). Fail-open through
+    :func:`record_turn`."""
+    from datetime import datetime, timezone
+
+    record_turn(
+        TurnUsage(
+            ts=datetime.now(timezone.utc).isoformat(),
+            session_key=session_key,
+            source=source,
+            agent="",
+            provider=provider,
+            model=model,
+            cost_usd=cost_usd,
+            priced=priced,
+            local=local,
+            duration_ms=duration_ms,
+            unit=unit,
+            quantity=quantity,
+        )
+    )
+
+
 def _maybe_trim(p: Path) -> None:
     """Trim to the newest ``_CAP`` turns by each one's ``ts`` when the file exceeds 2×
     (``bounded_log``: an atomic rewrite, in time order)."""
@@ -289,6 +348,8 @@ def _blank_agg() -> dict:
         "cost_usd": 0.0,
         "turns": 0,
         "priced": True,
+        # How much of each unit other than tokens the calls were billed for: ``{"image": 3}``.
+        "units": {},
     }
 
 
@@ -299,6 +360,13 @@ def _fold(agg: dict, row: dict) -> None:
     agg["cache_creation_tokens"] += int(row.get("cache_creation_tokens", 0) or 0)
     agg["cost_usd"] += float(row.get("cost_usd", 0.0) or 0.0)
     agg["turns"] += 1
+    unit = str(row.get("unit", "") or "")
+    if unit:
+        try:
+            quantity = float(row.get("quantity", 0) or 0)
+        except (TypeError, ValueError):
+            quantity = 0.0
+        agg["units"][unit] = round(float(agg["units"].get(unit, 0.0)) + quantity, 6)
     # A single unpriced constituent taints the total — it can never present as complete.
     if not row.get("priced", True):
         agg["priced"] = False

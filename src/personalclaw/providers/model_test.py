@@ -434,6 +434,7 @@ async def _reply(use_case: str, ref: str, messages: list[dict[str, Any]]) -> str
     usage row written as an evaluation's."""
     from personalclaw.guardrails.local_queue import Attended, attending
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
+    from personalclaw.llm.events import EVENT_SPENT
     from personalclaw.providers.provider_bridge import resolve_metered_model
     from personalclaw.usage_ledger import Attribution, recorder
 
@@ -449,7 +450,7 @@ async def _reply(use_case: str, ref: str, messages: list[dict[str, Any]]) -> str
             async for event in provider.complete(messages):
                 if event.kind == EVENT_TEXT_CHUNK:
                     parts.append(getattr(event, "text", "") or "")
-                elif event.kind == EVENT_COMPLETE:
+                elif event.kind in (EVENT_COMPLETE, EVENT_SPENT):
                     record(event)
     finally:
         try:

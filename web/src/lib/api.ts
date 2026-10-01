@@ -6728,6 +6728,9 @@ export interface UsageAgg {
   input_tokens: number; output_tokens: number
   cache_read_tokens: number; cache_creation_tokens: number
   cost_usd: number; turns: number; priced: boolean
+  /** How much of each unit other than tokens the calls were billed for (`{image: 3}`): images,
+   *  seconds of video, minutes of audio, characters of speech. */
+  units?: Partial<Record<Exclude<ModelRateUnit, 'token'>, number>>
 }
 
 /** One row of the per-day spend fold (`GET /api/usage`).
@@ -6817,32 +6820,81 @@ export interface ModelRateFields {
   cache_write_per_mtok: number | null
 }
 
-/** Where the rate a model's calls are counted at comes from: a price set in Settings (`overlay`),
- *  the known $0 of a model this machine serves itself (`local`), the provider app's own
- *  (`app_default`) or PersonalClaw's shipped table (`builtin`). `''` when nothing prices the model. */
+/** What a model is billed in: per 1M tokens, per image, per second of video, per minute of audio
+ *  or per 1M characters of speech (`routing.rates.UNITS`). */
+export type ModelRateUnit = 'token' | 'image' | 'second' | 'minute' | 'character'
+
+/** One price of an image model priced by size and quality: `size` is the largest image it covers
+ *  (`WIDTHxHEIGHT`, `''` for any size) and `quality` the quality it is for (`''` for any). */
+export interface ImageTier { size: string; quality: string; per_image: number }
+
+/** A price in a unit other than tokens: one price per unit (`per_unit`), or an image model's
+ *  prices by size and quality (`tiers`, with the size and quality a call that names none is made
+ *  at). */
+export interface UnitRateFields {
+  per_unit: number | null
+  tiers: ImageTier[]
+  default_size: string
+  default_quality: string
+}
+
+/** A price to set (`PUT /api/models/rates`), in the unit the model is billed in. */
+export type ModelRateBody =
+  | ({ key: string; unit: 'token' } & ModelRateFields)
+  | { key: string; unit: 'image'; per_image: number }
+  | { key: string; unit: 'image'; tiers: ImageTier[]; default_size?: string; default_quality?: string }
+  | { key: string; unit: 'second'; per_second: number }
+  | { key: string; unit: 'minute'; per_minute: number }
+  | { key: string; unit: 'character'; per_mchar: number }
+
+/** A price you set in Settings, as `GET /api/models/rates` lists it: its unit, its price in it and
+ *  the day you set it (`recorded`, `''` for one set before the day was kept). */
+export type ModelRateRow =
+  | ({ key: string; unit: 'token'; recorded: string } & ModelRateFields)
+  | ({ key: string; unit: Exclude<ModelRateUnit, 'token'>; recorded: string } & UnitRateFields)
+
+/** Where the rate a model's calls are counted at comes from: your price (`overlay`), the known $0
+ *  of a model this machine serves itself (`local`), the provider app's own (`app_default`) or
+ *  PersonalClaw's shipped table (`builtin`). `''` when nothing prices the model. */
 export type ModelRateSource = '' | 'overlay' | 'local' | 'app_default' | 'builtin'
+
+/** A rate and where it comes from: its tier (`source`), whose price it is (`vendor`: the model
+ *  maker for the table, the app's provider type for an app), its date (`recorded`: the day the
+ *  table recorded its row, or the day you set yours) and the table row it was found as
+ *  (`priced_as`), with its fields in its unit. */
+export type ModelRateProvenance = {
+  source: ModelRateSource
+  vendor: string
+  recorded: string
+  priced_as: string
+  /** `''` when nothing prices the model. */
+  unit: ModelRateUnit | ''
+  in_per_mtok: number | null
+  out_per_mtok: number | null
+  cache_read_per_mtok: number | null
+  cache_write_per_mtok: number | null
+} & UnitRateFields
 
 /** `GET /api/models/rates` — Settings → Usage → Model prices.
  *
  *  · `rates` — the prices set here, one per key: a `provider:model` ref, a pattern over refs
- *    (`anthropic:claude-*`) or a model name alone, which prices it whoever serves it.
+ *    (`anthropic:claude-*`) or a model name alone, which prices it whoever serves it, each in the
+ *    unit the model is billed in.
  *  · `models` — each model a use is bound to, and each one spent on in the last 30 days, with the
- *    rate its calls are counted at and where it comes from. `priced: false` means nothing prices
- *    it: its rate fields are `null`, its calls count toward no dollar figure (each figure says how
- *    many it leaves out), and a daily dollar cap refuses them.
- *  · `unreadable` — why the price file could not be read, when it could not: no price in it is in
- *    effect, and setting one here is refused until it is fixed or removed. */
+ *    rate its calls are counted at, in its `unit`, and where it comes from (`ModelRateProvenance`).
+ *    `priced: false` means nothing prices it: its rate fields are `null`, its calls count toward no
+ *    dollar figure (each figure says how many it leaves out), and a daily dollar cap refuses them.
+ *    Under a price of yours, `default` is the price resetting yours brings back (`null` when nothing
+ *    else prices the model); otherwise it is `null`.
+ *  · `unreadable` — why `config.json`, where your prices are kept, could not be read, when it could
+ *    not: no price you set is in effect, and setting one here is refused until it is fixed. */
 export interface ModelRatesView {
-  rates: Array<{ key: string } & ModelRateFields>
+  rates: ModelRateRow[]
   models: Array<{
     ref: string
     priced: boolean
-    source: ModelRateSource
-    in_per_mtok: number | null
-    out_per_mtok: number | null
-    cache_read_per_mtok: number | null
-    cache_write_per_mtok: number | null
-  }>
+    default: ModelRateProvenance | null
+  } & ModelRateProvenance>
   unreadable: string
 }
 
@@ -7249,7 +7301,7 @@ export const api = {
   // what the dollar caps, the Usage page and cost-aware routing count the model's calls at, from
   // the next call on. Each write changes ONE rate, so it names no revision.
   modelRates: () => get<ModelRatesView>('/api/models/rates'),
-  setModelRate: (rate: { key: string } & ModelRateFields) =>
+  setModelRate: (rate: ModelRateBody) =>
     put<ModelRatesView>('/api/models/rates', rate),
   clearModelRate: (key: string) => del(`/api/models/rates?key=${encodeURIComponent(key)}`),
   // The requests you are waiting for while a local model is busy, and moving one on to its next

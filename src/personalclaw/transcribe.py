@@ -7,6 +7,11 @@ threshold is cut into parts with ffmpeg (found by :func:`personalclaw.ffmpeg_bin
 and handed to it by its absolute path); without ffmpeg it is sent whole, and a failure of that one
 call says so (:data:`SENT_WHOLE`).
 
+**Counted by the minute.** Each transcription goes through the metering seam every call billed
+by its unit goes through (``guardrails.media_call``), as long as the recording is
+(:func:`audio_seconds`): an unattended one is weighed against the dollar caps before it runs, and
+every one is counted in Usage by its minutes.
+
 **One answer per call.** :func:`transcribe_audio` and :func:`transcribe_audio_detailed` return
 the transcript, whose text is empty when the recording holds no speech, or raise
 :class:`~personalclaw.stt.provider.SttError` with the sentence saying why there is none:
@@ -16,8 +21,10 @@ nothing and did not say. They used to return ``None`` for all of those, and ever
 transcribed said "Transcription done".
 """
 
+import asyncio
 import logging
 import os
+import re
 
 from personalclaw.ffmpeg_binary import ffmpeg_not_found, find_ffmpeg
 from personalclaw.stt.provider import SttError
@@ -144,6 +151,73 @@ def _resolve(audio_path: str):
     return provider, model_id, str(settings.get("language_code", "") or "")
 
 
+_DURATION = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
+
+
+def audio_seconds(audio_path: str) -> float | None:
+    """How long the recording at *audio_path* is, in seconds, or None when it cannot be read.
+
+    Read from the header ffmpeg prints for the file (``Duration: 00:01:23.45``), which every
+    format speech-to-text takes has; a WAV file is read directly when ffmpeg is not there.
+    """
+    import subprocess
+
+    ffmpeg = find_ffmpeg()
+    if ffmpeg:
+        try:
+            probe = subprocess.run(
+                [ffmpeg, "-hide_banner", "-nostdin", "-i", audio_path],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("could not read the length of %s", audio_path, exc_info=True)
+        else:
+            found = _DURATION.search(probe.stderr or "")
+            if found:
+                hours, minutes, seconds = found.groups()
+                return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    try:
+        import wave
+
+        with wave.open(audio_path, "rb") as clip:
+            rate = clip.getframerate()
+            return clip.getnframes() / float(rate) if rate else None
+    except (OSError, EOFError, wave.Error):
+        return None
+
+
+async def _metered_transcription(provider, model_id: str, audio_path: str, run, *, unattended):
+    """*run* (the transcription of *audio_path*) through the metering seam, by its minutes."""
+    from personalclaw.guardrails.media_call import MediaCall, metered_media_call
+    from personalclaw.providers.engines import binding_name
+
+    seconds = await asyncio.to_thread(audio_seconds, audio_path)
+    call = MediaCall(
+        provider=binding_name(provider),
+        model=model_id,
+        unit="minute",
+        quantity=round(seconds / 60.0, 4) if seconds is not None else None,
+    )
+
+    def _billed(result) -> float | None:
+        heard = float(getattr(result, "duration", 0.0) or 0.0)
+        return round(heard / 60.0, 4) if heard > 0 else None
+
+    from personalclaw.guardrails.budgets import BudgetConfigUnreadable
+    from personalclaw.guardrails.failure import BudgetExceededError
+
+    try:
+        return await metered_media_call(call, run, unattended=unattended, billed=_billed)
+    except BudgetExceededError as refused:
+        # Said as every reason there is no transcript is: an SttError with its sentence.
+        raise SttError(refused.sentence()) from refused
+    except BudgetConfigUnreadable as unknown:
+        raise SttError(f"{unknown}, so nothing was transcribed.") from unknown
+
+
 def _long(audio_path: str) -> bool:
     """Whether *audio_path* is above the segment threshold, and so transcribed in parts when there
     is ffmpeg to cut it. A large recording must not depend on the provider taking the whole file in
@@ -182,12 +256,17 @@ async def transcribe_audio(audio_path: str) -> str:
     provider, model_id, language = _resolve(audio_path)
     long = _long(audio_path)
     ffmpeg = find_ffmpeg() if long else None
-    if ffmpeg:
-        text = await _transcribe_segmented(provider, model_id, language, audio_path, ffmpeg=ffmpeg)
-    else:
-        text = await _sent_whole(
+
+    async def _run() -> str:
+        if ffmpeg:
+            return await _transcribe_segmented(
+                provider, model_id, language, audio_path, ffmpeg=ffmpeg
+            )
+        return await _sent_whole(
             lambda: provider.transcribe(audio_path, model=model_id, language=language), long=long
         )
+
+    text = await _metered_transcription(provider, model_id, audio_path, _run, unattended=None)
     if text:
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -196,7 +275,12 @@ async def transcribe_audio(audio_path: str) -> str:
     return text
 
 
-async def transcribe_audio_detailed(audio_path: str, *, bias_terms: list[str] | None = None):
+async def transcribe_audio_detailed(
+    audio_path: str,
+    *,
+    bias_terms: list[str] | None = None,
+    unattended: bool | None = None,
+):
     """Rich transcription via the active STT provider (core L0): a ``TranscriptResult`` (flat
     text + segments + word timestamps), whose text is empty when there was no speech.
 
@@ -204,21 +288,28 @@ async def transcribe_audio_detailed(audio_path: str, *, bias_terms: list[str] | 
     credential/exfil redaction of the flat text, the same :class:`SttError` when there is no
     transcript) but preserves structure. For large files the segmented path OFFSETS each
     chunk's segment/word times by the chunk's start so the merged timeline is continuous.
-    ``bias_terms`` is the Lexicon pre-decode hint (L2)."""
+    ``bias_terms`` is the Lexicon pre-decode hint (L2). ``unattended`` says the transcription
+    is unattended work whatever session asks for it (a knowledge import), and so is held to the
+    dollar caps (``guardrails.media_call``)."""
     provider, model_id, language = _resolve(audio_path)
     long = _long(audio_path)
     ffmpeg = find_ffmpeg() if long else None
-    if ffmpeg:
-        result = await _transcribe_segmented_detailed(
-            provider, model_id, language, audio_path, bias_terms, ffmpeg=ffmpeg
-        )
-    else:
-        result = await _sent_whole(
+
+    async def _run():
+        if ffmpeg:
+            return await _transcribe_segmented_detailed(
+                provider, model_id, language, audio_path, bias_terms, ffmpeg=ffmpeg
+            )
+        return await _sent_whole(
             lambda: provider.transcribe_detailed(
                 audio_path, model=model_id, language=language, bias_terms=bias_terms
             ),
             long=long,
         )
+
+    result = await _metered_transcription(
+        provider, model_id, audio_path, _run, unattended=unattended
+    )
 
     # Redact the flat text (the same guard transcribe_audio applies). Segment text mirrors
     # the flat text span-for-span; redacting the flat surface is what feeds FTS/embeddings.
