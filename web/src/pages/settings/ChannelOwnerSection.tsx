@@ -4,21 +4,29 @@ import { api, type ChannelOwnerStatus } from '../../lib/api'
 import { untilSentence } from '../../lib/epoch'
 import { copyText } from '../../app/clipboard'
 import { Button } from '../../ui/Button'
+import { IconButton } from '../../ui/IconButton'
 import { FieldError } from '../../ui/forms'
+import { channelPerson, ownerWho } from './channelPerson'
 
 /** How often the page re-reads the pairing while a code is showing. */
 const POLL_MS = 2000
 
 const msg = (e: unknown) => String((e as Error)?.message || e)
 
+const ownerOf = (s: ChannelOwnerStatus) => ({ id: s.owner_id, source: s.source, name: s.owner_name })
+
 /** What the channel knows about you, in words: who it reaches you as, or that it can't. */
 function ownerLine(s: ChannelOwnerStatus): string {
-  const who = s.display_name
-  if (!s.owner_id) return `${who} doesn't know who you are yet, so nothing your agent sends you can reach you there.`
+  const channel = s.display_name
+  if (!s.owner_id) return `${channel} doesn't know who you are yet, so nothing your agent sends you can reach you there.`
+  const who = ownerWho(channel, ownerOf(s))
   if (s.source === 'shared') {
-    return `${who} reaches you as ${s.owner_id}, the owner id every channel used to share. It may be another app's id.`
+    // A shared id this channel knows a name for is someone here, so it is not "another app's".
+    return s.owner_name
+      ? `${channel} reaches you as ${who}, by the owner id every channel used to share.`
+      : `${channel} reaches you as ${who}, the owner id every channel used to share. It may be another app's id.`
   }
-  return `${who} reaches you as ${s.owner_id}.`
+  return `${channel} reaches you as ${who}.`
 }
 
 /** Why the last pairing ended, when it did not end in a pairing. */
@@ -108,12 +116,25 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
 
   const who = status.display_name
   const Icon = status.owner_id ? UserCheck : UserX
+  const detail = status.owner_id ? channelPerson(who, status.owner_id, status.owner_name).detail : ''
   return (
     <section role="region" aria-label={`${who} owner`} className="flex flex-col gap-s rounded-md border border-outline-variant bg-surface-high p-m">
       <div data-type="label-l" className="text-on-surface">Owner</div>
-      <div data-type="body-s" className="flex items-start gap-2 text-on-surface-var">
+      <div data-type="body-s" className="flex items-start gap-s text-on-surface-var">
         <Icon size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
-        <span>{ownerLine(status)}</span>
+        <div className="flex min-w-0 flex-col">
+          <span>{ownerLine(status)}</span>
+          {/* With a name to lead with, the platform's id for the owner is the quieter detail under
+              it: the name is the one the sender chose, the id is who the channel actually reaches.
+              With no name, the sentence above already says the id. */}
+          {detail && (
+            <span data-type="caption" className="flex items-center gap-xs text-on-surface-low">
+              <span className="break-all">{detail}</span>
+              <IconButton icon={Copy} size={24} iconSize={12} label={`Copy your ${who} id`}
+                onClick={() => void copyText(status.owner_id, `your ${who} id`)} />
+            </span>
+          )}
+        </div>
       </div>
 
       {code ? (
@@ -129,7 +150,7 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
           </div>
           <div data-type="caption" className="text-on-surface-low">
             {untilSentence('It works once', status.pairing.expires_at)} Whoever sends it becomes {who}'s owner
-            {status.owner_id ? `, in place of ${status.owner_id}` : ''}.
+            {status.owner_id ? `, in place of ${ownerWho(who, ownerOf(status))}` : ''}.
           </div>
           <div className="flex items-center gap-s">
             <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low">
@@ -161,10 +182,11 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
         <div data-type="caption" className="text-on-surface-low">{who} can't pair its owner from here.</div>
       )}
 
-      {said && !code && <div data-type="caption" className="text-on-surface-var">{said}</div>}
+      {/* How the pairing ended, said ONCE: this live region is also the line you see. Always
+          mounted, since a live region created with its text is not reliably announced, and kept
+          out of the layout while it is empty. (A code on show always has `said` empty.) */}
+      <div role="status" aria-live="polite" data-type="caption" className={said ? 'text-on-surface-var' : 'sr-only'}>{said}</div>
       {err && <FieldError>{err}</FieldError>}
-      {/* Always mounted, empty at rest — a live region created with its text is not reliably announced. */}
-      <div role="status" aria-live="polite" className="sr-only">{said}</div>
     </section>
   )
 }

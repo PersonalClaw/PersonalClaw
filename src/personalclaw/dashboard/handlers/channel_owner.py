@@ -5,9 +5,10 @@ and a chat's handoff to on a channel (``channel_delivery.reach_owner``). It was 
 ``personalclaw setup``, so a channel set up in the UI had none and everything core sent you there
 reached nobody. Three routes close that:
 
-* ``GET /api/channels/{name}/owner`` — the owner id core uses on that channel and which key it came
-  from, whether the channel can pair from here and how the code is sent there (``pairing_hint``,
-  when not a DM to the bot), and the pairing's state. Never a code.
+* ``GET /api/channels/{name}/owner`` — the owner id core uses on that channel, which key it came
+  from, and the name the channel's trust list knows the owner by (``owner_name``, the owner's own
+  entry only); whether the channel can pair from here and how the code is sent there
+  (``pairing_hint``, when not a DM to the bot), and the pairing's state. Never a code.
 * ``POST /api/channels/{name}/owner/pairing`` — mint the code, returned ONCE in this response. The
   owner sends it to the bot in a direct message; the channel's inbound crosses the guarded door,
   where :func:`~personalclaw.channel_trust.guard_inbound` stores the sender's id under the
@@ -28,7 +29,6 @@ from aiohttp import web
 
 from personalclaw import channel_trust
 from personalclaw.channel_transports import WEBUI_TRANSPORT, get_transport
-from personalclaw.config.credentials import owner_id_source
 from personalclaw.http_errors import json_error
 
 logger = logging.getLogger(__name__)
@@ -68,13 +68,14 @@ async def api_channel_owner(request: web.Request) -> web.Response:
     transport = _channel(request)
     if transport is None:
         return _unknown()
-    owner, source = owner_id_source(transport.name)
+    owner = channel_trust.owner_ref(transport.name)
     return web.json_response(
         {
             "channel": transport.name,
             "display_name": transport.display_name,
-            "owner_id": owner,
-            "source": source,
+            "owner_id": owner["id"],
+            "owner_name": owner["name"],
+            "source": owner["source"],
             "pairing_supported": _pairing_supported(transport),
             "pairing_hint": _pairing_hint(transport),
             "pairing": channel_trust.owner_pairing_status(transport.name),

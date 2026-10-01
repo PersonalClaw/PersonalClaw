@@ -71,11 +71,11 @@ let AppearanceProvider: typeof import('../../app/appearance')['AppearanceProvide
 
 const telegram = {
   name: 'telegram', display_name: 'Telegram', connected: true, app: 'telegram-channel',
-  capabilities: { owner_pairing: true }, health: { state: 'ready' }, owner: { id: '4242', source: 'channel' },
+  capabilities: { owner_pairing: true }, health: { state: 'ready' }, owner: { id: '4242', source: 'channel', name: '' },
 }
 const discord = {
   name: 'discord', display_name: 'Discord', connected: true, app: 'discord-channel',
-  capabilities: { owner_pairing: true }, health: { state: 'ready' }, owner: { id: '', source: '' },
+  capabilities: { owner_pairing: true }, health: { state: 'ready' }, owner: { id: '', source: '', name: '' },
 }
 const webui = { name: 'webui', display_name: 'Web UI', connected: true, app: '', health: { state: 'ready' } }
 

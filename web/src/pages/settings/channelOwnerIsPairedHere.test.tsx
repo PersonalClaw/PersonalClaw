@@ -4,6 +4,9 @@ import { ChannelOwnerSection } from './ChannelOwnerSection'
 import { ProviderCard } from './ProviderCard'
 import { api, type ChannelOwnerStatus, type ChannelRuntime, type SettingsProvider } from '../../lib/api'
 
+const clipboard = vi.hoisted(() => ({ copyText: vi.fn(async () => true) }))
+vi.mock('../../app/clipboard', () => clipboard)
+
 // ── A channel's owner is set on its Configure page ─────────────────────────────────────────────
 //
 // The owner id — who the gateway sends your results, scheduled messages and approvals to on a
@@ -15,7 +18,7 @@ const idle: ChannelOwnerStatus['pairing'] = { active: false, expires_at: '', att
 
 function status(over: Partial<ChannelOwnerStatus> = {}): ChannelOwnerStatus {
   return {
-    channel: 'telegram', display_name: 'Telegram', owner_id: '', source: '',
+    channel: 'telegram', display_name: 'Telegram', owner_id: '', owner_name: '', source: '',
     pairing_supported: true, pairing: idle, ...over,
   }
 }
@@ -46,12 +49,87 @@ describe('the owner section', () => {
     expect(screen.getByText(/Waiting for your message/)).toBeTruthy()
 
     // The owner sends it; the next read says the pairing ended and who the channel reaches now.
-    read.mockResolvedValue(status({ owner_id: '4242', source: 'channel', pairing: { ...idle, ended: 'paired', ended_at: expires } }))
+    read.mockResolvedValue(status({
+      owner_id: '7000000001', owner_name: 'Ada Example', source: 'channel',
+      pairing: { ...idle, ended: 'paired', ended_at: expires },
+    }))
     await act(async () => { await vi.advanceTimersByTimeAsync(2100) })
     expect(screen.queryByText('48151623')).toBeNull()
-    expect(screen.getByText('Telegram reaches you as 4242.')).toBeTruthy()
-    expect(screen.getAllByText('Paired.').length).toBeGreaterThan(0)
+    expect(screen.getByText('Telegram reaches you as Ada Example.')).toBeTruthy()
     expect(onChanged).toHaveBeenCalled()
+  })
+
+  // Every channel that pairs from here shows this one section: Telegram and Discord alike.
+  for (const ch of [{ name: 'telegram', display: 'Telegram' }, { name: 'discord', display: 'Discord' }]) {
+    it(`says the pairing ended once on ${ch.display}: the line you see is the one a screen reader hears`, async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      const read = vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ channel: ch.name, display_name: ch.display }))
+      const expires = new Date(Date.now() + 600_000).toISOString()
+      vi.spyOn(api, 'startChannelOwnerPairing').mockResolvedValue({
+        code: '48151623', expires_at: expires, ttl_secs: 600,
+        pairing: { active: true, expires_at: expires, attempts_left: 5, ended: '', ended_at: '' },
+      })
+      render(<ChannelOwnerSection channel={ch.name} />)
+      fireEvent.click(await screen.findByRole('button', { name: /Pair as owner/ }))
+      await screen.findByText('48151623')
+      read.mockResolvedValue(status({
+        channel: ch.name, display_name: ch.display, owner_id: '4242', owner_name: 'Ada Example', source: 'channel',
+        pairing: { ...idle, ended: 'paired', ended_at: expires },
+      }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100) })
+      expect(screen.getByText(`${ch.display} reaches you as Ada Example.`)).toBeTruthy()
+      // 🔴 Before: the sentence was shown, and then said again by a hidden copy of it, so the
+      // accessibility tree held "Paired." twice. It is one live region now, which is also what you see.
+      expect(screen.getAllByText('Paired.')).toHaveLength(1)
+      const said = screen.getByRole('status')
+      expect(said.textContent).toBe('Paired.')
+      expect(said.className).not.toMatch(/sr-only/)
+    })
+  }
+
+  it('the confirmation region is mounted empty and out of the layout until there is something to say', async () => {
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status())
+    render(<ChannelOwnerSection channel="telegram" />)
+    await screen.findByRole('button', { name: /Pair as owner/ })
+    const said = screen.getByRole('status')
+    expect(said.textContent).toBe('')
+    expect(said.className).toMatch(/sr-only/)
+  })
+
+  it('names the owner as the channel knows them, with the platform id under it', async () => {
+    // 🔴 Before: "Telegram reaches you as 7000000001." A chat id is a number nobody recognises;
+    // the name the sender goes by on Telegram is already in the channel's trust list.
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ owner_id: '7000000001', owner_name: 'Ada Example', source: 'channel' }))
+    render(<ChannelOwnerSection channel="telegram" />)
+    const line = await screen.findByText('Telegram reaches you as Ada Example.')
+    expect(line.textContent).not.toContain('7000000001')
+    // The id stays, as the smaller, quieter detail under the name — and it can still be copied.
+    const id = screen.getByText('Telegram id 7000000001')
+    expect(line.contains(id)).toBe(false)
+    expect(id.closest('[data-type="caption"]')).toBeTruthy()
+    expect(id.closest('.text-on-surface-low')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy your Telegram id' }))
+    expect(clipboard.copyText).toHaveBeenCalledWith('7000000001', 'your Telegram id')
+  })
+
+  it('with no name for the owner, says the id is the channel\'s id', async () => {
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ owner_id: '7000000001', source: 'channel' }))
+    render(<ChannelOwnerSection channel="telegram" />)
+    expect(await screen.findByText('Telegram reaches you as Telegram id 7000000001.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Copy your Telegram id/ })).toBeNull()
+  })
+
+  it('a code offered over a paired owner names who it would replace by name', async () => {
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ owner_id: '7000000001', owner_name: 'Ada Example', source: 'channel' }))
+    const expires = new Date(Date.now() + 600_000).toISOString()
+    vi.spyOn(api, 'startChannelOwnerPairing').mockResolvedValue({
+      code: '48151623', expires_at: expires, ttl_secs: 600,
+      pairing: { active: true, expires_at: expires, attempts_left: 5, ended: '', ended_at: '' },
+    })
+    render(<ChannelOwnerSection channel="telegram" />)
+    fireEvent.click(await screen.findByRole('button', { name: /Pair a new owner/ }))
+    const caption = await screen.findByText(/Whoever sends it becomes Telegram's owner/)
+    expect(caption.textContent).toMatch(/in place of Ada Example\.$/)
   })
 
   it('a channel whose code is not sent in a DM says how it is sent', async () => {
@@ -105,6 +183,13 @@ describe('the owner section', () => {
     expect(screen.getByRole('button', { name: /Pair a new owner/ })).toBeTruthy()
   })
 
+  it('a shared owner id this channel knows a name for is named, and not called another app\'s', async () => {
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ owner_id: '777', owner_name: 'Ada Example', source: 'shared' }))
+    render(<ChannelOwnerSection channel="telegram" />)
+    expect(await screen.findByText('Telegram reaches you as Ada Example, by the owner id every channel used to share.')).toBeTruthy()
+    expect(screen.getByText('Telegram id 777')).toBeTruthy()
+  })
+
   it('a channel that cannot pair from here offers no code', async () => {
     vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ display_name: 'Slack', pairing_supported: false }))
     render(<ChannelOwnerSection channel="slack" />)
@@ -130,25 +215,36 @@ function channel(owner: ChannelRuntime['owner'], pairing = true): ChannelRuntime
 
 describe('the channel status row', () => {
   it('says the channel knows no owner, and where to pair one', () => {
-    render(<ProviderCard ext={ext} channel={channel({ id: '', source: '' })} open={false} onOpenChange={() => {}} onChanged={() => {}} />)
+    render(<ProviderCard ext={ext} channel={channel({ id: '', source: '', name: '' })} open={false} onOpenChange={() => {}} onChanged={() => {}} />)
     expect(screen.getByText(/No owner yet — pair one in Configure/)).toBeTruthy()
   })
 
-  it('says who the channel reaches you as', () => {
-    render(<ProviderCard ext={ext} channel={channel({ id: '4242', source: 'channel' })} open={false} onOpenChange={() => {}} onChanged={() => {}} />)
-    expect(screen.getByText('Reaches you as 4242')).toBeTruthy()
+  it('says who the channel reaches you as, by the name it knows you by', () => {
+    render(<ProviderCard ext={ext} channel={channel({ id: '7000000001', source: 'channel', name: 'Ada Example' })} open={false} onOpenChange={() => {}} onChanged={() => {}} />)
+    expect(screen.getByText('Reaches you as Ada Example')).toBeTruthy()
+    expect(screen.queryByText(/7000000001/)).toBeNull()
+  })
+
+  it('with no name, says the id is the channel\'s id', () => {
+    render(<ProviderCard ext={ext} channel={channel({ id: '4242', source: 'channel', name: '' })} open={false} onOpenChange={() => {}} onChanged={() => {}} />)
+    expect(screen.getByText('Reaches you as Telegram id 4242')).toBeTruthy()
   })
 
   it('names a shared id as shared', () => {
-    render(<ProviderCard ext={ext} channel={channel({ id: 'U0SLACK', source: 'shared' })} open={false} onOpenChange={() => {}} onChanged={() => {}} />)
+    render(<ProviderCard ext={ext} channel={channel({ id: 'U0SLACK', source: 'shared', name: '' })} open={false} onOpenChange={() => {}} onChanged={() => {}} />)
     expect(screen.getByText('Reaches you as U0SLACK (the id every channel used to share)')).toBeTruthy()
+  })
+
+  it('a shared id this channel knows a name for is named', () => {
+    render(<ProviderCard ext={ext} channel={channel({ id: '777', source: 'shared', name: 'Ada Example' })} open={false} onOpenChange={() => {}} onChanged={() => {}} />)
+    expect(screen.getByText('Reaches you as Ada Example (by the id every channel used to share)')).toBeTruthy()
   })
 
   it('opening Configure shows the owner section beside the settings', async () => {
     vi.spyOn(api, 'providerSchema').mockResolvedValue({ properties: {} })
     vi.spyOn(api, 'providerConfig').mockResolvedValue({ config: {}, _secret_set: [], revision: 'r0' })
     vi.spyOn(api, 'channelOwner').mockResolvedValue(status())
-    render(<ProviderCard ext={ext} channel={channel({ id: '', source: '' })} open onOpenChange={() => {}} onChanged={() => {}} />)
+    render(<ProviderCard ext={ext} channel={channel({ id: '', source: '', name: '' })} open onOpenChange={() => {}} onChanged={() => {}} />)
     expect(await screen.findByRole('region', { name: 'Telegram owner' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Pair as owner/ })).toBeTruthy()
   })

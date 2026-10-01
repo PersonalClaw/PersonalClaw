@@ -302,6 +302,9 @@ What that one call gets you, and what you must not re-implement:
   `owner_id_credential(PROVIDER)` and trusting them — and returns
   `reason == "owner_paired"` with a canned reply your transport delivers like any other. Five
   wrong codes cancel the code. Without the flag the page shows only who your channel reaches.
+  The page names the owner by the display name your inbound passes as `sender_name` (or as the
+  `name` of `redeem_owner_pairing_code`), with your platform's id for them under it; with no name
+  it shows the id, saying what it is.
   A channel whose messages cannot be the code alone (a mail, under a quote and a signature)
   hands each code-shaped word it finds to `redeem_owner_pairing_code(PROVIDER, sender, word)`,
   which pairs by the same rules, and says over the code how it is sent there

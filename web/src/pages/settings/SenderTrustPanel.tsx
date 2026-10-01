@@ -11,6 +11,7 @@ import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, SegPills } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { EmptyState, FormSkeleton, ListRow, LoadError } from '../../ui/ListScaffold'
+import { channelPerson } from './channelPerson'
 
 const CACHE_KEY = 'settings:sender-trust'
 
@@ -115,8 +116,8 @@ export function SenderTrustPanel({ navigate }: { navigate?: (path: string) => vo
   const [said, setSaid] = useState('')
 
   const revoke = async (p: ChannelTrustProvider, sender: ChannelTrustSender) => {
-    const who = sender.name || sender.sender_id
     const where = labelOf(p)
+    const who = channelPerson(where, sender.sender_id, sender.name).name
     const ok = await confirm({
       title: `Revoke ${who}?`,
       // The claim this body makes is about what the backend actually does: `deny_sender` drops
@@ -352,7 +353,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
           <>
             <RowGroup>
               {senders.map((s, i) => {
-                const who = s.name || s.sender_id
+                const { name: who, detail } = channelPerson(label, s.sender_id, s.name)
                 const tag = `${p.provider}:${s.sender_id}`
                 return (
                   // `ListRow`, not a hand-rolled flex row: this is a RECORD row (a glyph plus two
@@ -369,8 +370,8 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
                         {/* The id is shown even when a display name exists: on most channels the
                             name is chosen by the sender, so the id is the part that identifies
                             who you are actually revoking. */}
-                        {s.name ? (
-                          <div data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{s.sender_id}</div>
+                        {detail ? (
+                          <div data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{detail}</div>
                         ) : null}
                         <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
                           {viaLabel(s.via)} · added {addedLabel(s.added_at)}

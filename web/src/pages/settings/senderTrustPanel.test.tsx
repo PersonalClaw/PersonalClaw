@@ -82,6 +82,7 @@ describe('SenderTrustPanel', () => {
   it('lists each trusted sender with its provenance and the channel it applies to', async () => {
     vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({
       providers: [provider({
+        display_name: 'Telegram',
         allowed_senders: [
           sender({ sender_id: '111', name: 'Alice', via: 'owner' }),
           sender({ sender_id: '222', name: '', via: 'pairing' }),
@@ -93,8 +94,9 @@ describe('SenderTrustPanel', () => {
     expect(await screen.findByText('Alice')).toBeTruthy()
     expect(screen.getByText(/You allowed them/)).toBeTruthy()
     expect(screen.getByText(/Redeemed a pairing code/)).toBeTruthy()
-    // A sender with no display name still renders its id — that is what identifies them.
-    expect(screen.getByText('222')).toBeTruthy()
+    // A sender with no display name still renders its id — that is what identifies them — and
+    // says what the number is.
+    expect(screen.getByText('Telegram id 222')).toBeTruthy()
     // The provider's DM posture is stated: what happens to someone NOT on this list.
     expect(screen.getByText(/Strangers must redeem a pairing code/)).toBeTruthy()
   })

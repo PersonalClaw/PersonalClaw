@@ -161,6 +161,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A note the agent cites in a chat opens from the chat, by its path or its file name alone, and so does a file in a folder the agent may read.**
 - **A workflow step, a batch's review leaf included, reads the folder its batch was started in and its project's folder, read only, instead of finding only its empty working folder.**
 - **The agent no longer reads the knowledge library's own database as a file or from the shell; it is pointed to `knowledge_search` and `knowledge_get` instead.**
+- **A chat channel's Owner names you as the channel knows you, with its id for you under it ("Telegram id …" when it knows no name), and says "Paired." once.**
 - **Every model in Settings → Models has a Test for the use case it is listed under, hosted or on this machine, and one that can't be tested says why: `untestable_reason()` on the speech, voice, diarization, embedding and image provider classes (an SDK addition no app has to change for).**
 - **An app's log lines reach `gateway.log`, `personalclaw logs` and Settings → Diagnostics → Live logs from the moment its code loads, an app installed after the gateway started and a module logging under its own name included, and those three and the console show the same lines.**
 - **`personalclaw logs` on a macOS service shows the gateway's log lines (launchd's `gateway.err`), not only what the gateway printed.**

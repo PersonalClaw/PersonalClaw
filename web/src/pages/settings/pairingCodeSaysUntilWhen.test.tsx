@@ -32,7 +32,7 @@ const idle: ChannelOwnerStatus['pairing'] = { active: false, expires_at: '', att
 
 function owner(over: Partial<ChannelOwnerStatus> = {}): ChannelOwnerStatus {
   return {
-    channel: 'discord', display_name: 'Discord', owner_id: '', source: '',
+    channel: 'discord', display_name: 'Discord', owner_id: '', owner_name: '', source: '',
     pairing_supported: true, pairing: idle, ...over,
   }
 }

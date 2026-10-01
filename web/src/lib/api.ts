@@ -673,8 +673,9 @@ export interface RemediationSnapshot {
 export interface ChannelHealth { state: string; detail?: string }
 /** Who core reaches the owner as on a channel, and which key that id came from: `channel` (its
  *  own) or `shared` (the one key every channel wrote before each had its own — it may hold another
- *  platform's id). An empty `id` means nothing core sends the owner reaches anyone there. */
-export interface ChannelOwnerRef { id: string; source: 'channel' | 'shared' | '' }
+ *  platform's id). An empty `id` means nothing core sends the owner reaches anyone there. `name` is
+ *  the name the channel's trust list knows them by (the owner's own entry; `''` when it holds none). */
+export interface ChannelOwnerRef { id: string; source: 'channel' | 'shared' | ''; name: string }
 export interface ChannelRuntime {
   name: string; display_name: string; connected: boolean
   /** `owner_pairing`: the owner can pair this channel from its Configure page. */
@@ -698,6 +699,8 @@ export interface ChannelOwnerStatus {
   channel: string
   display_name: string
   owner_id: string
+  /** The name the channel knows its owner by; `''` when it knows none. */
+  owner_name: string
   source: ChannelOwnerRef['source']
   pairing_supported: boolean
   /** How the owner sends the code on this channel when it is not a DM to the bot (a mail to the

@@ -27,7 +27,7 @@ const ext: SettingsProvider = {
 
 const channel: ChannelRuntime = {
   name: 'email', display_name: 'Email', connected: true, app: 'email-channel',
-  capabilities: {}, health: { state: 'error', detail: REFUSED }, owner: { id: '', source: '' },
+  capabilities: {}, health: { state: 'error', detail: REFUSED }, owner: { id: '', source: '', name: '' },
 }
 
 /** Classes that cut a line short instead of letting it wrap. */

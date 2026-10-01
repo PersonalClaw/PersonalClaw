@@ -8,6 +8,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Button } from '../../ui/Button'
 import { ProviderConfigForm } from './ProviderConfigForm'
 import { ChannelOwnerSection } from './ChannelOwnerSection'
+import { ownerWho } from './channelPerson'
 import { EngineSection } from './EngineSection'
 import { SearchProviderCheck } from './searchProviderState'
 import { InlineError } from '../../ui/InlineError'
@@ -219,9 +220,11 @@ function ownerStatusLine(channel: ChannelRuntime): string {
       ? 'No owner yet — pair one in Configure, or nothing your agent sends you reaches you here.'
       : "No owner yet — nothing your agent sends you reaches you here."
   }
-  return owner.source === 'shared'
-    ? `Reaches you as ${owner.id} (the id every channel used to share)`
-    : `Reaches you as ${owner.id}`
+  const who = ownerWho(channel.display_name, owner)
+  if (owner.source !== 'shared') return `Reaches you as ${who}`
+  return owner.name
+    ? `Reaches you as ${who} (by the id every channel used to share)`
+    : `Reaches you as ${who} (the id every channel used to share)`
 }
 
 const CHANNEL_STATE_TONE: Record<string, string> = {

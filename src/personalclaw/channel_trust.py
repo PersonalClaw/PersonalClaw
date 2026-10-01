@@ -412,6 +412,22 @@ def list_providers() -> list[str]:
     return sorted(_read_store().keys())
 
 
+def _sender_entry(sender_id: str, meta: Any) -> dict[str, str]:
+    """One trusted sender as every read shows them: id, name, when and how they were let in.
+
+    The one reader of an ``allowed_senders`` entry, so Settings › Sender trust
+    (:func:`provider_trust`) and a channel's Owner (:func:`owner_ref`) name a person the same way.
+    An entry the store holds badly reads as an id with nothing else known: the gate trusts any id
+    that is listed (:func:`is_allowed_sender`), so the list must still show it, to be revoked."""
+    rec = meta if isinstance(meta, dict) else {}
+    return {
+        "sender_id": sender_id,
+        "name": str(rec.get("name", "") or "").strip(),
+        "added_at": str(rec.get("added_at", "") or ""),
+        "via": str(rec.get("via", "") or ""),
+    }
+
+
 def provider_trust(provider: str) -> dict[str, Any]:
     """One provider's trust posture, shaped for a read surface.
 
@@ -430,7 +446,7 @@ def provider_trust(provider: str) -> dict[str, Any]:
     # outstanding here either, whether or not anyone has sent it since: the page must not say a
     # code is live that nobody can redeem. Read only; the gate clears the record when it is tried.
     pairing_live = bool(pairing.get("code_hash")) and not _code_expired(pairing)
-    senders = rec.get("allowed_senders") or {}
+    senders = rec.get("allowed_senders")
     channels = rec.get("tracked_channels") or {}
     raw_seen = rec.get("seen_channels")
     seen: dict[str, Any] = raw_seen if isinstance(raw_seen, dict) else {}
@@ -438,14 +454,8 @@ def provider_trust(provider: str) -> dict[str, Any]:
         "provider": provider,
         "policies": dict(rec["policies"]),
         "allowed_senders": [
-            {
-                "sender_id": sid,
-                "name": str((meta or {}).get("name", "") or ""),
-                "added_at": str((meta or {}).get("added_at", "") or ""),
-                "via": str((meta or {}).get("via", "") or ""),
-            }
-            for sid, meta in sorted(senders.items())
-            if isinstance(senders, dict)
+            _sender_entry(sid, meta)
+            for sid, meta in sorted(senders.items() if isinstance(senders, dict) else [])
         ],
         "tracked_channels": [
             {
@@ -704,6 +714,28 @@ def _owner_code_verdict(provider: str, candidate: str) -> str:
         _write_store(store)
         return ""
     return "match" if hmac.compare_digest(stored, _hash_code(candidate)) else "miss"
+
+
+def owner_ref(provider: str) -> dict[str, str]:
+    """Who core reaches the owner as on ``provider``: ``{"id", "source", "name"}``.
+
+    ``id`` and ``source`` are :func:`~personalclaw.config.credentials.owner_id_source`'s. ``name``
+    is what this channel's trust list holds for that id, read as Sender trust reads it
+    (:func:`_sender_entry`): the sender's display name an owner pairing stored, or the name a
+    channel app wrote through for its owner. So a page can say who the channel reaches by name,
+    not by the platform's number for them. Only the owner's own entry is read; the rest of the
+    list belongs to :func:`provider_trust`, which only the owner reads. ``""`` when no owner is
+    known, or when the list holds no name for them (an id written by setup, a shared id that is
+    nobody here, an entry the store holds badly).
+    """
+    from personalclaw.config.credentials import owner_id_source
+
+    owner, source = owner_id_source(provider)
+    senders = _provider_record(_read_store(), provider).get("allowed_senders")
+    name = ""
+    if owner and isinstance(senders, dict) and owner in senders:
+        name = _sender_entry(owner, senders[owner])["name"]
+    return {"id": owner, "source": source, "name": name}
 
 
 def _pair_owner(provider: str, sender_id: str, sender_name: str) -> None:

@@ -19,7 +19,7 @@ const patchConfig = vi.fn()
 
 const channel = (name: string, display_name: string, owner = ''): ChannelRuntime => ({
   name, display_name, connected: true, health: { state: 'ready' }, app: `${name}-channel`,
-  owner: { id: owner, source: owner ? 'channel' : '' },
+  owner: { id: owner, source: owner ? 'channel' : '', name: '' },
 })
 
 const CHANNELS: ChannelRuntime[] = [

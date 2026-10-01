@@ -10,6 +10,7 @@ redeemed, and which reads its owner when it needs it.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -124,19 +125,102 @@ async def test_pairing_from_the_page_makes_the_sender_the_owner(channels):
 async def test_the_channel_status_says_whether_an_owner_is_known(channels):
     async with TestClient(TestServer(_app())) as c:
         listed = {e["name"]: e for e in (await (await c.get("/api/channels")).json())["channels"]}
-        assert listed["fakechat"]["owner"] == {"id": "", "source": ""}
+        assert listed["fakechat"]["owner"] == {"id": "", "source": "", "name": ""}
         assert listed["fakechat"]["capabilities"]["owner_pairing"] is True
         assert listed["plain"]["capabilities"]["owner_pairing"] is False
 
+        # Ids written by setup, never seen on the channel: it knows no name for either.
         save_credential(owner_id_credential("fakechat"), "4242")
         save_credential(CRED_OWNER_ID, "U0SHARED")
         listed = {e["name"]: e for e in (await (await c.get("/api/channels")).json())["channels"]}
-        assert listed["fakechat"]["owner"] == {"id": "4242", "source": "channel"}
+        assert listed["fakechat"]["owner"] == {"id": "4242", "source": "channel", "name": ""}
         # A channel with no key of its own is reached with the shared one — and the status says
         # so, because that id may belong to another platform.
-        assert listed["plain"]["owner"] == {"id": "U0SHARED", "source": "shared"}
+        assert listed["plain"]["owner"] == {"id": "U0SHARED", "source": "shared", "name": ""}
         one = await (await c.get("/api/channels/plain")).json()
-        assert one["owner"] == {"id": "U0SHARED", "source": "shared"}
+        assert one["owner"] == {"id": "U0SHARED", "source": "shared", "name": ""}
+
+
+@pytest.mark.asyncio
+async def test_the_owner_is_named_as_the_channel_knows_them(channels, isolated):
+    """Who a channel reaches you as is the name it knows you by, not the platform's number for you.
+
+    Pairing stores the sender's display name in the channel's trust list; both owner reads serve
+    it for the owner's own entry and for nobody else's — the rest of that list is a page of its
+    own, which only the owner reads."""
+    async with TestClient(TestServer(_app())) as c:
+        code = (await (await c.post("/api/channels/fakechat/owner/pairing")).json())["code"]
+        ct.allow_sender("fakechat", "other-sender", "Sam Sample", via="owner")
+        verdict = ct.guard_inbound(
+            None, "fakechat", "4242", sender_name="Ada Example", is_dm=True, text=code
+        )
+        assert verdict.reason == "owner_paired"
+
+        owner = await (await c.get("/api/channels/fakechat/owner")).json()
+        assert owner["owner_id"] == "4242" and owner["owner_name"] == "Ada Example"
+        listed = {e["name"]: e for e in (await (await c.get("/api/channels")).json())["channels"]}
+        assert listed["fakechat"]["owner"] == {
+            "id": "4242",
+            "source": "channel",
+            "name": "Ada Example",
+        }
+        for body in (owner, listed):
+            text = json.dumps(body)
+            assert "Sam Sample" not in text and "other-sender" not in text
+
+        # A name the store holds badly is no name, and the page falls back to the id.
+        path = isolated / "entity_settings" / "channel_trust.json"
+        store = json.loads(path.read_text(encoding="utf-8"))
+        store["fakechat"]["allowed_senders"]["4242"] = "not a record"
+        path.write_text(json.dumps(store), encoding="utf-8")
+        owner = await (await c.get("/api/channels/fakechat/owner")).json()
+        assert owner["owner_id"] == "4242" and owner["owner_name"] == ""
+
+
+@pytest.mark.asyncio
+async def test_an_owner_set_outside_pairing_is_named_too(channels, monkeypatch):
+    """A channel that cannot pair (its owner set in the environment, the way a Slack setup does)
+    names its owner the same way, once its app writes the owner into its own trust list."""
+    monkeypatch.setenv(owner_id_credential("plain"), "U0EXAMPLE1")
+    ct.allow_sender("plain", "U0EXAMPLE1", "Ada Example", via="owner")
+    async with TestClient(TestServer(_app())) as c:
+        owner = await (await c.get("/api/channels/plain/owner")).json()
+        assert owner["pairing_supported"] is False
+        assert (owner["owner_id"], owner["source"], owner["owner_name"]) == (
+            "U0EXAMPLE1",
+            "channel",
+            "Ada Example",
+        )
+        listed = {e["name"]: e for e in (await (await c.get("/api/channels")).json())["channels"]}
+        assert listed["plain"]["owner"] == {
+            "id": "U0EXAMPLE1",
+            "source": "channel",
+            "name": "Ada Example",
+        }
+
+
+@pytest.mark.parametrize(
+    ("held", "name"),
+    [
+        ({"name": " Ada Example ", "added_at": "", "via": "owner_pairing"}, "Ada Example"),
+        ({"name": "", "added_at": "", "via": "owner"}, ""),
+        ("not a record", ""),
+    ],
+)
+def test_sender_trust_and_the_owner_read_one_entry_one_way(isolated, held, name):
+    """Settings › Sender trust and a channel's Owner show the same trust-list entry, so they read
+    it one way: the same name, however the store holds it. An entry held badly is still trusted
+    (the gate asks only whether the id is listed), so the list still shows it, to be revoked."""
+    save_credential(owner_id_credential("fakechat"), "4242")
+    ct.allow_sender("fakechat", "4242", "placeholder", via="owner_pairing")
+    path = isolated / "entity_settings" / "channel_trust.json"
+    store = json.loads(path.read_text(encoding="utf-8"))
+    store["fakechat"]["allowed_senders"]["4242"] = held
+    path.write_text(json.dumps(store), encoding="utf-8")
+
+    listed = {s["sender_id"]: s for s in ct.provider_trust("fakechat")["allowed_senders"]}
+    assert ct.is_allowed_sender("fakechat", "4242")
+    assert listed["4242"]["name"] == ct.owner_ref("fakechat")["name"] == name
 
 
 @pytest.mark.asyncio
