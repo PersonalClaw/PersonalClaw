@@ -1,4 +1,8 @@
-/** Coerce whatever a timestamp field actually holds into epoch SECONDS, or `undefined`.
+/** A date-time with no zone designator — `2026-10-01T01:22:09`, `2026-10-01 01:22:09.5`. A date
+ *  alone is not one: it is a calendar day, and its callers read it as such (`parseDueDate`). */
+const ZONE_LESS_DATE_TIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/
+
+/** Coerce a timestamp the GATEWAY sent into epoch SECONDS, or `undefined`.
  *
  *  Every relative-time formatter in this app was typed `ts?: number | null` and did arithmetic
  *  on it directly. That is fine until an endpoint sends an ISO string — then `Date.now()/1000 - ts`
@@ -11,21 +15,46 @@
  *  read its input must say nothing — `NaN` on screen is worse than a blank, because a blank reads
  *  as "no data" (which is true) and `NaNd` reads as a broken product.
  *
+ *  What it reads, explicitly: a number is epoch seconds; a string is a date-time that SAYS which
+ *  zone it is in (`…Z`, `…+00:00`, `…-04:00`, an RFC 2822 date with its zone). A date-time with no
+ *  zone is REFUSED. It names no instant this page can know: `Date.parse` would read it as this
+ *  browser's local time, and the gateway that wrote it may be in another zone. Measured: a gateway
+ *  in Toronto served `next_poll_at: "2026-10-01T01:22:09"` for a folder due in five minutes, and a
+ *  browser in Los Angeles showed **"next in 3h"**. The gateway now writes every stamp with its
+ *  offset (`personalclaw.instants`), so a zone-less one reaching here is a defect to see, not a
+ *  time to guess. A time the USER typed into a `datetime-local` picker is local by construction
+ *  and has its own reader, `localDateTimeSeconds`.
+ *
  *  Seconds, not milliseconds: that is what the app's `next_run_ts` / `last_run_ts` /
  *  `started_at` numeric fields already are, so a number passes through untouched.
  */
 export function epochSeconds(ts?: number | string | null): number | undefined {
   if (ts == null || ts === '') return undefined
   if (typeof ts === 'number') return Number.isFinite(ts) ? ts : undefined
+  if (ZONE_LESS_DATE_TIME.test(ts.trim())) return undefined
   const ms = Date.parse(ts)
+  return Number.isFinite(ms) ? ms / 1000 : undefined
+}
+
+/** A `<input type="datetime-local">` value — `2026-10-05T09:50` — as epoch SECONDS, read in the
+ *  BROWSER's zone, or `undefined` when it is not such a value (an empty picker).
+ *
+ *  The picker has no zone: it is the wall clock of whoever is typing, which is this browser's.
+ *  That is the one place a zone-less date-time means something here, so it is read here and
+ *  nowhere else — `epochSeconds` refuses the same shape from the gateway. Converted on THIS side
+ *  of the wire, because the gateway resolving it would read it in ITS zone instead of the user's. */
+export function localDateTimeSeconds(value?: string | null): number | undefined {
+  const text = (value ?? '').trim()
+  if (!ZONE_LESS_DATE_TIME.test(text)) return undefined
+  const ms = Date.parse(text)  // ECMAScript reads a zone-less date-time as local time
   return Number.isFinite(ms) ? ms / 1000 : undefined
 }
 
 /** The value a `<input type="datetime-local">` shows for a stamp — `2026-10-05T09:50`, in the
  *  BROWSER's zone, to the minute — or `''` when the stamp is unreadable (an empty picker).
  *
- *  The inverse of reading such a value back with `epochSeconds`, which parses a zone-less date-time
- *  as local: a form seeded from this and saved untouched lands on the same minute. */
+ *  The inverse of `localDateTimeSeconds`: a form seeded from this and saved untouched lands on
+ *  the same minute. */
 export function localDateTimeInput(ts?: number | string | null): string {
   const secs = epochSeconds(ts)
   if (secs === undefined) return ''

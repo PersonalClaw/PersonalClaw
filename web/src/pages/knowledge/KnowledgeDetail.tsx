@@ -15,7 +15,7 @@ import { ReadingView } from './ReadingView'
 import { readingTimeLabel } from './readingTime'
 import { queueSentence } from './queueStanding'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
-import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
+import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES, journalDayHasPassed } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
 import { GistEditor } from './GistEditor'
 import { confirm } from '../../ui/dialog'
@@ -509,17 +509,9 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   const titleEditable = draft.item_type !== 'fleeting' && draft.item_type !== 'journal'
   // A journal is immutable once its creation day has passed (the backend 403s a
   // content/title edit). Detect it so the editor signals this upfront — read-only body,
-  // no failed-save surprise. Curation (tags/pin/archive) stays editable.
-  // Compare in LOCAL time: created_at is stored local (datetime.now()) and the backend
-  // checks against local today, so we must too — using toISOString() (UTC) here would
-  // mis-lock a same-day journal in the evening of a behind-UTC timezone (UTC already
-  // rolled to tomorrow) while the backend still accepts the edit.
-  const localToday = (() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })()
-  const journalLocked = (full.item_type ?? full.type) === 'journal'
-    && (full.created_at || '').slice(0, 10) !== localToday
+  // no failed-save surprise. Curation (tags/pin/archive) stays editable. The day is the
+  // local calendar day of the stored instant (`journalDayHasPassed`), as the backend reads it.
+  const journalLocked = (full.item_type ?? full.type) === 'journal' && journalDayHasPassed(full.created_at)
   // Bottom edit bar: ONLY the re-ingest checkbox (Cancel/Save live in the header — the
   // single home for the item's actions; there's no second copy here). Re-ingest is
   // meaningful only when there's a re-processable body: text content or a bookmark URL

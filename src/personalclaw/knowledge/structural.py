@@ -496,11 +496,15 @@ class StructuralRetriever:
         origin = date_ref(stamp)
         if not stamp:
             return StructuralAnswer(CHANGED_SINCE, origin, STRUCTURE_ONLY, empty_reason=BAD_REQUEST)
+        # Compared as text with the stored instants, which are UTC with their offset, so the
+        # bound is put in that form: "since 09:00" means 09:00 here, not 09:00 UTC.
+        from personalclaw.instants import as_utc
+
         rows = self.store.db.execute(
             "SELECT i.id, i.title, i.updated_at FROM items i "
             "WHERE i.updated_at > ? " + self._visibility_sql("i", include_archived) + " "
             "ORDER BY i.updated_at DESC, i.id ASC LIMIT ?",
-            (stamp, limit + 1),
+            (as_utc(stamp), limit + 1),
         ).fetchall()
         truncated = len(rows) > limit
         hits = tuple(

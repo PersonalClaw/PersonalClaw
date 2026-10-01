@@ -806,11 +806,12 @@ async def update_item(request: web.Request) -> web.Response:
     if (existing.get("item_type") or existing.get("type")) == "journal" and (
         "content" in fields or "title" in fields
     ):
-        created = str(existing.get("created_at") or "")[:10]
-        from datetime import datetime
+        from datetime import date
 
-        today = datetime.now().isoformat()[:10]
-        if created and created != today:
+        from personalclaw.instants import local_day
+
+        created = local_day(existing.get("created_at"))
+        if created and created != date.today().isoformat():
             return web.json_response(
                 {"error": "this journal entry is immutable — its creation day has passed"},
                 status=403,
@@ -2337,11 +2338,10 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
             {"error": "Could not synthesize a skill from the gathered outcomes."}, status=502
         )
 
-    from datetime import datetime
-
+    from personalclaw.instants import utc_now_iso
     from personalclaw.skills.loader import AutoSkillProvenance
 
-    now = datetime.now().isoformat()
+    now = utc_now_iso()
     name = _loader.create_auto_skill(
         _slug,
         description=(_redact(parts.get("description") or intent.goal) or "")[:200],

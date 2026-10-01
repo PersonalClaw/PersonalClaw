@@ -14,7 +14,7 @@ import {
   ScheduleForm, emptyDraft as emptySchedule, scheduleDraftInvalidReason, type ScheduleDraft,
 } from '../schedule/ScheduleForm'
 import { intervalToSecs, scheduleWhenMet } from '../schedule/scheduleMeta'
-import { epochSeconds } from '../../lib/epoch'
+import { localDateTimeSeconds } from '../../lib/epoch'
 import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
 import { humanizeKey } from './DryRunResult'
 import { TRIGGER_PRESETS, findTriggerPreset, prefillDraft } from './triggerPresets'
@@ -226,7 +226,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
         // Epoch seconds, converted in the BROWSER — see `draftToPayload`'s note: the handler
         // refuses a raw `datetime-local` string, and parsing it server-side would resolve the
         // zone-less value in the gateway's OS zone instead of the user's (issues 530, 497).
-        else if (sched.kind === 'at') body.at = epochSeconds(sched.at)
+        else if (sched.kind === 'at') body.at = localDateTimeSeconds(sched.at)
         // The unified facade derives exec fields from the canonical action.
         body.action = { provider, config: coerced.config }
         await api.createSchedule(body)

@@ -150,6 +150,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Every time the gateway stores or serves carries its offset, so a browser or phone in another timezone reads it right: a watched folder polled a moment ago says "next in 5m", not "next in 3h", and the library, chat transcripts and rooms read the times they already hold as the instants they were.**
 - **A Code loop's task worker in the middle of a long model call is no longer failed as stalled, a failed loop keeps its task workers' worktrees and the edits you approved in them, and Resume (or a steer) gives the task worker a turn instead of answering "ran out of cycles" again.**
 - **A planning step whose planner wrote a file that is not valid JSON says where it breaks, to the planner on its retry and to you beside Retry; a pass that ran out of time says so, and a planner turn cut at its time limit ends cleanly with a line in its session saying why.**
 - **"Cancel and edit the task" stops the planning and opens the composer with your task, project, codebase and Mode; a loop still planning can be stopped from its walkthrough, the Code list and its project's Work board, a stopped or cancelled planner is not started again after a restart, and the Loops list links to the code loops at work.**

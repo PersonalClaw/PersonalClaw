@@ -452,8 +452,15 @@ def _hours_since_last_pass(store: Any) -> float:
         return 10_000.0
     if not rows or not rows[0]["updated_at"]:
         return 10_000.0
+    # Read as the library writes it: an ISO instant with its offset (`personalclaw.instants`).
+    # A fixed `…:SSZ` pattern matched no stamp the library has ever written, so every pass read
+    # the "never" answer and the floor held nothing back.
+    from datetime import datetime
+
+    from personalclaw.instants import as_instant
+
     try:
-        stamp = time.mktime(time.strptime(str(rows[0]["updated_at"]), "%Y-%m-%dT%H:%M:%SZ"))
+        stamp = datetime.fromisoformat(as_instant(str(rows[0]["updated_at"]))).timestamp()
     except (TypeError, ValueError):
         return 10_000.0
     return max(0.0, (time.time() - stamp) / 3600.0)

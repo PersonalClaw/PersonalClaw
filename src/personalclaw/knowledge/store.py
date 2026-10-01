@@ -7,10 +7,10 @@ import pathlib
 import re
 from collections import defaultdict
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Any, Callable
 from uuid import uuid4
 
+from personalclaw.instants import backfill_zone_less, utc_now_iso
 from personalclaw.sqlite_compat import FTS5_REMEDY, connect_shared, probe, sqlite3
 
 from .embedding_fingerprint import (
@@ -1071,6 +1071,9 @@ class KnowledgeStore:
         except Exception:
             self.db.execute("ROLLBACK")
             raise
+        # A stamp written before the store recorded offsets is this machine's local time with
+        # none; rewritten as its UTC instant, so it sorts and compares with every newer one.
+        backfill_zone_less(self.db)
 
     def _migrate_chunk_fingerprint(self) -> None:
         """Add the RET-4 embedding fingerprint columns to a ``chunks`` table without them.
@@ -1147,7 +1150,7 @@ class KnowledgeStore:
                 per_item[row["id"]] = names
                 found.update(names)
 
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute("PRAGMA foreign_keys=OFF")
         self.db.execute("BEGIN")
         try:
@@ -1358,7 +1361,7 @@ class KnowledgeStore:
     ) -> str:
         """Persist a WatchedSource row and return its ``src-<8hex>`` id (§1.2)."""
         sid = f"src-{uuid4().hex[:8]}"
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute(
             "INSERT INTO sources (id, name, provider, kind, spec, enrichment, "
             "poll_interval_secs, budget, item_type, enabled, created_by, "
@@ -1449,7 +1452,7 @@ class KnowledgeStore:
             vals = [self._EDITABLE_SOURCE_FIELDS[k](v) for k, v in fields.items()]
             self.db.execute(
                 f"UPDATE sources SET {cols}, updated_at = ? WHERE id = ?",
-                (*vals, datetime.now().isoformat(), source_id),
+                (*vals, utc_now_iso(), source_id),
             )
             self.db.commit()
         return self.get_source(source_id)
@@ -1486,7 +1489,7 @@ class KnowledgeStore:
         a row the UI reads would be a log in a rollup column. Recorded on the success path too
         — an escalation that only surfaced on failure would make the expensive-but-working
         case the invisible one."""
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute("BEGIN")
         try:
             self.db.execute(
@@ -1574,7 +1577,7 @@ class KnowledgeStore:
         cursor-persist re-yields items) harmless. Native callers omit both and always
         get an id (contract unchanged)."""
         item_id = str(uuid4())
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         # Tags are rows now. Normalized here so the caller's shape (list[str], possibly
         # with blanks/dupes) can't reach storage — the public contract is unchanged.
         tag_names = _clean_tag_names(tags)
@@ -1710,7 +1713,7 @@ class KnowledgeStore:
         cur = self.db.execute(
             "INSERT OR IGNORE INTO source_seen (source_id, guid, first_seen_at) "
             "VALUES (?, ?, ?)",
-            (source_id, guid, datetime.now().isoformat()),
+            (source_id, guid, utc_now_iso()),
         )
         self.db.commit()
         return cur.rowcount > 0
@@ -1789,7 +1792,7 @@ class KnowledgeStore:
             return False
         meta = item.get("file_metadata")
         meta = dict(meta) if isinstance(meta, dict) else {}
-        meta["source_deleted_at"] = deleted_at or datetime.now().isoformat()
+        meta["source_deleted_at"] = deleted_at or utc_now_iso()
         # touch=False: the source vanishing is not the user editing the item, so it must
         # not masquerade as recent user activity in "Last updated" / recency ordering.
         self.update_item(item_id, touch=False, is_archived=1, file_metadata=meta)
@@ -2620,7 +2623,7 @@ class KnowledgeStore:
                 item_id,
                 summary,
                 json.dumps(snapshot),
-                datetime.now().isoformat(),
+                utc_now_iso(),
             ),
         )
         self.db.execute(
@@ -2670,7 +2673,7 @@ class KnowledgeStore:
     ) -> str:
         """Append one node's output to an item's extracted-content pool. Returns its id."""
         ec_id = uuid4().hex
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute(
             "INSERT INTO extracted_contents (id, item_id, node_type, backend, text, metadata, created_at) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -2995,7 +2998,7 @@ class KnowledgeStore:
                 (intent_id, item_id),
             )
         oid = uuid4().hex
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute(
             "INSERT INTO intent_outcomes "
             "(id, intent_id, intent_name, item_id, item_title, takeaway, fields, created_at) "
@@ -3163,7 +3166,7 @@ class KnowledgeStore:
         members is what makes the hierarchy stable (deleting the last tagged item would
         otherwise silently destroy a branch of the user's taxonomy).
         """
-        now = now or datetime.now().isoformat()
+        now = now or utc_now_iso()
         self.db.execute("DELETE FROM item_tags WHERE item_id = ?", (item_id,))
         for name in names:
             self.db.execute(
@@ -3246,7 +3249,7 @@ class KnowledgeStore:
         # tags, embedding) pass touch=False so machine processing doesn't masquerade as
         # the user having just edited the item.
         if touch:
-            fields["updated_at"] = datetime.now().isoformat()
+            fields["updated_at"] = utc_now_iso()
         # Recompute word_count whenever content changes (file uploads backfill content
         # after create; edits change it) so it never goes stale — unless the caller set
         # it explicitly.
@@ -3655,7 +3658,7 @@ class KnowledgeStore:
         re-sweep refreshes the timestamp rather than raising on the primary key."""
         self.db.execute(
             "INSERT OR REPLACE INTO mention_sweeps (item_id, swept_at) VALUES (?, ?)",
-            (item_id, datetime.now().isoformat()),
+            (item_id, utc_now_iso()),
         )
         self.db.commit()
 
@@ -3729,7 +3732,7 @@ class KnowledgeStore:
         re-sweep refreshes the timestamp rather than raising on the primary key."""
         self.db.execute(
             "INSERT OR REPLACE INTO similarity_sweeps (item_id, swept_at) VALUES (?, ?)",
-            (item_id, datetime.now().isoformat()),
+            (item_id, utc_now_iso()),
         )
         self.db.commit()
 
@@ -3994,7 +3997,7 @@ class KnowledgeStore:
         when the other writer withdraws.
         """
         written = 0
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         for row in rows or []:
             a_id = str(row.get("source_item_id") or "")
             b_id = str(row.get("target_item_id") or "")
@@ -4640,7 +4643,7 @@ class KnowledgeStore:
 
     def add_entity(self, name, entity_type, description=None, aliases=None) -> str:
         eid = str(uuid4())
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute(
             "INSERT INTO entities (id, name, entity_type, description, aliases, created_at, updated_at) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -4672,7 +4675,7 @@ class KnowledgeStore:
             return False
         self.db.execute(
             "UPDATE entities SET description = ?, updated_at = ? WHERE id = ?",
-            (desc, datetime.now().isoformat(), entity_id),
+            (desc, utc_now_iso(), entity_id),
         )
         self.db.commit()
         return True
@@ -4711,7 +4714,7 @@ class KnowledgeStore:
             return 0
         self.db.execute(
             "UPDATE entities SET aliases = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(merged), datetime.now().isoformat(), entity_id),
+            (json.dumps(merged), utc_now_iso(), entity_id),
         )
         self.db.commit()
         return len(merged) - len(current)
@@ -4770,7 +4773,7 @@ class KnowledgeStore:
             )
             return existing["id"]
         rid = str(uuid4())
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute(
             "INSERT INTO entity_relations (id, source_id, target_id, relation_type, description, weight, source_item_id, created_at) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -4783,7 +4786,7 @@ class KnowledgeStore:
         return rid
 
     def add_mention(self, item_id, entity_id, context=None):
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute(
             "INSERT OR IGNORE INTO mentions (item_id, entity_id, context, created_at) VALUES (?, ?, ?, ?)",  # noqa: E501
             (item_id, entity_id, context, now),
@@ -5043,7 +5046,7 @@ class KnowledgeStore:
             [r["item_id"] for r in rows] + self._items_with_tag(target_id)
         )
         moved = already = 0
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute("BEGIN")
         try:
             for row in rows:
@@ -5265,7 +5268,7 @@ class KnowledgeStore:
         if kind == "smart" and not (query or "").strip():
             raise ValueError("a smart collection requires a query")
         cid = str(uuid4())
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         # New shelves land at the end of the rail rather than the top: the user's
         # existing order is theirs, and silently reshuffling it on every create is
         # the kind of "helpful" the ordering column exists to prevent.
@@ -5327,7 +5330,7 @@ class KnowledgeStore:
             sets["name"] = renamed
             if self._collection_name_clash(renamed, exclude_id=collection_id):
                 raise ValueError(f"collection_name_taken:{renamed}")
-        sets["updated_at"] = datetime.now().isoformat()
+        sets["updated_at"] = utc_now_iso()
         cols = ", ".join(f"{k} = ?" for k in sets)
         cur = self.db.execute(
             f"UPDATE collections SET {cols} WHERE id = ?",  # noqa: S608 — keys allowlisted
@@ -5357,7 +5360,7 @@ class KnowledgeStore:
         self.db.execute(
             "INSERT OR IGNORE INTO collection_items (collection_id, item_id, added_at) "
             "VALUES (?, ?, ?)",
-            (collection_id, item_id, datetime.now().isoformat()),
+            (collection_id, item_id, utc_now_iso()),
         )
         self.db.commit()
         # The page's `collections:` block changed while the item row did not, so the
@@ -5472,7 +5475,7 @@ class KnowledgeStore:
         if not self.db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
             return None
         row_id = str(uuid4())
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         self.db.execute(
             "INSERT INTO annotations (id, item_id, quote, occurrence, note, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",

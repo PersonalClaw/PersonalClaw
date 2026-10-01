@@ -8,7 +8,7 @@ import { Combobox, type ComboOption } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { Field, TextInput, TextArea, Segmented, ChipInput, FieldError } from '../../ui/forms'
 import { SoonTag } from '../tasks/taskMeta'
-import { epochSeconds, localDateTimeInput } from '../../lib/epoch'
+import { localDateTimeInput, localDateTimeSeconds } from '../../lib/epoch'
 import {
   KINDS, EXEC_MODES, deriveKind, deriveMode, kindMeta, modeMeta,
   secsToInterval, intervalToSecs, INTERVAL_UNITS, MIN_INTERVAL_SECS, CRON_PRESETS,
@@ -152,8 +152,8 @@ export function scheduleDraftInvalidReason(d: ScheduleDraft): string | null {
  *  And the conversion belongs on THIS side of the wire, not in the handler: a `datetime-local`
  *  value carries no zone, so parsing it server-side would resolve it in the gateway's OS zone
  *  rather than the zone the user typed it in — which is issue 497's live defect on the week-grid
- *  window. `epochSeconds` resolves it against the BROWSER's zone (`Date.parse` on a date-TIME
- *  form is local), which is the only reading that matches what the picker showed. */
+ *  window. `localDateTimeSeconds` resolves it against the BROWSER's zone, which is the only
+ *  reading that matches what the picker showed. */
 export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   // 🔴 `message` is omitted in 'other' mode, and that omission is the signal. This form cannot
   // edit a non-agent action provider, so it must send nothing that describes one — otherwise
@@ -204,7 +204,7 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   // `atSecsOriginal`); a changed one sends what the user picked.
   else if (d.kind === 'at') {
     const orig = d.atSecsOriginal
-    const at = orig !== undefined && d.at === localDateTimeInput(orig) ? orig : epochSeconds(d.at)
+    const at = orig !== undefined && d.at === localDateTimeInput(orig) ? orig : localDateTimeSeconds(d.at)
     if (at !== undefined) body.at = at
   }
   if (d.mode !== 'other') body.message = d.message.trim()

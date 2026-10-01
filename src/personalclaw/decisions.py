@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -586,7 +586,8 @@ def resolve_decision(
             now=now,
         )
 
-    captured = (now or datetime.now()).isoformat()
+    # An instant with its offset; a naive ``now`` is this machine's local time, as ever.
+    captured = (now or datetime.now()).astimezone(timezone.utc).isoformat()
     _write_meta(
         ks,
         item_id,
@@ -682,8 +683,9 @@ def _defer(
 
 
 def _created_date(item: dict, fallback: datetime):
+    """The local day the decision was recorded on: the same calendar its horizon is in."""
     try:
-        return datetime.fromisoformat(str(item.get("created_at") or "")).date()
+        return datetime.fromisoformat(str(item.get("created_at") or "")).astimezone().date()
     except ValueError:
         return fallback.date()
 

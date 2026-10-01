@@ -42,9 +42,9 @@ questions under one word would give one banner two jobs.
 
 Timestamps go through :func:`personalclaw.knowledge.semantics._parse`, the parser the rest
 of the knowledge layer already uses, rather than a second hand-rolled one. The store writes
-every ``created_at``/``updated_at`` with the same naive-local ``datetime.now().isoformat()``,
-so running both sides of every comparison through one coercion is what keeps the ordering
-honest.
+every ``created_at``/``updated_at`` as a UTC instant with its offset
+(:mod:`personalclaw.instants`), and running both sides of every comparison through one
+coercion is what keeps the ordering honest.
 """
 
 from __future__ import annotations

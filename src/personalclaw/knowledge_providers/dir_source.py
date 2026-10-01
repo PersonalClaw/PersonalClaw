@@ -571,14 +571,14 @@ class DirSourceProvider(KnowledgeSourceProvider):
 
     def _emit(self, spec: dict, rel: str, change: str, now: float) -> SourceItem | None:
         """Build the sighting for a settled change (content read only for a live file)."""
-        from datetime import datetime
+        from personalclaw.instants import utc_iso
 
         if change == CHANGE_DELETED:
             return SourceItem(
                 guid=rel,
                 title=Path(rel).name,
                 change=CHANGE_DELETED,
-                metadata={"source_deleted_at": datetime.fromtimestamp(now).isoformat()},
+                metadata={"source_deleted_at": utc_iso(now)},
             )
         content = self._read(spec, rel)
         if content is None:

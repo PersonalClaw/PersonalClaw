@@ -216,6 +216,19 @@ export function fmtBytes(n?: number): string {
  *  Both now match `taskMeta`: past a week, show the actual date; a future stamp shows its date too,
  *  because "in 3 days" is not what any of these four call sites mean. Parsing goes through
  *  `epochSeconds`, the canonical parser, rather than a fourth local `Date.parse`. */
+/** Has a journal entry's day passed, so the gateway refuses to change its text?
+ *
+ *  The day is the calendar day the entry was WRITTEN, here: the stored stamp is a UTC instant
+ *  (`2026-10-01T03:30:00+00:00` for 20:30 on 30 September in Los Angeles), so its first ten
+ *  characters name the UTC date, which west of UTC is already tomorrow every evening. Read that
+ *  way, an entry written tonight showed as locked while the gateway still took the edit. A stamp
+ *  this page cannot read decides nothing here: the gateway's own check stands, and it allows. */
+export function journalDayHasPassed(createdAt?: string, now: number = Date.now()): boolean {
+  const secs = epochSeconds(createdAt)
+  if (secs === undefined) return false
+  return new Date(secs * 1000).toDateString() !== new Date(now).toDateString()
+}
+
 export function relTime(iso?: string): string {
   const secs = epochSeconds(iso)
   if (secs === undefined) return ''

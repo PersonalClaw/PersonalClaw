@@ -57,12 +57,12 @@ import logging
 import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.history import ConversationLog
+from personalclaw.instants import as_instant, utc_now_iso
 from personalclaw.security import redact_field
 
 logger = logging.getLogger(__name__)
@@ -240,7 +240,8 @@ class Room:
         return cls(
             id=room_id,
             title=str(data.get("title", "")),
-            created_at=str(data.get("created_at", "")),
+            # A room created before stamps carried offsets holds this machine's local time.
+            created_at=as_instant(str(data.get("created_at", ""))),
             archived=bool(data.get("archived", False)),
             paused=bool(data.get("paused", False)),
             rounds_used=max(0, int(data.get("rounds_used", 0) or 0)),
@@ -432,7 +433,7 @@ def create_room(title: str) -> Room:
     room = Room(
         id=_unique_id(_slugify(clean), {r.id for r in rooms}),
         title=clean,
-        created_at=datetime.now().isoformat(),
+        created_at=utc_now_iso(),
     )
     rooms.append(room)
     _write_index(rooms)

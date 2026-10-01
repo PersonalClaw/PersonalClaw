@@ -259,7 +259,9 @@ re-invents a shape another touches:
   when the home is used, never at import);
   writes via `atomic_write`/`atomic_write_bytes`; reads tolerate missing/corrupt;
   secrets `mode=0o600`; append-only JSONL trims at 2× cap; new durable state that
-  external tools may read is a stable surface.
+  external tools may read is a stable surface. A stored or served time is a UTC
+  instant with its offset (`personalclaw.instants`), never a bare local wall-clock
+  reading: a reader in another zone cannot tell which instant that names.
 - **Fail-open vs fail-closed** — user-facing availability surfaces (notification
   rules, settings) fail **open**: corrupt file → permissive default + warn.
   Inbound/security surfaces (tokens, inbound `enabled` flags, capability probes)

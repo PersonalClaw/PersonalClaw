@@ -4,6 +4,7 @@ import {
   Presentation, Film, type LucideIcon,
 } from 'lucide-react'
 import type { ArtifactKind } from '../../lib/api'
+import { epochSeconds } from '../../lib/epoch'
 
 // ── file type detection (drives the viewer + icon) ──
 export type FileViewType = 'image' | 'pdf' | 'csv' | 'json' | 'html' | 'markdown' | 'code'
@@ -212,8 +213,11 @@ export function fmtBytes(n?: number): string {
 
 export function relTime(iso: string | number): string {
   if (!iso) return ''
-  const t = typeof iso === 'number' ? iso * (iso < 1e12 ? 1000 : 1) : Date.parse(iso)
-  if (Number.isNaN(t)) return ''
+  // A number is seconds or milliseconds; a string goes through the canonical reading, which
+  // refuses a stamp with no zone rather than taking it for this browser's local time.
+  const secs = typeof iso === 'number' ? iso / (iso < 1e12 ? 1 : 1000) : epochSeconds(iso)
+  if (secs === undefined || Number.isNaN(secs)) return ''
+  const t = secs * 1000
   const s = Math.floor((Date.now() - t) / 1000)
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)}m ago`

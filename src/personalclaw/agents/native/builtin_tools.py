@@ -2025,8 +2025,9 @@ class NativeBuiltinToolProvider(ToolProvider):
         applied = dict(fields)
 
         def _update() -> str:
-            from datetime import datetime
+            from datetime import date
 
+            from personalclaw.instants import local_day
             from personalclaw.knowledge import get_knowledge_store
 
             store = get_knowledge_store()
@@ -2040,8 +2041,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             if (item.get("item_type") or item.get("type")) == "journal" and (
                 "content" in applied or "title" in applied
             ):
-                created = str(item.get("created_at") or "")[:10]
-                if created and created != datetime.now().isoformat()[:10]:
+                created = local_day(item.get("created_at"))
+                if created and created != date.today().isoformat():
                     return "journal_locked"
             # A language only makes sense on a gist; silently ignore it on other types
             # rather than stamping a meaningless column (the FE only reads it for gists).

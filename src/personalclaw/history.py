@@ -30,7 +30,6 @@ import threading
 import time as _time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -39,6 +38,7 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.concurrency import single_flight
 from personalclaw.config import loader as config_loader
 from personalclaw.guardrails.incident import incident_active
+from personalclaw.instants import as_instant, utc_iso, utc_now_iso
 from personalclaw.security import (
     MaskConflict,
     keep_masked_lines,
@@ -198,7 +198,7 @@ def summary_record(
         "reduced": reduced,
         "reduced_cap": reduced_cap,
         "digest": span_digest(_turns(messages)[:reduced]),
-        "created_at": datetime.now().isoformat(),
+        "created_at": utc_now_iso(),
     }
 
 
@@ -324,6 +324,20 @@ class _Head:
     complete: bool
 
 
+def _with_instants(record: dict) -> dict:
+    """*record*, a parsed transcript line, with each time it holds read as an instant.
+
+    A message's ``ts`` and the metadata's ``*_at`` times were written as this machine's local
+    time with no offset until stamps carried one, and a reader in another zone read them hours
+    off. Each is read here as the instant it was (:func:`personalclaw.instants.as_instant`), so
+    every reader of a transcript sees the same one; a stamp with an offset keeps its text.
+    """
+    for key, value in record.items():
+        if (key == "ts" or key.endswith("_at")) and isinstance(value, str):
+            record[key] = as_instant(value)
+    return record
+
+
 def _metadata_line(first: bytes) -> dict:
     """The metadata a transcript's first line holds, or ``{}`` when it is not a metadata line."""
     if not first.strip():
@@ -332,7 +346,9 @@ def _metadata_line(first: bytes) -> dict:
         data = json.loads(first)
     except ValueError:
         return {}
-    return data if isinstance(data, dict) and data.get("_type") == "metadata" else {}
+    if not isinstance(data, dict) or data.get("_type") != "metadata":
+        return {}
+    return _with_instants(data)
 
 
 def _prompt_of(data: object) -> str:
@@ -497,6 +513,7 @@ def _load_listing(sessions_dir: Path) -> None:
             continue
         path = os.path.join(key, name)
         if _HEADS.get(path, (ino, size, mtime_ns)) is None:
+            meta = _with_instants(meta)  # a listing written before stamps carried offsets
             head = _Head(MappingProxyType(meta), head_bytes, messages, first_prompt, True)
             _HEADS.keep(path, (ino, size, mtime_ns), head)
 
@@ -599,7 +616,7 @@ class ConversationLog:
             self._dir.mkdir(parents=True, exist_ok=True)
             meta: dict = {
                 "_type": "metadata",
-                "created_at": datetime.now().isoformat(),
+                "created_at": utc_now_iso(),
                 "last_consolidated": 0,
             }
             if agent:
@@ -611,7 +628,7 @@ class ConversationLog:
         msg: dict = {
             "role": role,
             "content": content,
-            "ts": datetime.now().isoformat(),
+            "ts": utc_now_iso(),
         }
         if tools:
             msg["tools"] = tools
@@ -662,7 +679,7 @@ class ConversationLog:
             return
         meta = json.loads(lines[0])
         meta["last_consolidated"] = offset
-        meta["updated_at"] = datetime.now().isoformat()
+        meta["updated_at"] = utc_now_iso()
         lines[0] = json.dumps(meta) + "\n"
         atomic_write(path, "".join(lines))
         self._invalidate_cache(key)
@@ -751,8 +768,7 @@ class ConversationLog:
                 "key": key,
                 "messages": head.messages if head is not None else None,
                 "modified": stat.st_mtime,
-                "created": meta.get("created_at")
-                or datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "created": meta.get("created_at") or utc_iso(stat.st_mtime),
                 "memory_mode": meta.get("memory_mode", "persistent"),
                 "title": meta.get("title")
                 or (head.first_prompt if head is not None else "")
@@ -1115,7 +1131,7 @@ class ConversationLog:
                 continue
             if data.get("_type") == "metadata":
                 continue
-            messages.append(data)
+            messages.append(_with_instants(data))
         self._msg_cache[key] = (mtime, messages)
         return messages
 

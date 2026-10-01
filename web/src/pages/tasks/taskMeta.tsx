@@ -1,6 +1,7 @@
 import { Circle, CircleDot, CircleSlash, CheckCircle2, XCircle, CircleDashed, ListChecks } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ExitCriterion, TaskItem } from '../../lib/api'
+import { epochSeconds } from '../../lib/epoch'
 
 /** Re-export so list/empty states share one task glyph. */
 export const ListChecksLike = ListChecks
@@ -119,9 +120,9 @@ export function SoonTag() {
 }
 
 export function relTime(iso?: string): string {
-  if (!iso) return ''
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return ''
+  const secs = epochSeconds(iso)  // the canonical reading: a stamp with no zone names no instant
+  if (secs === undefined) return ''
+  const t = secs * 1000
   const s = (Date.now() - t) / 1000
   if (s < 0) return new Date(t).toLocaleDateString()
   if (s < 60) return 'just now'

@@ -372,8 +372,9 @@ class LexiconStore:
 
 
 def _now() -> str:
-    # Wall-clock ISO stamp; time.time is fine here (not in a workflow script sandbox).
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    # Wall-clock ISO stamp in UTC, saying so; time.time is fine here (not in a workflow script
+    # sandbox). Without the `Z` a reader takes it for its own local time.
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _row_to_term(r: sqlite3.Row) -> LexiconTerm:

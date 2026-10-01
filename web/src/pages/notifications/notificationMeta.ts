@@ -1,6 +1,7 @@
 import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, ShieldX, RefreshCw, Receipt, UserRound, StickyNote, CalendarClock } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
+import { epochSeconds } from '../../lib/epoch'
 
 // ── kind → icon + tone (the `kind`s the backend actually emits) ──
 //
@@ -171,8 +172,13 @@ export function kindsPresent(items: NotificationItem[]): Array<{ kind: string; n
 
 // ── time bucketing for grouped display ──
 export type Bucket = 'Today' | 'Yesterday' | 'Earlier'
+/** A note's `ts` in epoch MILLISECONDS, or NaN — through the canonical reading (`epochSeconds`). */
+function noteMs(iso: string): number {
+  const secs = epochSeconds(iso)
+  return secs === undefined ? NaN : secs * 1000
+}
 export function bucketOf(iso: string, now: number): Bucket {
-  const t = Date.parse(iso)
+  const t = noteMs(iso)
   if (Number.isNaN(t)) return 'Earlier'
   const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0)
   if (t >= startOfToday.getTime()) return 'Today'
@@ -182,7 +188,7 @@ export function bucketOf(iso: string, now: number): Bucket {
 export const BUCKET_ORDER: Bucket[] = ['Today', 'Yesterday', 'Earlier']
 
 export function relTime(iso: string, now: number): string {
-  const t = Date.parse(iso); if (Number.isNaN(t)) return ''
+  const t = noteMs(iso); if (Number.isNaN(t)) return ''
   const s = Math.max(0, (now - t) / 1000)
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
@@ -190,7 +196,7 @@ export function relTime(iso: string, now: number): string {
   return `${Math.floor(s / 86400)}d ago`
 }
 export function clockTime(iso: string): string {
-  const t = Date.parse(iso); if (Number.isNaN(t)) return ''
+  const t = noteMs(iso); if (Number.isNaN(t)) return ''
   return new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 

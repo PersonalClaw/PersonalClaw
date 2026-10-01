@@ -1,5 +1,5 @@
 import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff, Ban } from 'lucide-react'
-import { epochSeconds } from '../../lib/epoch'
+import { epochSeconds, localDateTimeSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
 
@@ -25,7 +25,7 @@ export function kindMeta(k?: ScheduleKind): KindMeta { return KINDS.find((x) => 
  *  field, while an untouched `datetime-local` is the empty string — and submitting that omits `at`
  *  entirely, which the handler answers with a bare "every, cron, or at required" (issue 530). */
 export function scheduleWhenMet(kind: ScheduleKind, at: string): boolean {
-  return kind !== 'at' || epochSeconds(at) !== undefined
+  return kind !== 'at' || localDateTimeSeconds(at) !== undefined
 }
 
 // ── execution mode (agent / script / command) ──

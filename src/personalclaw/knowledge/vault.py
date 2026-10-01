@@ -74,7 +74,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -673,7 +673,7 @@ class KnowledgeVault:
             relpath=relpath,
             updated_at=str(item.get("updated_at") or ""),
             body_hash=body_hash(body),
-            projected_at=datetime.now().isoformat(timespec="seconds"),
+            projected_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             seen_mtime=float(mtime),
         )
 

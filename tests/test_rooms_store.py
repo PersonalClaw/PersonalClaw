@@ -1546,28 +1546,19 @@ def test_a_member_removed_and_re_added_reads_on_from_where_its_session_left_off(
 def test_a_clock_that_goes_back_neither_skips_nor_replays(enabled, monkeypatch):
     """🔴 A cursor is a position in the file, never a time, because the clock goes backwards.
 
-    ``ConversationLog.append`` stamps naive LOCAL time, so on the night the clocks go back the
-    hour from 01:00 repeats, and a line written in the second pass carries an earlier ``ts`` than
-    one written in the first. The WIP compared stamps and so treated every line of the repeated
-    hour as read. An NTP step or a hand-set clock does the same. An offset into an append-only
+    ``ConversationLog.append`` stamps the wall clock, and an NTP step or a hand-set clock moves
+    it back, so a line written after another can carry an earlier ``ts``. The WIP compared stamps
+    and so treated every line of the repeated stretch as read. An offset into an append-only
     transcript (#3603 took rotation out; nothing shortens it) has no clock to go wrong.
     """
-    import datetime as dt
-
     import personalclaw.history as history
 
-    clock = {"now": dt.datetime(2026, 11, 1, 1, 50)}
-
-    class _Clock(dt.datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock["now"]
-
-    monkeypatch.setattr(history, "datetime", _Clock)
-    room_id = _two_member_room("Fall back")
+    clock = {"now": "2026-11-01T05:50:00+00:00"}
+    monkeypatch.setattr(history, "utc_now_iso", lambda: clock["now"])
+    room_id = _two_member_room("Clock steps back")
     sessions = _StreamingSessions()
     _human_round(sessions, room_id, "should we ship?")
-    clock["now"] = dt.datetime(2026, 11, 1, 1, 10)  # 02:00 became 01:00 again
+    clock["now"] = "2026-11-01T05:10:00+00:00"  # the clock was stepped back forty minutes
 
     _human_round(sessions, room_id, "after the clocks went back")
 

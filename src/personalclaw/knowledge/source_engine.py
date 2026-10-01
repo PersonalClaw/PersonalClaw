@@ -290,14 +290,15 @@ class SourceEngine:
         return effective_interval(source, cfg, self._provider_for(source["provider"]))
 
     def _next_poll_at(self, source: dict, cfg: Any) -> str:
-        """When this source is due again, as an ISO timestamp — a DISPLAY rollup only.
+        """When this source is due again, as an instant with its offset — a DISPLAY rollup only.
 
         Scheduling reads ``last_poll_at`` (see :meth:`_due_delay`), so this never decides
         anything; it exists so a reader of the row can say "retrying in 9 minutes" instead of
-        leaving a failing source looking abandoned."""
-        from datetime import datetime
+        leaving a failing source looking abandoned. The offset is what makes that true for a
+        reader in another zone (:mod:`personalclaw.instants`)."""
+        from personalclaw.instants import utc_iso
 
-        return datetime.fromtimestamp(self._now_fn() + self._interval_for(source, cfg)).isoformat()
+        return utc_iso(self._now_fn() + self._interval_for(source, cfg))
 
     def _due_delay(self, source: dict, cfg: Any, now: float) -> float:
         """Seconds until this source is next due (<=0 means due now). Never-polled sources
