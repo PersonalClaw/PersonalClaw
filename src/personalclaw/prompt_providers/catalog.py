@@ -1099,7 +1099,7 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
     BundledSnippet(
         name="subagent-orchestration",
         filename="subagent-orchestration.md",
-        description="The spawn-and-synthesize pattern: tasks array + wait=false, results inject back.",  # noqa: E501
+        description="The spawn-and-synthesize pattern: one result injects back, a batch is read.",
     ),
     BundledSnippet(
         name="mcp-reconnect",

@@ -10,12 +10,12 @@ the run and the `on_overlap: queue` drain.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from personalclaw import project_context
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import ownership
-from personalclaw.workflows.models import OriginKind, RunStatus, run_ending
+from personalclaw.workflows.models import OriginKind, RunStatus, WorkflowRun, run_ending
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
@@ -100,7 +100,7 @@ def capture_run_end(ctl: RunController) -> None:
 _UNREPORTED_ENDINGS: frozenset[RunStatus] = frozenset({RunStatus.CANCELLED, RunStatus.DECLINED})
 
 
-def report_to_its_trigger(ctl: RunController, status: RunStatus) -> None:
+def report_to_its_trigger(services: Any, run: WorkflowRun, status: RunStatus) -> None:
     """Say how a run a trigger started went, on the trigger's route, now that it has ended.
 
     The fire that started it only said it launched the run, or queued it, which is not news yet
@@ -109,11 +109,14 @@ def report_to_its_trigger(ctl: RunController, status: RunStatus) -> None:
     before it finished. Only a trigger's own start (`OriginKind.HOOK`) carries a trigger id; a
     sub-run's origin names its parent's node instead.
 
-    Inert unless the gateway wired its delivery into `EngineServices.report_to_trigger`, and
-    fully guarded: a failure costs the report, never the run's terminal status.
+    Asked by every terminal write: the controller's (`RunController._finish`) and the two the
+    watchdog makes with no controller (a run whose spec cannot be read, and one whose steps all
+    ended while nothing drove it), so a run's trigger hears however it ended. Inert unless the
+    gateway wired its delivery into `EngineServices.report_to_trigger`, and fully guarded: a
+    failure costs the report, never the run's terminal status.
     """
-    report = getattr(ctl.services, "report_to_trigger", None)
-    origin = ctl.run.origin
+    report = getattr(services, "report_to_trigger", None)
+    origin = run.origin
     if report is None or origin.kind != OriginKind.HOOK or not origin.trigger_id:
         return
     if status in _UNREPORTED_ENDINGS:
@@ -121,31 +124,32 @@ def report_to_its_trigger(ctl: RunController, status: RunStatus) -> None:
     try:
         error = ""
         if status != RunStatus.COMPLETE:
-            error = str(ctl.run.error_message or "").strip() or (
+            error = str(run.error_message or "").strip() or (
                 f"The workflow run {run_ending(status)}."
             )
-        report(origin.trigger_id, error=error, summary=_completion_summary(ctl), run_id=ctl.run.id)
+        report(origin.trigger_id, error=error, summary=_completion_summary(run), run_id=run.id)
     except Exception:
-        logger.debug("run %s: could not report to its trigger", ctl.run.id, exc_info=True)
+        logger.debug("run %s: could not report to its trigger", run.id, exc_info=True)
 
 
-def chain_after_run(ctl: RunController, status: RunStatus) -> None:
+def chain_after_run(services: Any, run: WorkflowRun, status: RunStatus) -> None:
     """Hand the run's end to the triggers waiting on it: on this run, on any run of its workflow,
     or on the trigger that started it (`triggers.chain`). "When the research run finishes, post the
     summary" is one of those, and it runs now, not when the run started.
 
     Every ending but the two its owner chose (`_UNREPORTED_ENDINGS`): a run that failed has
-    finished too, and what waits on it is told how it ended. Inert unless the gateway wired its
-    dispatch into `EngineServices.run_ended`; fully guarded, so a failure costs the chain, never
-    the run's terminal status.
+    finished too, and what waits on it is told how it ended. Asked by every terminal write, as
+    :func:`report_to_its_trigger` is. Inert unless the gateway wired its dispatch into
+    `EngineServices.run_ended`; fully guarded, so a failure costs the chain, never the run's
+    terminal status.
     """
-    ended = getattr(ctl.services, "run_ended", None)
+    ended = getattr(services, "run_ended", None)
     if ended is None or status in _UNREPORTED_ENDINGS:
         return
     try:
-        ended(ctl.run, status=status.value, summary=_completion_summary(ctl))
+        ended(run, status=status.value, summary=_completion_summary(run))
     except Exception:
-        logger.debug("run %s: could not chain what waits on it", ctl.run.id, exc_info=True)
+        logger.debug("run %s: could not chain what waits on it", run.id, exc_info=True)
 
 
 def revise_project_overview(ctl: RunController) -> None:
@@ -166,7 +170,7 @@ def revise_project_overview(ctl: RunController) -> None:
         return
     try:
         name = ctl.run.workflow_name or "run"
-        summary = _completion_summary(ctl)
+        summary = _completion_summary(ctl.run)
         line = f"- {name} → {ctl.run.status.value}"
         if summary:
             line += f": {summary}"
@@ -183,7 +187,7 @@ def revise_project_overview(ctl: RunController) -> None:
         logger.debug("project overview revision skipped for %s", ctl.run.id, exc_info=True)
 
 
-def _completion_summary(ctl: RunController) -> str:
+def _completion_summary(run: WorkflowRun) -> str:
     """A one-line summary for the overview append: the run's own handoff, else "".
 
     Pulled from the last recorded handoff's summary — what the run itself said it
@@ -191,7 +195,7 @@ def _completion_summary(ctl: RunController) -> str:
     the line falls back to just name + status, which is honest.
     """
     try:
-        handoff = getattr(ctl.run, "extra", {}).get("summary") if ctl.run.extra else ""
+        handoff = getattr(run, "extra", {}).get("summary") if run.extra else ""
         if isinstance(handoff, str) and handoff.strip():
             return handoff.strip().splitlines()[0][:200]
     except Exception:

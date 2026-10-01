@@ -55,6 +55,7 @@ from personalclaw.subagent_persistence import (
     write_result_chunk,
     write_tombstone,
 )
+from personalclaw.subagent_tier import SubagentTier
 from personalclaw.task_modes import declared_level
 from personalclaw.textfmt import extract_options
 from personalclaw.validation import _AGENT_NAME_RE
@@ -2240,14 +2241,7 @@ class SubagentManager:
         # §4.1 read-only research class: resolve ONCE per run. An auto-fired spawn defaults to the
         # research (read-only) class, so its write/execute tools are denied at the approval loop
         # below. Resolved here (not per event) because the class is fixed for the run's lifetime.
-        from functools import partial
-
-        from personalclaw.guardrails.policy import (
-            TOOL_READ,
-            TOOL_READ_WRITE,
-            declared_tool_grant_denial,
-            tool_grant_posture,
-        )
+        from personalclaw.guardrails.policy import TOOL_READ, TOOL_READ_WRITE, tool_grant_posture
 
         _capability_class = resolve_capability_class(
             capability_class=info.capability_class, approval_mode=info.approval_mode
@@ -2264,24 +2258,19 @@ class SubagentManager:
         )
 
         # A call is within the grant by what its tool DECLARES, asked as a research leaf's and a
-        # room critic's are (`declared_tool_grant_denial`). An automation's own agent (a
-        # trigger's fire, or its Run now) may also tell the owner something with `notify`, and
-        # nothing more (`owner_notices`): an automation that finds something has to be able to
-        # say so, and a research run changes nothing else.
-        _grant_denial = partial(
-            declared_tool_grant_denial,
-            _tool_profile,
-            owner_notices=bool(info.trigger_id),
-            may_change=info.may_change,
+        # room critic's are, and an automation's own agent may also tell the owner what it found
+        # (`SubagentTier`, which also tallies how the agent's calls came out).
+        tier = SubagentTier(
+            _tool_profile, owner_notices=bool(info.trigger_id), may_change=info.may_change
         )
 
         # 🔴 The grants are enforced in the approval loop below, which sees only the calls that
         # ASK. A native runtime answers an ask itself while a standing grant stands (its policy
         # source says `auto`), so none of its calls reached that loop and a research run's write
-        # tools ran. It is handed the same check, asked before its own approval.
+        # tools ran. It is held to the same tier, asked before its own approval (`tier.hold`).
         native = _is_native(client)
         if _is_native(client):
-            client.set_tool_grants(_grant_denial)
+            tier.hold(client)
         # Each call's input by its id, from the moment it is made to its result: a call its runtime
         # approved from the policy is reported with the input it ran with (`_fire_granted`).
         call_inputs: dict[str, Any] = {}
@@ -2299,6 +2288,7 @@ class SubagentManager:
                 await self._fire_event("subagent_chunk", info, {"text": redacted})
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 asked.add(event.tool_call_id or "")
+                call_id = event.tool_call_id or f"ask:{event.request_id}"
                 turns += 1
                 info.turns = turns
                 info.last_tool = event.title or ""
@@ -2329,7 +2319,7 @@ class SubagentManager:
                 # declares; so a ceiling that narrowed this spawn's tools refuses the rest even for
                 # a MUTATING class. An ACP child's own tool declares nothing, so only its read-only
                 # shell commands pass a `read` grant.
-                _grant_deny = _grant_denial(
+                _grant_deny = tier.refusal(
                     event.title or "",
                     event.risk_level,
                     event.tool_kind,
@@ -2338,6 +2328,7 @@ class SubagentManager:
                     tells_owner=event.tells_owner,
                 )
                 if _grant_deny:
+                    tier.refused(call_id, event.title or "", _grant_deny)
                     await self._reject_and_log(
                         client,
                         event.request_id,
@@ -2358,6 +2349,7 @@ class SubagentManager:
                     event.title, cwd=info.cwd or None
                 )
                 if tool_result.action == TOOL_DENY:
+                    tier.refused(call_id, event.title or "", "a hook blocked it")
                     await self._reject_and_log(
                         client,
                         event.request_id,
@@ -2435,6 +2427,7 @@ class SubagentManager:
                         )
                 else:
                     # No callback, no auto policy — deny by default
+                    tier.refused(call_id, event.title or "", "nobody could approve it")
                     await self._reject_and_log(
                         client,
                         event.request_id,
@@ -2445,6 +2438,7 @@ class SubagentManager:
                     )
                     continue
                 if not decision:
+                    tier.declined(call_id, event.title or "", decision.outcome)
                     await self._reject_and_log(
                         client,
                         event.request_id,
@@ -2482,6 +2476,7 @@ class SubagentManager:
                 )
             elif event.kind == EVENT_TOOL_RESULT:
                 meta = event.tool_meta or {}
+                tier.result(event.tool_call_id or "", event.title or "", meta if native else {})
                 if (event.tool_call_id or "") not in asked:
                     # Nobody was asked, so this is the call's one audit row, from what its runtime
                     # stamped: refused by one of its gates, declined with nobody to ask, answered
@@ -2564,6 +2559,10 @@ class SubagentManager:
             if len(info.result) > 3000:
                 info.result = info.result[:3000]
             evict_completed_agents(self._agents)
+        # Every call refused: it did nothing it was asked, so it ends not done, with why, and its
+        # reply stays its result. Set with `done`, so nothing reads it finished without the reason.
+        couldnt = tier.verdict()
+        info.error = info.error or couldnt
         info.done = True
         self._sessions.record_success(session_key)
         # Fold this child's cost into the run-scoped budget and stop the fan-out
@@ -2571,6 +2570,11 @@ class SubagentManager:
         # one place the per-child cost is known, so the check re-runs after EVERY
         # child rather than once at spawn.
         self._charge_child_and_check_budget(info)
+        if couldnt:
+            Stats().inc_subagent_failed()
+            self._write_tombstone(info, "refused")
+            logger.info("Subagent %s could not do its task: every call was refused", info.id)
+            return
         Stats().inc_subagent_completed()
         logger.info("Subagent %s completed", info.id)
 

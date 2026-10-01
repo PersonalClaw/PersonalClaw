@@ -14,11 +14,19 @@ import { fmtElapsed, isTerminal, nodeLabel, nodeLook, runLook } from '../workflo
 import { TextLink } from '../../ui/TextLink'
 
 // Tools whose result means "a workflow run now exists worth watching". `workflow_start`
-// creates one; `workflow_status`/`workflow_observe` name one the agent inspected, and a
-// user reading that turn wants the live thing, not the frozen text the tool returned.
-const WORKFLOW_TOOLS = new Set(['workflow_start', 'workflow_status', 'workflow_observe'])
+// creates one, and so does `subagent_run` given two or more tasks: they run as one batch run,
+// each task a step whose card says how it ended. `workflow_status`/`workflow_observe` name one
+// the agent inspected, and a user reading that turn wants the live thing, not the frozen text
+// the tool returned.
+const CREATING_TOOLS = new Set(['workflow_start', 'subagent_run'])
+const WORKFLOW_TOOLS = new Set([...CREATING_TOOLS, 'workflow_status', 'workflow_observe'])
 
 export interface WorkflowRunRef { runId: string; created: boolean }
+
+/** The step states a finished run can carry that mean the step did not do its work. */
+const FAILED_STEP_STATES = new Set(['failed', 'scope_violation', 'blocked', 'escalated'])
+/** How many of them a chat card names before it counts the rest: a card is a glance. */
+const FAILED_STEPS_SHOWN = 3
 
 /** Recognize a workflow tool segment and pull the run id out of its output.
  *
@@ -33,7 +41,7 @@ export function workflowRefFromTool(
   if (!toolName || !WORKFLOW_TOOLS.has(toolName) || !output) return null
   const m = output.match(/"run_id"\s*:\s*"([0-9a-f]{6,})"/i)
   if (!m) return null
-  return { runId: m[1], created: toolName === 'workflow_start' }
+  return { runId: m[1], created: CREATING_TOOLS.has(toolName) }
 }
 
 /** Live in-chat progress widget for a workflow run the agent started or inspected.
@@ -139,7 +147,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
       {vm && vm.totalCount > 0 && (
         <div className="flex items-center gap-s">
           <Meter size="thin" className="flex-1" pct={pct}
-            label={`${vm.workflow || 'Workflow'} progress: ${vm.doneCount} of ${vm.totalCount} steps done`} />
+            label={`${vm.workflow || 'Workflow'} progress: ${vm.doneCount} of ${vm.totalCount} steps finished`} />
           <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">
             {vm.doneCount}/{vm.totalCount}
           </span>
@@ -183,6 +191,25 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
       {vm?.error && (atBudget
         ? <p data-type="caption" className="text-on-surface-var">{vm.error}</p>
         : <p role="alert" data-type="caption" className="text-danger">{vm.error}</p>)}
+
+      {/* A run that finished with steps that did not. A batch completes when any of its tasks
+          does, so without this a task whose every call was refused read as done: the card said
+          Completed and nothing else. A run whose ending already names them (`error`) says it there. */}
+      {vm && isTerminal(vm.status) && !vm.error && (() => {
+        const failed = vm.nodes.filter((n) => FAILED_STEP_STATES.has(n.state))
+        if (!failed.length) return null
+        return (
+          <div className="flex flex-col gap-xs">
+            {failed.slice(0, FAILED_STEPS_SHOWN).map((n) => {
+              const line = `${nodeLabel(n)} failed${n.failure?.cause_plain ? `: ${n.failure.cause_plain}` : ''}`
+              return <p key={n.instance_path} data-type="caption" className="truncate text-danger" title={line}>{line}</p>
+            })}
+            {failed.length > FAILED_STEPS_SHOWN && (
+              <p data-type="caption" className="text-on-surface-low">and {failed.length - FAILED_STEPS_SHOWN} more</p>
+            )}
+          </div>
+        )
+      })()}
 
       {/* The currently-interesting node, not the whole list — a chat card is a glance, and
           twenty rows in a message stream is a wall. */}

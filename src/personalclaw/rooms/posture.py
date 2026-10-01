@@ -90,6 +90,7 @@ from personalclaw.guardrails.budgets import (
 )
 from personalclaw.guardrails.ceiling import widening_scopes
 from personalclaw.guardrails.policy import (
+    READ_ONLY_REASON,
     TOOL_CUSTOM,
     TOOL_READ,
     TOOL_TIERS,
@@ -457,13 +458,14 @@ NO_APPROVER_REASON = (
     "to this turn, so there is nobody to ask"
 )
 
-#: Why a member at the ``read`` tier is refused a tool: the room's members panel shows that tier
-#: as "Read-only tools", and this says the same thing about the one call.
-READ_ONLY_REASON = "its tools are read-only, and {tool} is not one of them"
-
 
 def member_tool_refusal(
-    profile: SafetyProfile, tool_name: str, declared: object = "", *, proposes: bool = False
+    profile: SafetyProfile,
+    tool_name: str,
+    declared: object = "",
+    *,
+    proposes: bool = False,
+    tells_owner: bool = False,
 ) -> str:
     """Why a member at *profile* may not use *tool_name* at all, or ``""`` when it may.
 
@@ -472,7 +474,10 @@ def member_tool_refusal(
     says ``""``, so a member is never shown a tool it would be refused, and a call to a tool it was
     not shown is refused for the reason it was not shown. A shell is therefore outside a ``read``
     tier whatever its command: whether a command only reads is a property of one call, and a
-    member shown a shell would be shown every command it can run.
+    member shown a shell would be shown every command it can run. A room grants no member a call
+    that only tells the owner something, so ``tells_owner`` (what the runtime asks an offer about
+    every tool) widens nothing here; the refusal is the room's members panel's own word for the
+    tier, "Read-only tools" (:data:`~personalclaw.guardrails.policy.READ_ONLY_REASON`).
     """
     denial = declared_tool_grant_denial(profile, tool_name, declared, "", None, proposes=proposes)
     if denial and profile.tool_grants == TOOL_READ:

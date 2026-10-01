@@ -403,7 +403,8 @@ SPAWN_RUN_SCHEMA = ToolSchema(
         # A batch item is a plain string OR a leaf-contract object (task + objective +
         # output_format + boundary, which `batch_compile.contract_lint` requires of an N>=2
         # batch). Both shapes are accepted here because the compiler — not the schema — owns
-        # which declarations a batch needs; rejecting objects here would make the contract
+        # which declarations a batch needs, and reads each one by its type
+        # (`batch_compile.leaf_from_item`); rejecting objects here would make the contract
         # unexpressible through the tool that needs it.
         FieldSpec(
             "tasks",

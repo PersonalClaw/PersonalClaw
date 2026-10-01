@@ -238,7 +238,7 @@ def _ctl(status_error: str = "", *, kind: OriginKind = OriginKind.HOOK) -> Any:
 
 def test_a_finished_run_reports_to_its_trigger():
     ctl = _ctl()
-    run_finish.report_to_its_trigger(ctl, RunStatus.COMPLETE)
+    run_finish.report_to_its_trigger(ctl.services, ctl.run, RunStatus.COMPLETE)
     assert ctl.services.report_to_trigger.calls == [
         (TRIGGER_ID, {"error": "", "summary": "", "run_id": "run-7"})
     ]
@@ -254,7 +254,7 @@ def test_a_finished_run_reports_to_its_trigger():
 )
 def test_a_run_that_did_not_finish_says_why(status, message, said):
     ctl = _ctl(message)
-    run_finish.report_to_its_trigger(ctl, status)
+    run_finish.report_to_its_trigger(ctl.services, ctl.run, status)
     assert ctl.services.report_to_trigger.calls == [
         (TRIGGER_ID, {"error": said, "summary": "", "run_id": "run-7"})
     ]
@@ -263,14 +263,14 @@ def test_a_run_that_did_not_finish_says_why(status, message, said):
 @pytest.mark.parametrize("status", [RunStatus.CANCELLED, RunStatus.DECLINED])
 def test_a_run_a_person_stopped_says_nothing(status):
     ctl = _ctl()
-    run_finish.report_to_its_trigger(ctl, status)
+    run_finish.report_to_its_trigger(ctl.services, ctl.run, status)
     assert ctl.services.report_to_trigger.calls == []
 
 
 def test_a_sub_run_is_not_a_triggers():
     """A sub-run's origin names its parent's node in the same field."""
     ctl = _ctl(kind=OriginKind.SUBAGENT_TOOL)
-    run_finish.report_to_its_trigger(ctl, RunStatus.COMPLETE)
+    run_finish.report_to_its_trigger(ctl.services, ctl.run, RunStatus.COMPLETE)
     assert ctl.services.report_to_trigger.calls == []
 
 

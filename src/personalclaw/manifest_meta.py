@@ -770,6 +770,28 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Run one subagent task",
                 "args": {"task": "Summarize the open PRs", "agent": "general-purpose"},
             },
+            {
+                "summary": "Review two things in parallel as one batch",
+                "args": {
+                    "tasks": [
+                        {
+                            "task": "List where src/app/retry.py reads its retry ceiling",
+                            "objective": "find every place the retry ceiling is decided in it",
+                            "output_format": "a numbered list of file:line, one sentence each",
+                            "boundary": "read only: change no file, commit nothing",
+                        },
+                        {
+                            "task": "Run the retry tests in a scratch copy at /tmp/retry-check",
+                            "objective": "show whether the retry tests pass before the change",
+                            "output_format": "each command run, with its last line of output",
+                            "boundary": "work only in the scratch copy, and remove it afterward",
+                            "capability": "mutating",
+                            "writes": ["/tmp/retry-check"],
+                            "off_limits": ["src/"],
+                        },
+                    ]
+                },
+            },
         ],
     },
     "subagent_list": {

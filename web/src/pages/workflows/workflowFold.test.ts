@@ -397,6 +397,16 @@ describe('workflowRefFromTool', () => {
       .toEqual({ runId: 'deadbeef', created: false })
   })
 
+  it('recognizes the batch run a subagent_run of several tasks started', () => {
+    const out = '{"run_id": "5e1a7c20", "status": "running"}\nCompiled 2 tasks into one batch run (5e1a7c20).'
+    expect(workflowRefFromTool('subagent_run', out)).toEqual({ runId: '5e1a7c20', created: true })
+  })
+
+  it('opens no card for a single subagent, which is not a run', () => {
+    expect(workflowRefFromTool('subagent_run', 'Spawned 1 subagent(s). Results will arrive as completion events:\n  ab12cd34: go check the disk'))
+      .toBeNull()
+  })
+
   it('ignores unrelated tools', () => {
     expect(workflowRefFromTool('workflow_manifest', '{"run_id": "a1b2c3d4"}')).toBeNull()
     expect(workflowRefFromTool('bash', '{"run_id": "a1b2c3d4"}')).toBeNull()

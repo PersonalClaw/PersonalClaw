@@ -213,11 +213,11 @@ def _ended(status: RunStatus) -> list:
     from personalclaw.workflows import run_finish
 
     seen: list = []
-    ctl = SimpleNamespace(
-        run=SimpleNamespace(id="9c2c10ab", extra={"summary": "Done."}),
-        services=SimpleNamespace(run_ended=lambda run, **kw: seen.append((run.id, kw))),
+    run_finish.chain_after_run(
+        SimpleNamespace(run_ended=lambda run, **kw: seen.append((run.id, kw))),
+        SimpleNamespace(id="9c2c10ab", extra={"summary": "Done."}),  # type: ignore[arg-type]
+        status,
     )
-    run_finish.chain_after_run(ctl, status)  # type: ignore[arg-type]
     return seen
 
 

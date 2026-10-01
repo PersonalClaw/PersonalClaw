@@ -525,6 +525,105 @@ def declared_tool_grant_denial(
     return tool_grant_denial(profile, tool_name, write_class=not within_read, detail=detail)
 
 
+#: Why a ``read`` tier refuses a tool, in the words the tier is shown by ("Read-only tools"). Never
+#: the grant algebra's own vocabulary ("write-class", a profile's internal name): an agent repeats
+#: the reason it was given to the owner, and those words told her nothing she could act on.
+READ_ONLY_REASON = "its tools are read-only, and {tool} is not one of them"
+
+#: The same for a shell command: a ``read`` tier is shown the shell, and the command decides.
+READ_ONLY_COMMAND_REASON = "its tools are read-only, and this command does more than read"
+
+
+def _reads_at_most(profile: SafetyProfile) -> bool:
+    """Whether *profile*'s tier is ``read``: any tier but the two wider ones, since
+    :func:`tool_grant_denial` reads an unrecognised tier as ``read``."""
+    return str(profile.tool_grants or "").strip() not in (TOOL_CUSTOM, TOOL_READ_WRITE)
+
+
+def offer_refusal(
+    profile: SafetyProfile,
+    tool_name: str,
+    declared: object = "",
+    *,
+    proposes: bool = False,
+    tells_owner: bool = False,
+    owner_notices: bool = False,
+    may_change: tuple[str, ...] = (),
+) -> str:
+    """Why a run held to *profile* is not SHOWN *tool_name* at all, or ``""`` when it is.
+
+    Judged on what the tool declares, before any call: a tool is shown exactly when some call to
+    it can pass :func:`declared_tool_grant_denial`. At a ``read`` tier those are a tool that
+    declares it only reads or only files a proposal; the platform shell, since each command is
+    read before it runs and one that only reads passes; a tool whose call can do nothing but tell
+    the owner something, for a run granted that (``owner_notices``); and a native file write, for
+    a run given files it may change (``may_change``). Anything else could only be refused, so it
+    is not shown, and a call to it by a name the model has from elsewhere is refused by the grant,
+    which a run held to an offer is held to as well (:func:`granted_call_refusal`).
+    """
+    from personalclaw import write_scope
+    from personalclaw.task_modes import declared_level, is_shell_invocation
+
+    grants = str(profile.tool_grants or "").strip()
+    if grants == TOOL_READ_WRITE:
+        return ""
+    if grants == TOOL_CUSTOM:
+        return tool_grant_denial(profile, tool_name, write_class=True)
+    if (
+        proposes
+        or declared_level(declared) == "safe"
+        or is_shell_invocation(tool_name, "", declared)
+        or (owner_notices and tells_owner)
+        or (bool(may_change) and write_scope.writes_a_file(tool_name))
+    ):
+        return ""
+    return READ_ONLY_REASON.format(tool=tool_name or "this tool")
+
+
+def granted_call_refusal(
+    profile: SafetyProfile,
+    tool_name: str,
+    declared: object = "",
+    tool_kind: str = "",
+    tool_input: object = None,
+    *,
+    proposes: bool = False,
+    tells_owner: bool = False,
+    owner_notices: bool = False,
+    may_change: tuple[str, ...] = (),
+) -> str:
+    """:func:`declared_tool_grant_denial` for one call, said the way the tier is shown.
+
+    A ``read`` tier refuses as outside its read-only tools (:data:`READ_ONLY_REASON`), or, for a
+    shell command, as a command that does more than read (:data:`READ_ONLY_COMMAND_REASON`), and
+    names the files the run may change when it was given some. A wider tier's refusal (an
+    allowlist's) is its own sentence, as :func:`tool_grant_denial` words it.
+    """
+    from personalclaw import write_scope
+    from personalclaw.task_modes import is_shell_invocation
+
+    denial = declared_tool_grant_denial(
+        profile,
+        tool_name,
+        declared,
+        tool_kind,
+        tool_input,
+        proposes=proposes,
+        tells_owner=tells_owner,
+        owner_notices=owner_notices,
+        may_change=may_change,
+    )
+    if not denial or not _reads_at_most(profile):
+        return denial
+    if is_shell_invocation(tool_name, tool_kind, declared):
+        said = READ_ONLY_COMMAND_REASON
+    else:
+        said = READ_ONLY_REASON.format(tool=tool_name or "this tool")
+    if may_change:
+        said += f" — this run may change only {write_scope.sentence(may_change)}"
+    return said
+
+
 @contextmanager
 def tool_grants_held(runtime: object, profile: SafetyProfile) -> Iterator[bool]:
     """Hold *runtime*'s tool calls to *profile*'s tool grants for the turn run inside, then give

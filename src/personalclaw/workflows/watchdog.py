@@ -41,7 +41,7 @@ from typing import Any
 
 from personalclaw import concurrency, shutdown_event
 from personalclaw.cancellation import cancel_and_wait
-from personalclaw.workflows import containers, overlap, store
+from personalclaw.workflows import containers, overlap, run_finish, store
 from personalclaw.workflows.coalescer import EventCoalescer
 from personalclaw.workflows.controller import _ROOT_TO_RUN, EngineServices, RunController
 from personalclaw.workflows.models import (
@@ -561,6 +561,10 @@ class WorkflowWatchdog:
         run.completed_at = run.completed_at or _now()
         store.save(run)
         logger.info("workflow watchdog reaped orphaned run %s → %s", run.id, status.value)
+        # Ended without a controller, so without `_finish`: its trigger, and what waits on it,
+        # hear here how it ended.
+        run_finish.report_to_its_trigger(self._services, run, status)
+        run_finish.chain_after_run(self._services, run, status)
         return True
 
     async def _honor_cancel(self, run: WorkflowRun) -> None:
@@ -602,12 +606,10 @@ class WorkflowWatchdog:
         run.completed_at = run.completed_at or _now()
         store.save(run)
         logger.warning("workflow run %s failed: %s", run.id, reason)
-        # Ended without a controller, so without `_finish`: what waits on the run hears here, as
-        # it does from `run_finish.chain_after_run`.
-        ended = getattr(self._services, "run_ended", None)
-        if ended is not None:
-            with contextlib.suppress(Exception):
-                ended(run, status=RunStatus.FAILED.value, summary="")
+        # Ended without a controller, so without `_finish`: its trigger, and what waits on it,
+        # hear here that it failed and why.
+        run_finish.report_to_its_trigger(self._services, run, RunStatus.FAILED)
+        run_finish.chain_after_run(self._services, run, RunStatus.FAILED)
 
 
 def _now() -> str:

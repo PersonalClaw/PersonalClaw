@@ -44,9 +44,22 @@ collisions — it is coordination data between leaves. `boundary` is a NEGATIVE 
 this leaf must not touch) and exists for the WORKER — it is instruction content, the active
 ingredient the evidence points at. They are duals, not complements: an empty `writes` does not mean
 "the boundary is everything", and a boundary says nothing about what the rest of the tree may
-receive. They meet in exactly one place — a leaf that declares a write INSIDE its own boundary has
-declared it will do the thing it declared it must not do, which is a contradiction only the author
-can resolve, so the compile refuses it (`boundary_contradicts_writes`).
+receive.
+
+**The boundary has two parts, and only one of them is compared.** `boundary` is prose, and prose
+cannot say which of the paths it names are fenced: "work only inside the temporary copy
+/tmp/review-copy" names the one folder the leaf is told to write. So the paths a leaf must not
+write are declared as paths (`off_limits`), and they ride into the prompt beside the prose. That
+is where `writes` and the boundary meet, in exactly one place — a leaf that declares a write INSIDE
+a path it declared off limits has declared it will do the thing it declared it must not do, which
+is a contradiction only the author can resolve, so the compile refuses it
+(`boundary_contradicts_writes`). The prose is never searched for paths.
+
+**A leaf is read by the types its contract declares** (:func:`leaf_from_item`). A model sends the
+contract as the tool's schema shows it, and sends it loosely: a list as JSON text, one path as a
+string. One path sent as text is a one-item list and never the characters of a string; a list sent
+as JSON text is that list; a value of any other type, a capability that is not one of the two, and
+a key the contract does not have are refused, naming the field and the shape it takes.
 
 **Homogeneous by default, heterogeneous by MODEL only (amendment (a)).** A leaf inherits the
 parent's agent binding unless it pins one, and may pin a different `model` — the single measured
@@ -178,6 +191,23 @@ MIN_DECLARATION_CHARS = 12
 
 
 @dataclass
+class LintFinding:
+    """One compile-time finding.
+
+    `severity` matters: a `warn` compiles and renders in review, an `error` refuses. The
+    distinction is
+    what keeps the lint from being either ignorable or obstructive.
+    """
+
+    code: str
+    severity: str  # warn | error
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"code": self.code, "severity": self.severity, "message": self.message}
+
+
+@dataclass
 class LeafTask:
     """One leaf's CONTRACT — the load-bearing artifact of a fan-out (amendment (b)).
 
@@ -218,9 +248,16 @@ class LeafTask:
     #: : collision it was told about, and an inferred path list would produce confident
     #: false warnings.
     writes: list[str] = field(default_factory=list)
+    #: Paths this leaf must not write: the boundary's half the compiler compares with `writes`
+    #: (module docstring). Rides into the prompt beside the prose `boundary`.
+    off_limits: list[str] = field(default_factory=list)
     #: The MECHANICAL half of `output_format`, compiled into the engine's `output_contract`.
     output_schema: dict[str, Any] | None = None
     timeout_secs: int = DEFAULT_LEAF_TIMEOUT_SECS
+    #: What the item this leaf was read from declared that the contract could not read
+    #: (:func:`leaf_from_item`): a value of the wrong type, or a key the contract does not have.
+    #: Each refuses the compile, so a leaf is never run on a declaration it silently dropped.
+    unreadable: list[LintFinding] = field(default_factory=list)
 
     def node_id(self, index: int) -> str:
         """A stable, readable node id.
@@ -248,6 +285,8 @@ class LeafTask:
             f"Required output format: {self.output_format.strip()}",
             f"Boundary — do NOT touch: {self.boundary.strip()}",
         ]
+        if self.off_limits:
+            parts.append(f"Do NOT write anything under: {', '.join(self.off_limits)}")
         if self.output_schema:
             # The literal schema, so the worker is held to the SAME shape `check_output_contract`
             # will hold it to. A paraphrase would let the two drift, and the worker would satisfy
@@ -256,21 +295,212 @@ class LeafTask:
         return "\n\n".join(parts)
 
 
-@dataclass
-class LintFinding:
-    """One compile-time finding.
+#: The keys a batch item may carry, each as the tool's input schema shows it to a model, in the
+#: order it reads them (:func:`leaf_item_schema`). One table for the reader (:func:`leaf_from_item`)
+#: and the schema, so the contract a model is shown is the contract the compile reads. `model` is
+#: the item's name for `LeafTask.model_ref`; `output_schema` is free-form, so it travels as JSON
+#: text (the portable tool-schema profile has no form for a free-form object).
+LEAF_DECLARATIONS: dict[str, dict[str, Any]] = {
+    "task": {
+        "type": "string",
+        "description": "What this subagent does, in full: it does not see this conversation.",
+    },
+    "objective": {
+        "type": "string",
+        "description": f"What the task is for, in at least {MIN_DECLARATION_CHARS} characters.",
+    },
+    "output_format": {
+        "type": "string",
+        "description": (
+            f"The shape its answer takes, in at least {MIN_DECLARATION_CHARS} characters."
+        ),
+    },
+    "boundary": {
+        "type": "string",
+        "description": (
+            "What it must not touch, as it is told, in at least "
+            f"{MIN_DECLARATION_CHARS} characters. Prose: it fences nothing by itself."
+        ),
+    },
+    "off_limits": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Paths it must not write. A write declared inside one is refused.",
+    },
+    "capability": {
+        "type": "string",
+        "enum": [c.value for c in Capability],
+        "description": (
+            "research (the default): it may only read, and runs only shell commands that only "
+            "read. mutating: it may change things, and mutating tasks run one at a time."
+        ),
+    },
+    "writes": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Paths a mutating task will write, so two tasks never write one at once.",
+    },
+    "agent": {
+        "type": "string",
+        "description": "The agent it runs as; subagent_list names them. Default: yours.",
+    },
+    "model": {"type": "string", "description": "The model it runs on. Default: yours."},
+    "output_schema": {
+        "type": "string",
+        "description": "A JSON schema its answer must satisfy, as JSON text.",
+    },
+}
 
-    `severity` matters: a `warn` compiles and renders in review, an `error` refuses. The
-    distinction is
-    what keeps the lint from being either ignorable or obstructive.
+
+def leaf_item_schema() -> dict[str, Any]:
+    """The input schema of one batch item: the contract :func:`leaf_from_item` reads."""
+    return {
+        "type": "object",
+        "properties": {name: dict(spec) for name, spec in LEAF_DECLARATIONS.items()},
+        "required": ["task", *_REQUIRED_DECLARATIONS],
+    }
+
+
+#: The declarations that are text.
+_TEXT_DECLARATIONS = ("task", "objective", "output_format", "boundary", "agent", "model")
+
+
+def _type_name(value: object) -> str:
+    return "a list" if isinstance(value, list) else f"{type(value).__name__}"
+
+
+def _paths(name: str, value: object, unreadable: list[LintFinding]) -> list[str]:
+    """A path-list declaration by its type: a list of text is its non-blank entries, a list sent as
+    JSON text is that list, and one path sent as text is a one-item list. Any other value is
+    refused into *unreadable*, so it is never iterated as though it were the list."""
+    from personalclaw.validation import decode_json_text
+
+    if value is None:
+        return []
+    if isinstance(value, str):
+        decoded = decode_json_text(value)
+        value = decoded if isinstance(decoded, list) else [value]
+    if isinstance(value, list) and all(isinstance(entry, str) for entry in value):
+        return [entry.strip() for entry in value if entry.strip()]
+    unreadable.append(
+        LintFinding(
+            code="leaf_declaration_type",
+            severity="error",
+            message=(
+                f"declares {name} as {_type_name(value)}: {name} is a list of paths, "
+                'e.g. ["/tmp/out"]'
+            ),
+        )
+    )
+    return []
+
+
+def leaf_from_item(item: object, *, agent: str = "") -> LeafTask:
+    """One `tasks[]` item of `subagent_run` as a `LeafTask`, each declaration read by its type.
+
+    A plain string is a task with no contract. An object is a contract: its text declarations must
+    be text, `writes` and `off_limits` are lists of paths (:func:`_paths`), `capability` is one of
+    the two `Capability` values (absent: research, the safe direction to be wrong in), and
+    `output_schema` is an object or its JSON text. What it declares that the contract cannot read
+    — a value of another type, or a key the contract does not have — is kept on the leaf
+    (`LeafTask.unreadable`), and the compile refuses it.
+
+    Missing declarations are passed through EMPTY rather than defaulted: `contract_lint` exists
+    to refuse an under-specified leaf, and a synthesized objective would satisfy the gate without
+    satisfying the requirement — the exact failure the contract was written to prevent.
     """
+    from personalclaw.validation import decode_json_text
 
-    code: str
-    severity: str  # warn | error
-    message: str
+    spec: dict[str, Any] = item if isinstance(item, dict) else {"task": item}
+    unreadable: list[LintFinding] = []
 
-    def to_dict(self) -> dict[str, Any]:
-        return {"code": self.code, "severity": self.severity, "message": self.message}
+    unknown = [str(key) for key in spec if key not in LEAF_DECLARATIONS]
+    if unknown:
+        unreadable.append(
+            LintFinding(
+                code="leaf_declaration_unknown",
+                severity="error",
+                message=(
+                    f"declares {', '.join(repr(k) for k in unknown)}, which a leaf contract does "
+                    f"not have — it takes: {', '.join(LEAF_DECLARATIONS)}"
+                ),
+            )
+        )
+
+    text: dict[str, str] = {}
+    for name in _TEXT_DECLARATIONS:
+        value = spec.get(name)
+        if value is None or isinstance(value, str):
+            text[name] = (value or "").strip() if name == "task" else value or ""
+            continue
+        text[name] = ""
+        unreadable.append(
+            LintFinding(
+                code="leaf_declaration_type",
+                severity="error",
+                message=f"declares {name} as {_type_name(value)}: {name} is text",
+            )
+        )
+
+    raw_capability = spec.get("capability")
+    capability = Capability.RESEARCH
+    if raw_capability not in (None, ""):
+        word = raw_capability.strip().lower() if isinstance(raw_capability, str) else None
+        if word in {c.value for c in Capability}:
+            capability = Capability(word)
+        else:
+            unreadable.append(
+                LintFinding(
+                    code="leaf_declaration_type",
+                    severity="error",
+                    message=(
+                        f"declares capability {raw_capability!r}: capability is "
+                        f"{' or '.join(c.value for c in Capability)}"
+                    ),
+                )
+            )
+
+    schema = decode_json_text(spec.get("output_schema"))
+    if schema is not None and not isinstance(schema, dict):
+        unreadable.append(
+            LintFinding(
+                code="leaf_declaration_type",
+                severity="error",
+                message=(
+                    f"declares output_schema as {_type_name(schema)}: output_schema is a JSON "
+                    "schema object"
+                ),
+            )
+        )
+        schema = None
+
+    return LeafTask(
+        task=text["task"],
+        objective=text["objective"],
+        output_format=text["output_format"],
+        boundary=text["boundary"],
+        agent=text["agent"] or agent or "",
+        model_ref=text["model"],
+        capability=capability,
+        writes=_paths("writes", spec.get("writes"), unreadable),
+        off_limits=_paths("off_limits", spec.get("off_limits"), unreadable),
+        output_schema=schema or None,
+        unreadable=unreadable,
+    )
+
+
+def declaration_lint(leaves: list[LeafTask]) -> list[LintFinding]:
+    """Refuse a leaf whose item declared something its contract could not read
+    (:func:`leaf_from_item`), named by the leaf it belongs to."""
+    return [
+        LintFinding(
+            code=finding.code,
+            severity=finding.severity,
+            message=f"leaf {leaf.node_id(index)!r} {finding.message}",
+        )
+        for index, leaf in enumerate(leaves)
+        for finding in leaf.unreadable
+    ]
 
 
 def schema_to_contract(schema: dict[str, Any] | None) -> dict[str, Any]:
@@ -456,42 +686,33 @@ def contract_lint(leaves: list[LeafTask]) -> list[LintFinding]:
     return findings
 
 
-def _within_boundary(path: str, boundary: str) -> bool:
-    """Whether a declared write path falls inside a declared boundary.
+def _normalized(path: str) -> str:
+    """A declared path as the boundary check compares it: no edge slashes, `.`/`..` folded."""
+    text = path.strip().strip("/")
+    folded = posixpath.normpath(text) if text else ""
+    return "" if folded == "." else folded
 
-    Path-shaped comparison, not substring: `writes=["reports/x.md"]` against
-    `boundary="report"` is NOT a contradiction (different directory), and a naive `in` would call it
-    one — a false error on a legitimate fan-out is how a gate gets disabled. Only tokens that LOOK
-    like paths are compared, because a boundary is usually prose ("the production database") and
-    prose has no path semantics to match against.
-    """
-    target = posixpath.normpath(path.strip().strip("/")) if path.strip() else ""
-    if not target or target == ".":
-        return False
-    for token in re.split(r"[\s,;]+", boundary):
-        candidate = token.strip().strip("'\"`()[]").rstrip(".")
-        if "/" not in candidate and "." not in candidate:
-            # Not path-shaped: a prose word. Comparing it would match on coincidence.
-            continue
-        fence = posixpath.normpath(candidate.strip("/")) if candidate else ""
-        if not fence or fence == ".":
-            continue
-        if target == fence or target.startswith(f"{fence}/"):
-            return True
-    return False
+
+def _inside(path: str, fence: str) -> bool:
+    """Whether *path* is *fence* or under it. Path-shaped, not a substring: `reports/x.md` is not
+    inside `report`, and a false error on a legitimate fan-out is how a gate gets disabled."""
+    target, root = _normalized(path), _normalized(fence)
+    return bool(target and root) and (target == root or target.startswith(f"{root}/"))
 
 
 def boundary_lint(leaves: list[LeafTask]) -> list[LintFinding]:
-    """Refuse a leaf that declares a write INSIDE its own boundary.
+    """Refuse a leaf that declares a write INSIDE a path it declared off limits.
 
-    The one place `writes` and `boundary` meet (module docstring): they are duals, so most leaves
-    trip nothing here. But a leaf saying "I will write `db/schema.sql`" and "do not touch `db/`" has
-    declared it will do the thing it declared it must not do, and compiling it picks one of the two
-    meanings silently — the author is the only one who knows which.
+    The one place `writes` and the boundary meet (module docstring): most leaves trip nothing
+    here. But a leaf saying "I will write `db/schema.sql`" and "do not write under `db/`" has
+    declared it will do the thing it declared it must not do, and compiling it picks one of the
+    two meanings silently — the author is the only one who knows which.
     """
     findings: list[LintFinding] = []
     for index, leaf in enumerate(leaves):
-        inside = [p for p in leaf.writes if _within_boundary(str(p), leaf.boundary)]
+        inside = [
+            str(p) for p in leaf.writes if any(_inside(str(p), fence) for fence in leaf.off_limits)
+        ]
         if inside:
             findings.append(
                 LintFinding(
@@ -499,9 +720,9 @@ def boundary_lint(leaves: list[LeafTask]) -> list[LintFinding]:
                     severity="error",
                     message=(
                         f"leaf {leaf.node_id(index)!r} declares writes to "
-                        f"{', '.join(sorted(inside))} but its boundary excludes them "
-                        "— narrow the boundary or drop the writes; compiling it would pick one "
-                        "of the two meanings silently"
+                        f"{', '.join(sorted(inside))} but declares them off limits "
+                        f"({', '.join(leaf.off_limits)}) — narrow off_limits or drop the writes; "
+                        "compiling it would pick one of the two meanings silently"
                     ),
                 )
             )
@@ -688,6 +909,7 @@ def compile_batch(
                 ),
             )
         )
+    findings.extend(declaration_lint(leaves))
     findings.extend(contract_lint(leaves))
     findings.extend(capability_lint(leaves))
     findings.extend(boundary_lint(leaves))

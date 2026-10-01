@@ -1977,7 +1977,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         # The host's tool grants (`set_tool_grants`), for the same reason: an approval the policy
         # answers here must not admit a tool the run was never granted.
-        if self._tool_grants is not None and tool_name not in self._META_TOOLS:
+        if self._tool_grants is not None and tool_name not in self.META_TOOLS:
             try:
                 grant_deny = self._tool_grants(
                     tool_name,
@@ -2016,7 +2016,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         # A tool this agent does not have (it was never offered, or it is switched off) is refused
         # before anything asks you about it: allowing the call could run nothing.
-        if tool_name not in self._tool_index and tool_name not in self._META_TOOLS:
+        if tool_name not in self._tool_index and tool_name not in self.META_TOOLS:
             return self._unknown_tool(tool_name, meta)
         if (gone := self._no_longer_offered(tool_name, meta)) is not None:
             return gone
@@ -2056,7 +2056,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         ``name`` is neither a real tool nor a runtime meta-tool do we fall back
         to the sanitized(real)->real map (unique names only). Any miss returns
         ``name`` unchanged so the existing "unknown tool" error still fires."""
-        if name in self._tool_index or name in self._META_TOOLS:
+        if name in self._tool_index or name in self.META_TOOLS:
             return name
         return self._tool_sanitized_index.get(name, name)
 
@@ -2207,8 +2207,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     # Synthetic runtime meta-tools (not in _tool_defs): pure, side-effect-free
     # discovery answered by the runtime itself → never gated, never dispatched to a
     # provider. Without this they fall through to the `return True` default and the
-    # loop parks on the approval gate forever.
-    _META_TOOLS = frozenset({"tool_search", "tool_schema", "reset_tools"})
+    # loop parks on the approval gate forever. Public: a run's host counts them as no work.
+    META_TOOLS = frozenset({"tool_search", "tool_schema", "reset_tools"})
 
     def _declared(self, tool_name: str) -> RiskLevel:
         """What *tool_name* declares a call does. A tool this runtime has no definition for
@@ -2245,7 +2245,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     def _asks_first(self, tool_name: str) -> bool:
         """Whether the tool asks before it runs by its own definition, before the session's
         approval policy is consulted."""
-        if tool_name in self._META_TOOLS:
+        if tool_name in self.META_TOOLS:
             return False
         for t in self._tool_defs:
             if t.name == tool_name:
@@ -2616,10 +2616,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         return self._tool_grants
 
     def set_tool_offer(self, offer: Callable[..., str] | None) -> None:
-        """Set which tools this run's model is shown: ``offer(tool, declared, proposes=...)`` is
-        why a tool is not, ``""`` if it is. A tool it is not shown is left out of the tool block,
-        the deferred catalog, ``tool_search`` and ``tool_schema``, so the model is never handed a
-        tool the run would refuse.
+        """Set which tools this run's model is shown: ``offer(tool, declared, proposes=...,
+        tells_owner=...)`` is why a tool is not, ``""`` if it is. A tool it is not shown is left out
+        of the tool block, the deferred catalog, ``tool_search`` and ``tool_schema``, so the model
+        is never handed a tool the run would refuse.
 
         Only what is SHOWN: a call to a tool by a name the model has from elsewhere is still
         decided by :meth:`set_tool_grants`, which a host that narrows the offer holds too.
@@ -2634,12 +2634,12 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     def _offered(self, tool_name: str) -> bool:
         """Whether this run's model is shown *tool_name* (:meth:`set_tool_offer`). The runtime's
         own meta-tools always are; an offer that cannot be read shows nothing else."""
-        if self._tool_offer is None or tool_name in self._META_TOOLS:
+        if self._tool_offer is None or tool_name in self.META_TOOLS:
             return True
         try:
-            return not self._tool_offer(
-                tool_name, self._declared(tool_name), proposes=tool_name in self._tool_proposes
-            )
+            declared, proposes = self._declared(tool_name), tool_name in self._tool_proposes
+            tells = bool(self._tool_tells_owner.get(tool_name))  # calls that only tell the owner
+            return not self._tool_offer(tool_name, declared, proposes=proposes, tells_owner=tells)
         except Exception:  # noqa: BLE001 - an offer that cannot be read shows nothing
             logger.warning("native: tool offer could not be read; not showing %s", tool_name)
             return False

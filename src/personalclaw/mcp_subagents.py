@@ -11,6 +11,7 @@ so a spawn's completions inject back into the parent session — plus ``_get`` /
 is owned by ``mcp_core`` and reused here.
 """
 
+import json
 import re
 import time
 from typing import Any
@@ -18,7 +19,7 @@ from typing import Any
 from personalclaw.mcp_core import _get, _post, _resolve_session_key
 from personalclaw.tool_providers.base import tool_failure
 from personalclaw.workflows import batch_compile
-from personalclaw.workflows.batch_compile import Capability, LeafTask
+from personalclaw.workflows.batch_compile import LeafTask
 
 
 def _wf_depth() -> int:
@@ -54,27 +55,9 @@ def _leaf_specs(tasks: list[Any]) -> list[tuple[str, dict[str, Any]]]:
 
 
 def _to_leaf(text: str, spec: dict[str, Any], agent: str) -> LeafTask:
-    """One `tasks[]` item as a `LeafTask`.
-
-    Missing declarations are passed through EMPTY rather than defaulted: `contract_lint` exists
-    to refuse an under-specified leaf, and a synthesized objective would satisfy the gate without
-    satisfying the requirement — the exact failure the contract was written to prevent.
-    """
-    raw_capability = str(spec.get("capability", "") or "").strip().lower()
-    capability = Capability.MUTATING if raw_capability == "mutating" else Capability.RESEARCH
-    writes = [str(w) for w in (spec.get("writes") or []) if str(w).strip()]
-    schema = spec.get("output_schema")
-    return LeafTask(
-        task=text,
-        objective=str(spec.get("objective", "") or ""),
-        output_format=str(spec.get("output_format", "") or ""),
-        boundary=str(spec.get("boundary", "") or ""),
-        agent=str(spec.get("agent", "") or agent or ""),
-        model_ref=str(spec.get("model", "") or ""),
-        capability=capability,
-        writes=writes,
-        output_schema=schema if isinstance(schema, dict) else None,
-    )
+    """One `tasks[]` item as a `LeafTask`, each declaration read by its type
+    (`batch_compile.leaf_from_item`): a plain string item is its text, an object its contract."""
+    return batch_compile.leaf_from_item(spec or text, agent=agent)
 
 
 #: Compiled-batch def names are minted per call and must satisfy `models.valid_name` (lowercase,
@@ -95,7 +78,8 @@ def _findings_report(result: batch_compile.CompileResult) -> str:
         "\nPass each item of 'tasks' as an object with 'task', 'objective', 'output_format' "
         "and 'boundary' (each declaration at least "
         f"{batch_compile.MIN_DECLARATION_CHARS} characters), plus 'capability' and 'writes' "
-        "when the leaf mutates."
+        "(a list of paths) when the leaf mutates, and 'off_limits' (a list of paths) for what "
+        "it must not write."
     )
     return tool_failure("\n".join(lines))
 
@@ -156,8 +140,11 @@ def _run_compiled_batch(
     run_id = str(started.get("run_id", "") or "")
 
     lines = [
-        f"Compiled {len(leaves)} tasks into one batch run ({run_id or 'pending'}).",
-        "Progress is a live widget; each branch is individually retryable.",
+        # As JSON, the shape every workflow tool returns its run in: the chat reads the run id out
+        # of it to show the batch's live progress card, each leaf a step with how it ended.
+        json.dumps({"run_id": run_id, "status": "running"}),
+        f"Compiled {len(leaves)} tasks into one batch run ({run_id or 'pending'}); each branch "
+        "is individually retryable.",
     ]
     for index, leaf in enumerate(leaves):
         node_id = leaf.node_id(index)
@@ -170,7 +157,12 @@ def _run_compiled_batch(
     for finding in warnings:
         lines.append(f"  [warn] {finding.code}: {finding.message}")
     if parent_session:
-        lines.append("\nResults arrive as completion events in this session.")
+        lines.append(
+            "\nIts results are not sent to this conversation. Wait for it with "
+            "workflow_observe(run_id), then read each branch's outcome with "
+            "workflow_status(run_id): a branch whose every tool call was refused ends failed, "
+            "saying why."
+        )
     return "\n".join(lines)
 
 
@@ -180,11 +172,13 @@ def _list_tools() -> list[dict[str, Any]]:
             "name": "subagent_run",
             "annotations": {"readOnlyHint": False},
             "description": (
-                "Spawn subagent(s) to run tasks in the background. "
-                "Returns immediately — results arrive as [Subagent completion event] "
-                "messages in your conversation. For parallel work, use 'tasks' array. "
-                "Tasks are automatically batched if they exceed the concurrency limit. "
-                "WAIT for all completion events before responding to the user."
+                "Spawn subagent(s) to run tasks in the background. One task ('task') returns "
+                "at once, and its result arrives as a [Subagent completion event] message in "
+                "your conversation: WAIT for it before responding to the user. Two or more "
+                "('tasks') run in parallel as one batch run, each task a contract the batch is "
+                "checked against before it starts. A batch's results are not sent to this "
+                "conversation: wait with workflow_observe and read them with workflow_status, "
+                "on the run_id it returns. More tasks than may run at once wait their turn."
             ),
             "inputSchema": {
                 "type": "object",
@@ -195,8 +189,12 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "tasks": {
                         "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Multiple tasks to run in parallel",
+                        "items": batch_compile.leaf_item_schema(),
+                        "description": (
+                            "Two or more tasks to run in parallel as one batch, each an object: "
+                            "what to do, what it is for, the shape of its answer and what it "
+                            "must not touch."
+                        ),
                     },
                     "agent": {
                         "type": "string",

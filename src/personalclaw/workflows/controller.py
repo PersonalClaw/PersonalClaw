@@ -2220,8 +2220,8 @@ class RunController:
             if status == RunStatus.COMPLETE:
                 run_finish.revise_project_overview(self)
             run_finish.capture_run_end(self)
-            run_finish.report_to_its_trigger(self, status)
-            run_finish.chain_after_run(self, status)
+            run_finish.report_to_its_trigger(self.services, self.run, status)
+            run_finish.chain_after_run(self.services, self.run, status)
         self._publish("workflow_run_update", {"status": status.value, "error": error})
         if status in TERMINAL_RUN_STATUSES:
             await run_finish.drain_overlap_queue(self)

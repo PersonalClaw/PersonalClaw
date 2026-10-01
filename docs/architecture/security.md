@@ -489,6 +489,16 @@ from nothing else except a shell command's own text:
   arguments must be ones the tool takes, and on kiro-cli, whose shell calls share the title shape,
   only a destructive declaration is taken. An ACP kind never admits a call; it only decides whether
   an ungated one stops the turn (`REPORTED_READ_KINDS`).
+- **A `read` grant is shown only what it can run.** A research subagent on PersonalClaw's own loop
+  is offered exactly the tools some call to which the grant admits (`guardrails.policy.
+  offer_refusal`): declared reads, proposals, the platform `bash` (each command screened as above),
+  a notice to the owner for an automation's agent, and a file write into the files an automation
+  was given. A call to any other tool, by a name the model has from elsewhere, is refused before
+  any approval as outside its read-only tools, and a shell command that does more than read is
+  refused the same way (`granted_call_refusal`). A room member's `read` tier is stricter: it is
+  not shown the shell (`rooms.posture.member_tool_refusal`). A subagent whose every call was
+  refused did nothing it was asked, so it ends not done, naming the tools and why
+  (`subagent_tier.refused_every_call`), and the workflow step it ran for fails as a refusal.
 
 ## Governance ceiling (`guardrails/ceiling.py`)
 

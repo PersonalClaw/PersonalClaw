@@ -536,7 +536,9 @@ start you declined is `declined` (`SubagentInfo.declined`, mapped to
 `skipped_gate`): your own decision, so it sends no note and never reads as a
 failure. A workflow run reports the same way from its
 terminal write (`workflows/run_finish.report_to_its_trigger`, wired as
-`EngineServices.report_to_trigger`) and links to the run; a run that was
+`EngineServices.report_to_trigger`) and links to the run, including the two
+endings the workflow watchdog writes with no controller: a run whose spec cannot
+be read, and one whose steps all ended while nothing drove it. A run that was
 cancelled or declined says nothing, since whoever stopped it knows. A Run now
 that starts either reports the same way. A spawn the subagent manager refuses on
 the spot (low memory, an incident, the day's budget) is the fire's own failure

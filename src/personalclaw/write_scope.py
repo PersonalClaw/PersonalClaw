@@ -86,6 +86,11 @@ def scope(writes: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(_real(entry) for entry in writes if entry))
 
 
+def writes_a_file(tool_name: str) -> bool:
+    """Whether *tool_name* is one of the native file writes a scope can admit a call to."""
+    return tool_name in _FILE_WRITES
+
+
 def admits(tool_name: str, tool_input: Any, allowed: Iterable[str]) -> bool:
     """Whether a call is a file write into one of *allowed* (:func:`scope`'s real paths).
 

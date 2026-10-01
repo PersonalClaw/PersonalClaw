@@ -132,11 +132,19 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         inst.tokens = usage.billable()
         ctl.run.total_tokens += inst.tokens
         if error:
+            from personalclaw.subagent_tier import couldnt_do_it
+
             failure = Failure(
-                # The manager reaps on its OWN deadline, so a reaped child is a timeout.
-                # Anything else it reports is an execution fault: filing that as TIMEOUT
-                # would tell the user to raise a limit that was never the problem.
-                failure_class=FailureClass.TIMEOUT if reaped else FailureClass.INTERNAL,
+                # The manager reaps on its OWN deadline, so a reaped child is a timeout. A child
+                # whose every tool call was refused did nothing it was asked, for want of tools
+                # (`subagent_tier.couldnt_do_it`): retrying it under the same tools reaches the
+                # same refusals. Anything else it reports is an execution fault: filing that as
+                # TIMEOUT would tell the user to raise a limit that was never the problem.
+                failure_class=(
+                    FailureClass.TIMEOUT
+                    if reaped
+                    else FailureClass.PERMISSION if couldnt_do_it(error) else FailureClass.INTERNAL
+                ),
                 # The manager's own sentence, verbatim — it carries the elapsed time and
                 # the deadline that was crossed, which a re-worded message would drop.
                 cause_plain=error,
@@ -144,7 +152,12 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
                     "the subagent was force-killed after exceeding its deadline; raise the "
                     "subagent timeout, or split this stage into smaller steps"
                     if reaped
-                    else "check the subagent's transcript for the failing turn"
+                    else (
+                        "give this step the tools its task needs (a read-only step runs only "
+                        "what reads), or narrow its task to what its tools can do"
+                        if couldnt_do_it(error)
+                        else "check the subagent's transcript for the failing turn"
+                    )
                 ),
                 recoverable=True,
             )

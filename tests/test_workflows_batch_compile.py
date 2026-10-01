@@ -339,16 +339,16 @@ def test_OFF_FORMAT_leaf_output_is_CAUGHT_by_the_engines_own_validator():
 
 
 def test_a_leaf_writing_INSIDE_its_own_boundary_is_refused():
-    """The one place `writes` and `boundary` meet. A leaf saying "I will write db/schema.sql" and
-    "do not touch db/" has declared it will do the thing it declared it must not do, and compiling
-    it picks one of the two meanings silently."""
+    """The one place `writes` and the boundary meet. A leaf saying "I will write db/schema.sql" and
+    "do not write under db/" has declared it will do the thing it declared it must not do, and
+    compiling it picks one of the two meanings silently."""
     result = compile_batch(
         [
             leaf(
                 "a",
                 capability=Capability.MUTATING,
                 writes=["db/schema.sql"],
-                boundary="anything under db/ is off limits",
+                off_limits=["db/"],
             ),
             leaf("b"),
         ]
@@ -366,7 +366,7 @@ def test_writes_OUTSIDE_the_boundary_are_fine():
                 "a",
                 capability=Capability.MUTATING,
                 writes=["out/report.md"],
-                boundary="anything under db/ is off limits",
+                off_limits=["db/"],
             )
         ]
     )
@@ -374,16 +374,16 @@ def test_writes_OUTSIDE_the_boundary_are_fine():
 
 
 def test_the_boundary_check_is_PATH_shaped_not_a_substring_match():
-    """`writes=["reports/x.md"]` against a boundary mentioning the word "report" is a DIFFERENT
-    directory, and a naive `in` would call it a contradiction. A gate that cries wolf on a
-    legitimate fan-out is a gate that gets switched off."""
+    """`writes=["reports/x.md"]` against an off-limits `report` is a DIFFERENT directory, and a
+    naive `in` would call it a contradiction. A gate that cries wolf on a legitimate fan-out is a
+    gate that gets switched off."""
     findings = boundary_lint(
         [
             leaf(
                 "a",
                 capability=Capability.MUTATING,
                 writes=["reports/x.md"],
-                boundary="do not touch the production report pipeline",
+                off_limits=["report"],
             )
         ]
     )
@@ -397,11 +397,27 @@ def test_a_boundary_naming_a_PARENT_directory_still_catches_the_write():
                 "a",
                 capability=Capability.MUTATING,
                 writes=["src/personalclaw/engine.py"],
-                boundary="never write under src/",
+                off_limits=["src/"],
             )
         ]
     )
     assert [f.code for f in findings] == ["boundary_contradicts_writes"]
+
+
+def test_the_boundary_PROSE_is_never_read_as_a_fence():
+    """Prose cannot say which paths it fences: "never write under src/" and "work only inside
+    src/" name the same path. Only `off_limits` is compared, so the prose fences nothing."""
+    findings = boundary_lint(
+        [
+            leaf(
+                "a",
+                capability=Capability.MUTATING,
+                writes=["src/personalclaw/engine.py"],
+                boundary="never write under src/",
+            )
+        ]
+    )
+    assert findings == []
 
 
 # ── Capability enforcement, homogeneity, and the model pin (amendment (a)/(c)) ──

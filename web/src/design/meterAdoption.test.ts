@@ -140,7 +140,7 @@ describe('the determinate progress primitive', () => {
     const adopters: Array<[string, RegExp]> = [
       [join('pages', 'ChatPage.tsx'), /label=\{`Uploading \$\{u\.name\}`\}/],
       [join('pages', 'ChatPage.tsx'), /label="Prompt budget used by attached knowledge"/],
-      [join('pages', 'chat', 'WorkflowProgressCard.tsx'), /steps done`\}/],
+      [join('pages', 'chat', 'WorkflowProgressCard.tsx'), /steps finished`\}/],
       [join('pages', 'files', 'FilesSection.tsx'), /label=\{`Uploading \$\{u\.name\}`\}/],
       [join('pages', 'knowledge', 'KnowledgeCreatePage.tsx'), /label="Upload progress"/],
       [join('pages', 'tasks', 'TasksListPage.tsx'), /label=\{`Exit criteria: /],

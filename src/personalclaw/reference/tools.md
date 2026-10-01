@@ -1728,7 +1728,7 @@ List all running and completed subagents (read-only, no commands executed)
 
 ### `subagent_run`
 
-Spawn subagent(s) to run tasks in the background. Returns immediately — results arrive as [Subagent completion event] messages in your conversation. For parallel work, use 'tasks' array. Tasks are automatically batched if they exceed the concurrency limit. WAIT for all completion events before responding to the user.
+Spawn subagent(s) to run tasks in the background. One task ('task') returns at once, and its result arrives as a [Subagent completion event] message in your conversation: WAIT for it before responding to the user. Two or more ('tasks') run in parallel as one batch run, each task a contract the batch is checked against before it starts. A batch's results are not sent to this conversation: wait with workflow_observe and read them with workflow_status, on the run_id it returns. More tasks than may run at once wait their turn.
 
 **Response type:** `subagent.run.result`
 
@@ -1740,7 +1740,7 @@ Spawn subagent(s) to run tasks in the background. Returns immediately — result
 - `cwd` (string, optional) — Optional absolute path to launch the subagent subprocess in, instead of the default sandbox. Enables cwd-relative resource globs (.personalclaw/steering, AGENTS.md) to resolve against this directory. Must be inside the workspace, or under a folder the owner added to agent.subagent_cwd_allowed_roots (none by default). Applies to all tasks in a batch spawn.
 - `max_turns` (integer, optional) — Override tool-call budget for this spawn (default: config or 100)
 - `task` (string, optional) — Single task description
-- `tasks` (array, optional) — Multiple tasks to run in parallel
+- `tasks` (array, optional) — Two or more tasks to run in parallel as one batch, each an object: what to do, what it is for, the shape of its answer and what it must not touch.
 
 **Example — Run one subagent task:**
 
@@ -1748,6 +1748,34 @@ Spawn subagent(s) to run tasks in the background. Returns immediately — result
 {
   "agent": "general-purpose",
   "task": "Summarize the open PRs"
+}
+```
+
+**Example — Review two things in parallel as one batch:**
+
+```json
+{
+  "tasks": [
+    {
+      "boundary": "read only: change no file, commit nothing",
+      "objective": "find every place the retry ceiling is decided in it",
+      "output_format": "a numbered list of file:line, one sentence each",
+      "task": "List where src/app/retry.py reads its retry ceiling"
+    },
+    {
+      "boundary": "work only in the scratch copy, and remove it afterward",
+      "capability": "mutating",
+      "objective": "show whether the retry tests pass before the change",
+      "off_limits": [
+        "src/"
+      ],
+      "output_format": "each command run, with its last line of output",
+      "task": "Run the retry tests in a scratch copy at /tmp/retry-check",
+      "writes": [
+        "/tmp/retry-check"
+      ]
+    }
+  ]
 }
 ```
 
