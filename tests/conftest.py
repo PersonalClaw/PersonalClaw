@@ -592,34 +592,37 @@ def _reset_session_restrictions():
 
 @pytest.fixture(autouse=True)
 def _restore_personalclaw_logging():
-    """Snapshot + restore the ``personalclaw`` logger namespace around every test.
+    """Snapshot + restore the gateway's logging around every test.
 
-    Two process-global logging mutations leak across tests and are invisible in
-    isolation but deterministic-per-schedule in an xdist mix — the same shape as the
-    resets above. Both reach the SAME logger, ``logging.getLogger("personalclaw")``:
+    Process-global logging mutations leak across tests and are invisible in isolation but
+    deterministic-per-schedule in an xdist mix — the same shape as the resets above:
 
     * ``cli.main()`` (exercised by every ``test_cli_*`` that calls it) runs the CLI's
-      logging setup, which ``setLevel(WARNING)`` on that logger (the persisted default)
-      and *appends* a ``RotatingFileHandler`` to it;
+      logging setup, which attaches the console and a ``gateway.log`` file handler to the
+      ROOT logger as the log's sinks (``log_sinks.attach``) and sets the root's level;
+    * ``dashboard.handlers.updates.install_log_ring_handler`` (every dashboard app a test
+      builds) attaches the Diagnostics ring the same way;
     * ``dashboard.handlers.updates.apply_log_level`` / the ``agent.log_level`` PATCH set
-      that logger's level LIVE.
+      the level LIVE (``log_sinks.set_level``: the root logger's level and the sinks' rule).
 
-    Neither restores. ``caplog.set_level(...)`` only touches the ROOT logger, not this
-    one, so once a worker has run a ``cli.main`` test the ``personalclaw`` logger stays
-    pinned at WARNING for the rest of that worker — and every later observability test
-    that expects its own DEBUG/INFO records to be captured (e.g.
-    ``test_channel_inbound_drop_reporting``) silently loses them and reds. Sharding
-    exposed this: a leaker and a victim that used to sit in different halves of one long
-    serial run now land on the same worker in the same shard.
+    None restores. Left behind, a root at WARNING drops every later observability test's
+    own DEBUG/INFO records before ``caplog`` sees them (e.g.
+    ``test_channel_inbound_drop_reporting``), and every ``cli.main`` test would leave one more
+    open ``gateway.log`` handle on the root. Sharding exposed this: a leaker and a victim
+    that used to sit in different halves of one long serial run now land on the same worker
+    in the same shard.
 
-    Levels are snapshotted for the whole ``personalclaw.*`` namespace (not a name list —
-    the same reason the registry guards above snapshot rather than enumerate) and any
-    descendant created during the test is reset to ``NOTSET``. Handlers ADDED to the
-    ``personalclaw`` logger during the test are removed and closed at teardown, so a
-    worker does not accumulate a stale open ``gateway.log`` file handle per ``cli.main``
-    test. The root logger is deliberately left to ``caplog``, which owns it.
+    So the root logger's level and the sinks' level are put back, and every sink ADDED to
+    the root during the test is removed and closed — only sinks (``log_sinks``' filter on
+    them), never ``caplog``'s own handlers, which pytest attaches and removes itself.
+    Levels are also snapshotted for the whole ``personalclaw.*`` namespace (not a name
+    list — the same reason the registry guards above snapshot rather than enumerate), any
+    descendant created during the test reset to ``NOTSET``, and handlers a test added to
+    the ``personalclaw`` logger itself removed.
     """
     import logging
+
+    from personalclaw import log_sinks
 
     def _pclaw_loggers() -> dict[str, logging.Logger]:
         out: dict[str, logging.Logger] = {}
@@ -634,19 +637,30 @@ def _restore_personalclaw_logging():
     levels_before = {name: lg.level for name, lg in _pclaw_loggers().items()}
     levels_before["personalclaw"] = root.level
     handlers_before = list(root.handlers)
+    top = logging.getLogger()
+    top_level_before = top.level
+    sinks_level_before = log_sinks.level()
+    sinks_before = [h for h in top.handlers if log_sinks._FILTER in h.filters]
 
     yield
 
     for name, lg in _pclaw_loggers().items():
         lg.setLevel(levels_before.get(name, logging.NOTSET))
     root.setLevel(levels_before["personalclaw"])
-    for handler in list(root.handlers):
-        if handler not in handlers_before:
-            root.removeHandler(handler)
-            try:
-                handler.close()
-            except Exception:  # pragma: no cover - close() is best-effort cleanup
-                pass
+    added = [h for h in root.handlers if h not in handlers_before]
+    for handler in added:
+        root.removeHandler(handler)
+    log_sinks.set_level(sinks_level_before)
+    top.setLevel(top_level_before)
+    for handler in list(top.handlers):
+        if log_sinks._FILTER in handler.filters and handler not in sinks_before:
+            log_sinks.detach(handler)
+            added.append(handler)
+    for handler in added:
+        try:
+            handler.close()
+        except Exception:  # pragma: no cover - close() is best-effort cleanup
+            pass
 
 
 @pytest.fixture(autouse=True)

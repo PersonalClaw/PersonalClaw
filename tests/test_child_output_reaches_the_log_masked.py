@@ -486,7 +486,7 @@ def test_gateway_log_keeps_no_credential_a_record_carried(tmp_path):
     from personalclaw.cli import _gateway_log_handler
 
     log_file = tmp_path / "gateway.log"
-    handler = _gateway_log_handler(log_file, logging.DEBUG)
+    handler = _gateway_log_handler(log_file)
     try:
         handler.emit(_record("connected with %s", _KEY))
         handler.emit(_record("the sync failed", exc=True))

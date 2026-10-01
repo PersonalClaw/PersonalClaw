@@ -5336,7 +5336,6 @@
     {"annotation": "Permissions", "default": "<factory>", "kind": "positional_or_keyword", "name": "permissions"},
     {"annotation": "SetupConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "setup"},
     {"annotation": "CliConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "cli"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "loggerRoots"},
     {"annotation": "Dependencies", "default": "<factory>", "kind": "positional_or_keyword", "name": "dependencies"},
     {"annotation": "PlatformConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "platform"},
     {"annotation": "ProviderConfig | None", "default": "None", "kind": "positional_or_keyword", "name": "provider"},

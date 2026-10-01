@@ -390,24 +390,19 @@ class TestRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# CLI seams + loggerRoots (Plan 32 — cli.setup / cli.doctor / loggerRoots)
+# CLI seams (Plan 32 — cli.setup / cli.doctor)
 # ---------------------------------------------------------------------------
 
 
-class TestCliAndLoggerRoots:
-    # --- P1: round-trip for cli + loggerRoots ---
-    def test_cli_and_logger_roots_round_trip(self):
-        original = _valid_manifest(
-            cli={"setup": "cli_setup:run", "doctor": "cli_doctor:probe"},
-            loggerRoots=["slack_runtime", "slack_events"],
-        )
+class TestCliSeams:
+    # --- P1: round-trip for cli ---
+    def test_cli_round_trip(self):
+        original = _valid_manifest(cli={"setup": "cli_setup:run", "doctor": "cli_doctor:probe"})
         m = AppManifest.from_dict(original)
         assert m.cli.setup == "cli_setup:run"
         assert m.cli.doctor == "cli_doctor:probe"
-        assert m.loggerRoots == ["slack_runtime", "slack_events"]
         serialized = m.to_dict()
         assert serialized["cli"] == {"setup": "cli_setup:run", "doctor": "cli_doctor:probe"}
-        assert serialized["loggerRoots"] == ["slack_runtime", "slack_events"]
         m2 = AppManifest.from_dict(serialized)
         assert m2.to_dict() == serialized
 
@@ -415,15 +410,12 @@ class TestCliAndLoggerRoots:
         cfg = CliConfig(setup="mod:fn", doctor="d:probe")
         assert CliConfig.from_dict(cfg.to_dict()).to_dict() == cfg.to_dict()
 
-    # --- P2: absent fields default empty and are omitted from output ---
-    def test_cli_and_logger_roots_default_empty(self):
+    # --- P2: an absent field defaults empty and is omitted from output ---
+    def test_cli_default_empty(self):
         m = AppManifest.from_dict(_valid_manifest())
         assert m.cli.setup == ""
         assert m.cli.doctor == ""
-        assert m.loggerRoots == []
-        serialized = m.to_dict()
-        assert "cli" not in serialized
-        assert "loggerRoots" not in serialized
+        assert "cli" not in m.to_dict()
 
     def test_partial_cli_config(self):
         # Only setup declared → doctor stays empty, only setup serialized.
@@ -437,22 +429,16 @@ class TestCliAndLoggerRoots:
         assert m.cli.setup == ""
         assert m.cli.doctor == ""
 
-    def test_logger_roots_falsy_entries_dropped(self):
-        m = AppManifest.from_dict(_valid_manifest(loggerRoots=["ok", "", None, "two"]))
-        assert m.loggerRoots == ["ok", "two"]
-
     # --- P3: unknown-field preservation still works alongside the new fields ---
     def test_unknown_fields_preserved_with_cli(self):
         data = _valid_manifest(
             cli={"setup": "cli_setup:run"},
-            loggerRoots=["slack_runtime"],
             futureField={"nested": [1, 2]},
             anotherUnknown="x",
         )
         m = AppManifest.from_dict(data)
-        # cli + loggerRoots are typed, NOT in extra
+        # cli is typed, NOT in extra
         assert "cli" not in m.extra
-        assert "loggerRoots" not in m.extra
         # genuinely-unknown fields land in extra and survive a round-trip
         assert m.extra == {"futureField": {"nested": [1, 2]}, "anotherUnknown": "x"}
         serialized = m.to_dict()
@@ -472,7 +458,6 @@ class TestCliAndLoggerRoots:
         )
         assert m.validate() == []
         assert m.cli.to_dict() == {}
-        assert m.loggerRoots == []
 
     # --- APE-1: the new permission grants do not disturb unknown-field preservation ---
     def test_unknown_fields_preserved_alongside_new_permission_grants(self):

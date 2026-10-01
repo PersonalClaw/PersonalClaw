@@ -30,6 +30,8 @@ def root(tmp_path, monkeypatch) -> Iterator[Path]:
     """An app directory, a clean ledger, and a media-catalog table the test may write into."""
     monkeypatch.setattr(app_code, "_roots", {})
     monkeypatch.setattr(app_code, "_undo", {})
+    monkeypatch.setattr(app_code, "_released", set())
+    monkeypatch.setattr(app_code, "_loaded", ())
     monkeypatch.setattr(
         media_catalogs, "_catalogs", {k: dict(v) for k, v in media_catalogs._catalogs.items()}
     )
@@ -123,6 +125,26 @@ def test_a_take_back_leaves_a_newer_registration_under_the_same_key(root):
 
     app_code.release(APP)
     assert _catalog("code-probe") is newer
+
+
+def test_a_file_is_a_loaded_apps_code_from_its_load_until_its_release(root, tmp_path):
+    """What the gateway's log asks of every record (``log_sinks``): is its call site an app's
+    code that is loaded now? Yes from the load on, no once released, yes again after a reload;
+    never for a file outside the app's directory."""
+    module = _write(root / "provider.py", "VALUE = 1\n")
+    elsewhere = _write(tmp_path / "library" / "client.py", "VALUE = 2\n")
+    assert app_code.loaded_app(str(module)) is None, "nothing was loaded yet"
+
+    _load(root)
+    assert app_code.loaded_app(str(module)) == APP
+    assert app_code.loaded_app(str(root.resolve() / "provider.py")) == APP
+    assert app_code.loaded_app(str(elsewhere)) is None
+
+    app_code.release(APP)
+    assert app_code.loaded_app(str(module)) is None, "an unloaded app's file is still its code"
+
+    _load(root)
+    assert app_code.loaded_app(str(module)) == APP, "a reload is the app's code again"
 
 
 def test_release_unloads_every_module_loaded_from_the_apps_directory(root):

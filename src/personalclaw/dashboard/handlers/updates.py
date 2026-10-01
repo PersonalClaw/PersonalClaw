@@ -8,14 +8,13 @@ import os
 import re
 import sys
 import time
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from personalclaw import __version__ as _local_version
-from personalclaw import self_update, shutdown_event
+from personalclaw import log_sinks, self_update, shutdown_event
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
@@ -853,27 +852,18 @@ _LOG_LEVELS = {
 
 
 def apply_log_level(level_name: str) -> bool:
-    """Set the backend log level LIVE: every logger root we own plus their
-    RotatingFileHandler(s). Returns False for an unrecognized level so a caller
+    """Set the backend log level LIVE, for every sink of the gateway's log at once
+    (``log_sinks.set_level``). Returns False for an unrecognized level so a caller
     can decide whether that is an error.
 
     Shared by ``POST /api/logs/level`` and the config PATCH path so a write to
     ``agent.log_level`` from EITHER Settings surface takes effect immediately
-    rather than only at the next restart. The handler pass is load-bearing: a
-    boot-time RotatingFileHandler level would otherwise keep filtering
-    gateway.log at the old verbosity even after the logger level moved.
+    rather than only at the next restart.
     """
     name = (level_name or "").upper()
     if name not in _LOG_LEVELS:
         return False
-    from personalclaw.apps.catalog import installed_logger_roots
-
-    for _lname in ("personalclaw", *installed_logger_roots()):
-        _lg = logging.getLogger(_lname)
-        _lg.setLevel(_LOG_LEVELS[name])
-        for _h in _lg.handlers:
-            if isinstance(_h, RotatingFileHandler):
-                _h.setLevel(_LOG_LEVELS[name])
+    log_sinks.set_level(_LOG_LEVELS[name])
     return True
 
 
@@ -894,7 +884,7 @@ async def api_log_level(request: web.Request) -> web.Response:
     level_name = raw_level.upper()
     if level_name not in _LOG_LEVELS:
         return web.json_response({"error": f"invalid level: {level_name}"}, status=400)
-    # Apply live (loggers + RotatingFileHandlers), then persist so it survives a
+    # Apply live (every sink), then persist so it survives a
     # restart. level_name is already validated against _LOG_LEVELS above.
     apply_log_level(level_name)
     logger.info("Log level changed to %s via dashboard", level_name)
@@ -914,8 +904,7 @@ async def api_log_level(request: web.Request) -> web.Response:
 
 async def api_log_level_get(request: web.Request) -> web.Response:
     """GET /api/logs/level — current backend logger level."""
-    root = logging.getLogger("personalclaw")
-    return web.json_response({"level": logging.getLevelName(root.level)})
+    return web.json_response({"level": logging.getLevelName(log_sinks.level())})
 
 
 class _QueueLogHandler(logging.Handler):
@@ -939,7 +928,6 @@ class _QueueLogHandler(logging.Handler):
 
 _LOG_RING_SIZE = 1000
 _log_ring: collections.deque[str] = collections.deque(maxlen=_LOG_RING_SIZE)
-_log_ring_handler_installed = False
 _log_ring_handler: "_RingLogHandler | None" = None
 
 
@@ -980,17 +968,17 @@ class _RingLogHandler(logging.Handler):
             pass
 
 
-def install_log_ring_handler() -> _RingLogHandler | None:
-    """Install the persistent ring buffer handler (call once at startup)."""
-    global _log_ring_handler_installed, _log_ring_handler  # noqa: PLW0603
-    if _log_ring_handler_installed:
-        return _log_ring_handler
-    _log_ring_handler_installed = True
-    handler = _RingLogHandler(_log_ring, _LOG_RING_SIZE)
-    handler.setFormatter(MaskingFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.getLogger("personalclaw").addHandler(handler)
-    _log_ring_handler = handler
-    return handler
+def install_log_ring_handler() -> _RingLogHandler:
+    """Make the persistent ring buffer one of the log's sinks (``log_sinks.attach``) — the
+    history Diagnostics replays on connect. One buffer per process; installing it again only
+    attaches that one."""
+    global _log_ring_handler  # noqa: PLW0603
+    if _log_ring_handler is None:
+        handler = _RingLogHandler(_log_ring, _LOG_RING_SIZE)
+        handler.setFormatter(MaskingFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        _log_ring_handler = handler
+    log_sinks.attach(_log_ring_handler)
+    return _log_ring_handler
 
 
 async def api_logs(request: web.Request) -> web.StreamResponse:
@@ -1036,8 +1024,7 @@ async def api_logs(request: web.Request) -> web.StreamResponse:
     log_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=500)
     handler = _QueueLogHandler(log_queue)
     handler.setFormatter(MaskingFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    root = logging.getLogger("personalclaw")
-    root.addHandler(handler)
+    log_sinks.attach(handler)
     try:
         while not shutdown_event.is_set():
             # Drain any queued log entries
@@ -1062,5 +1049,5 @@ async def api_logs(request: web.Request) -> web.StreamResponse:
     ):
         pass
     finally:
-        root.removeHandler(handler)
+        log_sinks.detach(handler)
     return resp

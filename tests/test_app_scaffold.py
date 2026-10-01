@@ -429,9 +429,10 @@ def test_generated_manifest_declares_the_plan32_seams(provider_type: str, tmp_pa
     assert data["version"] == "0.1.0"
     assert data["displayName"]
     assert data["description"]
-    # Plan 32: the two CLI seams + the logger roots, both pointing at emitted code.
+    # Plan 32: the two CLI seams, pointing at emitted code.
     assert data["cli"] == {"setup": "app_cli:setup", "doctor": "app_cli:doctor"}
-    assert data["loggerRoots"] == [app.name.replace("-", "_")]
+    # Nothing to declare for its log lines: they are recognised by the code that logs them.
+    assert "loggerRoots" not in data
     assert data["provider"]["type"] == provider_type
     assert data["provider"]["implementation"] == "provider:create_provider"
     # Minimum permissions is the whole point of the consent surface: the scaffold asks

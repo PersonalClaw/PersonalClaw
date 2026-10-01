@@ -145,6 +145,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Removed
 
 - **`POST /api/models/local/{provider}/selftest`, `GET /api/models/local/{provider}/health` and `POST /api/model-providers/{name}/selftest`: a model's Test is `POST /api/models/test`.**
+- **The app manifest's `loggerRoots` (`AppManifest.loggerRoots`), since an app's log lines are recognised by the code that logs them: `bedrock-models`, `code-review`, `companion`, `design-critique`, `docs-slides`, `inbox-github-notifications`, `issue-radar`, `mail-inbox`, `notes`, `ops`, `research-lab`, `spec-builder`, `watched-source-github`, `discord-channel`, `email-channel`, `slack-channel` and `telegram-channel` drop it.**
 
 - **`personalclaw.sdk.channel.generate_token` is off the channel SDK.**
 
@@ -157,6 +158,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **Every model in Settings → Models has a Test for the use case it is listed under, hosted or on this machine, and one that can't be tested says why: `untestable_reason()` on the speech, voice, diarization, embedding and image provider classes (an SDK addition no app has to change for).**
+- **An app's log lines reach `gateway.log`, `personalclaw logs` and Settings → Diagnostics → Live logs from the moment its code loads, an app installed after the gateway started and a module logging under its own name included, and those three and the console show the same lines.**
+- **`personalclaw logs` on a macOS service shows the gateway's log lines (launchd's `gateway.err`), not only what the gateway printed.**
 - **Every time the gateway stores or serves carries its offset, so a browser or phone in another timezone reads it right: a watched folder polled a moment ago says "next in 5m", not "next in 3h", and the library, chat transcripts and rooms read the times they already hold as the instants they were.**
 - **A Code loop's planner and workers, background work and workflows on Amazon Bedrock and Anthropic models read their repeated prompt from the cache, instead of paying for all of it on every call.**
 - **The agent no longer answers its own tool list in your chat ("The catalog notice doesn't ask for anything…"): the per-turn tool note is marked as the runtime's, and on Anthropic and Amazon Bedrock models it rides the last turn instead of arriving as a message from you: `personalclaw.sdk.model.VOLATILE_KEY` (an SDK addition, used by `bedrock-models`; `anthropic-models`, `anthropic-compatible` and `claude-subscription` get it through core).**

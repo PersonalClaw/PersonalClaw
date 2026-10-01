@@ -466,7 +466,9 @@ def _class_name(app_name: str) -> str:
     return "".join(part.capitalize() for part in re.split(r"[-_]", app_name) if part) + "Provider"
 
 
-def _logger_root(app_name: str) -> str:
+def _logger_name(app_name: str) -> str:
+    """The provider's logger: the app's own name, so its lines say whose they are. (Under
+    ``__name__`` they would carry the private module name core loads it under.)"""
     return app_name.replace("-", "_")
 
 
@@ -669,9 +671,6 @@ def _manifest_dict(
         "tags": [type_name],
         # Plan 32 CLI seams — a setup step and a doctor probe, both in app_cli.py.
         "cli": {"setup": "app_cli:setup", "doctor": "app_cli:doctor"},
-        # Plan 32 logger roots — read WITHOUT importing app code, so core log setup can
-        # set this app's level from Settings.
-        "loggerRoots": [_logger_root(name)],
         "provider": {
             "type": type_name,
             "implementation": "provider:create_provider",
@@ -726,7 +725,7 @@ import logging
 from typing import Any
 
 {imports}
-logger = logging.getLogger("{_logger_root(app_name)}")
+logger = logging.getLogger("{_logger_name(app_name)}")
 
 
 class {class_name}{bases}:

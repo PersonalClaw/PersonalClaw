@@ -342,7 +342,7 @@ def _safe_audit(*, outcome: str, resources: str) -> None:
     Pattern matches ``dashboard/chat.py``'s forward-callback handling
     (``except Exception: logger.warning(...)``). Using ``.warning`` (not
     ``.debug``) is deliberate: the ``seed`` subcommand short-circuits in
-    ``cli.py`` before ``logging.basicConfig()`` runs, so a ``.debug``
+    ``cli.py`` before the log's sinks are attached (``log_sinks``), so a ``.debug``
     call would be silently dropped by Python's last-resort handler
     (WARNING+ only). ``.warning`` survives the last-resort handler and
     emits one line to stderr on the rare path where SEL init fails, so the

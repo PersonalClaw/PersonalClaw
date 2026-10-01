@@ -33,7 +33,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from personalclaw import __version__
+from personalclaw import __version__, log_sinks
 from personalclaw.config import AppConfig, config_dir
 from personalclaw.config.loader import DASHBOARD_PORT, resolve_config_dir
 from personalclaw.constants import BANNER
@@ -1242,7 +1242,7 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     svc_sub.add_parser("status", help="Show service status (systemctl/launchctl)")
 
     # logs — tail the gateway log. Reads from the systemd journal when running
-    # as a service on Linux, the launchd stdout file on macOS, or the
+    # as a service on Linux, the launchd stderr file on macOS, or the
     # foreground gateway log file otherwise.
     logs_parser = sub.add_parser("logs", help="Show gateway logs")
     logs_parser.add_argument(
@@ -1533,15 +1533,14 @@ def _console_log_handler() -> logging.Handler:
     return handler
 
 
-def _gateway_log_handler(log_file: Path, level: int) -> RotatingFileHandler:
-    """The handler that writes ``gateway.log``: rotated, at *level*, and masked like every view
+def _gateway_log_handler(log_file: Path) -> RotatingFileHandler:
+    """The handler that writes ``gateway.log``: rotated, and masked like every view
     (``security.MaskingFormatter``), so a credential in any record never reaches the file; a
     record the file cannot take is named on the console without its words
-    (``security.WithholdingHandler``)."""
+    (``security.WithholdingHandler``). Which records it is given is ``log_sinks``'s rule."""
     from personalclaw.security import MaskedRotatingFileHandler, MaskingFormatter
 
     handler = MaskedRotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=3)
-    handler.setLevel(level)
     handler.setFormatter(MaskingFormatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
     return handler
 
@@ -1667,43 +1666,28 @@ def main() -> None:
 
         seed_local_model_cmd(args)
 
+    # The console and gateway.log are two of the log's sinks (`log_sinks`, which also holds the
+    # rule for what every sink shows), attached before the config is read so its warnings reach
+    # both. An app loaded later is shown the moment its code loads: nothing here names one.
+    log_sinks.attach(_console_log_handler())
+    log_sinks.attach(_gateway_log_handler(config_dir() / "gateway.log"))
+    # The --verbose flag takes precedence, otherwise the persisted log_level from config.
     if args.verbose >= 2:
         level = logging.DEBUG
     elif args.verbose >= 1:
         level = logging.INFO
     else:
         level = logging.WARNING
-    logging.basicConfig(
-        level=logging.WARNING,  # third-party libs stay quiet
-        handlers=[_console_log_handler()],
-    )
-    # PersonalClaw loggers: --verbose CLI flag takes precedence, otherwise
-    # fall back to the persistent log_level from config.
-    if args.verbose == 0:
         try:
-            _cfg = AppConfig.load()
-            _persisted = _cfg.agent.log_level.upper()
+            _persisted = AppConfig.load().agent.log_level.upper()
             level = getattr(logging, _persisted, logging.WARNING)
         except Exception:
             pass  # config missing or corrupt — keep default WARNING
-    logging.getLogger("personalclaw").setLevel(level)
-    # App bundles log under their OWN top-level namespace (e.g. ``slack_runtime``),
-    # not ``personalclaw`` — so the level + file handler below are applied to each
-    # loaded app's logger root too, or an app's operational logs would be invisible.
-    # Noisy third-party libs stay at WARNING (pinned below).
-    from personalclaw.apps.catalog import installed_logger_roots as _installed_logger_roots
-
-    _APP_LOGGER_ROOTS = _installed_logger_roots()
-    for _lname in _APP_LOGGER_ROOTS:
-        logging.getLogger(_lname).setLevel(level)
+    log_sinks.set_level(level)
+    # Libraries that log busily below WARNING are held there, so they do not make a record per
+    # request (aiohttp's access log is one) that no sink shows.
     for _noisy in ("slack_sdk", "aiohttp", "urllib3", "asyncio"):
         logging.getLogger(_noisy).setLevel(logging.WARNING)
-
-    # Persistent file log — respects the configured log_level
-    _fh = _gateway_log_handler(config_dir() / "gateway.log", level)
-    logging.getLogger("personalclaw").addHandler(_fh)
-    for _lname in _APP_LOGGER_ROOTS:
-        logging.getLogger(_lname).addHandler(_fh)
 
     # App-contributed providers (every model provider, the bundled default model included)
     # register only when their app module is imported — work the gateway does at boot but a

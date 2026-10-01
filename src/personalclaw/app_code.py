@@ -23,6 +23,9 @@ Four calls:
   ``sys.modules``, for a process that runs one app's code after another (``personalclaw setup``
   and ``doctor``).
 
+And one question: :func:`loaded_app` — whose loaded code a file is, which is how the gateway's log
+tells an app's records from a library's (:mod:`personalclaw.log_sinks`).
+
 Deliberately standard-library only: the registries that call :func:`keep` sit below the app
 platform, and must be able to import this without importing it.
 """
@@ -54,6 +57,12 @@ _undo: dict[str, list[Callable[[], None]]] = {}
 #: The app → the modules its earlier :func:`alone` blocks loaded, set aside by name until its
 #: next block.
 _parked: dict[str, dict[str, Any]] = {}
+#: The apps :func:`release` took out and no :func:`claim` has brought back.
+_released: set[str] = set()
+#: ``(directory with a trailing separator, app)`` for every app whose code is loaded now: what
+#: :func:`loaded_app` reads. Replaced whole, never changed in place, so it is read without the
+#: lock — by the log's filter, on every record, from whichever thread logged it.
+_loaded: tuple[tuple[str, str], ...] = ()
 
 #: How many times, and how far apart, a thread must be seen running an app's code before it
 #: counts as left running. A thread passing through the app's code for a moment (the event
@@ -67,6 +76,23 @@ def claim(app: str, root: Path) -> None:
     with _lock:
         for path in {str(root), str(root.resolve())}:
             _roots[os.path.join(path, "")] = app
+        _released.discard(app)
+        _refresh_loaded()
+
+
+def _refresh_loaded() -> None:
+    """Rebuild :data:`_loaded` from the claimed directories. Called with the lock held."""
+    global _loaded  # noqa: PLW0603 — replaced whole, for readers that take no lock
+    _loaded = tuple((prefix, app) for prefix, app in _roots.items() if app not in _released)
+
+
+def loaded_app(path: str) -> str | None:
+    """The app whose loaded code *path* is: a file under a directory a load claimed for it,
+    and not released since. ``None`` for core's own files, a library's, and an unloaded app's."""
+    for prefix, app in _loaded:
+        if path.startswith(prefix):
+            return app
+    return None
 
 
 def roots(app: str) -> tuple[str, ...]:
@@ -131,6 +157,8 @@ def release(app: str) -> Released:
         undo = _undo.pop(app, [])
         prefixes = tuple(p for p, a in _roots.items() if a == app)
         _parked.pop(app, None)
+        _released.add(app)
+        _refresh_loaded()
     for take_back in reversed(undo):
         try:
             take_back()

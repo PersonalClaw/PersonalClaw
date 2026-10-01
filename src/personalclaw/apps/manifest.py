@@ -1693,7 +1693,6 @@ _KNOWN_FIELDS = frozenset(
         "sources",
         "native",
         "cli",
-        "loggerRoots",
         # App-owned SKILL.md skills — a typed field again, seeded through
         # the supply-chain chokepoint on enable. See apps.skill_seed.
         "skills",
@@ -1778,12 +1777,6 @@ class AppManifest:
     # doctor probe. Both are optional "module:function" entry points resolved
     # from the installed app dir at command time (never imported at parse time).
     cli: CliConfig = field(default_factory=CliConfig)
-
-    # --- Logger roots (Plan 32) ---
-    # Logger namespaces this app logs under (e.g. ["slack_runtime"]). Static data
-    # read WITHOUT importing app code so core log setup + the log-level handler
-    # can apply levels to the app's loggers. Replaces constants.APP_LOGGER_ROOTS.
-    loggerRoots: list[str] = field(default_factory=list)  # noqa: N815
 
     # --- Dependencies ---
     dependencies: Dependencies = field(default_factory=Dependencies)
@@ -2215,8 +2208,6 @@ class AppManifest:
         cli_d = self.cli.to_dict()
         if cli_d:
             d["cli"] = cli_d
-        if self.loggerRoots:
-            d["loggerRoots"] = self.loggerRoots
         deps_d = self.dependencies.to_dict()
         if deps_d:
             d["dependencies"] = deps_d
@@ -2341,7 +2332,6 @@ class AppManifest:
             permissions=permissions,
             setup=setup,
             cli=cli,
-            loggerRoots=[str(r) for r in data.get("loggerRoots", []) if r],
             dependencies=deps,
             # A bare string is kept as a name, so ``validate`` reports its missing why and how
             # instead of the entry vanishing into "requires nothing".

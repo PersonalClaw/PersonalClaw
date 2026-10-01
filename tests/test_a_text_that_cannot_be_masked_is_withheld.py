@@ -420,7 +420,7 @@ def test_a_record_the_log_file_cannot_take_is_named_without_its_words(
 ) -> None:
     from personalclaw import cli
 
-    handler = cli._gateway_log_handler(tmp_path / "gateway.log", logging.DEBUG)
+    handler = cli._gateway_log_handler(tmp_path / "gateway.log")
     assert handler.stream is not None
     handler.stream.close()
     handler.stream = _FullDisk()  # type: ignore[assignment]

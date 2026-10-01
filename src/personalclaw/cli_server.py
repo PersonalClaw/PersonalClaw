@@ -1198,12 +1198,16 @@ def _service_cmd(args: argparse.Namespace) -> int:
 
 
 def _logs_cmd(args: argparse.Namespace) -> None:
-    """Tail gateway logs from the most appropriate source.
+    """Tail the gateway's log from where the running gateway writes it.
 
     Order of preference:
       1. systemd journal (if the system service is installed on Linux)
-      2. launchd stdout file (macOS)
+      2. launchd's stderr file (macOS): the console stream the gateway logs to, which also holds
+         anything it wrote before its logging started. Its stdout file has only what it printed.
       3. ``~/.personalclaw/gateway.log`` (foreground gateway)
+
+    Each shows the same log lines (``log_sinks``): the gateway's own, its apps', and any
+    library's warnings.
     """
     follow = bool(getattr(args, "follow", False))
     lines = int(getattr(args, "lines", 100) or 100)
@@ -1258,11 +1262,11 @@ def _logs_cmd(args: argparse.Namespace) -> None:
             sudo_cmd.append("-f")
         os.execvp("sudo", sudo_cmd)
 
-    if plat == Platform.LAUNCHD and svc_macos.STDOUT_LOG.exists():
+    if plat == Platform.LAUNCHD and svc_macos.STDERR_LOG.exists():
         cmd = ["tail", "-n", str(lines)]
         if follow:
             cmd.append("-f")
-        cmd.append(str(svc_macos.STDOUT_LOG))
+        cmd.append(str(svc_macos.STDERR_LOG))
         os.execvp("tail", cmd)
 
     fallback = config_dir() / "gateway.log"

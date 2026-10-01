@@ -89,7 +89,7 @@ def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -
         _print_carried(carried)
         print()
         print("   Status: personalclaw service status")
-        print(f"   Logs:   tail -f {macos.STDOUT_LOG}")
+        print("   Logs:   personalclaw logs -f")
         print("   Remove: personalclaw service uninstall")
         return 0
     _unsupported_message()

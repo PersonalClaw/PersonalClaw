@@ -716,22 +716,22 @@ class TestLogLevelAppliesLive:
     async def test_patching_log_level_sets_the_live_logger(self, tmp_config) -> None:
         import logging
 
-        lg = logging.getLogger("personalclaw")
-        prior = lg.level
-        try:
-            # A known baseline distinct from the target so the assertion is meaningful.
-            lg.setLevel(logging.WARNING)
-            async with TestClient(TestServer(_make_app())) as c:
-                resp = await _patch(c, "agent.log_level", "DEBUG")
-                assert resp.status == 200
-            # The Agent-defaults PATCH must APPLY the level live (the Diagnostics
-            # POST /api/logs/level path already did), not merely persist it.
-            assert lg.level == logging.DEBUG
-            # …and it still persists for the restart path.
-            saved = json.loads(tmp_config.read_text(encoding="utf-8"))
-            assert saved["agent"]["log_level"] == "DEBUG"
-        finally:
-            lg.setLevel(prior)
+        from personalclaw import log_sinks
+
+        # A known baseline distinct from the target so the assertion is meaningful (the
+        # suite's logging fixture puts the level back).
+        log_sinks.set_level(logging.WARNING)
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "agent.log_level", "DEBUG")
+            assert resp.status == 200
+        # The Agent-defaults PATCH must APPLY the level live (the Diagnostics
+        # POST /api/logs/level path already did), not merely persist it: every sink's level,
+        # and the root logger's, so a logger that names none of its own is enabled down to it.
+        assert log_sinks.level() == logging.DEBUG
+        assert logging.getLogger().level == logging.DEBUG
+        # …and it still persists for the restart path.
+        saved = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert saved["agent"]["log_level"] == "DEBUG"
 
 
 # ── agent.yolo applies LIVE in BOTH directions, not only at the next start (#672) ──

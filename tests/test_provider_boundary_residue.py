@@ -350,9 +350,8 @@ def test_the_judgment_table_cites_no_symbol_that_does_not_exist():
 
     The table listed ``constants.APP_LOGGER_ROOTS`` as a deliberate core keep
     while ``constants.py`` has no such name, and in the same row called apps registering
-    their own logger roots "deliberately not built yet" while ``loggerRoots`` +
-    ``apps.catalog.installed_logger_roots()`` do exactly that for two live consumers. The
-    row is gone; this keeps the next one honest.
+    their own logger roots "deliberately not built yet" while the manifest already let them
+    declare those. The row is gone; this keeps the next one honest.
     """
     rows = _judgment_table_rows()
     assert rows, "no judgment-table rows parsed out of provider-boundary.md — fix the parser"
