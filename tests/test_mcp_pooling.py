@@ -1,9 +1,11 @@
-"""Tests for MCP connection pooling, session isolation, idle eviction, and the
-spawn circuit-breaker (rel-mcp-server-pooling #46).
+"""Tests for MCP connection pooling, session isolation and idle eviction
+(rel-mcp-server-pooling #46).
 
 These exercise the registry's routing/lifecycle logic directly — no real MCP
 subprocess is spawned (connections are created but never `ensure_started`), so
-they run without the optional ``mcp`` SDK extra.
+they run without the optional ``mcp`` SDK extra. What stops a server that keeps failing to
+start — across every session's connection and the probe — is
+``test_an_mcp_server_card_says_how_it_stopped.py``.
 """
 
 from __future__ import annotations
@@ -11,7 +13,6 @@ from __future__ import annotations
 import pytest
 
 from personalclaw.mcp_client import (
-    _BREAKER_THRESHOLD,
     McpClientRegistry,
     McpServerConn,
     _conn_key,
@@ -164,30 +165,6 @@ def test_sweep_idle_keeps_fresh():
     reg.load_from_specs({"a": _POOLABLE})
     reg.get("a", "sess-1")
     assert reg.sweep_idle(ttl_secs=600) == 0
-
-
-# ── circuit breaker ──
-def test_breaker_trips_after_threshold_failures():
-    conn = McpServerConn("bad", _STATEFUL)
-    for _ in range(_BREAKER_THRESHOLD):
-        conn._note_failure()
-    import time
-
-    assert conn._breaker_until > time.monotonic()  # cooldown armed
-
-
-@pytest.mark.asyncio
-async def test_breaker_blocks_respawn_during_cooldown():
-    conn = McpServerConn("bad", _STATEFUL)
-    import time
-
-    conn._consecutive_failures = _BREAKER_THRESHOLD
-    conn._breaker_until = time.monotonic() + 60
-    # ensure_started must refuse without spawning a task.
-    ok = await conn.ensure_started()
-    assert ok is False
-    assert conn._task is None
-    assert "circuit breaker" in conn.error
 
 
 def test_touch_updates_last_used():

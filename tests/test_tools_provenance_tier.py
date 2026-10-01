@@ -34,7 +34,7 @@ class _DummyRequest:
     """Minimal stand-in — the handler reads nothing off the request."""
 
 
-async def _noop_list_all_tools():
+async def _noop_list_all_tools(*, skip=()):
     return []
 
 

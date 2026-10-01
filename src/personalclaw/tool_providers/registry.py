@@ -713,7 +713,7 @@ def still_serves(provider: ToolProvider) -> bool:
     return not _was_registered(provider) or _live(provider) is not None
 
 
-async def list_all_tools() -> list[ToolDefinition]:
+async def list_all_tools(*, skip: Iterable[str] = ()) -> list[ToolDefinition]:
     """Aggregate tools from all registered providers, each name from the one provider serving it.
 
     Built through :func:`serve`, so a provider refused for a taken name contributes nothing, as
@@ -724,6 +724,11 @@ async def list_all_tools() -> list[ToolDefinition]:
     tool already has: it stays in this catalog (the Tools page can still show and
     invoke it), but no model request carries it, and the page has to be able to
     say why.
+
+    A provider named in *skip* is not asked at all. A caller that has no use for the external MCP
+    servers' tools (:data:`EXTERNAL_MCP_PROVIDER`) skips it rather than dropping what it lists:
+    listing them starts each server and waits for its answer, which a server still starting takes
+    as long as its own start does.
     """
     from personalclaw.agents.native.tool_names import build_sanitized_index, left_out
     from personalclaw.tool_providers.portable_schema import (
@@ -731,7 +736,7 @@ async def list_all_tools() -> list[ToolDefinition]:
         exclusion_reason,
     )
 
-    served, failures = await serve(tool_surface(None))
+    served, failures = await serve(tool_surface(None), skip=skip)
     for prov, exc in failures:
         logger.warning("Tool provider %r failed to list tools: %s", prov.name, exc, exc_info=exc)
         record_failure(prov.name, str(exc))

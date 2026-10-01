@@ -106,13 +106,22 @@ describe('the composed fetcher keeps its asymmetry legible', () => {
       .not.toMatch(/api\.toolsIndex\(\)\s*\.catch/)
   })
 
-  it('the other four reads still DO carry one', () => {
+  it('the other reads still DO carry one', () => {
     const list = readList()
-    for (const read of ['api.mcpServers()', 'api.importableMcp()', 'api.mcpPoolStats()', 'api.toolGroups()']) {
+    for (const read of ['api.importableMcp()', 'api.mcpPoolStats()', 'api.toolGroups()']) {
       const at = list.indexOf(read)
       expect(at, `${read} must be in the list`).toBeGreaterThan(-1)
       expect(list.slice(at, at + 90), `${read} is peripheral and stays tolerant`).toMatch(/\.catch\(/)
     }
+  })
+
+  it('the server cards are a read of their own, tolerant, and never wait on the tool list', () => {
+    // In the composed fetcher they waited for every server the tool list starts to answer, so a
+    // card after Allow kept its old state for as long as a server took to start.
+    expect(readList(), 'the server list is not in the composed fetcher').not.toContain('api.mcpServers()')
+    const at = code.indexOf('api.mcpServers()')
+    expect(at, 'the server list is still read').toBeGreaterThan(-1)
+    expect(code.slice(at, at + 40), 'and stays tolerant, carrying the failure').toMatch(/\.catch\(failedRead\)/)
   })
 
   it('the error gate keeps a warm cache visible', () => {

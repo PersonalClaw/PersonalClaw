@@ -349,6 +349,27 @@ def register_lifecycle_hooks(app: web.Application) -> None:
 
     app.on_cleanup.append(_provider_availability_shutdown)
 
+    def _relay_mcp_status(_server: str) -> None:
+        """What an MCP server's card says may have changed (`mcp_status.announce`): every open page
+        that shows servers re-reads them on the ``refresh`` frame naming ``mcp``, instead of
+        polling while one starts."""
+        app["state"].push_refresh("mcp")
+
+    async def _mcp_status_relay_startup(app_: web.Application) -> None:
+        from personalclaw import mcp_status
+
+        mcp_status.subscribe(_relay_mcp_status)
+
+    app.on_startup.append(_mcp_status_relay_startup)
+
+    async def _mcp_status_relay_shutdown(app_: web.Application) -> None:
+        """Stop relaying when this gateway stops, so a later one in the same process is told."""
+        from personalclaw import mcp_status
+
+        mcp_status.unsubscribe(_relay_mcp_status)
+
+    app.on_cleanup.append(_mcp_status_relay_shutdown)
+
     async def _mcp_client_shutdown(app_: web.Application) -> None:
         """Stop the idle sweeper + drain all live MCP connections on gateway stop
         (rel-mcp-server-pooling #46)."""

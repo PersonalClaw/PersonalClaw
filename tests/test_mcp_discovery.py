@@ -774,7 +774,7 @@ class TestProbeCache:
         _clear_cache()
 
     def test_cache_miss_returns_unknown(self) -> None:
-        status, tools, error = _get_cached(McpServerInfo(name="nonexistent", command="x"))
+        status, tools, error, _ = _get_cached(McpServerInfo(name="nonexistent", command="x"))
         assert status == "unknown"
         assert tools == []
         assert error == ""
@@ -784,14 +784,14 @@ class TestProbeCache:
             name="test-srv", command="x", status="ok", tools=["t1", "t2"], error=""
         )
         _cache_probe(server)
-        status, tools, error = _get_cached(McpServerInfo(name="test-srv", command="x"))
+        status, tools, error, _ = _get_cached(McpServerInfo(name="test-srv", command="x"))
         assert status == "ok"
         assert tools == ["t1", "t2"]
         assert error == ""
 
     def test_a_result_for_another_definition_is_not_this_servers(self) -> None:
         _cache_probe(McpServerInfo(name="test-srv", command="x", status="ok", tools=["t1"]))
-        status, tools, _ = _get_cached(McpServerInfo(name="test-srv", command="y"))
+        status, tools, _, _ = _get_cached(McpServerInfo(name="test-srv", command="y"))
         assert (status, tools) == ("unknown", [])
 
     def test_cache_error_preserved(self) -> None:
@@ -799,7 +799,7 @@ class TestProbeCache:
             name="err-srv", command="x", status="error", tools=[], error="timeout"
         )
         _cache_probe(server)
-        status, tools, error = _get_cached(McpServerInfo(name="err-srv", command="x"))
+        status, tools, error, _ = _get_cached(McpServerInfo(name="err-srv", command="x"))
         assert status == "error"
         assert error == "timeout"
 
@@ -864,100 +864,6 @@ class TestProbeRemote:
 
         mock_remote.assert_not_awaited()
         assert result.status == "error"
-
-
-class TestProbeServerProcessCleanup:
-    """Tests for the finally block that tears down the probed subprocess."""
-
-    def _make_mock_proc(self, *, wait_side_effect=None):
-        proc = AsyncMock()
-        proc.returncode = None  # process still running
-        proc.stdin = MagicMock()
-        proc.stdin.close = MagicMock()
-        proc.kill = MagicMock()
-        if wait_side_effect:
-            proc.wait = AsyncMock(side_effect=wait_side_effect)
-        else:
-            proc.wait = AsyncMock(return_value=0)
-        return proc
-
-    @pytest.mark.asyncio
-    async def test_graceful_stdin_close(self) -> None:
-        """Closing stdin causes process to exit within timeout."""
-        proc = self._make_mock_proc()
-        server = McpServerInfo(name="test", command="echo")
-        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
-
-        with (
-            patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
-            patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"),
-        ):
-            proc.stdout = AsyncMock()
-            proc.stdout.readline = AsyncMock(return_value=b"")
-            await probe_server(server)
-
-        proc.stdin.close.assert_called_once()
-        proc.kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_fallback_kill_on_timeout(self) -> None:
-        """When graceful shutdown times out, falls back to proc.kill()."""
-        proc = self._make_mock_proc(
-            wait_side_effect=[asyncio.TimeoutError(), AsyncMock(return_value=0)()]
-        )
-        server = McpServerInfo(name="test", command="echo")
-        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
-
-        with (
-            patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
-            patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"),
-        ):
-            proc.stdout = AsyncMock()
-            proc.stdout.readline = AsyncMock(return_value=b"")
-            await probe_server(server)
-
-        proc.stdin.close.assert_called_once()
-        proc.kill.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_fallback_kill_also_fails(self) -> None:
-        """When both graceful and forceful shutdown fail, exception is swallowed."""
-        proc = self._make_mock_proc(
-            wait_side_effect=[asyncio.TimeoutError(), OSError("kill failed")]
-        )
-        server = McpServerInfo(name="test", command="echo")
-        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
-
-        with (
-            patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
-            patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"),
-        ):
-            proc.stdout = AsyncMock()
-            proc.stdout.readline = AsyncMock(return_value=b"")
-            await probe_server(server)
-
-        # Should not raise — the exception is caught and swallowed
-        proc.stdin.close.assert_called_once()
-        proc.kill.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_stdin_none_skips_close(self) -> None:
-        """When proc.stdin is None, close is skipped without error."""
-        proc = self._make_mock_proc()
-        proc.stdin = None
-        server = McpServerInfo(name="test", command="echo")
-        allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
-
-        with (
-            patch("personalclaw.mcp_discovery.asyncio.create_subprocess_exec", return_value=proc),
-            patch("personalclaw.mcp_discovery.shutil.which", return_value="/usr/bin/echo"),
-        ):
-            proc.stdout = AsyncMock()
-            proc.stdout.readline = AsyncMock(return_value=b"")
-            await probe_server(server)
-
-        # Should not raise — stdin None is handled gracefully
-        proc.kill.assert_not_called()
 
 
 class TestRebuildAgentConfigRemote:
@@ -1059,64 +965,43 @@ class TestGetProbeTimeout:
 
 
 class TestProbeServerTimeout:
-    """Tests that probe_server uses _get_probe_timeout() and handles timeout."""
+    """A stdio probe gives its server the configured time to answer (`_get_probe_timeout()`), and
+    the start it makes is an agent connection's own (`mcp_client.try_start`)."""
+
+    @staticmethod
+    async def _deadline_asked(server: McpServerInfo) -> float:
+        from personalclaw.mcp_client import StartResult
+
+        asked: list[float] = []
+
+        async def fake_start(name, spec, *, deadline, seal):
+            asked.append(deadline)
+            return StartResult(
+                tools=[], error="x did not answer", detail="", sign_in_needed=False, timed_out=True
+            )
+
+        with patch("personalclaw.mcp_client.try_start", fake_start):
+            result = await probe_server(server)
+        assert result.status == "error"
+        [deadline] = asked
+        return deadline
 
     @pytest.mark.asyncio
-    async def test_probe_server_timeout_on_tools_list(self) -> None:
-        """probe_server times out on tools/list (second readline), covering L456."""
-        server = McpServerInfo(name="slow-server", command="sleep", args=["999"])
+    async def test_probe_server_gives_its_server_the_configured_time(self) -> None:
+        server = McpServerInfo(name="slow-server", command="/nonexistent/pc-fixture-mcp")
         allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
-
-        init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}).encode() + b"\n"
-
-        mock_proc = AsyncMock()
-        mock_proc.stdin = AsyncMock()
-        mock_proc.stdin.write = MagicMock()
-        mock_proc.stdin.close = MagicMock()
-        mock_proc.stdout = AsyncMock()
-        mock_proc.stdout.readline = AsyncMock(side_effect=[init_resp, asyncio.TimeoutError])
-        mock_proc.returncode = None
-        mock_proc.kill = MagicMock()
-        mock_proc.wait = AsyncMock(return_value=0)
-
-        with (
-            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
-            patch("personalclaw.config.loader.AppConfig") as mock_cls,
-        ):
-            mock_cfg = MagicMock()
-            mock_cfg.dashboard.mcp_probe_timeout_secs = 42
-            mock_cls.load.return_value = mock_cfg
-
-            result = await probe_server(server)
-
-        assert result.status == "error"
-        assert result.error == "timeout"
+        with patch("personalclaw.config.loader.AppConfig") as mock_cls:
+            mock_cls.load.return_value.dashboard.mcp_probe_timeout_secs = 42
+            assert await self._deadline_asked(server) == 42
 
     @pytest.mark.asyncio
     async def test_probe_server_config_fallback_on_error(self) -> None:
         """probe_server falls back to 15s when config loading fails."""
-        server = McpServerInfo(name="test", command="echo")
+        server = McpServerInfo(name="test", command="/nonexistent/pc-fixture-mcp")
         allow(server)  # the owner's yes (`mcp_grants`): the subject is the probe
-
-        mock_proc = AsyncMock()
-        mock_proc.stdin = AsyncMock()
-        mock_proc.stdin.close = MagicMock()
-        mock_proc.stdout = AsyncMock()
-        mock_proc.stdout.readline = AsyncMock(side_effect=asyncio.TimeoutError)
-        mock_proc.returncode = None
-        mock_proc.kill = MagicMock()
-        mock_proc.wait = AsyncMock(return_value=0)
-
-        with (
-            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
-            patch("personalclaw.config.loader.AppConfig") as mock_cls,
-        ):
+        with patch("personalclaw.config.loader.AppConfig") as mock_cls:
             mock_cls.load.side_effect = RuntimeError("corrupt config")
-
-            result = await probe_server(server)
-
-        assert result.status == "error"
-        assert result.error == "timeout"
+            assert await self._deadline_asked(server) == 15
 
 
 class TestProbeRemoteTimeout:
@@ -1130,9 +1015,9 @@ class TestProbeRemoteTimeout:
 
         server = McpServerInfo(name="remote", url="https://example.com/mcp", transport="http")
 
-        async def never_answers(self):
+        async def never_answers(self, stack):
+            # The connection is opened and nothing ever answers: the probe's own deadline ends it.
             await asyncio.sleep(30)
-            return []
 
         async def resolves(host: str) -> None:
             return None
@@ -1140,7 +1025,7 @@ class TestProbeRemoteTimeout:
         with (
             patch("personalclaw.mcp_discovery._get_probe_timeout", return_value=0.2),
             patch("personalclaw.mcp_discovery._look_up", resolves),
-            patch("personalclaw.mcp_client.McpServerConn.list_tools", never_answers),
+            patch("personalclaw.mcp_client.McpServerConn._open_transport", never_answers),
         ):
             started = time.monotonic()
             result = await _probe_remote(server)

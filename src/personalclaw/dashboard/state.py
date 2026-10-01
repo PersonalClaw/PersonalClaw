@@ -2544,6 +2544,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         ``workflow_runs`` (a workflow run started, changed status or ended —
         ``workflows/watchdog``), ``history`` (the chat list), ``agents``, ``lessons``,
         ``artifacts`` (an artifact was written or removed — :meth:`announce_artifact_change`),
+        ``mcp`` (what an MCP server's card says may have changed — ``mcp_status.announce``),
         and the self-update's ``update_available`` / ``updating`` / ``update_failed``.
         """
         self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})

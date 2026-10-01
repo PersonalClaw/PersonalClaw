@@ -11,13 +11,19 @@ async-context-manager based, so each server runs as a small **actor**: one backg
 holds the transport + session context open and serves ``list_tools`` / ``call_tool`` requests
 off a queue, with health/respawn and clean shutdown (drained by the gateway's reaper on exit).
 
-Transports: stdio (``command``/``args``/``env``), and a server at a ``url`` over Streamable HTTP
-or SSE, sent its ``headers`` on every request — which one is the spec's ``type``, read by
+Transports: stdio (``command``/``args``/``env``, started by `mcp_stdio`, which knows how the program
+ended), and a server at a ``url`` over Streamable HTTP or SSE, sent its ``headers`` on every
+request — which one is the spec's ``type``, read by
 :func:`personalclaw.mcp_discovery.mcp_transport` — and, for a server its owner signed in to, the
 bearer token of that sign-in (:func:`personalclaw.mcp_oauth.connection_auth`, given to the same
 transport client as its ``auth``). The SDK is imported at the first connection,
 not at module load: it brings pydantic with it (~0.22 s), which a process that never connects to
 a server — most CLI commands — has no reason to pay.
+
+Every start is recorded where the Tools page reads it (`mcp_discovery.note_start`): what it found,
+in the words of `mcp_status`, and how many starts in a row failed. A server that failed
+``mcp_status.STOP_AFTER`` times in a row is not started again — by any connection, in any chat —
+until its owner presses Retry or its definition changes.
 """
 
 from __future__ import annotations
@@ -33,6 +39,8 @@ from urllib.parse import urlsplit
 
 from personalclaw import trace_recorder as _trace
 from personalclaw.cancellation import cancel_and_wait
+from personalclaw.mcp_status import StartFailure, closed, command_not_found, did_not_answer, exited
+from personalclaw.mcp_stdio import CommandNotFound, StdioRun
 
 if TYPE_CHECKING:
     from personalclaw.tool_providers.base import RiskLevel
@@ -41,18 +49,17 @@ logger = logging.getLogger(__name__)
 
 # Per-call ceiling so one wedged tool can't stall a chat turn indefinitely.
 _CALL_TIMEOUT_SECS = 120.0
-# Handshake ceiling — a server that never completes initialize is marked failed.
+# Handshake ceiling — a server that never completes initialize is marked failed. The actor holds
+# it, so a start's outcome is decided once, however many callers are waiting on it.
 _CONNECT_TIMEOUT_SECS = 30.0
+# How much longer than the deadline a caller waits for the actor's answer: putting a server that
+# did not answer away is bounded too (`mcp_stdio`).
+_ANSWER_SLACK_SECS = 10.0
 # Reap a connection unused for this long (frees the subprocess; respawns on next
 # use). Bounds resident MCP memory to actively-used (server, session) pairs.
 _IDLE_TTL_SECS = 600.0
 # How often the registry sweeps for idle connections.
 _SWEEP_INTERVAL_SECS = 120.0
-# Spawn circuit-breaker: after this many consecutive connect failures, stop
-# respawning for a cooldown so a server that crashes on connect can't churn
-# (spawn → fail → spawn) in a hot loop and burn CPU.
-_BREAKER_THRESHOLD = 3
-_BREAKER_COOLDOWN_SECS = 60.0
 # How long closing one server's connection may take before it is abandoned (and logged), so a
 # server that will not stop cannot hold up the app unload that is replacing it.
 _CLOSE_TIMEOUT_SECS = 10.0
@@ -188,10 +195,17 @@ class McpServerConn:
         self._closing = False
         # Idle reaping: bump on every use; the registry sweeper reaps when stale.
         self._last_used: float = time.monotonic()
-        # Spawn circuit-breaker: count consecutive connect failures; once over
-        # the threshold, refuse to respawn until the cooldown elapses.
-        self._consecutive_failures: int = 0
-        self._breaker_until: float = 0.0
+        # How long a start may take to answer: the agent's ceiling, or the probe's (`try_start`).
+        self._connect_timeout: float = _CONNECT_TIMEOUT_SECS
+        # The last start of a stdio server: how its program ended, and its error output.
+        self._stdio: StdioRun | None = None
+        # Why the last start failed, in `mcp_status`'s words; None after one that connected.
+        self._failure: StartFailure | None = None
+        # Whether the last start ran out of `_connect_timeout`.
+        self._timed_out = False
+        # The definition this connection starts (`mcp_discovery.definition_seal`), worked out at
+        # the first start; the probe passes the one it read.
+        self._seal: str | None = None
 
     @property
     def error(self) -> str:
@@ -216,44 +230,42 @@ class McpServerConn:
     async def ensure_started(self) -> bool:
         """Start the actor + wait for the handshake. Returns connected-ok.
 
-        Gated by a circuit-breaker: a server that keeps failing to connect stops
-        being respawned for a cooldown, so a broken server can't churn the CPU in
-        a spawn→fail→spawn loop."""
+        A server that failed to start ``mcp_status.STOP_AFTER`` times in a row — by this
+        connection, another chat's, or the probe — is not started (`mcp_discovery.start_refused`):
+        nothing is spawned, and why is this connection's error. Its owner's Retry, or a change to
+        what it runs, starts it again. The actor decides each start's outcome once and records it;
+        every caller waiting on it only reads it."""
         self.touch()
         if self._task is None or self._task.done():
-            now = time.monotonic()
-            if now < self._breaker_until:
-                self._error = self._error or "circuit breaker open (repeated connect failures)"
+            from personalclaw.mcp_discovery import start_refused
+
+            refused = start_refused(self.name, self._definition_seal())
+            if refused is not None:
+                self._error = refused
                 return False
             self._requests = asyncio.Queue()
             self._ready = asyncio.Event()
             self._error = ""
             self._sign_in_needed = False
             self._closing = False
+            self._failure = None
+            self._timed_out = False
             self._task = asyncio.create_task(self._run(), name=f"mcp-conn-{self.name}")
         try:
-            await asyncio.wait_for(self._ready.wait(), timeout=_CONNECT_TIMEOUT_SECS)
-        except asyncio.TimeoutError:
-            self._error = self._error or "handshake timed out"
-            self._note_failure()
-            return False
-        if self._error:
-            self._note_failure()
-            return False
-        self._consecutive_failures = 0  # healthy handshake resets the breaker
-        return True
-
-    def _note_failure(self) -> None:
-        self._consecutive_failures += 1
-        if self._consecutive_failures >= _BREAKER_THRESHOLD:
-            self._breaker_until = time.monotonic() + _BREAKER_COOLDOWN_SECS
-            logger.warning(
-                "MCP server '%s' tripped the spawn breaker after %d failures; "
-                "cooling down %.0fs",
-                self.name,
-                self._consecutive_failures,
-                _BREAKER_COOLDOWN_SECS,
+            await asyncio.wait_for(
+                self._ready.wait(), timeout=self._connect_timeout + _ANSWER_SLACK_SECS
             )
+        except asyncio.TimeoutError:
+            self._error = self._error or did_not_answer(self.name, self._connect_timeout).headline
+            return False
+        return not self._error
+
+    def _definition_seal(self) -> str:
+        if self._seal is None:
+            from personalclaw.mcp_discovery import definition_seal
+
+            self._seal = definition_seal(self.name, self.spec)
+        return self._seal
 
     async def list_tools(self) -> list[McpToolSpec]:
         if not await self.ensure_started():
@@ -301,7 +313,17 @@ class McpServerConn:
     # ── actor body ──────────────────────────────────────────────────────────
 
     async def _run(self) -> None:
-        """Hold the transport+session open, serve queued requests until cancelled."""
+        """Hold the transport+session open, serve queued requests until cancelled.
+
+        The start — the transport, ``initialize`` and the first tool list — has
+        ``_connect_timeout`` to answer. Its outcome is recorded once, here
+        (`mcp_discovery.note_start`): every surface reads it from there. A start that its owner's
+        sign-in would answer is not recorded: it is not a failure, and the probe says what it wants.
+        """
+        from personalclaw.mcp_discovery import note_start
+
+        deadline = asyncio.timeout(self._connect_timeout)
+        self._stdio = None
         try:
             from contextlib import AsyncExitStack
 
@@ -310,32 +332,62 @@ class McpServerConn:
             from personalclaw.mcp_elicitation import elicitation_callback_for
 
             async with AsyncExitStack() as stack:
-                read, write = await self._open_transport(stack)
-                # The ONE place the elicitation grant is consulted, resolved per
-                # server at handshake time. `None` (the default — the grant list ships
-                # empty) leaves the SDK's own default callback in place, and
-                # `ClientSession.initialize` then sends `elicitation=None`, so the
-                # capability is absent from THIS server's advertised set while a granted
-                # sibling's session advertises it. One expression, both behaviours: a
-                # branch here would be two session-construction paths to keep in step.
-                session = await stack.enter_async_context(
-                    ClientSession(
-                        read,
-                        write,
-                        elicitation_callback=elicitation_callback_for(self.name),
+                async with deadline:
+                    read, write = await self._open_transport(stack)
+                    # The ONE place the elicitation grant is consulted, resolved per
+                    # server at handshake time. `None` (the default — the grant list ships
+                    # empty) leaves the SDK's own default callback in place, and
+                    # `ClientSession.initialize` then sends `elicitation=None`, so the
+                    # capability is absent from THIS server's advertised set while a granted
+                    # sibling's session advertises it. One expression, both behaviours: a
+                    # branch here would be two session-construction paths to keep in step.
+                    session = await stack.enter_async_context(
+                        ClientSession(
+                            read,
+                            write,
+                            elicitation_callback=elicitation_callback_for(self.name),
+                        )
                     )
-                )
-                await session.initialize()
-                await self._refresh_tools(session)
+                    await session.initialize()
+                    await self._refresh_tools(session)
+                note_start(self.name, self._definition_seal(), tools=self._tools)
                 self._ready.set()
                 await self._serve(session)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            self._error = _failure_text(exc, str(self.spec.get("url") or ""), self.name)
+            # Read once the transport has closed: a stdio program has been put away by then, so
+            # how it ended is known (`mcp_stdio`).
+            self._timed_out = deadline.expired()
+            failure = self._start_failure(exc, timed_out=self._timed_out)
+            self._error = failure.headline
+            self._failure = failure
             self._sign_in_needed = _wants_sign_in(exc)
             logger.warning("MCP server '%s' connection failed: %s", self.name, self._error)
+            if not self._ready.is_set() and not self._sign_in_needed:
+                note_start(self.name, self._definition_seal(), failure=failure)
             self._ready.set()  # unblock waiters with the error recorded
+
+    def _start_failure(self, exc: BaseException, *, timed_out: bool) -> StartFailure:
+        """Why this start failed, in `mcp_status`'s words. A stdio program that ended on its own
+        exited; one still running at the deadline did not answer; one that closed its output and
+        had to be stopped closed the connection. Any other failure is the connection's own
+        (:func:`_failure_text`), with the program's error output as its detail."""
+        run = self._stdio
+        leaf = _leaf(exc)
+        if isinstance(leaf, CommandNotFound):
+            return command_not_found(leaf.command)
+        if run is not None:
+            if run.exited and run.returncode is not None:
+                return exited(self.name, run.returncode, run.stderr)
+            if timed_out:
+                return did_not_answer(self.name, self._connect_timeout, run.stderr)
+            if _connection_closed(leaf):
+                return closed(self.name, run.stderr)
+            return StartFailure(_failure_text(exc, "", self.name), detail=run.stderr.strip())
+        if timed_out:
+            return did_not_answer(self.name, self._connect_timeout)
+        return StartFailure(_failure_text(exc, str(self.spec.get("url") or ""), self.name))
 
     async def _open_transport(self, stack: Any):
         """Enter the right transport context for this server's spec: the one
@@ -372,36 +424,13 @@ class McpServerConn:
         if transport != "stdio":
             raise ValueError(f"PersonalClaw cannot connect over the {transport!r} transport")
 
-        # stdio: spawn the declared command in the environment the probe spawns it in, so a
-        # server that probes "ok" is one this connection can start.
-        from mcp.client.stdio import StdioServerParameters, stdio_client
+        # stdio: started by `mcp_stdio` — in the one environment a server is started in, through
+        # the resource ceiling — which keeps how the program ended and what it wrote to its error
+        # output, so a failed start can say why.
+        from personalclaw.mcp_stdio import stdio_streams
 
-        from personalclaw.mcp_discovery import stdio_spawn_env
-
-        command = self.spec.get("command", "")
-        if not command:
-            raise ValueError("server spec has neither 'url' nor 'command'")
-        env = stdio_spawn_env(self.spec.get("env") or {}, server=self.name)
-        # ``cwd`` lets an app-shipped server (registered by the app-platform MCP
-        # bridge with cwd=app_dir) resolve relative command/args; ignored when
-        # absent (the historical behavior — spawn in the gateway's cwd).
-        cwd = self.spec.get("cwd") or None
-        # Resource ceiling: an MCP server command is agent-influenced. The MCP
-        # SDK spawns the process itself (we cannot pass through create_subprocess_limited
-        # here), so we wrap command+args with the ceiling shim IN the argv — the SDK then
-        # spawns ``python -m shim <policy> -- <command> <args>`` which applies the ``tool``
-        # ceiling after exec and execv's the real server. No preexec_fn is involved.
-        from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
-
-        wrapped = spawn_shim_argv([command, *(self.spec.get("args") or [])], PROFILE_TOOL)
-        params = StdioServerParameters(
-            command=wrapped[0],
-            args=list(wrapped[1:]),
-            env=env,
-            cwd=cwd,
-        )
-        read, write = await stack.enter_async_context(stdio_client(params))
-        return read, write
+        self._stdio = StdioRun()
+        return await stack.enter_async_context(stdio_streams(self.name, self.spec, run=self._stdio))
 
     async def _refresh_tools(self, session: Any) -> None:
         result = await session.list_tools()
@@ -433,6 +462,53 @@ class McpServerConn:
             except Exception as exc:  # noqa: BLE001
                 if not fut.done():
                     fut.set_result((False, str(exc)[:500]))
+
+
+def _connection_closed(exc: BaseException) -> bool:
+    """Whether *exc* is the SDK session's "the other side closed the connection"."""
+    from mcp.shared.exceptions import McpError
+    from mcp.types import CONNECTION_CLOSED
+
+    return isinstance(exc, McpError) and getattr(exc.error, "code", None) == CONNECTION_CLOSED
+
+
+@dataclass(frozen=True)
+class StartResult:
+    """What one start of a server found (:func:`try_start`)."""
+
+    tools: list[McpToolSpec]
+    #: Why it did not connect, or ``""``: the start's failure headline (`mcp_status`).
+    error: str
+    #: The tail of a stdio program's error output when it failed.
+    detail: str
+    #: It refused the connection until its owner signs in.
+    sign_in_needed: bool
+    #: It did not answer within its deadline.
+    timed_out: bool
+
+
+async def try_start(name: str, spec: dict[str, Any], *, deadline: float, seal: str) -> StartResult:
+    """Start server *name* once, as the probe does, and put it away again.
+
+    The same start an agent's connection makes, recorded the same way (`mcp_discovery.note_start`)
+    and said in the same words, given *deadline* to answer (the probe's own,
+    ``dashboard.mcp_probe_timeout_secs``). *seal* is the definition the probe read the server as.
+    """
+    conn = McpServerConn(name, spec)
+    conn._connect_timeout = float(deadline)
+    conn._seal = seal
+    try:
+        tools = await conn.list_tools()
+    finally:
+        await conn.shutdown()
+    failure = conn._failure
+    return StartResult(
+        tools=tools,
+        error=conn.error,
+        detail=failure.detail if failure is not None else "",
+        sign_in_needed=conn.sign_in_needed,
+        timed_out=conn._timed_out,
+    )
 
 
 def _annotations_of(tool: Any) -> dict[str, Any]:

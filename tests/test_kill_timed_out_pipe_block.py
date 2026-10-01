@@ -484,10 +484,6 @@ _NOT_ROUTED_TO_THE_OWNER: dict[str, str] = {
     "workflows/review_service.py::_git::proc": (
         "outstanding: run-workspace `git diff` pid-killed; forks under fsmonitor/LFS"
     ),
-    "mcp_discovery.py::_probe::proc": (
-        "outstanding: two of its four deadlines tear down, one does not; the stdio "
-        "lifecycle also tears down in a `finally`, so this needs its own read"
-    ),
     # ── still outstanding: NO teardown at all, but every one is a leaf tmux client ──
     # `tmux -S <home>/tmux.sock <verb>` against the home's OWN server. A hung client is a
     # leaked client, not a leaked tree, and `new_session` has 30 dependent test files — a

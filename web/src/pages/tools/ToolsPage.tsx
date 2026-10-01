@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
-import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, ShieldCheck, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
+import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, CircleAlert, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, ShieldCheck, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -21,6 +21,7 @@ import { copyText } from '../../app/clipboard'
 import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { refreshKinds, useChatSocket } from '../../lib/useChatSocket'
 import { readableErrText } from '../../lib/errText'
 import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ImportableMcpList, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
@@ -70,6 +71,8 @@ export function serverHealth(s: McpServer): { state: string; tone: string; detai
   if (s.status === 'waiting') return { state: 'waiting for your Allow', tone: 'var(--color-warn)', detail: s.error }
   if (!s.enabled) return { state: 'disabled', tone: 'var(--color-on-surface-low)' }
   if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)' }
+  // It failed to start again and again, and nothing starts it until Retry (`mcp_status.STOPPED`).
+  if (s.status === 'stopped') return { state: 'failed — stopped retrying', tone: 'var(--color-danger)', detail: s.error }
   if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }
   if (s.status === 'unserved') return { state: "agents can't call it", tone: 'var(--color-warn)', detail: s.error }
   if (s.status === 'signin') return { state: 'sign-in needed', tone: 'var(--color-warn)', detail: s.error }
@@ -92,14 +95,23 @@ export function noToolsLine(server: McpServer | undefined, healthState: string |
   return 'No tools exposed yet.'
 }
 
+/** What a server wrote to its error output when its last start failed, behind Details: the headline
+ *  is the gateway's one line (`mcp_status`), and a traceback is not a reason. */
+function StartDetails({ detail }: { detail?: string }) {
+  if (!detail) return null
+  return (
+    <details className="group">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-xs text-on-surface">
+        <ChevronRight size={12} className="shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+        Details
+      </summary>
+      <pre data-type="caption" className="mt-s max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-high p-s font-mono text-on-surface-low">{detail}</pre>
+    </details>
+  )
+}
+
 /** How long the page keeps looking for a sign-in to finish in the other tab before it stops. */
 const SIGN_IN_WAIT_MS = 5 * 60_000
-/** How often it looks. The callback re-probes the server itself, so a look finds it ready. */
-const SIGN_IN_POLL_MS = 2_000
-/** While a server reads `probing`, how often the page reads the list again, and for how long at
- *  most: a probe gives up on its own well before then (`dashboard.mcp_probe_timeout_secs`). */
-const PROBE_POLL_MS = 1_500
-const PROBE_WAIT_MS = 3 * 60_000
 
 /** A sign-in the owner started from this page and is finishing in another tab. */
 interface PendingSignIn { name: string; url: string; since: number }
@@ -118,9 +130,6 @@ function isFailedRead(v: unknown): v is FailedRead {
 interface ToolsIndexData {
   tools: ToolItem[]
   loadFailures: ToolLoadFailure[]
-  /** `null` when the list could not be read, with `serversError` saying why. */
-  servers: McpServer[] | null
-  serversError: string
   /** `null` when the other tools could not be looked through, with `importableError` saying why. */
   importable: ImportableMcpServer[] | null
   importableError: string
@@ -141,20 +150,18 @@ interface ToolsIndexData {
 
 export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data, error: loadErr, refresh } = useQuery<ToolsIndexData>('tools:index', async () => {
-    const [idx, servers, importable, poolStats, groups, elicitationServers, readOnlyServers] = await Promise.all([
-      // 🔴 The four reads below are tolerated on purpose — a dead MCP server or an unreachable pool
+    const [idx, importable, poolStats, groups, elicitationServers, readOnlyServers] = await Promise.all([
+      // 🔴 The reads below are tolerated on purpose — a dead MCP server or an unreachable pool
       // must not hide the built-in tools, and `load_failures` makes per-tool breakage first-class on
       // this surface. The INDEX is different in kind: it IS the collection, so substituting `[]` for
       // its rejection made a failed read render "No tools · Tools are the capabilities agents can
       // invoke…" — the newcomer empty state, on an install whose tools are all present. Same
       // asymmetry `fetchAgentGroups` draws between its native slice and its provider slices.
       //
-      // 🔑 TOLERATED IS NOT FABRICATED. The server list and the import list keep their catch but
-      // carry the failure (`failedRead`), never `[]`: a failed server read painted "no MCP servers"
-      // and a failed import read painted "nothing to import", and each is said where its answer
-      // would be instead.
+      // 🔑 TOLERATED IS NOT FABRICATED. The import list keeps its catch but carries the failure
+      // (`failedRead`), never `[]`: a failed import read painted "nothing to import", and it is said
+      // where its answer would be instead. The server list does the same, in its own read below.
       api.toolsIndex(),
-      api.mcpServers().catch(failedRead),
       api.importableMcp().catch(failedRead),
       api.mcpPoolStats().catch(() => null),
       api.toolGroups().catch(() => null),
@@ -168,18 +175,30 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     ])
     return {
       tools: idx.tools, loadFailures: idx.load_failures ?? [],
-      servers: isFailedRead(servers) ? null : servers, serversError: isFailedRead(servers) ? servers.failed : '',
       importable: isFailedRead(importable) ? null : importable.servers, importableError: isFailedRead(importable) ? importable.failed : '',
       importUnreadable: isFailedRead(importable) ? [] : importable.unreadable,
       poolStats, groups, elicitationServers, readOnlyServers,
     }
   }, { persist: true })
+  // 🔴 THE SERVER CARDS ARE THEIR OWN READ, AND THE GATEWAY SAYS WHEN TO READ THEM AGAIN. They were
+  // one `Promise.all` with the tool list, which waits for each server it lists to answer, so after
+  // an Allow the card of a server that was still starting kept its "waiting for your Allow" for as
+  // long as the server took (31 s, measured), and the page read the list again only on a timer
+  // while a server read `probing`. Now the cards are `GET /api/mcp` alone, which never waits on a
+  // server, and they are read again whenever the gateway says one changed: the `refresh` frame
+  // naming `mcp` (`mcp_status.announce`), sent when a server is being checked, when what its last
+  // start found lands, whoever started it, and on every write that changes one.
+  const { data: serverData, error: serversLoadErr, refresh: refreshServers } = useQuery<McpServer[] | FailedRead>(
+    'tools:mcp-servers', () => api.mcpServers().catch(failedRead), { persist: true })
+  // A read that never answered (the request deadline) failed too, and is said where the cards would
+  // be; it is not left to read as one still in flight.
+  const serverRead = serverData ?? (serversLoadErr ? failedRead(serversLoadErr) : undefined)
   const tools = data?.tools ?? null
   const loadFailures = data?.loadFailures ?? []
   // A failed read groups like an empty one, but says so: the notices below read these two.
-  const servers = data?.servers ?? []
-  const serversUnread = !!data && data.servers === null
-  const serversError = data?.serversError ?? ''
+  const servers = Array.isArray(serverRead) ? serverRead : []
+  const serversUnread = isFailedRead(serverRead)
+  const serversError = isFailedRead(serverRead) ? serverRead.failed : ''
   const importable = data?.importable ?? []
   const importUnread = !!data && data.importable === null
   const importableError = data?.importableError ?? ''
@@ -203,7 +222,21 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // so the open form survives a reload and can be linked to. Not `edit`: that key is the canonical
   // view↔edit MODE flag (`useEditFlag`, `?edit=1`), and this one names a record.
   const [editing, setEditing] = useQueryParam(query, setQuery, 'editServer', '')
-  const load = () => { invalidateKeys('tools:index'); refresh() }
+  const load = () => { invalidateKeys('tools:index'); invalidateKeys('tools:mcp-servers'); refresh(); refreshServers() }
+  // `refresh`, not `load`: a read already on the wire is joined, never stacked behind another. A
+  // frame lost while the socket was down is made up for by reading again when it reconnects.
+  useChatSocket((m) => { if (refreshKinds(m).includes('mcp')) refreshServers() }, refreshServers)
+  // A server that has just connected lists its tools in the tool index, so that is read again too,
+  // once per server that comes up. Not on every frame: the index starts the servers it lists.
+  const connectedNames = servers
+    .filter((sv) => sv.status === 'ok' || sv.status === 'ready' || sv.status === 'connected' || sv.status === 'unserved')
+    .map((sv) => sv.name).sort().join('\n')
+  const listedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (serverRead === undefined) return
+    if (listedFor.current !== null && listedFor.current !== connectedNames) refresh()
+    listedFor.current = connectedNames
+  }, [connectedNames, serverRead, refresh])
 
   async function reprobe() {
     setProbing(true)
@@ -366,8 +399,9 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     if (ok) { setPendingSignIn(null); setTimeout(load, 400) }
   }
 
-  // While a sign-in is finishing in the other tab, look again every few seconds and when this tab
-  // regains focus, until the server reads signed in (then say so) or the wait runs out.
+  // While a sign-in is finishing in the other tab, the card is read again when the gateway's callback
+  // lands (it probes the server again, which the `mcp` frame announces) and when this tab regains
+  // focus, until the server reads signed in (then say so) or the wait runs out.
   useEffect(() => {
     if (!pendingSignIn) return
     const done = servers.find((sv) => sv.name === pendingSignIn.name)?.auth?.state === 'signed_in'
@@ -376,28 +410,12 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       setPendingSignIn(null)
       return
     }
-    if (Date.now() - pendingSignIn.since > SIGN_IN_WAIT_MS) { setPendingSignIn(null); return }
-    const timer = window.setInterval(load, SIGN_IN_POLL_MS)
+    const left = SIGN_IN_WAIT_MS - (Date.now() - pendingSignIn.since)
+    if (left <= 0) { setPendingSignIn(null); return }
+    const timer = window.setTimeout(() => setPendingSignIn(null), left)
     window.addEventListener('focus', load)
-    return () => { window.clearInterval(timer); window.removeEventListener('focus', load) }
+    return () => { window.clearTimeout(timer); window.removeEventListener('focus', load) }
   }, [pendingSignIn, servers])
-
-  // 🔴 A CARD SAID WHAT THE READ JUST AFTER A CHANGE COULD KNOW, AND NOTHING READ IT AGAIN. After an
-  // add, an edit, an Allow or a switch-on, the gateway probes the server and says `probing` until the
-  // probe lands, which takes as long as the server takes to start or to answer. The page read the list
-  // once, 400 ms after the change, so a server that was fine read "unknown" until Re-probe. Now it
-  // reads the list again while any server is being checked. `refresh`, not `load`: a read already on
-  // the wire is joined, never stacked behind another.
-  const probingNames = servers.filter((sv) => sv.status === 'probing').map((sv) => sv.name).join('\n')
-  useEffect(() => {
-    if (!probingNames) return
-    const since = Date.now()
-    const timer = window.setInterval(() => {
-      if (Date.now() - since > PROBE_WAIT_MS) window.clearInterval(timer)
-      else refresh()
-    }, PROBE_POLL_MS)
-    return () => window.clearInterval(timer)
-  }, [probingNames, refresh])
 
   async function removeServer(s: McpServer) {
     // The body names the whole blast radius: the delete takes the server out of mcp.json AND the
@@ -441,7 +459,9 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   }
 
   const groups = useMemo<Group[] | null>(() => {
-    if (!tools) return null
+    // Both reads, before the first paint: without the server list an MCP server's tools would be
+    // drawn as a native provider's.
+    if (!tools || serverRead === undefined) return null
     // The activation group a provider's tools belong to — shown as a badge only
     // when grouping is ON (off, every group is loaded, so naming one is noise).
     // Providers are group-grain by construction, so the provider's tools agree;
@@ -504,7 +524,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     // With a filter active, drop groups with no matching tools — including MCP
     // groups (an errored/0-tool server is only worth showing in the browse view).
     return out.filter((g) => g.tools.length > 0 || (g.kind === 'mcp' && !active) || !active)
-  }, [tools, servers, serversUnread, q, risk, groupsEnabled])
+  }, [tools, serverRead, servers, serversUnread, q, risk, groupsEnabled])
 
   const open = tools?.find((t) => t.name === openName) ?? null
   const openServer = open ? servers.find((s) => s.name === open.provider) : undefined
@@ -682,6 +702,8 @@ export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { labe
 function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, readOnlyTrusted, onToggleReadOnlyTrust, onSignIn, onSignOut, pendingSignIn, onAllow, allowing }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; readOnlyTrusted: boolean | null; onToggleReadOnlyTrust: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null; onAllow: (s: McpServer) => void; allowing: string | null }) {
   const health = g.server ? serverHealth(g.server) : null
   const waiting = g.server?.status === 'waiting'
+  // Stopped after failing to start again and again: its line below says why, with Retry.
+  const stopped = !!g.server?.enabled && g.server.status === 'stopped'
   // A server that waits is off: nothing runs it until its Allow, which switches it on too.
   const serverOn = !!g.server?.enabled && !waiting
   const signInState = g.server?.auth?.state
@@ -824,6 +846,19 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
             ariaLabel={`Allow ${g.server.name}`}>Allow</Button>
         </div>
       )}
+      {/* A server PersonalClaw stopped starting says so in the page, with what its last start found
+          and the one action that answers it: Retry starts it again, once. */}
+      {stopped && g.server && (
+        <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-m text-on-surface-low flex flex-col gap-s">
+          <div className="flex flex-wrap items-center gap-s">
+            <CircleAlert size={14} className="shrink-0 text-danger" aria-hidden="true" />
+            <span className="min-w-0 flex-1">{g.server.error}</span>
+            <Button size="sm" onClick={() => onReconnect(g.server!)} loading={reconnecting === g.server.name}
+              ariaLabel={`Retry ${g.server.name}`}>Retry</Button>
+          </div>
+          <StartDetails detail={g.server.detail} />
+        </div>
+      )}
       {g.server?.enabled && (signInState === 'required' || signInState === 'signed_out') && (
         <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex flex-wrap items-center gap-s">
           <KeyRound size={14} className="shrink-0" />
@@ -863,11 +898,15 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
           AuditPanel, PresetEmptyState, DesignCockpitPage ×2).
           🪤 This comment sits ABOVE the conditional on purpose: a `{…}` comment as the first child of a
           ternary branch is a second child where one expression is allowed, and it does not compile. */}
-      {/* A server that waits has no tools to show, and its line above already says why. */}
-      {waiting ? null : g.kind === 'mcp' && g.tools.length === 0 ? (
-        <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
-          <Plug size={14} />
-          {noToolsLine(g.server, health?.state, signInState)}
+      {/* A server that waits, or that was stopped, has no tools to show, and its line above already
+          says why. */}
+      {waiting || stopped ? null : g.kind === 'mcp' && g.tools.length === 0 ? (
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex flex-col gap-s">
+          <div className="flex items-center gap-s">
+            <Plug size={14} className="shrink-0" />
+            <span className="min-w-0">{noToolsLine(g.server, health?.state, signInState)}</span>
+          </div>
+          {health?.state === 'error' && <StartDetails detail={g.server?.detail} />}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-s sm:grid-cols-2">

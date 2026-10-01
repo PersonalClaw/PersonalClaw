@@ -57,7 +57,7 @@ from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers import mcp_instances as _mcp
 from personalclaw.providers.failure_copy import connectivity_guidance
 from personalclaw.safety_flags import confirm_granted
-from personalclaw.security import MaskConflict
+from personalclaw.security import MaskConflict, redact_for_display
 from personalclaw.stale_write import revision_of, stale_write_refusal
 
 if TYPE_CHECKING:
@@ -543,13 +543,16 @@ async def handle_test_instance(request: web.Request) -> web.Response:
         return elsewhere
 
     # mcp-tools instances live in ~/.personalclaw/mcp.json — probe the real
-    # server (spawn → initialize → tools/list) for a true connectivity check.
+    # server (start → initialize → tools/list) for a true connectivity check. Pressing Test is the
+    # owner asking, as Retry on the Tools page is: a server stopped after failing to start again
+    # and again is started once more. What it found is what the Tools page's card says too.
     if name == _mcp.MCP_TOOLS_EXTENSION:
-        from personalclaw.mcp_discovery import list_servers, probe_server
+        from personalclaw.mcp_discovery import forget_probe, list_servers, probe_server
 
         target = next((s for s in list_servers() if s.name == instance_id), None)
         if target is None:
             return json_error("not_found", message="No instance exists with that id.", status=404)
+        forget_probe(instance_id)
         try:
             probed = await probe_server(target)
         except Exception as exc:
@@ -566,7 +569,8 @@ async def handle_test_instance(request: web.Request) -> web.Response:
         )
         return json_error(
             "provider_test_failed",
-            message="The MCP server did not report ready. Check its "
+            message=redact_for_display(probed.error)
+            or "The MCP server did not report ready. Check its "
             + ("URL and headers." if probed.is_remote else "command and configuration."),
             status=502,
         )

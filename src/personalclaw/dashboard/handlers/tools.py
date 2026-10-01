@@ -245,10 +245,10 @@ async def api_tools_list(request: web.Request) -> web.Response:
     # MCP servers — Source 3 emits their tools labeled per-server; re-adding them here under
     # its name would produce a phantom duplicate group (the _add dedup keys on provider).
     try:
-        registry_tools = await list_all_tools()
+        # The external provider is not asked: listing it starts every server and waits for each
+        # to answer, which held the whole page for as long as a server took to start.
+        registry_tools = await list_all_tools(skip={EXTERNAL_MCP_PROVIDER})
         for t in registry_tools:
-            if t.provider == EXTERNAL_MCP_PROVIDER:
-                continue
             _add(
                 t.name,
                 t.description,
@@ -770,7 +770,7 @@ async def api_tool_groups(request: web.Request) -> web.Response:
 
     defs: list = []
     try:
-        defs = [t for t in await list_all_tools() if t.provider != EXTERNAL_MCP_PROVIDER]
+        defs = await list_all_tools(skip={EXTERNAL_MCP_PROVIDER})
     except Exception:
         logger.warning("Failed to list tools for the group partition", exc_info=True)
     # The cwd-coupled platform provider isn't in the registry (same reason the

@@ -1357,7 +1357,8 @@
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "disabled_tools"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "transport"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "sign_in"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "disabled"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "disabled"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "detail"}
    ],
    "returns": "None"
   },

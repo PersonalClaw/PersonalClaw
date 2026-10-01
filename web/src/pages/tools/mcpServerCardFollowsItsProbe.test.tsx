@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
+import type { WsMessage } from '../../lib/useChatSocket'
 
 // ── A server's card says what the server is now, after every change ──────────────────────────────
 //
@@ -8,17 +9,19 @@ import { useState } from 'react'
 // `probing` until the probe lands, which takes as long as the server takes to start. The page read the
 // list once, 400 ms after the change, and never again, so a server that was fine read "unknown" beside
 // the tools it listed until the owner pressed Re-probe. The card now says it is checking the server,
-// and the page reads the list again until no server is being checked.
+// and the page reads the list again when the gateway says what a server's card says has changed (the
+// `refresh` frame naming `mcp`), and not otherwise: there is no timer.
 
 let servers: Array<Record<string, unknown>> = []
 let tools: Array<Record<string, unknown>> = []
 const mcpServers = vi.fn(() => Promise.resolve(servers))
+const toolsIndex = vi.fn(() => Promise.resolve({ tools, load_failures: [] }))
 
 function mockModules() {
   vi.doMock('../../lib/api', async (orig) => ({
     ...(await orig<Record<string, unknown>>()),
     api: {
-      toolsIndex: () => Promise.resolve({ tools, load_failures: [] }),
+      toolsIndex,
       mcpServers,
       importableMcp: () => Promise.resolve({ servers: [], unreadable: [] }),
       mcpPoolStats: () => Promise.resolve({}),
@@ -27,6 +30,22 @@ function mockModules() {
       mcpReadOnlyServers: () => Promise.resolve([]),
     },
   }))
+}
+
+class FakeSocket {
+  static all: FakeSocket[] = []
+  onopen: (() => void) | null = null
+  onmessage: ((e: { data: string }) => void) | null = null
+  onclose: (() => void) | null = null
+  onerror: (() => void) | null = null
+  closed = false
+  constructor(public url: string) { FakeSocket.all.push(this) }
+  close(): void { this.closed = true }
+}
+const socket = () => FakeSocket.all.filter((s) => !s.closed).at(-1)!
+
+async function frame(m: WsMessage) {
+  await act(async () => { socket().onmessage?.({ data: JSON.stringify(m) }) })
 }
 
 async function mount() {
@@ -42,17 +61,22 @@ async function mount() {
   }
   render(<Harness />)
   await waitFor(() => expect(screen.getAllByText('notes').length).toBeGreaterThan(0))
+  await act(async () => { socket().onopen?.() })
 }
 
 beforeEach(() => {
   vi.resetModules()
   sessionStorage.clear()
+  FakeSocket.all = []
+  vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket)
   mcpServers.mockClear()
+  toolsIndex.mockClear()
   tools = []
 })
+afterEach(() => { vi.unstubAllGlobals() })
 
 describe('a server the gateway is checking', () => {
-  it('says so, and the page reads the list again until the probe lands', async () => {
+  it('says so, and the page reads the list again when the gateway says the probe landed', async () => {
     servers = [{ name: 'notes', transport: 'stdio', status: 'probing', enabled: true, allowed: true, tools: [], error: '' }]
     mockModules()
     await mount()
@@ -60,17 +84,21 @@ describe('a server the gateway is checking', () => {
     expect(screen.getByText('Checking the server…')).toBeInTheDocument()
     expect(screen.queryByText('unknown')).toBeNull()
 
-    // The probe lands: the next read finds it connected, with its tool.
+    // Nothing is said, so nothing is read: there is no timer.
+    const before = mcpServers.mock.calls.length
+    await new Promise((r) => setTimeout(r, 1800))
+    expect(mcpServers.mock.calls.length).toBe(before)
+
+    // The probe lands, and the gateway says so: the next read finds it connected, and the tool list
+    // is read again for the tool it now lists.
     servers = [{ name: 'notes', transport: 'stdio', status: 'ok', enabled: true, allowed: true, tools: [{ name: 'hello' }], error: '' }]
     tools = [{ name: 'mcp/notes/hello', provider: 'notes', serverTool: 'hello', description: 'say hello', parameters: {}, requires_approval: true, risk_level: 'caution' }]
-    await waitFor(() => expect(screen.getByText('ready')).toBeInTheDocument(), { timeout: 5000 })
+    const listed = toolsIndex.mock.calls.length
+    await frame({ type: 'refresh', data: { kinds: ['mcp'] } })
+    await waitFor(() => expect(screen.getByText('ready')).toBeInTheDocument())
     expect(screen.queryByText('checking')).toBeNull()
-    const reads = mcpServers.mock.calls.length
-    expect(reads).toBeGreaterThan(1)
-
-    // Nothing is being checked any more, so the page stops reading.
-    await new Promise((r) => setTimeout(r, 1800))
-    expect(mcpServers.mock.calls.length).toBe(reads)
+    await waitFor(() => expect(screen.getByText('mcp/notes/hello')).toBeInTheDocument())
+    expect(toolsIndex.mock.calls.length).toBeGreaterThan(listed)
   })
 })
 

@@ -77,12 +77,10 @@ _BUILT: dict[str, str] = {
     "knowledge_providers/pack_parse.py::run_parse_script::subprocess.run": (
         "a connector pack's parse script"
     ),
-    "mcp_discovery.py::_probe::create_subprocess_limited": (
-        "an MCP server probe (`stdio_spawn_env`: an app's server gets the allowlist; a server of "
-        "the owner's own gets the gateway's environment, like a program the owner starts)"
-    ),
-    "mcp_client.py::McpServerConn._open_transport::StdioServerParameters": (
-        "an MCP server connection (`stdio_spawn_env`, the probe's own definition)"
+    "mcp_stdio.py::stdio_streams::create_subprocess_limited": (
+        "an MCP stdio server, for the probe and an agent's connection alike (`stdio_spawn_env`: an "
+        "app's server gets the allowlist; a server of the owner's own gets the gateway's "
+        "environment, like a program the owner starts)"
     ),
     # Git that fetches someone else's repository (`net.git.git_env`, with the SSH agent).
     "apps/catalog.py::_read_git_registry::subprocess.run": (

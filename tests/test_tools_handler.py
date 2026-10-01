@@ -74,7 +74,7 @@ async def test_slow_mcp_server_does_not_block_catalog(monkeypatch):
     assert not any(n.startswith("mcp/dead/") for n in names)
 
 
-async def _noop_list_all_tools():
+async def _noop_list_all_tools(*, skip=()):
     return []
 
 
@@ -198,7 +198,7 @@ async def test_groups_endpoint_reports_the_partition(monkeypatch):
 
     from personalclaw.tool_providers.base import ToolDefinition
 
-    async def _tools():
+    async def _tools(*, skip=()):
         return [
             ToolDefinition(name="schedule_add", description="d", provider="personalclaw-schedule"),
             ToolDefinition(name="subagent_run", description="d", provider="personalclaw-subagents"),
@@ -229,7 +229,7 @@ async def test_groups_endpoint_survives_a_broken_registry(monkeypatch):
     """A provider that explodes must not 500 the page — the endpoint degrades."""
     import json
 
-    async def _boom():
+    async def _boom(*, skip=()):
         raise RuntimeError("registry down")
 
     monkeypatch.setattr("personalclaw.tool_providers.registry.list_all_tools", _boom)
@@ -281,7 +281,7 @@ async def test_a_provider_in_the_body_is_not_read(bad_provider, monkeypatch):
 
 
 # ── #444 gaps #2/#3: tools toggle validation ────────────────────────────────
-async def _one_tool():
+async def _one_tool(*, skip=()):
     from personalclaw.tool_providers.base import ToolDefinition
 
     return [ToolDefinition(name="artifact_list", description="d", provider="personalclaw-core")]

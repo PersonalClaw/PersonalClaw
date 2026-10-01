@@ -643,7 +643,12 @@ same command and arguments, so a connection left open would keep the old server 
 answering. Entries are namespaced
 `{app}:{server}` so apps can't collide on a server key and deregistration
 removes exactly this app's servers. App-shipped stdio servers run with
-`cwd=<app dir>` (`mcp_client.py` / `mcp_discovery.py`).
+`cwd=<app dir>` (`mcp_stdio.py`, which starts every stdio server, for the probe and an agent's
+connection alike). Every start of a server is recorded in one place (`mcp_discovery.note_start`, in
+the words of `mcp_status.py`), which the Tools page card, the Settings test and an agent's failed
+call all read: a server that exited before it answered says so with its exit code and the line of
+its error output that says why, and one that fails to start three times in a row is not started
+again until its owner presses Retry or its definition changes.
 
 The manifest is the only way an app gets an MCP server. `/api/mcp` is owner-only for
 app tokens, reads included (`apps/permissions.OWNER_ONLY_API_PATHS`): a server entry is a

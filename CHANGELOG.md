@@ -164,6 +164,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The agent's `grep` leaves out binary files, as `grep -I` does, rather than returning lines of a database's or an image's bytes.**
 - **An MCP server that lists a tool with no description, or a tool whose name a model provider does not accept, no longer fails every chat turn: the tool is offered with a description written from its name and inputs (shown on the Tools page too) and under a name every provider accepts, and one that still cannot be offered is left out and logged.**
+- **An MCP server's card says how its start really ended: it exited, with its exit code and the line that says why, or it did not answer in time; what it wrote to its error output is behind Details (`McpServerInfo.detail`: an SDK addition no app has to change for), and the card updates as soon as the gateway knows, without a reload.**
+- **An MCP server that fails to start three times in a row is stopped, with Retry on its card, instead of being started again by every chat turn and every look at the Tools page.**
 - **A note the agent cites in a chat opens from the chat, by its path or its file name alone, and so does a file in a folder the agent may read.**
 - **A workflow step, a batch's review leaf included, reads the folder its batch was started in and its project's folder, read only, instead of finding only its empty working folder.**
 - **The agent no longer reads the knowledge library's own database as a file or from the shell; it is pointed to `knowledge_search` and `knowledge_get` instead.**

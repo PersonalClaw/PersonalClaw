@@ -49,13 +49,11 @@ async def _tools_section() -> list[dict[str, Any]]:
     """
     from personalclaw.tool_providers.registry import EXTERNAL_MCP_PROVIDER, list_all_tools
 
-    tools = await list_all_tools()
+    # The generic external-MCP fan-in is per-install and not part of the stable self-description
+    # — it varies by the user's mcp.json — so it is not asked (which would start every server).
+    tools = await list_all_tools(skip={EXTERNAL_MCP_PROVIDER})
     out: list[dict[str, Any]] = []
     for t in tools:
-        # The generic external-MCP fan-in is per-install and not part of the stable
-        # self-description — it varies by the user's mcp.json.
-        if t.provider == EXTERNAL_MCP_PROVIDER:
-            continue
         meta = TOOL_META.get(t.name, {})
         out.append(
             {

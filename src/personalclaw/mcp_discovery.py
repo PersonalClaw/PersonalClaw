@@ -18,13 +18,16 @@ import shutil
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
 from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
 from personalclaw.env import augmented_path, gateway_env, startup_path
 from personalclaw.hooks import safe_read_file
 from personalclaw.security import redact_for_display
+
+if TYPE_CHECKING:
+    from personalclaw.mcp_status import StartFailure
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +245,7 @@ def as_agents_see_it(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-# ── what the last probe of a server found ───────────────────────────────────────────────────
+# ── what the last start of a server found ───────────────────────────────────────────────────
 #
 # 🔴 A RESULT IS A RESULT OF ONE DEFINITION. The cache was keyed by the server's NAME alone and
 # nothing that writes a server touched it, so the Tools page's card said what the last probe had
@@ -251,6 +254,14 @@ def as_agents_see_it(row: dict[str, Any]) -> dict[str, Any]:
 # new one's tools. Each result now carries what it was probed as (:func:`_probed_as`), and a
 # server is shown only a result for what it is now. Anything else reads ``probing`` while a probe
 # of it runs, and ``unknown`` until one starts.
+#
+# 🔴 ONE RECORD FOR EVERY START. The probe kept what it found here and an agent's connection kept
+# what it found to itself, so a server the probe had given up on while it was still building read
+# "timeout" on its card while every connection that started it next saw it exit. Both now record
+# each start here (`note_start`, `_cache_probe`), in `mcp_status`'s words, with how many starts in
+# a row failed. At ``mcp_status.STOP_AFTER`` the server reads ``stopped``, and nothing starts it
+# (`start_refused`) until its owner presses Retry, a write changes it (`forget_probe`), or its
+# definition changes. Each change is announced (`mcp_status.announce`) for the pages to re-read.
 
 #: A server a probe is checking now, and has no result for yet as it is defined now.
 PROBING = "probing"
@@ -258,16 +269,20 @@ PROBING = "probing"
 
 @dataclass
 class _ProbeResult:
-    """What the last probe of one server found, and what it probed."""
+    """What the last start of one server found, and what it started."""
 
     status: str
     tools: list[dict[str, Any]]  # each entry: {"name", "description", "inputSchema"}
     error: str
     #: The definition the result is of (:func:`_probed_as`).
     probed_as: str
+    #: The tail of what a stdio server wrote to its error output, behind its card's Details.
+    detail: str = ""
+    #: How many starts of this definition in a row failed (`mcp_status.STOP_AFTER`).
+    failures: int = 0
 
 
-# Module-level probe cache: server name → result
+# Module-level record of each server's last start: server name → result
 _probe_cache: dict[str, _ProbeResult] = {}
 
 #: How many probes of each server are running now, by name.
@@ -289,45 +304,149 @@ def _probed_as(server: "McpServerInfo") -> str:
     return json.dumps(seal, sort_keys=True, separators=(",", ":"))
 
 
-def _get_cached(server: "McpServerInfo") -> tuple[str, list[dict[str, Any]], str]:
-    """``(status, tools, error)`` of the last probe of *server* as it is defined now; else
-    ``probing`` while one runs, and ``unknown`` before one starts.
+def _get_cached(server: "McpServerInfo") -> tuple[str, list[dict[str, Any]], str, str]:
+    """``(status, tools, error, detail)`` of the last start of *server* as it is defined now; else
+    ``probing`` while a probe of it runs, and ``unknown`` before one starts. A server that failed
+    to start ``mcp_status.STOP_AFTER`` times in a row reads ``stopped``, with what its last start
+    found.
 
-    However old the result, it stands until the next probe replaces it: the Tools page re-probes
+    However old the result, it stands until the next start replaces it: the Tools page re-probes
     every server on its own schedule, and meanwhile the last answer is the one there is."""
+    from personalclaw import mcp_status
+
     cached = _probe_cache.get(server.name)
     if cached is not None and cached.probed_as == _probed_as(server):
-        return cached.status, cached.tools, cached.error
+        if cached.failures >= mcp_status.STOP_AFTER:
+            text = mcp_status.stopped_trying(server.name, cached.error)
+            return mcp_status.STOPPED, [], text, cached.detail
+        return cached.status, cached.tools, cached.error, cached.detail
     if _probing.get(server.name):
-        return PROBING, [], ""
-    return "unknown", [], ""
+        return PROBING, [], "", ""
+    return "unknown", [], "", ""
+
+
+def _keep(name: str, result: _ProbeResult) -> None:
+    """Keep *result* as what server *name*'s last start found, and say so when its card changes."""
+    from personalclaw import mcp_status
+
+    if _probe_cache.get(name) != result:
+        _probe_cache[name] = result
+        mcp_status.announce(name)
 
 
 def forget_probe(name: str) -> None:
-    """Drop server ``name``'s cached probe: what it said is no longer true."""
-    _probe_cache.pop(name, None)
+    """Drop what server ``name``'s last start found, and how many failed in a row: what it said is
+    no longer true. Every write that changes a server, and its owner's Retry, comes through here,
+    which is also what starts a stopped server again."""
+    from personalclaw import mcp_status
+
+    if _probe_cache.pop(name, None) is not None:
+        mcp_status.announce(name)
 
 
 def _cache_probe(server: "McpServerInfo") -> None:
-    """Store probe result in cache."""
-    _probe_cache[server.name] = _ProbeResult(
-        status=server.status,
-        tools=list(server.tools),
-        error=server.error,
-        probed_as=_probed_as(server),
+    """Keep what a probe found as what *server*'s card shows. The count of failed starts is the
+    connection's to keep (`note_start`), and is carried over; a probe that connected resets it."""
+    seal = _probed_as(server)
+    prev = _probe_cache.get(server.name)
+    carried = prev.failures if prev is not None and prev.probed_as == seal else 0
+    _keep(
+        server.name,
+        _ProbeResult(
+            status=server.status,
+            tools=list(server.tools),
+            error=server.error,
+            probed_as=seal,
+            detail=server.detail,
+            failures=0 if server.status == "ok" else carried,
+        ),
     )
 
 
+def definition_seal(name: str, spec: Mapping[str, Any]) -> str:
+    """What a start of server *name* from *spec* is a start OF (:func:`_probed_as`). A spec whose
+    secrets are resolved seals the same as the one in ``mcp.json``: values are not in the seal."""
+    return _probed_as(_server_from_spec(name, dict(spec), "mcp.json"))
+
+
+def _current_seal(name: str) -> str | None:
+    """The seal of server *name* as it is defined now, or ``None`` when no server has that name."""
+    server = next((s for s in list_servers(include_disabled=True) if s.name == name), None)
+    return _probed_as(server) if server is not None else None
+
+
+def note_start(
+    name: str,
+    seal: str,
+    *,
+    tools: list[Any] | None = None,
+    failure: "StartFailure | None" = None,
+) -> None:
+    """Record one start of server *name* (sealed *seal*): connected with *tools*, or failed with
+    *failure*. Called once per start, by the connection that made it (`mcp_client`), whoever asked
+    for it: an agent's turn, the Tools page's listing, a probe.
+
+    A failure that counts adds one to the failed starts in a row; a start that connected resets
+    them. A start of a definition the server no longer has is not its result, and is dropped.
+    """
+    from personalclaw import mcp_status
+
+    if _current_seal(name) != seal:
+        return
+    prev = _probe_cache.get(name)
+    same = prev is not None and prev.probed_as == seal
+    if failure is None:
+        listed = [
+            {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+            for t in tools or []
+        ]
+        _keep(name, _ProbeResult("ok", listed, "", seal))
+        return
+    failures = (prev.failures if same and prev is not None else 0) + int(failure.counts)
+    _keep(
+        name,
+        _ProbeResult("error", [], failure.headline, seal, detail=failure.detail, failures=failures),
+    )
+    if failure.counts and failures == mcp_status.STOP_AFTER:
+        logger.warning(
+            "MCP server %r failed to start %d times in a row; it is not started again until its "
+            "owner presses Retry or changes it",
+            name,
+            failures,
+        )
+
+
+def start_refused(name: str, seal: str) -> str | None:
+    """Why server *name*, sealed *seal*, must not be started now, or ``None``: it failed to start
+    ``mcp_status.STOP_AFTER`` times in a row as it is defined now. Asked before every start, by
+    an agent's connection and by the probe, so nothing starts a stopped server."""
+    from personalclaw import mcp_status
+
+    cached = _probe_cache.get(name)
+    if cached is None or cached.probed_as != seal or cached.failures < mcp_status.STOP_AFTER:
+        return None
+    return mcp_status.stopped_trying(name, cached.error)
+
+
 def _probe_started(name: str) -> None:
+    """A probe of *name* is running: a server with no result for what it is now reads
+    ``probing`` from here on, which is announced."""
+    from personalclaw import mcp_status
+
     _probing[name] = _probing.get(name, 0) + 1
+    if _probing[name] == 1:
+        mcp_status.announce(name)
 
 
 def _probe_ended(name: str) -> None:
+    from personalclaw import mcp_status
+
     left = _probing.get(name, 0) - 1
     if left > 0:
         _probing[name] = left
     else:
         _probing.pop(name, None)
+        mcp_status.announce(name)
 
 
 #: The re-probes :func:`recheck` started for a caller that holds no task set of its own.
@@ -386,7 +505,8 @@ class McpServerInfo:
     cwd: str = ""  # working dir for the spawn (app-shipped servers set this to the app dir)
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
-    # unknown | ok | error | signin | probing (UNSERVED and ``waiting`` are only shown). ``signin``:
+    # unknown | ok | error | signin | probing | stopped (UNSERVED and ``waiting`` are only shown).
+    # ``stopped``: it failed to start ``mcp_status.STOP_AFTER`` times in a row. ``signin``:
     # a remote server that refused the connection until its owner signs in, or signs in again —
     # only one that offers a sign-in (`_probe_remote`). ``probing``: a probe of it is running, and
     # there is no result yet for it as it is defined now.
@@ -407,6 +527,9 @@ class McpServerInfo:
     #: Switched off by the owner. Only ``list_servers(include_disabled=True)`` lists such a server,
     #: for the pages that show it switched off; nothing probes or connects to one.
     disabled: bool = False
+    #: The tail of what a stdio server wrote to its error output when its last start failed: what
+    #: its card shows behind Details. ``error`` is the one-line reason (`mcp_status`).
+    detail: str = ""
 
     def __post_init__(self) -> None:
         self.transport = mcp_transport(
@@ -436,6 +559,9 @@ class McpServerInfo:
             "error": redact_for_display(self.error) if self.error else self.error,
             "source": self.source,
         }
+        if self.detail:
+            # A server's error output can print anything it was given, its variables included.
+            d["detail"] = redact_for_display(self.detail)
         if self.disabled_tools:
             d["disabledTools"] = self.disabled_tools
         return d
@@ -643,12 +769,9 @@ def list_servers(*, include_disabled: bool = False) -> list[McpServerInfo]:
         if name in servers and "disabledTools" in spec:
             servers[name].disabled_tools = spec.get("disabledTools", [])
 
-    # 3. Merge cached probe results: each server's own, for what it is now (`_get_cached`).
+    # 3. Merge what each server's last start found, for what it is now (`_get_cached`).
     for s in servers.values():
-        status, tools, error = _get_cached(s)
-        s.status = status
-        s.tools = tools
-        s.error = error
+        s.status, s.tools, s.error, s.detail = _get_cached(s)
 
     return list(servers.values())
 
@@ -675,7 +798,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         ForeignSecretReference,
         resolve_mcp_values,
     )
-    from personalclaw.mcp_client import McpServerConn
+    from personalclaw.mcp_client import try_start
 
     try:
         # The spec holds `{{secret:…}}` references; the header values are resolved here, where the
@@ -693,22 +816,14 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         spec: dict[str, Any] = {"type": server.transport, "url": server.url, "headers": headers}
         if server.sign_in:
             spec[MCP_SIGN_IN] = server.sign_in
-        conn = McpServerConn(server.name, spec)
         waited = _get_probe_timeout()
-        tools: list[Any] = []
-        timed_out = False
-        try:
-            tools = await asyncio.wait_for(conn.list_tools(), timeout=waited)
-        except asyncio.TimeoutError:
-            timed_out = True
-        finally:
-            await conn.shutdown()
-        if timed_out:
+        started = await try_start(server.name, spec, deadline=waited, seal=_probed_as(server))
+        if started.timed_out:
             server.status = "error"
             server.error = await _why_no_answer(server.url, waited)
-        elif conn.error:
-            server.status, server.error = "error", conn.error
-            if conn.sign_in_needed:
+        elif started.error:
+            server.status, server.error = "error", started.error
+            if started.sign_in_needed:
                 # A sign-in it holds has ended: signing in again is the answer. One it never had
                 # is offered only if the server says how to sign in.
                 why_not = None if server.sign_in else await _sign_in_unavailable(server, headers)
@@ -720,7 +835,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
             server.status = "ok"
             server.tools = [
                 {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
-                for t in tools
+                for t in started.tools
             ]
     if server.status in ("error", "signin"):
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
@@ -819,31 +934,8 @@ async def _look_up(host: str) -> None:
     await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
 
 
-async def _drain_stderr_reason(proc: Any) -> str:
-    """Read whatever the server wrote to stderr, condensed to a one-line reason.
-
-    Used when stdout is empty (server exited before responding) so the failure
-    is legible — e.g. ``server exited: Node version 18 detected, requires >=20``
-    instead of a bare ``no response``. Bounded read + short timeout so a server
-    that holds stderr open can't hang the probe.
-    """
-    if proc is None or proc.stderr is None:
-        return ""
-    try:
-        data = await asyncio.wait_for(proc.stderr.read(4096), timeout=2.0)
-    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
-        return ""
-    text = (data or b"").decode("utf-8", "replace").strip()
-    if not text:
-        return ""
-    # Last non-empty line is usually the actionable error.
-    last = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    reason = last[-1] if last else text
-    return f"server exited: {reason[:200]}"
-
-
 async def probe_server(server: McpServerInfo) -> McpServerInfo:
-    """Probe a single MCP server by spawning it and sending initialize.
+    """Probe a single MCP server: start it, or connect to it, as an agent's connection does.
 
     Updates server.status and server.tools in place and returns it. A server the owner has not
     allowed as it is defined now (`mcp_grants`) is neither spawned nor connected to: it reads
@@ -853,7 +945,7 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
     is kept (`_cache_probe`) whatever it was, a failure included. A probe that kept only its
     successes left each failure on screen as whatever an older probe had said.
     """
-    from personalclaw import mcp_grants
+    from personalclaw import mcp_grants, mcp_status
 
     _probe_started(server.name)
     try:
@@ -864,8 +956,9 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
     finally:
         _probe_ended(server.name)
-    # Whether it waits, and whether it is switched off, are read when the server is shown.
-    if server.status not in (mcp_grants.WAITING, "disabled"):
+    # Whether it waits, and whether it is switched off, are read when the server is shown, and a
+    # stopped one's record is the one that says so.
+    if server.status not in (mcp_grants.WAITING, "disabled", mcp_status.STOPPED):
         _cache_probe(server)
     return server
 
@@ -891,6 +984,12 @@ async def _probe(server: McpServerInfo) -> None:
         server.tools = []
         return
 
+    if start_refused(server.name, _probed_as(server)) is not None:
+        # Stopped after failing to start again and again: the Tools page's own look starts it no
+        # more than an agent does. Retry (`forget_probe`) does.
+        server.status, server.tools, server.error, server.detail = _get_cached(server)
+        return
+
     if server.is_remote:
         await _probe_remote(server)
         return
@@ -912,147 +1011,32 @@ async def _probe(server: McpServerInfo) -> None:
         server.status = "error"
         server.error = str(exc)
         return
-    proc = None
-    try:
-        env = stdio_spawn_env(server_env, server=server.name)
+    from personalclaw.mcp_client import try_start
 
-        # Resolve command to absolute path using the merged env PATH
-        resolved = shutil.which(server.command, path=env.get("PATH"))
-        if not resolved:
-            server.status = "error"
-            server.error = f"command not found: {server.command}"
-            logger.warning(
-                "MCP probe failed [%s]: command not found: %s", server.name, server.command
-            )
-            return
-
-        # Resource ceiling: an MCP server is agent-influenced (its command comes
-        # from a discovered/installed server spec). Deliver the ``tool`` ceiling via the
-        # post-exec shim — no preexec_fn, so this probe spawn never wedges the loop.
-        from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
-
-        proc = await create_subprocess_limited(
-            resolved,
-            *(server.args or []),
-            profile=PROFILE_TOOL,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            # An app-shipped server sets cwd to its app dir so relative args
-            # (e.g. "backend/mcp_server.py") resolve; None keeps the gateway cwd.
-            cwd=server.cwd or None,
-            limit=1024 * 1024,  # 1 MB
-        )
-
-        # Send initialize request
-        init_req = (
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "personalclaw-probe", "version": "1.0.0"},
-                    },
-                }
-            )
-            + "\n"
-        )
-
-        assert proc.stdin is not None
-        assert proc.stdout is not None
-        proc.stdin.write(init_req.encode())
-        await proc.stdin.drain()
-
-        # Read initialize response
-        line = await asyncio.wait_for(proc.stdout.readline(), timeout=_get_probe_timeout())
-        if not line:
-            server.status = "error"
-            # Empty stdout usually means the server exited before responding
-            # (a common cause: wrong Node/interpreter version). Surface the
-            # child's stderr so the reason is legible instead of "no response".
-            server.error = await _drain_stderr_reason(proc) or "no response"
-            return
-
-        resp = json.loads(line.decode())
-        if "error" in resp:
-            server.status = "error"
-            server.error = resp["error"].get("message", "unknown error")
-            return
-
-        # Send initialized notification
-        notif = (
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/initialized",
-                }
-            )
-            + "\n"
-        )
-        proc.stdin.write(notif.encode())
-        await proc.stdin.drain()
-
-        # Request tool list
-        list_req = (
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/list",
-                    "params": {},
-                }
-            )
-            + "\n"
-        )
-        proc.stdin.write(list_req.encode())
-        await proc.stdin.drain()
-
-        line2 = await asyncio.wait_for(proc.stdout.readline(), timeout=_get_probe_timeout())
-        if line2:
-            resp2 = json.loads(line2.decode())
-            tools_data = resp2.get("result", {}).get("tools", [])
-            server.tools = [
-                {
-                    "name": t.get("name", ""),
-                    "description": t.get("description", ""),
-                    "inputSchema": t.get("inputSchema", {}),
-                }
-                for t in tools_data
-                if isinstance(t, dict) and t.get("name")
-            ]
-
-        server.status = "ok"
-
-    except asyncio.TimeoutError:
+    # Started as an agent's connection starts it (`mcp_client`, `mcp_stdio`): in the same
+    # environment, through the same ceiling, so a server that probes "ok" is one an agent can start
+    # and one that cannot says why in the same words. Given the probe's own time to answer.
+    spec: dict[str, Any] = {
+        "command": server.command,
+        "args": list(server.args or []),
+        "env": server_env,
+    }
+    if server.cwd:
+        spec["cwd"] = server.cwd
+    started = await try_start(
+        server.name, spec, deadline=_get_probe_timeout(), seal=_probed_as(server)
+    )
+    if started.error:
         server.status = "error"
-        server.error = "timeout"
-        logger.warning(
-            "MCP probe failed [%s]: timeout after %ds", server.name, _get_probe_timeout()
-        )
-    except FileNotFoundError:
-        server.status = "error"
-        server.error = f"command not found: {server.command}"
-        logger.warning("MCP probe failed [%s]: command not found: %s", server.name, server.command)
-    except Exception as exc:
-        server.status = "error"
-        server.error = str(exc)[:200]
+        server.error = started.error
+        server.detail = started.detail
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
-    finally:
-        if proc is not None and proc.returncode is None:
-            try:
-                if proc.stdin:
-                    proc.stdin.close()
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except (asyncio.TimeoutError, Exception):
-                try:
-                    proc.kill()
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except Exception:
-                    pass
+        return
+    server.status = "ok"
+    server.tools = [
+        {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+        for t in started.tools
+    ]
 
 
 async def probe_one(name: str) -> McpServerInfo | None:

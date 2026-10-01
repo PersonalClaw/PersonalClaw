@@ -2794,6 +2794,9 @@ export type McpTransport = 'stdio' | 'http' | 'sse'
 export interface McpServer {
   name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
   error?: string; source?: string; enabled?: boolean
+  /** When its last start failed: the tail of what it wrote to its error output, which the card shows
+   *  behind Details. `error` is the one-line reason (`mcp_status`). */
+  detail?: string
   /** A server at a URL's OAuth sign-in, when it has one or asked for one (`status: 'signin'`). */
   auth?: McpSignInState
   /** Whether the owner allowed what the server runs, as it is defined now (`mcp_grants`). */

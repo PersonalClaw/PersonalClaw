@@ -75,9 +75,9 @@ class _Probe:
         self.looked_up: list[str] = []
 
     async def run(self) -> McpServerInfo:
-        async def never_answers(_conn):
+        async def never_answers(_conn, _stack):
+            # The connection is opened and nothing ever answers: the probe's own deadline ends it.
             await asyncio.sleep(30)
-            return []
 
         async def look_up(host: str) -> None:
             self.looked_up.append(host)
@@ -89,7 +89,7 @@ class _Probe:
             patch("personalclaw.mcp_discovery._get_probe_timeout", return_value=0.2),
             patch("personalclaw.mcp_discovery._look_up", look_up, create=True),
             patch("personalclaw.mcp_discovery._proxied", return_value=False, create=True),
-            patch("personalclaw.mcp_client.McpServerConn.list_tools", never_answers),
+            patch("personalclaw.mcp_client.McpServerConn._open_transport", never_answers),
         ):
             return await _probe_remote(self.server)
 

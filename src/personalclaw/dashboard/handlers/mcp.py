@@ -437,28 +437,35 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
     """POST /api/mcp/probe — probe all MCP servers and return live status.
 
     Each row carries the user's enable and disabledTools choices from mcp.json, and what the
-    probe found is what every later read shows (`mcp_discovery`) until the next probe.
+    probe found is what every later read shows (`mcp_discovery`) until the next probe. It is the
+    owner asking for every server, so one stopped after failing to start again and again is
+    started once more, as its own Retry does.
     """
     global _mcp_probe_ts
-    from personalclaw.mcp_discovery import probe_all  # noqa: F811
+    from personalclaw.mcp_discovery import forget_probe, list_servers, probe_all  # noqa: F811
 
     _mcp_probe_ts = time.time()
+    for server in list_servers():
+        forget_probe(server.name)
     servers = await probe_all()
     mcp_specs = _read_mcp_json()
     return web.json_response([_server_row(s, mcp_specs) for s in servers])
 
 
 async def api_mcp_probe_one(request: web.Request) -> web.Response:
-    """POST /api/mcp/probe/{name} — reconnect (re-probe) a SINGLE MCP server.
+    """POST /api/mcp/probe/{name} — reconnect (re-probe) a SINGLE MCP server: its card's Retry.
 
     Lets the user recover one timed-out/errored provider without re-probing the
-    whole fleet (a slow server shouldn't force an all-provider re-probe). Answers this
-    server's row as every read shows it from now on. 404 if no server by that name."""
+    whole fleet (a slow server shouldn't force an all-provider re-probe). It is the owner asking,
+    so a server stopped after failing to start again and again is started once more
+    (`mcp_discovery.forget_probe`). Answers this server's row as every read shows it from now on.
+    404 if no server by that name."""
     name = request.match_info["name"].strip()
     if not name:
         return web.json_response({"error": "server name is required"}, status=400)
-    from personalclaw.mcp_discovery import probe_one  # noqa: F811
+    from personalclaw.mcp_discovery import forget_probe, probe_one  # noqa: F811
 
+    forget_probe(name)
     info = await probe_one(name)
     if info is None:
         return web.json_response({"error": f"no MCP server {name!r} configured"}, status=404)
