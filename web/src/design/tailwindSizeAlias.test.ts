@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Tailwind's font-size ALIASES bypass the app's type ramp ────────────────────
 //
@@ -44,13 +45,7 @@ const ALIAS_RE = new RegExp(String.raw`(?<![-\w])text-(${SIZE_ALIASES.join('|')}
 const ALLOWED: Record<string, string> = {}
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) { out.push(...walk(p)); continue }
-    if (/\.(tsx|ts)$/.test(name) && !/\.test\.(tsx|ts)$/.test(name)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (name) => /\.(tsx|ts)$/.test(name) && !/\.test\.(tsx|ts)$/.test(name))
 }
 
 describe('type sizes stay on the app ramp, not Tailwind aliases', () => {
@@ -59,7 +54,7 @@ describe('type sizes stay on the app ramp, not Tailwind aliases', () => {
     for (const abs of [...walk(join(SRC, 'pages')), ...walk(join(SRC, 'ui'))]) {
       const rel = abs.slice(SRC.length + 1)
       if (rel in ALLOWED) continue
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       src.split('\n').forEach((line, i) => {
         if (ALIAS_RE.test(line)) offenders.push(`${rel}:${i + 1}`)
       })

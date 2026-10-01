@@ -59,7 +59,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
 
-- **An app's test suite can refuse its tests a real local model server: `personalclaw.sdk.testing.refuse_ports()`.**
+- **An app's test suite can refuse its tests a real local model server, and with `loopback=True` any server on the machine its tests did not start: `personalclaw.sdk.testing.refuse_ports()` (an SDK addition no app has to change for).**
 
 - **An app's test suite can keep its tests' git off the machine's credential helpers, as core's own suite now does: `personalclaw.sdk.testing.neutral_git_env` and `refuse_git_helpers`, used by the apps repository's test harness.**
 

@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { unavailableWhen } from './unavailable'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The raw-<button> half of "an unavailable control says why" ────────────────────────
 //
@@ -92,14 +93,10 @@ describe('unavailableWhen', () => {
       .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
       .replace(/^(\s*)\/\/.*$/gm, '$1')
-    const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-    })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
     let busySites = 0
     for (const abs of walk(SRC)) {
-      const code = strip(readFileSync(abs, 'utf8'))
+      const code = strip(readSource(abs))
       // Every call form in the tree spreads the result directly into the element.
       for (const m of code.matchAll(/\{\.\.\.unavailableWhen\([\s\S]{0,200}?\)\}/g)) {
         if (/busy/.test(m[0])) busySites += 1
@@ -145,12 +142,7 @@ describe('unavailableWhen', () => {
 
 // ── The call-site half ────────────────────────────────────────────────────────────────
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 // `app/Onboarding.tsx` left this list when its raw submit did: the name step's Continue was an
 // arrow `<button>` inside the name field, and it is now the flow's navigation-bar `<Button>` with
@@ -168,7 +160,7 @@ const ADOPTERS = [
 describe('every converted raw submit uses the helper', () => {
   for (const rel of ADOPTERS) {
     it(`${rel} spreads unavailableWhen on its gated submit`, () => {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, 'must spread the helper').toMatch(/\{\.\.\.unavailableWhen\(/)
       // 🪤 THIS PINNED THE BRACE CONTENTS, NOT THE IMPORT. Adding a second name to the same statement
       // — `import { unavailableWhen, BUSY_REASON } from '…/ui/unavailable'` — reddened it while changing
@@ -195,7 +187,7 @@ describe('every converted raw submit uses the helper', () => {
     const mismatched: string[] = []
     const missing: string[] = []
     for (const rel of ADOPTERS) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       for (const m of src.matchAll(/unavailableWhen\(/g)) {
         const start = src.lastIndexOf('<', m.index!)
         let depth = 0

@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ContextMenu } from './ContextMenu'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── An overlay a pointer can open and a keyboard cannot ───────────────────────────────────────────
 //
@@ -116,22 +117,17 @@ describe('the row context menu opens from the keyboard', () => {
 
 describe('the population this reaches', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   it('14 surfaces use the primitive, so the fix is not a per-page patch', () => {
-    const files = walk(join(SRC, 'pages')).filter((abs) => /<ContextMenu[\s>]/.test(readFileSync(abs, 'utf8')))
+    const files = walk(join(SRC, 'pages')).filter((abs) => /<ContextMenu[\s>]/.test(readSource(abs)))
     expect(files.length, `consumers:\n${files.map((f) => f.slice(SRC.length + 1)).join('\n')}`).toBeGreaterThanOrEqual(14)
   })
 
   it('the primitive still binds a keyboard opener', () => {
     // If a refactor drops `onKeyDown` from the bind object, every one of those surfaces silently loses
     // its keyboard route again — the state this cycle found.
-    const code = readFileSync(join(SRC, 'ui/motion/ContextMenu.tsx'), 'utf8')
+    const code = readSource(join(SRC, 'ui/motion/ContextMenu.tsx'))
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     expect(code).toMatch(/onKeyDown: \(e: React\.KeyboardEvent\)/)
     expect(code).toMatch(/e\.key === 'ContextMenu' \|\| \(e\.key === 'F10' && e\.shiftKey\)/)

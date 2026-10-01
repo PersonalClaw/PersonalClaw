@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /** Writes docs/design/consistency-audit.json. Runs ONLY when explicitly asked.
  *
  * `npm run audit:consistency` (from the repo root or the web workspace) sets the env var

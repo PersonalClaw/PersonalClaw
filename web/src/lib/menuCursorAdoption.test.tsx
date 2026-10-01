@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── If a popup DECLARES role=menu / role=listbox, it has to implement one ──────────────────────
 //
@@ -41,19 +42,14 @@ import { join } from 'node:path'
 // still arms, so the first Arrow key pulls focus in.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 /** 🪤 Comments stripped FIRST, always. `ui/Popover.tsx` documents the words `role="menu"` in
  *  MenuRow's prose, so a raw grep counts it as a sixth popup — the same false positive that has
  *  cost this session three separate censuses. */
 const codeOf = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
 /** Every non-test file under web/src. */
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 describe('the declaration-implies-implementation census', () => {
   /** file → the popup roles it declares, comments stripped. */
@@ -363,7 +359,7 @@ describe('the quick-open combobox says what it is doing', () => {
     // The palette's list exists for as long as the palette does; this one appears on typing and goes
     // away on Escape, so without `aria-expanded` nothing announces that a list arrived.
     expect(code).toMatch(/ariaExpanded=\{open && q\.trim\(\)\.length >= 2\}/)
-    expect(readFileSync(join(SRC, 'ui/SearchField.tsx'), 'utf8'), 'and the field must pass it through')
+    expect(readSource(join(SRC, 'ui/SearchField.tsx')), 'and the field must pass it through')
       .toMatch(/'aria-expanded': ariaExpanded/)
   })
 

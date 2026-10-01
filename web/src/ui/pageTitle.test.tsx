@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { PageTitle } from './PageTitle'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Every destination names itself with an h1 ──────────────────────────────────────────
 //
@@ -90,12 +91,7 @@ describe('PageTitle', () => {
 // ── The call-site half ────────────────────────────────────────────────────────────────
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.doc\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.doc\.tsx$/.test(n))
 
 /** The destinations converged in this pass: a nav destination whose TopBar left slot is a
  *  STATIC page name. Every one of these measured h1-less before the change. */
@@ -139,7 +135,7 @@ const DESTINATIONS = [
 describe('every converged destination names itself', () => {
   for (const rel of DESTINATIONS) {
     it(`${rel} titles itself with PageTitle`, () => {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, 'must render the primitive').toMatch(/<PageTitle[\s>]/)
       expect(src, 'must import it').toMatch(/import \{ PageTitle \}/)
     })
@@ -150,7 +146,7 @@ describe('every converged destination names itself', () => {
     // which is the state that looks converged in a diff and is not.
     const holdouts: string[] = []
     for (const rel of DESTINATIONS) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       if (/left=\{<span data-type="title-l"/.test(src)) holdouts.push(rel)
     }
     expect(holdouts, `still hand-rolling the page title:\n  ${holdouts.join('\n  ')}`).toEqual([])
@@ -169,7 +165,7 @@ describe('every converged destination names itself', () => {
       'pages/projects/ProjectsSection.tsx']
     const offenders: string[] = []
     for (const rel of DESTINATIONS) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       const n = [...src.matchAll(/<PageTitle[\s>]/g)].length
       if (n > 1 && !TWO_STEP.includes(rel)) offenders.push(`${rel} (${n})`)
     }
@@ -179,7 +175,7 @@ describe('every converged destination names itself', () => {
   it('does NOT give a docked panel header an h1', () => {
     // ChatPage's "Chat history" is a SidePanel header. If a future pass converts it, heading
     // navigation gets two competing document titles on one route.
-    const chat = readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8')
+    const chat = readSource(join(SRC, 'pages/ChatPage.tsx'))
     expect(
       /left=\{<PageTitle[^>]*>Chat history/.test(chat),
       'the Chat history panel header must stay a span — a drawer is not the page',
@@ -199,7 +195,7 @@ describe('every converged destination names itself', () => {
 // headers (the shared `Section` and the separately-authored `PinnedTiles`) are now h2.
 
 describe('an entity is the destination when the URL says so', () => {
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
 
   it('the path-segment detail routes carry the entity as their h1', () => {
     // A run started as a loop is named by the loop (`title`), a template run by its template.
@@ -245,7 +241,7 @@ describe('an entity is the destination when the URL says so', () => {
 })
 
 describe('no destination skips a heading level', () => {
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
 
   // ── Cycle 163: the LAST skip in the app, and the sweep that proves it was the last ──────────────
   //
@@ -272,14 +268,8 @@ describe('no destination skips a heading level', () => {
     // The surface this cycle measured, held closed. Other areas still have h3s (workflows' drawers,
     // settings' panels, DiscoverPage) — they sit under an h2 or in a panel, and the sweep found no skip
     // in any of them, so they are deliberately untouched rather than swept on principle.
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-      })
-    const offenders = walk(join(SRC, 'pages/tasks')).filter((abs) => /<h3[\s>]/.test(readFileSync(abs, 'utf8')))
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
+    const offenders = walk(join(SRC, 'pages/tasks')).filter((abs) => /<h3[\s>]/.test(readSource(abs)))
       .map((abs) => abs.slice(SRC.length + 1))
     expect(offenders, `these would skip h1 → h3:\n${offenders.join('\n')}`).toEqual([])
   })
@@ -289,7 +279,7 @@ describe('the dashboard does not skip a heading level', () => {
   const files = ['pages/dashboard/DashboardPage.tsx', 'pages/dashboard/PinnedTiles.tsx']
 
   it.each(files)('%s renders its section header as h2', (rel) => {
-    const src = readFileSync(join(SRC, rel), 'utf8')
+    const src = readSource(join(SRC, rel))
     expect(src, 'section header must be an h2, directly under the page h1').toMatch(/<h2 data-type="label-l"/)
     expect(src, 'no h3 section header left to skip a level').not.toMatch(/<h3 data-type="label-l"/)
   })
@@ -297,7 +287,7 @@ describe('the dashboard does not skip a heading level', () => {
   it('finds the shared Section component (not vacuously green)', () => {
     // If `Section` is ever renamed or inlined, this assertion is what notices before the
     // heading level silently drifts back.
-    const src = readFileSync(join(SRC, 'pages/dashboard/DashboardPage.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/dashboard/DashboardPage.tsx'))
     expect(src).toMatch(/function Section\(/)
   })
 })
@@ -323,12 +313,7 @@ describe('the dashboard does not skip a heading level', () => {
 
 describe('a panel that owns its h1 does not skip a level', () => {
   const PAGES = join(process.cwd(), 'src/pages')
-  const walkPages = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walkPages(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walkPages = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
   const strip = (s: string) => s
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
 
@@ -344,14 +329,14 @@ describe('a panel that owns its h1 does not skip a level', () => {
    *  them — they need a drive-open pass, not an assertion. */
   function ownsItsH1() {
     return walkPages(PAGES)
-      .map((abs) => ({ rel: abs.slice(PAGES.length + 1), src: strip(readFileSync(abs, 'utf8')) }))
+      .map((abs) => ({ rel: abs.slice(PAGES.length + 1), src: strip(readSource(abs)) }))
       .filter((f) => /<h[1-6]\b/.test(f.src) && /<PanelHeader\b|<PageTitle\b/.test(f.src))
   }
 
   /** The primitives the rule leans on. If either changes level, the rule's arithmetic is wrong and
    *  these two assertions fail before the sweep can report a false verdict. */
   it('the premises hold: PanelHeader is an h1 and Section is an h2', () => {
-    const ui = readFileSync(join(process.cwd(), 'src/pages/settings/settingsUI.tsx'), 'utf8')
+    const ui = readSource(join(process.cwd(), 'src/pages/settings/settingsUI.tsx'))
     expect(ui, 'PanelHeader must render the panel title as h1').toMatch(/<h1 className="text-on-surface"/)
     expect(ui, 'Section must render its heading as h2').toMatch(/<h2 data-type="title-m" className=\{`mb-s text-on-surface/)
   })
@@ -389,7 +374,7 @@ describe('a panel that owns its h1 does not skip a level', () => {
     // `<Section title={label} hint={hint} icon={Icon}` and broke the moment the call was rewritten to
     // put the count inside the title. Attribute order is incidental; what matters is which props the
     // panel hands the primitive.
-    const providers = readFileSync(join(PAGES, 'settings/ProvidersPanel.tsx'), 'utf8')
+    const providers = readSource(join(PAGES, 'settings/ProvidersPanel.tsx'))
     const sectionCall = providers.slice(providers.indexOf('<Section'), providers.indexOf('<Section') + 400)
     expect(sectionCall, 'the entity group renders the shared Section').toContain('<Section')
     for (const prop of ['icon={Icon}', 'hint={hint}', '{label}']) {
@@ -398,7 +383,7 @@ describe('a panel that owns its h1 does not skip a level', () => {
     expect(sectionCall, 'with the muted tone — coral on nine decorative glyphs is a system violation')
       .toContain('iconTone="muted"')
     expect(/<h[1-6]\b/.test(providers), 'and writes no heading tag of its own').toBe(false)
-    const voice = readFileSync(join(PAGES, 'settings/VoicePanel.tsx'), 'utf8')
+    const voice = readSource(join(PAGES, 'settings/VoicePanel.tsx'))
     expect(voice, 'Learned corrections nests under its Section h2').toMatch(/<h3 [^>]*>Learned corrections<\/h3>/)
   })
 })

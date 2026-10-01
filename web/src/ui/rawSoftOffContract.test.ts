@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The hand-rolled half of the disabled-button family ────────────────────────────────────
 //
@@ -55,12 +56,7 @@ import { join } from 'node:path'
 // session's recurring one: a census that flags the thing you just fixed is measuring itself.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 const FIXED: Array<{ file: string; reason: string; guard: RegExp }> = [
   { file: 'pages/settings/AccountPanel.tsx', reason: 'No changes to save', guard: /aria-disabled=\{!dirty \|\| undefined\}/ },
@@ -76,7 +72,7 @@ const FIXED: Array<{ file: string; reason: string; guard: RegExp }> = [
 describe('a converted raw control keeps its tab stop AND its dimming', () => {
   for (const { file, reason, guard } of FIXED) {
     it(`${file} — "${reason}"`, () => {
-      const src = readFileSync(join(SRC, file), 'utf8')
+      const src = readSource(join(SRC, file))
       expect(src, 'the gate must publish aria-disabled, not the native attribute').toMatch(guard)
       expect(src.toLowerCase(), 'and it must say why').toContain(reason.toLowerCase())
       // Trap 1, PER TAG — a file-scoped version of this check stayed GREEN while one of the two
@@ -93,13 +89,13 @@ describe('a converted raw control keeps its tab stop AND its dimming', () => {
 
   it('neutralises the hover tint that `enabled:` starts allowing', () => {
     // Trap 2. Only the cycle row has an `enabled:hover:` tint among the converted set.
-    const src = readFileSync(join(SRC, 'pages/tasks/formControls.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/tasks/formControls.tsx'))
     expect(src).toMatch(/enabled:hover:bg-surface-high aria-disabled:hover:bg-transparent/)
   })
 
   it('refuses the click it can no longer refuse natively', () => {
     for (const rel of ['pages/settings/AccountPanel.tsx', 'pages/tasks/formControls.tsx', 'pages/knowledge/KnowledgeDetail.tsx', 'ui/content/ContentSurface.tsx']) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       // Either order — `x ? handler : undefined` or `x ? undefined : handler` — and the arrow body
       // may contain braces, so match the ternary rather than the whole expression.
       expect(src, `${rel} must guard its handler`).toMatch(/onClick=\{[^}\n]*\?[^\n]*undefined/)
@@ -130,7 +126,7 @@ describe('the remaining raw disabled buttons are accounted for', () => {
   const unaccounted = walk(SRC).flatMap((f) => {
     const rel = f.slice(SRC.length + 1)
     if (ACCOUNTED.has(rel)) return []
-    const src = readFileSync(f, 'utf8')
+    const src = readSource(f)
     return [...src.matchAll(/<button\b[^>]{0,600}?(?<!aria-)disabled=\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/gs)]
       .filter((m) => m[1].split(/\|\||&&/).map((s) => s.trim()).filter(Boolean).some((c) => !BUSY.test(c)))
       .map(() => rel)
@@ -141,7 +137,7 @@ describe('the remaining raw disabled buttons are accounted for', () => {
   })
 
   it('still finds the population it is filtering (not vacuously green)', () => {
-    const all = walk(SRC).flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/<button\b[^>]{0,600}?(?<!aria-)disabled=\{/gs)].map(() => 1))
+    const all = walk(SRC).flatMap((f) => [...readSource(f).matchAll(/<button\b[^>]{0,600}?(?<!aria-)disabled=\{/gs)].map(() => 1))
     expect(all.length, 'the matcher must find the raw disabled buttons').toBeGreaterThanOrEqual(30)
   })
 })

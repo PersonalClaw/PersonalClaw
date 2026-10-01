@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ContextMenu } from '../ui/motion/ContextMenu'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A context menu's highlighted row must BE the focused row ───────────────────────────────────
 //
@@ -113,7 +114,7 @@ describe('Enter activates exactly once', () => {
   })
 
   it('the Enter branch is gone from the source, not just inert', () => {
-    const src = readFileSync(join(process.cwd(), 'src/ui/motion/ContextMenu.tsx'), 'utf8')
+    const src = readSource(join(process.cwd(), 'src/ui/motion/ContextMenu.tsx'))
     expect(src, 'a re-added Enter branch fires onSelect twice per press').not.toMatch(/key === 'Enter'/)
   })
 })
@@ -177,7 +178,7 @@ describe('a disabled row stays reachable and says why it cannot act', () => {
 })
 
 describe("FileTree's second implementation shares the keyboard contract", () => {
-  const whole = readFileSync(join(process.cwd(), 'src/pages/files/browse/FileTree.tsx'), 'utf8')
+  const whole = readSource(join(process.cwd(), 'src/pages/files/browse/FileTree.tsx'))
   // Scoped to the menu component — it is the LAST declaration in the file. The tree's inline
   // rename/create inputs legitimately handle Enter, so a whole-file "no Enter branch" assertion is
   // a false red (it was, on the first run of this rail).
@@ -222,15 +223,9 @@ describe("FileTree's second implementation shares the keyboard contract", () => 
 
 describe('every ContextMenu consumer inherits this — the census', () => {
   it('is worth doing in the primitive: 13 files, 16 call sites', () => {
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
     const PAGES = join(process.cwd(), 'src/pages')
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-      })
-    const sites = walk(PAGES).flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/<ContextMenu[\s>]/g)].map(() => f))
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
+    const sites = walk(PAGES).flatMap((f) => [...readSource(f).matchAll(/<ContextMenu[\s>]/g)].map(() => f))
     expect(new Set(sites).size, 'files rendering a context menu').toBeGreaterThanOrEqual(13)
     expect(sites.length, 'call sites — one primitive, sixteen row menus').toBeGreaterThanOrEqual(16)
   })

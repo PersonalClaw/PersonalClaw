@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── One endpoint, four readers, three different swallows ─────────────────────────────────────────
 //
@@ -85,18 +86,14 @@ describe('the dashboard pin widget survives a failed artifact read', () => {
 
 describe('every reader of api.artifacts() can tell failure from empty', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-  })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
 
   /** 🪤 COMMENTS STRIPPED FIRST. The first draft flagged all four readers, including the canonical
    *  one — because each file's new comment QUOTES the old `catch { setArtifacts([]) }` shape to explain
    *  what changed, and the scan counted the explanation as code. Fourth time in this session; strip
    *  before matching, always. (The `~200 char` window it also used was the other half of the bug: a
    *  character count is not a statement. It reads the whole file's code now and matches the shape.) */
-  const codeOf = (abs: string) => readFileSync(abs, 'utf8')
+  const codeOf = (abs: string) => readSource(abs)
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   const readers = () => walk(SRC)
@@ -124,26 +121,26 @@ describe('every reader of api.artifacts() can tell failure from empty', () => {
   })
 
   it('the library reports the failure and offers a retry', () => {
-    const src = readFileSync(join(SRC, 'pages/artifacts/ArtifactsSection.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/artifacts/ArtifactsSection.tsx'))
     expect(src, 'the rejection is kept').toMatch(/catch \(e\) \{ setLoadErr\(e\) \}/)
     expect(src, 'and rendered, gated on there being nothing to show')
       .toMatch(/loadErr && artifacts\.length === 0[\s\S]{0,200}?<LoadError what="artifacts"[^>]*onRetry=\{load\}/)
   })
 
   it('the widget only drops a pin against a TRUSTED index', () => {
-    const src = readFileSync(join(SRC, 'pages/dashboard/widgets/PinnedArtifacts.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/dashboard/widgets/PinnedArtifacts.tsx'))
     expect(src, 'null means "the read failed", not "nothing exists"')
       .toMatch(/const resolved = byslug === null \? \(pins \?\? \[\]\)/)
     expect(src, 'and the row cannot crash on an unresolved artifact').not.toMatch(/\{art\.name\}/)
   })
 
   it('the files tree keeps its last known markers rather than asserting none', () => {
-    const src = readFileSync(join(SRC, 'pages/files/FilesSection.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/files/FilesSection.tsx'))
     expect(src).toMatch(/catch \{ \/\* keep the last known set \*\/ \}/)
   })
 
   it('a failed content search says so instead of counting zero matches', () => {
-    const src = readFileSync(join(SRC, 'pages/files/FilesSection.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/files/FilesSection.tsx'))
     expect(src, 'the search error is tracked').toMatch(/setSearchErr\(e\)/)
     expect(src, 'and reported before the no-matches line').toMatch(/error && results\.length === 0[\s\S]{0,300}?Search failed/)
   })

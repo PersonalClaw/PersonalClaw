@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /**
  * Issue 558's RECURRENCE GUARD: a flag `foldReducer` can write must have somebody who reads it.
  *
@@ -33,10 +34,10 @@
  * source text, so the producer and the consumer are measured by different means.
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
 import { RUN_LIFECYCLE } from './useRunStream'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 const SRC = join(process.cwd(), 'src')
 /** The producer. Excluded from the reader scan: `foldRun` copying a flag onto the view-model is a
@@ -45,20 +46,14 @@ const SRC = join(process.cwd(), 'src')
 const PRODUCER = join(SRC, 'pages', 'loops', 'runFold.ts')
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (entry) => /\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry))
 }
 
 const SOURCES = walk(SRC).filter((f) => f !== PRODUCER)
 
 /** The flags the interface DECLARES, read off the producer's own source. */
 function declaredFlags(): string[] {
-  const src = readFileSync(PRODUCER, 'utf8')
+  const src = readSource(PRODUCER)
   const block = src.match(/export interface RunFlags \{([\s\S]*?)\n\}/)
   if (!block) throw new Error('could not find `export interface RunFlags` in runFold.ts')
   // Field lines only. A doc-comment line starts with `/*` or `*`, so it cannot match.
@@ -89,7 +84,7 @@ function writtenFlags(): Map<string, string[]> {
  *  bare `.gate` on an unrelated object cannot count as a reader. */
 function readersOf(flag: string): string[] {
   const re = new RegExp(String.raw`\b(?:runFlags|flags|vm|run)\s*\.\s*${flag}\b`)
-  return SOURCES.filter((f) => re.test(readFileSync(f, 'utf8'))).map((f) => relative(SRC, f))
+  return SOURCES.filter((f) => re.test(readSource(f))).map((f) => relative(SRC, f))
 }
 
 describe('the RunFlags producer and its readers agree', () => {

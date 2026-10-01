@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { errEnvelope, errText } from './errText'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── What a user is told when something fails, and what must never be said ─────────────────
 //
@@ -167,12 +168,7 @@ describe('errText', () => {
 
 describe('one owner', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
   it('no file re-declares errText — nor the envelope reader underneath it', () => {
     // It lived in two files, byte-identical, which is how a fix to the funnel misses the upload
@@ -181,7 +177,7 @@ describe('one owner', () => {
     // up branching on a code some other parse spelled differently.
     for (const name of ['errText', 'errEnvelope'] as const) {
       const decls = walk(SRC)
-        .filter((f) => new RegExp(`function ${name}\\b|const ${name}\\s*=`).test(readFileSync(f, 'utf8')))
+        .filter((f) => new RegExp(`function ${name}\\b|const ${name}\\s*=`).test(readSource(f)))
         .map((f) => f.slice(SRC.length + 1))
       expect(decls, `${name} must have exactly one home`).toEqual(['lib/errText.ts'])
     }
@@ -193,7 +189,7 @@ describe('one owner', () => {
     // sentence. What stays forbidden is the thing that actually broke — a private copy of the
     // parse, which the declaration test above owns for both entry points.
     for (const rel of ['lib/api.ts', 'lib/chunkedUpload.ts']) {
-      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must use the shared helper`)
+      expect(readSource(join(SRC, rel)), `${rel} must use the shared helper`)
         .toMatch(/import \{[^}]*\berrText\b[^}]*\} from '\.\/errText'/)
     }
   })
@@ -201,7 +197,7 @@ describe('one owner', () => {
 
 describe('the envelope this extracts is the one the backend declares', () => {
   const PY = join(__dirname, '../../../src/personalclaw')
-  const py = (rel: string) => readFileSync(join(PY, rel), 'utf8')
+  const py = (rel: string) => readSource(join(PY, rel))
 
   it('errors.py states the wire shape verbatim', () => {
     // 🔑 The justification for widening the funnel is a written contract, not a guess. If the declared shape
@@ -216,13 +212,8 @@ describe('the envelope this extracts is the one the backend declares', () => {
 
   it('and enough routes really return it for this to matter', () => {
     // Not speculative API: a census, so a future reader knows the extraction earns its place.
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.py$/.test(n) ? [p] : []
-      })
-    const sites = walk(PY).reduce((n, f) => n + (readFileSync(f, 'utf8').match(/"error": \{"code"/g) ?? []).length, 0)
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.py$/.test(n))
+    const sites = walk(PY).reduce((n, f) => n + (readSource(f).match(/"error": \{"code"/g) ?? []).length, 0)
     expect(sites, 'typed-envelope responses in the backend').toBeGreaterThanOrEqual(80)
   })
 

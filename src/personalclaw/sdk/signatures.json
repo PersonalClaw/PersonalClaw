@@ -8799,12 +8799,20 @@
   "init": {
    "params": [
     {"annotation": "Iterable[int]", "kind": "positional_or_keyword", "name": "ports"},
-    {"annotation": "str", "kind": "keyword_only", "name": "what"}
+    {"annotation": "str", "kind": "keyword_only", "name": "what"},
+    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "loopback"}
    ],
    "returns": "None"
   },
   "kind": "class",
   "members": {
+   "bound": {
+    "kind": "method",
+    "params": [
+     {"annotation": "socket.socket", "kind": "positional_or_keyword", "name": "sock"}
+    ],
+    "returns": "None"
+   },
    "check": {
     "kind": "method",
     "params": [
@@ -8812,6 +8820,11 @@
      {"annotation": "object", "kind": "positional_or_keyword", "name": "address"}
     ],
     "returns": "None"
+   },
+   "held_ports": {
+    "kind": "method",
+    "params": [],
+    "returns": "set[int]"
    },
    "install": {
     "kind": "method",
@@ -8822,6 +8835,13 @@
     "kind": "method",
     "params": [
      {"annotation": "socket.socket", "kind": "positional_or_keyword", "name": "sock"}
+    ],
+    "returns": "None"
+   },
+   "own": {
+    "kind": "method",
+    "params": [
+     {"annotation": "int", "kind": "positional_or_keyword", "name": "port"}
     ],
     "returns": "None"
    },
@@ -8880,7 +8900,8 @@
   "kind": "function",
   "params": [
    {"annotation": "Iterable[int]", "kind": "positional_or_keyword", "name": "ports"},
-   {"annotation": "str", "kind": "keyword_only", "name": "what"}
+   {"annotation": "str", "kind": "keyword_only", "name": "what"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "loopback"}
   ],
   "returns": "PortGuard"
  },

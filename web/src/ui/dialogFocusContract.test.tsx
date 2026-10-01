@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── aria-modal is a PROMISE that focus is owned ─────────────────────────────────
 //
@@ -41,15 +42,10 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const read = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+const read = (rel: string) => strip(readSource(join(SRC, rel)))
 
 describe('the update overlay honours the contract it declares', () => {
   const src = read('ui/UpdateProgressOverlay.tsx')
@@ -73,7 +69,7 @@ describe('the update overlay honours the contract it declares', () => {
 })
 
 describe('the rail: aria-modal implies a focus trap', () => {
-  const files = walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readFileSync(abs, 'utf8')) }))
+  const files = walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readSource(abs)) }))
 
   it('every aria-modal surface uses useFocusTrap', () => {
     const offenders = files
@@ -150,7 +146,7 @@ describe('the rail: aria-modal implies a focus trap', () => {
 
 describe('the rail: a hand-rolled modal over live content owes containment', () => {
   const overlays = walk(SRC)
-    .map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readFileSync(abs, 'utf8')) }))
+    .map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readSource(abs)) }))
     .filter((f) => !f.rel.startsWith('ui/') && /fixed inset-0/.test(f.src))
 
   it('finds the population — the census is not vacuous', () => {

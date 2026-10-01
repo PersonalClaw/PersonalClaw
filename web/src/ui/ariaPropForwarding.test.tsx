@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── An accessibility prop the type checker cannot see ─────────────────────────────────────────────
 //
@@ -37,12 +38,7 @@ import { join } from 'node:path'
 // So this file asserts the narrow, true thing, and its floors make sure it is still looking.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
 /** The attribute text a component tag owns: everything at brace-depth 0 up to its closing `>`.
@@ -66,7 +62,7 @@ function ownAttrs(src: string, start: number): string {
 function appComponents(): Map<string, string> {
   const defs = new Map<string, string>()
   for (const f of walk(SRC)) {
-    const src = readFileSync(f, 'utf8')
+    const src = readSource(f)
     for (const m of src.matchAll(/export function ([A-Z]\w*)\s*\(/g)) defs.set(m[1], f.slice(SRC.length + 1))
     for (const m of src.matchAll(/export const ([A-Z]\w*)\s*=\s*(?:memo|forwardRef|\()/g)) defs.set(m[1], f.slice(SRC.length + 1))
   }
@@ -77,13 +73,13 @@ function hyphenatedAriaOnAppComponents() {
   const defs = appComponents()
   const out: { file: string; comp: string; arias: string[]; def: string }[] = []
   for (const f of walk(SRC)) {
-    const src = strip(readFileSync(f, 'utf8'))
+    const src = strip(readSource(f))
     for (const m of src.matchAll(/<([A-Z][\w.]*)\b/g)) {
       const def = defs.get(m[1])
       if (!def) continue                                   // not ours → forwards natively
       const arias = [...ownAttrs(src, m.index! + m[0].length).matchAll(/\s(aria-[a-z]+)=/g)].map((x) => x[1])
       if (!arias.length) continue
-      const target = readFileSync(join(SRC, def), 'utf8')
+      const target = readSource(join(SRC, def))
       // A component that spreads rest props, or declares the hyphenated name itself, forwards it.
       if (/\.\.\.(rest|props)\b/.test(target)) continue
       if (arias.some((a) => new RegExp(`['"\`]${a}['"\`]\\s*[:?]|\\[['"]${a}['"]\\]`).test(target))) continue
@@ -111,7 +107,7 @@ describe('a hyphenated aria prop on one of our components is dropped, so nobody 
     expect(defs.has('Button'), 'ui/Button is the primitive this rail was written about').toBe(true)
     // And the brace-skipping must actually skip: Popover's render-prop callers hold `aria-expanded`
     // inside a brace expression, which this scan must NOT attribute to <Popover>.
-    const filterMenu = strip(readFileSync(join(SRC, 'ui/FilterMenu.tsx'), 'utf8'))
+    const filterMenu = strip(readSource(join(SRC, 'ui/FilterMenu.tsx')))
     const at = filterMenu.indexOf('<Popover')
     expect(at, 'FilterMenu must still render a Popover').toBeGreaterThan(-1)
     expect(filterMenu.slice(at), 'and still put aria-expanded inside the trigger callback').toMatch(/aria-expanded=/)
@@ -122,17 +118,17 @@ describe('a hyphenated aria prop on one of our components is dropped, so nobody 
   it('Button still declares the camelCase surface the fix depends on', () => {
     // If Button ever starts spreading rest props, the rail above stops flagging its callers — which
     // would be correct, but only if that is deliberate. Pin what is true today.
-    const src = readFileSync(join(SRC, 'ui/Button.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'ui/Button.tsx'))
     for (const prop of ['ariaLabel', 'ariaExpanded', 'ariaPressed']) expect(src).toContain(prop)
     expect(src, 'and it renders them onto the button').toMatch(/aria-label=\{ariaLabel\}/)
     expect(src, 'no rest spread — the reason a hyphenated prop vanishes').not.toMatch(/\.\.\.(rest|props)\b/)
   })
 
   it('the two fixed call sites use the camelCase props', () => {
-    const matrix = readFileSync(join(SRC, 'pages/settings/NotificationRulesMatrix.tsx'), 'utf8')
+    const matrix = readSource(join(SRC, 'pages/settings/NotificationRulesMatrix.tsx'))
     expect(matrix).toMatch(/ariaExpanded=\{isOpen\}/)
     expect(matrix).toMatch(/ariaLabel=\{`\$\{isOpen \? 'Hide' : 'Show'\} delivery detail for \$\{r\.label\}`\}/)
-    const audit = readFileSync(join(SRC, 'pages/settings/AuditPanel.tsx'), 'utf8')
+    const audit = readSource(join(SRC, 'pages/settings/AuditPanel.tsx'))
     expect(audit).toMatch(/ariaExpanded=\{showMore\}/)
   })
 })

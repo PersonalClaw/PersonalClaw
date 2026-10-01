@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Every disabled control is explained, in flight, or listed here with its reason ────────────────
 //
@@ -21,12 +22,7 @@ import { join } from 'node:path'
 // the shape it is excused for.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
 /** In-flight names: `unavailable.ts` sends these natively disabled on purpose. */
 const BUSY =
@@ -104,7 +100,7 @@ const codeOf = (s: string): string => s
 function unexplained(): Site[] {
   const out: Site[] = []
   for (const abs of walk(SRC)) {
-    const src = codeOf(readFileSync(abs, 'utf8'))   // comments blanked; line numbers preserved
+    const src = codeOf(readSource(abs))   // comments blanked; line numbers preserved
     for (const m of src.matchAll(/disabled=\{([^}]{1,90})\}/g)) {
       const expr = m[1].trim()
       const ids = (expr.match(/[A-Za-z_$][\w$]*/g) ?? []).filter((x) => !['true', 'false', 'null', 'undefined', 'length'].includes(x))
@@ -201,7 +197,7 @@ const PASSTHROUGH = /^(ui\/(Slider|Segmented|HeaderActions|forms)\.tsx|pages\/(l
 
 describe('the disabled-reason census', () => {
   it('finds the population — the scan is not vacuous', () => {
-    const all = walk(SRC).flatMap((abs) => [...readFileSync(abs, 'utf8').matchAll(/disabled=\{/g)])
+    const all = walk(SRC).flatMap((abs) => [...readSource(abs).matchAll(/disabled=\{/g)])
     expect(all.length, 'conditional disabled props').toBeGreaterThanOrEqual(300)
   })
 
@@ -231,7 +227,7 @@ describe('the disabled-reason census', () => {
     // is computed from — so what this adds is the CORROBORATION each reason claims: the label, the cursor,
     // the neighbouring field, the paired prop. None of it reads a line number, so an insertion above any
     // of these sites cannot red it.
-    const code = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+    const code = (rel: string) => readSource(join(SRC, rel))
 
     expect(code('ui/Button.tsx'), 'the carrier really implements soft-off').toMatch(/softOff/)
 

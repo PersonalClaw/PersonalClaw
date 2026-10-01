@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { SCHEMES } from '../../design/schemes'
 import { weightStroke, weightWidth } from './KnowledgeGraph'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── The entity graph's marks must be perceivable (WCAG 2.1 SC 1.4.11) ─────────────────────────
 //
@@ -30,8 +31,8 @@ import { weightStroke, weightWidth } from './KnowledgeGraph'
 // it for `active`, so painting resting nodes with it would erase hover and selection. A token can
 // pass the number and fail the meaning.
 
-const SRC = readFileSync(join(process.cwd(), 'src/pages/knowledge/KnowledgeGraph.tsx'), 'utf8')
-const TOKENS = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+const SRC = readSource(join(process.cwd(), 'src/pages/knowledge/KnowledgeGraph.tsx'))
+const TOKENS = readSource(join(process.cwd(), 'src/design/tokens.css'))
 
 /** WCAG 2.1 relative luminance + ratio, over sRGB hex. */
 function luminance(hex: string): number {
@@ -144,20 +145,12 @@ function mapBodies(src: string): string[] {
  *  the condition is proven to be load-bearing rather than decorative in its own test below. */
 function graphMarkCensus(root: string): string[] {
   const found: string[] = []
-  const walk = (dir: string) => {
-    let entries
-    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
-    for (const e of entries) {
-      const p = join(dir, e.name)
-      if (e.isDirectory()) { walk(p); continue }
-      if (!e.name.endsWith('.tsx') || e.name.includes('.test.')) continue
-      const bodies = mapBodies(blankComments(readFileSync(p, 'utf8')))
-      const perDatum = (tags: string[]) =>
-        bodies.some((b) => tags.some((t) => MARK_TAG(t).test(b)))
-      if (perDatum(NODE_MARKS) && perDatum(EDGE_MARKS)) found.push(relative(process.cwd(), p))
-    }
+  for (const p of filesUnder(root, (name) => name.endsWith('.tsx') && !name.includes('.test.'))) {
+    const bodies = mapBodies(blankComments(readSource(p)))
+    const perDatum = (tags: string[]) =>
+      bodies.some((b) => tags.some((t) => MARK_TAG(t).test(b)))
+    if (perDatum(NODE_MARKS) && perDatum(EDGE_MARKS)) found.push(relative(process.cwd(), p))
   }
-  walk(root)
   return found.sort()
 }
 
@@ -246,7 +239,7 @@ function tokensIn(src: string, expr: string, seen = new Set<string>(), depth = 0
  *  on fills too would indict `--color-surface` here and `--color-surface-container` in DagView for
  *  being what they are. */
 function strokeTokens(file: string): string[] {
-  const raw = readFileSync(join(process.cwd(), file), 'utf8')
+  const raw = readSource(join(process.cwd(), file))
   const scan = blankComments(raw)
   const out = new Set<string>()
   for (const m of scan.matchAll(/\bstroke\s*=\s*/g)) {
@@ -315,7 +308,7 @@ describe('every file that renders graph marks is under the contrast rail', () =>
     // a real graph. So: prove the barcode satisfies node∧edge ANYWHERE in the file (the previous
     // signal, which is why it turned this rail red), and that only the iteration keeps it out.
     const src = blankComments(
-      readFileSync(join(process.cwd(), 'src/pages/settings/PairingQr.tsx'), 'utf8'),
+      readSource(join(process.cwd(), 'src/pages/settings/PairingQr.tsx')),
     )
     const anywhere = (tags: string[]) => tags.some((t) => MARK_TAG(t).test(src))
     expect(anywhere(NODE_MARKS), 'a <rect> plate').toBe(true)
@@ -395,7 +388,7 @@ describe('the entity graph marks meet non-text contrast', () => {
   it('both marks use the neutral, so no scheme can move them', () => {
     // The claim that two measurements cover twelve schemes, asserted rather than asserted-in-prose.
     expect(SCHEMES.length).toBeGreaterThanOrEqual(11)
-    const schemeSrc = readFileSync(join(process.cwd(), 'src/design/schemes.ts'), 'utf8')
+    const schemeSrc = readSource(join(process.cwd(), 'src/design/schemes.ts'))
     for (const name of ['on-surface-low', 'canvas']) {
       expect(schemeSrc, `${name} is not per-scheme`).not.toMatch(new RegExp(`--color-${name}\\s*:`))
     }

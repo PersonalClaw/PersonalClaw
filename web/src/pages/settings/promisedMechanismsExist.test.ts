@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pyMethod, pyStrTuple } from '../../design/pySource'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── The empty-state hints that promise an automatic future, pinned to the mechanism ─────────────
 //
@@ -25,8 +26,8 @@ import { pyMethod, pyStrTuple } from '../../design/pySource'
 const SRC = join(process.cwd(), 'src')
 const PY = join(__dirname, '../../../../src/personalclaw')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const web = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
-const py = (rel: string) => readFileSync(join(PY, rel), 'utf8')
+const web = (rel: string) => strip(readSource(join(SRC, rel)))
+const py = (rel: string) => readSource(join(PY, rel))
 
 
 describe('the nightly-snapshot promise', () => {
@@ -83,12 +84,7 @@ describe('the backups promise: the snapshot is what a restore reads', () => {
 })
 
 describe('the feedback-thumbs promise', () => {
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
   it('names five surfaces, and all five render the control', () => {
     expect(web('pages/settings/FeedbackPanel.tsx')).toContain(
@@ -96,7 +92,7 @@ describe('the feedback-thumbs promise', () => {
     )
     const kinds = new Set<string>()
     for (const abs of walk(SRC)) {
-      for (const m of strip(readFileSync(abs, 'utf8')).matchAll(/<FeedbackThumbs[\s\S]{0,200}?targetKind="([a-z_]+)"/g)) {
+      for (const m of strip(readSource(abs)).matchAll(/<FeedbackThumbs[\s\S]{0,200}?targetKind="([a-z_]+)"/g)) {
         kinds.add(m[1])
       }
     }
@@ -241,12 +237,7 @@ describe('the remaining promise-hints, verified and pinned', () => {
 })
 
 describe('the census: every empty-state promise is accounted for', () => {
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
   it('no unverified "nothing here YET, but it will fill" copy ships', () => {
     // 🔑 THE POINT OF A CENSUS over a pile of pins: it makes "have we checked them all?" mechanical. The
@@ -282,7 +273,7 @@ describe('the census: every empty-state promise is accounted for', () => {
     for (const abs of walk(SRC)) {
       const rel = abs.replace(SRC + '/', '')
       if (VERIFIED.includes(rel)) continue
-      const src = strip(readFileSync(abs, 'utf8'))
+      const src = strip(readSource(abs))
       for (const line of src.split('\n')) {
         if (EMPTY.test(line) && PROMISE.test(line)) unverified.push(`${rel}: ${line.trim().slice(0, 90)}`)
       }
@@ -299,7 +290,7 @@ describe('the census: every empty-state promise is accounted for', () => {
       'pages/settings/FeedbackPanel.tsx', 'pages/settings/MemoryPanel.tsx',
       'pages/loops/DesignCockpitPage.tsx', 'pages/settings/settingsWidgets.tsx',
       'pages/ChatPage.tsx', 'pages/code/CodeCockpitPage.tsx']) {
-      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} should still carry a promise`)
+      expect(strip(readSource(join(SRC, rel))), `${rel} should still carry a promise`)
         .toMatch(PROMISE)
     }
   })

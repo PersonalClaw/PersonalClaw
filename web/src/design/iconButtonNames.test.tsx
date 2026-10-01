@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ChipInput } from '../ui/forms'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Every icon-only button must carry its own name ──────────────────────────────
 //
@@ -35,12 +36,7 @@ import { ChipInput } from '../ui/forms'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
@@ -93,19 +89,19 @@ describe('the ChipInput remove button names the chip it removes', () => {
 
   it('a chip with no remove name would be announced as bare "button"', () => {
     // Pins the mechanism at the source, so a refactor that drops the attribute reds here too.
-    expect(strip(readFileSync(join(SRC, 'ui/forms.tsx'), 'utf8')))
+    expect(strip(readSource(join(SRC, 'ui/forms.tsx'))))
       .toMatch(/aria-label=\{`Remove \$\{v\}`\}/)
   })
 })
 
 describe('the two singleton icon buttons', () => {
   it('the intent editor close button is named', () => {
-    expect(strip(readFileSync(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'), 'utf8')))
+    expect(strip(readSource(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'))))
       .toMatch(/aria-label="Close the intent editor"/)
   })
 
   it('the task comment send button is named', () => {
-    expect(strip(readFileSync(join(SRC, 'pages/tasks/TaskDetail.tsx'), 'utf8')))
+    expect(strip(readSource(join(SRC, 'pages/tasks/TaskDetail.tsx'))))
       .toMatch(/aria-label="Post comment"/)
   })
 })
@@ -113,7 +109,7 @@ describe('the two singleton icon buttons', () => {
 describe('the rail: no icon-only button ships without a name', () => {
   const scanned = walk(SRC).map((abs) => ({
     rel: abs.slice(SRC.length + 1),
-    buttons: iconOnlyButtons(strip(readFileSync(abs, 'utf8'))),
+    buttons: iconOnlyButtons(strip(readSource(abs))),
   }))
 
   it('every icon-only button has an aria-label or a title', () => {

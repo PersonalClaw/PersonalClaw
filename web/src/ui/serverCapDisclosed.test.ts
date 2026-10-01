@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { PartialCount } from './MoreRow'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A cap the SERVER applied must reach the screen that shows the remainder ───────────────────────
 //
@@ -35,12 +36,7 @@ import { PartialCount } from './MoreRow'
 const SRC = join(process.cwd(), 'src')
 const GATEWAY = join(process.cwd(), '..', 'src', 'personalclaw', 'dashboard')
 
-const walk = (d: string, re: RegExp): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p, re)
-    return re.test(n) ? [p] : []
-  })
+const walk = (d: string, re: RegExp): string[] => filesUnder(d, (n) => re.test(n))
 
 /** JSON keys by which the gateway says "this answer is not all of it". Deliberately closed: `total`
  *  and `count` are honest counts on dozens of complete payloads, and a vocabulary that matched them
@@ -56,7 +52,7 @@ function gatewayFunctions() {
   for (const f of walk(GATEWAY, /\.py$/)) {
     let name: string | null = null
     let buf: string[] = []
-    for (const line of readFileSync(f, 'utf8').split('\n')) {
+    for (const line of readSource(f).split('\n')) {
       const m = line.match(/^(?:async )?def (\w+)\(/)
       if (m) {
         if (name) out.set(name, (out.get(name) ?? '') + buf.join('\n'))
@@ -77,7 +73,7 @@ function cappedRoutes(): { routes: number; capped: Capped[] } {
   const seen = new Map<string, Capped>()
   let routes = 0
   for (const f of walk(GATEWAY, /\.py$/)) {
-    for (const m of readFileSync(f, 'utf8').matchAll(ROUTE)) {
+    for (const m of readSource(f).matchAll(ROUTE)) {
       routes++
       const path = m[1]
       const handler = m[2].split('.').pop() as string
@@ -97,7 +93,7 @@ function cappedRoutes(): { routes: number; capped: Capped[] } {
 const webFiles = new Map(
   walk(SRC, /\.tsx?$/)
     .filter((p) => !/\.(test|doc)\.tsx?$/.test(p))
-    .map((p) => [p.replace(SRC + '/', ''), readFileSync(p, 'utf8')] as const),
+    .map((p) => [p.replace(SRC + '/', ''), readSource(p)] as const),
 )
 const API = 'lib/api.ts'
 const apiLines = (webFiles.get(API) ?? '').split('\n')
@@ -219,7 +215,7 @@ describe('every truncation the gateway declares reaches a surface that says so',
     expect(detail.fetched, 'the transcript route is fetched').toContain(API)
     const line = apiLines.find((l) => /chatSessionDetail:/.test(l)) ?? ''
     expect(line, 'and it asks for no page').not.toMatch(/limit=|before=/)
-    const chat = readFileSync(join(GATEWAY, 'chat_handlers.py'), 'utf8')
+    const chat = readSource(join(GATEWAY, 'chat_handlers.py'))
     expect(chat, 'while the handler caps only when asked').toContain('if limit_raw is None and before is None:')
   })
 

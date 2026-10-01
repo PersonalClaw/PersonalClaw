@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ToggleRow } from './settingsUI'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── "This switch relaxes a safety default" has to be sayable, not just drawable ───────────────────
 //
@@ -63,7 +64,7 @@ describe('the danger glyph says what it means', () => {
     // 🪤 The wording is not free here. If the doc says "relaxes a safety default" and the label says
     // something else, a reader has two definitions of what `danger` means — which is how the count
     // comments in `ui/forms.tsx` went stale. Both are asserted against the same phrase.
-    const src = readFileSync(join(import.meta.dirname, 'settingsUI.tsx'), 'utf8')
+    const src = readSource(join(import.meta.dirname, 'settingsUI.tsx'))
     const at = src.indexOf('danger?: boolean')
     expect(at, 'the danger prop moved — this rail measures nothing').toBeGreaterThan(-1)
     const doc = src.slice(Math.max(0, at - 300), at)
@@ -74,12 +75,7 @@ describe('the danger glyph says what it means', () => {
 describe('every consumer that relaxes a safety default marks itself', () => {
   const PANELS = join(import.meta.dirname)
   const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
   it('the danger consumers are a real, findable population (vacuity floor)', () => {
     // Two today. A floor rather than an equality: a new safety-relaxing switch should not red this, but
@@ -93,7 +89,7 @@ describe('every consumer that relaxes a safety default marks itself', () => {
     // swallow the next element.
     let consumers = 0
     for (const abs of walk(PANELS)) {
-      for (const m of strip(readFileSync(abs, 'utf8')).matchAll(/<ToggleRow\b[\s\S]{0,1200}?\/>/g)) {
+      for (const m of strip(readSource(abs)).matchAll(/<ToggleRow\b[\s\S]{0,1200}?\/>/g)) {
         if (/\bdanger\b/.test(m[0])) consumers++
       }
     }

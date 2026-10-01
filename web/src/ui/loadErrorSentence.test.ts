@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── LoadError's `what` is interpolated into prose, so it has a grammar ───────────────────────────
 //
@@ -25,20 +26,14 @@ import { join } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name)
-    if (e.isDirectory()) out.push(...walk(p))
-    else if (/\.tsx?$/.test(e.name) && !e.name.includes('.test.')) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !name.includes('.test.'))
 }
 
 /** Every literal and expression value passed to a LoadError `what`, with its file. */
 function whatValues(): { rel: string; value: string }[] {
   const out: { rel: string; value: string }[] = []
   for (const abs of walk(SRC)) {
-    const src = readFileSync(abs, 'utf8')
+    const src = readSource(abs)
     for (const m of src.matchAll(/<LoadError\b[^>]*?\bwhat=(?:"([^"]*)"|\{([^}]*)\})/gs)) {
       const rel = abs.slice(SRC.length + 1)
       if (m[1] != null) out.push({ rel, value: m[1] })
@@ -102,7 +97,7 @@ describe("LoadError's what composes a grammatical headline", () => {
     // is asserted here by pinning that it dropped the `${what}` that made it "Your <noun> are safe".
     // 🪤 Strip comments first — the doc comment QUOTES the old "Your ${what} are safe" to explain the
     // change, and a raw scan would flag its own explanation (the same trap ux-669's rails hit twice).
-    const scaffold = readFileSync(join(SRC, 'ui/ListScaffold.tsx'), 'utf8')
+    const scaffold = readSource(join(SRC, 'ui/ListScaffold.tsx'))
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const body = /The server didn't respond[^`"]*/.exec(scaffold)?.[0] ?? ''
     expect(body, 'the fallback must still exist').toContain('load error')

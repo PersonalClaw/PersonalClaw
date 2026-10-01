@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /**
  * A STATUS CHIP PAINTS ITS TONE TWICE — AS THE INK **AND** AS THE BACKGROUND — AND NOTHING SWEPT
  * THE SECOND ONE.
@@ -94,9 +95,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { SCHEMES } from './schemes'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 const WEB = process.cwd()
 const SRC = join(WEB, 'src')
@@ -146,7 +147,7 @@ export function aaFloor(px: number, bold: boolean): 3 | 4.5 {
  *  ".light", which appears in prose earlier in the file and made a sibling rail read the DARK
  *  canvas as the light one (the trap `schemeContrast.test.ts` records). */
 function blocks(): { dark: string; light: string } {
-  const src = readFileSync(join(SRC, 'design/tokens.css'), 'utf8')
+  const src = readSource(join(SRC, 'design/tokens.css'))
   const at = src.search(/\.light\s*\{/)
   if (at < 0) throw new Error('could not find the .light rule block in tokens.css')
   return { dark: src.slice(0, at), light: src.slice(at) }
@@ -186,13 +187,8 @@ function enclosingObject(src: string, idx: number): string | null {
   return null
 }
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.tsx?$/.test(name) && !/\.(test|doc)\.tsx?$/.test(name)) out.push(p)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.(test|doc)\.tsx?$/.test(name))
 }
 
 /** Every element whose `style` object puts ONE tone in both `color` and a
@@ -201,7 +197,7 @@ function chipSites(): Site[] {
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const sites: Site[] = []
   for (const abs of walk(SRC)) {
-    const src = readFileSync(abs, 'utf8')
+    const src = readSource(abs)
     for (const m of src.matchAll(TINT)) {
       const tone = m[1].replace(/^\$\{/, '').replace(/\}$/, '').replace(/^['"`]|['"`]$/g, '').trim()
       const obj = enclosingObject(src, m.index!)
@@ -250,7 +246,7 @@ const RESTING = ['canvas', 'surface', 'surface-low', 'surface-container'] as con
  *  end. `tone_vocabulary` below cross-checks these keys against the `StatusPillTone` UNION parsed
  *  from the same file, so a skipped entry reds instead of vanishing. */
 function pillToneInks(): Record<string, string> {
-  const src = readFileSync(join(SRC, 'ui/StatusPill.tsx'), 'utf8')
+  const src = readSource(join(SRC, 'ui/StatusPill.tsx'))
   const block = src.match(/const TONE_VAR:[^=]*=\s*\{([\s\S]*?)\n\}/)
   if (!block) throw new Error('could not find the TONE_VAR map in ui/StatusPill.tsx')
   const out: Record<string, string> = {}
@@ -261,7 +257,7 @@ const PILL_TONES = pillToneInks()
 
 /** The `StatusPillTone` union's members, from the same file — the control on the parse above. */
 function pillToneUnion(): string[] {
-  const src = readFileSync(join(SRC, 'ui/StatusPill.tsx'), 'utf8')
+  const src = readSource(join(SRC, 'ui/StatusPill.tsx'))
   const m = src.match(/export type StatusPillTone\s*=\s*([^\n]+)/)
   if (!m) throw new Error('could not find the StatusPillTone union in ui/StatusPill.tsx')
   return [...m[1].matchAll(/'([a-z]+)'/g)].map((x) => x[1])
@@ -320,7 +316,7 @@ const HAIRLINE_TOKENS = new Set(['--color-outline', '--color-outline-variant'])
 function modules(): Array<[string, string]> {
   return walk(SRC).map((abs) => [
     abs.slice(SRC.length + 1),
-    readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, ''),
+    readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, ''),
   ])
 }
 const MODULES = modules()
@@ -705,7 +701,7 @@ describe('the applicable floor is 4.5, derived from the size, not assumed', () =
     // allowed 3:1 and this rail must notice rather than keep asserting 4.5 by assumption.
     const sizes: Array<{ site: string; px: number }> = []
     for (const s of SITES) {
-      const src = readFileSync(join(SRC, s.file), 'utf8').split('\n')
+      const src = readSource(join(SRC, s.file)).split('\n')
       const window = [src[s.line - 2] ?? '', src[s.line - 1] ?? ''].join(' ')
       for (const m of window.matchAll(/text-\[([\d.]+)(rem|px)\]/g)) {
         sizes.push({ site: `${s.file}:${s.line}`, px: Number(m[1]) * (m[2] === 'rem' ? 16 : 1) })
@@ -807,7 +803,7 @@ describe('--color-info is declared once, in three places that must agree', () =>
     expect(token('info', 'light')).toBe(coral.colors['--color-info'].light)
   })
   it('tokenRegistry matches the coral scheme', () => {
-    const reg = readFileSync(join(SRC, 'design/tokenRegistry.ts'), 'utf8')
+    const reg = readSource(join(SRC, 'design/tokenRegistry.ts'))
     const m = reg.match(/c\('--color-info',[^)]*'(#[0-9a-fA-F]{6})',\s*'(#[0-9a-fA-F]{6})'\)/)
     expect(m, "tokenRegistry declares --color-info with two hex values").toBeTruthy()
     expect(m![1]).toBe(coral.colors['--color-info'].dark)

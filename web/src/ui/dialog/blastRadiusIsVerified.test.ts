@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pyBetween, pyMethod } from '../../design/pySource'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A destructive dialog's body is a CLAIM about the backend ────────────────────────────────────
 //
@@ -26,8 +27,8 @@ import { pyBetween, pyMethod } from '../../design/pySource'
 const SRC = join(process.cwd(), 'src')
 const PY = join(__dirname, '../../../../src/personalclaw')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const web = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
-const py = (rel: string) => readFileSync(join(PY, rel), 'utf8')
+const web = (rel: string) => strip(readSource(join(SRC, rel)))
+const py = (rel: string) => readSource(join(PY, rel))
 
 describe('the task delete states what the backend really does', () => {
   it('claims the unblock, and the backend performs it', () => {
@@ -164,12 +165,7 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     },
   ]
 
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
   /** The balanced `{…}` object literal starting at `i`. */
   function objectAt(src: string, i: number): string {
@@ -221,7 +217,7 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     for (const abs of walk(SRC)) {
       const rel = abs.replace(SRC + '/', '')
       if (SINGLE_SUBJECT_SURFACES.includes(rel)) continue
-      const src = strip(readFileSync(abs, 'utf8'))
+      const src = strip(readSource(abs))
       for (const m of src.matchAll(/confirm\(\s*\{/g)) {
         const obj = objectAt(src, src.indexOf('{', m.index!))
         if (!/danger:\s*true/.test(obj)) continue
@@ -260,7 +256,7 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     // dialog, its "the subject is the page" reason no longer covers both.
     const counts: Record<string, number> = {}
     for (const rel of ['pages/workflows/WorkflowRunDetail.tsx']) {
-      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const src = strip(readSource(join(SRC, rel)))
       let n = 0
       for (const m of src.matchAll(/confirm\(\s*\{/g)) {
         const obj = objectAt(src, src.indexOf('{', m.index!))

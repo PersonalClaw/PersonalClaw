@@ -1,11 +1,13 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Plus, Brain } from 'lucide-react'
 import { EmptyState } from '../ui/ListScaffold'
 import { workflowPresets } from './workflows/workflowPresets'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── ONE empty-state primitive, rolled out to the seven surfaces ─────────────────────────
 //
@@ -44,7 +46,7 @@ import { workflowPresets } from './workflows/workflowPresets'
 // `ui/loadErrorState.test.tsx`'s ADOPTERS entry for `pages/loops/LoopsListPage.tsx`.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 
 /** Every `action={…}` JSX attribute in a file, as the expression BETWEEN its braces —
  *  brace-matched from the opening `{` to its partner.
@@ -301,16 +303,10 @@ describe('PEP-2 · every list surface\'s genuinely-empty branch is classified', 
     // A new list surface therefore cannot ship without a verdict, and a shrunken table cannot
     // read green.
     const rendering = new Set<string>()
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(join(SRC, dir), { withFileTypes: true })) {
-        const rel = `${dir}/${entry.name}`
-        if (entry.isDirectory()) walk(rel)
-        else if (/\.tsx$/.test(entry.name) && !/\.test\.tsx$/.test(entry.name)) {
-          if (/<(Preset)?EmptyState\b/.test(read(rel))) rendering.add(rel)
-        }
-      }
+    const pages = filesUnder(join(SRC, 'pages'), (name) => /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name))
+    for (const rel of pages.map((p) => relative(SRC, p).split(sep).join('/'))) {
+      if (/<(Preset)?EmptyState\b/.test(read(rel))) rendering.add(rel)
     }
-    walk('pages')
     // The population is real, not an empty set that would make the diff below vacuous.
     expect(rendering.size, 'files rendering an empty state').toBeGreaterThanOrEqual(28)
     const classified = new Set(PEP2_CENSUS.map((r) => r.file))

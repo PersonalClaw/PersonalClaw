@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── StatusPill adoption ratchet (audit AB-2) ────────────────────────────────
 // The canonical tinted status pill is ui/StatusPill.tsx: one sanctioned tint
@@ -21,20 +22,14 @@ import { join } from 'node:path'
 const PAGES_ROOT = join(process.cwd(), 'src/pages')
 
 function listTsx(dir: string): string[] {
-  const out: string[] = []
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name)
-    if (e.isDirectory()) out.push(...listTsx(p))
-    else if (e.name.endsWith('.tsx')) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (name) => name.endsWith('.tsx'))
 }
 
 function countInlineColorMix(): { total: number; byFile: Record<string, number> } {
   const byFile: Record<string, number> = {}
   let total = 0
   for (const p of listTsx(PAGES_ROOT)) {
-    const n = (readFileSync(p, 'utf8').match(/color-mix\(/g) || []).length
+    const n = (readSource(p).match(/color-mix\(/g) || []).length
     if (n > 0) {
       byFile[p.slice(PAGES_ROOT.length + 1)] = n
       total += n
@@ -46,7 +41,7 @@ function countInlineColorMix(): { total: number; byFile: Record<string, number> 
 interface Baseline { inlineColorMix: number }
 
 function loadBaseline(): Baseline {
-  const raw = readFileSync(join(process.cwd(), 'src/design/statusTint.baseline.json'), 'utf8')
+  const raw = readSource(join(process.cwd(), 'src/design/statusTint.baseline.json'))
   return JSON.parse(raw) as Baseline
 }
 

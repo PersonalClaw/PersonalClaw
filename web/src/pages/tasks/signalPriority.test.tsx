@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { signalPriority, priorityMeta } from './taskMeta'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A default value rendered as if it were a choice ────────────────────────────────────
 //
@@ -54,7 +55,7 @@ describe('signalPriority', () => {
 
 // ── The call-site half ────────────────────────────────────────────────────────────────
 
-const read = (rel: string) => readFileSync(join(process.cwd(), 'src/pages/tasks', rel), 'utf8')
+const read = (rel: string) => readSource(join(process.cwd(), 'src/pages/tasks', rel))
 
 /** The whole `src/` tree, for the derived census below. Anchored on `import.meta.dirname` rather than
  *  `process.cwd()`, which differs between a root `npm run test:web` and a `cd web && vitest`. */
@@ -68,12 +69,7 @@ const stripComments = (t: string) =>
  *  lookup. Not `/g` — a stateful regex would skip every other call to `.test`. */
 const RIVAL_TONE_MAP = /critical:\s*'var\(--color-[^)]+\)'[\s\S]{0,160}?high:\s*'var\(--color-/
 
-const walkSrc = (d: string = SRC_ROOT): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walkSrc(p)
-    return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-  })
+const walkSrc = (d: string = SRC_ROOT): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
 describe('every BROWSING view is signal-only; the detail view is not', () => {
   // 🪤 THIS LIST WAS COMPLETE FOR `pages/tasks/` AND THAT WAS THE PROBLEM. `read()` resolves against
@@ -94,7 +90,7 @@ describe('every BROWSING view is signal-only; the detail view is not', () => {
     ['pages/dashboard/widgets/TasksWidget.tsx', 1],       // the home dashboard's task preview
     ['pages/companion/CompanionSections.tsx', 1],         // the companion's open-task list
   ])('%s calls signalPriority (%i site(s))', (rel, n) => {
-    const src = readFileSync(join(SRC_ROOT, rel), 'utf8')
+    const src = readSource(join(SRC_ROOT, rel))
     expect([...src.matchAll(/signalPriority\(/g)].length, `${rel} must use the signal-only helper`).toBeGreaterThanOrEqual(n)
     expect(src, `${rel} must not fall back to the always-render helper`).not.toMatch(/=\s*priorityMeta\(/)
   })
@@ -107,7 +103,7 @@ describe('every BROWSING view is signal-only; the detail view is not', () => {
     const offenders: string[] = []
     for (const abs of walkSrc()) {
       if (abs.endsWith('taskMeta.tsx')) continue
-      const src = stripComments(readFileSync(abs, 'utf8'))
+      const src = stripComments(readSource(abs))
       // Two rungs keyed to a `var(--color-…)` inside one literal is enough to be a tone map; one
       // could be an unrelated lookup. `critical`/`high` are the two that carry a semantic colour.
       if (RIVAL_TONE_MAP.test(src)) {

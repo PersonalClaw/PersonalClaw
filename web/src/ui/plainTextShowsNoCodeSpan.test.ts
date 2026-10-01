@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A plain-text sink shows its backticks ─────────────────────────────────────────────────────────
 //
@@ -23,13 +24,8 @@ const MARKDOWN_SOURCES: Record<string, string> = {
   'pages/loops/DesignCockpitPage.tsx': 'the design brief the page exports as a markdown document',
 }
 
-function sources(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const abs = join(dir, entry.name)
-    if (entry.isDirectory()) sources(abs, out)
-    else if (entry.name.endsWith('.tsx') && !/\.(test|doc)\.tsx$/.test(entry.name)) out.push(abs)
-  }
-  return out
+function sources(dir: string): string[] {
+  return filesUnder(dir, (name) => name.endsWith('.tsx') && !/\.(test|doc)\.tsx$/.test(name))
 }
 
 /** Comments blanked in place, so a line number still points at its line. */
@@ -85,7 +81,7 @@ describe('no plain-text string shows a markdown code span', () => {
   it('leaves none outside the markdown sources', () => {
     const found = files
       .filter((abs) => !(relative(SRC, abs) in MARKDOWN_SOURCES))
-      .flatMap((abs) => codeSpansInPlainStrings(readFileSync(abs, 'utf8')).map((h) => `${relative(SRC, abs)}:${h}`))
+      .flatMap((abs) => codeSpansInPlainStrings(readSource(abs)).map((h) => `${relative(SRC, abs)}:${h}`))
     expect(found, 'write the command as a <code> element, or without the markup where the sink is a tooltip').toEqual([])
   })
 })

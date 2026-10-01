@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { lineViolations, stripComments } from './tokenLintRule'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Token-lint (component-redesign Slice 0) ────────────────────────────────
 // Design-system adherence guard: no raw color hex or raw px literals in app
@@ -49,21 +50,16 @@ const ALLOWLIST = new Set<string>(loadAllowlist())
 
 function loadAllowlist(): string[] {
   try {
-    const raw = readFileSync(join(SRC, 'design/tokenLint.allowlist.json'), 'utf8')
+    const raw = readSource(join(SRC, 'design/tokenLint.allowlist.json'))
     return JSON.parse(raw) as string[]
   } catch { return [] }
 }
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
+  return filesUnder(dir, (entry, p) => {
     const rel = relative(SRC, p).replace(/\\/g, '/')
-    if (EXEMPT_DIRS.some((d) => rel.startsWith(d))) continue
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+    return !EXEMPT_DIRS.some((d) => rel.startsWith(d)) && /\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)
+  })
 }
 
 // The rule itself now lives in ./tokenLintRule so an APP BUNDLE can be
@@ -81,7 +77,7 @@ function walk(dir: string): string[] {
 // it linted one as code, and since every decimal digit is a hex digit the HEX pattern
 // matched any 3-to-8-digit issue reference. Citing `#1783` in a comment reddened the rail.
 function violations(file: string): string[] {
-  const text = readFileSync(file, 'utf8')
+  const text = readSource(file)
   const lines = text.split('\n')
   const hits: string[] = []
   // Report the ORIGINAL line, not the stripped one: a violation should read the way the
@@ -142,7 +138,7 @@ describe('token-lint: design-system adherence', () => {
     // every file must return to `code` by EOF. A genuinely unterminated `/*` in source
     // would also land here, which is the right place for it.
     const stuck = files
-      .map((f) => [relative(SRC, f).replace(/\\/g, '/'), stripComments(readFileSync(f, 'utf8')).endState] as const)
+      .map((f) => [relative(SRC, f).replace(/\\/g, '/'), stripComments(readSource(f)).endState] as const)
       .filter(([, state]) => state !== 'code')
     expect(stuck, `Comment/template state left open at EOF:\n${JSON.stringify(stuck, null, 2)}`).toEqual([])
   })

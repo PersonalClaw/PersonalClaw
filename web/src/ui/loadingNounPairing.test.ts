@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The loading state borrows a noun the surface has already declared ─────────────────────────────
 //
@@ -106,12 +107,7 @@ import { join } from 'node:path'
 // than an honest "Loading…".
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 const SKELETON = /<(?:List|Form|CardGrid)Skeleton\b[^>]*?\/>/
 /** `what="literal"` or `what={expression}` — a dynamic noun is still a declared noun.
@@ -174,7 +170,7 @@ function skeletons(): Site[] {
   const out: Site[] = []
   for (const abs of walk(SRC)) {
     if (abs.endsWith('ListScaffold.tsx')) continue
-    const lines = readFileSync(abs, 'utf8').split('\n')
+    const lines = readSource(abs).split('\n')
     const bs = blocks(lines)
     // Every `results={{ count: …, noun: … }}` in the file, with the component that declares it.
     const declared = lines.flatMap((l, i) => {
@@ -375,8 +371,8 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
 
   it('both canonical patterns are intact — a failure and a count each name the data', () => {
     // If either stops taking a noun, this whole rule loses a source of truth.
-    expect(readFileSync(join(SRC, 'ui/ListScaffold.tsx'), 'utf8'), 'LoadError').toMatch(/what: string/)
-    const controls = readFileSync(join(SRC, 'ui/ListControls.tsx'), 'utf8')
+    expect(readSource(join(SRC, 'ui/ListScaffold.tsx')), 'LoadError').toMatch(/what: string/)
+    const controls = readSource(join(SRC, 'ui/ListControls.tsx'))
     expect(controls, 'ListControls results contract').toMatch(/results\?: \{ count: number; noun: string/)
     expect(controls, 'and it is spoken aloud').toMatch(/ResultAnnouncement/)
   })

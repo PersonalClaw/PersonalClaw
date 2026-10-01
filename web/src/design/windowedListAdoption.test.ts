@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Windowing-adoption ratchet (resuming SM-3) ──────────────────────────────
 // The INVERSE of primitiveAdoption.test.ts. That ratchet counts bespoke chrome and
@@ -24,22 +25,17 @@ const SRC = join(process.cwd(), 'src')
 const BASELINE = join(SRC, 'design', 'windowedListAdoption.baseline.json')
 
 interface Baseline { adopters: number; surfaces: string[]; before: { samples: unknown[] }; after: unknown }
-const base: Baseline = JSON.parse(readFileSync(BASELINE, 'utf8'))
+const base: Baseline = JSON.parse(readSource(BASELINE))
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e)
-    if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.tsx$/.test(e) && !/\.test\.tsx$/.test(e)) out.push(p)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (e) => /\.tsx$/.test(e) && !/\.test\.tsx$/.test(e))
 }
 
 /** Files that render a `<WindowedList` (the primitive's own file and its tests excluded
  *  by construction — it lives in a .tsx under ui/ and is matched by the OPENING TAG,
  *  which its own definition does not contain). */
 const adopters = walk(SRC)
-  .filter((p) => /<WindowedList[\s>]/.test(readFileSync(p, 'utf8')))
+  .filter((p) => /<WindowedList[\s>]/.test(readSource(p)))
   .map((p) => relative(SRC, p).split(/[\\/]/).join('/'))
   .sort()
 
@@ -84,7 +80,7 @@ describe('windowing adoption ratchet (the window may only spread, never retreat)
     // rail is here because the honest value is a judgment tsc cannot check.
     const undeclared: string[] = []
     for (const rel of adopters) {
-      const text = readFileSync(join(SRC, rel), 'utf8')
+      const text = readSource(join(SRC, rel))
       // One declaration per <WindowedList in the file.
       const opens = (text.match(/<WindowedList[\s>]/g) ?? []).length
       const declared = (text.match(/rowHeights=["{]/g) ?? []).length
@@ -98,7 +94,7 @@ describe('windowing adoption ratchet (the window may only spread, never retreat)
     // stated alternative" — and this is what stops the statement being an empty string.
     const bad: string[] = []
     for (const rel of adopters) {
-      const text = readFileSync(join(SRC, rel), 'utf8')
+      const text = readSource(join(SRC, rel))
       const opens = (text.match(/<WindowedList[\s>]/g) ?? []).length
       const hints = [...text.matchAll(/findHint=(?:"([^"]*)"|\{["'`]([^"'`]*)["'`]\})/g)]
         .map((m) => m[1] ?? m[2] ?? '')
@@ -136,6 +132,6 @@ describe('windowing adoption ratchet (the window may only spread, never retreat)
 
   it('the ratchet is not vacuous — it really found the primitive in the tree', () => {
     expect(adopters.length).toBeGreaterThan(0)
-    expect(readFileSync(join(SRC, 'ui', 'WindowedList.tsx'), 'utf8')).toContain('WINDOWING_THRESHOLD')
+    expect(readSource(join(SRC, 'ui', 'WindowedList.tsx'))).toContain('WINDOWING_THRESHOLD')
   })
 })

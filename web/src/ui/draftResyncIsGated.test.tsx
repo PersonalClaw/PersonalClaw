@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useEffect, useLayoutEffect, useState } from 'react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { useSyncedDraft } from './forms'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A draft of a stored value is re-seeded when the value moves — never on mount ────────────────
 //
@@ -98,11 +99,7 @@ function selfReseededDrafts(src: string): string[] {
 }
 
 function sources(dir: string): string[] {
-  return readdirSync(dir).flatMap((n) => {
-    const path = join(dir, n)
-    if (statSync(path).isDirectory()) return sources(path)
-    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [path] : []
-  })
+  return filesUnder(dir, (n) => /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n))
 }
 
 describe('the census', () => {
@@ -133,10 +130,10 @@ describe('the census', () => {
   it('🔴 leaves no control re-seeding its own draft', () => {
     const files = sources(join(process.cwd(), 'src'))
     expect(files.length, 'vacuity floor: the walk must reach the source tree').toBeGreaterThan(200)
-    const adopters = files.filter((f) => readFileSync(f, 'utf8').includes('useSyncedDraft(')).length
+    const adopters = files.filter((f) => readSource(f).includes('useSyncedDraft(')).length
     expect(adopters, 'and the controls that use the hook').toBeGreaterThanOrEqual(10)
     const offenders = files.flatMap((f) =>
-      selfReseededDrafts(readFileSync(f, 'utf8')).map((name) => `${f.slice(process.cwd().length + 1)}: ${name}`))
+      selfReseededDrafts(readSource(f)).map((name) => `${f.slice(process.cwd().length + 1)}: ${name}`))
     expect(offenders, 'use `useSyncedDraft` — its mount run can overwrite an edit').toEqual([])
   })
 })

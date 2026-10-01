@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { NativeAgentDetail } from '../pages/agents/AgentDetail'
 import type { SavedAgent } from '../lib/api'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A scroll box Chrome puts in the tab order is named by its whole content ───────────────────────
 //
@@ -52,7 +53,7 @@ import type { SavedAgent } from '../lib/api'
 // auto-focus scrollers; that reasoning is stated, not measured.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 
 const agent: SavedAgent = {
   name: 'personalclaw-loop', provider: 'claude', system_prompt: 'You are personalclaw-loop. '.repeat(40), revision: 'r1',
@@ -154,12 +155,7 @@ describe('the canonical form has one shape across the family', () => {
 
 describe('the scrollable <pre> family is derived, not hand-listed', () => {
   const SRC = join(process.cwd(), 'src')
-  const walkTsx = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walkTsx(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walkTsx = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** Complete `<pre …>` openings, brace-aware: a `[^>]*>` matcher stops at the `>` inside
    *  `{(info.instructions?.length ? … )}` and would report every site as attribute-less. */
@@ -180,7 +176,7 @@ describe('the scrollable <pre> family is derived, not hand-listed', () => {
   function census() {
     const named: string[] = [], xScroll: string[] = [], yCapped: string[] = []
     for (const abs of walkTsx(SRC)) {
-      for (const tag of preTags(readFileSync(abs, 'utf8'))) {
+      for (const tag of preTags(readSource(abs))) {
         if (!/overflow/.test(tag)) continue
         const rel = abs.slice(SRC.length + 1)
         if (/tabIndex=\{0\}/.test(tag) && /aria-label/.test(tag)) { named.push(rel); continue }
@@ -229,7 +225,7 @@ describe('the scrollable <pre> family is derived, not hand-listed', () => {
       ['pages/settings/UpdatesPanel.tsx', /aria-label=\{verdict === 'pin_older' \? 'Rollback commands' : 'Update commands'\}/],
     ]
     for (const [rel, re] of shared) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, `${rel} must carry its region name`).toMatch(re)
       // The trio, not just a name: a named box that is not a `group` still takes its name from content.
       expect(preTags(src).some((t) => /tabIndex=\{0\}/.test(t) && /role="group"/.test(t)),
@@ -272,7 +268,7 @@ describe('the scrollable <pre> family is derived, not hand-listed', () => {
     for (const [rel, label] of OVERFLOWS_WITH_REAL_DATA) {
       expect(named, `${rel} overflows with real data, so it needs the trio`).toContain(rel)
       expect(yCapped, `${rel} must not slip back into the un-asserted latent bucket`).not.toContain(rel)
-      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel}'s region name`)
+      expect(readSource(join(SRC, rel)), `${rel}'s region name`)
         .toMatch(new RegExp(`aria-label="${label}"`))
       expect(label.length, 'a name must stay a name, not become the content').toBeLessThan(40)
     }

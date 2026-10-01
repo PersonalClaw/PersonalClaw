@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A menu nobody could open, and two promises with nothing behind them ───────────────────────
 //
@@ -31,13 +32,8 @@ import { join } from 'node:path'
 // hid the terminal tab strip, the dropzone, the bell's action names and both progress indicators.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
-const files = () => walk(SRC).map((abs) => ({ file: abs.slice(SRC.length + 1), src: readFileSync(abs, 'utf8') }))
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
+const files = () => walk(SRC).map((abs) => ({ file: abs.slice(SRC.length + 1), src: readSource(abs) }))
 
 describe('an aria-haspopup trigger delivers what it promises', () => {
   /** `MarkdownInput` sets the attribute through a props object and documents, in its own words, that
@@ -65,7 +61,7 @@ describe('an aria-haspopup trigger delivers what it promises', () => {
 
   it('the two corrected triggers claim only a disclosure', () => {
     for (const rel of ['ui/WidthPill.tsx', 'ui/NotificationBell.tsx']) {
-      const code = readFileSync(join(SRC, rel), 'utf8').replace(/\/\/.*$/gm, '')
+      const code = readSource(join(SRC, rel)).replace(/\/\/.*$/gm, '')
       expect(code, `${rel} must not re-add a false menu promise`).not.toMatch(/aria-haspopup/)
       expect(code, `${rel} still reports open/closed`).toMatch(/aria-expanded=\{open\}/)
     }
@@ -88,7 +84,7 @@ describe('a disclosure is never hover-only', () => {
   })
 
   it('the width pill closes on Escape and returns focus to its trigger', () => {
-    const src = readFileSync(join(SRC, 'ui/WidthPill.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'ui/WidthPill.tsx'))
     expect(src).toMatch(/e\.key === 'Escape'/)
     expect(src).toMatch(/btnRef\.current\?\.focus\(\)/)
     expect(src, 'and closes on an outside click').toMatch(/wrapRef\.current && !wrapRef\.current\.contains/)

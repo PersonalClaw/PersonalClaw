@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The density slider only moves TOKENISED spacing ────────────────────────────────────────────
 //
@@ -80,7 +81,7 @@ import { join } from 'node:path'
 // px value the arithmetic assumes — asserted first, below, as this rail's premise.
 
 const SRC = join(process.cwd(), 'src')
-const tokens = readFileSync(join(SRC, 'design/tokens.css'), 'utf8')
+const tokens = readSource(join(SRC, 'design/tokens.css'))
 
 /** Spacing utilities that take a numeric Tailwind scale value. Negative forms (`-mx-1`) are
  *  excluded by the lookbehind: they are a different concern (pulling layout back), and the ramp
@@ -127,13 +128,8 @@ function strip(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
 }
 
-function tsxFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) tsxFiles(p, acc)
-    else if (entry.endsWith('.tsx') && !entry.includes('.test.')) acc.push(p)
-  }
-  return acc
+function tsxFiles(dir: string): string[] {
+  return filesUnder(dir, (entry) => entry.endsWith('.tsx') && !entry.includes('.test.'))
 }
 
 /** 🔴 EVERY LITERAL `className` SPELLING, BECAUSE THE LEG BELOW IS ONLY AS WIDE AS THIS MATCH.
@@ -177,7 +173,7 @@ function census() {
   const noToken: string[] = []
   for (const abs of tsxFiles(SRC)) {
     const rel = abs.slice(SRC.length + 1)
-    for (const m of strip(readFileSync(abs, 'utf8')).matchAll(RAW)) {
+    for (const m of strip(readSource(abs)).matchAll(RAW)) {
       const px = Number(m[2]) * 4
       ;(Number.isInteger(px) && RUNG[px] ? mappable : noToken).push(`${rel}: ${m[0]}`)
     }
@@ -237,7 +233,7 @@ describe('spacing rides the density scale', () => {
       'ui/FindBar.tsx',
       'ui/Composer.tsx',
     ]) {
-      const code = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const code = strip(readSource(join(SRC, rel)))
       // Non-vacuity FIRST: stripping a file's layout would satisfy the pin below, not fail it.
       expect(
         [...code.matchAll(TOKENISED)].length,
@@ -312,7 +308,7 @@ describe('spacing rides the density scale', () => {
     ).toEqual(['m-0 gap-x-s gap-y-1.5'])
 
     for (const rel of ['pages/chat/WorkflowProgressCard.tsx', 'pages/settings/ChatPanel.tsx']) {
-      const code = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const code = strip(readSource(join(SRC, rel)))
       expect(
         sameElementMixedSpacing(code),
         `${rel} mixes a tokenised and a raw spacing utility on one element — density-scale one side, ` +

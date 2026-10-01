@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /**
  * ZERO AUDIO FILES SHIP (the plan's "CI grep").
  *
@@ -22,8 +23,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // vitest runs from web/.
 const WEB = process.cwd()
@@ -42,13 +44,7 @@ function isAudioAsset(path: string): boolean {
 }
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else out.push(p)
-  }
-  return out
+  return filesUnder(dir)
 }
 
 /** Every tree whose contents can end up in the shipped bundle. `dist/` is included
@@ -98,7 +94,7 @@ describe('no audio file ships in the bundle', () => {
 })
 
 describe('the cue module reaches for no audio file', () => {
-  const raw = readFileSync(join(WEB, 'src/design/soundCues.ts'), 'utf8')
+  const raw = readSource(join(WEB, 'src/design/soundCues.ts'))
   const code = stripComments(raw)
 
   it('the comment stripper works, or every check below is vacuous', () => {

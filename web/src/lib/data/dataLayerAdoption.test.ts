@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { CACHE_NAMESPACES, namespaceOf } from './keys'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── The completeness ratchets for ONE data layer ───────────────────────────────────────────────
 //
@@ -22,18 +23,13 @@ import { CACHE_NAMESPACES, namespaceOf } from './keys'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n))
 
 const isTest = (p: string) => /\.(test|doc)\./.test(p)
 const rel = (p: string) => p.slice(SRC.length + 1)
 /** Source with block and line comments removed. */
 const codeOf = (p: string) =>
-  readFileSync(p, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+  readSource(p).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
 
 const PRODUCTION = walk(SRC).filter((p) => !isTest(p))
 const EVERY = walk(SRC)
@@ -62,7 +58,7 @@ describe('§1 the deleted helper stays deleted', () => {
   })
 
   it('and the module file itself is gone', () => {
-    expect(() => readFileSync(join(SRC, 'lib', 'useCachedData.ts'), 'utf8'))
+    expect(() => readSource(join(SRC, 'lib', 'useCachedData.ts')))
       .toThrow()
   })
 

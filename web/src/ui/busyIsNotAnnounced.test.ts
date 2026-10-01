@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── "`aria-busy` already announces it" — an EXEMPTION USED BY THREE RAILS, AND IT IS FALSE ────────
 //
@@ -107,17 +108,12 @@ const SRC = join(process.cwd(), 'src')
 /** 🪤 Comments BLANKED IN PLACE, never deleted — the first draft of this census stripped them and
  *  every reported line number was off. This file's own prose also quotes the shapes it scans for. */
 const code = (abs: string): string =>
-  readFileSync(abs, 'utf8')
+  readSource(abs)
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/^(\s*)\/\/.*$/gm, '$1')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** In-flight vocabulary, unioned from the two rails that already discovered it by measurement. */
 const BUSY = /\b(busy|saving|sending|loading|installing|retrying|pending|working|submitting|launching|testing|promoting|consolidating|regen\w*|bulkBusy|levelBusy|deleting|creating|running|uploading|importing|exporting|refreshing|syncing|starting|stopping|genning|repairing|reloading|applying|generating|fetching|polling|checking)\b/i
@@ -318,10 +314,10 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
   it('🔴 the two rails no longer claim the exemption they never checked', () => {
     // The retraction, propagated. Neither may state that a busy-gated `disabled` is already
     // announced, because it is not — and a comment is what a later reader trusts.
-    const triage = readFileSync(join(SRC, 'ui', 'disabledReasonTriage.test.ts'), 'utf8')
+    const triage = readSource(join(SRC, 'ui', 'disabledReasonTriage.test.ts'))
     expect(triage, 'the false exemption criterion is gone').not.toMatch(/aria-busy` already announces/)
     expect(triage, 'and it says what is actually true instead').toMatch(/announces nothing|no `aria-busy`|NOT announced/)
-    const raw = readFileSync(join(SRC, 'ui', 'rawSoftOffContract.test.ts'), 'utf8')
+    const raw = readSource(join(SRC, 'ui', 'rawSoftOffContract.test.ts'))
     expect(raw, 'the false exemption criterion is gone').not.toMatch(/`aria-busy` already says so/)
     expect(raw, 'and it says what is actually true instead').toMatch(/announces nothing|no `aria-busy`|NOT announced/)
   })

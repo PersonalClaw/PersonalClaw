@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { buildAuditPayload, scanDrift } from './consistencyAudit.report'
 

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── TextLink adoption rail (audit CN-1) ─────────────────────────────────────
 // The inline text-link idiom is ui/TextLink.tsx: one ink vocabulary (the
@@ -16,13 +17,7 @@ import { join } from 'node:path'
 const PAGES_ROOT = join(process.cwd(), 'src/pages')
 
 function listTsx(dir: string): string[] {
-  const out: string[] = []
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name)
-    if (e.isDirectory()) out.push(...listTsx(p))
-    else if (e.name.endsWith('.tsx')) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (name) => name.endsWith('.tsx'))
 }
 
 const HAND_ROLLED = /className="[^"]*(?:text-primary(?:-emphasis)?[^"]*hover:underline|hover:underline[^"]*text-primary(?:-emphasis)?)[^"]*"/
@@ -30,7 +25,7 @@ const HAND_ROLLED = /className="[^"]*(?:text-primary(?:-emphasis)?[^"]*hover:und
 describe('TextLink adoption rail (no hand-rolled inline text links)', () => {
   it('no page hand-rolls the text-link idiom', () => {
     const offenders = listTsx(PAGES_ROOT)
-      .filter((p) => HAND_ROLLED.test(readFileSync(p, 'utf8')))
+      .filter((p) => HAND_ROLLED.test(readSource(p)))
       .map((p) => p.slice(PAGES_ROOT.length + 1))
     expect(
       offenders,

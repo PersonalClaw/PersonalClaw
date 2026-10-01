@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CompanionPanel } from './CompanionPanel'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── An explanation written to be READ has to reach a reader ────────────────────────────────────────
 //
@@ -25,7 +26,7 @@ import { CompanionPanel } from './CompanionPanel'
 // phone. Inventing an "Offline" panel for one row would have been the speculative move.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 
 // The panel reads its config through `api.personalclawConfig()`; stub it so the row renders.
 // `companionDiscovery` is the live advertiser read the same panel makes — stubbed to the
@@ -97,16 +98,10 @@ describe('the Companion panel reports install & offline availability', () => {
   it('the helper is no longer console-only — it has a production reader', () => {
     // The vacuity floor: this rail is meaningless if the import disappears, and the censused fact
     // that made this cycle worth doing was "zero production importers".
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
     const readers = walk(SRC)
       .filter((abs) => !abs.endsWith(join('app', 'registerServiceWorker.ts')))
-      .filter((abs) => /serviceWorkerBlockedReason/.test(readFileSync(abs, 'utf8')))
+      .filter((abs) => /serviceWorkerBlockedReason/.test(readSource(abs)))
       .map((abs) => abs.slice(SRC.length + 1))
     expect(readers).toEqual(['pages/settings/CompanionPanel.tsx'])
   })

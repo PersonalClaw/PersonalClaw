@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { SidePanel } from './SidePanel'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The panel's title clips on a DESKTOP too, which makes it the odd one out ────────────────────
 //
@@ -22,17 +23,12 @@ import { SidePanel } from './SidePanel'
 // like data. Every call site today passes a string (`open.title`, `open.name`, `selectedEntity`, …) so
 // all of them gain it, and a future JSX title gets nothing rather than something wrong.
 
-const SRC = readFileSync(join(process.cwd(), 'src/ui/SidePanel.tsx'), 'utf8')
+const SRC = readSource(join(process.cwd(), 'src/ui/SidePanel.tsx'))
 const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) walk(abs, out)
-    else if (/\.tsx$/.test(name) && !name.includes('.test.')) out.push(abs)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx$/.test(name) && !name.includes('.test.'))
 }
 
 describe('a panel title is recoverable when it clips', () => {
@@ -74,7 +70,7 @@ describe('a panel title is recoverable when it clips', () => {
     // The vacuity floor for the leverage claim. If SidePanel ever stops being widely used, the
     // "one edit, every panel" reasoning in the header needs revisiting.
     const consumers = walk(join(process.cwd(), 'src'))
-      .filter((abs) => /<SidePanel[\s>]/.test(readFileSync(abs, 'utf8')))
+      .filter((abs) => /<SidePanel[\s>]/.test(readSource(abs)))
     expect(consumers.length, 'surfaces mounting a SidePanel').toBeGreaterThanOrEqual(15)
   })
 })

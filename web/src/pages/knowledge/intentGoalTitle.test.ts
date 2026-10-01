@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── An intent's goal is a sentence the user wrote; `truncate` was eating most of it ────────────
 //
@@ -27,17 +28,12 @@ import { join } from 'node:path'
 // a number rather than a hunch.
 
 const SRC_DIR = join(process.cwd(), 'src')
-const SRC = readFileSync(join(SRC_DIR, 'pages/knowledge/KnowledgeListPage.tsx'), 'utf8')
+const SRC = readSource(join(SRC_DIR, 'pages/knowledge/KnowledgeListPage.tsx'))
 const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) walk(abs, out)
-    else if (/\.tsx$/.test(name) && !name.includes('.test.')) out.push(abs)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx$/.test(name) && !name.includes('.test.'))
 }
 
 describe("an intent's goal survives truncation", () => {
@@ -73,7 +69,7 @@ describe('the population this deliberately does NOT sweep', () => {
     const tag = /<(?:span|div|p|h[1-6])\b([^>]*\bclassName="[^"]*\btruncate\b[^"]*"[^>]*)>/g
     let withTitle = 0, without = 0
     for (const abs of walk(SRC_DIR)) {
-      for (const m of readFileSync(abs, 'utf8').matchAll(tag)) {
+      for (const m of readSource(abs).matchAll(tag)) {
         if (/title=|aria-label/.test(m[1])) withTitle++
         else without++
       }

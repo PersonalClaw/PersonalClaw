@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Defined-token-read rail ─────────────────────────────────────────────────
 // A `var(--token)` with NO fallback, naming a token that is DEFINED NOWHERE, is
@@ -44,13 +45,7 @@ const SOURCE_EXT = /\.(tsx?|css)$/
 const TEST_FILE = /\.(test|spec)\.tsx?$/
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else if (SOURCE_EXT.test(entry) && !TEST_FILE.test(entry)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (entry) => SOURCE_EXT.test(entry) && !TEST_FILE.test(entry))
 }
 
 /** Comments carry design rationale that names tokens in prose — including one
@@ -84,12 +79,12 @@ interface Offender { file: string; line: number; token: string }
 
 function scan(files: string[]): { offenders: Offender[]; defined: Set<string>; reads: number } {
   const defined = new Set<string>()
-  for (const f of files) for (const t of definitionsIn(readFileSync(f, 'utf8'))) defined.add(t)
+  for (const f of files) for (const t of definitionsIn(readSource(f))) defined.add(t)
 
   const offenders: Offender[] = []
   let reads = 0
   for (const f of files) {
-    const text = stripComments(readFileSync(f, 'utf8'))
+    const text = stripComments(readSource(f))
     for (const m of text.matchAll(/var\(\s*(--[a-zA-Z0-9_-]+)\s*\)/g)) {
       reads += 1
       if (defined.has(m[1])) continue

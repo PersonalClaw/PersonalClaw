@@ -1,8 +1,10 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { MoreRow } from './MoreRow'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A list under a label that states the total must say what it is not showing ───────────────────
 //
@@ -21,12 +23,7 @@ import { MoreRow } from './MoreRow'
 
 const SRC = join(process.cwd(), 'src')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
 const CAP = /([A-Za-z_$][\w$.?!\[\]]*)\s*\.slice\(\s*0\s*,\s*(\d+)\s*\)\s*\.map\(/g
 
@@ -34,7 +31,7 @@ const CAP = /([A-Za-z_$][\w$.?!\[\]]*)\s*\.slice\(\s*0\s*,\s*(\d+)\s*\)\s*\.map\
 function cappedLists() {
   const out: Array<{ rel: string; base: string; root: string; cap: number; totalStated: boolean; after: string }> = []
   for (const abs of walk(SRC)) {
-    const src = strip(readFileSync(abs, 'utf8'))
+    const src = strip(readSource(abs))
     const lines = src.split('\n')
     for (const m of src.matchAll(CAP)) {
       const ln = src.slice(0, m.index!).split('\n').length - 1
@@ -94,7 +91,7 @@ describe('MoreRow', () => {
   })
 
   it('is one wording, so eleven sites cannot drift again', () => {
-    const src = readFileSync(join(SRC, 'ui/MoreRow.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'ui/MoreRow.tsx'))
     // Matches the word as RENDERED — followed by the element's close or by the optional noun's
     // interpolation. (It keyed on `more<` until the noun prop arrived, at which point the only
     // spelling in the tree stopped matching and this failed on correct code: an assertion pinned to
@@ -132,7 +129,7 @@ describe('every list whose label states a total discloses its cap', () => {
     const adhoc: string[] = []
     for (const abs of walk(SRC)) {
       if (abs.endsWith('MoreRow.tsx')) continue
-      const src = strip(readFileSync(abs, 'utf8'))
+      const src = strip(readSource(abs))
       // A residue written inline: a `.length - <cap>` beside the word "more".
       for (const line of src.split('\n')) {
         const at = line.search(/\.length\s*-\s*\d+\}?\s*more/)
@@ -163,7 +160,7 @@ describe('every list whose label states a total discloses its cap', () => {
     // names "Show more" as its canonical standalone use, and which renders a `<button type="button">`
     // underneath. So the thing this rail protects never changed; only the tag it is written with did.
     // Read the title's sentence and the wired `onClick` together, which is the disclosure itself.
-    const src = strip(readFileSync(join(SRC, 'pages/code/CodeCockpitPage.tsx'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'pages/code/CodeCockpitPage.tsx')))
     expect(src, 'still an interactive disclosure').toMatch(/title=\{`Show \$\{hidden\} more file\$\{[^}]*\}`\}>\+\{hidden\} more<\/TextLink>/)
     expect(src, 'and it still expands the list').toMatch(/onClick=\{\(\) => setExpanded\(true\)\}/)
   })
@@ -180,7 +177,7 @@ describe('every list whose label states a total discloses its cap', () => {
       ['pages/tools/ToolOutput.tsx', /<MoreRow total=\{cols\.length\} shown=\{8\} noun="columns"/],
     ]
     for (const [rel, re] of pins) {
-      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must disclose its cap`).toMatch(re)
+      expect(strip(readSource(join(SRC, rel))), `${rel} must disclose its cap`).toMatch(re)
     }
   })
 
@@ -189,7 +186,7 @@ describe('every list whose label states a total discloses its cap', () => {
     // involved and left off everywhere else (beneath a stacked list the subject is what sits above).
     for (const rel of ['pages/chat/toolRenderers/primitives.tsx', 'pages/files/browse/FilePreviews.tsx',
       'pages/tools/ToolOutput.tsx']) {
-      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const src = strip(readSource(join(SRC, rel)))
       for (const tag of src.match(/<MoreRow[\s\S]{0,160}?\/>/g) ?? []) {
         // FilePreviews also has a JSON-tree residue that is NOT under a table — it sits under an
         // indented node list, where the subject is unambiguous.
@@ -204,7 +201,7 @@ describe('every list whose label states a total discloses its cap', () => {
     // Not a style point: the browser hoists it out and the residue lands somewhere unpredictable.
     for (const rel of ['pages/chat/toolRenderers/primitives.tsx', 'pages/files/browse/FilePreviews.tsx',
       'pages/tools/ToolOutput.tsx']) {
-      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const src = strip(readSource(join(SRC, rel)))
       expect(src, `${rel}: the residue must follow </table>`).toMatch(/<\/table>[\s\S]{0,320}?<MoreRow/)
       // 🪤 CONTAINMENT, NOT PROXIMITY. The first draft asserted `<tbody>[\s\S]{0,600}?<MoreRow` did
       // not match, which fails on CORRECT code the moment the table body is short — the row is 40
@@ -236,7 +233,7 @@ describe('every list whose label states a total discloses its cap', () => {
       ['pages/dashboard/widgets/OnThisMachine.tsx', /<MoreRow total=\{rows\.length\} shown=\{5\} \/>/],
     ]
     for (const [rel, re] of pins) {
-      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must disclose its cap`).toMatch(re)
+      expect(strip(readSource(join(SRC, rel))), `${rel} must disclose its cap`).toMatch(re)
     }
     expect(readdirSync(widgets).length, 'the widget directory must be readable').toBeGreaterThan(4)
   })
@@ -246,7 +243,7 @@ describe('every list whose label states a total discloses its cap', () => {
     // choice: this file already discloses the rows its archive fold hides, and its comment insists the
     // count come from the SERVER's full-window tally so "the label must not shrink to the fold" —
     // while a silent six-row truncation sat beside it. Both must stay.
-    const src = strip(readFileSync(join(SRC, 'pages/dashboard/widgets/ScheduleWidget.tsx'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'pages/dashboard/widgets/ScheduleWidget.tsx')))
     expect(src, 'the fold disclosure it already had').toMatch(/\$\{scheduleSuppressed\} suppressed by a gate/)
     expect(src, 'and the cap disclosure it was missing').toMatch(/<MoreRow total=\{visible\.length\}/)
     expect(src, 'the residue is measured against what the fold shows').not.toMatch(
@@ -272,7 +269,7 @@ describe('every list whose label states a total discloses its cap', () => {
     // a literal here ever was — `pages/dashboard/suggestionCapMatchesProducer.test.ts` ties it to the
     // producer's cap and to the other consumer, so 4, 5 or 7 all red there. The exclusion this test
     // exists to protect is untouched and still fully enforced.
-    const src = strip(readFileSync(join(SRC, 'pages/dashboard/widgets/Suggestions.tsx'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'pages/dashboard/widgets/Suggestions.tsx')))
     expect(src, 'still capped — the count is owned by suggestionCapMatchesProducer.test.ts').toMatch(
       /items\.slice\(0, \d+\)/,
     )
@@ -283,7 +280,7 @@ describe('every list whose label states a total discloses its cap', () => {
   it('a string SUMMARY keeps its own grammar', () => {
     // Pinned so the exclusion above is a judgement on record rather than a hole: this one already
     // tells the user what it omits, in the only form that reads correctly inline.
-    const src = strip(readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'pages/ChatPage.tsx')))
     expect(src, 'the tool-name summary still discloses its own residue').toMatch(
       /toolNames\.slice\(0, 3\)\.join\(', '\)[\s\S]{0,60}toolNames\.length - 3\} more/,
     )

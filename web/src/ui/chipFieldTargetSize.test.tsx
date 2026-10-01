@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { ChipInput, Field } from './forms'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The chip field's target must match the well it lives in ────────────────────────────
 //
@@ -30,7 +31,7 @@ import { ChipInput, Field } from './forms'
 // stated reason beats a layout assertion that cannot fail.
 
 const SRC = join(process.cwd(), 'src')
-const forms = readFileSync(join(SRC, 'ui/forms.tsx'), 'utf8')
+const forms = readSource(join(SRC, 'ui/forms.tsx'))
 
 /** The `<input>` inside `ChipInput` — sliced from the component body so a sibling input in the same
  *  file cannot satisfy the assertion by accident. */
@@ -114,20 +115,15 @@ describe('the chip field is shared widely enough to be worth a primitive fix', (
   // idiom the other design rails use, and it took **20.5 SECONDS** and intermittently timed out while
   // four sibling test suites were running on the same machine — a rail that reds under load is worse
   // than no rail. One `readdir` syscall per directory instead of one `stat` per file.
-  function walk(dir: string, out: string[] = []): string[] {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const abs = join(dir, e.name)
-      if (e.isDirectory()) walk(abs, out)
-      else if (/\.tsx?$/.test(e.name) && !e.name.includes('.test.')) out.push(abs)
-    }
-    return out
+  function walk(dir: string): string[] {
+    return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !name.includes('.test.'))
   }
 
   it('has at least 10 production call sites (vacuity floor)', () => {
     const sites: string[] = []
     for (const abs of walk(SRC)) {
       if (abs.endsWith('ui/forms.tsx')) continue
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       for (const _ of src.matchAll(/<ChipInput[\s/>]/g)) sites.push(abs.slice(SRC.length + 1))
     }
     // If this ever matches nothing, the assertion above is guarding a component nobody renders.

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── No composed sentence hedges its own count ────────────────────────────────────────────────
 //
@@ -39,13 +40,8 @@ const stripComments = (t: string) =>
   t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
 /** Every `.ts`/`.tsx` under `src/`, excluding tests. */
-function sources(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) sources(p, out)
-    else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p)
-  }
-  return out
+function sources(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
 }
 
 /** 🏁 THE EIGHT THAT WERE ONCE EXEMPT — now a POSITIVE regression set.
@@ -86,7 +82,7 @@ function offenders(): string[] {
   const out: string[] = []
   for (const abs of sources(SRC)) {
     const rel = abs.slice(SRC.length + 1).replace(/\\/g, '/')
-    stripComments(readFileSync(abs, 'utf8')).split('\n').forEach((line, i) => {
+    stripComments(readSource(abs)).split('\n').forEach((line, i) => {
       if (HEDGE.test(line) && !/http\(s\)/.test(line)) {
         out.push(`${rel}:${i + 1}  ${line.trim().slice(0, 90)}`)
       }
@@ -141,7 +137,7 @@ describe('no composed sentence hedges its own count', () => {
     // those merge deletes the list entirely". This is that follow-up, so the assertion inverts: there is
     // no exemption mechanism left to grow. If a future pass reintroduces one, this fails and the reason
     // has to be argued rather than added.
-    const src = readFileSync(join(SRC, 'design/parentheticalPluralFree.test.ts'), 'utf8')
+    const src = readSource(join(SRC, 'design/parentheticalPluralFree.test.ts'))
     const code = stripComments(src)
     expect(code, 'no file may be skipped by name — convert the site, do not exempt it')
       .not.toMatch(/\.includes\(rel\)\s*\)\s*continue/)

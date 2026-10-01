@@ -1,11 +1,12 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { PanelRight } from 'lucide-react'
 import { HeaderControl } from './HeaderActions'
 import { IconButton } from './IconButton'
 import { TileButton } from './TileButton'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Three primitives modelled "this control is on" and told nobody ───────────────────────────
 //
@@ -123,7 +124,7 @@ describe('TileButton — the card-shaped member of the family', () => {
 
 describe("the design panel's own two hand-rolled selectors", () => {
   const SRC = join(process.cwd(), 'src')
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
 
   it('the scheme tile announces which scheme is on', () => {
     expect(read('pages/settings/DesignPanel.tsx')).toMatch(/<button type="button" onClick=\{onPick\} aria-pressed=\{active\}/)
@@ -144,7 +145,7 @@ describe("the design panel's own two hand-rolled selectors", () => {
 
 describe('an `active` that can never be true is deleted, not announced', () => {
   const SRC = join(process.cwd(), 'src')
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
 
   it('the artifacts grid no longer threads a hard-coded selection', () => {
     for (const rel of ['pages/artifacts/ArtifactCard.tsx', 'pages/artifacts/ArtifactGrid.tsx', 'pages/artifacts/ArtifactsSection.tsx']) {
@@ -161,18 +162,13 @@ describe('an `active` that can never be true is deleted, not announced', () => {
 
 describe('the population this reaches, so the primitives were the right place', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** 🪤 Matched to the SELF-CLOSING `/>`, never to the first `>` — `onClick={() => …}` contains one, and
    *  that mistake produced four false negatives earlier in this session. */
   const callSites = (prim: string) =>
     walk(SRC).flatMap((abs) =>
-      [...readFileSync(abs, 'utf8').matchAll(new RegExp(`<${prim}\\b[\\s\\S]{0,400}?/>`, 'g'))]
+      [...readSource(abs).matchAll(new RegExp(`<${prim}\\b[\\s\\S]{0,400}?/>`, 'g'))]
         .filter((m) => /\bactive=/.test(m[0])))
 
   it('HeaderControl has 14 active call sites', () => {
@@ -181,7 +177,7 @@ describe('the population this reaches, so the primitives were the right place', 
 
   it('FilterChip has 8, and now announces them', () => {
     expect(callSites('FilterChip').length).toBeGreaterThanOrEqual(8)
-    const src = readFileSync(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'))
     expect(src).toMatch(/<button type="button" onClick=\{onClick\} aria-pressed=\{active\}/)
   })
 
@@ -202,7 +198,7 @@ describe('the population this reaches, so the primitives were the right place', 
     // state prop. Where the primitive also supports `ariaExpanded`, that expression must yield to
     // it — a control claiming both pressed and expanded claims one of them wrongly.
     for (const rel of ['ui/HeaderActions.tsx', 'ui/IconButton.tsx', 'ui/SquareIconButton.tsx']) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       const bind = src.match(/aria-pressed=\{([^}]*)\}/)
       expect(bind, `${rel} must bind aria-pressed`).not.toBeNull()
       const expr = bind![1]
@@ -232,7 +228,7 @@ describe('the population this reaches, so the primitives were the right place', 
 // must say what the next press does; a constant label could not. It is excluded by name below.
 describe('a pressed header control names the action, not the state', () => {
   const SRC = join(process.cwd(), 'src')
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
   /** Source with comments stripped — this very block names the forbidden strings. */
   const code = (rel: string) => read(rel)
     .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')

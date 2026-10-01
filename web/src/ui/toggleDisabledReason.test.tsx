@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Toggle } from './Toggle'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Four switches a keyboard user could not reach, and a census that first said two ────────
 //
@@ -95,7 +96,7 @@ describe('a Toggle with a reason stays reachable', () => {
 
 describe('the triage, pinned per site', () => {
   const SRC = join(process.cwd(), 'src')
-  const account = readFileSync(join(SRC, 'pages/settings/AccountPanel.tsx'), 'utf8')
+  const account = readSource(join(SRC, 'pages/settings/AccountPanel.tsx'))
 
   it('all four precondition switches name what unlocks them', () => {
     // Per TAG, not per file: an earlier rail in this session stayed green while one of two Saves in
@@ -107,7 +108,7 @@ describe('the triage, pinned per site', () => {
       ['pages/settings/VoicePanel.tsx', /(?<!aria-)disabled=\{!bound\}/],
     ]
     for (const [rel, gate] of PRECONDITION) {
-      const src = rel.endsWith('AccountPanel.tsx') ? account : readFileSync(join(SRC, rel), 'utf8')
+      const src = rel.endsWith('AccountPanel.tsx') ? account : readSource(join(SRC, rel))
       const tag = [...src.matchAll(/<Toggle\b[\s\S]{0,400}?\/>/g)].map((m) => m[0]).find((t) => gate.test(t))
       expect(tag, `${rel}: the switch gated by ${gate} must still exist`).toBeTruthy()
       expect(tag!, `${rel}: a precondition switch must say what unlocks it`).toMatch(/disabledReason="/)
@@ -131,7 +132,7 @@ describe('the triage, pinned per site', () => {
       // POST is in flight.
       'pages/triggers/CallbackDetail.tsx',
     ]) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       const tag = src.match(/<Toggle\b[\s\S]{0,300}?\/>/)?.[0] ?? ''
       expect(tag, `${rel} must still gate on busy`).toMatch(/(?<!aria-)disabled=\{busy\}/)
       expect(tag, `${rel} must NOT soften an in-flight action`).not.toMatch(/disabledReason/)
@@ -141,13 +142,9 @@ describe('the triage, pinned per site', () => {
   it('the census is reproducible — 27 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
-    const walk = (d: string): string[] =>
-      readFileSync !== undefined
-        ? require('node:fs').readdirSync(d, { withFileTypes: true }).flatMap((e: { name: string; isDirectory(): boolean }) =>
-          e.isDirectory() ? walk(join(d, e.name)) : (/\.tsx$/.test(e.name) && !/\.(test|doc)\.tsx$/.test(e.name) ? [join(d, e.name)] : []))
-        : []
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
     const sites = walk(SRC).flatMap((abs) =>
-      [...readFileSync(abs, 'utf8').matchAll(/<Toggle\b[\s\S]{0,400}?\/>/g)]
+      [...readSource(abs).matchAll(/<Toggle\b[\s\S]{0,400}?\/>/g)]
         .filter((m) => /(?<!aria-)disabled=/.test(m[0])))
     // 🔺 15 → 16: Memory → Settings gained the topology-orientation switch, which is
     // a PRECONDITION switch (the map is built from entity-graph links), so it carries a reason

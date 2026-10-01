@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The audit of our own floors: 106 of them, and four had rotted ─────────────────────────────
 //
@@ -45,7 +46,7 @@ import { join } from 'node:path'
 // the removal has to be read rather than discovered.)
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 
 /** [file, the assertion's tail, the measured population it must sit at] */
 const TIGHTENED: [string, RegExp, number][] = [
@@ -138,14 +139,9 @@ describe('a floor that stands for a population sits at the population', () => {
   it('the audit itself is repeatable — every floor in the suite is still countable', () => {
     // Not vacuous, and it is the handle for re-running this: 106 numeric floors across 75 test files when
     // measured. If that collapses, the scan broke rather than the floors vanishing.
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.test\.tsx?$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.test\.tsx?$/.test(n))
     const floors = walk(SRC).flatMap((abs) =>
-      [...readFileSync(abs, 'utf8').matchAll(/\.toBeGreaterThan(?:OrEqual)?\(\d+\)/g)])
+      [...readSource(abs).matchAll(/\.toBeGreaterThan(?:OrEqual)?\(\d+\)/g)])
     expect(floors.length, 'the floor census must still find the suite').toBeGreaterThanOrEqual(100)
   })
 })

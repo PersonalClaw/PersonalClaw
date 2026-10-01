@@ -23,7 +23,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -34,6 +33,11 @@ from personalclaw import local_model_detect as lmd
 from personalclaw import seed_local_model as slm
 from personalclaw.dashboard.handlers.local_model import register_local_model_routes
 from personalclaw.seed_local_model import ADDED, BOUND, SKIPPED_NO_SERVER, BindResult
+
+#: Every probe budget in these tests. A loopback fake answers in milliseconds, so only a hung one
+#: reaches it, and a loaded machine can never make a slow answer read as "no server". The tests of
+#: what a budget DOES pass a budget of their own and hold the probe still rather than time it.
+PATIENT_SECS = 60.0
 
 
 @pytest.fixture(autouse=True)
@@ -46,25 +50,61 @@ def isolated(tmp_path, monkeypatch):
     yield tmp_path
 
 
+@pytest.fixture(autouse=True)
+def registry(monkeypatch):
+    """A provider registry of this test's own, empty unless the test loads an app into it.
+
+    An earlier test on the worker can leave the Ollama app's catalog registered in the process-wide
+    registry, and through it the detection asks whichever server answers at the endpoint to
+    describe its models: at the default endpoint, the machine's own Ollama.
+    """
+    from personalclaw.llm import registry as llm_registry
+
+    own = llm_registry.ProviderRegistry()
+    monkeypatch.setattr(llm_registry, "_default_registry", own)
+    return own
+
+
+@pytest.fixture(autouse=True)
+def patient_budgets(monkeypatch):
+    """Every probe and listing budget the detection, the scan and the bind read, at
+    :data:`PATIENT_SECS`."""
+    for name in ("PROBE_TIMEOUT_SECS", "DESCRIBE_BUDGET_SECS"):
+        monkeypatch.setattr(slm, name, PATIENT_SECS)
+    for name in (
+        "LOCALHOST_PROBE_TIMEOUT_SECS",
+        "SCAN_BUDGET_SECS",
+        "SCAN_PROBE_TIMEOUT_SECS",
+        "SCAN_DESCRIBE_BUDGET_SECS",
+    ):
+        monkeypatch.setattr(lmd, name, PATIENT_SECS)
+
+
+def _serves(monkeypatch, tags: list[dict] | None) -> None:
+    """The endpoint answers ``/api/tags`` with *tags* (None: nothing answers), and no app
+    describes its models: both of the detection's network calls, stubbed."""
+    monkeypatch.setattr(slm, "_probe_models", lambda endpoint, *, timeout=None: tags)
+    monkeypatch.setattr(slm, "_described_by_provider", lambda endpoint, *, budget: None)
+
+
 # ── detection: localhost ──────────────────────────────────────────────────────
 
 
 def test_detect_localhost_none_when_unreachable(monkeypatch):
-    monkeypatch.setattr(slm, "_probe_models", lambda endpoint, *, timeout=0.0: None)
+    _serves(monkeypatch, None)
     assert lmd.detect_localhost() is None
 
 
 def test_detect_localhost_none_when_reachable_but_no_model(monkeypatch):
     # Reachable but nothing pulled → nothing to bind → NOT detected (no card).
-    monkeypatch.setattr(slm, "_probe_models", lambda endpoint, *, timeout=0.0: [])
+    _serves(monkeypatch, [])
     assert lmd.detect_localhost() is None
 
 
 def test_detect_localhost_returns_chat_model(monkeypatch):
-    monkeypatch.setattr(
-        slm,
-        "_probe_models",
-        lambda endpoint, *, timeout=0.0: [
+    _serves(
+        monkeypatch,
+        [
             {
                 "model": "llama3.2:3b",
                 "modified_at": "2026-01-02T00:00:00Z",
@@ -141,16 +181,15 @@ def served_endpoint():
 
 
 @pytest.fixture
-def ollama_app_loaded(monkeypatch):
-    """The Ollama app as the gateway loads it: its type and its catalog in the registry."""
+def ollama_app_loaded(registry):
+    """The Ollama app as the gateway loads it: its type and its catalog in this test's registry."""
     from personalclaw.apps.native_contract import NATIVE_DIR
-    from personalclaw.llm import registry as llm_registry
 
-    monkeypatch.setattr(llm_registry, "_default_registry", llm_registry.ProviderRegistry())
     spec = importlib.util.spec_from_file_location(
         "pc_test_ollama_proposal", NATIVE_DIR / "ollama-models" / "provider.py"
     )
     spec.loader.exec_module(importlib.util.module_from_spec(spec))
+    assert registry.catalog_of(slm.PROVIDER_TYPE) is not None
 
 
 def test_it_proposes_the_chat_model_that_calls_tools_not_the_newer_vision_model(
@@ -164,12 +203,9 @@ def test_it_proposes_the_chat_model_that_calls_tools_not_the_newer_vision_model(
     assert found.model == "gemma4:12b"
 
 
-def test_without_the_apps_description_the_ids_decide_as_before(served_endpoint, monkeypatch):
+def test_without_the_apps_description_the_ids_decide_as_before(served_endpoint):
     """No loaded app describes the models (a CLI run before the gateway loads its apps): the pick
     falls back to what the ids say, and still never proposes the embedding model."""
-    from personalclaw.llm import registry as llm_registry
-
-    monkeypatch.setattr(llm_registry, "_default_registry", llm_registry.ProviderRegistry())
     found = lmd.detect_localhost(served_endpoint)
     assert found is not None
     assert found.model == "qwen2.5vl:7b"
@@ -262,17 +298,38 @@ def test_scan_respects_max_hosts():
 
 
 def test_scan_is_time_bounded():
-    def slow(endpoint: str) -> str | None:
-        time.sleep(0.6)
+    """The sweep returns at its budget, and a host still being probed is abandoned, not waited
+    for: a black-holed host cannot hang a first-run wizard step. Shown with a probe that cannot
+    answer until the sweep has returned, so no clock is read."""
+    released = threading.Event()
+
+    def held(endpoint: str) -> str | None:
+        released.wait(PATIENT_SECS)
         return "m"
 
-    start = time.monotonic()
-    found = lmd.scan_local_network(candidates=["192.168.1.10"], prober=slow, budget_secs=0.1)
-    elapsed = time.monotonic() - start
-    # The whole-sweep wall clock cut the slow probe off — the call returns fast and a
-    # black-holed host cannot hang a first-run wizard step.
-    assert elapsed < 0.5
-    assert found == []
+    try:
+        found = lmd.scan_local_network(candidates=["192.168.1.10"], prober=held, budget_secs=0.05)
+        # Had the sweep waited for the probe, it would have returned only after the probe
+        # answered "m", which nothing lets it do before this line.
+        assert found == []
+    finally:
+        released.set()
+
+
+def test_a_scan_budget_not_given_is_read_when_the_sweep_starts(monkeypatch):
+    """The budget is the module's at the call, not the value it had at import, so a caller sets
+    it: here to one the held probe below outlasts."""
+    released = threading.Event()
+    monkeypatch.setattr(lmd, "SCAN_BUDGET_SECS", 0.05)
+
+    def held(endpoint: str) -> str | None:
+        released.wait(PATIENT_SECS)
+        return "m"
+
+    try:
+        assert lmd.scan_local_network(candidates=["192.168.1.10"], prober=held) == []
+    finally:
+        released.set()
 
 
 def test_candidate_hosts_excludes_own_network_and_broadcast():
@@ -430,8 +487,7 @@ async def test_bind_accepts_a_private_lan_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_bind_makes_chat_resolvable_without_a_restart(monkeypatch):
-    from personalclaw.llm import registry as llm_registry
+async def test_bind_makes_chat_resolvable_without_a_restart(monkeypatch, registry):
     from personalclaw.llm.capabilities import Capability, ProviderCapability
     from personalclaw.providers.provider_bridge import (
         ProviderResolutionError,
@@ -445,8 +501,6 @@ async def test_bind_makes_chat_resolvable_without_a_restart(monkeypatch):
         def stream(self, *args, **kwargs):
             yield "ok"
 
-    registry = llm_registry.ProviderRegistry()
-    monkeypatch.setattr(llm_registry, "_default_registry", registry)
     registry.register_type(
         ProviderCapability(
             type=slm.PROVIDER_TYPE,
@@ -502,9 +556,7 @@ async def test_a_bind_that_binds_embedding_takes_the_reindex_path(
     Embedding to it and started no re-index, so what was written before stayed read by keyword.
     A bind of chat alone changes no embedding model, and starts nothing."""
     from personalclaw.dashboard.handlers import embedding_reindex
-    from personalclaw.llm import registry as llm_registry
 
-    monkeypatch.setattr(llm_registry, "_default_registry", llm_registry.ProviderRegistry())
     scheduled: list[object] = []
     monkeypatch.setattr(embedding_reindex, "schedule_reindex_for_binding", scheduled.append)
 

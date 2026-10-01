@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { epochSeconds, sessionActivitySeconds, sessionRecencyMs } from './epoch'
 import { relPast, relFuture, absTime } from '../pages/schedule/scheduleMeta'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── "in NaNd", six times, on the first screen of the app ─────────────────────────────────
 //
@@ -70,7 +71,7 @@ describe('the two session shapes agree about their timestamps', () => {
   // nothing validates a fetch against it". So the guard cannot be "the type is right" (nothing can
   // know that from inside the tree); it is "the two shapes of one entity do not CONTRADICT each
   // other", which is checkable and is exactly what went wrong.
-  const api = readFileSync(join(process.cwd(), 'src/lib/api.ts'), 'utf8')
+  const api = readSource(join(process.cwd(), 'src/lib/api.ts'))
 
   /** The declared type of `field` inside `interface name`, comments stripped. */
   function declared(name: string, field: string): string | null {
@@ -140,7 +141,7 @@ describe('sessionActivitySeconds — the field choice, in one place', () => {
   })
 
   it('#/chat reads both through lib/epoch, with no local parse left', () => {
-    const src = readFileSync(join(process.cwd(), 'src/pages/ChatPage.tsx'), 'utf8')
+    const src = readSource(join(process.cwd(), 'src/pages/ChatPage.tsx'))
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     expect(code, 'the label takes the shared field choice').toMatch(/relTimeShort\(sessionActivitySeconds\(s\)\)/)
     expect(code, 'the formatter parses through epochSeconds').toMatch(/const at_s = epochSeconds\(at\)/)
@@ -178,18 +179,13 @@ describe('the formatters render an empty form, never NaN', () => {
 
 describe('every relative-time formatter in the tree coerces', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
   /** Each `function rel…`/`function absTime` declaration with its body, by brace depth. A
    *  regex that stops at the first `}` ends at the first `if` block and reports a coercing
    *  formatter as bare. */
   const formatters = walk(SRC).flatMap((f) => {
-    const src = readFileSync(f, 'utf8')
+    const src = readSource(f)
     const out: Array<{ file: string; name: string; body: string }> = []
     // Anchored to the naming conventions that ARE time formatters. A `rel[A-Za-z]*` matcher
     // also caught `releaseLiveSlot` in ArtifactCard — a rail must be scoped to what it measured.

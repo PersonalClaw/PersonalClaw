@@ -1,6 +1,8 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── ONE OWNER FOR "SESSIONS SURVIVE A RESTART" ────────────────────────────────────────────────
 //
@@ -26,12 +28,7 @@ import { join, relative } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 const OWNER = join(SRC, 'lib', 'persistClaim.ts')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.(ts|tsx)$/.test(n) && !/\.(test|doc)\.(ts|tsx)$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.(ts|tsx)$/.test(n) && !/\.(test|doc)\.(ts|tsx)$/.test(n))
 
 /** A sentence that PROMISES tmux-backed survival: the binary named alongside outliving a restart.
  *  BOTH halves are required, so a passing mention of tmux (a shell command, a provider name) is
@@ -47,7 +44,7 @@ const strip = (raw: string) => raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s
 function claimants(): string[] {
   const out: string[] = []
   for (const f of walk(SRC)) {
-    const code = strip(readFileSync(f, 'utf8'))
+    const code = strip(readSource(f))
     if (CLAIM.test(code) && SURVIVAL.test(code)) out.push(f)
   }
   return out
@@ -63,7 +60,7 @@ describe('the tmux-survival claim has exactly one owner', () => {
     expect(files.length, 'the scan must find something, or it proves nothing').toBeGreaterThan(0)
     expect(files, 'the owner module states the claim, so it must match').toContain(OWNER)
     // And the owner really is reading the published capability, not a config flag.
-    const owner = readFileSync(OWNER, 'utf8')
+    const owner = readSource(OWNER)
     expect(owner).toMatch(/persist_available/)
     // Comments must be stripped first — the owner's own doc quotes the flag it replaced.
     expect(strip(owner), 'the owner must not derive the capability from the config flag')
@@ -86,7 +83,7 @@ describe('the tmux-survival claim has exactly one owner', () => {
     // Named, because these are the two the audit found — a THIRD one is caught by the scan
     // above, not by extending this list.
     for (const p of ['pages/terminal/TerminalPage.tsx', 'pages/settings/AgentDefaultsPanel.tsx']) {
-      const src = readFileSync(join(SRC, p), 'utf8')
+      const src = readSource(join(SRC, p))
       expect(src, `${p} must read the capability from lib/persistClaim`)
         .toMatch(/from '.*lib\/persistClaim'/)
     }

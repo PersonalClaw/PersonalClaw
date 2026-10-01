@@ -129,7 +129,7 @@ class BindResult:
         return self.status in (BOUND, ADDED, ALREADY_BOUND)
 
 
-def _probe_models(endpoint: str, *, timeout: float = PROBE_TIMEOUT_SECS) -> list[dict] | None:
+def _probe_models(endpoint: str, *, timeout: float | None = None) -> list[dict] | None:
     """Return Ollama's ``/api/tags`` model list, or None when unreachable.
 
     Probes the dialect the provider will actually SPEAK. The ``ollama-models`` app is
@@ -139,14 +139,16 @@ def _probe_models(endpoint: str, *, timeout: float = PROBE_TIMEOUT_SECS) -> list
 
     Uses ``urllib`` rather than ``httpx`` so the seed path pulls in no provider SDK.
 
-    ``timeout`` overrides the default per-probe budget. The onboarding LAN scan
+    ``timeout`` overrides the default per-probe budget, :data:`PROBE_TIMEOUT_SECS` as it
+    stands when the probe runs. The onboarding LAN scan
     (:mod:`personalclaw.local_model_detect`) reuses THIS probe with a much shorter
     budget so a whole subnet sweep stays inside a few seconds — one ``/api/tags``
     implementation, not a second socket.
     """
     url = endpoint.rstrip("/") + "/api/tags"
+    budget = PROBE_TIMEOUT_SECS if timeout is None else timeout
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=budget) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError) as exc:
         logger.debug("local model probe failed for %s: %s", url, exc)
@@ -223,21 +225,24 @@ def _from_tags(models: list[dict]) -> "list[ModelInfo]":
 def endpoint_models(
     endpoint: str,
     *,
-    timeout: float = PROBE_TIMEOUT_SECS,
-    describe_budget: float = DESCRIBE_BUDGET_SECS,
+    timeout: float | None = None,
+    describe_budget: float | None = None,
 ) -> "list[ModelInfo] | None":
     """The models ``endpoint`` serves, each with what it can be bound for; None when unreachable.
 
     Reachability is the one cheap ``/api/tags`` probe (:func:`_probe_models`). What each model
     can do is the provider app's description where a loaded app gives one
-    (:func:`_described_by_provider`), else what the ids suggest.
+    (:func:`_described_by_provider`), else what the ids suggest. A budget not given is the
+    module's own (:data:`PROBE_TIMEOUT_SECS`, :data:`DESCRIBE_BUDGET_SECS`) as it stands when the
+    call is made.
     """
     tags = _probe_models(endpoint, timeout=timeout)
     if tags is None:
         return None
     if not tags:
         return []
-    return _described_by_provider(endpoint, budget=describe_budget) or _from_tags(tags)
+    budget = DESCRIBE_BUDGET_SECS if describe_budget is None else describe_budget
+    return _described_by_provider(endpoint, budget=budget) or _from_tags(tags)
 
 
 def pick_model(models: "list[ModelInfo]", want: str) -> str:

@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import port_guard
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -135,7 +136,9 @@ def fixture_server(request, tmp_path):
             if proc.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError(f"the fixture server did not start (exit {proc.poll()})")
             time.sleep(0.05)
-        url = f"http://127.0.0.1:{port_file.read_text(encoding='utf-8').strip()}/mcp"
+        port = int(port_file.read_text(encoding="utf-8").strip())
+        port_guard.GUARD.own(port)  # the server this test started chose it
+        url = f"http://127.0.0.1:{port}/mcp"
         yield Fixture(transport, {"type": "http", "url": url}, marker)
     finally:
         proc.terminate()

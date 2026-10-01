@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { TextInput } from './forms'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A mandatory field must say so on the FIELD, not only at the button ────────────
 //
@@ -53,13 +54,8 @@ const ADOPTERS = [
  *  not this prop. Recorded so the sweep is CLOSED rather than silently incomplete. */
 const PRINCIPLED_EXCLUSION = join('pages', 'knowledge', 'KnowledgeCreatePage.tsx')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e)
-    if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (_name, p) => /\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p))
 }
 
 describe('TextInput can declare a field mandatory', () => {
@@ -83,13 +79,13 @@ describe('TextInput can declare a field mandatory', () => {
 
 describe('the create forms mark their mandatory field', () => {
   it.each(ADOPTERS)('%s passes required on its identity field', (rel) => {
-    const src = readFileSync(join(SRC, rel), 'utf8')
+    const src = readSource(join(SRC, rel))
     expect(src, `${rel} must mark exactly the mandatory input`).toMatch(/<TextInput required /)
   })
 
   it('the enforcement is still explained at the button too (belt and braces)', () => {
     // The button reason is what a sighted user reads; `aria-required` is what a screen reader hears. Both.
-    const task = readFileSync(join(SRC, 'pages', 'tasks', 'TaskCreatePage.tsx'), 'utf8')
+    const task = readSource(join(SRC, 'pages', 'tasks', 'TaskCreatePage.tsx'))
     expect(task).toMatch(/disabledReason=\{!draft\.title\.trim\(\) \? 'Enter a task title first'/)
   })
 
@@ -97,7 +93,7 @@ describe('the create forms mark their mandatory field', () => {
     // The four full-page create flows with a single mandatory identity field are all adopters above.
     // Knowledge is the fifth and is excluded on purpose; if it ever grows a single required field, this
     // assertion is where the exclusion gets revisited.
-    const knowledge = readFileSync(join(SRC, PRINCIPLED_EXCLUSION), 'utf8')
+    const knowledge = readSource(join(SRC, PRINCIPLED_EXCLUSION))
     expect(knowledge, 'the either/or reason is what makes the exclusion principled').toMatch(
       /Add a title or some content/,
     )
@@ -110,7 +106,7 @@ describe('the create forms mark their mandatory field', () => {
     const files = walk(SRC)
     let reasons = 0
     for (const f of files) {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       reasons += (src.match(/disabledReason=\{[^}]*[Ee]nter a[^}]*first/g) ?? []).length
     }
     // Measured 20, floored at 5 — 15 could have gone quietly. A floor that stands for a POPULATION has to

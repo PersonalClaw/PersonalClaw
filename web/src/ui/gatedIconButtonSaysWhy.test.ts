@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The canonical send button says why; the two hand-rolled ones said nothing ───────────────
 //
@@ -41,12 +42,7 @@ import { join } from 'node:path'
 // what documents which branch it belongs to.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** Every `<IconButton …/>` / `<SquareIconButton …/>` tag that is gated. Matched non-greedily to `/>`:
  *  🪤 a `[^>]` matcher stops at the `>` inside `onChange={(v) => …}` and silently misses tags — that
@@ -69,21 +65,21 @@ describe('a gated icon button whose gate the user can fix says so', () => {
 
   for (const [rel, gate] of ADOPTERS) {
     it(`${rel} ${gate.source.slice(0, 34)}… names what to do`, () => {
-      const tag = gatedTags(readFileSync(join(SRC, rel), 'utf8')).find((t) => gate.test(t))
+      const tag = gatedTags(readSource(join(SRC, rel))).find((t) => gate.test(t))
       expect(tag, `the gated button matching ${gate} must still exist`).toBeTruthy()
       expect(tag!, 'a fixable gate must say what fixes it').toMatch(/disabledReason=/)
     })
   }
 
   it('the cockpit reason is conditional, so it never fires mid-send', () => {
-    const src = readFileSync(join(SRC, 'pages/code/CodeCockpitPage.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/code/CodeCockpitPage.tsx'))
     const conditional = [...src.matchAll(/disabledReason=\{!text\.trim\(\) \? 'Type a steer first' : undefined\}/g)]
     expect(conditional.length, 'both steer composers gate the reason on the fixable branch only').toBe(2)
   })
 
   it('it converges on the canonical composer, which had it first', () => {
     // If this ever stops being true the copy has diverged and this rail is measuring a fossil.
-    const composer = readFileSync(join(SRC, 'ui/Composer.tsx'), 'utf8')
+    const composer = readSource(join(SRC, 'ui/Composer.tsx'))
     expect(composer, "the canonical send button's reason is the model for the others").toMatch(
       /label="Send message" disabledReason="Type a bit more first"/,
     )
@@ -92,7 +88,7 @@ describe('a gated icon button whose gate the user can fix says so', () => {
   it('a self-evident gate is still left mute — and every one left is a REAL gate', () => {
     // Not vacuous, and a guard against a future sweep "finishing the job": a move-up on the first
     // row explains itself by position, and a license-gated download by the badge beside it.
-    const mute = walk(SRC).flatMap((abs) => gatedTags(readFileSync(abs, 'utf8')))
+    const mute = walk(SRC).flatMap((abs) => gatedTags(readSource(abs)))
       .filter((t) => !/disabledReason=/.test(t))
     // Measured 3 (was 11, when 8 of them were in-flight states miscast as unavailability — see the
     // ⚠️ note at the top): a license gate, `disabled={false}`, and an already-pinned widget.
@@ -110,7 +106,7 @@ describe('a gated icon button whose gate the user can fix says so', () => {
 
   it('both icon primitives keep the tab stop, which is what makes a reason audible at all', () => {
     for (const rel of ['ui/IconButton.tsx', 'ui/SquareIconButton.tsx']) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, `${rel} must map disabled to aria-disabled`).toMatch(/aria-disabled=\{disabled \|\| undefined\}/)
       expect(src, `${rel} must not emit the native attribute`).not.toMatch(/<motion\.button[\s\S]{0,300}?\sdisabled=\{/)
     }

@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /**
  * The SHELL_ELEMENTS registry contract.
  *
@@ -32,9 +33,9 @@
 import { describe, expect, it } from 'vitest'
 import { Suspense } from 'react'
 import { render, waitFor } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { SHELL_ELEMENTS, getShellElement, PERSONALITIES } from './personalities'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 const SRC = join(process.cwd(), 'src')
 const IDS = Object.keys(SHELL_ELEMENTS) as (keyof typeof SHELL_ELEMENTS)[]
@@ -124,7 +125,7 @@ describe('lazy means lazy', () => {
     let dynamicRefs = 0
     for (const file of files) {
       const rel = relative(SRC, file).replace(/\\/g, '/')
-      const code = stripComments(readFileSync(file, 'utf8'))
+      const code = stripComments(readSource(file))
       // Every static form: `import x from '…'`, `export {…} from '…'`, and the bare
       // side-effect `import '…'`. The bare form has no `from` and an earlier draft of
       // this rail missed it — it bundles the module just as thoroughly, so the `from`
@@ -155,13 +156,7 @@ describe('lazy means lazy', () => {
 /** Every non-test `.ts`/`.tsx` under web/src. Tests are excluded on purpose: a test
  *  importing a component directly is correct and carries no bundle cost. */
 function walkSource(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) out.push(...walkSource(p))
-    else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (entry) => /\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry))
 }
 
 /** Drop block and line comments. Prose in this repo cites import paths (this file

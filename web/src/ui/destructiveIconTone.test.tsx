@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Trash2 } from 'lucide-react'
 import { IconButton } from './IconButton'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The primitive WITH the danger affordance guarded the reversible edits ──────────────────────────
 //
@@ -35,7 +36,7 @@ const strip = (s: string) => s
   .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
   .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
   .replace(/^(\s*)\/\/.*$/gm, '$1')
-const codeOf = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+const codeOf = (rel: string) => strip(readSource(join(SRC, rel)))
 
 describe('IconButton renders the danger tone as a hover tint, not a fill', () => {
   it('a danger button keeps this tier’s resting ink and tints on hover', () => {
@@ -179,11 +180,7 @@ describe('the two that stay neutral, because they are not destroys', () => {
 })
 
 describe('VACUITY: the sweep is measuring something', () => {
-  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   it('IconButton still has many call sites, and the danger ones are the minority', () => {
     // A tone that spread everywhere would stop meaning anything; one that spread nowhere is a dead
@@ -191,7 +188,7 @@ describe('VACUITY: the sweep is measuring something', () => {
     let total = 0
     let danger = 0
     for (const abs of walk(SRC)) {
-      const code = strip(readFileSync(abs, 'utf8'))
+      const code = strip(readSource(abs))
       const tags = [...code.matchAll(/<IconButton[\s\S]{0,420}?\/>/g)].map((m) => m[0])
       total += tags.length
       danger += tags.filter((t) => /tone="danger"/.test(t)).length

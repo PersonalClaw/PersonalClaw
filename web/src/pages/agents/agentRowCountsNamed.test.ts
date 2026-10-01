@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Three bare integers, and an 11px glyph deciding which is which ───────────────────────────────
 //
@@ -30,7 +31,7 @@ import { join } from 'node:path'
 
 const SRC = join(import.meta.dirname, '..', '..')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const read = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+const read = (rel: string) => strip(readSource(join(SRC, rel)))
 
 const COUNTS = [
   { field: 'skills', glyph: 'Sparkles', noun: 'skill' },
@@ -76,15 +77,10 @@ describe('every count in an agent row says what it counts', () => {
     // The derived half. Every OTHER site in the tree states its noun in visible text; this catches a
     // new bare-count badge appearing without either treatment, rather than trusting the three above to
     // stay the whole population.
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
     const offenders: string[] = []
     for (const abs of walk(join(SRC, 'pages'))) {
-      const text = strip(readFileSync(abs, 'utf8'))
+      const text = strip(readSource(abs))
       for (const m of text.matchAll(/<span([^>]*)>\s*<[A-Z]\w+ size=\{1[0-4]\}[^>]*\/>\s*\{([a-zA-Z_.!?]+\.length)\}\s*<\/span>/g)) {
         if (!/role="img"/.test(m[1])) {
           offenders.push(`${abs.slice(abs.indexOf('/pages/') + 7)}: {${m[2]}}`)
@@ -100,12 +96,7 @@ describe('every count in an agent row says what it counts', () => {
   })
 
   it('the pages sweep reads a real tree (vacuity floor)', () => {
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
     expect(walk(join(SRC, 'pages')).length, 'the pages sweep found nothing').toBeGreaterThan(60)
   })
 })

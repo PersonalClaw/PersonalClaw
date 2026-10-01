@@ -1,10 +1,11 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { RungChip } from '../ui/RungChip'
 import { RUNG_PRESENTATION } from '../lib/rungs'
 import { accentChip, toneChipSkin } from './accent'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The accent-chip failure, THIRD SPELLING: the tone arrives from a REGISTRY ──────────────────────
 //
@@ -60,13 +61,8 @@ import { accentChip, toneChipSkin } from './accent'
 // Moving those would repaint five surfaces for no accessibility reason.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-  })
+const read = (rel: string) => readSource(join(SRC, rel))
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
 
 const rung = (resolved: string) =>
   ({
@@ -131,7 +127,7 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
   })
 
   it('every consumer gets the fix from the primitive, so none can be missed', () => {
-    const users = walk(SRC).filter((abs) => /<RungChip\b/.test(readFileSync(abs, 'utf8')))
+    const users = walk(SRC).filter((abs) => /<RungChip\b/.test(readSource(abs)))
     // The two approval surfaces are not consumers: a tool call dispatches no action provider, so
     // no rung describes it (`lib/ladderIsKeyedOnTheProvider.test.tsx`).
     expect(users.map((a) => a.slice(SRC.length + 1)).sort()).toEqual([
@@ -141,7 +137,7 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
   })
 
   it("the family's rail points here, so the third spelling is findable from it", () => {
-    expect(readFileSync(join(SRC, 'design/accentChip.test.ts'), 'utf8'))
+    expect(readSource(join(SRC, 'design/accentChip.test.ts')))
       .toMatch(/accentChipTone\.test\.tsx/)
   })
 })

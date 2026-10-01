@@ -16,7 +16,10 @@ refuses, in this process, every TCP connection to one of *ports* before it is ma
 process is itself listening there (a test's own fake). The code under test sees what it would see
 with no server there; ``take()`` names each refusal, with the test that asked, so a
 ``conftest.py`` fails that test by name. Each suite passes the ports it keeps out: which servers
-a suite's code talks to is the suite's knowledge, not core's.
+a suite's code talks to is the suite's knowledge, not core's. Any other server on the machine is
+reached the same way, and no port list names them all, so ``loopback=True`` refuses a connection
+to any port on this machine the process has not opened itself: a test reaches only the servers
+it started.
 
 A test's git reaches the machine too: it reads the machine's git configuration, and on a Mac the
 file Apple's git bundles names ``osxkeychain``, which hands every credential git signs in with to
@@ -56,6 +59,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import inspect
+import ipaddress
 import os
 import re
 import shlex
@@ -85,17 +89,47 @@ __all__ = [
 _INET = (socket.AF_INET, socket.AF_INET6)
 
 
-class PortGuard:
-    """Refuses a TCP ``connect`` to one of :attr:`ports` that nobody in this process listens on.
+def _on_this_machine(host: object) -> bool:
+    """Whether a ``connect`` to *host* reaches this machine: a loopback address, the unspecified
+    address (which a connect sends to this machine), or a ``localhost`` name (RFC 6761 keeps it and
+    every name under it for this machine). A name is not looked up, so a name that only resolves
+    here is not seen."""
+    if not isinstance(host, str):
+        return False
+    name = host.split("%", 1)[0].rstrip(".").lower()
+    if not name or name == "localhost" or name.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
+    return address.is_loopback or address.is_unspecified
 
-    What it cannot see: a connection a child process makes (it has its own sockets), and a server
-    on a port that is not in :attr:`ports`.
+
+class PortGuard:
+    """Refuses a TCP ``connect`` to a port that is not this process's own.
+
+    A connection to one of :attr:`ports`, at any address, is refused unless this process is
+    listening on that port now (a test's own fake). With :attr:`loopback` set, a connection to ANY
+    port on this machine is refused too unless this process holds it: it bound the port itself (a
+    fake it serves, a free port it picked and handed a child it started, or one it bound and let go
+    to stand for a server that is not there), or :meth:`own` declared it (a port a child it started
+    chose for itself).
+
+    What it cannot see: a connection a child process makes (it has its own sockets), a connection
+    made below ``socket.socket``, a name that resolves to this machine other than ``localhost``, and
+    a server on a port that is not in :attr:`ports` at one of this machine's network addresses.
     """
 
-    def __init__(self, ports: Iterable[int], *, what: str) -> None:
+    def __init__(self, ports: Iterable[int], *, what: str, loopback: bool = False) -> None:
         self.ports = frozenset(int(port) for port in ports)
         self.what = what
+        self.loopback = loopback
         self._listeners: weakref.WeakSet[socket.socket] = weakref.WeakSet()
+        self._held: set[int] = set()
         self._refused: list[str] = []
         self._lock = threading.Lock()
         self._undo: list[Any] = []
@@ -113,25 +147,66 @@ class PortGuard:
                 continue
         return ports
 
+    def held_ports(self) -> set[int]:
+        """The ports this process has held: every port it bound, and every port :meth:`own`
+        declared."""
+        with self._lock:
+            return set(self._held)
+
     def listened(self, sock: socket.socket) -> None:
         """Note *sock* as listening: a port it holds is this process's own."""
         with self._lock:
             self._listeners.add(sock)
 
+    def bound(self, sock: socket.socket) -> None:
+        """Note the port *sock* is bound to as held by this process."""
+        if sock.family not in _INET:
+            return
+        try:
+            port = int(sock.getsockname()[1])
+        except (OSError, IndexError, TypeError, ValueError):
+            return
+        self.own(port)
+
+    def own(self, port: int) -> None:
+        """Hold *port* for this process: a server on it is one this test started, such as a child
+        that chose its port itself and said which."""
+        if port:
+            with self._lock:
+                self._held.add(int(port))
+
     def check(self, sock: socket.socket, address: object) -> None:
-        """Raise ``ConnectionRefusedError`` for one of the ports this process does not serve."""
+        """Raise ``ConnectionRefusedError`` for a port that is not this process's own."""
         if sock.family not in _INET or not isinstance(address, tuple) or len(address) < 2:
             return
         host, port = address[0], address[1]
-        if not isinstance(port, int) or port not in self.ports or port in self.own_ports():
+        if not isinstance(port, int):
             return
+        if port in self.ports:
+            if port not in self.own_ports():
+                self._refuse(host, port, self.what, "a real one")
+            return
+        if (
+            self.loopback
+            and _on_this_machine(host)
+            and port not in self.held_ports()
+            and port not in self.own_ports()
+        ):
+            self._refuse(
+                host,
+                port,
+                "a port on this machine that this process did not open",
+                "a server it did not start",
+            )
+
+    def _refuse(self, host: object, port: int, what: str, reached: str) -> None:
         who = os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" ", 1)[0] or "(no test)"
         with self._lock:
             self._refused.append(f"{who} -> {host}:{port}")
         raise ConnectionRefusedError(
             errno.ECONNREFUSED,
-            f"refused by the test suite: {host}:{port} is {self.what}, and a test must not reach "
-            "a real one. Fake it: a server this test starts on its own port, or a mocked "
+            f"refused by the test suite: {host}:{port} is {what}, and a test must not reach "
+            f"{reached}. Fake it: a server this test starts on its own port, or a mocked "
             "transport.",
         )
 
@@ -142,12 +217,18 @@ class PortGuard:
         return refused
 
     def install(self) -> None:
-        """Wrap ``socket.socket``'s ``listen``, ``connect`` and ``connect_ex`` for this process,
-        until :meth:`undo`."""
+        """Wrap ``socket.socket``'s ``bind``, ``listen``, ``connect`` and ``connect_ex`` for this
+        process, until :meth:`undo`."""
+        real_bind = socket.socket.bind
         real_listen = socket.socket.listen
         real_connect = socket.socket.connect
         real_connect_ex = socket.socket.connect_ex
         guard = self
+
+        def bind(sock, address):
+            result = real_bind(sock, address)
+            guard.bound(sock)
+            return result
 
         def listen(sock, *args):
             result = real_listen(sock, *args)
@@ -162,26 +243,29 @@ class PortGuard:
             guard.check(sock, address)
             return real_connect_ex(sock, address)
 
+        socket.socket.bind = bind  # type: ignore[method-assign]
         socket.socket.listen = listen  # type: ignore[method-assign]
         socket.socket.connect = connect  # type: ignore[method-assign]
         socket.socket.connect_ex = connect_ex  # type: ignore[method-assign]
-        self._undo.append((real_listen, real_connect, real_connect_ex))
+        self._undo.append((real_bind, real_listen, real_connect, real_connect_ex))
 
     def undo(self) -> None:
         """Put ``socket.socket`` back as :meth:`install` found it."""
         while self._undo:
-            real_listen, real_connect, real_connect_ex = self._undo.pop()
+            real_bind, real_listen, real_connect, real_connect_ex = self._undo.pop()
+            socket.socket.bind = real_bind  # type: ignore[method-assign]
             socket.socket.listen = real_listen  # type: ignore[method-assign]
             socket.socket.connect = real_connect  # type: ignore[method-assign]
             socket.socket.connect_ex = real_connect_ex  # type: ignore[method-assign]
 
 
-def refuse_ports(ports: Iterable[int], *, what: str) -> PortGuard:
+def refuse_ports(ports: Iterable[int], *, what: str, loopback: bool = False) -> PortGuard:
     """Refuse every connection this process makes to one of *ports* (*what* says what they are,
-    for the refusal), and return the installed guard. A ``conftest.py`` calls it before anything is
-    collected, asks :meth:`PortGuard.take` after each test, and calls :meth:`PortGuard.undo` when
-    the run is done."""
-    guard = PortGuard(ports, what=what)
+    for the refusal) and, with *loopback*, to any port on this machine it has not opened itself,
+    and return the installed guard. A ``conftest.py`` calls it before anything is collected, asks
+    :meth:`PortGuard.take` after each test, and calls :meth:`PortGuard.undo` when the run is
+    done."""
+    guard = PortGuard(ports, what=what, loopback=loopback)
     guard.install()
     return guard
 

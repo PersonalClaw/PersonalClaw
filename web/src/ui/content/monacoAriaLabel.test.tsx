@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Both Monaco editors announced the same generic name ────────────────────────
 //
@@ -44,14 +45,9 @@ import { join } from 'node:path'
 // future Monaco mount can ship without a specific name.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 
-const walk = (dir: string): string[] =>
-  readdirSync(dir).flatMap((n) => {
-    const p = join(dir, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (dir: string): string[] => filesUnder(dir, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 describe('every Monaco consumer names its editing surface', () => {
   it('ContentSurface names the editor from the document title', () => {
@@ -94,7 +90,7 @@ describe('the rail: every Monaco mount names itself specifically', () => {
     // three cycles, and just as wrong).
     const offenders: string[] = []
     for (const abs of walk(SRC)) {
-      const code = readFileSync(abs, 'utf8')
+      const code = readSource(abs)
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/^\s*\/\/.*$/gm, '')
       if (!/<MonacoEditor\b/.test(code)) continue
@@ -110,7 +106,7 @@ describe('the rail: every Monaco mount names itself specifically', () => {
 
   it('the rail actually finds the Monaco mounts (it is not vacuously green)', () => {
     // A rail that matches nothing passes forever. Pin that every known consumer is in scope.
-    const mounting = walk(SRC).filter((abs) => /<MonacoEditor\b/.test(readFileSync(abs, 'utf8')))
+    const mounting = walk(SRC).filter((abs) => /<MonacoEditor\b/.test(readSource(abs)))
       .map((abs) => abs.slice(SRC.length + 1)).sort()
     expect(mounting).toEqual([
       'pages/knowledge/GistEditor.tsx',

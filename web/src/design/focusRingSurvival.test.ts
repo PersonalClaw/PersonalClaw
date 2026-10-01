@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── `outline-none` silently defeats the app-wide keyboard focus ring ────────────
 //
@@ -87,13 +88,8 @@ const FOCUS_TREATMENT =
  *       single-file scan cannot see. */
 const BASELINE = 2
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.(ts|tsx|css)$/.test(name)) out.push(p)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.(ts|tsx|css)$/.test(name))
 }
 
 /** Blank out comments, preserving line numbers so reported positions stay accurate.
@@ -121,7 +117,7 @@ function unringedSites(): string[] {
     // `design/` is this rail's own home (its regexes would match themselves); tests are not shipped.
     if (rel.startsWith('design/') || rel.includes('.test.')) continue
     // Comments are blanked FIRST: both the detection and the credit must read code, not prose.
-    const text = withoutComments(readFileSync(file, 'utf8'))
+    const text = withoutComments(readSource(file))
     if (!OUTLINE_KILLED.test(text)) continue
     // FILE-WIDE credit — see the calibration note above. A file that provides any focus treatment
     // is composing its ring somewhere (a constant, a wrapper, a `has-` variant on the parent), and
@@ -166,7 +162,7 @@ describe('the global focus ring must survive `outline-none`', () => {
   it('tokens.css still provides the one global ring this rail protects', () => {
     // If the global rule is ever removed or renamed, `outline-none` stops being the interesting
     // signal and this rail is measuring the wrong thing.
-    const tokens = readFileSync(join(SRC, 'design', 'tokens.css'), 'utf8')
+    const tokens = readSource(join(SRC, 'design', 'tokens.css'))
     expect(tokens, 'the global :focus-visible ring is gone — re-derive this rail').toMatch(
       /:focus-visible\s*\{[^}]*outline:/,
     )

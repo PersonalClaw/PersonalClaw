@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A write the user CONFIRMED must tell them when it fails ──────────────────────────────────
 //
@@ -46,13 +47,8 @@ import { join } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 
 /** Every `.ts`/`.tsx` under `src/`, excluding tests. */
-function sources(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) sources(p, out)
-    else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p)
-  }
-  return out
+function sources(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
 }
 
 /** The `api.*` methods `lib/api.ts` implements with a non-GET verb.
@@ -60,7 +56,7 @@ function sources(dir: string, out: string[] = []): string[] {
  *  Shape there is uniform: `name: (args) => post<T>(url, body)`. Reading the VERB is the only way
  *  to know a write from a read — `verifySkill` POSTs, `sideTurn` POSTs, `grillTree` POSTs. */
 function writeMethods(): string[] {
-  const src = readFileSync(join(SRC, 'lib/api.ts'), 'utf8')
+  const src = readSource(join(SRC, 'lib/api.ts'))
   const decl =
     /\n {2}([a-zA-Z_][\w]*)\s*:\s*(?:async\s*)?\([^\n]*?\)\s*(?::[^=\n]*?)?=>\s*\n?\s*(get|post|put|patch|del)\b/g
   const out = new Set<string>()
@@ -113,7 +109,7 @@ function unhandled(): { population: number; findings: Finding[] } {
   for (const abs of sources(SRC)) {
     const rel = abs.slice(SRC.length + 1).replace(/\\/g, '/')
     if (rel === 'lib/api.ts') continue
-    const s = readFileSync(abs, 'utf8')
+    const s = readSource(abs)
     if (!CONFIRM.test(s) || !HAS_WRITE.test(s)) continue
     const spans = functionSpans(s)
     for (const m of s.matchAll(new RegExp(pattern, 'g'))) {

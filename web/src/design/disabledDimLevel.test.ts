@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Disabled controls dim at an established level, not an arbitrary one ───────────────
 //
@@ -35,12 +36,7 @@ const ESTABLISHED = new Set(['40', '50', '60'])
 /** Site-pinned exception: a disabled control whose label carries information. */
 const PINNED_EXCEPTIONS = new Map([['pages/knowledge/KnowledgeListPage.tsx', '70']])
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 /** 🪤 Comments BLANKED IN PLACE — identical length, so the reported line numbers still match the
  *  file, while prose can no longer register as a dim level.
@@ -58,7 +54,7 @@ const codeOf = (s: string): string => s
 function levels(): Array<{ file: string; line: number; level: string }> {
   const out: Array<{ file: string; line: number; level: string }> = []
   for (const abs of walk(SRC)) {
-    const text = codeOf(readFileSync(abs, 'utf8'))
+    const text = codeOf(readSource(abs))
     for (const m of text.matchAll(/(?<!aria-)disabled:opacity-(\d+)/g)) {
       out.push({
         file: abs.slice(SRC.length + 1),

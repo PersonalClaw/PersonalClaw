@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A thin vertical control needs a 24px band, not a 24px box ─────────────────────────────────
 //
@@ -36,9 +37,9 @@ import { join } from 'node:path'
 // layout, so that number cannot be re-derived here; this file guards the contract that produces it.
 
 const SRC = join(process.cwd(), 'src')
-const css = readFileSync(join(SRC, 'design/tokens.css'), 'utf8')
-const navRail = readFileSync(join(SRC, 'ui/NavRail.tsx'), 'utf8')
-const sidePanel = readFileSync(join(SRC, 'ui/SidePanel.tsx'), 'utf8')
+const css = readSource(join(SRC, 'design/tokens.css'))
+const navRail = readSource(join(SRC, 'ui/NavRail.tsx'))
+const sidePanel = readSource(join(SRC, 'ui/SidePanel.tsx'))
 // `pages/chat/SessionMapRail.tsx` is deliberately NOT read here any more — see the ADOPTERS note.
 // The derived-list test below is what notices if it (or anything else) adopts the utility again.
 
@@ -113,15 +114,10 @@ const ADOPTERS: [string, string][] = [
 const SPLITTERS = ['ui/NavRail.tsx', 'ui/SidePanel.tsx']
 
 /** Every `.tsx` under `src`, so a fourth adopter cannot appear in a directory this file forgot to
- *  look in — which is exactly how the Session Map rail hid. */
-function allSources(dir: string, prefix = ''): string[] {
-  const out: string[] = []
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const rel = prefix ? `${prefix}/${e.name}` : e.name
-    if (e.isDirectory()) { out.push(...allSources(join(dir, e.name), rel)); continue }
-    if (/\.tsx$/.test(e.name) && !/\.test\./.test(e.name)) out.push(rel)
-  }
-  return out
+ *  look in — which is exactly how the Session Map rail hid. As `/`-separated paths under `dir`. */
+function allSources(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx$/.test(name) && !/\.test\./.test(name))
+    .map((path) => relative(dir, path).split(sep).join('/'))
 }
 
 // Comments stripped BEFORE any matching, and this is load-bearing rather than tidiness: the
@@ -213,7 +209,7 @@ describe('the thin-handle hit target', () => {
     // `ui/nestedTargetSize.test.tsx`, which owns the full property assertion.
     expect(base, 'no adopter restates its drawn size any more').not.toMatch(/--hit-size/)
     expect(
-      readFileSync(join(SRC, 'ui/BoardCollapse.tsx'), 'utf8'),
+      readSource(join(SRC, 'ui/BoardCollapse.tsx')),
       'BoardCollapse must still use the symmetric idiom, not this one',
     ).toMatch(/\bhit-24\b(?!-x)/)
   })
@@ -254,7 +250,7 @@ describe('the thin-handle hit target', () => {
     // the per-site measurement (one passes at 24px, one is clipped at 15px, one is horizontal-only);
     // a bare grep could not. Walks ALL of `src`: scanning only `src/ui` is how the Session Map rail
     // adopted the utility and stayed invisible to the file whose green it was credited with.
-    const found = allSources(SRC).filter((rel) => code(readFileSync(join(SRC, rel), 'utf8')).includes('hit-24-x'))
+    const found = allSources(SRC).filter((rel) => code(readSource(join(SRC, rel))).includes('hit-24-x'))
     expect(found.sort(), 'an adopter of .hit-24-x exists that this rail does not measure')
       .toEqual(ADOPTERS.map(([rel]) => rel).sort())
   })

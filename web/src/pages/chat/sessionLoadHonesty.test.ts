@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Telling an account with 31 sessions that it has none ──────────────────────────────────
 //
@@ -35,19 +36,14 @@ import { join } from 'node:path'
 // chat list.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 const IMPERATIVE_EXEMPT = new Set(['pages/settings/MemoryPanel.tsx'])
 
 /** Every `api.chatSessions(` call with the text that follows it, so a `.catch` on the same
  *  expression is visible. Bounded rather than to end-of-line: these calls wrap. */
 const callSites = walk(SRC).flatMap((abs) => {
-  const src = readFileSync(abs, 'utf8')
+  const src = readSource(abs)
   const rel = abs.slice(SRC.length + 1)
   return [...src.matchAll(/api\.chatSessions\([^)]*\)[\s\S]{0,60}/g)].map((m) => ({
     file: rel,
@@ -76,7 +72,7 @@ describe('every reader of the chat-session list', () => {
 })
 
 describe('the two chat-history surfaces', () => {
-  const src = readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8')
+  const src = readSource(join(SRC, 'pages/ChatPage.tsx'))
 
   it('capture the error from the hook', () => {
     // `useQuery` hands back `{ data, loading, error, refresh }`; the branch is impossible

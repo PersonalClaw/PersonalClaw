@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A failed read must not render as an empty document, where the editor can OVERWRITE it ─────────
 //
@@ -26,13 +27,7 @@ import { join } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) out.push(...walk(abs))
-    else if (/\.tsx?$/.test(name) && !name.includes('.test.')) out.push(abs)
-  }
-  return out
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !name.includes('.test.'))
 }
 
 /** Comments stripped FIRST — this file and the two it guards both DISCUSS the defective
@@ -48,7 +43,7 @@ const EDITORS = [
 describe('a doc editor that can overwrite must not treat a failed read as empty content', () => {
   for (const ed of EDITORS) {
     describe(ed.file, () => {
-      const code = strip(readFileSync(join(SRC, ed.file), 'utf8'))
+      const code = strip(readSource(join(SRC, ed.file)))
 
       it('reads and writes the same document — which is what makes this data loss, not a cosmetic bug', () => {
         // Vacuity: if either call is renamed the assertions below are about nothing, so they
@@ -91,7 +86,7 @@ describe('a doc editor that can overwrite must not treat a failed read as empty 
     // So a broad sweep would ship red-or-allowlisted against nine non-bugs, which trains people to
     // add allowlist entries. The per-file rails above are the precise form. This test records the
     // enumeration so the next reader does not have to redo it.
-    const both = EDITORS.map((e) => strip(readFileSync(join(SRC, e.file), 'utf8')))
+    const both = EDITORS.map((e) => strip(readSource(join(SRC, e.file))))
     for (const code of both) {
       expect(code, 'neither editor may reintroduce the empty-string failure path')
         .not.toMatch(/catch[\s\S]{0,120}set(?:Content|Draft|ViewContent)\(''\)/)

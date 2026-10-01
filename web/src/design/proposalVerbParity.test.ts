@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Declining a PROPOSAL is "Reject"; clearing an ITEM is "Dismiss" ───────────
 //
@@ -35,14 +36,7 @@ const PAGES = join(process.cwd(), 'src/pages')
 
 function pageFiles(): string[] {
   const out: string[] = []
-  const walk = (dir: string) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, e.name)
-      if (e.isDirectory()) { walk(p); continue }
-      if (/\.tsx$/.test(e.name) && !/\.test\.tsx$/.test(e.name)) out.push(p)
-    }
-  }
-  walk(PAGES)
+  out.push(...filesUnder(PAGES, (name) => /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name)))
   return out
 }
 
@@ -64,7 +58,7 @@ describe('accept/decline verb parity', () => {
   it('the decline half of an accept/decline pair says "Reject"', () => {
     const offenders: string[] = []
     for (const f of files) {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       const buttons = [...src.matchAll(LABELS)].map((m) => ({ text: m[1], at: m.index ?? 0 }))
       const accepts = buttons.filter((b) => ACCEPTISH.test(b.text))
       if (!accepts.length) continue
@@ -93,7 +87,7 @@ describe('accept/decline verb parity', () => {
     // The counterpart direction: this rail must not become "ban the word Dismiss". It stays
     // correct for clearing an item, and InboxDetail is the reference for that usage — if this
     // ever fails, the distinction has been flattened rather than respected.
-    const inbox = readFileSync(join(PAGES, 'inbox/InboxDetail.tsx'), 'utf8')
+    const inbox = readSource(join(PAGES, 'inbox/InboxDetail.tsx'))
     expect(inbox).toMatch(/Dismiss/)
     expect(inbox, 'InboxDetail should still write the dismissed status').toMatch(/status:\s*'dismissed'/)
   })

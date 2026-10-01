@@ -42,12 +42,13 @@ real_home_guard.GUARD.install()
 # once the bytecode-cache rail is active so that its own bytecode is under it.
 env_guard = importlib.import_module("env_guard")
 
-# ── Local model port guard ─────────────────────────────────────────────
-# From here on a connection to a local model server's port (Ollama's 11434 among them) is refused
-# before it is made, unless this process is listening on it (a test's own fake), and the test that
-# asked fails by name (`_no_test_reaches_a_real_local_model`). Mechanism and what it cannot see:
-# tests/local_model_port_guard.py, which installs it as it is imported.
-local_model_port_guard = importlib.import_module("local_model_port_guard")
+# ── Port guard ──────────────────────────────────────────────────────────
+# From here on a connection to a server this process did not start is refused before it is made:
+# a local model server's port (Ollama's 11434 among them) at any address unless this process is
+# listening on it (a test's own fake), and any port on this machine this process has not opened
+# itself. The test that asked fails by name (`_no_test_reaches_a_server_it_did_not_start`).
+# Mechanism and what it cannot see: tests/port_guard.py, which installs it as it is imported.
+port_guard = importlib.import_module("port_guard")
 
 # ── The machine's git configuration, and its credential helpers, stay out ─────────
 # From here on every test's git runs with no system configuration, a global git file of the test's
@@ -169,13 +170,13 @@ def _a_test_leaves_the_environment_as_it_found_it(request):
 
 
 @pytest.fixture(autouse=True)
-def _no_test_reaches_a_real_local_model():
-    """Fail the test that tried to connect to a local model server's port. The connection itself
-    was refused before it was made: tests/local_model_port_guard.py."""
+def _no_test_reaches_a_server_it_did_not_start():
+    """Fail the test that tried to connect to a server it did not start. The connection itself was
+    refused before it was made: tests/port_guard.py."""
     yield
-    refused = local_model_port_guard.GUARD.take()
+    refused = port_guard.GUARD.take()
     if refused:
-        pytest.fail(local_model_port_guard.failure(refused), pytrace=False)
+        pytest.fail(port_guard.failure(refused), pytrace=False)
 
 
 @pytest.fixture(autouse=True)

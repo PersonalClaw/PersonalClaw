@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { accentChip } from './accent'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The accent as both ink and background ──────────────────────────────────────────────
 //
@@ -27,12 +28,7 @@ import { accentChip } from './accent'
 // four that sit at 18% are recorded as their own family rather than swept in here.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
 
 describe('accentChip', () => {
   it('uses the container pair, not the accent as ink', () => {
@@ -49,7 +45,7 @@ describe('accentChip', () => {
 describe('no primary tint under primary ink survives', () => {
   const offenders: string[] = []
   for (const abs of walk(SRC)) {
-    const text = readFileSync(abs, 'utf8')
+    const text = readSource(abs)
     text.split('\n').forEach((line, i) => {
       const bg = /background:\s*'?`?color-mix\(in srgb, var\(--color-primary\) \d+%/.test(line)
       const ink = /color:\s*'?var\(--color-primary\)/.test(line)
@@ -125,7 +121,7 @@ describe('no primary tint under primary ink survives — utility spelling', () =
   const seen: string[] = []
   for (const abs of walk(SRC)) {
     const rel = abs.slice(SRC.length + 1)
-    readFileSync(abs, 'utf8').split('\n').forEach((line, i) => {
+    readSource(abs).split('\n').forEach((line, i) => {
       // One class string carrying both the coral tint and coral ink. Alpha-bearing only: a bare
       // `bg-primary` is the solid accent with `text-on-primary`, which is a different, passing pair.
       if (!/bg-primary\/\d+/.test(line)) return
@@ -155,7 +151,7 @@ describe('no primary tint under primary ink survives — utility spelling', () =
 })
 
 describe('the sweep actually adopted the shared definition', () => {
-  const adopters = walk(SRC).filter((abs) => /\baccentChip\b/.test(readFileSync(abs, 'utf8')))
+  const adopters = walk(SRC).filter((abs) => /\baccentChip\b/.test(readSource(abs)))
 
   it('is used across the tree, not in one corner', () => {
     // 23 files at the time of writing, plus the definition itself.
@@ -165,7 +161,7 @@ describe('the sweep actually adopted the shared definition', () => {
   it('every adopter imports it rather than re-declaring the colours', () => {
     const bad = adopters
       .filter((abs) => !abs.endsWith(join('design', 'accent.ts')))
-      .filter((abs) => !/import \{[^}]*accentChip[^}]*\} from '[^']*design\/accent'/.test(readFileSync(abs, 'utf8')))
+      .filter((abs) => !/import \{[^}]*accentChip[^}]*\} from '[^']*design\/accent'/.test(readSource(abs)))
     expect(bad.map((b) => b.slice(SRC.length + 1)), 'uses accentChip without importing it').toEqual([])
   })
 })
@@ -187,7 +183,7 @@ describe('the sweep actually adopted the shared definition', () => {
 
 describe('the third spelling has a home', () => {
   it('is swept behaviourally next door, not silently ignored here', () => {
-    expect(readFileSync(join(SRC, 'design/accentChipTone.test.tsx'), 'utf8'))
+    expect(readSource(join(SRC, 'design/accentChipTone.test.tsx')))
       .toMatch(/a rung chip inks coral through the container pair/)
   })
 })
@@ -219,7 +215,7 @@ describe('no primary tint under CLASS-spelled primary ink survives', () => {
   const INK_CLASS = /className="[^"]*\btext-primary\b[^"]*"/
   const offenders: string[] = []
   for (const abs of walk(SRC)) {
-    const text = readFileSync(abs, 'utf8')
+    const text = readSource(abs)
     for (const m of text.matchAll(TINT)) {
       const window = text.slice(Math.max(0, m.index! - 320), m.index!)
       if (INK_CLASS.test(window)) {

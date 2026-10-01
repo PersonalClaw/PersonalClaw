@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A skeleton with no size is a 0px invisible element, and the component reports success ──────────
 //
@@ -38,13 +39,8 @@ const SRC = join(process.cwd(), 'src')
 const strip = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const e of readdirSync(dir)) {
-    const abs = join(dir, e)
-    if (statSync(abs).isDirectory()) walk(abs, out)
-    else if (/\.tsx$/.test(e) && !/\.test\.tsx$/.test(e)) out.push(abs)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (e) => /\.tsx$/.test(e) && !/\.test\.tsx$/.test(e))
 }
 
 const FILES = walk(SRC)
@@ -53,7 +49,7 @@ describe('every skeleton placeholder has a size', () => {
   it('no call site renders a bare <Skeleton /> — it would be invisible', () => {
     const bare: string[] = []
     for (const abs of FILES) {
-      const body = strip(readFileSync(abs, 'utf8'))
+      const body = strip(readSource(abs))
       // `<Skeleton />` or `<Skeleton  />` with nothing between the name and the close.
       for (const _m of body.matchAll(/<Skeleton\s*\/>/g)) bare.push(abs.slice(SRC.length + 1))
     }
@@ -63,7 +59,7 @@ describe('every skeleton placeholder has a size', () => {
   it('and the population is real, so the assertion above is not vacuous', () => {
     // If the scan found no skeletons at all, the test above would pass trivially forever.
     const total = FILES.reduce(
-      (n, abs) => n + [...strip(readFileSync(abs, 'utf8')).matchAll(/<Skeleton\b/g)].length,
+      (n, abs) => n + [...strip(readSource(abs)).matchAll(/<Skeleton\b/g)].length,
       0,
     )
     expect(total, 'Skeleton call sites outside comments').toBeGreaterThanOrEqual(45)
@@ -72,7 +68,7 @@ describe('every skeleton placeholder has a size', () => {
   it('`className` is REQUIRED on the primitive, so a sizeless one cannot compile', () => {
     // 🔑 The real guard. Without this the five defects are fixed and the trap is still armed for the
     // next caller. `className?: string` or a `= ''` default both reopen it.
-    const kit = readFileSync(join(SRC, 'ui/ListScaffold.tsx'), 'utf8')
+    const kit = readSource(join(SRC, 'ui/ListScaffold.tsx'))
     const decl = strip(kit).match(/export function Skeleton\([^)]*\)/)?.[0] ?? ''
     expect(decl, 'the Skeleton declaration must be found before it is checked').not.toBe('')
     expect(decl, 'an optional className is what allowed a 0px skeleton').not.toMatch(/className\?/)
@@ -98,14 +94,14 @@ describe('every skeleton placeholder has a size', () => {
       ['pages/workflows/OutboxPanel.tsx', /<ListSkeleton rows=\{3\} \/>/],
     ]
     for (const [rel, re] of cases) {
-      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must render a shaped skeleton`).toMatch(re)
+      expect(strip(readSource(join(SRC, rel))), `${rel} must render a shaped skeleton`).toMatch(re)
     }
   })
 
   it('the two Outbox detail placeholders are SIZED changes, deliberately not shaped', () => {
     // One stands in for a single artifact's detail body and one fills a bordered box for a lazy
     // view — neither is a list or a form, so the shaped primitives would be the wrong silhouette.
-    const src = strip(readFileSync(join(SRC, 'pages/workflows/OutboxPanel.tsx'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'pages/workflows/OutboxPanel.tsx')))
     expect(src).toMatch(/<Skeleton className="h-24 w-full" \/>/)
     expect(src).toMatch(/fallback=\{<Skeleton className="h-full w-full" \/>\}/)
   })

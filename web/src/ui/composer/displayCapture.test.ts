@@ -1,5 +1,5 @@
+// @module-tag tree-scan
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   acquireDisplayStream,
@@ -9,6 +9,7 @@ import {
   displayCaptureSupported,
   grabOneFrame,
 } from './displayCapture'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── ONE display-capture acquisition, two products ───────────────────────────────────
 //
@@ -25,17 +26,12 @@ import {
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
 describe('the app has exactly one getDisplayMedia call site', () => {
-  const files = walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readFileSync(abs, 'utf8')) }))
+  const files = walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readSource(abs)) }))
 
   it('only displayCapture.ts invokes it', () => {
     const callers = files.filter((f) => /getDisplayMedia\s*\(/.test(f.src)).map((f) => f.rel).sort()
@@ -189,7 +185,7 @@ describe('grabOneFrame — one frame, then nothing', () => {
   })
 
   it('never streams: no timer or animation loop anywhere in the module', () => {
-    const src = strip(readFileSync(join(SRC, 'ui/composer/displayCapture.ts'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'ui/composer/displayCapture.ts')))
     expect(src).not.toMatch(/setInterval|requestAnimationFrame/)
   })
 

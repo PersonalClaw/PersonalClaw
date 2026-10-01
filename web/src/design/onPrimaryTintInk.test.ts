@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A label on a TRANSLUCENT tint of its own hue ─────────────────────────────
 //
@@ -51,7 +52,7 @@ import { join } from 'node:path'
 // tint that one value can serve all twelve — a margin the rail asserts rather than assumes.
 
 const WEB = process.cwd()
-const tokens = () => readFileSync(join(WEB, 'src/design/tokens.css'), 'utf8')
+const tokens = () => readSource(join(WEB, 'src/design/tokens.css'))
 
 function valueIn(block: string, prop: string): string | null {
   const m = block.match(new RegExp(`${prop}:\\s*([^;]+);`))
@@ -119,7 +120,7 @@ describe('--color-on-primary-tint', () => {
   it('the tonal variant actually reads the token', () => {
     // 🪤 The `--color-on-danger` cycle's lesson: a token fix does nothing for a component that
     // never reads it, and `HeaderActions` was the one site that bypassed the token.
-    const btn = readFileSync(join(WEB, 'src/ui/Button.tsx'), 'utf8')
+    const btn = readSource(join(WEB, 'src/ui/Button.tsx'))
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const tonal = /tonal:\s*'([^']+)'/.exec(btn)?.[1] ?? ''
     expect(tonal, 'the tonal variant must exist').not.toBe('')
@@ -130,17 +131,10 @@ describe('--color-on-primary-tint', () => {
   it('no OTHER component hand-rolls the failing pair', () => {
     // The variant exists because pages used to write `bg-primary/15 text-primary` by hand; a site
     // that still does inherits the defect the token was added to fix.
-    const walk = (dir: string): string[] => {
-      const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-      return readdirSync(dir).flatMap((n: string) => {
-        const p = join(dir, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-      })
-    }
+    const walk = (dir: string): string[] => filesUnder(dir, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\./.test(n))
     const offenders = walk(join(WEB, 'src'))
       .filter((f) => {
-        const code = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+        const code = readSource(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
         // Same element carrying both halves of the failing pair.
         return /className="[^"]*bg-primary\/15[^"]*\btext-primary\b/.test(code)
           || /className="[^"]*\btext-primary\b[^"]*bg-primary\/15/.test(code)

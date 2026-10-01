@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A ghost button whose label carries the accent, and the two ways its ink was wrong ─────────────
 //
@@ -55,17 +56,12 @@ import { join } from 'node:path'
 // measurement, not this variant.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 const strip = (s: string) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) walk(abs, out)
-    else if (/\.tsx?$/.test(name) && !name.includes('.test.')) out.push(abs)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !name.includes('.test.'))
 }
 
 const RETRY_SITES = [
@@ -101,7 +97,7 @@ describe('the retry button carries its accent through a variant, not a className
     // inside the tag" again. Verified by reverting a call site — this test fails.
     const offenders: string[] = []
     for (const abs of walk(SRC)) {
-      const code = strip(readFileSync(abs, 'utf8')).replace(/=>/g, '\u21d2')
+      const code = strip(readSource(abs)).replace(/=>/g, '\u21d2')
       for (const m of code.matchAll(/<Button[^>]*className="[^"]*\btext-primary\b[^"]*"/g))
         offenders.push(`${abs.replace(SRC, '')}: ${m[0].slice(0, 60)}`)
     }

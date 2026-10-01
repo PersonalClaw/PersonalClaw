@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { render, cleanup, fireEvent, createEvent, within } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { DagView, type DagNode } from './DagView'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Every DAG node is reachable and operable by keyboard (#474) ──────────────────────────────────
 //
@@ -154,18 +155,13 @@ describe('DAG nodes are keyboard-operable buttons', () => {
 // call sites from the tree rather than from a hand-written list, so a FOURTH graph surface is
 // enrolled the moment it is added.
 
-function tsxFiles(dir: string, out: string[] = []): string[] {
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e)
-    if (statSync(p).isDirectory()) tsxFiles(p, out)
-    else if (/\.tsx?$/.test(e) && !/\.test\.tsx?$/.test(e)) out.push(p)
-  }
-  return out
+function tsxFiles(dir: string): string[] {
+  return filesUnder(dir, (e) => /\.tsx?$/.test(e) && !/\.test\.tsx?$/.test(e))
 }
 
 describe('every DagView surface names its graph and its nodes', () => {
   const root = join(process.cwd(), 'src')
-  const files = tsxFiles(root).map((p) => [p, readFileSync(p, 'utf8')] as const)
+  const files = tsxFiles(root).map((p) => [p, readSource(p)] as const)
 
   const callSites = files.filter(([p, s]) => s.includes('<DagView') && !p.endsWith('DagView.tsx'))
   const nodeBuilders = files.filter(([, s]) => /import type \{[^}]*DagNode/.test(s) || /\): DagNode =>/.test(s))

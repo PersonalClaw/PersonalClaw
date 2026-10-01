@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { FieldError } from './forms'
 import { InlineError } from './InlineError'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A failure nobody was told about ───────────────────────────────────────────────────────
 //
@@ -29,12 +30,7 @@ import { InlineError } from './InlineError'
 // The mechanical pass on every surface in this change was 0 blocking, before and after.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 describe('FieldError', () => {
   it('announces — that is the whole reason it exists', () => {
@@ -80,7 +76,7 @@ describe('no site hand-rolls the silent line any more', () => {
   const RAW = /<(p|div|span)[^>]*className="(?:[a-z0-9:.\-[\]/]+ )*text-danger text-\[0\.(?:8125|75)rem\]"[^>]*>\{\s*\w[\w.]*\s*\}<\/\1>/g
 
   const offenders = files.flatMap((f) => {
-    const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const src = readSource(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     return [...src.matchAll(RAW)]
       // The create pages keep their own line: it ALREADY carries role="alert" plus an
       // `errRef` for focus management, which this primitive does not model. Named, not
@@ -96,7 +92,7 @@ describe('no site hand-rolls the silent line any more', () => {
   })
 
   it('finds the primitive at the sites that used to hand-roll it (not vacuously green)', () => {
-    const adopters = files.filter((f) => /<FieldError\b/.test(readFileSync(f, 'utf8')))
+    const adopters = files.filter((f) => /<FieldError\b/.test(readSource(f)))
     // 35 sites across 18 files at the time of writing.
     expect(adopters.length, 'the conversion must actually be there').toBeGreaterThanOrEqual(18)
   })

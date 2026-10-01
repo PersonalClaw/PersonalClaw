@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Toaster } from './Toaster'
 import { Button } from './Button'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A state that exists for 5 seconds still has to reach a screen reader ─────────────
 //
@@ -133,17 +134,12 @@ describe('an in-flight button says it is busy', () => {
 // decision is pending.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 describe('the hand-rolled in-flight population is pinned', () => {
   it('has not grown', () => {
     const hand = walk(SRC).flatMap((abs) => {
-      const text = readFileSync(abs, 'utf8')
+      const text = readSource(abs)
       return [...text.matchAll(/\{\s*(?:busy|saving|checking|applying|running|submitting|pending)\s*\?\s*<Loader2/g)]
         .map(() => abs.slice(SRC.length + 1))
     })

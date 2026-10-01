@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Eight disclosures that hid that they disclose — and a census that was wrong by 4× ────────
 //
@@ -48,7 +49,7 @@ import { join } from 'node:path'
 //            #/tools             "false" → "true" → "false"  ✅  2316
 
 const PAGES = join(process.cwd(), 'src', 'pages')
-const read = (rel: string) => readFileSync(join(PAGES, rel), 'utf8')
+const read = (rel: string) => readSource(join(PAGES, rel))
 
 /** Each disclosure: [file, the state it is gated on, a fragment of its own button]. */
 const DISCLOSURES: [string, string, string][] = [
@@ -100,12 +101,7 @@ describe('a button that reveals content says that it does', () => {
   it('the census is reproducible — every boolean-toggling button is accounted for', () => {
     // Not vacuous, and the number is the point: if a new toggle appears it must be classified (disclosure
     // → `aria-expanded`, mode → `aria-pressed` or a state-naming label), not left silent by default.
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
     // 🪤 FIFTH WINDOW FAILURE OF THE SESSION, and the funniest: the first version matched
     // `<button …</button>` within 400 chars, so ADDING `aria-expanded` pushed two buttons past the
     // window and the census fell from 12 to 10 — the fix shrank its own population. Anchor on the
@@ -122,7 +118,7 @@ describe('a button that reveals content says that it does', () => {
     // One-open-at-a-time (`setX(open ? null : id)`) stores an id, so there is no `!` here to match on;
     // that population is swept in the last describe of this file.
     const toggles = walk(PAGES).flatMap((abs) => {
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       return [...src.matchAll(TOGGLE)].map((m) => src.slice(Math.max(0, m.index! - 200), m.index! + 260))
     })
     expect(toggles.length, 'the scan must still find the population it was written for').toBeGreaterThanOrEqual(48)
@@ -142,12 +138,7 @@ describe('the accordions the boolean-flip census could not see', () => {
   const ACCORDION = /onClick=\{\(\) => set\w+\(\s*\w+ \? null : [\w.]+\s*\)/g
 
   /** The file's other `walk` is scoped inside its own test, so this describe carries one. */
-  const walkPages = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walkPages(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walkPages = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** Does the markup around a toggle actually publish an expanded state?
    *
@@ -183,7 +174,7 @@ describe('the accordions the boolean-flip census could not see', () => {
   function accordions() {
     const out: { rel: string; announced: boolean }[] = []
     for (const abs of walkPages(PAGES)) {
-      const src = readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      const src = readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
       for (const m of src.matchAll(ACCORDION)) {
         // Anchored on the toggle, not on tag boundaries — the lesson this file already carries.
         const around = src.slice(Math.max(0, m.index! - 300), m.index! + 320)
@@ -287,17 +278,12 @@ describe('the disclosures whose toggle arrives as a PROP', () => {
     PROP_TOGGLE.lastIndex = 0
   })
 
-  const walkPages = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walkPages(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walkPages = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   function propToggles() {
     const out: { rel: string; state: string; announced: boolean }[] = []
     for (const abs of walkPages(PAGES)) {
-      const src = readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      const src = readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
       for (const m of src.matchAll(PROP_TOGGLE)) {
         const arg = m[2]
         if (!/!\w+/.test(arg) && !/\?\s*null\s*:/.test(arg) && !/\?\s*''\s*:/.test(arg)) continue

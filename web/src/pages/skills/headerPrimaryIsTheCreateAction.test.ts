@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── One primary per header, and it is the create action ───────────────────────────────────────────
 //
@@ -25,18 +26,13 @@ import { join } from 'node:path'
 
 const PAGES = join(import.meta.dirname, '..')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
 /** Every `<HeaderControl …/>` in `src/pages`, with the file it came from. */
 function headerControls(): Array<{ rel: string; tag: string }> {
   const out: Array<{ rel: string; tag: string }> = []
   for (const abs of walk(PAGES)) {
-    const src = strip(readFileSync(abs, 'utf8'))
+    const src = strip(readSource(abs))
     for (const m of src.matchAll(/<HeaderControl\b[\s\S]{0,400}?\/>/g)) {
       out.push({ rel: abs.slice(abs.indexOf('/pages/') + 7), tag: m[0] })
     }
@@ -85,7 +81,7 @@ describe('a header control that renders primary also declares primary priority',
     // count to the file-wide one. A truncating `topBars` collapses the ratio immediately.
     let inBars = 0
     for (const abs of walk(PAGES)) {
-      const src = strip(readFileSync(abs, 'utf8'))
+      const src = strip(readSource(abs))
       for (const bar of topBars(src)) {
         inBars += [...bar.matchAll(/<HeaderControl\b/g)].length
       }
@@ -123,7 +119,7 @@ describe('a header control that renders primary also declares primary priority',
     // A file can render several headers; only what appears together is a duplicate.
     const dupes: string[] = []
     for (const abs of walk(PAGES)) {
-      const src = strip(readFileSync(abs, 'utf8'))
+      const src = strip(readSource(abs))
       const rel = abs.slice(abs.indexOf('/pages/') + 7)
       for (const [i, bar] of topBars(src).entries()) {
         const labels = [...bar.matchAll(/<HeaderControl\b[\s\S]{0,400}?\/>/g)]
@@ -151,7 +147,7 @@ describe('a header control that renders primary also declares primary priority',
   })
 
   it("skills' create action now matches the ten siblings", () => {
-    const src = readFileSync(join(PAGES, 'skills/SkillsPage.tsx'), 'utf8')
+    const src = readSource(join(PAGES, 'skills/SkillsPage.tsx'))
     expect(src, 'New skill must carry both attributes on one control').toMatch(
       /label="New skill" variant="primary" priority="primary"/,
     )

@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { TaskForm } from './TaskForm'
 import { STATUSES, PRIORITIES } from './taskMeta'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── #3472 Status and Priority are radio groups, not a tablist with no tabpanels ────────────
 //
@@ -120,20 +121,14 @@ describe('§2 each option is a radio that says whether it is chosen', () => {
 const SRC = join(process.cwd(), 'src')
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) { out.push(...walk(abs)); continue }
-    out.push(abs)
-  }
-  return out
+  return filesUnder(dir)
 }
 
 /** Comments blanked, newlines kept. Three separate rails in this change went red on their own
  *  prose before this was added — `Segmented` now DOCUMENTS the roles it gave up, so any scan
  *  that reads raw source counts the sentence explaining the fix as an instance of the defect. */
 const codeOf = (abs: string) =>
-  readFileSync(abs, 'utf8')
+  readSource(abs)
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/^[ \t]*\/\/.*$/gm, '')
 

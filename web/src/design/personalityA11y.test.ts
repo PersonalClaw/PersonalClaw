@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /**
  * PERSONALITY-THEMES §S1/§S2 (contract C5) — structural invariants for the
  * personality registry.
@@ -32,7 +33,6 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { SCHEMES } from './schemes'
 import {
@@ -48,6 +48,7 @@ import {
 import { getErrorTreatment } from './errorTreatments'
 import { CUES } from './soundCues'
 import { TOKENS } from './tokenRegistry'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 const SCHEME_IDS = new Set(SCHEMES.map((s) => s.id))
 
@@ -344,13 +345,7 @@ function stripComments(src: string): string {
  *  cue tests must import `CUES` to assert the recipes, and a rail that forbade that
  *  would forbid testing the thing it protects. */
 function sourceFiles(dir = join(WEB, 'src')): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) out.push(...sourceFiles(p))
-    else if (/\.tsx?$/.test(entry) && !/\.(test|spec)\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (entry) => /\.tsx?$/.test(entry) && !/\.(test|spec)\.tsx?$/.test(entry))
 }
 
 /** The body of a top-level `function <name>(…) {…}`, extracted by brace balance.
@@ -370,7 +365,7 @@ function functionBody(code: string, name: string): string {
 }
 
 describe('a cue can only sound through the gate', () => {
-  const raw = readFileSync(join(WEB, CUE_MODULE), 'utf8')
+  const raw = readSource(join(WEB, CUE_MODULE))
   const code = stripComments(raw)
   const body = functionBody(code, 'playCue')
 
@@ -415,7 +410,7 @@ describe('a cue can only sound through the gate', () => {
     const offenders = sourceFiles()
       .map((f) => f.slice(WEB.length + 1))
       .filter((rel) => rel !== CUE_MODULE)
-      .filter((rel) => /createOscillator\s*\(/.test(stripComments(readFileSync(join(WEB, rel), 'utf8'))))
+      .filter((rel) => /createOscillator\s*\(/.test(stripComments(readSource(join(WEB, rel)))))
     expect(offenders, 'a tone built here would answer to no toggle — call playCue instead')
       .toEqual([])
   })
@@ -427,7 +422,7 @@ describe('a cue can only sound through the gate', () => {
     expect(all.length, 'the walker must find web/src').toBeGreaterThan(200)
     expect(all, 'the sweep must include the cue module itself').toContain(CUE_MODULE)
     const withOsc = all.filter((rel) =>
-      /createOscillator\s*\(/.test(readFileSync(join(WEB, rel), 'utf8')),
+      /createOscillator\s*\(/.test(readSource(join(WEB, rel))),
     )
     expect(withOsc).toEqual([CUE_MODULE])
   })

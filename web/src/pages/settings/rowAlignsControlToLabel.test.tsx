@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { Row } from './settingsUI'
 import { Toggle } from '../../ui/Toggle'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A settings Row centres its control on its LABEL, not on the label+hint block ────────────────
 //
@@ -39,15 +40,10 @@ const SETTINGS_UI = 'pages/settings/settingsUI.tsx'
  *  reasons unrelated to what it guards teaches people to re-run it, which is how a real red gets
  *  waved through. An in-process walk is the pattern the sibling rails already use
  *  (`ui/listRowNaming.test.tsx`), it needs no repository, and it cannot contend for a git lock. */
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 const sources = (): { file: string; src: string }[] =>
-  walk(SRC).map((p) => ({ file: relative(SRC, p), src: readFileSync(p, 'utf8') }))
+  walk(SRC).map((p) => ({ file: relative(SRC, p), src: readSource(p) }))
 
 /** The files that import from `settingsUI`, i.e. the real consumer set. */
 const consumerFiles = (all: { file: string; src: string }[]) =>

@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react'
 import type { ComponentType } from 'react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { stripComments } from '../design/tokenLintRule'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A write path whose SUCCESS branch exists and whose FAILURE branch does not ─────────────────────
 //
@@ -79,14 +80,9 @@ import { stripComments } from '../design/tokenLintRule'
 
 const SRC = join(process.cwd(), 'src')
 const codeOfText = (text: string) => stripComments(text).code.join('\n')
-const codeOf = (abs: string) => codeOfText(readFileSync(abs, 'utf8'))
+const codeOf = (abs: string) => codeOfText(readSource(abs))
 const rel = (abs: string) => abs.slice(SRC.length + 1)
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 // ── §A THE FIXES, DRIVEN ──────────────────────────────────────────────────────────────────────────
 //
@@ -641,7 +637,7 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     ).toBe(0)
     // `stripComments` says when it ended mid-block, and a stuck-open tracker reads as "the rest of
     // the file is clean" — the exact silent weakening. Its own docstring says callers MUST assert it.
-    const stuck = walk(SRC).filter((abs) => stripComments(readFileSync(abs, 'utf8')).endState === 'block')
+    const stuck = walk(SRC).filter((abs) => stripComments(readSource(abs)).endState === 'block')
     expect(stuck.map(rel), 'these files leave the comment scanner stuck open').toEqual([])
 
     // The live positive control: the first-run resume write is silent BY DESIGN (its budget entry

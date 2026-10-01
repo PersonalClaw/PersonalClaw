@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The two ways a disabled control explains itself, and the rule that says when it must ─────────
 //
@@ -33,13 +34,8 @@ import { join } from 'node:path'
 // instrument.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
-  })
+const read = (rel: string) => readSource(join(SRC, rel))
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n))
 
 describe('unavailableWhen — the raw-button carrier', () => {
   const src = read('ui/unavailable.ts')
@@ -84,9 +80,9 @@ describe('unavailableWhen — the raw-button carrier', () => {
   it('is actually used, and by raw buttons', () => {
     // A helper with no adopters is the shape this session keeps finding; 10 raw buttons were the reason
     // it was extracted, so the floor is deliberately near that.
-    const users = walk(SRC).filter((f) => /\bunavailableWhen\(/.test(readFileSync(f, 'utf8')))
+    const users = walk(SRC).filter((f) => /\bunavailableWhen\(/.test(readSource(f)))
     expect(users.length, 'adopting files').toBeGreaterThanOrEqual(10)
-    const anyRaw = users.some((f) => /<button[\s\S]{0,400}?unavailableWhen\(/.test(readFileSync(f, 'utf8')))
+    const anyRaw = users.some((f) => /<button[\s\S]{0,400}?unavailableWhen\(/.test(readSource(f)))
     expect(anyRaw, 'at least one is the raw-button case it exists for').toBe(true)
   })
 })

@@ -1,8 +1,10 @@
+// @module-tag tree-scan
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { brotliDecompressSync } from 'node:zlib'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Every @font-face says what its file carries ─────────────────────────────────────────────
 // fonts.css told the browser that inter.woff2 and google-sans-code.woff2 covered weight ranges,
@@ -18,7 +20,7 @@ import { brotliDecompressSync } from 'node:zlib'
 
 const WEB = process.cwd()
 const SRC = join(WEB, 'src')
-const FONTS_CSS = readFileSync(join(SRC, 'design/fonts.css'), 'utf8')
+const FONTS_CSS = readSource(join(SRC, 'design/fonts.css'))
 
 // ── A WOFF2 reader: just enough to read what @font-face has to agree with ────────────────────
 // W3C WOFF2 §5: a 48-byte header, a table directory, then one Brotli stream holding every table
@@ -178,7 +180,7 @@ describe('every @font-face declares what its file carries', () => {
 })
 
 describe("the terminal draws in its own font", () => {
-  const source = readFileSync(join(SRC, 'pages/terminal/TerminalView.tsx'), 'utf8')
+  const source = readSource(join(SRC, 'pages/terminal/TerminalView.tsx'))
   const stack = source.match(/fontFamily:\s*'([^']+)'/)?.[1] ?? ''
   const own = stack.split(',')[0].trim().replace(/"/g, '')
 
@@ -201,15 +203,10 @@ describe('every weight the app asks for exists in every face that can set its te
   const TAILWIND: Record<string, number> = {
     thin: 100, extralight: 200, light: 300, normal: 400, medium: 500, semibold: 600, bold: 700, extrabold: 800, black: 900,
   }
-  const files = (dir: string): string[] =>
-    readdirSync(dir).flatMap((name) => {
-      const path = join(dir, name)
-      if (statSync(path).isDirectory()) return files(path)
-      return /\.(tsx?|css)$/.test(name) && !/\.(test|doc)\.tsx?$/.test(name) && name !== 'fonts.css' ? [path] : []
-    })
+  const files = (dir: string): string[] => filesUnder(dir, (name) => /\.(tsx?|css)$/.test(name) && !/\.(test|doc)\.tsx?$/.test(name) && name !== 'fonts.css')
   const asked = new Set<number>()
   for (const path of files(SRC)) {
-    const text = readFileSync(path, 'utf8')
+    const text = readSource(path)
     for (const m of text.matchAll(/\b(?:fvs\(|withWeight\([^,]+,\s*)(\d+)\)/g)) asked.add(Number(m[1]))
     for (const m of text.matchAll(/["']wght["']\s+(\d+)/g)) asked.add(Number(m[1]))
     for (const m of text.matchAll(/(?:font-weight|fontWeight)\s*:\s*['"]?(\d+)/g)) asked.add(Number(m[1]))
@@ -219,8 +216,8 @@ describe('every weight the app asks for exists in every face that can set its te
   }
   // The faces the UI's text can be set in: the design tokens' --font-* (including the cli
   // density mode's) and every Appearance choice. Google Sans Code is only the terminal's.
-  const tokens = readFileSync(join(SRC, 'design/tokens.css'), 'utf8')
-  const appearance = readFileSync(join(SRC, 'app/appearance.tsx'), 'utf8')
+  const tokens = readSource(join(SRC, 'design/tokens.css'))
+  const appearance = readSource(join(SRC, 'app/appearance.tsx'))
   const named = [...tokens.matchAll(/--font-[\w-]+:\s*"([^"]+)"/g), ...appearance.matchAll(/:\s*'"([^"]+)"/g)].map((m) => m[1])
   const uiFaces = [...new Set(named)].filter((family) => FACES.some((f) => f.family === family))
 

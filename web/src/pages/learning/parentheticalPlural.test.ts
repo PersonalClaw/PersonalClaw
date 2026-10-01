@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── "0 proposal(s) filed" is the most recognisable tell of unfinished product copy ────────────
 //
@@ -40,19 +41,14 @@ const PLURAL = /[A-Za-z]\((?:s|es)\)(?=[ ,·\n]|\)`)/
 const stripComments = (t: string) =>
   t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-function sources(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) sources(p, out)
-    else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p)
-  }
-  return out
+function sources(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
 }
 
 function offenders(): string[] {
   const out: string[] = []
   for (const abs of sources(HERE)) {
-    const lines = stripComments(readFileSync(abs, 'utf8')).split('\n')
+    const lines = stripComments(readSource(abs)).split('\n')
     lines.forEach((line, i) => {
       const m = PLURAL.exec(line)
       if (m && !/http\(s\)/.test(line)) {
@@ -101,7 +97,7 @@ describe('#/learning writes real plurals, not "(s)"', () => {
   ]
 
   it.each(CONVERTED)('%s still branches on all %d of its counts', (file, n) => {
-    const src = readFileSync(join(HERE, file), 'utf8')
+    const src = readSource(join(HERE, file))
     const conditionals = [...src.matchAll(/=== 1 \? '' : '(s|es)'/g)]
     expect(
       conditionals.length,

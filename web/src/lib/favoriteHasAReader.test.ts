@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /** A surface that lets you FAVORITE something must let you see and use your favorites.
  *
  * `api.ts` states the contract itself, next to the inbox field:
@@ -29,8 +30,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 const SRC = join(process.cwd(), 'src')
 const PAGES = join(SRC, 'pages')
@@ -46,20 +47,14 @@ const FAVORITE_WRITE = /\bapi\.[A-Za-z]*[Ff]avorit[A-Za-z]*\s*\(/
 const STAR_NAME = 'aria-label="Favorited"'
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (entry) => /\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry))
 }
 
 /** Page AREAS (the directory directly under `pages/`) that write the favorite flag. */
 function areasThatWrite(): Map<string, string[]> {
   const byArea = new Map<string, string[]>()
   for (const file of walk(PAGES)) {
-    if (!FAVORITE_WRITE.test(readFileSync(file, 'utf8'))) continue
+    if (!FAVORITE_WRITE.test(readSource(file))) continue
     const rel = relative(PAGES, file).split(/[\\/]/)
     const area = rel[0]
     byArea.set(area, [...(byArea.get(area) ?? []), file])
@@ -70,7 +65,7 @@ function areasThatWrite(): Map<string, string[]> {
 /** Everything in an area, so the READ can live in a sibling file — the write is usually in the
  *  detail panel and the star in the list page, which is correct and must not be penalised. */
 const areaSource = (area: string) =>
-  walk(join(PAGES, area)).map((f) => readFileSync(f, 'utf8')).join('\n')
+  walk(join(PAGES, area)).map((f) => readSource(f)).join('\n')
 
 describe('a favorite write implies a favorite read', () => {
   const writers = areasThatWrite()
@@ -124,7 +119,7 @@ describe('a favorite write implies a favorite read', () => {
     const INDICATOR = /favorited\s*&&\s*<Star\b/
     const names: string[] = []
     for (const file of walk(PAGES)) {
-      for (const line of readFileSync(file, 'utf8').split('\n')) {
+      for (const line of readSource(file).split('\n')) {
         if (!INDICATOR.test(line)) continue
         const m = line.match(/aria-label="([^"]+)"/)
         // An unnamed indicator IS a failure: nothing else on the row says the item is favorited.

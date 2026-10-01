@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ListRow } from './ListScaffold'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A clickable row must be named after the ENTITY, not after its whole subtree ──
 //
@@ -38,12 +39,7 @@ import { ListRow } from './ListScaffold'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** Every `<ListRow …>` opening tag in the tree, with file + line + its full attributes.
  *
@@ -55,7 +51,7 @@ const walk = (d: string): string[] =>
 function listRowTags(): Array<{ file: string; line: number; attrs: string }> {
   const out: Array<{ file: string; line: number; attrs: string }> = []
   for (const abs of walk(SRC)) {
-    const text = readFileSync(abs, 'utf8')
+    const text = readSource(abs)
     for (const m of text.matchAll(/<ListRow\b/g)) {
       let depth = 0
       let end = -1

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── `role="separator"` on a resize handle is the window-splitter promise ───────────────────────
 //
@@ -44,14 +45,9 @@ import { join } from 'node:path'
 // the `-w` convention). Both are real, used-now capabilities, not speculative API.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const files = () => walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readFileSync(abs, 'utf8')) }))
+const files = () => walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readSource(abs)) }))
 
 describe('a declared splitter implements the splitter contract', () => {
   const claimants = () => files().filter((f) => /role="separator"/.test(f.src))

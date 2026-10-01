@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A "stop" that silently did not stop ───────────────────────────────────────────────────────────
 //
@@ -36,7 +37,7 @@ import { join } from 'node:path'
 // later pass does not "finish the job" by adding a revert nobody verified against the WS.
 
 const SRC = join(process.cwd(), 'src', 'pages', 'ChatPage.tsx')
-const raw = readFileSync(SRC, 'utf8')
+const raw = readSource(SRC)
 // `=>` neutralised before any bounded scan: the catch bodies ARE arrow functions.
 const scan = raw.replace(/=>/g, '⇒')
 
@@ -53,7 +54,7 @@ describe('a failed cancel tells the user the work did not stop', () => {
     expect(raw, 'the shared sentence is imported').toMatch(
       /import \{ failureSentence, reportActionFailure, reportingWrite \} from '\.\.\/app\/reportingWrite'/,
     )
-    const shared = readFileSync(join(process.cwd(), 'src/app/reportingWrite.ts'), 'utf8')
+    const shared = readSource(join(process.cwd(), 'src/app/reportingWrite.ts'))
     expect(shared).toMatch(/^export const reportActionFailure = \(what: string\) => \(e: unknown\) => \{$/m)
     // 🔁 RE-POINTED A THIRD TIME, for the reason this rail already anticipates. The sentence moved from
     // an inline template into a named composer (`failureSentence`) when `readableErrText` was wired in,
@@ -77,16 +78,9 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // that first moved this shipped a second, indented copy inside `ChatPage` which legally shadowed
     // the outer one, and this very test passed because the module-level one it looked for was also
     // there. Count across the app, so a re-copy into any page fails wherever it lands.
-    const walk = (dir: string, out: string[] = []): string[] => {
-      for (const name of readdirSync(dir)) {
-        const abs = join(dir, name)
-        if (statSync(abs).isDirectory()) walk(abs, out)
-        else if (/\.tsx?$/.test(name) && !name.includes('.test.')) out.push(abs)
-      }
-      return out
-    }
+    const walk = (dir: string): string[] => filesUnder(dir, (name) => /\.tsx?$/.test(name) && !name.includes('.test.'))
     const defs = walk(join(process.cwd(), 'src')).filter((abs) =>
-      /(^|\s)(const|function)\s+reportActionFailure\b\s*[=(]/m.test(readFileSync(abs, 'utf8')),
+      /(^|\s)(const|function)\s+reportActionFailure\b\s*[=(]/m.test(readSource(abs)),
     )
     expect(defs.map((d) => d.replace(process.cwd() + '/', '')), 'exactly one home').toEqual([
       'src/app/reportingWrite.ts',
@@ -171,7 +165,7 @@ describe('a failed cancel tells the user the work did not stop', () => {
     // in a literal catch block, and `[^}]*` stops at the `}` inside `${what}` anyway. So assert the
     // property instead: the reporter's own body may notify and nothing else.
     // The reporter now lives in `app/reportingWrite`; the property asserted is unchanged.
-    const shared = readFileSync(join(process.cwd(), 'src/app/reportingWrite.ts'), 'utf8')
+    const shared = readSource(join(process.cwd(), 'src/app/reportingWrite.ts'))
     const at = shared.indexOf('export const reportActionFailure =')
     expect(at, 'the reporter must exist').toBeGreaterThan(-1)
     const body = shared.slice(at, shared.indexOf('\n}', at) + 2)

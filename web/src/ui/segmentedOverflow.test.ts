@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A registry-fed Segmented needs a collapse strategy ───────────────────────────
 //
@@ -32,13 +33,8 @@ import { join } from 'node:path'
 const THRESHOLD = 10
 const SRC = join(process.cwd(), 'src')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e)
-    if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (_name, p) => /\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p))
 }
 
 /** Entry count for every `const NAME = [ … ]` array of `{ key: … }` / `{ id: … }` records. Counted
@@ -47,7 +43,7 @@ function walk(dir: string, out: string[] = []): string[] {
 function registrySizes(files: string[]): Map<string, number> {
   const sizes = new Map<string, number>()
   for (const f of files) {
-    const s = readFileSync(f, 'utf8')
+    const s = readSource(f)
     const re = /(?:export )?const ([A-Za-z_][\w]*)(?::[^=]+)? = \[/g
     let m: RegExpExecArray | null
     while ((m = re.exec(s))) {
@@ -69,7 +65,7 @@ function registrySizes(files: string[]): Map<string, number> {
 function segmentedSites(files: string[]) {
   const sites: { file: string; line: number; collapse: string | null; registries: string[] }[] = []
   for (const f of files) {
-    const s = readFileSync(f, 'utf8')
+    const s = readSource(f)
     let i = 0
     while ((i = s.indexOf('<Segmented', i)) !== -1) {
       let depth = 0, end = i

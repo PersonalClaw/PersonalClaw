@@ -1,8 +1,8 @@
+// @module-tag tree-scan
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import type { AppCatalogEntry, AppInstallResult, AppPythonDependency } from '../../lib/api'
 
 const previewApp = vi.fn()
@@ -18,6 +18,7 @@ vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn() }))
 // Imported after the mocks so the dialog binds them.
 import { PermissionList, disclosureOf } from './installConsent'
 import { InstallDialogHarness } from '../../test/installDialogHarness'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Installing an app pip-installs packages the GATEWAY loads into its own process, and
 //    consent never said so ──────────────────────────────────────────────────────────────
@@ -231,18 +232,17 @@ const SRC = join(process.cwd(), 'src')
  *  a count. A rail measures the program, not the explanation of it. */
 const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
+/** Every production source under `dir`, outside any `test` folder in it. */
 function productionFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((n) => {
-    const p = join(dir, n)
-    if (statSync(p).isDirectory()) return n === 'test' ? [] : productionFiles(p)
-    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
-  })
+  return filesUnder(dir, (n, p) =>
+    /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n)
+    && !relative(dir, p).split(sep).slice(0, -1).includes('test'))
 }
 
 /** Every `<PermissionList …/>` in production code, by file. */
 function permissionListRenders(): { rel: string; tag: string }[] {
   return productionFiles(SRC).flatMap((abs) =>
-    [...strip(readFileSync(abs, 'utf8')).matchAll(/<PermissionList\b[\s\S]{0,300}?\/>/g)]
+    [...strip(readSource(abs)).matchAll(/<PermissionList\b[\s\S]{0,300}?\/>/g)]
       .map((m) => ({ rel: abs.slice(SRC.length + 1), tag: m[0] })))
 }
 
@@ -250,7 +250,7 @@ describe('every consent surface is handed the Python-dependency fact', () => {
   it('the comment stripper actually strips (or every count below is unfalsifiable)', () => {
     // The control this file's own rail needs: prove `strip()` removes both comment forms, so a
     // green below cannot be a green earned by a docstring.
-    const raw = readFileSync(join(SRC, 'pages/apps/installConsent.tsx'), 'utf8')
+    const raw = readSource(join(SRC, 'pages/apps/installConsent.tsx'))
     expect(strip(raw).length, 'stripping removed nothing — the regexes are wrong').toBeLessThan(raw.length)
     expect(strip(raw)).not.toMatch(/🔑/)
   })
@@ -271,7 +271,7 @@ describe('every consent surface is handed the Python-dependency fact', () => {
     // `pythonDependencies` would be worse, because the honest empty case renders NOTHING and so
     // a fabricated `[]` is indistinguishable from a correct one on screen.
     for (const rel of ['pages/apps/AppsSection.tsx', 'app/onboarding/EssentialsStep.tsx']) {
-      expect(strip(readFileSync(join(SRC, rel), 'utf8')), rel).not.toMatch(/pythonDependencies:\s*\[/)
+      expect(strip(readSource(join(SRC, rel))), rel).not.toMatch(/pythonDependencies:\s*\[/)
     }
   })
 })

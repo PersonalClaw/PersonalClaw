@@ -1,6 +1,8 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../../test/sourceTree'
 
 // ── Every widget module must be reachable from somewhere ──────────────────────
 //
@@ -32,15 +34,7 @@ const SRC = join(process.cwd(), 'src')
 /** Every source file under src/, so a reference from anywhere counts. */
 function allSources(): Array<{ path: string; text: string }> {
   const out: Array<{ path: string; text: string }> = []
-  const walk = (dir: string) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, e.name)
-      if (e.isDirectory()) { walk(p); continue }
-      if (!/\.tsx?$/.test(e.name)) continue
-      out.push({ path: p, text: readFileSync(p, 'utf8') })
-    }
-  }
-  walk(SRC)
+  for (const p of filesUnder(SRC, (name) => /\.tsx?$/.test(name))) out.push({ path: p, text: readSource(p) })
   return out
 }
 
@@ -79,7 +73,7 @@ describe('dashboard widget modules', () => {
   it('the widgets DashboardPage mounts are among them', () => {
     // The counterpart direction: this rail must not pass because the directory went empty or the
     // dashboard stopped mounting anything. Naming two known-live widgets keeps it anchored.
-    const page = readFileSync(join(SRC, 'pages/dashboard/DashboardPage.tsx'), 'utf8')
+    const page = readSource(join(SRC, 'pages/dashboard/DashboardPage.tsx'))
     for (const w of ['TasksWidget', 'ScheduleWidget']) {
       expect(page, `DashboardPage should still mount ${w}`).toMatch(new RegExp(`\\b${w}\\b`))
       expect(readdirSync(WIDGETS)).toContain(`${w}.tsx`)

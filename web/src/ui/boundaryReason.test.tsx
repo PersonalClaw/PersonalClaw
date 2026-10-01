@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { AssistantActions } from '../pages/chat/MessageActions'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A control that vanishes from the tab order AT ITS LIMIT ───────────────────────────
 //
@@ -110,12 +111,7 @@ describe('a pager arrow at its limit keeps its tab stop', () => {
 // ── The tree-wide ratchet ─────────────────────────────────────────────────────────────
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** A gate that reads "you are at one end of a sequence": an index pinned to 0 or to the last
  *  slot, a named at-start/at-end flag, or a walk that cannot go further up. Deliberately does
@@ -128,7 +124,7 @@ const BOUNDARY = /\b(?:atStart|atEnd)\b|\b(?:index|idx|i)\s*(?:===\s*0|<=\s*0)|=
 function boundaryGated(): Array<{ file: string; line: number; tag: string; src: string }> {
   const out: Array<{ file: string; line: number; tag: string; src: string }> = []
   for (const abs of walk(SRC)) {
-    const text = readFileSync(abs, 'utf8')
+    const text = readSource(abs)
     for (const m of text.matchAll(/<(?:Button|button|motion\.button)\b/g)) {
       let depth = 0
       for (let i = m.index! + m[0].length; i < text.length; i++) {
@@ -232,7 +228,7 @@ describe('a boundary-gated icon button names its limit', () => {
   }
 
   it.each(REORDER)('%s explains every boundary-gated reorder control', (rel) => {
-    const src = readFileSync(join(SRC, rel), 'utf8')
+    const src = readSource(join(SRC, rel))
     const gated = iconButtonTags(src).filter((t) => {
       const g = /(?<!aria-)disabled=\{([\s\S]*?)\}/.exec(t)
       return g && BOUNDARY.test(g[1])
@@ -262,7 +258,7 @@ describe('a boundary-gated icon button names its limit', () => {
     // gate is no longer compound at all. Requiring `||`/`&&` therefore matched nothing and the check
     // went vacuous. The real subject is a BOUNDARY-gated control, compound or not: its reason must name
     // the boundary conditionally rather than flatly, because `loading` can be the reason it is off.
-    const src = readFileSync(join(SRC, 'pages/settings/ModelsPanel.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/settings/ModelsPanel.tsx'))
     const boundaryGated = iconButtonTags(src).filter((tag) => {
       const g = /(?<!aria-)disabled=\{([\s\S]*?)\}/.exec(tag)
       return !!g && BOUNDARY.test(g[1])

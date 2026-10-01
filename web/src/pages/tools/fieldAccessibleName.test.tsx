@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it, vi } from 'vitest'
 import { render } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Field, TextInput } from '../../ui/forms'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
 
@@ -94,7 +95,7 @@ describe('a control inside the shared Field claims its label', () => {
 })
 
 describe('ToolsPage uses the shared Field', () => {
-  const src = readFileSync(TOOLS_PAGE, 'utf8')
+  const src = readSource(TOOLS_PAGE)
 
   it('declares no local Field', () => {
     expect(/function Field\b/.test(src), 'ToolsPage should not declare its own Field').toBe(false)
@@ -125,17 +126,9 @@ describe('no page reimplements Field around a form-family control', () => {
     // Field around a form control still fails. Both properties are cheap to read from source, and
     // the DOM-level proof that publishing actually resolves a name is the first describe() above.
     const offenders: string[] = []
-    const walk = (dir: string): string[] => {
-      const out: string[] = []
-      for (const n of readdirSync(dir)) {
-        const p = join(dir, n)
-        if (statSync(p).isDirectory()) { out.push(...walk(p)); continue }
-        if (/\.tsx$/.test(n) && !/\.test\.tsx$/.test(n)) out.push(p)
-      }
-      return out
-    }
+    const walk = (dir: string): string[] => filesUnder(dir, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
     for (const abs of walk(join(SRC, 'pages'))) {
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       if (!/function Field\b/.test(src)) continue
       // A local Field that publishes an id through FieldLabelProvider IS the contract — its children
       // claim that id exactly as they would inside the shared Field. Two legitimate second layouts

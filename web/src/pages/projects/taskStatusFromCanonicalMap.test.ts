@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { STATUSES, statusMeta, TERMINAL } from '../tasks/taskMeta'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A task's status has one owner, and hand-rolling it gets it wrong ─────────────────────────────
 //
@@ -27,13 +28,8 @@ import { STATUSES, statusMeta, TERMINAL } from '../tasks/taskMeta'
 
 const SRC = join(import.meta.dirname, '..', '..')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const read = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-  })
+const read = (rel: string) => strip(readSource(join(SRC, rel)))
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
 describe('the project card reads task status from taskMeta', () => {
   const src = read('pages/projects/ProjectsSection.tsx')
@@ -77,7 +73,7 @@ describe('the project card reads task status from taskMeta', () => {
     const offenders: string[] = []
     for (const abs of walk(join(SRC, 'pages'))) {
       if (abs.endsWith('taskMeta.tsx')) continue
-      const text = strip(readFileSync(abs, 'utf8'))
+      const text = strip(readSource(abs))
       // Three or more `status === '<key>' ?` arms within one expression window.
       for (const m of text.matchAll(/status === '(?:open|in_progress|blocked|done|cancelled)'[\s\S]{0,900}?/g)) {
         const window = text.slice(m.index!, m.index! + 900)

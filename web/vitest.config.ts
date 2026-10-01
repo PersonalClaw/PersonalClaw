@@ -36,5 +36,19 @@ export default defineConfig({
     // margin is a property of the SUITE, not of those tests.
     testTimeout: 20_000,
     hookTimeout: 20_000,
+    // A test file that reads the source tree says so with `// @module-tag tree-scan`, and its
+    // tests get this budget instead of the one above. It reads the tree through
+    // `src/test/sourceTree.ts`, which lists each directory and reads each file once per test file,
+    // so the first test to ask pays for all of `src/` (2,000+ files) and the rest read it from
+    // memory: on a loaded machine that first read is what can outrun 20 s, and a scan cut off part
+    // way proves nothing either way. `src/test/sourceTree.test.ts` holds every tree scan to this
+    // tag and to that one reader.
+    tags: [
+      {
+        name: 'tree-scan',
+        description: 'Reads the source tree through src/test/sourceTree.ts',
+        timeout: 60_000,
+      },
+    ],
   },
 })

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A px floor in a multi-column grid is a reflow bomb ────────────────────────────────────────
 //
@@ -53,13 +54,8 @@ import { join } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 
 /** Every `.tsx` under `src/`, so a new surface inherits this rail without being registered. */
-function tsxFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) tsxFiles(p, acc)
-    else if (entry.endsWith('.tsx')) acc.push(p)
-  }
-  return acc
+function tsxFiles(dir: string): string[] {
+  return filesUnder(dir, (entry) => entry.endsWith('.tsx'))
 }
 
 // Comments stripped BEFORE any matching, and this is load-bearing rather than tidiness: this
@@ -75,7 +71,7 @@ function stripComments(src: string): string {
 const FILES = tsxFiles(SRC).map((path) => ({
   path,
   rel: path.slice(SRC.length + 1),
-  code: stripComments(readFileSync(path, 'utf8')),
+  code: stripComments(readSource(path)),
 }))
 
 /** `repeat(auto-fill|auto-fit, …)` reduces its own column count; the px is a wrap threshold. */

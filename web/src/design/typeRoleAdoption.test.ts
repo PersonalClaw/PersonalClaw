@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Type-role adoption ratchet (audit AB-1) ─────────────────────────────────
 // The type system's sanctioned voice is the data-type role ladder in
@@ -32,13 +33,7 @@ const SCAN_ROOTS = ['pages', 'app', 'ui', 'lib'] as const
 const ARBITRARY_TEXT_SIZE = /\btext-\[[0-9.]+rem\]/
 
 function listSource(dir: string): string[] {
-  const out: string[] = []
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name)
-    if (e.isDirectory()) out.push(...listSource(p))
-    else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
 }
 
 function countArbitrarySizes(): { total: number; byFile: Record<string, number> } {
@@ -46,7 +41,7 @@ function countArbitrarySizes(): { total: number; byFile: Record<string, number> 
   let total = 0
   for (const root of SCAN_ROOTS) {
     for (const p of listSource(join(SRC, root))) {
-      const n = (readFileSync(p, 'utf8').match(new RegExp(ARBITRARY_TEXT_SIZE, 'g')) || []).length
+      const n = (readSource(p).match(new RegExp(ARBITRARY_TEXT_SIZE, 'g')) || []).length
       if (n > 0) {
         byFile[p.slice(SRC.length + 1)] = n
         total += n
@@ -59,7 +54,7 @@ function countArbitrarySizes(): { total: number; byFile: Record<string, number> 
 interface Baseline { arbitraryTextSizes: number }
 
 function loadBaseline(): Baseline {
-  const raw = readFileSync(join(SRC, 'design/typeRoleAdoption.baseline.json'), 'utf8')
+  const raw = readSource(join(SRC, 'design/typeRoleAdoption.baseline.json'))
   return JSON.parse(raw) as Baseline
 }
 

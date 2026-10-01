@@ -1,10 +1,11 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { TileButton } from '../ui/TileButton'
 import { IconButton } from '../ui/IconButton'
 import { Trash2 } from 'lucide-react'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── What Chrome COMPUTES as a control's name, which is not what the source says ─────────────────
 //
@@ -46,7 +47,7 @@ import { Trash2 } from 'lucide-react'
 // (cycle 140's was `e.title` on inbox proposals). **Re-measure after composing a name.**
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 const codeOf = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
 // ── Cycle 154: THREE BUTTONS WHOSE ENTIRE BODY IS AN ICON, AND SO HAD NO NAME AT ALL ────────────
@@ -231,15 +232,10 @@ describe("the notification row actions name their row, and stay bounded", () => 
  *  the mistake that reported 1 of the 3 real sites. */
 function iconOnlyButtons(): string[] {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
   const out: string[] = []
   for (const abs of walk(SRC)) {
-    const lines = readFileSync(abs, 'utf8').split('\n')
+    const lines = readSource(abs).split('\n')
     lines.forEach((line, i) => {
       if (!line.includes('<Button')) return
       const blob = lines.slice(i, i + 6).join('\n')
@@ -287,7 +283,7 @@ describe('a Button whose whole body is an icon carries a name', () => {
   })
 
   it('the three named sites keep their names', () => {
-    const read = (rel: string) => readFileSync(join(process.cwd(), 'src', rel), 'utf8')
+    const read = (rel: string) => readSource(join(process.cwd(), 'src', rel))
     expect(read('pages/knowledge/KnowledgeListPage.tsx'), 'the destructive one, through the shared cap')
       .toMatch(/ariaLabel=\{`Delete intent: \$\{rowSubject\(\[it\.goal \|\| it\.id\], 40\)\}`\}/)
     expect(read('pages/settings/MemoryPanel.tsx')).toMatch(/ariaLabel="Reload the audit log"/)
@@ -296,8 +292,8 @@ describe('a Button whose whole body is an icon carries a name', () => {
 
   it('Button can carry a name at all, and documents it', () => {
     // The prop is the fix; without the forward, every call site above is inert.
-    expect(readFileSync(join(process.cwd(), 'src/ui/Button.tsx'), 'utf8')).toMatch(/aria-label=\{ariaLabel\}/)
-    expect(readFileSync(join(process.cwd(), 'src/ui/Button.doc.ts'), 'utf8')).toMatch(/name: 'ariaLabel'/)
+    expect(readSource(join(process.cwd(), 'src/ui/Button.tsx'))).toMatch(/aria-label=\{ariaLabel\}/)
+    expect(readSource(join(process.cwd(), 'src/ui/Button.doc.ts'))).toMatch(/name: 'ariaLabel'/)
   })
 })
 
@@ -308,18 +304,13 @@ describe('a hyphenated aria prop on a kit component is a dropped name', () => {
   const KIT = ['Button', 'TileButton', 'Segmented', 'HeaderSegmented', 'QuietButton', 'TextInput',
     'TextArea', 'SearchField', 'Slider', 'HeaderControl', 'IconButton']
 
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   it('no call site passes one', () => {
     const SRC = join(process.cwd(), 'src')
     const offenders: string[] = []
     for (const abs of walk(SRC)) {
-      readFileSync(abs, 'utf8').split('\n').forEach((line, i) => {
+      readSource(abs).split('\n').forEach((line, i) => {
         for (const c of KIT) {
           const m = new RegExp(`<${c}\\b([^>]*)`).exec(line)
           if (m && /\saria-[a-z]+=/.test(m[1])) offenders.push(`${abs.slice(SRC.length + 1)}:${i + 1} — <${c} ${/\s(aria-[a-z]+)=/.exec(m[1])?.[1]}>`)
@@ -330,7 +321,7 @@ describe('a hyphenated aria prop on a kit component is a dropped name', () => {
   })
 
   it('the two week arrows carry the forwarded prop instead', () => {
-    const src = readFileSync(join(process.cwd(), 'src/pages/triggers/WeekGridView.tsx'), 'utf8')
+    const src = readSource(join(process.cwd(), 'src/pages/triggers/WeekGridView.tsx'))
     expect(src).toMatch(/ariaLabel="Previous week"/)
     expect(src).toMatch(/ariaLabel="Next week"/)
     expect(src, 'and not the form the primitive ignores').not.toMatch(/<Button[^>]*aria-label=/)
@@ -340,7 +331,7 @@ describe('a hyphenated aria prop on a kit component is a dropped name', () => {
     // 🪤 The first version of this assertion was `<select value={marketplace}[^>]*aria-label=…` and it
     // FAILED on correct source — `[^>]*` stops at the `>` inside `onChange={(e) => …}`. The same trap
     // this whole cycle is about, in the test written to catch it. Anchor on the attribute instead.
-    const src = readFileSync(join(process.cwd(), 'src/pages/skills/SkillsPage.tsx'), 'utf8')
+    const src = readSource(join(process.cwd(), 'src/pages/skills/SkillsPage.tsx'))
     expect(src).toMatch(/setMarketplace\(e\.target\.value\)\} aria-label="Marketplace"/)
   })
 })

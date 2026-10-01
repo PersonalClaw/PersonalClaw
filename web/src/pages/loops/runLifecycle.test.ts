@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { AWAITING_EMITTER, RUN_LIFECYCLE, unwrapRunBatch } from './useRunStream'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // EventSource silently DROPS event types with no registered listener, and `useRunStream` builds
 // its listeners by iterating THIS const. So a member missing from the union is not a bug you can
@@ -41,16 +42,10 @@ describe('every RUN_LIFECYCLE member has a real emitter', () => {
   const PY_ROOT = join(process.cwd(), '..', 'src', 'personalclaw')
 
   function pythonSources(dir: string): string[] {
-    const out: string[] = []
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, entry.name)
-      if (entry.isDirectory()) out.push(...pythonSources(p))
-      else if (entry.name.endsWith('.py')) out.push(p)
-    }
-    return out
+    return filesUnder(dir, (name) => name.endsWith('.py'))
   }
 
-  const sources = pythonSources(PY_ROOT).map((p) => readFileSync(p, 'utf8'))
+  const sources = pythonSources(PY_ROOT).map((p) => readSource(p))
   const corpus = sources.join('\n')
 
   it('reads the Python tree (not vacuously green)', () => {

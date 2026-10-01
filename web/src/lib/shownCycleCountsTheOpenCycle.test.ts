@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, shownCycle } from './loopStatus'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The cycle number a user reads has ONE implementation ────────────────────────────────────
 //
@@ -44,19 +45,15 @@ describe('shownCycle counts the open cycle', () => {
   it('is the only place the +1 is derived', () => {
     const root = join(__dirname, '..')
     const offenders: string[] = []
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir)) {
-        const p = join(dir, entry)
-        if (statSync(p).isDirectory()) { walk(p); continue }
-        if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue
-        if (relative(root, p) === 'lib/loopStatus.ts') continue  // the one owner
-        for (const line of readFileSync(p, 'utf8').split('\n')) {
-          // A local re-derivation looks like `<something>total_cycles + 1`.
-          if (/total_cycles\s*\+\s*1/.test(line)) offenders.push(`${relative(root, p)}: ${line.trim()}`)
-        }
+    const sources = filesUnder(root, (_name, p) =>
+      /\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)
+      && relative(root, p) !== 'lib/loopStatus.ts')  // the one owner
+    for (const p of sources) {
+      for (const line of readSource(p).split('\n')) {
+        // A local re-derivation looks like `<something>total_cycles + 1`.
+        if (/total_cycles\s*\+\s*1/.test(line)) offenders.push(`${relative(root, p)}: ${line.trim()}`)
       }
     }
-    walk(root)
     // The cockpit's Details row is the one legitimate unconditional `+1`: it renders only inside
     // the live cycle card, so it has no status to gate on — and agreeing with it is the fix's
     // whole point. Any OTHER site is a fourth copy of the gate that just went wrong three times.

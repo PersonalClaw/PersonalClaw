@@ -1,10 +1,11 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Pencil } from 'lucide-react'
 import { QuietButton } from './QuietButton'
 import { SquareIconButton } from './SquareIconButton'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The last two state-bearing primitives that kept their state to themselves ─────────────────
 //
@@ -80,7 +81,7 @@ describe('SquareIconButton announces the tint it was already showing', () => {
 
 describe('the call sites, classified per site', () => {
   const SRC = join(process.cwd(), 'src')
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
 
   const DISCLOSURES: [string, string][] = [
     ['pages/ChatPage.tsx', 'open'],
@@ -219,18 +220,13 @@ describe('SquareIconButton asks the right question of the right caller', () => {
 
 describe('the SquareIconButton state family is classified, all thirteen of it', () => {
   const SRC = join(process.cwd(), 'src')
-  const walkTsx = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walkTsx(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walkTsx = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** Brace-aware opening tags — `onClick={() => f(a)}` contains a `>`. */
   function stateBearing() {
     const out: { rel: string; kind: 'disclosure' | 'toggle' }[] = []
     for (const abs of walkTsx(SRC)) {
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       for (const m of src.matchAll(/<SquareIconButton\b/g)) {
         let depth = 0, end = -1
         for (let i = m.index! + m[0].length; i < src.length; i++) {
@@ -294,7 +290,7 @@ describe('the SquareIconButton state family is classified, all thirteen of it', 
       ['ui/content/ContentSurface.tsx', /ariaExpanded=\{exportOpen\}/],
     ]
     for (const [rel, re] of pairs) {
-      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must bind ${re}`).toMatch(re)
+      expect(readSource(join(SRC, rel)), `${rel} must bind ${re}`).toMatch(re)
     }
   })
 })

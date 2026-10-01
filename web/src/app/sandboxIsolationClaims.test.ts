@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── #492, second clause: no frame may CLAIM isolation it does not have ────────────────
 //
@@ -26,21 +27,14 @@ import { join } from 'node:path'
 const ROOT = join(process.cwd(), 'src')
 
 function sources(dir: string): string[] {
-  const out: string[] = []
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) { out.push(...sources(p)); continue }
-    if (!/\.tsx?$/.test(name) || /\.test\.tsx?$/.test(name)) continue
-    out.push(p)
-  }
-  return out
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
 }
 
 /** Files declaring an iframe sandbox that keeps the frame in the PARENT's origin. */
 function sameOriginFrames(): { file: string; text: string }[] {
   const hits: { file: string; text: string }[] = []
   for (const file of sources(ROOT)) {
-    const text = readFileSync(file, 'utf8')
+    const text = readSource(file)
     for (const m of text.matchAll(/sandbox[:=]\s*['"]([^'"]*)['"]/g)) {
       const tokens = m[1].split(/\s+/)
       if (tokens.includes('allow-scripts') && tokens.includes('allow-same-origin')) {
@@ -77,7 +71,7 @@ describe('a same-origin sandbox never claims isolation (#492)', () => {
     // The rail must not become "never write the word isolation". `WidgetFrame` runs
     // `sandbox="allow-scripts"` off a blob (null) origin — genuinely origin-isolated —
     // and its comment is accurate. If this ever fails, the rail above got too greedy.
-    const widget = readFileSync(join(ROOT, 'ui/widget/WidgetFrame.tsx'), 'utf8')
+    const widget = readSource(join(ROOT, 'ui/widget/WidgetFrame.tsx'))
     expect(widget).toMatch(/sandbox="allow-scripts"/)
     expect(widget).not.toMatch(/allow-same-origin/)
   })

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Twelve of thirteen copy buttons failed without saying so ───────────────────────────────────────
 //
@@ -109,11 +110,7 @@ describe('copyText says whether the copy landed', () => {
 
 describe('THE RATCHET: no surface writes to the clipboard directly', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) ? [p] : []
-  })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n))
   // Comments are blanked IN PLACE so line numbers stay true — and because the prose above quotes the
   // broken idiom verbatim, which a naive scan would count as four live offenders.
   const strip = (s: string) => s
@@ -123,7 +120,7 @@ describe('THE RATCHET: no surface writes to the clipboard directly', () => {
   const sites = walk(SRC).flatMap((abs) => {
     const rel = abs.slice(SRC.length + 1)
     if (/\.(test|doc)\.tsx?$/.test(rel)) return []
-    const lines = strip(readFileSync(abs, 'utf8')).split('\n')
+    const lines = strip(readSource(abs)).split('\n')
     return lines.flatMap((ln, i) => (/navigator\.clipboard/.test(ln) ? [`${rel}:${i + 1}`] : []))
   })
 
@@ -137,14 +134,14 @@ describe('THE RATCHET: no surface writes to the clipboard directly', () => {
   it('VACUITY: the helper is really adopted, not adopted-by-deletion', () => {
     // Without this the ratchet above goes green if every copy button were simply removed.
     const importers = walk(SRC).filter((abs) => !/\.(test|doc)\.tsx?$/.test(abs))
-      .filter((abs) => /from '[^']*app\/clipboard'/.test(strip(readFileSync(abs, 'utf8'))))
+      .filter((abs) => /from '[^']*app\/clipboard'/.test(strip(readSource(abs))))
     expect(importers.length, 'files importing copyText').toBeGreaterThanOrEqual(8)
     expect(sites.length, 'app/clipboard.ts still owns exactly one write').toBe(1)
   })
 })
 
 describe('the site that claimed success now gates on the result', () => {
-  const code = readFileSync(join(process.cwd(), 'src/pages/ChatPage.tsx'), 'utf8')
+  const code = readSource(join(process.cwd(), 'src/pages/ChatPage.tsx'))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   it('copyLink only says "copied" when the write landed', () => {

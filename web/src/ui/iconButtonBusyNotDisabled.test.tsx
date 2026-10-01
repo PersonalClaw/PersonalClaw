@@ -1,11 +1,12 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent, screen } from '@testing-library/react'
 import { MotionConfig } from 'framer-motion'
 import { Send, Wifi } from 'lucide-react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { IconButton } from './IconButton'
 import { SquareIconButton } from './SquareIconButton'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── "Unavailable" and "working" are opposite claims, and both icon tiers only had the first ──────
 //
@@ -131,12 +132,7 @@ describe('an icon button in flight says "working", not "unavailable"', () => {
 // ── The tree-wide ratchet ─────────────────────────────────────────────────────────────────────
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** Complete opening tags for the two icon tiers, brace-depth tracked. A `[^>]*>` matcher stops at
  *  the `>` inside `onClick={() => f()}` and reports the tag as prop-less — the mistake that made an
@@ -163,7 +159,7 @@ function iconButtonTags(text: string): Array<{ tag: string; line: number }> {
 const IN_FLIGHT = /busy|saving|sending|testing|rechecking|reconnecting|deleting|pending|loading|installing|uploading|refreshing|syncing|retrying|submitting/i
 
 const all = walk(SRC).flatMap((abs) =>
-  iconButtonTags(readFileSync(abs, 'utf8')).map((t) => ({ ...t, file: abs.slice(SRC.length + 1) })),
+  iconButtonTags(readSource(abs)).map((t) => ({ ...t, file: abs.slice(SRC.length + 1) })),
 )
 
 describe('no icon button spells an in-flight state as `disabled`', () => {
@@ -201,7 +197,7 @@ describe('no icon button spells an in-flight state as `disabled`', () => {
 
   it('both primitives actually implement the state (the props are not decoration)', () => {
     for (const rel of ['ui/IconButton.tsx', 'ui/SquareIconButton.tsx']) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, `${rel} must announce the state`).toMatch(/aria-busy=\{loading \|\| undefined\}/)
       expect(src, `${rel} must gate the click on BOTH reasons`).toMatch(/const off = !!disabled \|\| loading/)
       expect(src, `${rel} must refuse the click through that guard`).toMatch(/onClick=\{off \? undefined : onClick\}/)

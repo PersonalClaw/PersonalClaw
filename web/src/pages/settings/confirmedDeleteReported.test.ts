@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A destructive action the user CONFIRMED must not fail silently ────────────────────────────────
 //
@@ -58,7 +59,7 @@ import { join } from 'node:path'
 // "does it have an error surface" answers the wrong question; the surface has to be in scope AT the call.
 
 const PAGES = join(process.cwd(), 'src', 'pages')
-const MEM = readFileSync(join(PAGES, 'settings', 'MemoryPanel.tsx'), 'utf8')
+const MEM = readSource(join(PAGES, 'settings', 'MemoryPanel.tsx'))
 
 describe('a confirmed delete reports its failure', () => {
   it('all three memory deletes are wrapped, not swallowed', () => {
@@ -107,7 +108,7 @@ describe('a confirmed delete reports its failure', () => {
     ]
     const swallowing: string[] = []
     for (const [rel, call] of slice) {
-      const src = readFileSync(join(PAGES, rel), 'utf8')
+      const src = readSource(join(PAGES, rel))
       const at = src.indexOf(`api.${call}(`)
       expect(at, `${rel} must still perform the delete`).toBeGreaterThan(-1)
       if (/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src.slice(at, at + 160))) swallowing.push(`${rel}:${call}`)
@@ -130,7 +131,7 @@ describe('a confirmed delete reports its failure', () => {
     // The worst half of the slice: they called the post-success step regardless, which asserts to the
     // user that the delete worked. The `return` in the catch is what stops that.
     for (const rel of [join('loops', 'DesignCockpitPage.tsx'), join('loops', 'LoopCockpitPage.tsx')]) {
-      const src = readFileSync(join(PAGES, rel), 'utf8')
+      const src = readSource(join(PAGES, rel))
       const at = src.indexOf('api.deleteULoop(')
       const chain = src.slice(at, at + 260)
       // 🪤 NOT `[^}]*` — the notify argument is a template literal containing `${…}`, so a
@@ -173,14 +174,7 @@ describe('a confirmed delete reports its failure', () => {
   const SWALLOWED = /\.catch\(\s*\(\s*\)\s*⇒\s*\{\s*\}\s*\)/
 
   const allPages = (): string[] => {
-    const walk = (dir: string, out: string[] = []): string[] => {
-      for (const name of readdirSync(dir)) {
-        const abs = join(dir, name)
-        if (statSync(abs).isDirectory()) walk(abs, out)
-        else if (/\.tsx$/.test(name) && !name.includes('.test.')) out.push(abs)
-      }
-      return out
-    }
+    const walk = (dir: string): string[] => filesUnder(dir, (name) => /\.tsx$/.test(name) && !name.includes('.test.'))
     return walk(PAGES)
   }
 
@@ -191,7 +185,7 @@ describe('a confirmed delete reports its failure', () => {
   const confirmGatedCalls = (): Gated[] => {
     const out: Gated[] = []
     for (const abs of allPages()) {
-      const src = readFileSync(abs, 'utf8').replace(/=>/g, '⇒')
+      const src = readSource(abs).replace(/=>/g, '⇒')
       for (const m of src.matchAll(/api\.(\w+)\(/g)) {
         const before = src.slice(Math.max(0, m.index! - 900), m.index!)
         const dialog = DIALOG_CONFIRM.test(before)
@@ -226,7 +220,7 @@ describe('a confirmed delete reports its failure', () => {
 
   it('the confirmed audit-log rotation the verb filter could not see now reports', () => {
     // Also must not run the post-success steps: nothing archived, so there is nothing to invalidate.
-    const src = readFileSync(join(PAGES, 'settings', 'AuditPanel.tsx'), 'utf8')
+    const src = readSource(join(PAGES, 'settings', 'AuditPanel.tsx'))
     expect(src, 'the rotation must still be confirmed first').toMatch(/await confirm\(\{/)
     expect(src, 'and the rejection captured, not discarded').toMatch(/try \{\s+const res = await api\.selRotate\(\)/)
     expect(src, 'reported with the server’s own message').toMatch(/notify\(`Couldn't archive the audit log: \$\{msg\}`, 'error'\)/)

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Side-stripe doctrine rail (Tone-Not-Line, web/DESIGN.md §"The Tone-Not-Line Rule") ──
 // "Depth and grouping come from the surface ramp; borders are 1px hairlines or nothing.
@@ -17,13 +18,8 @@ import { join } from 'node:path'
 
 const ROOT = join(process.cwd(), 'src')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.(ts|tsx)$/.test(name) && !/\.(test|spec)\./.test(name)) out.push(p)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.(ts|tsx)$/.test(name) && !/\.(test|spec)\./.test(name))
 }
 
 function isComment(line: string): boolean {
@@ -34,7 +30,7 @@ function isComment(line: string): boolean {
 function findSideStripes(): string[] {
   const offenders: string[] = []
   for (const file of walk(ROOT)) {
-    const lines = readFileSync(file, 'utf8').split('\n')
+    const lines = readSource(file).split('\n')
     lines.forEach((line, i) => {
       if (isComment(line)) return
       // A multi-pixel border-left utility (border-l-[2px] and up) — the colored

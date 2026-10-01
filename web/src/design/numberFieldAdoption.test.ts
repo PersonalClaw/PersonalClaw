@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A clamped numeric SETTING goes through NumberField ────────────────────────
 //
@@ -43,16 +44,10 @@ const SRC = join(process.cwd(), 'src')
 /** Every `.tsx` under src/, excluding tests and the primitive's own home. */
 function sourceFiles(): string[] {
   const out: string[] = []
-  const walk = (dir: string) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, e.name)
-      if (e.isDirectory()) { walk(p); continue }
-      if (!/\.tsx$/.test(e.name) || /\.test\.tsx$/.test(e.name)) continue
-      if (p.endsWith(join('ui', 'forms.tsx'))) continue   // the canonical implementation
-      out.push(p)
-    }
-  }
-  walk(SRC)
+  out.push(...filesUnder(SRC, (name, p) =>
+    /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name)
+    && !p.endsWith(join('ui', 'forms.tsx')),   // the canonical implementation
+  ))
   return out
 }
 
@@ -72,7 +67,7 @@ describe('the canonical numeric stepper', () => {
   it('has no hand-rolled twin wearing the settings-stepper chrome', () => {
     const offenders: string[] = []
     for (const f of files) {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       // Only the combination matters: a number input dressed as the settings stepper.
       if (!/type="number"/.test(src)) continue
       for (const [i, line] of src.split('\n').entries()) {
@@ -98,7 +93,7 @@ describe('the canonical numeric stepper', () => {
     // Named explicitly: these are the call sites the defect was measured on, so a future edit
     // that reverts either one fails here by name rather than by a generic sweep.
     for (const rel of [join('settings', 'MemoryPanel.tsx'), join('inbox', 'InboxSettingsPanel.tsx')]) {
-      const src = readFileSync(join(SRC, 'pages', rel), 'utf8')
+      const src = readSource(join(SRC, 'pages', rel))
       expect(src, `${rel} should render NumberField`).toMatch(/<NumberField\b/)
       expect(src, `${rel} still defines a local NumInput`).not.toMatch(/function NumInput\b/)
     }

@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── If Enter picks something, the surface has to say WHICH something ────────────────────────────
 //
@@ -23,18 +24,13 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
 /** Files whose Enter handler acts on the FIRST element of a collection. */
 function picksFirstOnEnter(): string[] {
   const out: string[] = []
   for (const abs of walk(SRC)) {
-    const lines = strip(readFileSync(abs, 'utf8')).split('\n')
+    const lines = strip(readSource(abs)).split('\n')
     for (let i = 0; i < lines.length; i++) {
       if (!lines[i].includes("key === 'Enter'")) continue
       if (/\[0\]|\.at\(0\)/.test(lines.slice(i, i + 3).join('\n'))) { out.push(abs.replace(SRC + '/', '')); break }
@@ -55,7 +51,7 @@ describe('an Enter shortcut states its target', () => {
 
   it('each one says what Enter will do, with the same glyph the palette uses', () => {
     for (const rel of picksFirstOnEnter()) {
-      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const src = strip(readSource(join(SRC, rel)))
       expect(src, `${rel} must state the target`).toMatch(/<CornerDownLeft size=\{11\} \/> (picks|opens) the first/)
       // Gated on there being a match to pick: the sentence is false on an empty list.
       expect(src, `${rel} must not claim a target when the list is empty`)
@@ -67,16 +63,16 @@ describe('an Enter shortcut states its target', () => {
     // 🪤 THE DRIFT THAT MATTERS: a hint is a claim about behaviour, so it has to be checked against the
     // behaviour. If a handler later picks the ACTIVE row instead of the first, this fails rather than
     // leaving a confidently wrong sentence on screen.
-    const prompt = strip(readFileSync(join(SRC, 'pages/chat/PromptPalette.tsx'), 'utf8'))
+    const prompt = strip(readSource(join(SRC, 'pages/chat/PromptPalette.tsx')))
     expect(prompt, 'picks filtered[0]').toMatch(/key === 'Enter'[\s\S]{0,120}pick\(filtered\[0\]\)/)
     expect(prompt).toContain('picks the first match')
-    const ws = strip(readFileSync(join(SRC, 'pages/code/WorkspacePicker.tsx'), 'utf8'))
+    const ws = strip(readSource(join(SRC, 'pages/code/WorkspacePicker.tsx')))
     expect(ws, 'browses shownDirs[0]').toMatch(/key === 'Enter'[\s\S]{0,120}browse\(shownDirs\[0\]\.path\)/)
     expect(ws, 'and says so in the verb that surface uses').toContain('opens the first folder')
   })
 
   it('a form SUBMIT on Enter is not this defect — the falsified candidate', () => {
-    const src = strip(readFileSync(join(SRC, 'pages/tasks/TaskForm.tsx'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'pages/tasks/TaskForm.tsx')))
     expect(src, 'it binds Enter').toMatch(/key === 'Enter'/)
     expect(src, 'but to submit, not to pick out of a list').toMatch(/isProject \? createProject\(\) : createList\(\)/)
     expect(src, 'so it indexes nothing').not.toMatch(/key === 'Enter'[\s\S]{0,120}\[0\]/)

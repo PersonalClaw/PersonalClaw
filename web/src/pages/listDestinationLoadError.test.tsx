@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A list destination's failed fetch must not wear its empty state ─────────────────────────────
 //
@@ -176,7 +177,7 @@ describe('#/knowledge distinguishes a failed read from an empty library', () => 
 })
 
 describe('the sources no longer swallow their own error', () => {
-  const read = (p: string) => readFileSync(join(process.cwd(), 'src', p), 'utf8')
+  const read = (p: string) => readSource(join(process.cwd(), 'src', p))
 
   // 🪤 Anchored to the `useQuery(<key>, …)` REGISTRATION, not a character window off the api
   // call: last cycle's window landed on a COMMENT naming the same method, so restoring a real catch
@@ -231,7 +232,7 @@ describe("the what= values compose LoadError's sentence", () => {
   it('reads as a sentence in both of the primitive\'s templates', () => {
     let checked = 0
     for (const f of SITES) {
-      const src = readFileSync(join(process.cwd(), 'src', f), 'utf8')
+      const src = readSource(join(process.cwd(), 'src', f))
       for (const m of src.matchAll(/<LoadError what=(?:"([^"]+)"|\{[^}]*?((?:'[^']+')(?:\s*:\s*'[^']+')?)[^}]*\})/g)) {
         const values = (m[1] ? [m[1]] : (m[2] ?? '').split(/\s*:\s*/)).map((v) => v.replace(/'/g, '').trim()).filter(Boolean)
         for (const v of values) {
@@ -261,26 +262,19 @@ describe('every useQuery list destination adopts LoadError', () => {
   it('has no un-named holdouts', () => {
     const dir = join(process.cwd(), 'src/pages')
     const files: string[] = []
-    const walk = (d: string) => {
-      for (const e of require('node:fs').readdirSync(d, { withFileTypes: true })) {
-        const p = join(d, e.name)
-        if (e.isDirectory()) walk(p)
-        else if (e.name.endsWith('.tsx') && !e.name.includes('.test.')) files.push(p)
-      }
-    }
-    walk(dir)
+    files.push(...filesUnder(dir, (name) => name.endsWith('.tsx') && !name.includes('.test.')))
 
     // 🪤 `includes('useQuery(')` MISSED THE GENERIC FORM and the census came back empty —
     // a rail matching nothing reads exactly like a converged family. `useQuery<T>(…)` is the
     // majority spelling on these pages, so the hook has to be matched as a regex, and the
     // vacuity floor below is what would have caught it on the first run.
     const HOOK = /useQuery(?:<[\s\S]*?>)?\(/
-    const usesHook = files.filter((f) => HOOK.test(readFileSync(f, 'utf8')))
+    const usesHook = files.filter((f) => HOOK.test(readSource(f)))
     expect(usesHook.length, 'vacuity floor: the hook must be found across the pages tree')
       .toBeGreaterThan(20)
 
     const holdouts = files.filter((f) => {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       // A list destination: renders the shared EmptyState AND reads through the shared cache hook.
       return src.includes('<EmptyState') && HOOK.test(src) && !src.includes('LoadError')
     }).map((f) => f.slice(dir.length + 1).replace(/\\/g, '/')).sort()

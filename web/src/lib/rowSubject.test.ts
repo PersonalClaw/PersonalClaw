@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { rowSubject } from './rowSubject'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── One rule for a row control's name, and one implementation of it ──────────────────────────────
 //
@@ -92,7 +93,7 @@ describe('rowSubject joins the parts that identify a row', () => {
 
 describe('the inbox row names itself by identity, not by kind', () => {
   const SRC2 = join(process.cwd(), 'src')
-  const code = readFileSync(join(SRC2, 'pages/inbox/InboxPage.tsx'), 'utf8')
+  const code = readSource(join(SRC2, 'pages/inbox/InboxPage.tsx'))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   it('composes through the shared helper', () => {
@@ -117,7 +118,7 @@ describe('the inbox row names itself by identity, not by kind', () => {
 
 describe('both composing surfaces use the one helper', () => {
   const SRC = join(process.cwd(), 'src')
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
   const codeOf = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   it("the dashboard's action centre composes through it", () => {
@@ -135,14 +136,8 @@ describe('both composing surfaces use the one helper', () => {
 
   it('nothing else re-implements the cap', () => {
     // The whole point: one number, one place. A second `slice(0, 54)` anywhere is the drift returning.
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-      })
-    const offenders = walk(join(SRC, 'pages')).filter((abs) => /slice\(0, 5[0-9]\)…|length > 5[0-9] \?/.test(readFileSync(abs, 'utf8')))
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
+    const offenders = walk(join(SRC, 'pages')).filter((abs) => /slice\(0, 5[0-9]\)…|length > 5[0-9] \?/.test(readSource(abs)))
     expect(offenders).toEqual([])
   })
 })

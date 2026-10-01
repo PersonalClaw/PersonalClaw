@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── `agent.yolo` has exactly ONE writer in the SPA, and it asks first ───────────────────────────
 //
@@ -13,12 +14,8 @@ import { join, relative } from 'node:path'
 // Comments are stripped before matching: the explanation of this defect quotes the defect.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-  const p = join(d, n)
-  if (statSync(p).isDirectory()) return walk(p)
-  return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-})
-const codeOf = (abs: string) => readFileSync(abs, 'utf8')
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
+const codeOf = (abs: string) => readSource(abs)
   .replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 const FILES = walk(SRC).map((abs) => ({ rel: relative(SRC, abs).split('\\').join('/'), code: codeOf(abs) }))
 const filesMatching = (re: RegExp) => FILES.filter((f) => re.test(f.code)).map((f) => f.rel).sort()

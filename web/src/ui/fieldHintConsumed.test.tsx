@@ -1,12 +1,13 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Field as FormsField } from './forms'
 import { Toggle } from './Toggle'
 import { Combobox } from './Combobox'
 import { ShortcutRecorder } from './ShortcutRecorder'
 import { Row } from '../pages/settings/settingsUI'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── THE HINT BESIDE A CONTROL IS THAT CONTROL'S DESCRIPTION ────────────────────────────────────────
 //
@@ -181,12 +182,7 @@ describe('the other two live non-consumers in the family', () => {
 // cwd-derived path silently becomes a wrong path the moment the suite is invoked from anywhere but
 // `web/` — which reads as an ENOENT crash, not as a finding. `import.meta.dirname` cannot drift.
 const UI_DIR = import.meta.dirname
-const tsxFiles = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return tsxFiles(p)
-    return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-  })
+const tsxFiles = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
 /** Every `ui/` primitive that claims a published hint id.
  *
@@ -239,7 +235,7 @@ describe('the hint-consumer census', () => {
 
     const spans = new Map<string, { file: string; body: string }>()
     for (const f of files) {
-      for (const [name, body] of exportSpans(readFileSync(f, 'utf8'))) {
+      for (const [name, body] of exportSpans(readSource(f))) {
         if (EXPECTED_CONSUMERS.includes(name)) spans.set(name, { file: f, body })
       }
     }
@@ -254,7 +250,7 @@ describe('the hint-consumer census', () => {
   })
 
   it('Toggle wires the hint through a softOff-aware binding, not unconditionally', () => {
-    const src = readFileSync(join(UI_DIR, 'Toggle.tsx'), 'utf8')
+    const src = readSource(join(UI_DIR, 'Toggle.tsx'))
     // The precedence rule is the whole subtlety; pin its shape so a "simplification" cannot drop it.
     expect(src).toMatch(/softOff\s*\?\s*undefined\s*:\s*hintId/)
   })
@@ -288,7 +284,7 @@ describe('a layout that publishes a label id publishes the hint id too', () => {
     const out: string[] = []
     for (const abs of tsxFiles(SRC_DIR)) {
       if (abs.endsWith('ui/forms.tsx')) continue
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       if (/<FieldLabelProvider\b/.test(src)) out.push(abs.slice(SRC_DIR.length + 1))
     }
     return out
@@ -305,7 +301,7 @@ describe('a layout that publishes a label id publishes the hint id too', () => {
   })
 
   it('none publishes only half the contract', () => {
-    const halfDone = found.filter((rel) => !/<FieldHintProvider\b/.test(readFileSync(join(SRC_DIR, rel), 'utf8')))
+    const halfDone = found.filter((rel) => !/<FieldHintProvider\b/.test(readSource(join(SRC_DIR, rel))))
     expect(
       halfDone,
       `these publish a label id but no hint id, so a control inside them resolves a name and no ` +
@@ -316,7 +312,7 @@ describe('a layout that publishes a label id publishes the hint id too', () => {
   it("the projects modal's hint carries the id it publishes", () => {
     // Publishing a value nothing renders an `id` for is the inert-control version of this bug: the
     // context says "there is a description at #x" and #x does not exist.
-    const src = readFileSync(join(SRC_DIR, 'pages/projects/ProjectsSection.tsx'), 'utf8')
+    const src = readSource(join(SRC_DIR, 'pages/projects/ProjectsSection.tsx'))
     expect(src, 'the hint span must carry the published id').toMatch(/\{hint && <span id=\{hintId\}/)
     // Published only WHEN there is a hint — an `aria-describedby` resolving to nothing is worse than
     // none, because it claims a description exists. Same guard the shared Field states.

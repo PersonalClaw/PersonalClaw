@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { SegToggle } from './bento'
 import { SegPills } from './settingsUI'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── An exclusive-choice pill group that says neither what it sets nor which one is on ──────
 //
@@ -59,12 +60,7 @@ const SRC = join(process.cwd(), 'src')
  *  it. Strip first, then match. */
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** Complete `<Tag …>` openings, tracking `{}` depth. A `[^>]*>` matcher stops at the `>` inside
  *  `onPick={(v) => save(v)}` and reports every site as attribute-less — the mistake that has
@@ -107,7 +103,7 @@ describe('SegToggle announces its dimension and its state', () => {
 })
 
 describe('every SegToggle call site names its dimension', () => {
-  const sites = walk(SRC).flatMap((f) => tags(stripComments(readFileSync(f, 'utf8')), 'SegToggle').map((t) => ({ f, t })))
+  const sites = walk(SRC).flatMap((f) => tags(stripComments(readSource(f)), 'SegToggle').map((t) => ({ f, t })))
 
   it('finds the call sites (not vacuously green)', () => {
     // Three at the time of writing. `ariaLabel` is a required prop, so typecheck is the real
@@ -122,7 +118,7 @@ describe('every SegToggle call site names its dimension', () => {
 })
 
 describe("the Design panel's hand-rolled mode pills agree with the primitive", () => {
-  const src = stripComments(readFileSync(join(SETTINGS, 'DesignPanel.tsx'), 'utf8'))
+  const src = stripComments(readSource(join(SETTINGS, 'DesignPanel.tsx')))
 
   it('announces Mode: <value> and its pressed state', () => {
     // Source-level: the panel mounts the whole appearance store (server-backed theme list), so a
@@ -179,7 +175,7 @@ describe('SegPills announces its dimension and its state', () => {
 })
 
 describe('every SegPills call site names its dimension', () => {
-  const sites = walk(SRC).flatMap((f) => tags(stripComments(readFileSync(f, 'utf8')), 'SegPills').map((t) => ({ f, t })))
+  const sites = walk(SRC).flatMap((f) => tags(stripComments(readSource(f)), 'SegPills').map((t) => ({ f, t })))
 
   it('finds the call sites (not vacuously green)', () => {
     // Eight at the time of writing, across six panels. `ariaLabel` is required, so typecheck is the
@@ -195,7 +191,7 @@ describe('every SegPills call site names its dimension', () => {
   it("the 26-at-once matrix names the RULE, not just the dimension", () => {
     // A shared dimension cannot disambiguate 26 sibling groups; the rule's own label has to be in
     // the name or the fix is cosmetic on the one surface where it matters most.
-    const src = stripComments(readFileSync(join(SETTINGS, 'NotificationRulesMatrix.tsx'), 'utf8'))
+    const src = stripComments(readSource(join(SETTINGS, 'NotificationRulesMatrix.tsx')))
     expect(src).toMatch(/ariaLabel=\{`Delivery mode for \$\{r\.label\}`\}/)
   })
 })
@@ -226,7 +222,7 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     const STATE = /aria-pressed|aria-selected|aria-checked|aria-current|aria-expanded|role="(?:tab|radio|option|menuitemradio|treeitem)"/
     const out: { rel: string; state: boolean; cmp: string; via: 'equality' | 'membership' }[] = []
     for (const f of walk(SRC)) {
-      const src = stripComments(readFileSync(f, 'utf8'))
+      const src = stripComments(readSource(f))
       for (const m of src.matchAll(/\.map\(\s*\(?\s*(\w+)[^)]{0,40}\)?\s*=>\s*\{/g)) {
         const body = src.slice(m.index!, m.index! + 1100)
         const item = m[1]
@@ -361,7 +357,7 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
       ['pages/loops/LoopPlanReview.tsx', /role="group" aria-label=\{label\}/],
     ]
     for (const [rel, re] of named) {
-      const src = stripComments(readFileSync(join(SRC, rel), 'utf8'))
+      const src = stripComments(readSource(join(SRC, rel)))
       expect(src, `${rel} must name the group its options belong to`).toMatch(re)
     }
   })
@@ -389,7 +385,7 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
 })
 
 describe('the last two current-item markers in the tree', () => {
-  const codeOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const codeOf = (rel: string) => readSource(join(SRC, rel))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   it("the task-list pill says which list the page is showing", () => {
@@ -415,7 +411,7 @@ describe('the last two current-item markers in the tree', () => {
 })
 
 describe('delegation is a real path, not a hole in the sweep', () => {
-  const codeOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const codeOf = (rel: string) => readSource(join(SRC, rel))
 
   /** Where each delegate actually declares the state it accepts. If a name is added to `DELEGATES`
    *  without landing here, the sweep has gained an exemption rather than an understanding. */
@@ -442,7 +438,7 @@ describe('delegation is a real path, not a hole in the sweep', () => {
   it("the delegate list and the list the sweep uses are the same list", () => {
     // Two copies of this list would let the sweep exempt a name that nothing proves. Read the sweep's
     // own array out of this file rather than restating it.
-    const self = readFileSync(join(SRC, 'pages/settings/exclusiveChoiceNamed.test.tsx'), 'utf8')
+    const self = readSource(join(SRC, 'pages/settings/exclusiveChoiceNamed.test.tsx'))
     const declared = self.match(/const DELEGATES = \[([^\]]+)\]/)
     expect(declared, "the sweep's DELEGATES array must be findable").toBeTruthy()
     const names = [...declared![1].matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1]).sort()

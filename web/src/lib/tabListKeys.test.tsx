@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { tabListKeys } from './tabListKeys'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Four strips announced tabs, and three of them could not be reached at all ────────────────
 //
@@ -150,12 +151,7 @@ describe('tabListKeys', () => {
 
 describe('every tab strip in the tree is a real tablist', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** Comments blanked, newlines kept — a census measures the PROGRAM, not the explanation of it.
    *
@@ -169,7 +165,7 @@ describe('every tab strip in the tree is a real tablist', () => {
       .replace(/^[ \t]*\/\/.*$/gm, '')
 
   const sites = () => walk(SRC)
-    .map((abs) => ({ file: abs.slice(SRC.length + 1), src: codeOf(readFileSync(abs, 'utf8')) }))
+    .map((abs) => ({ file: abs.slice(SRC.length + 1), src: codeOf(readSource(abs)) }))
     .filter((f) => /role="tab"/.test(f.src))
 
   it('finds the population (not vacuously green)', () => {
@@ -204,7 +200,7 @@ describe('every tab strip in the tree is a real tablist', () => {
   it('ui/Segmented is a RADIOGROUP, so it is not in this census at all (#3472)', () => {
     // The inverse of what this expectation used to assert, and the reason the census above needed a
     // comment stripper: `Segmented` documents the roles it gave up, in prose, in this file's reach.
-    const seg = codeOf(readFileSync(join(SRC, 'ui/Segmented.tsx'), 'utf8'))
+    const seg = codeOf(readSource(join(SRC, 'ui/Segmented.tsx')))
     expect(seg, 'the ruling landed: single-choice fields are radio groups').toMatch(/role="radiogroup"/)
     expect(seg).toMatch(/role="radio"/)
     expect(seg).toMatch(/aria-checked=/)

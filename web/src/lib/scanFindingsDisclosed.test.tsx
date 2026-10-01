@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote } from './scanFindings'
 import { ScanReport } from '../pages/apps/installConsent'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A truncated security-findings list says how much it is hiding ───────────────────────────────
 //
@@ -25,7 +26,7 @@ import { ScanReport } from '../pages/apps/installConsent'
 
 const SRC = join(process.cwd(), 'src')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const read = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+const read = (rel: string) => strip(readSource(join(SRC, rel)))
 
 const CONSENT = ['pages/apps/installConsent.tsx', 'pages/skills/MarketplaceDetail.tsx']
 
@@ -89,13 +90,7 @@ describe('both consent surfaces disclose their cap', () => {
   it('no OTHER surface lists scan findings without the note — the census', () => {
     // Population-keyed, so a third consent surface cannot arrive silent. Anything that truncates a
     // findings list has to route through the shared rules.
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n: string) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n))
     // 🪤 Keyed on the SECURITY-scan shape — `scan.findings`, or a list typed `AppScanFinding[]` (the
     // app dialog renders one report as two such lists: what the app runs, and what it cannot) — not
     // on the word "findings". A looser sweep flagged `chat/SdlcProgressCard` and
@@ -107,7 +102,7 @@ describe('both consent surfaces disclose their cap', () => {
       /scan\??\.findings[\s\S]{0,40}\.slice\(\s*0/.test(src)
       || (/\bAppScanFinding\[\]/.test(src) && /\bfindings\.slice\(\s*0/.test(src))
     const renderers = walk(SRC)
-      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readFileSync(abs, 'utf8')) }))
+      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readSource(abs)) }))
       .filter(({ src }) => listsScanFindings(src) && src.includes('.map('))
     expect(renderers.map((r) => r.rel).sort(), 'the census must find both consent surfaces')
       .toEqual(expect.arrayContaining(CONSENT))

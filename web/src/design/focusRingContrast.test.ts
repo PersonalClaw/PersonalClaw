@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { SCHEMES } from './schemes'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The app's keyboard focus indicator was invisible, and a rail was mandating it ──────────────────
 //
@@ -60,7 +61,7 @@ const overlay = (hex: string, base: string, alpha: number): string => {
 /** A surface token in a given mode, read from source so a retint cannot drift this guard — the same
  *  discipline (and the same `.light` rule-block trap) as `schemeContrast.test.ts`. */
 function tier(mode: 'dark' | 'light', name: string): string {
-  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  const css = readSource(join(process.cwd(), 'src/design/tokens.css'))
   // 🪤 Match the RULE BLOCK, not `indexOf('.light')`: the file says ".light mode" in a comment first.
   const scope = mode === 'dark' ? css : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
   const m = scope.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{3,8})`))
@@ -135,11 +136,7 @@ describe('the focus indicator clears the 3:1 floor in every scheme, mode and sur
 // ── The spelling guard: an alpha on a FOCUS ring is the defect, mechanically ───────────────────────
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    return statSync(p).isDirectory() ? walk(p) : (/\.(tsx?|css)$/.test(n) ? [p] : [])
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.(tsx?|css)$/.test(n))
 
 /** Any variant prefix containing `focus` — `focus:`, `focus-visible:`, `focus-within:` and the
  *  `has-[input:focus-visible]:` / `has-[>button:focus-visible]:` forms the row and picker idioms use.
@@ -155,7 +152,7 @@ describe('no focus ring may carry an alpha', () => {
       // 🪤 Skip this file. Its scoping test below holds the counter-examples as literals, so a naive
       // walk reports the rail as its own top offender — which is how the first run failed.
       if (abs.endsWith('focusRingContrast.test.ts')) continue
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       for (const m of src.matchAll(new RegExp(ALPHA_FOCUS_RING, 'g'))) {
         offenders.push(`${abs.slice(SRC.length + 1)}: ${m[0]}`)
       }
@@ -169,7 +166,7 @@ describe('no focus ring may carry an alpha', () => {
     // (they carry `outline-none`, so the global rule cannot reach them). The floor sits at the
     // measurement per `railFloors.test.ts`'s taxonomy — if controls stop installing a ring, that is
     // either a migration worth noticing or a regression, and either way this should go red.
-    const uses = walk(SRC).filter((f) => /(focus|focus-visible|focus-within):ring-primary\b/.test(readFileSync(f, 'utf8')))
+    const uses = walk(SRC).filter((f) => /(focus|focus-visible|focus-within):ring-primary\b/.test(readSource(f)))
     expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(66)
   })
 

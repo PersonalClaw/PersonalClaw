@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { LoadError, EmptyState } from './ListScaffold'
 import { stripComments } from '../design/tokenLintRule'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A failed load is not an empty collection ──────────────────────────────────────────
 //
@@ -154,7 +155,7 @@ const SRC = join(process.cwd(), 'src')
 // vacuity block go through `codeOfText`, the same function the census uses, so reverting the one line
 // below reds them. That is the difference between testing a dependency and testing the program.
 const codeOfText = (text: string) => stripComments(text).code.join('\n')
-const codeOf = (abs: string) => codeOfText(readFileSync(abs, 'utf8'))
+const codeOf = (abs: string) => codeOfText(readSource(abs))
 /** An absolute path as the repo-relative form the budget below is keyed on. */
 const rel = (abs: string) => abs.slice(SRC.length + 1)
 
@@ -387,12 +388,7 @@ function readsFailure(src: string, name: string): boolean {
 }
 // `.tsx?` — `app/usePlatform.ts` is a `.ts` module that calls `useQuery` and swallows, and a
 // `.tsx`-only walker could never see it.
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 describe('the migrated surfaces read the error', () => {
   // `#/learning` joined after a measured failure: with both learning endpoints returning 500 and a
@@ -508,7 +504,7 @@ describe('the migrated surfaces read the error', () => {
 
   for (const rel of ADOPTERS) {
     it(`${rel} branches on the load error before the empty state`, () => {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, 'must render the shared primitive').toMatch(/<LoadError\b/)
       // The property that makes the branch possible is that the rejection is CAPTURED rather than
       // discarded. Two shapes qualify, and both ship here:
@@ -1191,7 +1187,7 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
     // 🔑 `stripComments` says when it ended mid-block, and a stuck-open tracker reads as "the rest of
     // the file is clean" — the exact silent weakening. Its own docstring says callers MUST assert on
     // this, so the census does.
-    const stuck = walk(SRC).filter((abs) => stripComments(readFileSync(abs, 'utf8')).endState === 'block')
+    const stuck = walk(SRC).filter((abs) => stripComments(readSource(abs)).endState === 'block')
     expect(
       stuck.map(rel),
       'these files leave the comment scanner stuck open, so every swallow below the opener is invisible',
@@ -1246,7 +1242,7 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
   it('the primitive is exported from the list kit, beside EmptyState', () => {
     // Co-located on purpose: the two are alternative answers to the same condition, and a
     // surface reaching for one should see the other.
-    const kit = readFileSync(join(SRC, 'ui/ListScaffold.tsx'), 'utf8')
+    const kit = readSource(join(SRC, 'ui/ListScaffold.tsx'))
     expect(kit).toMatch(/export function LoadError\b/)
     expect(kit).toMatch(/export function EmptyState\b/)
   })

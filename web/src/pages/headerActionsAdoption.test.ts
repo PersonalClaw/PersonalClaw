@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A header's right slot with MORE THAN ONE control must degrade ────────────
 //
@@ -40,14 +41,7 @@ const PAGES = join(process.cwd(), 'src/pages')
 /** Every `.tsx` under src/pages. */
 function pageFiles(): string[] {
   const out: string[] = []
-  const walk = (dir: string) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, e.name)
-      if (e.isDirectory()) { walk(p); continue }
-      if (/\.tsx$/.test(e.name) && !/\.test\.tsx$/.test(e.name)) out.push(p)
-    }
-  }
-  walk(PAGES)
+  out.push(...filesUnder(PAGES, (name) => /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name)))
   return out
 }
 
@@ -98,7 +92,7 @@ describe('header right slots use the responsive cluster', () => {
     for (const rel of Object.keys(EXEMPT)) {
       const f = join(PAGES, rel)
       expect(files, `exempt file ${rel} no longer exists — drop the entry`).toContain(f)
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       const slots = rightSlots(src).filter((s) => !s.body.includes('HeaderActions'))
       // If it has since adopted the cluster, the waiver is dead weight and must go — otherwise
       // it would keep excusing a file that no longer needs excusing.
@@ -112,7 +106,7 @@ describe('header right slots use the responsive cluster', () => {
   it('every multi-control right slot goes through HeaderActions', () => {
     const offenders: string[] = []
     for (const f of files) {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       if (!src.includes('right={')) continue
       const rel = f.slice(PAGES.length + 1)
       if (rel in EXEMPT) continue

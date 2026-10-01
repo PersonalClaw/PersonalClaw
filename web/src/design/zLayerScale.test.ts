@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── z-layer scale ratchet (CD-05) ───────────────────────────────────────────
 // Layering used to be scattered magic numbers (50 / 55 / 60 / 70 / 80 / 100 /
@@ -32,20 +33,15 @@ const NUMERIC_Z = /\bz-\[-?\d/
 interface Baseline { maxArbitraryZLayers: number; files: string[] }
 
 function loadBaseline(): Baseline {
-  const j = JSON.parse(readFileSync(join(SRC, 'design/zLayerScale.baseline.json'), 'utf8'))
+  const j = JSON.parse(readSource(join(SRC, 'design/zLayerScale.baseline.json')))
   return { maxArbitraryZLayers: j.maxArbitraryZLayers, files: j.files }
 }
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
+  return filesUnder(dir, (entry, p) => {
     const rel = relative(SRC, p).replace(/\\/g, '/')
-    if (EXEMPT_DIRS.some((d) => rel.startsWith(d))) continue
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+    return !EXEMPT_DIRS.some((d) => rel.startsWith(d)) && /\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)
+  })
 }
 
 function isCommentLine(trimmed: string): boolean {
@@ -60,7 +56,7 @@ function scanNumericZ(): { byFile: Record<string, number>; total: number } {
   let total = 0
   for (const f of walk(SRC)) {
     const rel = relative(SRC, f).replace(/\\/g, '/')
-    const text = readFileSync(f, 'utf8')
+    const text = readSource(f)
     let n = 0
     for (const line of text.split('\n')) {
       if (isCommentLine(line.trim())) continue
@@ -75,7 +71,7 @@ function scanNumericZ(): { byFile: Record<string, number>; total: number } {
  *  `calc(var(--z-content) + N)`, so the resolved value is content + N. Parsing
  *  (rather than hardcoding) is what makes this assert the SHIPPED order. */
 function resolveScale(): Record<'content' | 'overlay' | 'modal' | 'menu' | 'toast', number> {
-  const css = readFileSync(TOKENS_CSS, 'utf8')
+  const css = readSource(TOKENS_CSS)
   const content = Number(/--z-content:\s*(\d+)/.exec(css)?.[1])
   const rung = (name: string): number => {
     const m = new RegExp(`--z-${name}:\\s*calc\\(\\s*var\\(--z-content\\)\\s*\\+\\s*(\\d+)\\s*\\)`).exec(css)
@@ -189,7 +185,7 @@ function scanStandardScaleFixed(): { byFile: Record<string, number>; total: numb
     const rel = relative(SRC, f).replace(/\\/g, '/')
     // Comments blanked in place: design rationale cites `fixed z-50` in prose, and this rail is
     // about code. Length preserved so any future line report stays accurate.
-    const text = readFileSync(f, 'utf8')
+    const text = readSource(f)
       .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
       .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, p1) => p1 + ' '.repeat(m.length - p1.length))
@@ -210,15 +206,15 @@ function scanStandardScaleFixed(): { byFile: Record<string, number>; total: numb
 describe('the standard-scale spelling is ratcheted too', () => {
   // Resolved here rather than reused: the ladder `z` in the first describe is closure-scoped to it.
   const z = resolveScale()
-  const baseline = JSON.parse(readFileSync(join(SRC, 'design/zLayerScale.baseline.json'), 'utf8'))
+  const baseline = JSON.parse(readSource(join(SRC, 'design/zLayerScale.baseline.json')))
   const { byFile, total } = scanStandardScaleFixed()
 
   it('the two control-anchored menu primitives ride --z-menu, ABOVE dialogs', () => {
     // The value fix. `--z-menu` exists for exactly this component class; at z-50 they sat below
     // every dialog, contradicting the rung tokens.css assigns them.
-    const pop = readFileSync(join(SRC, 'ui/Popover.tsx'), 'utf8')
+    const pop = readSource(join(SRC, 'ui/Popover.tsx'))
     expect(pop, 'the portaled popover must ride the menu rung').toMatch(/fixed z-\[var\(--z-menu\)\]/)
-    const ctx = readFileSync(join(SRC, 'ui/motion/ContextMenu.tsx'), 'utf8')
+    const ctx = readSource(join(SRC, 'ui/motion/ContextMenu.tsx'))
     expect(ctx, 'the context menu must ride the menu rung').toMatch(/fixed z-\[var\(--z-menu\)\]/)
     for (const [name, src] of [['Popover', pop], ['ContextMenu', ctx]] as const) {
       expect(src, `${name} must not go back to a bare z-50 while fixed`).not.toMatch(/fixed z-50\b/)
@@ -236,7 +232,7 @@ describe('the standard-scale spelling is ratcheted too', () => {
     // `role="menu"` with menu-cursor keyboard handling, which rode a bare `z-50` — the CONTENT
     // ceiling, below every dialog. It was invisible to this rail because the rail could only see the
     // arbitrary `z-[N]` spelling, so a census scoped to one spelling certified a fix as complete.
-    const tree = readFileSync(join(SRC, 'pages/files/browse/FileTree.tsx'), 'utf8')
+    const tree = readSource(join(SRC, 'pages/files/browse/FileTree.tsx'))
     expect(tree, 'the file-tree context menu must ride the menu rung')
       .toMatch(/fixed z-\[var\(--z-menu\)\]/)
     expect(tree, 'and must not go back to a bare z-50 while fixed').not.toMatch(/fixed z-50\b/)
@@ -248,7 +244,7 @@ describe('the standard-scale spelling is ratcheted too', () => {
     // a bare z-50 it rode the CONTENT ceiling, tying with `ui/SidePanel` and `chat/ChatFilePanel`
     // (both `fixed inset-0 z-50`). Three overlays on one rung do not stack by design — they stack by
     // DOM/portal order, so which covered which was an accident of mount sequence.
-    const rail = readFileSync(join(SRC, 'ui/NavRail.tsx'), 'utf8')
+    const rail = readSource(join(SRC, 'ui/NavRail.tsx'))
     expect(rail, 'the drawer must ride the modal rung').toMatch(/fixed left-0 top-0 z-\[var\(--z-modal\)\]/)
     // And its scrim is expressed AGAINST that rung rather than as a bare neighbouring number: a
     // literal 40 was chosen relative to the drawer's old 50, so moving the drawer would have left the
@@ -268,7 +264,7 @@ describe('the standard-scale spelling is ratcheted too', () => {
       ['ui/widget/ReactWidgetFrame.tsx', /fixed inset-4 z-\[var\(--z-content\)\]/],
     ]
     for (const [rel, re] of named) {
-      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must name the content rung`).toMatch(re)
+      expect(readSource(join(SRC, rel)), `${rel} must name the content rung`).toMatch(re)
     }
   })
 
@@ -295,7 +291,7 @@ describe('the standard-scale spelling is ratcheted too', () => {
     expect(Object.keys(reasons).sort(), 'every baselined file needs a checked reason, and vice versa')
       .toEqual([...baseline.standardScaleFixedFiles].sort())
     for (const [rel, proof] of Object.entries(reasons)) {
-      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel}: its exemption reason must still hold`)
+      expect(readSource(join(SRC, rel)), `${rel}: its exemption reason must still hold`)
         .toMatch(proof)
     }
     for (const rel of Object.keys(reasons)) {

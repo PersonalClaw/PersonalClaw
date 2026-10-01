@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { loopStatusLabel } from '../../lib/loopStatus'
 import { WORK_STATE_LABEL } from '../projects/ProjectsSection'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── #3471 "Needs you" names ONE set ───────────────────────────────────────────────────────
 //
@@ -38,14 +39,7 @@ import { WORK_STATE_LABEL } from '../projects/ProjectsSection'
 const SRC = join(process.cwd(), 'src')
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) { out.push(...walk(abs)); continue }
-    if (!/\.tsx?$/.test(name) || name.includes('.test.')) continue
-    out.push(abs)
-  }
-  return out
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !name.includes('.test.'))
 }
 
 /** Source with comments blanked — a rail measures the PROGRAM, not the explanation of it.
@@ -59,7 +53,7 @@ function walk(dir: string): string[] {
  *  that punishes documentation. Newlines are preserved so nothing shifts line for line — the same
  *  stripper `ui/loadErrorState.test.tsx` arrived at after the same mistake, made there four times. */
 const codeOf = (abs: string) =>
-  readFileSync(abs, 'utf8')
+  readSource(abs)
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/^[ \t]*\/\/.*$/gm, '')
 

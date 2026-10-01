@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── WCAG 2.5.3 Label in Name (Level A): a switch's name must contain what the row says ────────────
 //
@@ -50,13 +51,8 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) walk(abs, out)
-    else if (/\.tsx$/.test(name) && !name.includes('.test.')) out.push(abs)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx$/.test(name) && !name.includes('.test.'))
 }
 
 // A speech user says words, not punctuation: fold case, drop quote glyphs, treat hyphens as spaces.
@@ -68,7 +64,7 @@ function pairs(): Pair[] {
   const found: Pair[] = []
   for (const abs of walk(SRC)) {
     // 🪤 `=>` must die before any `[^>]*` can mean "still inside the tag".
-    const code = readFileSync(abs, 'utf8').replace(/=>/g, '⇒')
+    const code = readSource(abs).replace(/=>/g, '⇒')
     const re = /<(?:Row|Field)\s+label="([^"]+)"[^>]*>\s*(?:\{[^}]*\}\s*)?(?:<div[^>]*>\s*)?(?:<[A-Z][^>]*\/>\s*)*<Toggle\b[^>]*?label="([^"]+)"/gs
     for (const m of code.matchAll(re)) found.push({ file: abs.replace(SRC + '/', ''), visible: m[1], name: m[2] })
   }
@@ -92,19 +88,19 @@ describe('a toggle’s accessible name contains its visible row label', () => {
   })
 
   it('the five sites use the row’s own words', () => {
-    const notif = readFileSync(join(SRC, 'pages/settings/NotificationsPanel.tsx'), 'utf8')
-    const chat = readFileSync(join(SRC, 'pages/settings/ChatPanel.tsx'), 'utf8')
+    const notif = readSource(join(SRC, 'pages/settings/NotificationsPanel.tsx'))
+    const chat = readSource(join(SRC, 'pages/settings/ChatPanel.tsx'))
     expect(notif).toMatch(/label="Mute all notifications" \/>/)
     expect(notif).toMatch(/label="Enable quiet hours" \/>/)
     expect(chat).toMatch(/label="Restore sessions on startup" \/>/)
-    expect(readFileSync(join(SRC, 'pages/settings/NotificationRulesMatrix.tsx'), 'utf8'))
+    expect(readSource(join(SRC, 'pages/settings/NotificationRulesMatrix.tsx')))
       .toMatch(/label="Escalate on name mention" \/>/)
   })
 
   it('the visible rows are untouched — this changed a NAME, not any copy', () => {
     // The fix must not have quietly reworded what the user reads.
-    const notif = readFileSync(join(SRC, 'pages/settings/NotificationsPanel.tsx'), 'utf8')
-    const chat = readFileSync(join(SRC, 'pages/settings/ChatPanel.tsx'), 'utf8')
+    const notif = readSource(join(SRC, 'pages/settings/NotificationsPanel.tsx'))
+    const chat = readSource(join(SRC, 'pages/settings/ChatPanel.tsx'))
     expect(notif).toMatch(/<Row label="Mute all notifications" hint="Pause every notification regardless of severity\.">/)
     expect(notif).toMatch(/<Row label="Enable quiet hours">/)
     expect(chat).toMatch(/<Row label="Restore sessions on startup"/)
@@ -113,12 +109,12 @@ describe('a toggle’s accessible name contains its visible row label', () => {
   it('the quote-glyph pair is deliberately left alone', () => {
     // Satisfied in speech; only the glyphs differ. If someone "fixes" it, the header's reasoning about
     // what 2.5.3 actually requires needs revisiting rather than silently passing.
-    const chat = readFileSync(join(SRC, 'pages/settings/ChatPanel.tsx'), 'utf8')
+    const chat = readSource(join(SRC, 'pages/settings/ChatPanel.tsx'))
     expect(chat).toMatch(/label="Offer 'Check this work'"/)
   })
 
   it('Toggle still puts its label on the switch as aria-label — the mechanism this rests on', () => {
     // If `label` ever stops being the accessible name, the whole rule changes shape.
-    expect(readFileSync(join(SRC, 'ui/Toggle.tsx'), 'utf8')).toMatch(/role="switch"[^>]*aria-label=\{label\}/)
+    expect(readSource(join(SRC, 'ui/Toggle.tsx'))).toMatch(/role="switch"[^>]*aria-label=\{label\}/)
   })
 })

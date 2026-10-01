@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, act, cleanup, fireEvent } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Popover } from './Popover'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A portaled flyout was a focus black hole ──────────────────────────────────────────────────────
 //
@@ -184,7 +185,7 @@ describe('the fix is structural, and its reach is pinned', () => {
     // 🪤 NOT a micro-optimisation. The portaled flyout is `position: fixed`, and focusing into it
     // can scroll an ancestor. `Popover` closes on ANY scroll in portal mode (capture-phase), so a
     // scrolling focus call would shut the menu in the same frame it opened.
-    const code = strip(readFileSync(join(SRC, 'ui', 'Popover.tsx'), 'utf8'))
+    const code = strip(readSource(join(SRC, 'ui', 'Popover.tsx')))
     const effect = code.match(/if \(!open \|\| !portal \|\| ownsItsKeyboard\(\)\) return[\s\S]{0,200}/)?.[0] ?? ''
     expect(effect, 'found the focus-in effect').not.toBe('')
     expect(effect).toMatch(/preventScroll: true/)
@@ -194,15 +195,11 @@ describe('the fix is structural, and its reach is pinned', () => {
     // Comments are stripped FIRST: `ui/FilterMenu.tsx` writes "🔴 PORTAL for the same reason…" in
     // prose, and `ui/Segmented.tsx` writes "🔴 PORTAL, or this menu is INVISIBLE" — a naive scan
     // counts those and reports a reach the code does not have.
-    const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-    })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
     let portaled = 0
     let callSites = 0
     for (const f of walk(SRC)) {
-      const code = strip(readFileSync(f, 'utf8'))
+      const code = strip(readSource(f))
       const popovers = [...code.matchAll(/<Popover\b/g)].length
       if (!popovers) continue
       callSites += popovers

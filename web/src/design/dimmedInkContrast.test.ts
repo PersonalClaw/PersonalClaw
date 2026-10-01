@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Dimming the dimmest ink token drops it below AA ─────────────────────────────
 //
@@ -30,18 +31,13 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** Every className string in the tree, with file + line. */
 function classAttributes(): Array<{ file: string; line: number; value: string }> {
   const out: Array<{ file: string; line: number; value: string }> = []
   for (const abs of walk(SRC)) {
-    readFileSync(abs, 'utf8').split('\n').forEach((ln, i) => {
+    readSource(abs).split('\n').forEach((ln, i) => {
       for (const m of ln.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
         out.push({ file: abs.slice(SRC.length + 1), line: i + 1, value: m[1] ?? m[2] ?? '' })
       }
@@ -87,7 +83,7 @@ describe('the measured surfaces keep their ink undimmed', () => {
   it('the placeholder still reads as a placeholder', () => {
     // The italic carries "this is not a value" — the fix must not have flattened that distinction
     // into ordinary body text.
-    const src = readFileSync(join(SRC, 'pages/projects/ProjectsSection.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/projects/ProjectsSection.tsx'))
     expect(src).toMatch(/text-on-surface-low text-\[0\.8125rem\] italic">No workspace bound/)
   })
 })

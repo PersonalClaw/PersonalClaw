@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import type { ReactElement } from 'react'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { LoadingStatus, ListSkeleton, FormSkeleton, CardGridSkeleton, Loading } from './ListScaffold'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A live region with no text announces nothing, however well it is marked up ────────────────────
 //
@@ -42,12 +43,7 @@ import { LoadingStatus, ListSkeleton, FormSkeleton, CardGridSkeleton, Loading } 
 // makes the words a sighted user reads the words everyone hears.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 describe('LoadingStatus is the announcement', () => {
   it('renders sr-only text a live region can announce', () => {
@@ -96,7 +92,7 @@ describe('every shared skeleton says something', () => {
   it('the label is gone, because the announced text is the one that matters', () => {
     // Not "the text became the name" — `status` takes no name from content (see above). The label was
     // a second hard-coded string that could drift from what people hear, so it went.
-    const src = readFileSync(join(SRC, 'ui/ListScaffold.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'ui/ListScaffold.tsx'))
     expect(src, 'two strings for one region is drift').not.toMatch(/aria-busy="true" aria-label="Loading"/)
   })
 })
@@ -119,7 +115,7 @@ describe('Loading — the other loading state — announces too', () => {
     // 🪤 COMMENTS STRIPPED FIRST. `InboxSettingsPanel` documents an old bug by quoting the markup
     // (`rendered <Loading /> FOREVER`), and the first version of this counted that prose as a call
     // site — the third time this session a scan measured a comment.
-    const code = (abs: string) => readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const code = (abs: string) => readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const sites = walk(SRC).filter((abs) => /<Loading\b/.test(code(abs)) && !abs.endsWith('ListScaffold.tsx'))
     expect(sites.length, 'Loading call sites').toBeGreaterThanOrEqual(6)
     const bare = sites.filter((abs) => /<Loading \/>/.test(code(abs))).map((a) => a.slice(SRC.length + 1))
@@ -132,21 +128,21 @@ describe('the census is closed: no busy region without an announcement', () => {
     // THE RATCHET. A new skeleton that marks itself busy and says nothing is exactly the defect this
     // cycle measured; it fails here instead of shipping.
     const offenders = walk(SRC)
-      .filter((abs) => /aria-busy="true"/.test(readFileSync(abs, 'utf8')))
-      .filter((abs) => !/LoadingStatus/.test(readFileSync(abs, 'utf8')))
+      .filter((abs) => /aria-busy="true"/.test(readSource(abs)))
+      .filter((abs) => !/LoadingStatus/.test(readSource(abs)))
       .map((abs) => abs.slice(SRC.length + 1))
     expect(offenders, `these mark themselves busy and announce nothing:\n${offenders.join('\n')}`).toEqual([])
   })
 
   it('finds the population — the scan is not vacuous', () => {
-    const files = walk(SRC).filter((abs) => /aria-busy="true"/.test(readFileSync(abs, 'utf8')))
+    const files = walk(SRC).filter((abs) => /aria-busy="true"/.test(readSource(abs)))
     // At the MEASURED population (cycle 134's rule): ui/ListScaffold + ChatPage + ProvidersPanel +
     // ModelBackends + AppsPanel + NodeInspectorDrawer + WorkspacePanel.
     expect(files.length, 'files with a busy region').toBeGreaterThanOrEqual(7)
   })
 
   it('the hand-rolled regions kept their specific wording', () => {
-    const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+    const read = (rel: string) => readSource(join(SRC, rel))
     expect(read('pages/ChatPage.tsx')).toMatch(/LoadingStatus what="conversation"/)
     expect(read('pages/settings/ProvidersPanel.tsx')).toMatch(/LoadingStatus what="providers"/)
     expect(read('pages/settings/ModelBackends.tsx')).toMatch(/LoadingStatus what="model providers"/)
@@ -178,7 +174,7 @@ describe('the census is closed: no busy region without an announcement', () => {
 // the verified full-region states; a later cycle that finds another adds it here.
 describe('the route-level and app-host loading states announce', () => {
   const SRC = join(process.cwd(), 'src')
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
   /** Comments stripped: this block names the very markup it asserts on. */
   const code = (rel: string) => read(rel)
     .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '')

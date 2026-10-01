@@ -1,10 +1,11 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Pause } from 'lucide-react'
 import { Button } from './Button'
 import { HeaderControl } from './HeaderActions'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A disabled submit that cannot say why ─────────────────────────────────────────────
 //
@@ -136,12 +137,7 @@ describe('an unavailable header control says why', () => {
 // wrong messages.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 describe('the migrated submits pass a reason', () => {
   const ADOPTERS = [
@@ -172,7 +168,7 @@ describe('the migrated submits pass a reason', () => {
 
   for (const rel of ADOPTERS) {
     it(`${rel} explains its disabled submit`, () => {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, 'must pass disabledReason').toMatch(/disabledReason=\{/)
       // Conditional on purpose: an unconditional reason would announce "enter a name" on a
       // button disabled because a save is in flight. The condition need not START with `!` —
@@ -208,7 +204,7 @@ describe('the migrated submits pass a reason', () => {
 function gatedSubmits(): Array<{ file: string; line: number; tag: string }> {
   const out: Array<{ file: string; line: number; tag: string }> = []
   for (const abs of walk(SRC)) {
-    const text = readFileSync(abs, 'utf8')
+    const text = readSource(abs)
     for (const m of text.matchAll(/<(?:Button|button|motion\.button)\b/g)) {
       let depth = 0
       for (let i = m.index! + m[0].length; i < text.length; i++) {
@@ -300,7 +296,7 @@ describe('the unexplained-submit tail only shrinks', () => {
 // population-based rail can bind to them. Asserted by source instead.
 
 describe('a reason never rides the accessible name', () => {
-  const composer = readFileSync(join(SRC, 'ui/Composer.tsx'), 'utf8')
+  const composer = readSource(join(SRC, 'ui/Composer.tsx'))
 
   it('keeps the composer labels constant across states', () => {
     // Scoped to what `label`/`aria-label` actually carries — the reason itself still appears in
@@ -331,7 +327,7 @@ describe('a reason never rides the accessible name', () => {
     // that a reason has.
     const offenders: string[] = []
     for (const abs of walk(SRC)) {
-      const text = readFileSync(abs, 'utf8')
+      const text = readSource(abs)
       for (const m of text.matchAll(/(?:aria-)?label=["'{`][^"'`]*—\s*(type|enter|choose|pick|fill|add|name|answer|complete|write|set)\b[^"'`]*/gi)) {
         offenders.push(`${abs.slice(SRC.length + 1)}: ${m[0].slice(0, 78)}`)
       }

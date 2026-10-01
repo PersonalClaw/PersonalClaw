@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /** No test in the web suite may write into the repository.
  *
  * `npm test --workspace web` is the step every contributor runs immediately before
@@ -25,9 +26,10 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { WRITE_ENV } from './consistencyAudit.generate.test'
+import { filesUnder } from '../test/sourceTree'
 
 const SRC = join(process.cwd(), 'src')
 
@@ -54,16 +56,14 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
   'app/thirdPartyNotices.test.ts':
     'Lays out a throwaway repository (a package-lock.json, installed packages and a web ' +
     'build) for the third-party notices plugin to read, and to write its notices into.',
+  'test/sourceTree.test.ts':
+    'Lays out small throwaway trees to prove the one walker the tree scans share lists them ' +
+    'in the order the walkers it replaced did, never follows a link, and remembers a listing ' +
+    'and a read for the rest of the test file.',
 }
 
 function testFiles(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) out.push(...testFiles(p))
-    else if (/\.test\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (entry) => /\.test\.tsx?$/.test(entry))
 }
 
 describe('no test writes into the repository', () => {

@@ -1,6 +1,8 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The orchestrated entrances actually exist on the surfaces ────────────────────────────
 //
@@ -37,7 +39,7 @@ const ADOPTERS: { file: string; label: string; minRegions: number }[] = [
   { file: 'discover/DiscoverPage.tsx', label: 'the Discover hub column', minRegions: 2 },
 ]
 
-const sourceOf = (file: string) => readFileSync(join(PAGES, file), 'utf8')
+const sourceOf = (file: string) => readSource(join(PAGES, file))
 
 describe('orchestrated surface entrances', () => {
   it('finds the pages tree it scans', () => {
@@ -73,15 +75,9 @@ describe('orchestrated surface entrances', () => {
     // test files read it. Anything else is a second entrance vocabulary.
     const SRC = join(process.cwd(), 'src')
     const hits: string[] = []
-    const walk = (dir: string) => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const p = join(dir, e.name)
-        if (e.isDirectory()) { walk(p); continue }
-        if (!/\.tsx?$/.test(e.name)) continue
-        if (/\bregionStagger\b/.test(readFileSync(p, 'utf8'))) hits.push(p.slice(SRC.length + 1))
-      }
+    for (const p of filesUnder(SRC, (name) => /\.tsx?$/.test(name))) {
+      if (/\bregionStagger\b/.test(readSource(p))) hits.push(p.slice(SRC.length + 1))
     }
-    walk(SRC)
     expect(hits.sort()).toEqual([
       'design/motion.test.ts',
       'design/motion.ts',

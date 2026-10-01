@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── One list of twelve answered "nothing matches" with its onboarding paragraph ─────────────
 //
@@ -63,13 +64,8 @@ const NARROWED_COPY =
  *  named exemptions, because a weak claim that cannot be got wrong beats nineteen verdicts that can. */
 const HAND_ROLLED_CEILING = 19
 
-function tsxFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) tsxFiles(p, acc)
-    else if (entry.endsWith('.tsx') && !entry.includes('.test.')) acc.push(p)
-  }
-  return acc
+function tsxFiles(dir: string): string[] {
+  return filesUnder(dir, (entry) => entry.endsWith('.tsx') && !entry.includes('.test.'))
 }
 
 function censusNarrowed(): { primitive: string[]; handRolled: string[] } {
@@ -77,7 +73,7 @@ function censusNarrowed(): { primitive: string[]; handRolled: string[] } {
   const handRolled: string[] = []
   for (const abs of [...tsxFiles(join(SRC, 'pages')), ...tsxFiles(join(SRC, 'ui'))]) {
     const rel = abs.slice(SRC.length + 1)
-    const code = strip(readFileSync(abs, 'utf8'))
+    const code = strip(readSource(abs))
     for (const m of code.matchAll(new RegExp(NARROWED_COPY.source, 'gi'))) {
       // Which JSX construct encloses it: the nearest opening tag looking backwards.
       const back = code.slice(Math.max(0, m.index! - 400), m.index!)
@@ -89,7 +85,7 @@ function censusNarrowed(): { primitive: string[]; handRolled: string[] } {
   return { primitive, handRolled }
 }
 
-const inbox = readFileSync(join(SRC, 'pages/inbox/InboxPage.tsx'), 'utf8')
+const inbox = readSource(join(SRC, 'pages/inbox/InboxPage.tsx'))
 /** 🪤 Comments stripped, because this rail's first version flagged its own subject's PROSE: the file
  *  documents the historical `filter !== 'all'` trap in a comment, and the assertion below counted that
  *  sentence as code. Fifth time in this session a rail has measured an explanation instead of a
@@ -191,7 +187,7 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
       ['pages/tasks/TasksListPage.tsx', /No tasks match this (filter|scope)\./],
     ]
     for (const [rel, copy] of CANONICAL) {
-      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must keep its narrowed copy`).toMatch(copy)
+      expect(readSource(join(SRC, rel)), `${rel} must keep its narrowed copy`).toMatch(copy)
     }
   })
 
@@ -218,7 +214,7 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
     // branch and hand-rolled the sibling branch IN THE SAME COMPONENT, so there was never a
     // container argument for them. `CodeSection` was converged on main; `NotificationsPage` here.
     for (const rel of ['pages/code/CodeSection.tsx', 'pages/notifications/NotificationsPage.tsx']) {
-      const code = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const code = strip(readSource(join(SRC, rel)))
       expect(code, `${rel} must render its narrowed state through the primitive`)
         .toMatch(/<EmptyState[\s\S]{0,400}?just none/)
       expect(code, `${rel} must not reintroduce a centred div for it`)
@@ -236,7 +232,7 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
       ['pages/notifications/NotificationsPage.tsx', /Show all/],
       ['pages/loops/LoopsListPage.tsx', /View all loops/],
     ] as [string, RegExp][]) {
-      const code = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const code = strip(readSource(join(SRC, rel)))
       expect(code, `${rel} must offer the un-narrowing as an action`).toMatch(action)
       expect(code, `${rel} must say how many exist, so an empty filter reads differently from an empty app`)
         .toMatch(/just none in this view/)

@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { confirmDelete } from './index'
 import { closeDialog, subscribeDialogs } from './dialogStore'
 import { rowSubject } from '../../lib/rowSubject'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A destructive dialog must say what happens to what ─────────────────────────────────────────────
 //
@@ -36,13 +37,8 @@ import { rowSubject } from '../../lib/rowSubject'
 
 const SRC = join(process.cwd(), 'src')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) walk(abs, out)
-    else if (/\.tsx?$/.test(name) && !name.includes('.test.')) out.push(abs)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !name.includes('.test.'))
 }
 
 /** The balanced `{…}` object literal starting at `i`. */
@@ -62,7 +58,7 @@ function objectAt(src: string, i: number): string {
 function dialogs(): Array<{ file: string; obj: string }> {
   const out: Array<{ file: string; obj: string }> = []
   for (const abs of walk(SRC)) {
-    const src = readFileSync(abs, 'utf8')
+    const src = readSource(abs)
     for (const m of src.matchAll(/confirm\(\s*\{/g)) {
       const brace = src.indexOf('{', m.index!)
       out.push({ file: abs.replace(SRC + '/', ''), obj: objectAt(src, brace) })
@@ -74,7 +70,7 @@ function dialogs(): Array<{ file: string; obj: string }> {
 describe('a destructive confirm explains the consequence', () => {
   it('the canonical helper still supplies a body by default', () => {
     // Everything below leans on this: a `confirmDelete` caller is exempt because the helper covers it.
-    const helper = readFileSync(join(SRC, 'ui', 'dialog', 'index.ts'), 'utf8')
+    const helper = readSource(join(SRC, 'ui', 'dialog', 'index.ts'))
     expect(helper).toContain("body: opts?.body ?? 'This cannot be undone.'")
     expect(helper, 'and it is still the danger-tinted path').toContain('danger: true')
   })
@@ -92,7 +88,7 @@ describe('a destructive confirm explains the consequence', () => {
   })
 
   it('the episodic-memory delete uses the helper its siblings use', () => {
-    const src = readFileSync(join(SRC, 'pages', 'settings', 'MemoryPanel.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages', 'settings', 'MemoryPanel.tsx'))
     expect(src, 'converged onto the canonical helper').toContain("confirmDelete('episodic memory'")
     expect(src, 'and no longer hand-rolls the same dialog').not.toMatch(
       /confirm\(\{\s*title: 'Delete this episodic memory\?'/,
@@ -105,7 +101,7 @@ describe('a destructive confirm explains the consequence', () => {
   it('clear-all names the TOTAL, not the filtered view', () => {
     // The action truncates the whole log, so counting the filtered list would understate it — a user
     // looking at 3 of 50 would read the filter as a limit on the action.
-    const src = readFileSync(join(SRC, 'pages', 'notifications', 'NotificationsPage.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages', 'notifications', 'NotificationsPage.tsx'))
     expect(src).toContain('const total = items?.length ?? 0')
     expect(src, 'the count must come from the raw list, not `filtered`').not.toMatch(
       /const total = filtered/,
@@ -120,13 +116,13 @@ describe('a destructive confirm explains the consequence', () => {
   it('the dialogs that deliberately OMIT irreversibility keep doing so', () => {
     // Pinned, because three drafts of this sweep wanted to add "cannot be undone" to these and would
     // have been wrong: a dismissed inbox item can be restored, and a cancelled run keeps its work.
-    const inbox = readFileSync(join(SRC, 'pages', 'inbox', 'InboxPage.tsx'), 'utf8')
+    const inbox = readSource(join(SRC, 'pages', 'inbox', 'InboxPage.tsx'))
     // "open item", not "pending item": the sweep is `open_items()` (pending OR seen), and sizing this
     // dialog from the PENDING-only count understated it by every row the user had already read —
     // measured, the confirm said 33 and the endpoint answered `{"dismissed": 37}` (issue 493).
     expect(inbox, 'dismiss-all already names its count').toMatch(/Dismiss all \$\{n\} open item/)
     expect(inbox).not.toMatch(/Dismiss all[\s\S]{0,200}cannot be undone/)
-    const run = readFileSync(join(SRC, 'pages', 'workflows', 'WorkflowRunDetail.tsx'), 'utf8')
+    const run = readSource(join(SRC, 'pages', 'workflows', 'WorkflowRunDetail.tsx'))
     expect(run, 'cancel says what survives instead').toContain('Completed work is kept.')
   })
 })
@@ -180,7 +176,7 @@ describe('a destructive confirm names the item', () => {
   /** 🪤 Comments stripped first: an earlier rail in this repo matched the comment explaining its own
    *  absence, and the prose above this very `describe` contains a one-argument `confirmDelete(`. */
   function code(abs: string): string {
-    return readFileSync(abs, 'utf8')
+    return readSource(abs)
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '')
   }
@@ -219,11 +215,11 @@ describe('a destructive confirm names the item', () => {
   // the sibling version of the lesson twenty lines down — a scan for a rule about code must read code,
   // not prose — and pinning a spelling is the same error one step out.
   it('the three prose subjects converge on rowSubject, not a hand-rolled slice', () => {
-    const memory = readFileSync(join(SRC, 'pages', 'settings', 'MemoryPanel.tsx'), 'utf8')
+    const memory = readSource(join(SRC, 'pages', 'settings', 'MemoryPanel.tsx'))
     expect(memory).toContain("confirmDelete('episodic memory', rowSubject([selected.episodic.text], 40)")
     expect(memory).toContain("confirmDelete('lesson', rowSubject([selected.lesson.rule], 40)")
     expect(memory, 'imported, not redefined').toMatch(/import \{ rowSubject \} from '\.\.\/\.\.\/lib\/rowSubject'/)
-    const task = readFileSync(join(SRC, 'pages', 'tasks', 'TaskDetail.tsx'), 'utf8')
+    const task = readSource(join(SRC, 'pages', 'tasks', 'TaskDetail.tsx'))
     expect(task).toContain("confirmDelete('comment', rowSubject([body], 40)")
     // A local `.slice(0, n)` would re-answer a question the helper already answers — and would skip its
     // whitespace collapsing, which matters most here: a comment body carries the newlines it was typed
@@ -249,7 +245,7 @@ describe('a destructive confirm names the item', () => {
   it('the helper still degrades to "this <entity>" on an empty subject', () => {
     // The fallback is why `rowSubject` returning `''` is safe rather than a bug: an episodic memory
     // with blank text asks "Delete this episodic memory?", not `Delete episodic memory ""?`.
-    const helper = readFileSync(join(SRC, 'ui', 'dialog', 'index.ts'), 'utf8')
+    const helper = readSource(join(SRC, 'ui', 'dialog', 'index.ts'))
     expect(helper).toContain('const label = name ? `${entity} "${name}"` : `this ${entity}`')
   })
 })
@@ -301,7 +297,7 @@ describe('the sentence the dialog actually shows', () => {
     // two-line title just makes the sheet taller. Asserted rather than reasoned-about in a PR comment,
     // because a later `truncate` added here would silently clip the subject this cycle introduced —
     // and clipping it is worse than never naming it, since the user would not know it was cut.
-    const shell = readFileSync(join(SRC, 'ui', 'dialog', 'DialogShell.tsx'), 'utf8')
+    const shell = readSource(join(SRC, 'ui', 'dialog', 'DialogShell.tsx'))
     const titleLine = shell.split('\n').find((l) => l.includes('data-type="title-l"')) ?? ''
     expect(titleLine, 'the title line must be found').toContain('{title}')
     expect(titleLine, 'no truncation on a title that now carries the subject').not.toMatch(

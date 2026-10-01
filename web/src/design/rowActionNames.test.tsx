@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { RowAction } from '../pages/dashboard/widgets/kit'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A control that acts on ONE row has to name that row ────────────────────────────────────────
 //
@@ -38,13 +39,8 @@ import { RowAction } from '../pages/dashboard/widgets/kit'
 // separate per-route dump. A DOM census is a lead generator, not a gate.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const read = (rel: string) => readSource(join(SRC, rel))
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 describe('RowAction carries an explicit accessible name', () => {
   it('renders the composed name, and the visible verb stays short', () => {
@@ -100,7 +96,7 @@ describe('every row-scoped RowAction names its row', () => {
   })
 
   it('no OTHER RowAction call site appears without a name — the census is closed', () => {
-    const files = walk(SRC).filter((abs) => readFileSync(abs, 'utf8').includes('<RowAction'))
+    const files = walk(SRC).filter((abs) => readSource(abs).includes('<RowAction'))
     expect(files.length, 'widgets using RowAction').toBe(WIDGETS.length)
   })
 })
@@ -258,12 +254,7 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
   // whose own `onClick` mentions `item` acts on that row. Buttons whose visible text already
   // interpolates the subject (`Add to {c.name}`) are excluded — they are distinguishable as rendered —
   // and so are the per-row editors' `Cancel`/`Done`, whose handlers touch no item.
-  const walkTsx = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walkTsx(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walkTsx = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** Brace-aware `<Button …>` openings: `onClick={() => f(a)}` contains a `>`, so `[^>]*` ends the tag
    *  in the wrong place and every site reads as attribute-less. Four regex traps in this repo's rails
@@ -286,7 +277,7 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
   function rowActions() {
     const out: { rel: string; text: string; named: boolean }[] = []
     for (const abs of walkTsx(SRC)) {
-      const raw = readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      const raw = readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
       for (const m of raw.matchAll(/\.map\(\((\w+)(?:,\s*\w+)?\)\s*=>/g)) {
         const item = m[1]
         for (const t of buttonTags(raw, m.index!, m.index! + 3000)) {

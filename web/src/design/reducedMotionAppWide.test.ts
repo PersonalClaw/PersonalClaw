@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /**
  * The reduced-motion off-switch as an APP-WIDE property.
  *
@@ -38,10 +39,11 @@
  * is load-bearing rather than decorative.
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. The media-query stub — installed at MODULE SCOPE, before `motion.ts` is imported.
@@ -279,32 +281,13 @@ const MOTION_MODULE = 'src/design/motion.ts'
  *  floor fires. Test files are excluded because a test legitimately constructs a spring in
  *  order to assert something about it. */
 function collectSources(root: string): string[] {
-  const out: string[] = []
-  // The catch is what turns a missing root into an empty corpus instead of a throw. Inlined as
-  // its own function so the `Dirent` element type stays inferred rather than annotated (the
-  // Buffer/string overload pair makes an explicit annotation version-fragile).
-  const readSafe = (dir: string) => {
-    try {
-      return readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return []
-    }
-  }
-  const walkDir = (dir: string): void => {
-    for (const e of readSafe(dir)) {
-      const full = join(dir, e.name)
-      if (e.isDirectory()) {
-        if (e.name === 'node_modules' || e.name === 'dist') continue
-        walkDir(full)
-        continue
-      }
-      if (!/\.tsx?$/.test(e.name)) continue
-      if (/\.(test|spec)\.tsx?$/.test(e.name)) continue
-      out.push(full.slice(CWD.length + 1).split('\\').join('/'))
-    }
-  }
-  walkDir(root)
-  return out.sort()
+  // The existence check is what turns a missing root into an empty corpus instead of a throw.
+  if (!existsSync(root)) return []
+  return filesUnder(root, (name, path) =>
+    /\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name)
+    && !relative(root, path).split(sep).slice(0, -1).some((dir) => dir === 'node_modules' || dir === 'dist'))
+    .map((path) => path.slice(CWD.length + 1).split('\\').join('/'))
+    .sort()
 }
 
 /** Blank every comment, PRESERVING line structure so reported line numbers stay true.
@@ -337,7 +320,7 @@ function scan(files: string[], pattern: RegExp): Hit[] {
   for (const file of files) {
     let raw: string
     try {
-      raw = readFileSync(join(CWD, file), 'utf8')
+      raw = readSource(join(CWD, file))
     } catch {
       continue
     }
@@ -441,7 +424,7 @@ describe('census self-checks — the floors that stop a silent pass', () => {
   it('comment blanking removes prose that would otherwise be counted as code', () => {
     // ui/motion/vocabulary.ts documents the spread hazard in a docstring. Raw, those sentences
     // are indistinguishable from the one real occurrence on the return line.
-    const raw = readFileSync(join(CWD, 'src/ui/motion/vocabulary.ts'), 'utf8')
+    const raw = readSource(join(CWD, 'src/ui/motion/vocabulary.ts'))
     const rawHits = raw.split('\n').filter((l) => new RegExp(SPRING_PARAM.source).test(l)).length
     const blankedHits = blankComments(raw).split('\n').filter((l) => new RegExp(SPRING_PARAM.source).test(l)).length
     expect(rawHits, 'the control file must carry commented mentions, or it proves nothing').toBeGreaterThan(1)
@@ -535,7 +518,7 @@ describe('a gated preset is never read at module scope', () => {
         expect(files.length, 'the corpus is empty — this census proves nothing').toBeGreaterThan(300)
         const offenders: string[] = []
         for (const file of files) {
-            const text = blankComments(readFileSync(join(CWD, file), 'utf8'))
+            const text = blankComments(readSource(join(CWD, file)))
             for (const decl of moduleScopeInitializers(text)) {
                 if (GATED_READ.test(decl.body)) offenders.push(`${file}:${decl.line} ${decl.name}`)
             }

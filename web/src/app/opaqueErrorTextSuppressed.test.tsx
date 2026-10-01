@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The written sentence lost to the browser's debug string ────────────────────────────────────────
 //
@@ -124,12 +125,8 @@ describe('the sentence has ONE owner, and the filter is really adopted', () => {
   const strip = (s: string) => s
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/^(\s*)\/\/.*$/gm, '$1')
-  const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) ? [p] : []
-  })
-  const codeOf = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n))
+  const codeOf = (rel: string) => strip(readSource(join(SRC, rel)))
 
   it('both exports compose through the same helper, so they cannot drift', () => {
     // This module's own contract: "ONE module owns the sentence in both forms, so the two cannot
@@ -154,7 +151,7 @@ describe('the sentence has ONE owner, and the filter is really adopted', () => {
       .filter((abs) => {
         const rel = abs.slice(SRC.length + 1)
         if (rel === 'lib/errText.ts') return false
-        return /readableErrText\s*\(/.test(strip(readFileSync(abs, 'utf8')))
+        return /readableErrText\s*\(/.test(strip(readSource(abs)))
       })
     expect(consumers.length, 'production consumers of readableErrText').toBeGreaterThanOrEqual(3)
   })

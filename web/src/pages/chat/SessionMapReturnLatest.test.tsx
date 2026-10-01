@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it, vi } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { RETURN_TO_LATEST_LABEL, SessionMapReturnLatest, scrollToLatest } from './SessionMapReturnLatest'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Return-to-latest control (refactor existing pill) ─────────────────────────────────────────
 //
@@ -74,20 +75,16 @@ function code(src: string): string {
     .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, lead: string) => lead + ' '.repeat(m.length - lead.length))
 }
 
-/** Every non-test `.ts`/`.tsx` under `src`. `.ts` is included deliberately: a duplicate control
- *  could be minted by a helper module, and a `.tsx`-only walk would not look at one. */
-function allSources(dir: string, prefix = ''): string[] {
-  const out: string[] = []
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const rel = prefix ? `${prefix}/${e.name}` : e.name
-    if (e.isDirectory()) { out.push(...allSources(join(dir, e.name), rel)); continue }
-    if (/\.tsx?$/.test(e.name) && !/\.(test|spec)\./.test(e.name)) out.push(rel)
-  }
-  return out
+/** Every non-test `.ts`/`.tsx` under `src`, as `/`-separated paths under it. `.ts` is included
+ *  deliberately: a duplicate control could be minted by a helper module, and a `.tsx`-only walk
+ *  would not look at one. */
+function allSources(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.(test|spec)\./.test(name))
+    .map((path) => relative(dir, path).split(sep).join('/'))
 }
 
 const SOURCES = allSources(SRC)
-const CODE = new Map(SOURCES.map((rel) => [rel, code(readFileSync(join(SRC, rel), 'utf8'))]))
+const CODE = new Map(SOURCES.map((rel) => [rel, code(readSource(join(SRC, rel)))]))
 
 /** Does this source perform the return-to-newest GESTURE — a smooth scroll to an element's end?
  *

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Table-family adoption ratchet (audit AB-3) ──────────────────────────────
 // The canonical data-table family is ui/Table.tsx (Table/THead/Th/Td): required
@@ -17,18 +18,12 @@ import { join } from 'node:path'
 const PAGES_ROOT = join(process.cwd(), 'src/pages')
 
 function listTsx(dir: string): string[] {
-  const out: string[] = []
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name)
-    if (e.isDirectory()) out.push(...listTsx(p))
-    else if (e.name.endsWith('.tsx')) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (name) => name.endsWith('.tsx'))
 }
 
 function filesWithRawTable(): string[] {
   return listTsx(PAGES_ROOT)
-    .filter((p) => /<table\b/.test(readFileSync(p, 'utf8')))
+    .filter((p) => /<table\b/.test(readSource(p)))
     .map((p) => p.slice(PAGES_ROOT.length + 1))
     .sort()
 }
@@ -36,7 +31,7 @@ function filesWithRawTable(): string[] {
 interface Baseline { rawTableFiles: string[] }
 
 function loadBaseline(): Baseline {
-  const raw = readFileSync(join(process.cwd(), 'src/design/tableAdoption.baseline.json'), 'utf8')
+  const raw = readSource(join(process.cwd(), 'src/design/tableAdoption.baseline.json'))
   return JSON.parse(raw) as Baseline
 }
 

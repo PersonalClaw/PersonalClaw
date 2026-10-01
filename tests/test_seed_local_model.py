@@ -30,6 +30,10 @@ from personalclaw import seed_local_model as slm
 
 FIXTURE_NAME = "demo-home"
 
+#: Every probe budget in these tests. The fake below answers in milliseconds, so only a hung one
+#: reaches it, and a loaded machine can never make a slow answer read as "no Ollama answered".
+PATIENT_SECS = 60.0
+
 # Two tags whose ids alone must classify correctly: the chat model is the OLDER of the
 # two chat entries so recency ordering is actually exercised, and the embedding model
 # carries a family name with no "embed" substring in the id itself.
@@ -75,6 +79,28 @@ class _TagsHandler(BaseHTTPRequestHandler):
 
     def log_message(self, *args: object) -> None:
         """Silence the default stderr access log — it is noise under -q."""
+
+
+@pytest.fixture(autouse=True)
+def registry(monkeypatch: pytest.MonkeyPatch):
+    """A provider registry of this test's own, with no app loaded.
+
+    An earlier test on the worker can leave the Ollama app's catalog registered in the process-wide
+    registry, and the bind then also asks the endpoint to describe its models: what these tests
+    prove would depend on which test ran before. With no app loaded, the tags alone decide.
+    """
+    from personalclaw.llm import registry as llm_registry
+
+    own = llm_registry.ProviderRegistry()
+    monkeypatch.setattr(llm_registry, "_default_registry", own)
+    return own
+
+
+@pytest.fixture(autouse=True)
+def patient_budgets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bind's probe and listing budgets, at :data:`PATIENT_SECS`."""
+    monkeypatch.setattr(slm, "PROBE_TIMEOUT_SECS", PATIENT_SECS)
+    monkeypatch.setattr(slm, "DESCRIBE_BUDGET_SECS", PATIENT_SECS)
 
 
 @pytest.fixture

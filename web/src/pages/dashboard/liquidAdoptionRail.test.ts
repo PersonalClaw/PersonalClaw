@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── The liquid state transition actually exists in the product ───────────────────────────
 //
@@ -60,7 +61,7 @@ const BODY_GATE = /\{\s*body\s*\?/
  *  inside it (which is what makes it "the body-switching conditional" rather than any ternary). */
 const BODY_RENDERERS = ['<WidgetFrame', '<GenUiWidget'] as const
 
-const sourceOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const sourceOf = (rel: string) => readSource(join(SRC, rel))
 
 /** True when `expression` is a number AT THE SOURCE LEVEL: a bare numeric literal, or a bare
  *  identifier the same module declares as one. The second form is the better call site — a named
@@ -195,16 +196,11 @@ describe('the liquid state transition is adopted in the product', () => {
     // comment above. Test files are excluded because they were the entire population before this
     // change, and `ui/motion/` is excluded because a primitive demoing itself is not adoption.
     const hits: string[] = []
-    const walk = (dir: string) => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const p = join(dir, e.name)
-        if (e.isDirectory()) { walk(p); continue }
-        if (!/\.tsx?$/.test(e.name) || /\.(test|spec)\.tsx?$/.test(e.name)) continue
-        if (p.startsWith(join(SRC, 'ui/motion'))) continue
-        if (/<LiquidShape\b/.test(readFileSync(p, 'utf8'))) hits.push(p.slice(SRC.length + 1))
-      }
+    const sources = filesUnder(SRC, (name, p) =>
+      /\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name) && !p.startsWith(join(SRC, 'ui/motion')))
+    for (const p of sources) {
+      if (/<LiquidShape\b/.test(readSource(p))) hits.push(p.slice(SRC.length + 1))
     }
-    walk(SRC)
     expect(hits, 'LiquidShape is inert again — no product surface renders it').not.toHaveLength(0)
     expect(hits).toContain(TILES)
   })

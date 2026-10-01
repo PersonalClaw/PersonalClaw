@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /** ONE bridge, ONE way into chat — asserted against the tree, not against intent.
  *
  *  Two dual paths are cheap to reintroduce and expensive to find later: a host that
@@ -5,10 +6,10 @@
  *  provenance validator), and a non-chat host that navigates to chat its own way
  *  (bypassing `ne:launch-chat`). Both would look like ordinary local code in review.
  *  This rail names the single owner of each. */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { readWidgetMessage } from './useWidgetActionBridge'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 const SRC = join(process.cwd(), 'src')
 const BRIDGE = join('ui', 'widget', 'useWidgetActionBridge.ts')
@@ -19,18 +20,13 @@ const BRIDGE = join('ui', 'widget', 'useWidgetActionBridge.ts')
  *  which file that owner is moved, and the bridge re-exports it so consumers keep one path. */
 const DIALECT = join('ui', 'widget', 'actionTurn.ts')
 
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) { sourceFiles(full, out); continue }
-    if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(full)
-  }
-  return out
+function sourceFiles(dir: string): string[] {
+  return filesUnder(dir, (entry) => /\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry))
 }
 
 const files = sourceFiles(SRC).map((path) => ({
   rel: path.slice(SRC.length + 1),
-  text: readFileSync(path, 'utf8'),
+  text: readSource(path),
 }))
 
 describe('widget bridge: single path', () => {
@@ -86,7 +82,7 @@ const WIRE_CONTRACT = [
 const RESERVED_PARENT_PREFIX = '__edit_mode_'
 
 describe('widget wire contract: doc and validator agree', () => {
-  const doc = readFileSync(join(process.cwd(), '..', 'docs', 'architecture', 'widgets.md'), 'utf8')
+  const doc = readSource(join(process.cwd(), '..', 'docs', 'architecture', 'widgets.md'))
 
   it('accepts every message in the fixture', () => {
     const frame = document.createElement('iframe')

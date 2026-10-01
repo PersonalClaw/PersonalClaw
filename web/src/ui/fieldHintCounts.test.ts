@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The hint-contract population, and why this asserts a FLOOR ──────────────────────────
 //
@@ -35,13 +36,8 @@ const SRC = join(import.meta.dirname, '..')
 
 /** Every `.tsx` under `src/`, excluding tests. Anchored on `import.meta.dirname`, not `process.cwd()`:
  *  a cwd-derived root ENOENTs from anywhere but `web/`, which reads as a crash rather than a finding. */
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const abs = join(dir, entry.name)
-    if (entry.isDirectory()) sourceFiles(abs, out)
-    else if (entry.name.endsWith('.tsx') && !entry.name.includes('.test.')) out.push(abs)
-  }
-  return out
+function sourceFiles(dir: string): string[] {
+  return filesUnder(dir, (name) => name.endsWith('.tsx') && !name.includes('.test.'))
 }
 
 /** The props of every `<Name …>` in one source string, sliced to that tag's OWN closing `>` at brace
@@ -68,7 +64,7 @@ function sliceTags(src: string, name: string): string[] {
 }
 
 const propsOf = (name: string, files: string[]): string[] =>
-  files.flatMap((abs) => sliceTags(readFileSync(abs, 'utf8'), name))
+  files.flatMap((abs) => sliceTags(readSource(abs), name))
 
 const files = sourceFiles(SRC)
 const hinted = (name: string) => propsOf(name, files).filter((p) => /\bhint=/.test(p)).length
@@ -161,7 +157,7 @@ describe('the hint contract covers as many publishers as its docstring claims', 
   })
 
   it("forms.tsx's docstring states a total in the right neighbourhood, and dates it", () => {
-    const doc = readFileSync(join(SRC, 'ui/forms.tsx'), 'utf8')
+    const doc = readSource(join(SRC, 'ui/forms.tsx'))
     const claimed = Number(doc.match(/\*\*(\d+)\*\* hinted publishers render today/)?.[1])
     expect(claimed, 'forms.tsx no longer states a publisher total').toBeGreaterThan(0)
     const actual = [...PUBLISHERS, ...FORWARDERS].reduce((sum, p) => sum + hinted(p.name), 0)
@@ -179,7 +175,7 @@ describe('the hint contract covers as many publishers as its docstring claims', 
   })
 
   it("settingsUI's Row comment agrees with the scan, which is where it drifted 10% low", () => {
-    const ui = readFileSync(join(SRC, 'pages/settings/settingsUI.tsx'), 'utf8')
+    const ui = readSource(join(SRC, 'pages/settings/settingsUI.tsx'))
     const claimed = Number(ui.match(/\((\d+) hinted rows/)?.[1])
     expect(claimed, "settingsUI's Row comment no longer states a count").toBeGreaterThan(0)
     expect(

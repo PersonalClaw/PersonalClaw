@@ -36,18 +36,21 @@ import socket
 from dataclasses import dataclass
 from typing import Callable
 
-from personalclaw.seed_local_model import DEFAULT_ENDPOINT, DESCRIBE_BUDGET_SECS
+from personalclaw.seed_local_model import DEFAULT_ENDPOINT
 
 logger = logging.getLogger(__name__)
 
 #: Where a stock Ollama listens. One number, matched against the app's own default.
 OLLAMA_PORT = 11434
 
-#: A LAN sweep runs while a user waits on a wizard step, so it is quick and shallow.
+#: A LAN sweep runs while a user waits on a wizard step, so it is quick and shallow. Every
+#: budget below is read when a detection or a sweep starts, not when this module is imported.
 SCAN_BUDGET_SECS = 3.0
 #: Per-host connect/read budget. A LAN round-trip is sub-millisecond; a host with
 #: nothing on the port refuses instantly, and a firewalled one is cut at this wall.
 SCAN_PROBE_TIMEOUT_SECS = 0.3
+#: The loopback probe's budget: one host, so it can afford four LAN probes' worth.
+LOCALHOST_PROBE_TIMEOUT_SECS = 1.2
 #: How long a host that answered may take to say what its models do. Inside the sweep's own
 #: budget, so a slow answer falls back to what the model ids suggest rather than losing the host.
 SCAN_DESCRIBE_BUDGET_SECS = 1.5
@@ -76,7 +79,7 @@ class DetectedEndpoint:
 
 
 def _probe_chat(
-    endpoint: str, *, timeout: float, describe_budget: float = DESCRIBE_BUDGET_SECS
+    endpoint: str, *, timeout: float, describe_budget: float | None = None
 ) -> str | None:
     """Return the chat model to propose at ``endpoint``, or None.
 
@@ -107,16 +110,22 @@ def _set_up_as(found: DetectedEndpoint) -> DetectedEndpoint:
 def detect_localhost(
     endpoint: str = DEFAULT_ENDPOINT,
     *,
-    timeout: float = SCAN_PROBE_TIMEOUT_SECS * 4,
+    timeout: float | None = None,
+    describe_budget: float | None = None,
 ) -> DetectedEndpoint | None:
     """Probe the loopback Ollama endpoint. Returns None when nothing is bindable.
 
     This is a loopback round-trip, not a network scan, so a caller may run it
     automatically. The default endpoint mirrors ``seed_local_model.DEFAULT_ENDPOINT``
     so a home bound here and one bound by ``--seed-local-model`` carry the same
-    provider string.
+    provider string. ``timeout`` defaults to :data:`LOCALHOST_PROBE_TIMEOUT_SECS`, and
+    ``describe_budget`` to the bind's own (``seed_local_model.DESCRIBE_BUDGET_SECS``).
     """
-    model = _probe_chat(endpoint, timeout=timeout)
+    model = _probe_chat(
+        endpoint,
+        timeout=LOCALHOST_PROBE_TIMEOUT_SECS if timeout is None else timeout,
+        describe_budget=describe_budget,
+    )
     if not model:
         return None
     return _set_up_as(DetectedEndpoint(endpoint=endpoint, model=model))
@@ -188,9 +197,10 @@ def _candidate_hosts(local_ips: list[str], *, max_hosts: int) -> list[str]:
 
 def scan_local_network(
     *,
-    budget_secs: float = SCAN_BUDGET_SECS,
+    budget_secs: float | None = None,
     port: int = OLLAMA_PORT,
-    probe_timeout: float = SCAN_PROBE_TIMEOUT_SECS,
+    probe_timeout: float | None = None,
+    describe_budget: float | None = None,
     max_hosts: int = SCAN_MAX_HOSTS,
     candidates: list[str] | None = None,
     prober: Callable[[str], str | None] | None = None,
@@ -200,10 +210,15 @@ def scan_local_network(
     Returns the endpoints that answered ``/api/tags`` with a chat-capable model —
     only those, and only after a live probe. ``candidates`` and ``prober`` are
     injectable for tests; whatever candidate list is handed in, the RFC-1918 gate is
-    applied here too, so a non-private address can never be contacted.
+    applied here too, so a non-private address can never be contacted. A budget not
+    given is the module's (:data:`SCAN_BUDGET_SECS`, :data:`SCAN_PROBE_TIMEOUT_SECS`,
+    :data:`SCAN_DESCRIBE_BUDGET_SECS`) as it stands when the sweep starts.
     """
     from personalclaw.net.guard import classify_host
 
+    budget_secs = SCAN_BUDGET_SECS if budget_secs is None else budget_secs
+    probe_timeout = SCAN_PROBE_TIMEOUT_SECS if probe_timeout is None else probe_timeout
+    describe_budget = SCAN_DESCRIBE_BUDGET_SECS if describe_budget is None else describe_budget
     if candidates is None:
         candidates = _candidate_hosts(_local_private_ipv4s(), max_hosts=max_hosts)
     hosts = [h for h in candidates if classify_host(h).category == "private"][:max_hosts]
@@ -213,9 +228,7 @@ def scan_local_network(
     if prober is None:
 
         def prober(endpoint: str) -> str | None:  # noqa: F811 — the injectable default
-            return _probe_chat(
-                endpoint, timeout=probe_timeout, describe_budget=SCAN_DESCRIBE_BUDGET_SECS
-            )
+            return _probe_chat(endpoint, timeout=probe_timeout, describe_budget=describe_budget)
 
     endpoints = {h: f"http://{h}:{port}" for h in hosts}
     found: list[DetectedEndpoint] = []

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A dismissible overlay needs a KEYBOARD way out ──────────────────────────────
 //
@@ -50,15 +51,10 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const read = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+const read = (rel: string) => strip(readSource(join(SRC, rel)))
 
 describe('DegradedChip is dismissible from the keyboard', () => {
   const src = read('ui/DegradedChip.tsx')
@@ -103,7 +99,7 @@ describe('the NavRail overlay drawer is dismissible from the keyboard', () => {
 })
 
 describe('the rail: an overlay with a click-away scrim also binds Escape', () => {
-  const files = walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readFileSync(abs, 'utf8')) }))
+  const files = walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readSource(abs)) }))
 
   // The marker of a DISMISSIBLE overlay is a full-viewport `fixed inset-0` layer that CLOSES ON
   // CLICK. `fixed inset-0` alone over-matches badly — measured: it also flagged `Onboarding.tsx`

@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Reconciling is not the same as reporting ─────────────────────────────────────────────────────
 //
@@ -107,7 +108,7 @@ describe('the shared settings mutation reports as well as reconciles', () => {
    *  a COPY of the mechanism" defect this suite has already been bitten by. */
   const strip = (src: string) =>
     src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-  const codeOf = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+  const codeOf = (rel: string) => strip(readSource(join(SRC, rel)))
 
   it('mutate() notifies on rejection AND still invalidates on both paths', () => {
     const code = codeOf('pages/settings/settingsWidgets.tsx')
@@ -164,16 +165,7 @@ describe('the shared settings mutation reports as well as reconciles', () => {
     // 🪤 The file name still says `settings`. The matcher and the hard-won comment above it live here,
     // and copying them to a tree-wide file would create the "synthetic guard holding a COPY of the
     // mechanism" defect this suite has already been bitten by — so the sweep widens in place.
-    const walk = (dir: string, out: string[] = []): string[] => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const abs = join(dir, e.name)
-        // `withFileTypes` rather than a `statSync` per entry: the per-entry form took 20.5s here and
-        // intermittently blew the 20s test timeout, and a rail that reds under load is worse than none.
-        if (e.isDirectory()) walk(abs, out)
-        else if (/\.tsx?$/.test(e.name) && !/\.(test|doc|spec)\./.test(e.name)) out.push(abs)
-      }
-      return out
-    }
+    const walk = (dir: string): string[] => filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.(test|doc|spec)\./.test(name))
     const WRITE = /await api\.(save|patch|set|start|delete|create|update)\w*\([\s\S]{0,200}?catch \{\s*\}/g
 
     /** Silent ON PURPOSE, with the reason each one states — keyed by file + the write it guards, never
@@ -216,7 +208,7 @@ describe('the shared settings mutation reports as well as reconciles', () => {
     const files = walk(SRC)
     for (const abs of files) {
       const rel = abs.replace(SRC + '/', '')
-      const code = strip(readFileSync(abs, 'utf8'))
+      const code = strip(readSource(abs))
       for (const m of code.matchAll(WRITE)) {
         const method = /await (api\.\w+)\(/.exec(m[0])?.[1] ?? 'api.?'
         found.push(`${rel}  ${method}`)

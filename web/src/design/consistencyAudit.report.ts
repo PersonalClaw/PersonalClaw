@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 // ── Design-System Consistency Audit — reporter (Plan: DESIGN-SYSTEM-CONSISTENCY) ──
 //
 // This module is the *measurement engine* for the consistency audit. Unlike
@@ -10,9 +11,10 @@
 // It makes NO fixes and fails NO build — it only measures. Run via the
 // companion test (consistencyAudit.test.ts) or import scanDrift() directly.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 export type DriftCategory =
   | 'color'      // raw hex / rgb() / hsl() color literals
@@ -73,15 +75,10 @@ const COLOR_EXEMPT_FILES = new Set<string>([
 ])
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
+  return filesUnder(dir, (entry, p) => {
     const rel = relative(SRC, p).replace(/\\/g, '/')
-    if (EXEMPT_DIRS.some((d) => rel.startsWith(d))) continue
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+    return !EXEMPT_DIRS.some((d) => rel.startsWith(d)) && /\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)
+  })
 }
 
 const HEX = /#[0-9a-fA-F]{3,8}\b/
@@ -101,7 +98,7 @@ function isCommentLine(trimmed: string): boolean {
 }
 
 function scanFile(file: string, rel: string): DriftHit[] {
-  const text = readFileSync(file, 'utf8')
+  const text = readSource(file)
   const hits: DriftHit[] = []
   const colorExempt = COLOR_EXEMPT_FILES.has(rel)
   text.split('\n').forEach((line, i) => {
@@ -138,7 +135,7 @@ function scanPrimitives(file: string, rel: string): PrimitiveHit[] {
   // not anticipate. The baselines are ratcheted down to the true counts in the same commit.
   //
   // Length-preserving on purpose, so any future line report stays accurate.
-  const text = readFileSync(file, 'utf8')
+  const text = readSource(file)
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, p1) => p1 + ' '.repeat(m.length - p1.length))
@@ -216,13 +213,7 @@ const REDUCED_MOTION = /prefers-reduced-motion/
 const ANIMATED = /transition-|animate-|animation:|@keyframes/
 
 function walkAll(dir: string, exts: RegExp): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) out.push(...walkAll(p, exts))
-    else if (exts.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(p)
-  }
-  return out
+  return filesUnder(dir, (entry) => exts.test(entry) && !/\.test\.tsx?$/.test(entry))
 }
 
 export function scanA11y(): A11yCoverage {
@@ -237,7 +228,7 @@ export function scanA11y(): A11yCoverage {
 
   for (const f of files) {
     const rel = relative(SRC, f).replace(/\\/g, '/')
-    const text = readFileSync(f, 'utf8')
+    const text = readSource(f)
     const onMatches = text.match(new RegExp(OUTLINE_NONE, 'g'))
     if (onMatches && !rel.startsWith('design/')) {
       outlineNoneFiles.push(rel)
@@ -305,7 +296,7 @@ export function countInlineFontWeights(): { total: number; byFile: Record<string
   let total = 0
   for (const f of files) {
     const rel = relative(SRC, f).replace(/\\/g, '/')
-    const text = readFileSync(f, 'utf8')
+    const text = readSource(f)
     let n = 0
     for (const line of text.split('\n')) {
       const t = line.trim()
@@ -338,7 +329,7 @@ export function countUppercaseTrackedEyebrows(): { total: number; byFile: Record
   let total = 0
   for (const f of files) {
     const rel = relative(SRC, f).replace(/\\/g, '/')
-    const text = readFileSync(f, 'utf8')
+    const text = readSource(f)
     let n = 0
     for (const line of text.split('\n')) {
       const t = line.trim()
@@ -390,12 +381,12 @@ export async function loadUtilityOracle(): Promise<UtilityOracle> {
   const { __unstable__loadDesignSystem } = await import('tailwindcss')
   const require_ = createRequire(import.meta.url)
   const entry = join(SRC, 'design/tokens.css')
-  const ds = await __unstable__loadDesignSystem(readFileSync(entry, 'utf8'), {
+  const ds = await __unstable__loadDesignSystem(readSource(entry), {
     base: dirname(entry),
     loadStylesheet: async (id: string, base: string) => {
       // `@import "tailwindcss"` resolves through node, everything else is relative.
       const path = id === 'tailwindcss' ? require_.resolve('tailwindcss/index.css') : resolve(base, id)
-      return { path, base: dirname(path), content: readFileSync(path, 'utf8') }
+      return { path, base: dirname(path), content: readSource(path) }
     },
     // tokens.css is pure CSS — a plugin/config import would mean the entry
     // changed shape, and silently returning an empty module would make every
@@ -415,7 +406,7 @@ function handAuthoredClasses(): Set<string> {
   const dir = join(SRC, 'design')
   for (const entry of readdirSync(dir)) {
     if (!entry.endsWith('.css')) continue
-    const text = readFileSync(join(dir, entry), 'utf8')
+    const text = readSource(join(dir, entry))
     for (const m of text.matchAll(/\.(-?[a-zA-Z_][\w-]*)/g)) out.add(m[1])
   }
   return out
@@ -476,7 +467,7 @@ export async function scanInertUtilities(): Promise<InertUtilityHit[]> {
   const hits: InertUtilityHit[] = []
   for (const file of walk(SRC)) {
     const rel = relative(SRC, file).replace(/\\/g, '/')
-    const text = readFileSync(file, 'utf8')
+    const text = readSource(file)
     const lineStarts = [0]
     for (let i = 0; i < text.length; i++) if (text[i] === '\n') lineStarts.push(i + 1)
     const lineAt = (idx: number) => {

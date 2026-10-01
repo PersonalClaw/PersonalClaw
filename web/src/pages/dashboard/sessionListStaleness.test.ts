@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── A deleted chat kept its place on the dashboard, across reloads ───────────────────────────────
 //
@@ -28,12 +29,8 @@ import { join } from 'node:path'
 // later — which is precisely how the dashboard's was missed in the first place.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-  const p = join(d, n)
-  if (statSync(p).isDirectory()) return walk(p)
-  return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-})
-const codeOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
+const codeOf = (rel: string) => readSource(join(SRC, rel))
   .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })

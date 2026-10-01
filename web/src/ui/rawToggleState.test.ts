@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The eleven raw toggles left after the primitives were fixed ───────────────────────────────
 //
@@ -82,7 +83,7 @@ import { join } from 'node:path'
 // code — and when a rail hands you a worklist, verify each entry against the element before fixing
 // anything.
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 
 /** [file (relative to `src/`), the flag its content is gated on, an anchor unique to that button] */
 const DISCLOSURES: [string, string, string][] = [
@@ -151,12 +152,7 @@ describe('the census ceiling falls', () => {
     // walk still finds the family rather than silently matching nothing after a regex or layout
     // change. Pinning it AT the measurement would red on the next honest extraction, which is what
     // this very PR does to two of the rows.
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
     const TOGGLE = /onClick=\{\(\) => set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => set\w+\(!\w+\)/g
     // 🔴 THE WINDOW WAS THE DEFECT, and it manufactured a worklist of six bugs that did not exist.
     // A fixed ±340/380-char slice around the `onClick` is not the control — it is a guess at where
@@ -212,7 +208,7 @@ describe('the census ceiling falls', () => {
       return named.test(el)
     }
     const found = walk(SRC).flatMap((abs) => {
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       return [...src.matchAll(TOGGLE)].map((m) => ({
         el: elementAround(src, m.index!),
         setter: (m[0].match(/set\w+/) ?? ['set'])[0],

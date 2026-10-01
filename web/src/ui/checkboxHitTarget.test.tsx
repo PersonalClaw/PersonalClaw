@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The app's checkbox is 16px, and WCAG 2.2 SC 2.5.8 wants 24 ────────────────────────────────
 //
@@ -42,8 +43,8 @@ function strip(src: string): string {
     .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
 }
 
-const forms = strip(readFileSync(join(SRC, 'ui/forms.tsx'), 'utf8'))
-const tokens = readFileSync(join(SRC, 'design/tokens.css'), 'utf8')
+const forms = strip(readSource(join(SRC, 'ui/forms.tsx')))
+const tokens = readSource(join(SRC, 'design/tokens.css'))
 
 /** The `Checkbox` component body, sliced so a sibling's classes cannot satisfy these. */
 function checkboxBody(): string {
@@ -53,17 +54,12 @@ function checkboxBody(): string {
   return forms.slice(at, next === -1 ? undefined : next)
 }
 
-function tsxFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) tsxFiles(p, acc)
-    else if (entry.endsWith('.tsx')) acc.push(p)
-  }
-  return acc
+function tsxFiles(dir: string): string[] {
+  return filesUnder(dir, (entry) => entry.endsWith('.tsx'))
 }
 
 const CONSUMERS = tsxFiles(SRC)
-  .map((path) => ({ rel: path.slice(SRC.length + 1), code: strip(readFileSync(path, 'utf8')) }))
+  .map((path) => ({ rel: path.slice(SRC.length + 1), code: strip(readSource(path)) }))
   .filter((f) => /<Checkbox\b/.test(f.code) && !f.rel.endsWith('.test.tsx'))
 
 describe('the checkbox hit target', () => {
@@ -130,7 +126,7 @@ describe('the checkbox hit target', () => {
     // proves the narrowing did not cost the rail its teeth.
     for (const f of tsxFiles(SRC)
       .filter((p) => !/\.test\.tsx?$/.test(p))
-      .map((p) => ({ rel: p.slice(SRC.length + 1), code: strip(readFileSync(p, 'utf8')) }))) {
+      .map((p) => ({ rel: p.slice(SRC.length + 1), code: strip(readSource(p)) }))) {
       for (const m of f.code.matchAll(/\bhit-24\b(?!-x)/g)) {
         const at = f.code.lastIndexOf('className', m.index!)
         if (at < 0) continue
@@ -162,7 +158,7 @@ describe('the checkbox hit target', () => {
   it('the axe caveat is recorded where the change is, not only in the utility', () => {
     // A future pass reading a `target-size` report on a checkbox must find the reason here
     // rather than "fixing" it by inflating the input across fifteen call sites.
-    const raw = readFileSync(join(SRC, 'ui/forms.tsx'), 'utf8')
+    const raw = readSource(join(SRC, 'ui/forms.tsx'))
     expect(raw, 'the caveat must travel with the call site').toMatch(/axe[\s\S]{0,400}target-size/)
   })
 })

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A popup you cannot see is not a popup: the paint-order sweep ───────────────────────────────
 //
@@ -46,13 +47,8 @@ import { join } from 'node:path'
 // their "no finding" is vacuous and this rail does not claim otherwise.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-  })
+const read = (rel: string) => readSource(join(SRC, rel))
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 
 /** Every `<Popover` opening tag in the tree, with whether it passes `portal`.
  *
@@ -63,7 +59,7 @@ const walk = (d: string): string[] =>
 function popoverSites() {
   const out: { rel: string; line: number; portal: boolean }[] = []
   for (const abs of walk(SRC)) {
-    const raw = readFileSync(abs, 'utf8')
+    const raw = readSource(abs)
     const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     for (const m of src.matchAll(/<Popover\b/g)) {
       const seg = src.slice(m.index!, m.index! + 700)
@@ -97,7 +93,7 @@ describe('a Popover inside a clipping container must portal', () => {
     expect(s.length).toBe(1)
     expect(s[0].portal).toBe(true)
     // All eleven consumers inherit it; naming them keeps the blast radius in the diff.
-    const consumers = walk(SRC).filter((abs) => readFileSync(abs, 'utf8').includes('<FilterMenu'))
+    const consumers = walk(SRC).filter((abs) => readSource(abs).includes('<FilterMenu'))
     expect(consumers.length, 'FilterMenu consumers that moved with this change').toBeGreaterThanOrEqual(9)
   })
 

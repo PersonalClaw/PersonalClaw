@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── There is ONE lit-set BFS in this repo, and both graph canvases call it ─────────────────────
 //
@@ -23,20 +24,15 @@ import { join, relative } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry)
-    if (statSync(p).isDirectory()) walk(p, out)
-    // Test files are excluded — this very file quotes the patterns below, and a census that
-    // counted its own rail would report two implementations of a traversal it does not contain.
-    else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p)
-  }
-  return out
+function walk(dir: string): string[] {
+  // Test files are excluded — this very file quotes the patterns below, and a census that
+  // counted its own rail would report two implementations of a traversal it does not contain.
+  return filesUnder(dir, (_name, p) => /\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p))
 }
 
 const FILES = walk(SRC)
 const rel = (f: string) => relative(SRC, f).replace(/\\/g, '/')
-const read = (f: string) => readFileSync(f, 'utf8')
+const read = (f: string) => readSource(f)
 
 /** Shapes only a hop-depth neighbourhood traversal contains. */
 const BFS_SIGNATURES: [label: string, pattern: RegExp][] = [

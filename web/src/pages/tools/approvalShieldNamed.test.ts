@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── The shield that says "this tool will ask first" has to say it out loud ────────────────────────
 //
@@ -29,7 +30,7 @@ import { join } from 'node:path'
 
 const SRC = join(import.meta.dirname, '..', '..')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const read = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+const read = (rel: string) => strip(readSource(join(SRC, rel)))
 
 /** Sites this sweep found that are REAL but belong to another concern, named so the exemption is a
  *  judgement on record rather than a silent narrowing of scope (the pattern `emptyStateRollout.test.tsx`
@@ -102,15 +103,10 @@ describe('the approval shield names itself', () => {
     // The derived half: a `Shield*`/`Alert*` glyph that is the sole carrier of a fact must be named.
     // Scoped to warn/danger tones, because those are the ones asserting something a user must act on;
     // a decorative glyph next to its own sentence is fine and is excluded by the adjacent-text check.
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
     const offenders: string[] = []
     for (const abs of walk(join(SRC, 'pages'))) {
-      const text = strip(readFileSync(abs, 'utf8'))
+      const text = strip(readSource(abs))
       for (const m of text.matchAll(/<(Shield\w+|AlertTriangle|TriangleAlert)\b([^>]*)\/>/g)) {
         const attrs = m[2]
         if (!/text-(warn|danger)|--color-(warn|danger)/.test(attrs)) continue
@@ -142,7 +138,7 @@ describe('the approval shield names itself', () => {
     // needs to be — the same staleness that let the triggers census fence outlive TSE-4.
     for (const entry of RECORDED_NOT_FIXED) {
       const [rel, glyph] = entry.split(': ')
-      const text = strip(readFileSync(join(SRC, 'pages', rel), 'utf8'))
+      const text = strip(readSource(join(SRC, 'pages', rel)))
       const tag = glyph.replace(/[<>]/g, '')
       const found = [...text.matchAll(new RegExp(`<${tag}\\b([^>]*)\\/>`, 'g'))]
         .some((m) => /text-(warn|danger)|--color-(warn|danger)/.test(m[1]) && !/aria-label=|\baria-hidden\b/.test(m[1]))
@@ -153,12 +149,7 @@ describe('the approval shield names itself', () => {
   })
 
   it('the pages sweep reads a real tree (vacuity floor)', () => {
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
     expect(walk(join(SRC, 'pages')).length, 'the pages sweep found nothing').toBeGreaterThan(60)
   })
 })

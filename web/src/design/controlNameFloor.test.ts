@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The control-name floor, held where it was MEASURED ───────────────────────────────
 //
@@ -33,12 +34,7 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** Complete opening tags for `<input>`, tracking {} depth.
  *
@@ -49,7 +45,7 @@ const walk = (d: string): string[] =>
 function inputTags(): Array<{ file: string; line: number; tag: string }> {
   const out: Array<{ file: string; line: number; tag: string }> = []
   for (const abs of walk(SRC)) {
-    const text = readFileSync(abs, 'utf8')
+    const text = readSource(abs)
     for (const m of text.matchAll(/<input\b/g)) {
       let depth = 0
       for (let i = m.index! + m[0].length; i < text.length; i++) {

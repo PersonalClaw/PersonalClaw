@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A state badge says the app's own word for the state, not the backend's ────────────────────
 //
@@ -30,13 +31,8 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) walk(abs, out)
-    else if (/\.tsx$/.test(name) && !name.includes('.test.')) out.push(abs)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.tsx$/.test(name) && !name.includes('.test.'))
 }
 
 /** Every bare single-token text node rendered inside a pill/badge, with the class list that styles it. */
@@ -44,7 +40,7 @@ function badgeTokens(): { file: string; token: string; uppercased: boolean }[] {
   const re = /className="([^"]*rounded-(?:pill|md|lg)[^"]*)"[^>]*>([a-z][a-z0-9_-]{2,19})</g
   const hits: { file: string; token: string; uppercased: boolean }[] = []
   for (const abs of walk(SRC)) {
-    const src = readFileSync(abs, 'utf8')
+    const src = readSource(abs)
     for (const m of src.matchAll(re)) {
       hits.push({
         file: abs.slice(SRC.length + 1),
@@ -91,7 +87,7 @@ describe('state badges use the prose spelling the app already ships', () => {
 
   it('each converged concept still ships its prose form as a visible label', () => {
     // Guards the other direction: the fix is not "delete the badge".
-    const all = walk(SRC).map((abs) => readFileSync(abs, 'utf8')).join('\n')
+    const all = walk(SRC).map((abs) => readSource(abs)).join('\n')
     for (const [lower, prose] of CONVERGED) {
       expect(all.includes(`>${prose}<`) || all.includes(`'${prose}'`), `${lower} → ${prose}`).toBe(true)
     }

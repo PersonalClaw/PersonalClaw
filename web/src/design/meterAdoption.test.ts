@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A determinate progress bar goes through ui/Meter ──────────────────────────
 //
@@ -52,15 +53,7 @@ const SRC = join(process.cwd(), 'src')
 /** Every `.tsx` under src/, excluding tests. */
 function sourceFiles(): string[] {
   const out: string[] = []
-  const walk = (dir: string) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, e.name)
-      if (e.isDirectory()) { walk(p); continue }
-      if (!/\.tsx$/.test(e.name) || /\.test\.tsx$/.test(e.name)) continue
-      out.push(p)
-    }
-  }
-  walk(SRC)
+  out.push(...filesUnder(SRC, (name) => /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name)))
   return out
 }
 
@@ -87,7 +80,7 @@ const FILL = /\bh-full\b/
 function handRolled(files: string[]): string[] {
   const hits: string[] = []
   for (const f of files) {
-    const lines = readFileSync(f, 'utf8').split('\n')
+    const lines = readSource(f).split('\n')
     lines.forEach((ln, i) => {
       const m = ln.match(/className=(?:"([^"]*)"|\{`([^`]*)`\}|\{cx\(([^)]*)\))/)
       const cls = m ? (m[1] ?? m[2] ?? m[3] ?? '') : ''
@@ -147,7 +140,7 @@ describe('the determinate progress primitive', () => {
       [join('ui', 'SystemWidget.tsx'), /label=\{`\$\{label\} usage`\}/],
     ]
     for (const [rel, nameRe] of adopters) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, `${rel} should render <Meter`).toMatch(/<Meter\b/)
       // A progressbar with no name is a NEW axe finding, not a fix — so the rail checks
       // that each adoption passes a real label, not merely that it imports the primitive.
@@ -161,7 +154,7 @@ describe('the determinate progress primitive', () => {
     // whole change exists to prevent, so it gets its own assertion.
     const bad: string[] = []
     for (const f of files) {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       if (!/<Meter\b/.test(src)) continue
       if (/<Meter\b[^>]*\blabel=(?:""|\{''\}|\{``\}|\{undefined\})/s.test(src)) bad.push(f.slice(SRC.length + 1))
     }
@@ -176,7 +169,7 @@ describe('the determinate progress primitive', () => {
     const bad: string[] = []
     for (const f of files) {
       if (PRIMITIVES.some((p) => f.endsWith(p))) continue
-      const lines = readFileSync(f, 'utf8').split('\n')
+      const lines = readSource(f).split('\n')
       lines.forEach((ln, i) => {
         if (!/\bh-full\b/.test(ln) && !/\bwidth:/.test(ln)) return
         const win = lines.slice(Math.max(0, i - 1), i + 2).join('\n')

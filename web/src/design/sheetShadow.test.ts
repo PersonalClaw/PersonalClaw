@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A floating sheet's shadow does not follow the scheme, on six surfaces ──────────────────────
 //
@@ -51,15 +52,10 @@ import { join } from 'node:path'
 // the assertion below sits exactly at the number instead of leaving itself slack.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 const files = () =>
-  walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: readFileSync(abs, 'utf8') }))
+  walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: readSource(abs) }))
 
 /** The scheme-blind shadow, as it stands today. This list may only SHRINK. */
 const BASELINE = [
@@ -112,7 +108,7 @@ describe('the sheet-shadow ratchet (scheme-blind shadows may only shrink)', () =
   it('shadow-sheet is a real, scheme-aware alternative — not an aspiration', () => {
     // The convergence target has to exist and be defined per scheme, or this rail points at nothing.
     // Both definitions live in tokens.css; the light one is what `shadow-2xl` never becomes.
-    const tokens = readFileSync(join(SRC, 'design/tokens.css'), 'utf8')
+    const tokens = readSource(join(SRC, 'design/tokens.css'))
     const defs = tokens.match(/--shadow-sheet:/g) ?? []
     expect(defs.length, '--shadow-sheet must be defined per scheme (dark + light)').toBe(2)
     expect(tokens, 'the light definition is the blue-grey drop').toMatch(
@@ -134,7 +130,7 @@ describe('the sheet-shadow ratchet (scheme-blind shadows may only shrink)', () =
     // `--shadow-2xl` per scheme, this rail is measuring a defect that no longer exists and should
     // be deleted rather than kept green.
     const overrides = files()
-      .concat([{ rel: 'design/tokens.css', src: readFileSync(join(SRC, 'design/tokens.css'), 'utf8') }])
+      .concat([{ rel: 'design/tokens.css', src: readSource(join(SRC, 'design/tokens.css')) }])
       .filter((f) => /--shadow-2xl:/.test(f.src))
       .map((f) => f.rel)
     expect(

@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { MenuRow } from './Popover'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A popup that promised a content model it did not contain ───────────────────────────────
 //
@@ -81,12 +82,7 @@ describe('MenuRow carries the item role its container promises', () => {
 
 describe('every popup container in the tree contains its item type', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   const ITEM_OF: Record<string, RegExp> = {
     menu: /role="(menuitem|menuitemradio|menuitemcheckbox)"|<MenuRow[\s\S]{0,400}?role="(menuitem|menuitemradio)"/,
@@ -94,7 +90,7 @@ describe('every popup container in the tree contains its item type', () => {
   }
 
   const containers = walk(SRC).flatMap((f) => {
-    const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const src = readSource(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     return [...src.matchAll(/role="(menu|listbox)"/g)].map((m) => ({
       file: f.slice(SRC.length + 1),
       role: m[1],
@@ -127,7 +123,7 @@ describe('every popup container in the tree contains its item type', () => {
   // IS a popup container, whatever it says about itself, and it has to declare a container role.
   it('a component with an arrow-key cursor over a list declares a container role', () => {
     const cursored = walk(SRC).flatMap((f) => {
-      const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      const src = readSource(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
       const hasCursor = /key === 'ArrowDown'|key === 'ArrowUp'|useMenuCursor\(|menuCursorKeydown\(/.test(src)
       const rendersRows = /(?:options|filtered|opts|items|rows)\s*\.map\(/.test(src) && /<(?:motion\.)?button/.test(src)
       if (!hasCursor || !rendersRows) return []
@@ -144,7 +140,7 @@ describe('every popup container in the tree contains its item type', () => {
   })
 
   it("Segmented's trigger advertises the popup, like ProjectPicker's does", () => {
-    const seg = readFileSync(join(SRC, 'ui/Segmented.tsx'), 'utf8')
+    const seg = readSource(join(SRC, 'ui/Segmented.tsx'))
     expect(seg).toMatch(/aria-haspopup="listbox"/)
     expect(seg).toMatch(/aria-expanded=\{open\}/)
   })

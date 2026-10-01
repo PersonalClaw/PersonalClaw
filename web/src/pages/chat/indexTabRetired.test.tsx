@@ -1,5 +1,5 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -7,6 +7,7 @@ import { ChatActivityPanel } from './ChatActivityPanel'
 import { SessionMapRail } from './SessionMapRail'
 import { hydrateTurns, deriveActivity, type HistMsg } from './chatTypes'
 import { sessionMapEntries } from './sessionMap'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── THE SUPERSEDED ACTIVITY → INDEX TAB IS GONE, AND STAYS GONE ──────────────────────────────
 //
@@ -118,7 +119,7 @@ describe('The Activity panel renders no Index tab', () => {
 })
 
 describe('The panel owns no navigation at all', () => {
-  const src = readFileSync(join(SRC, 'pages/chat/ChatActivityPanel.tsx'), 'utf8')
+  const src = readSource(join(SRC, 'pages/chat/ChatActivityPanel.tsx'))
 
   it('🔑 ChatActivityPanel takes no jump prop and implements no scroll', () => {
     // CONTROL: the right file was read.
@@ -142,7 +143,7 @@ describe('The panel owns no navigation at all', () => {
   })
 
   it('🔑 ChatPage no longer hands the panel a jump handler', () => {
-    const page = readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8')
+    const page = readSource(join(SRC, 'pages/ChatPage.tsx'))
     expect(page.length, 'ChatPage.tsx read empty').toBeGreaterThan(1000)
     const open = page.indexOf('<ChatActivityPanel ')
     expect(open, 'no <ChatActivityPanel> call site in ChatPage.tsx — this rail would be vacuous').toBeGreaterThan(-1)
@@ -166,16 +167,12 @@ describe('The panel owns no navigation at all', () => {
 
 /** Every `.ts`/`.tsx` file under `dir`, recursively, as paths relative to `web/`. */
 function sources(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) return sources(p)
-    return /\.tsx?$/.test(name) ? [relative(WEB, p)] : []
-  })
+  return filesUnder(dir, (name) => /\.tsx?$/.test(name)).map((p) => relative(WEB, p))
 }
 
 /** Relative paths whose text matches `re`. */
 function hits(files: string[], re: RegExp): string[] {
-  return files.filter((rel) => re.test(readFileSync(join(WEB, rel), 'utf8')))
+  return files.filter((rel) => re.test(readSource(join(WEB, rel))))
 }
 
 describe('Nothing in the tree consumes an activity index', () => {
@@ -277,7 +274,7 @@ describe('The survivor still navigates', () => {
   })
 
   it('🔑 ChatPage still hands the rail its one jump handler, un-wrapped', () => {
-    const page = readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8')
+    const page = readSource(join(SRC, 'pages/ChatPage.tsx'))
     const open = page.indexOf('<SessionMapRail ')
     expect(open, 'no <SessionMapRail> call site in ChatPage.tsx — the map is not mounted').toBeGreaterThan(-1)
     const tag = page.slice(open, page.indexOf('/>', open))

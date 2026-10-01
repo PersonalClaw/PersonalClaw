@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A dimmed token must not be dimmed AGAIN with opacity ────────────────────
 //
@@ -28,19 +29,13 @@ const WEB_SRC = join(process.cwd(), 'src')
 /** Every `className` string literal in the tree, with its file + line. */
 function classAttributes(): Array<{ file: string; line: number; value: string }> {
   const out: Array<{ file: string; line: number; value: string }> = []
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, entry.name)
-      if (entry.isDirectory()) { walk(p); continue }
-      if (!/\.tsx$/.test(entry.name) || /\.test\.tsx$/.test(entry.name)) continue
-      readFileSync(p, 'utf8').split('\n').forEach((ln, i) => {
-        for (const m of ln.matchAll(/className="([^"]*)"/g)) {
-          out.push({ file: p.slice(WEB_SRC.length + 1), line: i + 1, value: m[1] })
-        }
-      })
-    }
+  for (const p of filesUnder(WEB_SRC, (name) => /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name))) {
+    readSource(p).split('\n').forEach((ln, i) => {
+      for (const m of ln.matchAll(/className="([^"]*)"/g)) {
+        out.push({ file: p.slice(WEB_SRC.length + 1), line: i + 1, value: m[1] })
+      }
+    })
   }
-  walk(WEB_SRC)
   return out
 }
 

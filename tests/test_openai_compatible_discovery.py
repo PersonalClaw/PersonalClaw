@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -303,10 +304,14 @@ def test_a_wrong_base_url_names_the_404_and_the_base_url(allow_loopback_egress: 
 
 
 def test_an_unreachable_endpoint_is_not_an_empty_catalog(allow_loopback_egress: None) -> None:
-    # Port 1 on loopback: nothing listens, so this exercises the transport-failure arm
-    # without a network call leaving the machine.
+    # A loopback port this test bound and let go: nothing listens there, so this exercises the
+    # transport-failure arm without a network call leaving the machine, and without reaching
+    # whatever the machine itself may serve on a fixed port.
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
     with pytest.raises(ModelDiscoveryError) as caught:
-        _run(openai_compatible_discover_models("http://127.0.0.1:1/v1", "fake-key-test"))
+        _run(openai_compatible_discover_models(f"http://127.0.0.1:{port}/v1", "fake-key-test"))
     assert "Could not reach" in str(caught.value)
     assert caught.value.status is None, "no HTTP status was ever received"
 

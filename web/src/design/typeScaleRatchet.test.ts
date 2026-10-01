@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Arbitrary font sizes are frozen debt, not a pattern (AUD-NZ13, the ratchet) ────────
 //
@@ -29,18 +30,13 @@ const CEILING = 641
 const RAW_SIZE = /text-\[0?\.[0-9]+rem\]/g
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
 
 describe('raw arbitrary font sizes only ever decrease', () => {
   it(`stays at or under the ${CEILING} frozen on ratchet day`, () => {
     let count = 0
     for (const abs of walk(SRC)) {
-      count += readFileSync(abs, 'utf8').match(RAW_SIZE)?.length ?? 0
+      count += readSource(abs).match(RAW_SIZE)?.length ?? 0
     }
     expect(
       count,

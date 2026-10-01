@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Native form controls inherit the theme's colour scheme; they must not pin one ────────────────
 //
@@ -35,13 +36,8 @@ function code(src: string): string {
     .replace(/(^|[^:])\/\/.*$/gm, '$1') // line comments, without eating https://
 }
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) walk(p, out)
-    else if (/\.(ts|tsx|css)$/.test(name)) out.push(p)
-  }
-  return out
+function walk(dir: string): string[] {
+  return filesUnder(dir, (name) => /\.(ts|tsx|css)$/.test(name))
 }
 
 describe('colour scheme is inherited, never pinned on a control', () => {
@@ -55,7 +51,7 @@ describe('colour scheme is inherited, never pinned on a control', () => {
 
   it('no file pins color-scheme on an element', () => {
     const offenders = files
-      .filter((f) => /\[color-scheme:\s*(dark|light)\]/.test(code(readFileSync(f, 'utf8'))))
+      .filter((f) => /\[color-scheme:\s*(dark|light)\]/.test(code(readSource(f))))
       .map((f) => f.slice(SRC.length + 1))
     expect(offenders, `these pin a scheme instead of inheriting the theme's: ${offenders.join(', ')}`).toEqual([])
   })
@@ -63,7 +59,7 @@ describe('colour scheme is inherited, never pinned on a control', () => {
   it('the form primitives keep the rest of their chrome', () => {
     // Removing the pin must not have taken the field chrome with it — the controls should still
     // carry surface, radius and focus ring, which is what makes them look like the field family.
-    const forms = readFileSync(join(SRC, 'ui/forms.tsx'), 'utf8')
+    const forms = readSource(join(SRC, 'ui/forms.tsx'))
     const select = forms.slice(forms.indexOf('export function Select'))
     expect(select).toMatch(/bg-surface-container/)
     expect(select).toMatch(/focus:ring-2/)
@@ -73,14 +69,14 @@ describe('colour scheme is inherited, never pinned on a control', () => {
   it('the docs no longer advertise a pinned dark scheme', () => {
     // `uiDocs.drift` compares authored docs against the components; a doc still claiming
     // "color-scheme:dark" would describe chrome the component no longer has.
-    const doc = readFileSync(join(SRC, 'ui/forms.doc.ts'), 'utf8')
+    const doc = readSource(join(SRC, 'ui/forms.doc.ts'))
     expect(doc).not.toMatch(/color-scheme:\s*dark/)
     expect(doc, 'and it should say what happens instead').toMatch(/theme-inherited color-scheme/)
   })
 
   it('the root still owns the scheme per theme', () => {
     // The other half of the pair. If this regresses, inheriting becomes inheriting the WRONG value.
-    const tokens = readFileSync(join(SRC, 'design/tokens.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const tokens = readSource(join(SRC, 'design/tokens.css')).replace(/\/\*[\s\S]*?\*\//g, '')
     expect(tokens).toMatch(/\.light\s*\{[\s\S]*?color-scheme:\s*light/)
     expect(tokens).toMatch(/:root:not\(\.light\)\s*\{\s*color-scheme:\s*dark/)
   })

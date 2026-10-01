@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A file picker nobody can reach without a mouse ────────────────────────────────────────────
 //
@@ -55,12 +56,7 @@ import { join } from 'node:path'
 // evidence that the input is reachable.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** Brace-aware tag text: the `>` inside `onChange={(e) => …}` does not end the tag. */
 function tags(src: string, name: string): string[] {
@@ -83,7 +79,7 @@ function tags(src: string, name: string): string[] {
 }
 
 const pickers = () => walk(SRC).flatMap((abs) => {
-  const src = readFileSync(abs, 'utf8')
+  const src = readSource(abs)
   return tags(src, 'input')
     .filter((t) => /type="file"/.test(t))
     .map((tag) => ({ file: abs.slice(SRC.length + 1), tag, src }))
@@ -122,7 +118,7 @@ describe('every file picker can be reached without a mouse', () => {
       ['pages/loop/LoopComposer.tsx', /<label[\s\S]{0,300}?has-\[input:focus-visible\]:ring-2/],
     ]
     for (const [rel, ring] of cases) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
       expect(code, `${rel}: the picker must stay focusable`).toMatch(/type="file"[\s\S]{0,220}?className="sr-only"/)
       expect(code, `${rel}: a visually hidden input needs the ring drawn on its container`).toMatch(ring)
@@ -136,7 +132,7 @@ describe('every file picker can be reached without a mouse', () => {
   it('the knowledge drop area guards the re-entrant click', () => {
     // Without this, activating the input by keyboard bubbles into the drop area's own onClick and asks
     // for a SECOND file dialog. Counted live: exactly 1 chooser per Enter with the guard.
-    const code = readFileSync(join(SRC, 'pages/knowledge/KnowledgeCreatePage.tsx'), 'utf8')
+    const code = readSource(join(SRC, 'pages/knowledge/KnowledgeCreatePage.tsx'))
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     expect(code).toMatch(/if \(e\.target === fileRef\.current\) return/)
   })
@@ -144,7 +140,7 @@ describe('every file picker can be reached without a mouse', () => {
   it('the knowledge copy no longer says only "click"', () => {
     // The visible affordance text is the instruction; with a keyboard route it must not describe one
     // input device.
-    const src = readFileSync(join(SRC, 'pages/knowledge/KnowledgeCreatePage.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'pages/knowledge/KnowledgeCreatePage.tsx'))
     expect(src).not.toMatch(/or click to choose/)
     expect(src).toMatch(/or choose one/)
   })

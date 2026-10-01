@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent, screen } from '@testing-library/react'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ListRow } from './ListScaffold'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The row's hit target is a SIBLING of its content, never an ancestor ──────────────
 //
@@ -130,7 +131,7 @@ describe('ListRow hit target', () => {
 })
 
 describe('the tasks list row and card carry the same overlay', () => {
-  const src = readFileSync(join(process.cwd(), 'src/pages/tasks/TasksListPage.tsx'), 'utf8')
+  const src = readSource(join(process.cwd(), 'src/pages/tasks/TasksListPage.tsx'))
 
   it('both wrappers hand their tab stop to the shared hit-target primitive', () => {
     // 🪤 The first version of this change hand-rolled the overlay, and the primitive-adoption ratchet
@@ -238,12 +239,7 @@ describe('the tasks list row and card carry the same overlay', () => {
 
 describe('every clickable non-interactive element has a keyboard route', () => {
   const SRC = join(process.cwd(), 'src')
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-    })
+  const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   /** 🪤 Brace-aware: the `>` inside `onClick={() => …}` does NOT end the tag, and a matcher that
    *  scans to the first `>` truncates it — five false positives earlier in this session. */
@@ -282,7 +278,7 @@ describe('every clickable non-interactive element has a keyboard route', () => {
   const hits = () => {
     const found: { file: string; tag: string }[] = []
     for (const abs of walk(SRC)) {
-      const src = readFileSync(abs, 'utf8')
+      const src = readSource(abs)
       for (const name of ['div', 'li', 'article', 'motion\\.div']) {
         for (const tag of tags(src, name)) {
           if (!/onClick=/.test(tag) || !/cursor-pointer/.test(tag)) continue
@@ -308,7 +304,7 @@ describe('every clickable non-interactive element has a keyboard route', () => {
       // 🪤 Not a literal `tabIndex={-1}`: a SHARED row primitive pins it only when the row is
       // clickable (`tabIndex={onClick ? -1 : undefined}` in the dashboard widget kit), because a
       // non-interactive row must not claim a tab index at all.
-      const usesPrimitive = /tabIndex=\{[^}]*-1/.test(tag) && readFileSync(join(SRC, file), 'utf8').includes('<RowHitTarget')
+      const usesPrimitive = /tabIndex=\{[^}]*-1/.test(tag) && readSource(join(SRC, file)).includes('<RowHitTarget')
       if (declaresRole || usesPrimitive || file in DEFERRED || file === 'ui/RowHitTarget.tsx') continue
       bad.push(file)
     }
@@ -318,7 +314,7 @@ describe('every clickable non-interactive element has a keyboard route', () => {
 
   it('the two rows this cycle converged go through the primitive', () => {
     for (const rel of ['pages/notifications/NotificationsPage.tsx', 'pages/loops/LoopsListPage.tsx', 'ui/NotificationBell.tsx']) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, `${rel}: the hit target`).toMatch(/<RowHitTarget label=/)
       expect(src, `${rel}: the ring, keyed off the overlay`).toMatch(/has-\[>button:focus-visible\]:ring-2/)
     }
@@ -336,7 +332,7 @@ describe('every clickable non-interactive element has a keyboard route', () => {
       expect(tags.length, `${rel} no longer matches the scan at all — drop it from DEFERRED`).toBeGreaterThan(0)
       const fixed = tags.some((h) => {
         const declaresRole = /\brole=/.test(h.tag) && /tabIndex=\{[^}]*\b0\b/.test(h.tag)
-        const usesPrimitive = /tabIndex=\{[^}]*-1/.test(h.tag) && readFileSync(join(SRC, rel), 'utf8').includes('<RowHitTarget')
+        const usesPrimitive = /tabIndex=\{[^}]*-1/.test(h.tag) && readSource(join(SRC, rel)).includes('<RowHitTarget')
         return declaresRole || usesPrimitive
       })
       expect(fixed, `${rel} now satisfies the criteria — drop it from DEFERRED`).toBe(false)

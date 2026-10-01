@@ -413,6 +413,12 @@ backend has no access to the gateway's SecurityEventLog).
   git that could still sign in with a helper of the machine's is refused before
   it starts, failing the test that started it (core's suite and the apps
   repository's both install it).
+  `testing.refuse_ports` refuses a suite's connections to a local model
+  server's port at any address, unless the test process itself serves that
+  port, and with `loopback=True` to any port on the machine the process has not
+  opened itself, so a test reaches only the servers it started; the test that
+  asked fails by name (core's suite installs both rules, the apps repository's
+  the first).
   `testing.launch_acp_entry` launches an ACP entry's command with the environment
   a spawn from that entry gets, so an ACP app's tests check what its CLI is
   handed with a stub in the CLI's place, never the CLI itself.

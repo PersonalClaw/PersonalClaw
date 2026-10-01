@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A hover-revealed control must also reveal on FOCUS ──────────────────────────
 //
@@ -44,12 +45,7 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
@@ -78,7 +74,7 @@ function hoverRevealed(src: string, rel: string): Hit[] {
   return out
 }
 
-const all = walk(SRC).flatMap((abs) => hoverRevealed(strip(readFileSync(abs, 'utf8')), abs.slice(SRC.length + 1)))
+const all = walk(SRC).flatMap((abs) => hoverRevealed(strip(readSource(abs)), abs.slice(SRC.length + 1)))
 
 describe('the rail: hover-revealed means focus-revealed', () => {
   it('every hover-revealed focusable container also reveals on focus', () => {

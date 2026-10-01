@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The shared field primitives never render a field the browser cannot tell apart ─────────────────
 //
@@ -24,11 +25,7 @@ const ROOTS = ['ui', 'app']
 const SHARED = ['pages/settings/bento.tsx', 'pages/settings/settingsUI.tsx']
 
 function files(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const p = join(dir, name)
-    if (statSync(p).isDirectory()) return files(p)
-    return /\.tsx$/.test(name) && !/\.(test|doc)\./.test(name) ? [p] : []
-  })
+  return filesUnder(dir, (name) => /\.tsx$/.test(name) && !/\.(test|doc)\./.test(name))
 }
 
 /** Blank block and line comments, keeping offsets (and so line numbers) intact. */
@@ -60,7 +57,7 @@ const exempt = (tag: string) => /type="(file|hidden)"/.test(tag)
 
 describe('every field in the shared components can be told apart', () => {
   const all = [...ROOTS.flatMap((r) => files(join(SRC, r))), ...SHARED.map((f) => join(SRC, f))].flatMap((p) =>
-    fieldTags(readFileSync(p, 'utf8')).map((t) => ({ ...t, at: `${relative(SRC, p)}:${t.line}` })))
+    fieldTags(readSource(p)).map((t) => ({ ...t, at: `${relative(SRC, p)}:${t.line}` })))
 
   it('scans the fields it claims to (vacuity floor)', () => {
     // 28 when this was written, seven of them in `ui/forms`; the floor fails loudly if the walk stops

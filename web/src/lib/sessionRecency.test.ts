@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { sessionRecencyMs } from './epoch'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── One comparator, three copies, and the one that differed was the breakable one ─────────────
 //
@@ -74,7 +75,7 @@ describe('sessionRecencyMs survives the payload the API actually sends', () => {
 
 describe('all three call sites share it now', () => {
   const SRC = join(process.cwd(), 'src')
-  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const read = (rel: string) => readSource(join(SRC, rel))
 
   it('the dashboard no longer builds a Date from a `??` chain', () => {
     const src = read('pages/dashboard/DashboardPage.tsx')
@@ -92,15 +93,9 @@ describe('all three call sites share it now', () => {
 
   it('no `new Date(x ?? y).getTime()` survives anywhere in pages/', () => {
     // The whole shape, not just the two sites: this is what makes the next copy hard to write.
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
     const offenders = walk(join(SRC, 'pages'))
-      .filter((abs) => /new Date\([^)]*\?\?[^)]*\)\.getTime\(\)/.test(readFileSync(abs, 'utf8')))
+      .filter((abs) => /new Date\([^)]*\?\?[^)]*\)\.getTime\(\)/.test(readSource(abs)))
     expect(offenders).toEqual([])
   })
 

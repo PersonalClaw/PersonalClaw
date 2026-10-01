@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── #492: every consent surface answers the host-page question ───────────────────────
 //
@@ -23,20 +24,19 @@ const SRC = join(process.cwd(), 'src')
 /** Source with comments stripped, so a `<PermissionList` inside a code comment cannot
  *  satisfy — or trip — a count. */
 const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const code = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
+const code = (rel: string) => strip(readSource(join(SRC, rel)))
 
+/** Every production source under `dir`, outside any `test` folder in it. */
 function productionFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((n) => {
-    const p = join(dir, n)
-    if (statSync(p).isDirectory()) return n === 'test' ? [] : productionFiles(p)
-    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
-  })
+  return filesUnder(dir, (n, p) =>
+    /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n)
+    && !relative(dir, p).split(sep).slice(0, -1).includes('test'))
 }
 
 describe('every consent surface is handed the host-page fact (#492)', () => {
   it('every PermissionList render passes hostUi, and there is exactly one', () => {
     const renders = productionFiles(SRC).flatMap((abs) =>
-      [...strip(readFileSync(abs, 'utf8')).matchAll(/<PermissionList\b[^>]*\/?>/g)]
+      [...strip(readSource(abs)).matchAll(/<PermissionList\b[^>]*\/?>/g)]
         .map((m) => ({ rel: abs.slice(SRC.length + 1), tag: m[0] })))
     for (const r of renders) {
       expect(r.tag, `${r.rel}: a PermissionList renders without the host-page fact`)

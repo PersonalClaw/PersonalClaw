@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Issue 614: absent permissions are DISCLOSED, not hidden ─────────────────────────
 //
@@ -15,14 +16,13 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const read = (f: string) => strip(readFileSync(join(SRC, 'pages/apps', f), 'utf8'))
+const read = (f: string) => strip(readSource(join(SRC, 'pages/apps', f)))
 
+/** Every production source under `dir`, outside any `test` folder in it. */
 function productionFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((n) => {
-    const p = join(dir, n)
-    if (statSync(p).isDirectory()) return n === 'test' ? [] : productionFiles(p)
-    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
-  })
+  return filesUnder(dir, (n, p) =>
+    /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n)
+    && !relative(dir, p).split(sep).slice(0, -1).includes('test'))
 }
 
 describe('install consent discloses absent permissions (issue 614)', () => {
@@ -69,7 +69,7 @@ describe('install consent discloses absent permissions (issue 614)', () => {
     expect(consent).toMatch(/if \(!entry\?\.consentKnown\) return undefined/)
     // No other production file reads the flag, so no surface can re-derive the distinction.
     const readers = productionFiles(SRC)
-      .filter((abs) => /\.consentKnown\b/.test(strip(readFileSync(abs, 'utf8'))))
+      .filter((abs) => /\.consentKnown\b/.test(strip(readSource(abs))))
       .map((abs) => abs.slice(SRC.length + 1))
     expect(readers).toEqual(['pages/apps/installConsent.tsx'])
   })

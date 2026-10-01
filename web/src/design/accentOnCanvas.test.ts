@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Accent TEXT on the canvas uses the emphasis shade ────────────────────────────────────────────
 //
@@ -33,7 +34,7 @@ import { join } from 'node:path'
 // ever sees. Match the rule block, not the first occurrence of the selector's name.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 
 // ── Cycle 155: THE THIRD GROUND — a small accent CHIP sits on `--color-surface-high` ─────────────
 //
@@ -178,16 +179,10 @@ describe('accent chips on surface-high use the emphasis shade', () => {
   it('no site pairs surface-high with the plain or alpha accent on the same element', () => {
     // THE RATCHET, and the reason it is written from the other side: a new chip that reaches for
     // `text-primary` on this ground cannot pass AA in 10 of 12 schemes, so it fails here first.
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
     const offenders: string[] = []
     for (const abs of walk(SRC)) {
-      readFileSync(abs, 'utf8').split('\n').forEach((line, i) => {
+      readSource(abs).split('\n').forEach((line, i) => {
         for (const m of line.matchAll(/className=(?:\{`|")([^"`]*)(?:`\}|")/g)) {
           const cls = m[1]
           if (!/(?:^|\s)bg-surface-high(?:\s|$)/.test(cls)) continue
@@ -224,15 +219,9 @@ describe('a dashboard row action uses the emphasis shade', () => {
 
   it('the call sites it reaches are the four dashboard row actions', () => {
     // If a fifth appears it inherits the fix; this pins the population the measurement covered.
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const walk = (d: string): string[] =>
-      readdirSync(d).flatMap((n) => {
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) return walk(p)
-        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-      })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
     const sites = walk(join(SRC, 'pages/dashboard')).flatMap((abs) =>
-      [...readFileSync(abs, 'utf8').matchAll(/<RowAction tone="primary"/g)].map(() => abs.slice(SRC.length + 1)))
+      [...readSource(abs).matchAll(/<RowAction tone="primary"/g)].map(() => abs.slice(SRC.length + 1)))
     expect(sites.length, 'RowAction tone="primary" call sites on the dashboard').toBeGreaterThanOrEqual(4)
   })
 

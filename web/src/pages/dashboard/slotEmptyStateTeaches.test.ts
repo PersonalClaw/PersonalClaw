@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── The dashboard's slot-empty states must not be bare facts ─────────────────
 //
@@ -32,14 +33,7 @@ import { join } from 'node:path'
 const HERE = join(process.cwd(), 'src/pages/dashboard')
 
 function walk(dir: string): string[] {
-  const out: string[] = []
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name)
-    if (statSync(abs).isDirectory()) { out.push(...walk(abs)); continue }
-    if (!name.endsWith('.tsx') || name.includes('.test.')) continue
-    out.push(abs)
-  }
-  return out
+  return filesUnder(dir, (name) => name.endsWith('.tsx') && !name.includes('.test.'))
 }
 
 type Slot = { file: string; text: string; hasAction: boolean; usesSlotAction: boolean }
@@ -68,7 +62,7 @@ function openTagEnd(slice: string): number {
 function slots(): Slot[] {
   const found: Slot[] = []
   for (const abs of walk(HERE)) {
-    const src = readFileSync(abs, 'utf8')
+    const src = readSource(abs)
     const file = abs.slice(abs.lastIndexOf('/') + 1)
     for (const m of src.matchAll(/<SlotEmptyState[\s>][\s\S]*?<\/SlotEmptyState>/g)) {
       const slice = m[0]
@@ -183,7 +177,7 @@ describe('dashboard slot-empty states teach a mechanism or offer a step', () => 
       expect(s.usesSlotAction, `${s.file} does not route its slot on-ramp through SlotAction`).toBe(true)
     }
     // And the definition itself lives in the kit, once.
-    const kit = readFileSync(join(HERE, 'widgets/kit.tsx'), 'utf8')
+    const kit = readSource(join(HERE, 'widgets/kit.tsx'))
     expect(kit.match(/export function SlotAction\b/g) ?? []).toHaveLength(1)
   })
 })

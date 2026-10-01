@@ -31,6 +31,7 @@ import time
 import types
 from pathlib import Path
 
+import port_guard
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -109,7 +110,9 @@ def token_server(tmp_path: Path):
             if proc.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError(f"the token server did not start: {stderr.read_text()!r}")
             time.sleep(0.05)
-        yield f"http://127.0.0.1:{port_file.read_text(encoding='utf-8').strip()}/mcp"
+        port = int(port_file.read_text(encoding="utf-8").strip())
+        port_guard.GUARD.own(port)  # the server this test started chose it
+        yield f"http://127.0.0.1:{port}/mcp"
     finally:
         proc.terminate()
         try:

@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── No write freezes a record field at a literal ──────────────────────────────────────────────────
 //
@@ -36,12 +37,7 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n))
 
 /** The write seams: an `api.` method that WRITES (a read cannot freeze anything), plus any
  *  `write<Record>()` helper — the naming this codebase uses for a single-writer funnel.
@@ -77,7 +73,7 @@ function census(): string[] {
     // `lib/api.ts` is the client itself: its literals are defaults of the transport, not a
     // caller freezing a record.
     if (file.endsWith(join('lib', 'api.ts'))) continue
-    const src = readFileSync(file, 'utf8')
+    const src = readSource(file)
     let m: RegExpExecArray | null
     WRITE_CALL.lastIndex = 0
     while ((m = WRITE_CALL.exec(src))) {

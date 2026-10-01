@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── One collection, two cache keys, one invalidated ──────────────────────────────────────────────
 //
@@ -90,7 +91,7 @@ describe('a decision on one surface does not leave a sibling count stale', () =>
 
 describe('every mutation site busts the collection it changed', () => {
   const SRC = join(process.cwd(), 'src')
-  const codeOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  const codeOf = (rel: string) => readSource(join(SRC, rel))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   it('all four proposal-decision sites bust the proposals prefix', () => {
@@ -128,11 +129,7 @@ describe('every mutation site busts the collection it changed', () => {
     const cache = codeOf('lib/data/store.ts')
     expect(cache, 'the primitive must still take the flag').toMatch(/invalidateKeys\(keyOrPrefix: string, prefix = false\)/)
     // At least the five call sites this cycle added; a regression to per-key busting drops the count.
-    const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-    })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
     const users = walk(SRC).filter((f) => /invalidateKeys\([^)]*,\s*true\)/.test(codeOf(f.slice(SRC.length + 1))))
     expect(users.length, 'prefix-mode call sites').toBeGreaterThanOrEqual(5)
   })

@@ -1,8 +1,9 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ListControls, ResultAnnouncement } from './ListControls'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Filtering a list changed the page and said nothing ───────────────────────────────
 //
@@ -223,17 +224,12 @@ describe('a filtered list announces its result count', () => {
 // `results={{` line per file.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** Source with comments stripped. `WorkbenchLayout`'s docstring says "Pass a `<ListControls …>`",
  *  which a raw scan counts as a seventeenth consumer that can never pass a prop. */
 function code(abs: string): string {
-  return readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  return readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
 /** The opening tag of every `<ListControls …>` in a file — balanced, so a `{{…}}` prop value with a
@@ -405,7 +401,7 @@ describe('the hand-laid bars reach the same idiom', () => {
 
   for (const [rel, noun, active] of DIRECT) {
     it(`${rel} renders the extracted announcement, not a copy of it`, () => {
-      const src = readFileSync(join(SRC, rel), 'utf8')
+      const src = readSource(join(SRC, rel))
       expect(src, 'must import the shared piece from the canonical module').toMatch(
         /import \{ ResultAnnouncement \} from '(\.\.\/)+ui\/ListControls'/,
       )
@@ -443,11 +439,11 @@ describe('the hand-laid bars reach the same idiom', () => {
       ['pages/settings/SettingsHome.tsx', /count=\{Object\.values\(matches\)\.filter\(Boolean\)\.length\}/],
     ]
     for (const [rel, re] of COUNTS) {
-      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must count its own rendered list`)
+      expect(strip(readSource(join(SRC, rel))), `${rel} must count its own rendered list`)
         .toMatch(re)
     }
     // MemoryPanel's two both read a `shown` — one per tab, each its own memo.
-    const mem = strip(readFileSync(join(SRC, 'pages/settings/MemoryPanel.tsx'), 'utf8'))
+    const mem = strip(readSource(join(SRC, 'pages/settings/MemoryPanel.tsx')))
     expect((mem.match(/count=\{shown\.length\}/g) ?? []).length, 'both MemoryPanel lists').toBe(2)
     // A count read off the PRE-filter collection is the shape being excluded, everywhere.
     //
@@ -460,7 +456,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     // the header showed all along as inline text. A different component's identically-named prop is
     // not this rail's subject; the `<ResultAnnouncement>` tag is.
     for (const [rel] of COUNTS) {
-      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const src = strip(readSource(join(SRC, rel)))
       const tags = [...src.matchAll(/<ResultAnnouncement[\s\S]{0,260}?\/>/g)].map((m) => m[0])
       expect(tags.length, `${rel} must render the announcement`).toBeGreaterThanOrEqual(1)
       for (const tag of tags) {
@@ -505,7 +501,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     }
 
     const withControl = walk(SRC)
-      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readFileSync(abs, 'utf8')) }))
+      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readSource(abs)) }))
       .filter(({ src }) => hasControl(src))
     // 16: the Ollama-only model manager (a library search) was unreachable and is gone — Ollama's
     // card is `LocalModelManager`, which is counted here already.
@@ -520,12 +516,12 @@ describe('the hand-laid bars reach the same idiom', () => {
 
     // Each exemption has to still be TRUE of the file it excuses.
     for (const [rel, [why, proof]] of Object.entries(EXEMPT)) {
-      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const src = strip(readSource(join(SRC, rel)))
       expect(src, `${rel} is exempt for "${why}" — which must still hold`).toMatch(proof)
     }
     // And an exemption for a file that no longer HAS a search control is dead weight.
     for (const rel of Object.keys(EXEMPT)) {
-      expect(hasControl(strip(readFileSync(join(SRC, rel), 'utf8'))), `${rel}: stale exemption`).toBe(true)
+      expect(hasControl(strip(readSource(join(SRC, rel)))), `${rel}: stale exemption`).toBe(true)
     }
   })
 
@@ -535,7 +531,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     // `showArchived` is deliberately NOT part of `active` — the active/archived split is enforced
     // server-side, so it swaps WHICH list is fetched rather than narrowing this one.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-    const src = strip(readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'pages/ChatPage.tsx')))
     expect((src.match(/<ResultAnnouncement\b/g) ?? []).length, 'chat list + two pickers').toBe(3)
     expect(src, 'the chat list counts its own filtered array').toMatch(
       /count=\{filtered\.length\} noun="chats"\s*\n?\s*active=\{!!n \|\| origin !== 'manual'\}/,
@@ -561,7 +557,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     // The third is `InspectTab`'s — you type a query and press a button to see what context a
     // retrieval WOULD return. Nothing is being narrowed, so a result count would describe nothing.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-    const src = strip(readFileSync(join(SRC, 'pages/settings/MemoryPanel.tsx'), 'utf8'))
+    const src = strip(readSource(join(SRC, 'pages/settings/MemoryPanel.tsx')))
     const controls = (src.match(/<SearchField\b/g) ?? []).length
       + (src.match(/<TextInput[^>]*ariaLabel="(?:Search|Filter)/g) ?? []).length
     expect(controls, 'two SEARCH-shaped controls — the explorer and the audit log').toBe(2)
@@ -578,7 +574,7 @@ describe('the hand-laid bars reach the same idiom', () => {
   it('ListControls itself routes through the extracted component', () => {
     // If it kept its own inline copy, the two would drift the moment either changed — which is
     // exactly what "converge onto what already exists" is meant to prevent.
-    const src = readFileSync(join(SRC, 'ui/ListControls.tsx'), 'utf8')
+    const src = readSource(join(SRC, 'ui/ListControls.tsx'))
     expect(src).toMatch(/<ResultAnnouncement /)
     expect(src).toMatch(/export function ResultAnnouncement\b/)
     const body = src.slice(0, src.indexOf('export function ResultAnnouncement'))
@@ -593,7 +589,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     }
     // `files` uses the one noun that DOES restate it, so its tag must carry both overrides —
     // the announced words are then exactly the visible ones ("No matches", "1 match").
-    const files = readFileSync(join(SRC, 'pages/files/FilesSection.tsx'), 'utf8')
+    const files = readSource(join(SRC, 'pages/files/FilesSection.tsx'))
     const tag = files.match(/<ResultAnnouncement[\s\S]{0,300}?\/>/)?.[0] ?? ''
     expect(tag, 'files announces the visible noun').toContain('noun="matches"')
     expect(tag, 'with the zero sentence the screen shows').toContain('empty="No matches"')

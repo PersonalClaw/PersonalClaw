@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── An adapter over useQuery must not eat the error it was handed ───────────────────────────
 //
@@ -22,18 +23,14 @@ import { join } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 
 function walk(dir: string): string[] {
-  return readdirSync(dir).flatMap((n) => {
-    const p = join(dir, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-  })
+  return filesUnder(dir, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
 }
 
 /** Every exported `use*` hook whose body calls `useQuery`, with that body. */
 function adapterHooks(): { rel: string; name: string; body: string }[] {
   const out: { rel: string; name: string; body: string }[] = []
   for (const abs of walk(SRC)) {
-    const src = readFileSync(abs, 'utf8')
+    const src = readSource(abs)
     if (!src.includes('useQuery')) continue
     for (const m of src.matchAll(/export function (use[A-Z]\w*)\s*\([^)]*\)[^{]*\{/g)) {
       let i = m.index! + m[0].length

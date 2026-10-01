@@ -1,12 +1,9 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, sep } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
-const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-  const p = join(d, n)
-  if (statSync(p).isDirectory()) return walk(p)
-  return /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n) ? [p] : []
-})
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\./.test(n))
 
 // ── Names that shadow a real ui/ primitive ────────────────────────────────────
 //
@@ -71,7 +68,7 @@ const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
 // components that share a name.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 
 describe('UpdatesPanel uses the shared Button (was a reimplementation)', () => {
   const src = read('pages/settings/UpdatesPanel.tsx')
@@ -138,7 +135,7 @@ describe('the census is DERIVED, so a ninth shadow cannot arrive unnoticed', () 
   const namesIn = (subset: string[], re: RegExp) => {
     const found = new Map<string, string[]>()
     for (const abs of subset) {
-      for (const m of readFileSync(abs, 'utf8').matchAll(re)) {
+      for (const m of readSource(abs).matchAll(re)) {
         const n = m[1] ?? m[2]
         if (!found.has(n)) found.set(n, [])
         found.get(n)!.push(abs.slice(SRC.length + 1))

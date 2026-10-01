@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, expect, it } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── Discover's area headings skipped a rung ───────────────────────────────────────────────────────
 //
@@ -45,7 +46,7 @@ import { join } from 'node:path'
 //                        its own headings. Defensible; not this family.
 
 const SRC = join(process.cwd(), 'src')
-const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+const read = (rel: string) => readSource(join(SRC, rel))
 const strip = (s: string) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/^\s*\/\/.*$/gm, '')
 
 describe("Discover's area headings sit one rung under the page title", () => {
@@ -75,16 +76,9 @@ describe("Discover's area headings sit one rung under the page title", () => {
   it('the h3s that remain in the tree are all panel-level or markdown — the scope claim', () => {
     // The vacuity floor for "only Discover was drift". If a page-level file starts using h3 again this
     // count moves and the classification above must be re-done.
-    const walk = (dir: string, out: string[] = []): string[] => {
-      for (const name of readdirSync(dir)) {
-        const abs = join(dir, name)
-        if (statSync(abs).isDirectory()) walk(abs, out)
-        else if (/\.tsx$/.test(name) && !name.includes('.test.')) out.push(abs)
-      }
-      return out
-    }
+    const walk = (dir: string): string[] => filesUnder(dir, (name) => /\.tsx$/.test(name) && !name.includes('.test.'))
     const withH3 = walk(SRC)
-      .filter((abs) => /<h3[\s>]/.test(strip(readFileSync(abs, 'utf8'))))
+      .filter((abs) => /<h3[\s>]/.test(strip(readSource(abs))))
       .map((abs) => abs.replace(SRC + '/', ''))
     // 2026-08-19, and the classification was re-done as this comment requires:
     //   · `settings/ProvidersPanel` LEFT the list — it reported `h1 → h3` (axe heading-order) and now

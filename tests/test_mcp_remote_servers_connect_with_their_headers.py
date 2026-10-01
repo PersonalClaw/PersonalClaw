@@ -34,6 +34,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import port_guard
 import pytest
 from aiohttp.test_utils import make_mocked_request
 from mcp_owner_allowed import allow_configured, confirmed
@@ -148,6 +149,7 @@ def remote(request, tmp_path):
                 raise RuntimeError(f"the fake server did not start: {stderr.read_text()!r}")
             time.sleep(0.05)
         port = port_file.read_text(encoding="utf-8").strip()
+        port_guard.GUARD.own(int(port))  # the server this test started chose it
         served.url = f"http://127.0.0.1:{port}{'/mcp' if transport == 'http' else '/sse'}"
         yield served
     finally:

@@ -1,7 +1,8 @@
+// @module-tag tree-scan
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { relTime } from './knowledgeMeta'
+import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── "412d ago" is not a date ─────────────────────────────────────────────────────────────────────
 //
@@ -69,7 +70,7 @@ describe('an aged library item reads as a date, not a day count', () => {
 
 describe('the fix matches the sibling it was measured against', () => {
   const SRC = join(process.cwd(), 'src')
-  const read = (...p: string[]) => readFileSync(join(SRC, ...p), 'utf8')
+  const read = (...p: string[]) => readSource(join(SRC, ...p))
 
   it('routes parsing through the canonical parser rather than a fourth Date.parse', () => {
     const code = read('pages', 'knowledge', 'knowledgeMeta.ts')
@@ -83,13 +84,9 @@ describe('the fix matches the sibling it was measured against', () => {
   it('VACUITY: the formatter family is still bigger than one name', () => {
     // Guards the reasoning in the header, not the fix: if this ever drops toward one, the "do not
     // consolidate" argument above needs revisiting rather than being inherited on trust.
-    const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
-      const p = join(d, n)
-      if (statSync(p).isDirectory()) return walk(p)
-      return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
-    })
+    const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
     const found = walk(SRC).flatMap((f) => [
-      ...readFileSync(f, 'utf8').matchAll(/function (relPast|relFuture|relTime|relTimeShort|relativeTime|absTime)\s*\(/g),
+      ...readSource(f).matchAll(/function (relPast|relFuture|relTime|relTimeShort|relativeTime|absTime)\s*\(/g),
     ].map((m) => m[1]))
     expect(found.length, 'time formatters across web/src').toBeGreaterThanOrEqual(9)
     // Three naming conventions is the reason a single-name grep undercounts.

@@ -30,6 +30,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+import port_guard
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -263,7 +264,9 @@ def _start_remote(tmp_path: Path, transport: str):
             proc.kill()
             raise RuntimeError(f"the fake server did not start: {stderr.read_text()!r}")
         time.sleep(0.05)
-    base = f"http://127.0.0.1:{port_file.read_text(encoding='utf-8').strip()}"
+    port = int(port_file.read_text(encoding="utf-8").strip())
+    port_guard.GUARD.own(port)  # the server this test started chose it
+    base = f"http://127.0.0.1:{port}"
     path = "/mcp" if transport == "http" else "/sse"
     return proc, OAuthRemote(transport, base, base + path, events, control)
 

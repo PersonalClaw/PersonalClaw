@@ -1,9 +1,10 @@
+// @module-tag tree-scan
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ruleGloss, SCAN_RULE_GLOSS } from './scanFindings'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Every surface that lists a scan finding says what the rule MEANS (#2535) ─────────────────────
 //
@@ -40,12 +41,7 @@ import { ruleGloss, SCAN_RULE_GLOSS } from './scanFindings'
 
 const SRC = join(process.cwd(), 'src')
 const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n: string) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n))
 
 /** The two consumers known on the day this landed. Named, not derived — the independent floor. */
 const KNOWN = ['pages/apps/installConsent.tsx', 'pages/skills/MarketplaceDetail.tsx']
@@ -55,7 +51,7 @@ describe('the derived population of finding renderers', () => {
     // Read the two files by NAME and assert the property directly. This cannot go vacuous with the
     // walker: if `walk`/the regex break, this still fails when a consumer stops glossing.
     for (const rel of KNOWN) {
-      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const src = strip(readSource(join(SRC, rel)))
       expect(src, `${rel} must render a finding's rule`).toMatch(/\{\s*f\.rule\s*\}/)
       expect(src, `${rel} must gloss it`).toMatch(/\bruleGloss\(/)
       expect(src, `${rel} must take the gloss from the shared module`).toMatch(
@@ -66,7 +62,7 @@ describe('the derived population of finding renderers', () => {
 
   it('every file that renders a finding rule also glosses it — the census', () => {
     const renderers = walk(SRC)
-      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readFileSync(abs, 'utf8')) }))
+      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readSource(abs)) }))
       .filter(({ src }) => /\{\s*f\.rule\s*\}/.test(src) && /\.findings\b/.test(src))
     expect(renderers.map((r) => r.rel).sort(), 'the census must find both known consumers')
       .toEqual(expect.arrayContaining(KNOWN))
@@ -78,7 +74,7 @@ describe('the derived population of finding renderers', () => {
     // A local map keyed by rule name is the defect shape #2535 removes: two glosses drift, and the
     // user comparing two install surfaces has no way to know which one is current.
     const others = walk(SRC)
-      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readFileSync(abs, 'utf8')) }))
+      .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readSource(abs)) }))
       .filter(({ rel, src }) => rel !== 'lib/scanFindings.ts' && /python_exec\s*:/.test(src))
     expect(others.map((r) => r.rel), 'the gloss vocabulary lives in lib/scanFindings only').toEqual([])
   })

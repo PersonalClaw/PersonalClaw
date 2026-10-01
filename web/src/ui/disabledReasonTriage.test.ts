@@ -1,6 +1,7 @@
+// @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The 106 unexplained disabled buttons, triaged ────────────────────────────────────────
 //
@@ -68,12 +69,7 @@ import { join } from 'node:path'
 // pixels, but the count is recorded so the next pass starts from a number rather than a guess.
 
 const SRC = join(process.cwd(), 'src')
-const walk = (d: string): string[] =>
-  readdirSync(d).flatMap((n) => {
-    const p = join(d, n)
-    if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
-  })
+const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
 /** In-flight vocabulary, from the census of what these gates actually reference. */
 const BUSY = /\b(busy|saving|sending|loading|installing|retrying|pending|working|submitting|launching|testing|promoting|consolidating|regen\w*|bulkBusy|levelBusy|deleting|creating|running|uploading|importing|exporting|refreshing|syncing|starting|stopping)\b/i
@@ -106,7 +102,7 @@ const EXEMPT: Record<string, string> = {
 
 const offenders = walk(SRC).flatMap((f) => {
   const rel = f.slice(SRC.length + 1)
-  const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const src = readSource(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
   return buttonTags(src)
     .filter(({ tag }) => /\bdisabled=\{/.test(tag) && !/\bdisabledReason=/.test(tag))
     .filter(({ tag }) => {
@@ -120,10 +116,10 @@ const offenders = walk(SRC).flatMap((f) => {
 
 describe('a disabled Button that a user could unblock says how', () => {
   it('finds the population (not vacuously green)', () => {
-    const all = walk(SRC).flatMap((f) => buttonTags(readFileSync(f, 'utf8')).filter(({ tag }) => /\bdisabled=\{/.test(tag)))
+    const all = walk(SRC).flatMap((f) => buttonTags(readSource(f)).filter(({ tag }) => /\bdisabled=\{/.test(tag)))
     // 143 at the time of writing; the assertion is a floor, not a pin.
     expect(all.length, 'the matcher must find the disabled Buttons').toBeGreaterThanOrEqual(100)
-    const withReason = walk(SRC).flatMap((f) => buttonTags(readFileSync(f, 'utf8')).filter(({ tag }) => /\bdisabledReason=/.test(tag)))
+    const withReason = walk(SRC).flatMap((f) => buttonTags(readSource(f)).filter(({ tag }) => /\bdisabledReason=/.test(tag)))
     expect(withReason.length, 'and the ones that explain themselves').toBeGreaterThanOrEqual(48)
   })
 
@@ -153,12 +149,12 @@ describe('a disabled Button that a user could unblock says how', () => {
     // rails stated one rule across both tiers, so it was wrong about one of them either way.
     //
     // Pinned against the primitive so the claim cannot float again.
-    const btn = readFileSync(join(SRC, 'ui/Button.tsx'), 'utf8')
+    const btn = readSource(join(SRC, 'ui/Button.tsx'))
     expect(btn, 'soft-off must swap the handler for a refusal, not merely drop the native attribute')
       .toMatch(/onClick=\{softOff \? \(e\) => e\.preventDefault\(\) : onClick\}/)
     expect(btn, 'and soft-off is what a reason turns on').toMatch(/const softOff = off && !!disabledReason && !loading/)
     // The other half of the tier split: the RAW helper must stay native, where the claim does hold.
-    const un = readFileSync(join(SRC, 'ui/unavailable.ts'), 'utf8')
+    const un = readSource(join(SRC, 'ui/unavailable.ts'))
     expect(un, "a raw <button> has no click guard, so its busy branch keeps the native attribute")
       .toMatch(/if \(opts\?\.busy\) return \{ disabled: true, 'aria-busy': true, title: opts\.title \}/)
   })
@@ -167,7 +163,7 @@ describe('a disabled Button that a user could unblock says how', () => {
     // The 74 busy-gated sites this file used to exempt now carry `BUSY_REASON`. One constant, so they
     // cannot drift into 74 wordings — and deliberately neutral about WHOSE action is running, because a
     // shared flag usually cannot say which of its buttons is the working one.
-    const inbox = readFileSync(join(SRC, 'pages/inbox/InboxDetail.tsx'), 'utf8')
+    const inbox = readSource(join(SRC, 'pages/inbox/InboxDetail.tsx'))
     const busyTags = buttonTags(inbox).filter(({ tag }) => /disabled=\{!!busy\}/.test(tag))
     expect(busyTags.length, 'the inbox action rows are the canonical busy-only case').toBeGreaterThanOrEqual(4)
     // 🪤 `loading=` SITES ARE EXCLUDED, and the first draft of this assertion forgot to — it reported
@@ -178,7 +174,7 @@ describe('a disabled Button that a user could unblock says how', () => {
       busyTags.filter(({ tag }) => !/disabledReason=/.test(tag) && !/\bloading=/.test(tag)),
       'a busy gate owes a reason now: soft-off keeps the tab stop AND refuses the click',
     ).toEqual([])
-    const un = readFileSync(join(SRC, 'ui/unavailable.ts'), 'utf8')
+    const un = readSource(join(SRC, 'ui/unavailable.ts'))
     expect(un, 'the shared sentence lives in one place').toMatch(/export const BUSY_REASON = /)
     // 🪤 And it must NOT name whose action it is. "Another action…" is a lie on the working button;
     // "Saving…" is a lie on the four beside it.
@@ -204,7 +200,7 @@ describe('a disabled Button that a user could unblock says how', () => {
       const rel = f.slice(SRC.length + 1)
       if (rel in OVERLOADED_VOCABULARY) return []
       // Comments blanked IN PLACE (length-preserving) — this file's own prose quotes the shapes it scans.
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
         .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
         .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
         .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, p1) => p1 + ' '.repeat(m.length - p1.length))
@@ -221,13 +217,13 @@ describe('a disabled Button that a user could unblock says how', () => {
     // Anti-vacuity, set well below the 74 that now carry the shared reason: this family SHRINKS as sites
     // adopt `loading=` instead, so a floor near the measurement would red on the next correct fix.
     const withReason = walk(SRC).flatMap((f) =>
-      buttonTags(readFileSync(f, 'utf8')).filter(({ tag }) => /\bdisabledReason=\{BUSY_REASON\}/.test(tag)))
+      buttonTags(readSource(f)).filter(({ tag }) => /\bdisabledReason=\{BUSY_REASON\}/.test(tag)))
     expect(withReason.length, 'the shared reason must still be in use').toBeGreaterThanOrEqual(40)
   })
 
   it('never parks the reason on a wrapper the keyboard user cannot reach', () => {
     const parked = walk(SRC).flatMap((f) => {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       // No exemptions: `ScheduleDetail`'s dry-run tooltip, the one static action title that used to
       // sit on a wrapper, now rides the Button's own `title`, which is how any such title should.
       return [...src.matchAll(/<(span|div)[^>]{0,200}?\btitle=[^>]{0,240}>\s*\n?\s*<Button\b[^>]{0,400}?disabled=/gs)]
