@@ -9,6 +9,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import memory_writes
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import ConfigWriteError
@@ -1106,6 +1107,10 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
     if not key:
         return web.json_response({"error": "session key required"}, status=400)
     include_history = body.get("include_history", True)
+    if state.consolidator.keeps_nothing_from(key):
+        # An Incognito or Temporary chat (or one whose mode cannot be read): nothing from it is
+        # written to memory, so there is nothing to consolidate.
+        return web.json_response({"error": memory_writes.REFUSAL}, status=403)
     # Fire consolidation in background
     if key in state.consolidator._running:
         return web.json_response({"error": "consolidation already running"}, status=409)

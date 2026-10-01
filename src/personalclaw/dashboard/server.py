@@ -916,6 +916,7 @@ async def start_dashboard(
     from personalclaw.dashboard.api_version_gate import api_version_middleware
     from personalclaw.dashboard.consent_ask import consent_ask_middleware
     from personalclaw.dashboard.invalid_id_gate import invalid_id_middleware
+    from personalclaw.dashboard.memory_write_gate import memory_write_middleware
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
     # Explicit middleware ordering — self-documenting and immune to future insertions
@@ -942,6 +943,7 @@ async def start_dashboard(
         # handler made it. See consent_ask.py.
         consent_ask_middleware,
         sel_audit_middleware,
+        memory_write_middleware(),  # a session's request writes as that session (see its module)
         # Maps an unguarded request-shape fault (a non-object JSON body, a non-numeric
         # query/path param) raised by the handler to the one 400 wire envelope, so a
         # malformed request never escapes as aiohttp's bare `500 text/plain`. Sits just

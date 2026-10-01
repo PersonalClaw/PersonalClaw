@@ -1110,6 +1110,13 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
     return sessions, consolidator, conv_log
 
 
+#: Why `personalclaw consolidate` leaves a session alone.
+_KEEPS_NOTHING = (
+    "it is Incognito or Temporary, or its mode could not be read, so nothing from it is written "
+    "to memory"
+)
+
+
 async def _consolidate_cmd(args: argparse.Namespace) -> None:
     """Run skill/memory extraction over one session (or every session) on demand.
 
@@ -1136,7 +1143,9 @@ async def _consolidate_cmd(args: argparse.Namespace) -> None:
         print(f"Consolidating {len(keys)} session(s)…")
         ran = 0
         for key in keys:
-            if await consolidator.consolidate_session(key):
+            if consolidator.keeps_nothing_from(key):
+                print(f"  • {key} skipped: {_KEEPS_NOTHING}")
+            elif await consolidator.consolidate_session(key):
                 ran += 1
                 print(f"  ✓ {key}")
             else:
@@ -1148,6 +1157,9 @@ async def _consolidate_cmd(args: argparse.Namespace) -> None:
     if not conv_log.has_log(key):
         print(f"❌ No conversation history for session '{key}'.", file=sys.stderr)
         sys.exit(1)
+    if consolidator.keeps_nothing_from(key):
+        print(f"• Session '{key}' was not consolidated: {_KEEPS_NOTHING}.")
+        return
     print(f"Consolidating session '{key}'…")
     if await consolidator.consolidate_session(key):
         print("✅ Done.")

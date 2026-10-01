@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from personalclaw import memory_writes
 from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.config import loader as config_loader
 from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
@@ -118,8 +119,7 @@ class MemoryStore:
 
     def write_preferences(self, content: str) -> None:
         """Write user preferences and update FTS index."""
-        atomic_write(self._preferences_file, content)
-        self._index_file(self._preferences_file, content)
+        self._persist(self._preferences_file, content)
 
     def add_preference(self, preference: str) -> None:
         """Append a preference line, avoiding duplicates."""
@@ -144,8 +144,7 @@ class MemoryStore:
             full = content.strip() + "\n"
         else:
             full = f"# Active Projects\n\n_Updated: {date}_\n\n{content}\n"
-        atomic_write(self._projects_file, full)
-        self._index_file(self._projects_file, full)
+        self._persist(self._projects_file, full)
 
     # ── Combined read/write (used by consolidator) ──
 
@@ -167,8 +166,7 @@ class MemoryStore:
             self.write_preferences(content[:idx].strip() + "\n")
             # Write directly + index (not write_projects, which adds a header)
             projects_content = content[idx:].strip() + "\n"
-            atomic_write(self._projects_file, projects_content)
-            self._index_file(self._projects_file, projects_content)
+            self._persist(self._projects_file, projects_content)
         else:
             self.write_preferences(content)
 
@@ -193,8 +191,27 @@ class MemoryStore:
             content = f"# {date}\n"
 
         content += f"\n#### {timestamp}\n{entry.strip()}\n"
-        atomic_write(path, content)
-        self._index_file(path, content)
+        self._persist(path, content)
+
+    def forget_history_entries(self, entries: "set[str]") -> int:
+        """Remove from the daily history every entry whose text is one of ``entries``, verbatim.
+
+        Returns how many entries went. What the consolidator appended for a session that keeps
+        nothing is removed this way at start (see ``memory_writes``); an entry that is not word for
+        word one of ``entries`` is left as it is.
+        """
+        wanted = {e.strip() for e in entries if e and e.strip()}
+        if not wanted or not self._history_dir.is_dir():
+            return 0
+        removed = 0
+        for path in sorted(self._history_dir.glob("*.md")):
+            content = path.read_text(encoding="utf-8")
+            head, *blocks = content.split("\n#### ")
+            kept = [b for b in blocks if b.partition("\n")[2].strip() not in wanted]
+            if len(kept) != len(blocks):
+                removed += len(blocks) - len(kept)
+                self._persist(path, "\n#### ".join([head, *kept]))
+        return removed
 
     def _history_files_over_retention(self, keep_days: int) -> list[Path]:
         """Daily history files older than *keep_days*. Shared by the prune and its
@@ -330,6 +347,16 @@ class MemoryStore:
                 f"{_cap(history, history_cap)}"
             )
         return parts
+
+    def _persist(self, path: Path, content: str) -> None:
+        """Write one memory file and index it: every change to a memory file comes through here.
+
+        Refused inside work that derives from an Incognito or Temporary session
+        (:mod:`personalclaw.memory_writes`): such a session writes nothing to memory.
+        """
+        memory_writes.refuse_write("a memory file")
+        atomic_write(path, content)
+        self._index_file(path, content)
 
     # ── FTS5 Full-Text Search ──
 

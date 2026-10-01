@@ -925,6 +925,8 @@ the same rotation on demand, and keeps the live log if the archive cannot be wri
 
 Restricted sessions (temporary/incognito) gate memory reads/writes and lesson
 capture — enforced in the after-turn path, session listing/search, and the
-recall API. Details in
+recall API — and keep nothing in long-term memory by any path: the stores
+refuse every write made for one and embed nothing of it (`memory_writes.py`,
+failing closed on a mode it cannot read). Details in
 [chat-sessions.md](chat-sessions.md#session-model) and
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard).

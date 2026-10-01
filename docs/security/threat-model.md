@@ -504,8 +504,10 @@ Data leaving the running system:
   cycle. The watchdog and the judge read a deliverable only when it resolves inside the loop's
   workspace or its own folder (`loop.files.file_inside`: symlinks and `..` resolved), so a
   `primary_deliverable` named out of either reads nothing.
-- **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
-  gate memory reads/writes.
+- **Memory privacy** (`session_restrictions.py`, `memory_writes.py`):
+  temporary/incognito sessions gate memory reads/writes; the memory, knowledge
+  and vocabulary stores refuse every write made for one, by any path, and embed
+  nothing of it.
 
 ## OWASP Agentic Security (ASI) Top-10 mapping
 

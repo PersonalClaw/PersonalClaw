@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from personalclaw import memory_writes
 from personalclaw.embedding_providers.base import (
     EmbeddingModel,
     EmbeddingProvider,
@@ -333,7 +334,26 @@ def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
 
 
 def embed_fn_for(provider_name: str, model_id: str) -> Callable[[str], list[float] | None] | None:
-    """A sync embed fn for ``provider_name``'s ``model_id``, or None when it cannot be built."""
+    """A sync embed fn for ``provider_name``'s ``model_id``, or None when it cannot be built.
+
+    Every embedding of a single text is made through a function built here, and the function
+    embeds nothing inside work that derives from an Incognito or Temporary session: it answers
+    ``None`` (no vector) without calling the model, so nothing from such a session is embedded
+    (:mod:`personalclaw.memory_writes`). A caller already reads ``None`` as "no vector".
+    """
+    fn = _embed_fn_for(provider_name, model_id)
+    if fn is None:
+        return None
+
+    def _embed(text: str) -> list[float] | None:
+        if memory_writes.writes_refused():
+            return None
+        return fn(text)
+
+    return _embed
+
+
+def _embed_fn_for(provider_name: str, model_id: str) -> Callable[[str], list[float] | None] | None:
     if provider_name in _NATIVE_NAMES:
         provider = direct_provider(provider_name)
         return provider.get_embed_fn(model_id) if provider else None
@@ -532,7 +552,25 @@ def embed_many_fn_for(
     One bridged call per BATCH, through `run_embed_sync` so it works from sync code with or
     without a running loop (a raw `asyncio.run()` raises inside one — the ingest and chunk-backfill
     paths run there).
+
+    Like :func:`embed_fn_for`, the function embeds nothing inside work that derives from an
+    Incognito or Temporary session: every text gets ``None`` and the model is not called.
     """
+    many = _embed_many_fn_for(provider_name, model_id)
+    if many is None:
+        return None
+
+    def _embed_many(texts: list[str]) -> list[list[float] | None]:
+        if memory_writes.writes_refused():
+            return [None] * len(texts)
+        return many(texts)
+
+    return _embed_many
+
+
+def _embed_many_fn_for(
+    provider_name: str, model_id: str
+) -> Callable[[list[str]], list[list[float] | None]] | None:
     direct = direct_provider(provider_name)
     if direct is not None:
         batch = getattr(direct, "embed_batch", None)

@@ -1049,6 +1049,11 @@ class GatewayOrchestrator:
         # built at first use, after the dashboard init has registered the app's provider type.
         self.vector_memory.init()
         memory.vector_store = self.vector_memory
+        # Whatever an Incognito or Temporary chat left in memory (an earlier version consolidated
+        # them like any other) goes before anything can recall it.
+        from personalclaw.memory_writes import forget_what_restricted_sessions_left
+
+        forget_what_restricted_sessions_left(self.vector_memory, memory)
         self.vector_memory.serve_recall()
 
         skills = SkillsLoader()
@@ -5265,6 +5270,12 @@ class GatewayOrchestrator:
         from personalclaw.guardrails.ceiling import ensure_governance_boot
 
         ensure_governance_boot()
+
+        # Work handed to a worker thread carries the memory-write scope of the session it is for,
+        # as it does on the loop: a store a handler reaches from a thread refuses what it would.
+        from personalclaw.memory_writes import carry_scope_into_worker_threads
+
+        carry_scope_into_worker_threads(asyncio.get_running_loop())
 
         # ── KEYSTONE AUDIT for desktop computer use (DESKTOP-COMPUTER-USE §3 floor 1) ──
         # Resolves the out-of-band enable file ONCE, here, so the posture the whole process

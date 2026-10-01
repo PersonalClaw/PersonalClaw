@@ -48,4 +48,15 @@ describe('incognito copy matches the backend contract', () => {
     expect(src).toMatch(/writes nothing back/)
     expect(src).toMatch(/nothing from this chat is written back to it/)
   })
+
+  it('says nothing of the chat is embedded, and the backend keeps that at the stores', () => {
+    expect(readFileSync(COPY, 'utf8')).toMatch(/or sent to the embedding model/)
+    const gateway = join(__dirname, '..', '..', '..', '..', 'src', 'personalclaw')
+    const registry = readFileSync(join(gateway, 'embedding_providers', 'registry.py'), 'utf8')
+    // Both embedding builders (one text, a batch) answer no vector in a restricted chat's work.
+    expect(registry.match(/if memory_writes\.writes_refused\(\):/g)?.length).toBe(2)
+    const history = readFileSync(join(gateway, 'history.py'), 'utf8')
+    // Every consolidation pass runs as deriving from its session and is skipped for one.
+    expect(history).toMatch(/with memory_writes\.derived_from\(key, memory_mode=self\._log\.recorded_memory_mode\(key\)\):\s*\n\s*if memory_writes\.writes_refused\(\):/)
+  })
 })

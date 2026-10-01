@@ -5,9 +5,11 @@ import type { MemoryMode } from '../../lib/api'
  *
  *  Every clause is a backend fact. Reads: `blocks_reads` is `memory_mode == 'temporary'` alone
  *  (state.py), so incognito injects memory context as a persistent chat does and only its writes
- *  are suppressed. History: both modes are kept out of the chat list and its search. An incognito
- *  chat's transcript is still saved, and a reopened one is restored from it. A Temporary chat's
- *  transcript lasts only while its session runs (a reload keeps it): when the gateway stops or
+ *  are suppressed. Writes: the stores refuse every write made for an incognito or temporary chat,
+ *  by any path, and the embedding functions embed nothing for one (`memory_writes.py`), so its
+ *  memory is searched by keyword. History: both modes are kept out of the chat list and its
+ *  search. An incognito chat's transcript is still saved, and a reopened one is restored from it.
+ *  A Temporary chat's transcript lasts only while its session runs (a reload keeps it): when the gateway stops or
  *  restarts, however it stops, the transcript and the files attached to it are deleted and the
  *  chat never opens again (`dashboard/chat_forget.py`). `memoryModeNoticeIsTrue.test.ts` holds
  *  these words to those facts. */
@@ -21,7 +23,8 @@ export const MEMORY_MODES: { id: MemoryMode; label: string; hint: string }[] = [
  *  because such a chat looks like any other. */
 export const MEMORY_MODE_NOTICE: Record<Exclude<MemoryMode, 'persistent'>, string> = {
   incognito:
-    'Incognito — memory is still read for context, but nothing from this chat is written back to it. '
+    'Incognito — memory is still read for context, but nothing from this chat is written back to it '
+    + 'or sent to the embedding model. '
     + 'The chat stays out of your chat history and search, though PersonalClaw still keeps its transcript.',
   temporary:
     'Temporary — memory is neither read nor written, and this chat is forgotten when its session ends: '

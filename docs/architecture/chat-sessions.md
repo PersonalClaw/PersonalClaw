@@ -31,6 +31,44 @@ chat, channel thread, loop worker, webhook, subagent).
   listing/search, and memory recall (see
   [knowledge-memory.md](knowledge-memory.md)). Restricted sessions never write
   lessons (`after_turn_review.py` checks `session.is_restricted`).
+
+  A channel's mark is recorded in the thread's transcript metadata
+  (`ConversationLog.append`), so a restricted thread is still restricted after
+  a restart, when the in-process registry is empty.
+- **`memory_writes.py` — a restricted session keeps nothing, by any path.**
+  An incognito or temporary session writes nothing to long-term memory
+  (working, episodic or semantic records, persona notes, commitments, lessons,
+  knowledge, vocabulary, the markdown memory files), and nothing from it is
+  embedded. Enforced at the stores, not by each caller:
+  - `blocks_memory_writes(key, memory_mode=)` is the one answer. It reads the
+    mode the caller holds, the registry and the mode the transcript records, and
+    fails closed: only a mode known to be `persistent` keeps memory. A
+    transcript whose metadata cannot be read, or an unknown mode, keeps nothing.
+  - `derived_from(key)` names the session work derives from. It is set by the
+    turn (`chat_runner.run_chat`), by every consolidation pass
+    (`HistoryConsolidator._consolidate` / `consolidate_session`) and by every
+    API request that names a session in `X-Session-Key`
+    (`dashboard/memory_write_gate.py`), and it follows the work into the tasks
+    it spawns, `asyncio.to_thread`, and the gateway's default executor
+    (`ScopeCarryingExecutor`).
+  - Inside a restricted scope the memory, knowledge and vocabulary databases
+    refuse every statement that changes them (`SharedConnection.statement_check`),
+    `MemoryStore._persist` refuses the markdown files, and the embedding
+    functions (`embed_fn_for` / `embed_many_fn_for`, and a function pinned on the
+    memory store) return no vector without calling the model. Reads still work,
+    by keyword, and leave no mark (no recall counts, access stamps or volunteer
+    log). The API answers a refused write `403`.
+  - A consolidation pass over a restricted session is skipped before its
+    transcript is read or a model is called: the idle sweep's expiry, a
+    channel's end of session, `personalclaw consolidate`, the consolidate
+    request and the per-turn and idle passes all end in `_consolidate`.
+  - Every record the memory store writes is stamped with the session it came
+    from (`source_session`), and at start the gateway removes every record a
+    restricted session left (`forget_what_restricted_sessions_left`): by that
+    stamp, an episodic row's `conversation_id`, a `consolidation:<key>` source or
+    a session-scoped row's `scope_ref`, with its history events, links and
+    vectors. A record that names no session (a persona note or a lesson an
+    earlier version wrote) cannot be traced and is left for the owner to review.
 - **`chat_traces.py` / `dashboard/chat_forget.py` — what a chat keeps on disk,
   and forgetting it.** A chat leaves its transcript, its working folder
   (`sessions/<key>/`), its turn checkpoints and the files attached to it

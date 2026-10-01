@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import approval_grants, auto_denials
+from personalclaw import approval_grants, auto_denials, memory_writes
 from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.acp.types import (
@@ -2351,6 +2351,7 @@ def _settle_granted(
         logger.debug("could not settle the note for %s", tool, exc_info=True)
 
 
+@memory_writes.runs_as_its_session
 async def run_chat(
     state: DashboardState,
     session: _ChatSession,

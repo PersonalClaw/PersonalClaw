@@ -1163,6 +1163,13 @@
     ],
     "returns": "list[dict]"
    },
+   "recorded_memory_mode": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
+    ],
+    "returns": "str | None"
+   },
    "search_sessions": {
     "kind": "method",
     "params": [
@@ -1283,6 +1290,13 @@
    },
    "consolidate_session": {
     "kind": "async method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
+    ],
+    "returns": "bool"
+   },
+   "keeps_nothing_from": {
+    "kind": "method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
     ],

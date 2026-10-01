@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from typing import Any, Callable
 from uuid import uuid4
 
+from personalclaw import memory_writes
 from personalclaw.instants import backfill_zone_less, utc_now_iso
 from personalclaw.sqlite_compat import FTS5_REMEDY, connect_shared, probe, sqlite3
 
@@ -468,6 +469,10 @@ class KnowledgeStore:
         self.graph = SimpleDiGraph()
         self._init_schema()
         self._migrate()
+        # Knowledge is shown to every session, so from here on each statement passes the one
+        # memory-write check: work that derives from an Incognito or Temporary session changes
+        # nothing in it. After the schema, which no session's work writes.
+        self.db.statement_check = memory_writes.check_statement
         self._load_graph()
         # The chunk ANN index lives in THIS database file, so a chunk write and its
         # vector write travel together instead of needing a sidecar's consistency story.

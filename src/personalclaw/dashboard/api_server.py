@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from personalclaw.dashboard.memory_write_gate import memory_write_middleware
 from personalclaw.dashboard.server import (
     _precompute_telemetry,
     _register_mcp_routes,
@@ -99,6 +100,8 @@ async def start_api_server(
         return await handler(request)  # type: ignore[operator]
 
     app.middlewares.append(sel_audit_middleware)
+    # The tools' memory, knowledge and vocabulary writes for their session (see its module).
+    app.middlewares.append(memory_write_middleware())
 
     _register_mcp_routes(app)
 

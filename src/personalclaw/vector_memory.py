@@ -27,7 +27,7 @@ from uuid import uuid4
 
 from snowballstemmer import stemmer as _snowball_stemmer
 
-from personalclaw import memory_holder, memory_slots
+from personalclaw import memory_holder, memory_slots, memory_writes
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.identity import contributor_label as _contributor_label
@@ -619,6 +619,27 @@ def _migrate_v11(db: sqlite3.Connection) -> None:
                 raise
 
 
+def _migrate_v12(db: sqlite3.Connection) -> None:
+    """Record which session each record was derived from, in both record tables.
+
+    ``source_session`` is the key of the session whose work wrote the row (a chat's transcript
+    key), stamped by the store from :func:`personalclaw.memory_writes.source_session`; ``NULL``
+    for a row no session's work wrote (the owner's own edit, an import, a maintenance pass). It is
+    how everything a session left in memory can be found again by the session it came from.
+
+    No backfill: nothing in an older row says which session wrote it except where the row already
+    recorded it another way (an episodic row's ``conversation_id``, a ``consolidation:<key>``
+    source, a session-scoped row's ``scope_ref``), and those stay where they are. Idempotent (ADD
+    COLUMN guarded).
+    """
+    for table in ("semantic_memory", "episodic_memories"):
+        try:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN source_session TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
+
+
 _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]] = [
     (1, _SCHEMA_V1, None),
     (2, "", _migrate_v2),
@@ -631,6 +652,7 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]
     (9, "", _migrate_v9),
     (10, "", _migrate_v10),
     (11, "", _migrate_v11),
+    (12, "", _migrate_v12),
 ]
 
 #: The model predicate over a row, as SQL: its vector came from the model the parameter names.
@@ -1087,6 +1109,10 @@ class VectorMemoryStore(MemoryProvider):
                 )
                 self._db.commit()
                 logger.info("Applied memory schema migration v%s", ver)
+        # From here on every statement passes the one memory-write check: inside work that
+        # derives from an Incognito or Temporary session, anything that would change memory is
+        # refused. Set after the schema is in place, which no session's work writes.
+        self._db.statement_check = memory_writes.check_statement
 
         # Set file permissions (owner-only)
         try:
@@ -1798,10 +1824,15 @@ class VectorMemoryStore(MemoryProvider):
             row_weight = memory_holder.normalize_weight(
                 row_holder, weight if weight is not None else memory_holder.weight_cap(row_holder)
             )
+        # The session this write derives from, stamped like the contributor at the one statement
+        # that writes the row. Unlike the contributor it IS in the ON CONFLICT update: a fact a
+        # later session restates now comes from that session too, and a value is only ever
+        # rewritten by work that may write (memory_writes refuses the statement otherwise).
+        from_session = memory_writes.source_session() or None
         self.db.execute(
-            "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted, tier, contributor, holder, weight) "  # noqa: E501
-            "VALUES (?, ?, ?, ?, ?, ?, 0, 'semantic', ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value_json=?, confidence=?, source=?, updated_at=?, is_deleted=0, holder=?, weight=?",  # noqa: E501
+            "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted, tier, contributor, holder, weight, source_session) "  # noqa: E501
+            "VALUES (?, ?, ?, ?, ?, ?, 0, 'semantic', ?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value_json=?, confidence=?, source=?, updated_at=?, is_deleted=0, holder=?, weight=?, source_session=?",  # noqa: E501
             (
                 key,
                 value_json,
@@ -1812,12 +1843,14 @@ class VectorMemoryStore(MemoryProvider):
                 who,
                 row_holder,
                 row_weight,
+                from_session,
                 value_json,
                 confidence,
                 source,
                 now,
                 row_holder,
                 row_weight,
+                from_session,
             ),
         )
         self.db.commit()
@@ -2222,7 +2255,9 @@ class VectorMemoryStore(MemoryProvider):
         Drives the L1 manifest's ranking (most-recalled-first). Best-effort — a
         failure to record a recall must never break retrieval.
         """
-        if not keys:
+        if not keys or memory_writes.writes_refused():
+            # A session that keeps nothing reads memory without leaving a mark on it: a recall
+            # count is the heat that promotes a record, and its reads must not promote anything.
             return
         try:
             self.db.executemany(
@@ -2444,6 +2479,81 @@ class VectorMemoryStore(MemoryProvider):
         self.db.commit()
         logger.info("Undid link event %d (%s)", event_id, etype)
         return (True, f"undid {etype} on {edge['from_ref']}")
+
+    def purge_records_from(self, keeps_nothing: "Callable[[str], bool]") -> list[str]:
+        """Remove every record a session that keeps no memory left here; return each one's text.
+
+        A record belongs to the session it records: its ``source_session``, an episodic row's
+        ``conversation_id`` (consolidation and sealing set it), a ``consolidation:<key>`` source,
+        or a session-scoped record's ``scope_ref`` (working memory). ``keeps_nothing(key)`` says
+        whether that session keeps nothing. A record that records no session is left alone.
+
+        Removed outright, deleted records included, with every history event about it (they
+        carry its text, and undo would bring it back), its links and its reflex log rows, and
+        the vector index rebuilt without it. Idempotent: a second pass finds nothing. The texts
+        returned let a caller remove the same words from where else they were written (the
+        daily history holds a session's summary verbatim).
+        """
+        verdicts: dict[str, bool] = {}
+
+        def gone(key: object) -> bool:
+            if not isinstance(key, str) or not key:
+                return False
+            if key not in verdicts:
+                verdicts[key] = bool(keeps_nothing(key))
+            return verdicts[key]
+
+        texts: list[str] = []
+        episodic: list[str] = []
+        for r in self.db.execute(
+            "SELECT id, text, conversation_id, source_session FROM episodic_memories"
+        ).fetchall():
+            if gone(r["source_session"]) or gone(r["conversation_id"]):
+                episodic.append(r["id"])
+                texts.append(str(r["text"] or ""))
+        semantic: list[str] = []
+        for r in self.db.execute(
+            "SELECT key, value_json, source, source_session, scope, scope_ref FROM semantic_memory"
+        ).fetchall():
+            if (
+                gone(r["source_session"])
+                or gone(str(r["source"] or "").partition("consolidation:")[2])
+                or (r["scope"] == "session" and gone(r["scope_ref"]))
+            ):
+                semantic.append(r["key"])
+                try:
+                    value = json.loads(r["value_json"])
+                except (TypeError, ValueError):
+                    value = r["value_json"]
+                texts.append(value if isinstance(value, str) else json.dumps(value))
+        refs = episodic + semantic
+        if not refs:
+            return []
+        for start in range(0, len(refs), 400):
+            batch = refs[start : start + 400]
+            marks = ",".join("?" * len(batch))
+            for row in self.db.execute(
+                f"SELECT to_entity, COUNT(*) AS n FROM mem_links WHERE from_ref IN ({marks}) "
+                "AND to_entity IS NOT NULL GROUP BY to_entity",
+                batch,
+            ).fetchall():
+                self.db.execute(
+                    "UPDATE mem_link_stats SET inbound_count = MAX(0, inbound_count - ?) "
+                    "WHERE entity_id = ?",
+                    (row["n"], row["to_entity"]),
+                )
+            for sql in (
+                f"DELETE FROM episodic_memories WHERE id IN ({marks})",
+                f"DELETE FROM semantic_memory WHERE key IN ({marks})",
+                f"DELETE FROM memory_events WHERE memory_key IN ({marks})",
+                f"DELETE FROM mem_links WHERE from_ref IN ({marks}) OR to_ref IN ({marks})",
+                f"DELETE FROM mem_volunteer_events WHERE record_ref IN ({marks})",
+            ):
+                self.db.execute(sql, batch * sql.count(f"({marks})"))
+        self.db.commit()
+        if episodic:
+            self.rebuild_faiss_index()
+        return texts
 
     def rotate_events(self, max_rows: int = _MAX_EVENTS) -> int:
         """Delete oldest events if over limit. Returns count deleted."""
@@ -2967,8 +3077,9 @@ class VectorMemoryStore(MemoryProvider):
             # forget, with an explicit value preserved for imports.
             self.db.execute(
                 "INSERT INTO episodic_memories (id, conversation_id, text, embedding, "
-                "embedding_model, tags, importance, created_at, is_deleted, contributor) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                "embedding_model, tags, importance, created_at, is_deleted, contributor, "
+                "source_session) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
                 (
                     mem_id,
                     conversation_id,
@@ -2979,6 +3090,7 @@ class VectorMemoryStore(MemoryProvider):
                     importance,
                     now,
                     current_username() if contributor is None else contributor,
+                    memory_writes.source_session() or None,
                 ),
             )
             self.db.commit()
@@ -3116,14 +3228,7 @@ class VectorMemoryStore(MemoryProvider):
             candidates.sort(key=lambda x: x["score"], reverse=True)
             result = _mmr_rerank(candidates, limit=limit) if mmr else candidates[:limit]
 
-            # Update last_accessed_at
-            for c in result:
-                self.db.execute(
-                    "UPDATE episodic_memories SET last_accessed_at = ? WHERE id = ?",
-                    (_now_iso(), c["id"]),
-                )
-            if result:
-                self.db.commit()
+            self._note_accessed(result)
             return result
 
         # Fallback: stdlib cosine search over SQLite embeddings (no FAISS/numpy needed)
@@ -3196,14 +3301,22 @@ class VectorMemoryStore(MemoryProvider):
             return None
         candidates.sort(key=lambda x: x["score"], reverse=True)
         result = _mmr_rerank(candidates, limit=limit) if mmr else candidates[:limit]
-        for c in result:
-            self.db.execute(
-                "UPDATE episodic_memories SET last_accessed_at = ? WHERE id = ?",
-                (_now_iso(), c["id"]),
-            )
-        if result:
-            self.db.commit()
+        self._note_accessed(result)
         return result
+
+    def _note_accessed(self, rows: list[dict]) -> None:
+        """Stamp the episodic rows a search returned as read now (recency feeds ranking).
+
+        Not inside work for a session that keeps nothing: its reads leave no mark on memory.
+        """
+        if not rows or memory_writes.writes_refused():
+            return
+        now = _now_iso()
+        for row in rows:
+            self.db.execute(
+                "UPDATE episodic_memories SET last_accessed_at = ? WHERE id = ?", (now, row["id"])
+            )
+        self.db.commit()
 
     def get_episodic_list(
         self, limit: int = 50, offset: int = 0, tag_filter: list[str] | None = None
@@ -3896,7 +4009,14 @@ class VectorMemoryStore(MemoryProvider):
     def _try_embed(
         self, text: str, fn: "Callable[[str], list[float] | None] | None" = None
     ) -> list[float] | None:
-        """Embed ``text`` with ``fn`` (resolved once by the caller), else with :attr:`embed_fn`."""
+        """Embed ``text`` with ``fn`` (resolved once by the caller), else with :attr:`embed_fn`.
+
+        Nothing is embedded inside work that derives from an Incognito or Temporary session
+        (:mod:`personalclaw.memory_writes`): no vector, and the model is not called. The bound
+        model's function refuses the same way; this covers a function pinned on the store.
+        """
+        if memory_writes.writes_refused():
+            return None
         fn = fn if fn is not None else self.embed_fn
         if fn is not None:
             try:

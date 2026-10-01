@@ -173,6 +173,11 @@ class LearningGate:
                 restricted = restricted or session_restrictions.is_restricted(str(key))
             except Exception:  # pragma: no cover - registry is in-process
                 logger.debug("session_restrictions lookup failed", exc_info=True)
+        # Work for an Incognito or Temporary session (the turn, a task it started) is restricted
+        # whatever the session object says: the same answer the stores give its writes.
+        from personalclaw import memory_writes
+
+        restricted = restricted or memory_writes.writes_refused()
 
         return cls(
             enabled=bool(getattr(cfg, "enabled", True)),

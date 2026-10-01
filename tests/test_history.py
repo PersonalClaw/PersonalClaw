@@ -802,6 +802,7 @@ class TestExplicitConsolidationTriggers:
 
     def _make_consolidator(self):
         log = MagicMock()
+        log.recorded_memory_mode.return_value = None  # a transcript that records no mode
         return HistoryConsolidator(log=log, memory=MagicMock(), sessions=None)
 
     def test_consolidate_now_uses_include_history(self):

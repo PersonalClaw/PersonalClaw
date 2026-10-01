@@ -24,6 +24,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any, Callable, cast
 
+from personalclaw import memory_writes
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import MemoryProvider
 
@@ -1014,7 +1015,8 @@ class MemoryService:
                         "record_ref": ref,
                     }
                 )
-                if log_events:
+                # The log is a write: never inside an Incognito or Temporary chat's work.
+                if log_events and not memory_writes.writes_refused():
                     vs.graph.log_volunteer(
                         entity_id=cand.entity_id,
                         entity_name=cand.name,

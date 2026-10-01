@@ -433,10 +433,11 @@ item vector).
 
 ### Recall & the privacy guard
 
-- Recall handlers live in `dashboard/handlers/memory.py`. Restricted sessions
-  are enforced at the API layer: a **temporary** session blocks memory READS
-  (`_blocks_reads_session`), and both temporary and **incognito** block writes
-  (`_is_restricted_session`) — see
+- Recall handlers live in `dashboard/handlers/memory.py`. A **temporary**
+  session blocks memory READS at the API layer (`_blocks_reads_session`). Both
+  temporary and **incognito** sessions keep nothing: the memory, knowledge and
+  vocabulary stores refuse every write made in their name, by any path, and
+  nothing from them is embedded (`memory_writes.py`) — see
   [chat-sessions.md](chat-sessions.md#session-model).
 - Recalled episodic content is fenced as data:
   the recall block is labeled `[Recalled episodes — past conversation

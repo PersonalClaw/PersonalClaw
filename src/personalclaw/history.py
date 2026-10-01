@@ -132,6 +132,17 @@ def _live_restricted(session_key: str) -> bool:
         return False
 
 
+def _marked_mode(session_key: str) -> str:
+    """The restricted mode the in-process registry marks ``session_key`` with, or ``""``."""
+    from personalclaw import session_restrictions
+
+    if session_restrictions.is_temporary(session_key):
+        return "temporary"
+    if session_restrictions.is_incognito(session_key):
+        return "incognito"
+    return ""
+
+
 def _sessions_dir() -> Path:
     return config_dir() / SESSIONS_DIR_NAME
 
@@ -350,6 +361,40 @@ def _metadata_line(first: bytes) -> dict:
     if not isinstance(data, dict) or data.get("_type") != "metadata":
         return {}
     return _with_instants(data)
+
+
+def read_memory_mode(path: Path) -> str | None:
+    """The memory mode the transcript at ``path`` records, read from its first line.
+
+    ``None`` when it records none: there is no transcript, or its first line is a message rather
+    than metadata, or its metadata names no mode (a transcript written before modes existed, or by
+    a channel that has none). :data:`~personalclaw.memory_writes.UNREADABLE` when the transcript
+    is there and its first line cannot be read or parsed, which keeps nothing: a mode that cannot
+    be read is not taken for ``persistent``. Read fresh on every call; it is one line.
+    """
+    from personalclaw.memory_writes import UNREADABLE
+
+    try:
+        with open(path, "rb") as f:
+            first = f.readline()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return UNREADABLE
+    if not first.strip():
+        return None
+    try:
+        data = json.loads(first)
+    except ValueError:
+        return UNREADABLE
+    if not isinstance(data, dict):
+        return UNREADABLE
+    if data.get("_type") != "metadata":
+        return None
+    mode = data.get("memory_mode")
+    if mode is None:
+        return None
+    return mode if isinstance(mode, str) else UNREADABLE
 
 
 def _prompt_of(data: object) -> str:
@@ -583,6 +628,10 @@ class ConversationLog:
         """Return True if a conversation log file exists for *key*."""
         return self._path(key).exists()
 
+    def recorded_memory_mode(self, key: str) -> str | None:
+        """The memory mode *key*'s transcript records (see :func:`read_memory_mode`)."""
+        return read_memory_mode(self._path(key))
+
     def append(
         self,
         key: str,
@@ -611,8 +660,13 @@ class ConversationLog:
         when non-empty, so every existing session file and every non-room caller
         produces byte-identical lines; read back through :func:`speaker_of`, which
         answers ``""`` for the absent field.
+
+        A session a channel marked Incognito or Temporary in the in-process registry has that
+        mode recorded in its metadata line here, so it outlives the process: after a restart the
+        registry is empty and the transcript is what says the session keeps nothing.
         """
         path = self._path(key)
+        marked = _marked_mode(key)
         if not path.exists():
             self._dir.mkdir(parents=True, exist_ok=True)
             meta: dict = {
@@ -624,7 +678,11 @@ class ConversationLog:
                 meta["agent"] = agent
             if tab_id:
                 meta["tab_id"] = tab_id
+            if marked:
+                meta["memory_mode"] = marked
             atomic_write(path, json.dumps(meta) + "\n")
+        elif marked and read_memory_mode(path) != marked:
+            self.update_metadata(key, {"memory_mode": marked})
 
         msg: dict = {
             "role": role,
@@ -1390,13 +1448,26 @@ class HistoryConsolidator:
         it (see ``_consolidate`` ``auto_skills_eligible``). Respects the running
         guard so it never double-runs against the idle poll; ``_consolidate``
         clears the guard in its ``finally``. Returns True if it ran, False if a
-        consolidation was already in flight for this key or incident mode is on.
+        consolidation was already in flight for this key, incident mode is on, or
+        the session keeps nothing (:meth:`keeps_nothing_from`).
         """
-        if key in self._running or incident_active():
+        if key in self._running or incident_active() or self.keeps_nothing_from(key):
             return False
         self._running.add(key)
         await self._consolidate(key, include_history=True)
         return True
+
+    def keeps_nothing_from(self, key: str) -> bool:
+        """Whether session ``key`` (or the work asking) must leave nothing in long-term memory.
+
+        Incognito and Temporary sessions, and any whose mode cannot be read
+        (:func:`~personalclaw.memory_writes.blocks_memory_writes`). A pass over one never
+        runs: not its model call, not its writes, not its seal.
+        """
+        from personalclaw import memory_writes
+
+        with memory_writes.derived_from(key, memory_mode=self._log.recorded_memory_mode(key)):
+            return memory_writes.writes_refused()
 
     # The explicit session-end seam (E11): an idle-expire / channel-end / CLI
     # trigger calls this. Distinct from the fire-and-forget poll so call sites
@@ -1410,7 +1481,12 @@ class HistoryConsolidator:
         the heat gate (run on the maintenance cadence) is the only path to global.
 
         A consolidation no model answered is owed (``owed_chores``), and the seal waits for it:
-        the session is sealed once its messages are consolidated, never before."""
+        the session is sealed once its messages are consolidated, never before.
+
+        An Incognito or Temporary session ends with nothing kept: no pass, no seal."""
+        if self.keeps_nothing_from(key):
+            logger.info("Session %s ended; it keeps no memory, so nothing from it is kept", key)
+            return False
         ran = await self.consolidate_now(key)
         if self._owe_if_unanswered(key, ending=True):
             return ran
@@ -1419,13 +1495,16 @@ class HistoryConsolidator:
 
     def _seal(self, key: str) -> None:
         """Seal the ended session *key* and mirror memory to the vault
-        (:meth:`consolidate_session`)."""
-        try:
-            swept = self._svc.seal_session(key)
-            if swept:
-                logger.info("Sealed session %s — swept %d unpromoted record(s)", key, swept)
-        except Exception:
-            logger.debug("session seal failed for %s", key, exc_info=True)
+        (:meth:`consolidate_session`). The seal is the session's own work."""
+        from personalclaw import memory_writes
+
+        with memory_writes.derived_from(key, memory_mode=self._log.recorded_memory_mode(key)):
+            try:
+                swept = self._svc.seal_session(key)
+                if swept:
+                    logger.info("Sealed session %s — swept %d unpromoted record(s)", key, swept)
+            except Exception:
+                logger.debug("session seal failed for %s", key, exc_info=True)
         # Mirror memory → markdown vault at the natural post-seal boundary (the
         # mem-fs-mirror freshness trigger). No-op when the vault is disabled;
         # never raises (best-effort, guarded internally).
@@ -1508,16 +1587,28 @@ class HistoryConsolidator:
         the vector store, and the lesson store. If another process holds the
         lock we skip (clearing the in-memory guard the caller set), since a
         concurrent consolidation of the same key is redundant, not queued work.
+
+        Every trigger of a pass ends here, and the pass runs as deriving from ``key``: a session
+        that keeps nothing (Incognito, Temporary, or a mode that cannot be read) is skipped
+        before its transcript is read or a model is called, and the stores refuse every write
+        made in its name (:mod:`personalclaw.memory_writes`).
         """
-        with single_flight(f"consolidate:{key}") as acquired:
-            if not acquired:
-                logger.info(
-                    "Consolidation for %s already running in another process — skipping",
-                    key,
-                )
+        from personalclaw import memory_writes
+
+        with memory_writes.derived_from(key, memory_mode=self._log.recorded_memory_mode(key)):
+            if memory_writes.writes_refused():
+                logger.info("Not consolidating %s: it keeps no memory", key)
                 self._running.discard(key)
                 return
-            await self._consolidate_locked(key, include_history=include_history)
+            with single_flight(f"consolidate:{key}") as acquired:
+                if not acquired:
+                    logger.info(
+                        "Consolidation for %s already running in another process — skipping",
+                        key,
+                    )
+                    self._running.discard(key)
+                    return
+                await self._consolidate_locked(key, include_history=include_history)
 
     async def _consolidate_locked(self, key: str, include_history: bool = True) -> None:
         """Run LLM consolidation for a session (holding the single-flight lock)."""

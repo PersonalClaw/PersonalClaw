@@ -28,6 +28,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 
+from personalclaw import memory_writes
 from personalclaw.lexicon.phonetics import phonetic_keys
 from personalclaw.lexicon.store import LexiconStore
 
@@ -451,8 +452,12 @@ def current_lexicon() -> LexiconService:
     """The Lexicon as a transcription (or the Vocabulary list) consults it: its graph terms
     first brought up to date with the knowledge graph. Cheap when nothing changed (one small
     read of the graph's fingerprint). Best-effort: a sync that fails is logged and leaves the
-    terms as they were — a Lexicon problem must never stop a transcription."""
+    terms as they were — a Lexicon problem must never stop a transcription. Inside an
+    Incognito or Temporary chat's work the store takes no writes, so the sync waits for the next
+    consult outside one."""
     svc = get_lexicon_service()
+    if memory_writes.writes_refused():
+        return svc
     try:
         svc.sync_from_graph()
     except Exception:

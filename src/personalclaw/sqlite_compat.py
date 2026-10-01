@@ -27,7 +27,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Any, Callable
 
 try:  # the newer bundled build (FTS5 + JSON1) when the wheel is installed
     import pysqlite3 as sqlite3  # type: ignore[import-not-found]
@@ -119,14 +119,17 @@ class _SharedCursor(sqlite3.Cursor):
 
     def execute(self, sql: str, parameters: Any = (), /) -> "_SharedCursor":
         with self.connection._serial:
+            self.connection._check(sql)
             return super().execute(sql, parameters)
 
     def executemany(self, sql: str, seq_of_parameters: Any, /) -> "_SharedCursor":
         with self.connection._serial:
+            self.connection._check(sql)
             return super().executemany(sql, seq_of_parameters)
 
     def executescript(self, sql_script: str, /) -> "_SharedCursor":
         with self.connection._serial:
+            self.connection._check(sql_script, script=True)
             return super().executescript(sql_script)
 
     def fetchone(self) -> Any:
@@ -169,11 +172,21 @@ class SharedConnection(sqlite3.Connection):
     fetch the driver makes inside its own call does not wait on itself.
 
     Open one with :func:`connect_shared`, or pass ``factory=SharedConnection`` to ``connect``.
+
+    ``statement_check``, when a store sets one, runs before every statement, with ``script=True``
+    for a script; it refuses a statement by raising. A store whose rows another session may be
+    shown (memory, knowledge, vocabulary) sets :func:`personalclaw.memory_writes.check_statement`.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._serial = threading.RLock()
+        self.statement_check: Callable[..., None] | None = None
+
+    def _check(self, sql: str, *, script: bool = False) -> None:
+        check = self.statement_check
+        if check is not None:
+            check(sql, script=script)
 
     def cursor(self, factory: Any = _SharedCursor) -> Any:
         return super().cursor(factory)

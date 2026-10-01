@@ -24,6 +24,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
+from personalclaw import memory_writes
 from personalclaw.sqlite_compat import connect_shared, sqlite3
 
 
@@ -66,6 +67,9 @@ class LexiconStore:
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.row_factory = sqlite3.Row
         self._init_schema()
+        # The learned vocabulary shapes every later session, so from here on each statement
+        # passes the one memory-write check (see KnowledgeStore).
+        self.db.statement_check = memory_writes.check_statement
 
     def _init_schema(self) -> None:
         self.db.executescript("""

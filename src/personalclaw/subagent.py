@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
-from personalclaw import approval_grants
+from personalclaw import approval_grants, memory_writes
 from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
@@ -1399,6 +1399,7 @@ class SubagentManager:
             may_change=tuple(may_change),
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
+        memory_writes.hand_on(agent_work_id(agent_id), parent_session_key)  # keeps what it keeps
 
         # --- Fan-out stop (C1.4 breaker / C1.5 run budget / kill-fan-out): a stopped
         # fan-out refuses further spawns with the recorded TYPED reason. ---

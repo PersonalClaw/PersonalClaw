@@ -36,6 +36,7 @@ def _consolidator(msg_count: int = _CONSOLIDATION_THRESHOLD) -> HistoryConsolida
     log = MagicMock()
     log._read_messages = MagicMock(return_value=[{}] * msg_count)
     log.unconsolidated_count = MagicMock(return_value=msg_count)
+    log.recorded_memory_mode = MagicMock(return_value=None)  # a transcript that records no mode
     return HistoryConsolidator(log=log, memory=MagicMock(), sessions=None, history_idle_secs=0)
 
 
