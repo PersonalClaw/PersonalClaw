@@ -188,6 +188,10 @@ class EngineServices:
     #: gateway wires its trigger delivery here, since the fire that started the run only said it
     #: launched; every test and CLI path leaves it None.
     report_to_trigger: Any = None
+    #: `(run, *, status, summary) -> None` — hands a run's end to the triggers waiting on it
+    #: (`run_finish.chain_after_run`). The gateway wires its trigger dispatch here; every test and
+    #: CLI path leaves it None.
+    run_ended: Any = None
     #: `() -> float` — the wall clock, as a seam. The controller's scheduling decisions
     #: (`_wake_due_nodes` resolving a parked node, and the `now` a `wait` computes its deadline
     #: against) read through this rather than `time.time()` directly, so a replay can substitute
@@ -2217,6 +2221,7 @@ class RunController:
                 run_finish.revise_project_overview(self)
             run_finish.capture_run_end(self)
             run_finish.report_to_its_trigger(self, status)
+            run_finish.chain_after_run(self, status)
         self._publish("workflow_run_update", {"status": status.value, "error": error})
         if status in TERMINAL_RUN_STATUSES:
             await run_finish.drain_overlap_queue(self)

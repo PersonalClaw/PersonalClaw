@@ -3010,7 +3010,7 @@ export interface LifecycleEventInfo { event: string; label: string; desc: string
 export interface AppSourceEvent { event: string; source_event: string }
 export interface AppSourceInfo { app: string; label: string; events: AppSourceEvent[] }
 // `event` is the `$variables` a data-event trigger's action can use (`event_triggers.EVENT_VARS`).
-export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[]; app_sources: AppSourceInfo[]; event: string[] }
+export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[]; app_sources: AppSourceInfo[]; event: string[]; run_completed?: string[] }
 // One manual store/schedule-trigger fire (POST /api/triggers/{schedule|store}:{id}/run).
 // `ok` is whether the action ACTUALLY RAN — not whether the request was understood. A trigger whose
 // action cannot be resolved answers 200 with `ok: false` and the reason in `result`, because a
@@ -8452,6 +8452,13 @@ export const api = {
     max_fires?: number; debounce_secs?: number; action: { provider: string; config: Record<string, unknown> }
   }) => withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger; warning?: string }>('/api/triggers',
     { trigger_type: 'event', ...body, ...(c ? { confirm: true } : {}) })),
+  // Create a trigger that runs after a run ends: on any run of a workflow (`source_def`) or on one
+  // run going now (`source_run`). The gateway refuses a run that has ended or does not exist.
+  createRunCompleted: (body: {
+    name: string; source_def?: string; source_run?: string
+    action: { provider: string; config: Record<string, unknown> }
+  }) => withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
+    { trigger_type: 'run_completed', ...body, ...(c ? { confirm: true } : {}) })),
   // schedule trigger helpers (id is the bare schedule raw id — the shared
   // Schedule* components mutate by bare id, which the helpers re-namespace).
   schedules: () => get<{ triggers: Trigger[]; server_tz: string }>('/api/triggers?type=schedule')

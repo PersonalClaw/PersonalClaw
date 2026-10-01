@@ -371,6 +371,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # The host's own tool grants (`set_tool_grants`): which tools this run may use at all,
         # asked in the same place and for the same reason as the task mode.
         self._tool_grants: Callable[..., str] | None = None
+        # Which tools this run's model is shown at all (`set_tool_offer`); None shows every one.
+        self._tool_offer: Callable[..., str] | None = None
         # tool name → what the tool DECLARES a call does (its RiskLevel; SAFE is the read-only
         # declaration), and the tools that declare they build a Build-mode deliverable or only
         # file a proposal, and the arguments a call to a tool may carry and still only tell the
@@ -679,10 +681,13 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         for g in self._groups:
             if g.name in self._active_groups or g.name in self._unofferable:
                 continue
-            sample = ", ".join(g.tools[:4])
-            more = f", +{len(g.tools) - 4} more" if len(g.tools) > 4 else ""
+            tools = [t for t in g.tools if self._offered(t)]
+            if not tools:
+                continue
+            sample = ", ".join(tools[:4])
+            more = f", +{len(tools) - 4} more" if len(tools) > 4 else ""
             lines.append(
-                f"- {g.name} ({_n_tools(len(g.tools))}, INACTIVE): {sample}{more} "
+                f"- {g.name} ({_n_tools(len(tools))}, INACTIVE): {sample}{more} "
                 f'— reset_tools({{"{g.name}": true}}) to activate'
             )
         return lines
@@ -1394,6 +1399,11 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         grouped = self._active_groups is not None
         pool = self._active_defs if grouped else self._tool_defs
+        # A host that narrowed what this run is shown (`set_tool_offer`) narrows the pool before
+        # either reduction, so neither the tool block nor the catalog names a tool left out.
+        narrowed = self._tool_offer is not None
+        if narrowed:
+            pool = [d for d in pool if self._offered(getattr(d, "name", "") or "")]
         stub_lines = self._group_stub_lines()
         # A group change from last turn announces itself here, at the boundary
         # where the rewritten tool block actually reaches the model.
@@ -1405,7 +1415,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # this turn. No-op until the pool exceeds K; fails open to the full pool.
         # On a worker thread: ranking embeds the request, and the gateway's loop serves every
         # other request while that call is out.
-        restrict = {getattr(d, "name", "") for d in pool} if grouped else None
+        restrict = {getattr(d, "name", "") for d in pool} if grouped or narrowed else None
         selected_defs = (
             await asyncio.to_thread(
                 self._tool_retriever.select,
@@ -1430,6 +1440,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 if self._groups:
                     surfaced_defs.append(self._reset_tools_def)
                 tools_kwarg = tool_definitions_to_openai_schema(surfaced_defs) or None
+            elif narrowed:
+                tools_kwarg = tool_definitions_to_openai_schema(pool) or None
             else:
                 tools_kwarg = self._tool_schema or None
         else:
@@ -1445,9 +1457,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 surfaced.append(self._reset_tools_def)
             tools_kwarg = tool_definitions_to_openai_schema(surfaced) or None
             exclude = {getattr(d, "name", "") for d in surfaced}
-            if grouped:
-                # Only ACTIVE-group tools belong in the deferred-schema catalog;
-                # inactive groups are represented by their stub lines instead.
+            if grouped or narrowed:
+                # Only ACTIVE-group tools belong in the deferred-schema catalog (inactive groups
+                # are represented by their stub lines instead), and only the ones it is shown.
                 exclude |= {n for n in self._group_of_name if n not in (restrict or set())}
             catalog = self._tool_retriever.catalog(exclude=exclude)
             notes.append(
@@ -2058,6 +2070,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 str(args.get("query", "")),
                 int(args.get("limit", 20) or 20),
             )
+            hits = [h for h in hits if self._offered(str(h.get("name", "")))]
             if not hits:
                 return "No tools matched. Try broader terms; all tools remain callable by name."
             # tool_search deliberately ranks the FULL catalog — including tools in
@@ -2085,7 +2098,14 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             import json as _json
 
             want = str(args.get("tool_name", "")).strip()
-            d = next((t for t in self._tool_defs if getattr(t, "name", "") == want), None)
+            d = next(
+                (
+                    t
+                    for t in self._tool_defs
+                    if getattr(t, "name", "") == want and self._offered(want)
+                ),
+                None,
+            )
             if d is None:
                 return (
                     f"No tool named {want!r}. Use tool_search(query) to find the right name "
@@ -2592,6 +2612,35 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         """The check :meth:`set_tool_grants` set, or ``None`` when this run is granted every tool:
         what a host that holds one turn to other grants restores when the turn ends."""
         return self._tool_grants
+
+    def set_tool_offer(self, offer: Callable[..., str] | None) -> None:
+        """Set which tools this run's model is shown: ``offer(tool, declared, proposes=...)`` is
+        why a tool is not, ``""`` if it is. A tool it is not shown is left out of the tool block,
+        the deferred catalog, ``tool_search`` and ``tool_schema``, so the model is never handed a
+        tool the run would refuse.
+
+        Only what is SHOWN: a call to a tool by a name the model has from elsewhere is still
+        decided by :meth:`set_tool_grants`, which a host that narrows the offer holds too.
+        """
+        self._tool_offer = offer
+
+    @property
+    def tool_offer(self) -> Callable[..., str] | None:
+        """The check :meth:`set_tool_offer` set, or ``None`` when every tool is shown."""
+        return self._tool_offer
+
+    def _offered(self, tool_name: str) -> bool:
+        """Whether this run's model is shown *tool_name* (:meth:`set_tool_offer`). The runtime's
+        own meta-tools always are; an offer that cannot be read shows nothing else."""
+        if self._tool_offer is None or tool_name in self._META_TOOLS:
+            return True
+        try:
+            return not self._tool_offer(
+                tool_name, self._declared(tool_name), proposes=tool_name in self._tool_proposes
+            )
+        except Exception:  # noqa: BLE001 - an offer that cannot be read shows nothing
+            logger.warning("native: tool offer could not be read; not showing %s", tool_name)
+            return False
 
     @property
     def agent_model(self) -> str:

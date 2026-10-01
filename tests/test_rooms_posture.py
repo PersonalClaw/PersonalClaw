@@ -637,7 +637,7 @@ def test_a_refused_tool_is_legible_on_the_transcript_not_a_silent_drop(enabled):
     note = notes[0]
     assert note["speaker"] == "critic", "the refused member is machine-readable"
     assert "critic" in note["content"] and "Bash" in note["content"], note["content"]
-    assert "write-class" in note["content"], "and WHY, in the grant algebra's own words"
+    assert "its tools are read-only" in note["content"], "and WHY, as its members row says it"
 
     rendered = turn.render_transcript(store.require_room(room.id), store.read_messages(room.id))
     assert "[room]: critic was refused Bash" in rendered, rendered

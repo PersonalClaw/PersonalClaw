@@ -100,8 +100,8 @@ def _gateway(monkeypatch, provider: _Blocks) -> tuple[GatewayOrchestrator, _Note
     orch.dashboard_state = notes  # type: ignore[assignment]
     chained: list = []
 
-    async def _chain(trigger: Any, payload: Any) -> None:
-        chained.append(trigger.id)
+    async def _chain(*, source_trigger: str = "", **_: Any) -> None:
+        chained.append(source_trigger)
 
     orch._fire_chained_triggers = _chain  # type: ignore[method-assign]
     return orch, notes, chained

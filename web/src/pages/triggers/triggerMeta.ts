@@ -13,11 +13,15 @@ import { epochSeconds } from '../../lib/epoch'
 //    A callback (an outside system calling back to a session the agent registered) is listed, and
 //    allowed, here too, but never created here: the agent registers it (`hook_register`). ──
 export type TriggerKind = 'schedule' | 'lifecycle' | 'event' | 'store' | 'callback'
-export interface TriggerKindMeta { key: TriggerKind; label: string; icon: LucideIcon; tone: string; hint: string }
+/** What the create form offers: the listed kinds it makes, and `run_completed`, a store row the
+ *  list shows under its store kind ("When a run finishes"). */
+export type CreatableTriggerKind = 'schedule' | 'lifecycle' | 'event' | 'run_completed'
+export interface TriggerKindMeta { key: CreatableTriggerKind; label: string; icon: LucideIcon; tone: string; hint: string }
 export const TRIGGER_KINDS: TriggerKindMeta[] = [
   { key: 'schedule', label: 'Schedule', icon: CalendarClock, tone: 'var(--color-info)', hint: 'Fires on a clock — every N, on a cron, or once at a set time.' },
   { key: 'lifecycle', label: 'Lifecycle event', icon: Anchor, tone: 'var(--color-primary)', hint: 'Fires on an agent-loop event — a tool call, a prompt, session end, …' },
   { key: 'event', label: 'Data event', icon: Inbox, tone: 'var(--color-secondary)', hint: 'Fires on an inbox message, a memory write, or an app-contributed event matching a pattern you choose.' },
+  { key: 'run_completed', label: 'Run finishes', icon: Workflow, tone: 'var(--color-primary)', hint: 'Fires when a workflow run ends — one run going now, or any run of a workflow — and tells its action how the run ended and what it produced.' },
 ]
 
 // ── Data-event patterns. One row per wired `event_triggers.EVENT_PATTERNS` member,

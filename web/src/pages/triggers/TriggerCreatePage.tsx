@@ -18,18 +18,21 @@ import { epochSeconds } from '../../lib/epoch'
 import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
 import { humanizeKey } from './DryRunResult'
 import { TRIGGER_PRESETS, findTriggerPreset, prefillDraft } from './triggerPresets'
+import {
+  RunCompletedSource, emptyRunCompleted, runCompletedReason, runCompletedSource, type RunCompletedDraft,
+} from './RunCompletedSource'
 import { schemaMeta, schemaProps } from '../tools/schema'
 import {
-  TRIGGER_KINDS, type TriggerKind, useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher,
+  TRIGGER_KINDS, type CreatableTriggerKind, useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher,
   eventDormancyReason, eventIsDormant, eventIsAgentScoped, EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon,
   eventSourceLabel, appEventOptions, lifecycleEventOptions, actionIsSendCapable,
 } from './triggerMeta'
 
 /** Create flow for a Trigger, with a CLEAN split between the Trigger mechanism
  *  and the Action:
- *    • Section 1 — TRIGGER: pick the type (schedule | lifecycle | event) and
- *      configure the mechanism (schedule WHEN+delivery, lifecycle event+matcher,
- *      or a data-event pattern + its one matcher field).
+ *    • Section 1 — TRIGGER: pick the type (schedule | lifecycle | event | run finishes)
+ *      and configure the mechanism (schedule WHEN+delivery, lifecycle event+matcher,
+ *      a data-event pattern + its one matcher field, or the run/workflow it runs after).
  *    • Section 2 — ACTION: the SAME action picker + schema-driven config for any
  *      trigger; only the $variables offered differ, derived from the trigger.
  *  Every kind POSTs to the unified /api/triggers facade (any action on any kind).
@@ -39,8 +42,8 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   onBack: () => void; onCreated: () => void
 } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const [kindRaw, setKindRaw] = useQueryParam(query, setQuery, 'kind', 'schedule', { replace: true })
-  const kind = (TRIGGER_KINDS.some((k) => k.key === kindRaw) ? kindRaw : 'schedule') as TriggerKind
-  const setKind = (k: TriggerKind) => setKindRaw(k)
+  const kind = (TRIGGER_KINDS.some((k) => k.key === kindRaw) ? kindRaw : 'schedule') as CreatableTriggerKind
+  const setKind = (k: CreatableTriggerKind) => setKindRaw(k)
   // Shared with TriggersListPage under the same key, so the action-provider
   // dropdown is instant on reopen. persist:true — providers rarely change.
   // 🔴 `.catch(() => [])` made a failed read look like an install with no action providers, and the
@@ -80,6 +83,8 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   const [patternRaw, setPatternRaw] = useQueryParam(query, setQuery, 'pattern', 'InboxMessage', { replace: true })
   const pattern = (EVENT_PATTERN_META.some((p) => p.pattern === patternRaw) ? patternRaw : 'InboxMessage') as EventPattern
   const [eventMatcher, setEventMatcher] = useState('')
+  // run-completed trigger mechanism: the run, or the workflow, it runs after.
+  const [runAfter, setRunAfter] = useState<RunCompletedDraft>(emptyRunCompleted)
   const pm = eventPatternMeta(pattern)
   const SourceIcon = eventSourceIcon(pm.source)
 
@@ -102,7 +107,8 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   // The variables available to the ACTION depend on the configured TRIGGER.
   // A data event's are `event_triggers.EVENT_VARS`, served in the same catalog — `[]` here left the
   // form offering no variables for an action that receives `$key`, `$value`, `$source`, ….
-  const actionVars = kind === 'schedule' ? (catalog?.schedule ?? []) : kind === 'lifecycle' ? em.vars : (catalog?.event ?? [])
+  const actionVars = kind === 'schedule' ? (catalog?.schedule ?? []) : kind === 'lifecycle' ? em.vars
+    : kind === 'run_completed' ? (catalog?.run_completed ?? []) : (catalog?.event ?? [])
   // Draft-by-default surfacing: a send-capable action delivers OUT to a channel, so an
   // inbox trigger that auto-replies is worth flagging before the user commits. Keyed to the
   // provider, not to a per-provider capability flag (none exists in core yet — see EIAT-3).
@@ -169,8 +175,11 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   // from, so the disabled button and the red field always agree — and it only ever refuses what
   // croniter refuses, so it cannot strand a user on a working expression.
   const scheduleReason = kind === 'schedule' ? scheduleDraftInvalidReason(sched) : null
+  // A "Run finishes" trigger waits on the run or the workflow picked; with neither it waits on
+  // nothing, which the gateway refuses.
+  const runReason = kind === 'run_completed' ? runCompletedReason(runAfter) : ''
   const canSave = !!name.trim() && !!provider && requiredConfigMet && eventMatcherMet
-    && scheduleWhenOk && !scheduleReason
+    && scheduleWhenOk && !scheduleReason && !runReason
   // Why "Create trigger" is unavailable: the FIRST requirement outstanding, in the order the form
   // presents them, rather than a recital of all of them. Said beside the button, where it can be
   // read, and as the button's own reason. Empty while saving, where the label reads "Creating…".
@@ -180,6 +189,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
       // named first — and this reason is the field's own sentence, so the button and the red cron
       // field never say two different things.
       : scheduleReason ? scheduleReason
+        : runReason ? runReason
         // The providers read comes FIRST among the action-shaped reasons: telling someone to pick
         // from a list that failed to load asks for something they cannot do.
         : providersErr && providers.length === 0 ? "Couldn't load the action providers — retry above"
@@ -222,6 +232,10 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
         await api.createSchedule(body)
       } else if (kind === 'lifecycle') {
         await api.createHook({ name: name.trim(), event, matcher: matcher.trim(), provider, provider_config: coerced.config })
+      } else if (kind === 'run_completed') {
+        const source = runCompletedSource(runAfter)
+        if (!source) { setErr(runReason); return }
+        await api.createRunCompleted({ name: name.trim(), ...source, action: { provider, config: coerced.config } })
       } else {
         // Data event — carry only the pattern's ONE wired matcher field; the backend derives the
         // source from the pattern. An empty matcher is fine except where matcherRequired gated it.
@@ -268,7 +282,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
           {/* ── SECTION 1 · TRIGGER ── */}
           <SectionHeader icon={Zap} title="Trigger" subtitle="When this fires" />
           <Field label="Trigger type" hint={TRIGGER_KINDS.find((k) => k.key === kind)?.hint}>
-            <Segmented options={TRIGGER_KINDS.map((k) => ({ key: k.key, label: k.label, tone: k.tone, icon: k.icon }))} value={kind} onChange={(v) => setKind(v as TriggerKind)} />
+            <Segmented options={TRIGGER_KINDS.map((k) => ({ key: k.key, label: k.label, tone: k.tone, icon: k.icon }))} value={kind} onChange={(v) => setKind(v as CreatableTriggerKind)} />
           </Field>
           {kind === 'schedule' ? (
             // The cadence floor governs an action that can call a model, and the action is picked
@@ -276,6 +290,8 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
             // a provider the catalog does not classify, keeps the floor.
             <ScheduleForm draft={sched} onChange={setSched} triggerOnly
               invokesModel={providers.find((p) => p.name === provider)?.invokes_model !== false} />
+          ) : kind === 'run_completed' ? (
+            <RunCompletedSource draft={runAfter} onChange={setRunAfter} />
           ) : kind === 'lifecycle' ? (
             <>
               <Field label="Fires on" hint={em.desc}>

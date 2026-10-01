@@ -732,8 +732,9 @@ class AgentConfig:
         default_factory=list,
         metadata=_meta(
             "SubAgent CWD Allowed Roots",
-            "Folders besides the workspace that subagent_run's cwd parameter may name. Values "
-            "support ~ expansion. Empty by default: a subagent works in the workspace only.",
+            "Folders besides the workspace that subagent_run's cwd parameter may name, and that "
+            "a room member's file tools reach. Values support ~ expansion. Empty by default: a "
+            "subagent works in the workspace only.",
         ),
     )
     log_level: str = field(

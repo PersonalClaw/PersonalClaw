@@ -164,11 +164,26 @@ async def member_session(
         raise RoomError("room_archived", f"Room {room_id!r} is archived.")
 
     key = session_key(room_id, member_name)
-    provider, is_new, resumed = await sessions.get_or_create(key, agent=member.name)
+    provider, is_new, resumed = await sessions.get_or_create(
+        key, agent=member.name, extra_tool_roots=owner_allowed_folders() or None
+    )
     try:
         yield HeldSession(provider, remembers=bool(resumed or not is_new))
     finally:
         sessions.release(key)
+
+
+def owner_allowed_folders() -> list[str]:
+    """The folders besides the workspace the owner allowed agents to work in (Settings → Agent
+    defaults → Allowed working directories), as real paths: where a member's file tools reach,
+    as a subagent may work there. What a member may DO there is still its own tier's: a read-only
+    member reads them, and its tier refuses every change."""
+    import os
+
+    from personalclaw.config.loader import AppConfig
+
+    roots = AppConfig.load().agent.subagent_cwd_allowed_roots
+    return [os.path.realpath(os.path.expanduser(str(r))) for r in roots if str(r).strip()]
 
 
 # ── who was named ──────────────────────────────────────────────────────────
@@ -546,7 +561,10 @@ async def run_member_turn(
     room's INTERACTIVE-by-construction base (the prefix tuples that make it so are untouched
     here), narrowed by what this member declared, defaulting to the READ-ONLY tier when it
     declared nothing. That is what lets a read-only critic and a tool-bearing executor share
-    one room: they differ in ``tool_grants``, never in who approves.
+    one room: they differ in ``tool_grants``, never in who approves. The member's own runtime is
+    held to that tier for the turn (:func:`~personalclaw.rooms.posture.member_tools_held`), so it
+    is shown only the tools its tier allows, and its file tools reach the folders the owner allowed
+    agents to work in (:func:`owner_allowed_folders`) as well as its workspace.
 
     *approver* is the human's channel. With none bound every tool call is refused rather than
     waved through, and each refusal is written onto the transcript so the human can see which
@@ -613,7 +631,10 @@ async def run_member_turn(
         if isinstance(substitution, ModelSubstitution):
             _note(room_id, member_name, substitution.notice())
         feed, since_last_turn = member_feed(messages, read_from, member_name, remembers=remembers)
-        with posture.member_spend_scope(key, profile):
+        with (
+            posture.member_spend_scope(key, profile),
+            posture.member_tools_held(provider, member, profile, record=refusals.append),
+        ):
             # Inside the member's spend scope because fitting the feed to its window may itself
             # be a model call (the fold's summary), and that call is this member's to pay for.
             prompt = await member_context(

@@ -85,14 +85,18 @@ def _list_tools() -> list[dict[str, Any]]:
             "description": (
                 "Create an automation from ONE natural-language message. Use for 'when a file "
                 "in ~/notes changes', 'every weekday at 9', 'at 5pm', 'when my nightly run "
-                "finishes'. The `when` phrase is routed to the right trigger kind "
-                "(file/clock/web_watch/…) — a time runs it once at that time, in the owner's "
-                "timezone, a cadence becomes a repeating schedule, an event becomes an event "
-                "trigger. Give `when` + `name` + `message` (what the automation should do). "
+                "finishes', 'when the research run 9c2c10ab finishes'. The `when` phrase is routed "
+                "to the right trigger kind (file/clock/web_watch/run_completed/…) — a time runs it "
+                "once at that time, in the owner's timezone, a cadence becomes a repeating "
+                "schedule, an event becomes an event trigger, and a run finishing runs it when "
+                "that run ends: name the run in `when` by its id, or by the automation's or the "
+                "workflow's name. Give `when` + `name` + `message` (what the automation should "
+                "do). "
                 "When it is to send the owner words they gave ('message me …: …', 'remind me …: "
                 "…'), give them in `say` instead of `message`: they go out as written, and no "
-                "agent runs. When the owner named the chat channel ('on Telegram'), give it in "
-                "`via`: it sends there and on no other channel. "
+                "agent runs. When the owner named the chat channel ('on Telegram'), "
+                "give it in `via`: the words in `say`, or what the `message` task produced, go out "
+                "there and on no other channel; a chat on it goes in `to`. "
                 "For a button or anything the owner runs on demand ('make me a button that "
                 "runs …', 'something I can run when I want'), give `kind` 'manual' and no `when`: "
                 "it runs only when the owner runs it, and the chat shows it with a Run now button. "
@@ -126,12 +130,21 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "via": {
                         "type": "string",
-                        "description": "The chat channel to send `say` on, by its name (e.g. "
-                        "'telegram'), when the owner named one. Only that channel sends it: when "
-                        "it cannot, the words go to the owner's Inbox saying why, never to another "
-                        "channel. A name that is not a chat channel set up here is refused with "
-                        "the ones that are, so you can ask which. Omit it to reach the owner on "
-                        "the first connected channel that knows them.",
+                        "description": "The chat channel to send `say`, or the `message` "
+                        "task's result, on, by its name (e.g. 'telegram'), when the owner named "
+                        "one. Only that channel sends it: when it cannot, it goes to the owner's "
+                        "Inbox saying why, never to another channel. A name that is not a chat "
+                        "channel set up "
+                        "here is refused with the ones that are, so you can ask which. Omit it to "
+                        "reach the owner on the first connected channel that knows them.",
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "A chat on the `via` channel to send it to, by that "
+                        "channel's own id for it, when the owner named one. Omit it for the "
+                        "owner's direct messages there. An id "
+                        "the channel does not take is refused in the channel's words, so you can "
+                        "ask the owner for it.",
                     },
                     "kind": {
                         "type": "string",
@@ -440,6 +453,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             message=str(args.get("message") or ""),
             say=str(args.get("say") or ""),
             via=via,
+            to=str(args.get("to") or ""),
             chat_channels=_chat_channels() if via.strip() else None,
             created_by="agent",
             changes=[str(c) for c in args.get("changes") or [] if isinstance(c, str)],

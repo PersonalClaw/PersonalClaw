@@ -241,6 +241,44 @@ def test_a_finished_run_routes_to_run_completed():
     assert route("when my nightly run finishes").kind == "run_completed"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "when the research run 9c2c10ab finishes",
+        "once run 9c2c10ab is done",
+        "after the research run 9c2c10ab",
+    ],
+)
+def test_a_run_named_by_its_id_routes_to_run_completed_WAITING_ON_THAT_RUN(text):
+    """The run's id sits between "run" and "finishes", and a phrase list refused it: "I could not
+    tell what should trigger this". It is read as the run to wait on."""
+    routed = route(text)
+    assert routed.ok, routed.error
+    assert (routed.kind, routed.spec) == ("run_completed", {"source_run": "9c2c10ab"})
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        ("when my nightly run finishes", "nightly"),
+        ("when the deep-research workflow run finishes", "deep-research"),
+        ("when that research run is done", "research"),
+        ("once the backup job completes", "backup"),
+    ],
+)
+def test_a_run_named_by_its_name_routes_with_the_NAME_to_resolve(text, name):
+    """What "nightly" names (a trigger, a workflow, a run in flight) is the store's to say, so the
+    route carries the name and no guessed spec."""
+    routed = route(text)
+    assert (routed.kind, routed.spec, routed.run_name) == ("run_completed", {}, name)
+
+
+def test_a_run_with_no_name_routes_with_NOTHING_to_wait_on():
+    """ "When that run finishes" says which run only in the conversation; the tool asks."""
+    routed = route("when the run finishes")
+    assert (routed.kind, routed.spec, routed.run_name) == ("run_completed", {}, "")
+
+
 def test_idle_routes_to_idle():
     assert route("when I have been idle for an hour").kind == "idle"
 

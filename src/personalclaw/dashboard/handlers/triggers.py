@@ -55,6 +55,9 @@ _LIFECYCLE = "lifecycle"
 #: The `trigger_type` the create form sends for a data-event trigger. Not a namespace: the row lands
 #: in the trigger store as `kind: "event"` and is addressed as `store:<id>` like every other kind.
 _EVENT = "event"
+#: The `trigger_type` the create form sends for a trigger that runs after a run ends: a
+#: `kind: "run_completed"` row in the trigger store.
+_RUN_COMPLETED = "run_completed"
 _STORE = "store"  # unified TriggerStore kinds with no legacy backend (event/file/web_watch/idle/…)
 #: A callback the agent registered with ``hook_register`` (`trigger_callbacks`).
 _CALLBACK = trigger_callbacks.KIND
@@ -527,8 +530,8 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
     """GET /api/triggers/variables — the ``$variables`` each trigger kind exposes.
 
     The single server-sourced catalog both UIs read instead of mirroring it:
-    ``{schedule: [...], event: [...], lifecycle: [{event, label, desc, vars, blocking?}, ...],
-    app_sources: [{app, label, events: [{event, source_event}]}]}``.
+    ``{schedule: [...], event: [...], run_completed: [...], lifecycle: [{event, label, desc, vars,
+    blocking?}, ...], app_sources: [{app, label, events: [{event, source_event}]}]}``.
     Lifecycle entries come from :data:`personalclaw.hooks.LIFECYCLE_EVENT_CATALOG`
     (co-located with the payload assembly that produces those vars); schedule vars
     from :data:`personalclaw.schedule.SCHEDULE_VARS`; data-event vars from
@@ -543,6 +546,7 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
     from personalclaw.event_triggers import EVENT_VARS
     from personalclaw.hooks import LIFECYCLE_EVENT_CATALOG
     from personalclaw.schedule import SCHEDULE_VARS
+    from personalclaw.triggers.chain import RUN_COMPLETED_VARS
     from personalclaw.triggers.events import AGENT_SCOPED_EVENTS, DORMANCY_NOTES, DORMANT_EVENTS
 
     lifecycle = [
@@ -571,6 +575,7 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
         {
             "schedule": list(SCHEDULE_VARS),
             "event": list(EVENT_VARS),
+            "run_completed": list(RUN_COMPLETED_VARS),
             "lifecycle": lifecycle,
             "app_sources": _app_source_catalog(),
         }
@@ -855,8 +860,8 @@ def _grant_for_create(body: dict, *, trigger_type: str) -> Any:
     if trigger_type == _LIFECYCLE:
         candidate: Any = ScriptHook(name=name)
         _apply_hook_action(candidate, action)
-    elif trigger_type in (_SCHEDULE, _EVENT):
-        kind = "clock" if trigger_type == _SCHEDULE else "event"
+    elif trigger_type in (_SCHEDULE, _EVENT, _RUN_COMPLETED):
+        kind = "clock" if trigger_type == _SCHEDULE else trigger_type
         candidate = Trigger(id="", name=name, kind=kind, workflow={"inline": action})
     else:
         return None
@@ -896,9 +901,10 @@ async def api_trigger_create(request: web.Request) -> web.Response:
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
     trigger_type = str(body.get("trigger_type") or "").strip().lower()
-    if trigger_type not in (_LIFECYCLE, _SCHEDULE, _EVENT):
+    if trigger_type not in (_LIFECYCLE, _SCHEDULE, _EVENT, _RUN_COMPLETED):
         return web.json_response(
-            {"error": "trigger_type must be 'schedule', 'lifecycle', or 'event'"}, status=400
+            {"error": "trigger_type must be 'schedule', 'lifecycle', 'event' or 'run_completed'"},
+            status=400,
         )
     problem = await _action_problem(body.get("action"))
     if problem:
@@ -907,7 +913,71 @@ async def api_trigger_create(request: web.Request) -> web.Response:
         return await _create_lifecycle(state, body, request)
     if trigger_type == _SCHEDULE:
         return await _create_schedule(state, body, request)
+    if trigger_type == _RUN_COMPLETED:
+        return _create_run_completed(state, body, request)
     return _create_event(state, body, request)
+
+
+def _create_run_completed(state: DashboardState, body: dict, request: web.Request) -> web.Response:
+    """Create a trigger that runs after a run ends: on any run of a workflow (``source_def``) or
+    on one run going now (``source_run``). Written through `tools.create`, as the chat's
+    `automation_create` makes one, so what it waits on is checked the same way: a run that has
+    already ended, or one that does not exist, is refused before anything is saved."""
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.schedule import normalize_action
+    from personalclaw.triggers import tools as _tools
+    from personalclaw.triggers.ownership import owner_username
+
+    name = str(body.get("name") or "").strip()
+    if not name:
+        return json_error("invalid_request", message="name required", status=400)
+    spec = {
+        key: str(body.get(key) or "").strip()
+        for key in ("source_def", "source_run")
+        if str(body.get(key) or "").strip()
+    }
+    if not spec:
+        return json_error(
+            "invalid_request", message="Pick the workflow or the run it runs after.", status=400
+        )
+    try:
+        action = normalize_action(body.get("action"))
+    except ValueError as exc:
+        return json_error("invalid_request", message=str(exc), status=400)
+    asked = _creation_consent(request, body, trigger_type=_RUN_COMPLETED)
+    if asked is not None:
+        return asked
+    store = _trigger_store()
+    result = _tools.create(
+        store,
+        name=name,
+        kind="run_completed",
+        spec=spec,
+        workflow={"inline": action},
+        created_by="user",
+        # `_creation_consent` asked the owner first, so `confirm: true` is their yes to it.
+        owner_consented=confirm_granted(body),
+    )
+    if not result.ok:
+        return json_error(
+            "invalid_request", message=result.text.removeprefix("Error: "), status=400
+        )
+    raw_id = str((result.data.get("trigger") or {}).get("id") or "")
+    made = result.data.get("trigger") or {}
+    _audit_created_grant(request, raw_id, (made.get("capabilities") or {}).get("providers"))
+    state.push_refresh("crons")
+    _sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="trigger.create",
+        outcome="success",
+        source="dashboard",
+        resources=f"trigger:run_completed:{raw_id}",
+    )
+    row = store.get(raw_id)
+    return web.json_response(
+        {"ok": True, "trigger": _serialize_store(row, owner=owner_username()) if row else {}},
+        status=201,
+    )
 
 
 def _creation_consent(

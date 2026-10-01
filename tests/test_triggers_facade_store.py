@@ -945,7 +945,7 @@ def test_every_store_row_is_listed_exactly_once(home, state):
         "file": {"paths": ["~/notes"]},
         "web_watch": {"url": "https://example.com"},
         "idle": {},
-        "run_completed": {},
+        "run_completed": {"source_def": "nightly-backup"},
         "view": {},
         "webhook": {"token_ref": "hook-token"},
         "manual": {},

@@ -275,7 +275,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "max_items": 20,
         "security": SecurityControl(
             loosens_when_added(),
-            "Subagents may be started with their working directory inside the added folders.",
+            "Subagents may be started with their working directory inside the added folders, "
+            "and a room member's file tools reach them.",
         ),
     },
     # Resource ceilings for agent-influenced child

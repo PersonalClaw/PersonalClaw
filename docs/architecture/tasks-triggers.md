@@ -198,6 +198,28 @@ stands in. Before, the chat could only make an agent task, and nothing could
 name the channel a message for the owner went out on: it went to the first
 connected channel by name, Discord ahead of Telegram.
 
+**A task's result goes to the channel the owner named, too.** With `message`
+instead of `say`, `via` (and `to`, a chat on that channel by the channel's own
+id) sets the trigger's `delivery` to `channel:<name>[:<chat>]`: the route the
+Triggers page's Notify channel writes, delivered by the same code. Without `to`
+it is the owner's direct messages there; an id the channel does not take is
+refused in the channel's own words before anything is saved.
+
+**"When a run finishes" waits on the work, not its start.** A `run_completed`
+trigger waits on one workflow run (`source_run`), any run of a workflow
+(`source_def`) or another trigger's work (`source_trigger`). A workflow run's
+end fires the ones waiting on it, its workflow and the trigger that started it
+(`EngineServices.run_ended`), and an agent task's end the ones waiting on its
+trigger; a fire whose action only started its work chains when that work ends.
+The chained action is told which run ended, how, and what it said it produced
+(fenced, like every value from outside). `automation_create` reads the run from
+`when` ("when the research run 9c2c10ab finishes", "when my nightly run
+finishes"): an id is the run, a name the one run going under that workflow, the
+one trigger by that name, or the workflow, and anything it cannot place is
+refused with the runs going now. The Triggers page makes one as **Run
+finishes**. A chain carried through a workflow run keeps its depth and path on
+the run, so a loop through a run is refused as a loop.
+
 **A Send message action is checked where it is saved.** The Triggers page's
 create and edit (`_action_problem`) and the chat's and CLI's `automation_create`
 and `automation_update` (`tools.unsendable_message_refusal`) ask

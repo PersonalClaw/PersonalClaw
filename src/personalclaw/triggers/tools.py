@@ -571,6 +571,106 @@ def _origin_harness_for(store: Any) -> str:
         return ""
 
 
+def _workflow_run(run_id: str) -> Any:
+    """The workflow run *run_id*, or None. Reads no store that does not exist yet: asking about a
+    run must not make the run store."""
+    from personalclaw.workflows import store as runs
+
+    return runs.get(run_id) if run_id and runs.def_names() else None
+
+
+def _running_workflow_runs() -> list[Any]:
+    """The workflow runs still going, oldest first; none before any workflow has run."""
+    from personalclaw.workflows import store as runs
+
+    return sorted(runs.active_runs(), key=lambda r: r.created_at) if runs.def_names() else []
+
+
+def _running_now() -> str:
+    """The workflow runs still going, by id and workflow, for a refusal to offer."""
+    running = _running_workflow_runs()
+    if not running:
+        return "No workflow run is going now."
+    return "Going now: " + ", ".join(f"{r.id} ({r.workflow_name})" for r in running) + "."
+
+
+#: The spec keys naming what a `run_completed` trigger waits on (`models.SPEC_KEYS`).
+_RUN_SOURCE_KEYS: tuple[str, ...] = ("source_run", "source_trigger", "source_def")
+
+
+def _run_source(store: Any, spec: dict[str, Any], run_name: str) -> tuple[dict[str, Any], str, str]:
+    """``(spec, because, error)`` for a `run_completed` automation: what it waits on, checked.
+
+    A run's id must be a run that is still going; a trigger's id a trigger here. A name the request
+    gave the run ("the research run", "my nightly run") is resolved in that order to the ONE run
+    going whose workflow it names, the one trigger it names, or the one workflow that has run under
+    it. Anything else is refused with the runs going now, never saved: a `run_completed` row with
+    nothing to wait on matches nothing and would sit listed and silent forever.
+    """
+    named = [key for key in _RUN_SOURCE_KEYS if str(spec.get(key) or "").strip()]
+    if len(named) > 1:
+        return spec, "", f"Give one thing for it to run after, not {' and '.join(named)}."
+    if named == ["source_run"]:
+        run_id = str(spec["source_run"]).strip()
+        run = _workflow_run(run_id)
+        if run is None:
+            return spec, "", f"There is no workflow run {run_id}. {_running_now()}"
+        if run.is_terminal:
+            from personalclaw.workflows.models import run_ending
+
+            return (
+                spec,
+                "",
+                (
+                    f"The workflow run {run_id} ({run.workflow_name}) {run_ending(run.status)} "
+                    "already, so there is nothing left to wait for."
+                ),
+            )
+        return spec, f"runs when the workflow run {run_id} ({run.workflow_name}) ends", ""
+    if named == ["source_trigger"]:
+        trigger_id = str(spec["source_trigger"]).strip()
+        if store.get(trigger_id) is None:
+            return spec, "", f"There is no automation {trigger_id} for it to run after."
+        return spec, f"runs each time the work of the automation {trigger_id} ends", ""
+    if named == ["source_def"]:
+        return spec, f"runs each time a run of the workflow {spec['source_def']} ends", ""
+
+    wanted = run_name.strip().casefold()
+    if wanted:
+        runs = [r for r in _running_workflow_runs() if wanted in r.workflow_name.casefold()]
+        if len(runs) == 1:
+            return _run_source(store, {**spec, "source_run": runs[0].id}, "")
+        triggers = [
+            t
+            for t in store.list_triggers()
+            if t.kind != "run_completed"
+            and wanted in (t.id.casefold(), t.id.casefold().partition(":")[2], t.name.casefold())
+        ]
+        if len(triggers) == 1:
+            return _run_source(store, {**spec, "source_trigger": triggers[0].id}, "")
+        from personalclaw.workflows import store as wf_runs
+
+        defs = [d for d in wf_runs.def_names() if wanted == d.casefold()]
+        if len(defs) == 1:
+            return _run_source(store, {**spec, "source_def": defs[0]}, "")
+        return (
+            spec,
+            "",
+            (
+                f"I could not tell which run “{run_name}” is. Give the run's id, the automation's "
+                f"name or the workflow's name. {_running_now()}"
+            ),
+        )
+    return (
+        spec,
+        "",
+        (
+            "Which run should it wait for? Give the run's id, the automation's name or the "
+            f"workflow's name. {_running_now()}"
+        ),
+    )
+
+
 def create(
     store: Any,
     *,
@@ -590,6 +690,7 @@ def create(
     recurrence: str = "",
     say: str = "",
     via: str = "",
+    to: str = "",
     chat_channels: Any = None,
     changes: list[str] | None = None,
 ) -> AutomationToolResult:
@@ -617,11 +718,13 @@ def create(
     an agent's automation came with its own permission to run.
 
     `say` is words for the owner, sent as written each time it fires by a `send-message` action (no
-    agent runs), and `via` the chat channel the owner named for them: the action sends there and
-    on no other channel. A name that is not a chat channel set up here is refused with the ones
-    that are, so the owner can be asked which (`channel_delivery.named_chat_channel`, over
-    `chat_channels`, the registered ones when None). "Message me on Telegram" used to be an agent
-    task that could reach the owner only on the first connected channel by name.
+    agent runs), and `via` the chat channel the owner named: the words go out there, and a task's
+    result in `message` is delivered there (the trigger's `delivery`, the route the Triggers page's
+    Notify channel sets), on no other channel. `to` is a chat on that channel, by the channel's own
+    id; without it, the owner's direct messages there. A name that is not a chat channel set up
+    here is refused with the ones that are, so the owner can be asked which
+    (`channel_delivery.named_chat_channel`, over `chat_channels`, the registered ones when None),
+    and an id the channel does not take is refused in the channel's own words.
     """
     from personalclaw.triggers import grants
     from personalclaw.triggers import screen as _screen
@@ -638,16 +741,19 @@ def create(
             "`message`, not both.",
         )
     via_key = shown_via = ""
+    chat = (to or "").strip()
+    if chat and not (via or "").strip():
+        return AutomationToolResult(
+            False,
+            "Error: `to` is a chat on the channel `via` names; give `via` too.",
+            {"to": chat},
+        )
     if (via or "").strip():
-        if not words:
-            return AutomationToolResult(
-                False,
-                "Error: `via` sends the words given in `say`, as written; a task in `message` "
-                "reports its result in PersonalClaw, not on a chat channel. Give the words in "
-                "`say`, or leave out `via`.",
-                {"via": via},
-            )
-        from personalclaw.channel_delivery import channel_shown_as, named_chat_channel
+        from personalclaw.channel_delivery import (
+            channel_shown_as,
+            named_chat_channel,
+            target_problem,
+        )
 
         via_key, problem = named_chat_channel(via, transports=chat_channels)
         if problem:
@@ -655,6 +761,13 @@ def create(
                 False,
                 f"Error: nothing was saved: {problem} Ask the owner which one to use.",
                 {"via": via},
+            )
+        problem = target_problem(via_key, chat, transports=chat_channels) if chat else ""
+        if problem:
+            return AutomationToolResult(
+                False,
+                f"Error: nothing was saved: {problem} Ask the owner for it.",
+                {"via": via, "to": chat},
             )
         shown_via = str(
             getattr((chat_channels or {}).get(via_key), "display_name", "")
@@ -664,6 +777,7 @@ def create(
     resolved_spec = dict(spec or {})
     resolved_gates = dict(gates or {})
     because = ""
+    run_name = ""
     if kind:
         resolved_kind = kind
     else:
@@ -674,6 +788,7 @@ def create(
             return AutomationToolResult(False, f"Error: {routed.error}", {"when": when})
         resolved_kind, because = routed.kind, routed.because
         resolved_spec = {**routed.spec, **resolved_spec}
+        run_name = routed.run_name
         if routed.cadence and "expr" not in resolved_spec and "at" not in resolved_spec:
             timing = _read_when(
                 routed.cadence,
@@ -686,6 +801,12 @@ def create(
                 )
             resolved_spec = {**timing.spec, **resolved_spec}
             because = timing.because
+
+    if resolved_kind == "run_completed":
+        resolved_spec, waits_on, problem = _run_source(store, resolved_spec, run_name)
+        if problem:
+            return AutomationToolResult(False, f"Error: {problem}", {"spec": resolved_spec})
+        because = waits_on
 
     if resolved_kind == "event":
         # An event spec names its pattern; the source follows from it, and an author who names one
@@ -736,6 +857,8 @@ def create(
         config: dict[str, Any] = {"text_template": re.sub(r"\$(?=[A-Za-z_{$])", "$$", words)}
         if via_key:
             config["via"] = via_key
+        if chat:
+            config["channel"] = chat
         workflow = {"provider": "send-message", "config": config}
     if message and not workflow:
         # `changes` are the files the job changes (`write_scope`): its agent may change those and
@@ -796,6 +919,12 @@ def create(
         gates=resolved_gates,
         workflow=dict(workflow),
     )
+    if via_key and not words:
+        # A task's result goes where the owner named, as a trigger made on the Triggers page with
+        # a Notify channel does: the same route, read by the same delivery.
+        from personalclaw.triggers.delivery import CHANNEL_ROUTE_PREFIX
+
+        trigger.delivery = f"{CHANNEL_ROUTE_PREFIX}{via_key}" + (f":{chat}" if chat else "")
     # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3), when the owner said yes to
     # this action. A read-only action gets an empty block either way: the fence permits those
     # without one, and a written-out grant would imply an opt-in nobody had to make.
@@ -855,13 +984,15 @@ def create(
             "  it runs only when you run it: Run now on the Triggers page, or the Run now button "
             "shown with this reply in the chat"
         )
+    where = (
+        f"on {shown_via}" + (f" to {chat}" if chat else "") + ", and on no other channel"
+        if via_key
+        else "on the first connected chat channel that knows you, else in PersonalClaw"
+    )
     if words:
-        where = (
-            f"on {shown_via}, and on no other channel"
-            if via_key
-            else "on the first connected chat channel that knows you, else in PersonalClaw"
-        )
         lines.append(f"  sends you “{redact_for_display(words)}” {where}")
+    elif via_key:
+        lines.append(f"  sends you what it produced {where}")
     reach = grants.what_its_agent_may_do(saved)
     if reach:
         lines.append(f"  when it runs: {reach}")

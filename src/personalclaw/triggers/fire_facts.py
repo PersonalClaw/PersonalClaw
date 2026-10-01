@@ -150,6 +150,27 @@ def _web_watch_facts(trigger_id: str, payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _run_facts(event: dict[str, Any]) -> list[str]:
+    """What a fire after a workflow run is told: which run ended, how, and what it said it produced
+    (from outside, so fenced with the rest)."""
+    from personalclaw.workflows.models import RunStatus, run_ending
+
+    run_id = str(event.get("source_run_id") or "")
+    workflow = str(event.get("source_workflow") or "")
+    try:
+        ending = run_ending(RunStatus(str(event.get("run_status") or "")))
+    except ValueError:
+        ending = "ended"
+    named = f"The workflow run {run_id}" + (f" ({workflow})" if workflow else "")
+    lines = [
+        f"{named} {ending}; this automation runs after it. Its page: #/workflows/runs/{run_id}"
+    ]
+    summary = str(event.get("summary") or "").strip()
+    if summary:
+        lines += ["What the run said it produced:", summary]
+    return lines
+
+
 async def describe(trigger: Any, payload: dict[str, Any] | None) -> FireFacts:
     """What starting *trigger*'s action with *payload* tells its run (see the module docstring).
 
@@ -170,6 +191,8 @@ async def describe(trigger: Any, payload: dict[str, Any] | None) -> FireFacts:
             lines = _web_watch_facts(trigger_id, event)
         elif kind == "webhook" and str(event.get("body") or "").strip():
             lines = ["A webhook delivered this:", str(event["body"])]
+        elif kind == "run_completed" and event.get("source_run_id"):
+            lines = _run_facts(event)
         elif kind == "run_completed" and event.get("source_trigger_id"):
             lines = [
                 f"The automation {event['source_trigger_id']} finished; this one runs after it."

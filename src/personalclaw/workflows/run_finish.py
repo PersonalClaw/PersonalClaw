@@ -1,10 +1,10 @@
 """The best-effort consequences of a run's terminal write.
 
 `RunController._finish` is the single terminal writer and must never raise, so everything
-here is fully guarded: a failure costs a lesson, an overview line, a trigger's report or the next
-queued run's start — never this run's recorded outcome. Run-end learning capture, the project
-overview revision, the report to the trigger that started the run and the `on_overlap: queue`
-drain.
+here is fully guarded: a failure costs a lesson, an overview line, a trigger's report, a chain or
+the next queued run's start — never this run's recorded outcome. Run-end learning capture, the
+project overview revision, the report to the trigger that started the run, the triggers waiting on
+the run and the `on_overlap: queue` drain.
 """
 
 from __future__ import annotations
@@ -127,6 +127,25 @@ def report_to_its_trigger(ctl: RunController, status: RunStatus) -> None:
         report(origin.trigger_id, error=error, summary=_completion_summary(ctl), run_id=ctl.run.id)
     except Exception:
         logger.debug("run %s: could not report to its trigger", ctl.run.id, exc_info=True)
+
+
+def chain_after_run(ctl: RunController, status: RunStatus) -> None:
+    """Hand the run's end to the triggers waiting on it: on this run, on any run of its workflow,
+    or on the trigger that started it (`triggers.chain`). "When the research run finishes, post the
+    summary" is one of those, and it runs now, not when the run started.
+
+    Every ending but the two its owner chose (`_UNREPORTED_ENDINGS`): a run that failed has
+    finished too, and what waits on it is told how it ended. Inert unless the gateway wired its
+    dispatch into `EngineServices.run_ended`; fully guarded, so a failure costs the chain, never
+    the run's terminal status.
+    """
+    ended = getattr(ctl.services, "run_ended", None)
+    if ended is None or status in _UNREPORTED_ENDINGS:
+        return
+    try:
+        ended(ctl.run, status=status.value, summary=_completion_summary(ctl))
+    except Exception:
+        logger.debug("run %s: could not chain what waits on it", ctl.run.id, exc_info=True)
 
 
 def revise_project_overview(ctl: RunController) -> None:

@@ -1284,6 +1284,8 @@ MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
             FieldSpec("message", str, max_len=MAX_MEDIUM_STRING),
             FieldSpec("say", str, max_len=MAX_MEDIUM_STRING),
             FieldSpec("via", str, max_len=64, pattern=CHAT_CHANNEL_NAME_RE),
+            # A chat on that channel, by the channel's own id: the channel checks its shape.
+            FieldSpec("to", str, max_len=256),
             FieldSpec("kind", str, max_len=32, pattern=re.compile(r"^[a-z_]*$")),
             FieldSpec("spec", dict),
             FieldSpec("changes", list, item_type=str, item_max_len=1024, max_items=10),

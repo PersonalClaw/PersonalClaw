@@ -106,21 +106,35 @@ _CHANGE_CUES = (
     "gets a",
 )
 
-#: Cues for the kinds that need no extraction. Ordered most-specific first: a `run_completed`
-#: request ("when my nightly run finishes") also contains "when", so a generic event cue must not
-#: claim it. Each entry is (kind, cues).
+#: "When a run finishes", however the run is named. A run, a workflow, a job or an automation, then
+#: within the same clause a verb of ending: "when my nightly run finishes", "when the research run
+#: 9c2c10ab is done", "once the deep-research workflow run completes". Matched as a pattern rather
+#: than as phrases because the run's own name or id sits between the noun and the verb, and a
+#: phrase list ("run finishes") refused every request that named which run.
+_RUN_DONE_RE = re.compile(
+    r"\b(?:run|workflow|job|automation)\b[^.,;!?]{0,60}?"
+    r"\b(?:finish(?:es|ed)?|complete[sd]?|ends|ended|is done|is over)\b"
+    r"|\bafter (?:the|my|that|this|our) (?:[^.,;!?]{0,40}? )?(?:run|workflow)\b"
+)
+
+#: A workflow run's id as the Workflows page shows it: eight hex digits, at least one of them a
+#: digit, so a hex-looking word ("acceded") is not read as one.
+_RUN_ID_RE = re.compile(r"\b(?=[0-9a-f]*[0-9])[0-9a-f]{8}\b")
+
+#: The name a request gives the run it waits on: "my NIGHTLY run", "the DEEP-RESEARCH workflow
+#: run". What the name refers to (a trigger, a workflow, a run in flight) is `tools`'s to resolve:
+#: this module reads no store.
+_RUN_NAME_RE = re.compile(
+    r"\b(?:the|my|that|this|our)\s+([\w-]+)\s+(?:workflow\s+)?(?:run|workflow|job|automation)\b"
+)
+
+#: Words that sit where a run's name would and are not one: "the next run", "my last workflow".
+_NOT_A_RUN_NAME = frozenset({"next", "last", "current", "latest", "first", "previous", "same"})
+
+#: Cues for the kinds that need no extraction. Ordered most-specific first. Each entry is
+#: (kind, cues). `run_completed` is matched before these (`_RUN_DONE_RE`), because its requests
+#: also contain "when" and a generic event cue must not claim them.
 _KIND_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (
-        "run_completed",
-        (
-            "run finishes",
-            "run completes",
-            "workflow finishes",
-            "after the run",
-            "run is done",
-            "workflow completes",
-        ),
-    ),
     (
         "web_watch",
         ("web page", "webpage", "website", "url ", "http://", "https://", "page changes"),
@@ -201,6 +215,9 @@ class Route:
     #: "announced to the user on creation", and "routed to file because you named ~/notes" is what
     #: makes a wrong route correctable instead of mysterious.
     because: str = ""
+    #: Set when the kind is `run_completed` and the request named the run it waits on without its
+    #: id ("my nightly run"): the name, for `tools` to resolve to a run, a trigger or a workflow.
+    run_name: str = ""
 
     @property
     def ok(self) -> bool:
@@ -213,6 +230,7 @@ class Route:
             "error": self.error,
             "cadence": self.cadence,
             "because": self.because,
+            "run_name": self.run_name,
             "ok": self.ok,
         }
 
@@ -248,6 +266,21 @@ def _url_in(text: str) -> str:
 
 def _has(text: str, cues: tuple[str, ...]) -> bool:
     return any(cue in text for cue in cues)
+
+
+def _run_completed_route(low: str) -> Route:
+    """The `run_completed` route for a request that reads as "when a run finishes": the run's id
+    when it gave one (`source_run`), else the name it gave the run (`run_name`), else neither, which
+    `tools` refuses by asking which run."""
+    because = "routed to the run_completed kind because you asked for when a run finishes"
+    run_id = _RUN_ID_RE.search(low)
+    if run_id:
+        return Route(kind="run_completed", spec={"source_run": run_id.group(0)}, because=because)
+    for match in _RUN_NAME_RE.finditer(low):
+        name = match.group(1)
+        if name not in _NOT_A_RUN_NAME:
+            return Route(kind="run_completed", because=because, run_name=name)
+    return Route(kind="run_completed", because=because)
 
 
 def route(when: str) -> Route:
@@ -300,6 +333,10 @@ def route(when: str) -> Route:
                 "(e.g. ~/notes or ~/notes/**/*.md) — I will not guess a root."
             )
         )
+
+    # ── a run finishing, before the generic event cues claim its "when" ──
+    if _RUN_DONE_RE.search(low):
+        return _run_completed_route(low)
 
     # ── the kinds that need no extraction, most-specific first ──
     for kind, cues in _KIND_CUES:

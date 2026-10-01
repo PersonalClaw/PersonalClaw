@@ -243,7 +243,9 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
             "agent_scope",
         }
     ),
-    "run_completed": frozenset({"source_trigger", "source_def"}),
+    # What it runs after: a trigger's run (`source_trigger`), any run of a workflow (`source_def`),
+    # or one workflow run (`source_run`, its id).
+    "run_completed": frozenset({"source_trigger", "source_def", "source_run"}),
     # `message`/`max_cycles`/`stop_sentinel_path` are the absorbed autonudge loop's payload
     # — the same argument as the `interval` clock kind below: the store
     # must be able to carry what the migration puts in it, or every migrated nudge loop would

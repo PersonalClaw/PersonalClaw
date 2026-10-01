@@ -1641,6 +1641,9 @@ class GatewayOrchestrator:
         # Whether the action itself is under way, and whether a stop cancelled this fire at all:
         # only an action a stop interrupted is a run cut off, and no chain starts while it stops.
         running = cut_off = False
+        # Whether the action only STARTED its work (an agent task, a workflow run): the chain then
+        # waits for that work to end, where `_chain_after_work` fires it.
+        started_only = False
         try:
             # 🔴 The MODE DEFAULT the legacy dispatcher applied (300s for a command, 30s
             # otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
@@ -1731,6 +1734,9 @@ class GatewayOrchestrator:
             # reports on the trigger's route when it ends (`_report_to_its_trigger`), and a
             # parked one asks in the Inbox. One that had nothing to do says nothing at all.
             from personalclaw.triggers import delivery as _delivery
+            from personalclaw.triggers.chain import waits_for_its_work
+
+            started_only = fired_ok and waits_for_its_work(result)
 
             if not (fired_ok and _delivery.says_nothing_now(result)):
                 from personalclaw.schedule_history import failure_for_result, summary_for_result
@@ -1795,9 +1801,14 @@ class GatewayOrchestrator:
             # happened. After the refresh, so a slow chain never delays the view update.
             #
             # Not after a run a stop cut off: it did not complete, and a `run_completed` chain
-            # started while the gateway stops would be one more run cut off.
-            if not cut_off:
-                await self._fire_chained_triggers(trigger, payload)
+            # started while the gateway stops would be one more run cut off. Nor after an action
+            # that only started its work: what runs after it runs when that work ends.
+            if not cut_off and not started_only:
+                await self._fire_chained_triggers(source_trigger=trigger.id, payload=payload)
+            elif started_only:
+                from personalclaw.triggers.chain import hold_chain
+
+                hold_chain(trigger.id, payload)
 
     def _record_stopped_fire(self, trigger: Any, *, started_at: float) -> None:
         """Record a fire a stop or a restart cut off, and tell the owner. Never raises.
@@ -2317,8 +2328,17 @@ class GatewayOrchestrator:
         except Exception:  # noqa: BLE001 - bookkeeping must never alter a security decision
             logger.debug("could not record the refused-fire row for %s", trigger, exc_info=True)
 
-    async def _fire_chained_triggers(self, trigger: Any, payload: dict[str, Any]) -> None:
-        """Fire every `run_completed` trigger waiting on the run that just finished (S122).
+    async def _fire_chained_triggers(
+        self,
+        *,
+        source_trigger: str = "",
+        payload: dict[str, Any] | None = None,
+        source_def: str = "",
+        source_run: str = "",
+    ) -> None:
+        """Fire every `run_completed` trigger waiting on the work that just ended (S122): a
+        trigger's run (*source_trigger*), and when the work was a workflow run, that run
+        (*source_run*) and any run of its workflow (*source_def*).
 
         Never raises: a chain is a convenience layered on a completed run, and letting it fail the
         run it followed would make chaining strictly worse than not chaining.
@@ -2332,19 +2352,46 @@ class GatewayOrchestrator:
             from personalclaw.triggers import chain
             from personalclaw.triggers.store import TriggerStore
 
-            workflow = trigger.workflow if isinstance(trigger.workflow, dict) else {}
             fires, refused = chain.next_fires(
                 TriggerStore(base_dir=config_dir()),
-                source_id=trigger.id,
+                source_id=source_trigger,
                 source_payload=payload,
-                source_def=str(workflow.get("ref", "") or ""),
+                source_def=source_def,
+                source_run=source_run,
             )
             for row in refused:
                 logger.info("chain %s did not fire: %s", row["trigger_id"], row["reason"])
             for chained, chained_payload in fires:
                 await self._fire_store_trigger(chained, chained_payload, event="trigger.chained")
         except Exception:  # noqa: BLE001 - a chain must never fail the run it followed
-            logger.warning("chain dispatch failed after %s", trigger.id, exc_info=True)
+            logger.warning(
+                "chain dispatch failed after %s", source_trigger or source_run, exc_info=True
+            )
+
+    def _chain_after_work(self, **chained: Any) -> None:
+        """Fire what waits on work that has just ended, off the path that ended it
+        (`EngineServices.run_ended`, an agent task's end): the run's terminal write and the agent's
+        report never wait on a chained action. Never raises."""
+        try:
+            task = asyncio.get_running_loop().create_task(self._fire_chained_triggers(**chained))
+        except RuntimeError:  # no running loop: nothing can fire, and nothing should raise
+            logger.debug("no loop to chain after %s", chained, exc_info=True)
+            return
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _chain_after_workflow_run(self, run: Any, *, status: str, summary: str = "") -> None:
+        """`EngineServices.run_ended`: a workflow run ended, so what waits on it runs now — on the
+        run itself, on any run of its workflow, and on the trigger that started it."""
+        from personalclaw.triggers.chain import run_end_payload
+
+        origin = getattr(run, "origin", None)
+        self._chain_after_work(
+            source_trigger=str(getattr(origin, "trigger_id", "") or ""),
+            payload=run_end_payload(run, status=status, summary=summary),
+            source_def=str(getattr(run, "workflow_name", "") or ""),
+            source_run=str(getattr(run, "id", "") or ""),
+        )
 
     async def _file_watch_poll_loop(self) -> None:
         """Poll `file` triggers and fire the ones whose watched paths changed (§3 / crit 2 — S93).
@@ -3402,6 +3449,8 @@ class GatewayOrchestrator:
                     # A run a trigger started says how it went on the trigger's route when it
                     # ends; the fire that started it only said it launched.
                     report_to_trigger=self._report_to_its_trigger,
+                    # What waits on a run (`run_completed`) runs when the run ends.
+                    run_ended=self._chain_after_workflow_run,
                 ),
             )
             self.workflow_watchdog.start()
@@ -3970,6 +4019,15 @@ class GatewayOrchestrator:
                 ]
                 if any(settled):
                     self._push_trigger_refresh()
+                # What runs after the trigger that started it runs now that its work has ended,
+                # not when the agent started. Not after an agent its owner declined: it never ran.
+                from personalclaw.triggers.chain import held_chain
+
+                for m in started_by_a_trigger:
+                    if getattr(m, "declined", False) is not True:
+                        self._chain_after_work(
+                            source_trigger=m.trigger_id, payload=held_chain(m.trigger_id)
+                        )
 
             # A trigger's own agent says how it went on the trigger's route now that it has ended,
             # wherever its reply goes: the fire, or the Run now, that started it said nothing

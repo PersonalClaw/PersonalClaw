@@ -74,6 +74,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from personalclaw import approval_grants
@@ -456,6 +457,79 @@ NO_APPROVER_REASON = (
     "to this turn, so there is nobody to ask"
 )
 
+#: Why a member at the ``read`` tier is refused a tool: the room's members panel shows that tier
+#: as "Read-only tools", and this says the same thing about the one call.
+READ_ONLY_REASON = "its tools are read-only, and {tool} is not one of them"
+
+
+def member_tool_refusal(
+    profile: SafetyProfile, tool_name: str, declared: object = "", *, proposes: bool = False
+) -> str:
+    """Why a member at *profile* may not use *tool_name* at all, or ``""`` when it may.
+
+    Judged on what the tool DECLARES and never on one call's input, because the answer is also
+    what the member is OFFERED (:func:`member_tools_held`): a tool is on offer exactly when this
+    says ``""``, so a member is never shown a tool it would be refused, and a call to a tool it was
+    not shown is refused for the reason it was not shown. A shell is therefore outside a ``read``
+    tier whatever its command: whether a command only reads is a property of one call, and a
+    member shown a shell would be shown every command it can run.
+    """
+    denial = declared_tool_grant_denial(profile, tool_name, declared, "", None, proposes=proposes)
+    if denial and profile.tool_grants == TOOL_READ:
+        return READ_ONLY_REASON.format(tool=tool_name or "this tool")
+    return denial
+
+
+@contextlib.contextmanager
+def member_tools_held(
+    runtime: object,
+    member: RoomMember,
+    profile: SafetyProfile,
+    *,
+    record: Callable[[ToolRefusal], None],
+) -> Iterator[bool]:
+    """Hold *runtime* to the tools *member*'s tier allows for the turn run inside, then give it
+    back what it held before.
+
+    Two holds, from the one answer (:func:`member_tool_refusal`): what the runtime OFFERS the
+    member's model (``set_tool_offer``), and what a call may use (``set_tool_grants``). The second
+    is asked before the runtime's own approval, so it also refuses a call no approval would reach:
+    a tool that asks nobody before it runs never comes to :func:`approval_channel`'s gate. Each
+    call it refuses goes to *record*, as a refusal at the gate does, so it reaches the transcript.
+
+    Yields False, holding nothing, for a runtime that cannot be held: an agent CLI offers and runs
+    its own tools, asks about every call, and :func:`approval_channel`'s gate answers each one.
+    """
+    hold_offer = getattr(runtime, "set_tool_offer", None)
+    hold_grants = getattr(runtime, "set_tool_grants", None)
+    if not callable(hold_offer) or not callable(hold_grants):
+        yield False
+        return
+
+    def refuse(
+        tool_name: str,
+        declared: object = "",
+        tool_kind: str = "",
+        tool_input: object = None,
+        *,
+        proposes: bool = False,
+        tells_owner: bool = False,
+    ) -> str:
+        reason = member_tool_refusal(profile, tool_name, declared, proposes=proposes)
+        if reason:
+            record(ToolRefusal(member.name, tool_name, reason))
+        return reason
+
+    prior_offer = getattr(runtime, "tool_offer", None)
+    prior_grants = getattr(runtime, "tool_grants", None)
+    hold_offer(partial(member_tool_refusal, profile))
+    hold_grants(refuse)
+    try:
+        yield True
+    finally:
+        hold_grants(prior_grants)
+        hold_offer(prior_offer)
+
 
 def approval_channel(
     member: RoomMember,
@@ -479,9 +553,9 @@ def approval_channel(
 
     The gate asks the two questions a solo session asks, in that order:
 
-    1. **May this member use this tool at all?** ``declared_tool_grant_denial`` against the
-       member's own tier — the shipped grant ALGEBRA over what the tool declares, asked exactly
-       as every other live tool seam asks it. A read-only critic's write tool is refused HERE
+    1. **May this member use this tool at all?** :func:`member_tool_refusal` against the
+       member's own tier — the shipped grant ALGEBRA over what the tool declares, the same answer
+       that decides what the member is offered. A read-only critic's write tool is refused HERE
        without troubling the human: the grant question precedes the approval question, as
        ``chat_runner``'s task-mode gate runs before its approval card.
     2. **Does the human approve?** Only they can, and only through *approver*. With none bound
@@ -496,14 +570,12 @@ def approval_channel(
 
     async def gate(event: "LLMEvent") -> bool | ToolDecision:
         title = getattr(event, "title", "") or ""
-        # What the member's tool DECLARES decides whether a `read` grant covers it — the same
-        # question a research leaf and a research subagent are asked.
-        denial = declared_tool_grant_denial(
+        # What the member's tool DECLARES decides whether its tier covers it — the answer that
+        # also decides what the member is offered (`member_tool_refusal`).
+        denial = member_tool_refusal(
             profile,
             title,
             getattr(event, "risk_level", ""),
-            getattr(event, "tool_kind", ""),
-            getattr(event, "tool_input", ""),
             proposes=bool(getattr(event, "proposes", False)),
         )
         if denial:

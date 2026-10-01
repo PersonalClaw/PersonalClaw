@@ -167,4 +167,4 @@ def test_a_call_with_an_argument_the_tool_does_not_take_is_told_the_ones_it_does
         validate_tool_args({"trigger_type": "file_watch", "name": "Kitchen"}, schema)
     message = str(caught.value)
     assert message.startswith("trigger_type: unknown field for tool 'automation_create'")
-    assert "it takes: name, when, message, say, via, kind, spec" in message
+    assert "it takes: name, when, message, say, via, to, kind, spec" in message

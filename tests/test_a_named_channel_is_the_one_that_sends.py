@@ -410,21 +410,74 @@ def test_a_channel_not_set_up_here_is_refused_so_the_owner_can_be_asked_which(ch
     assert TriggerStore(base_dir=home).load() == []
 
 
-def test_a_channel_for_a_task_is_refused_rather_than_ignored(channels, home):
-    """An agent task's result reports in PersonalClaw: a channel given with one would be a setting
-    nothing honours."""
+def _delivery_of(home, trigger_id: str) -> str:
+    from personalclaw.triggers.store import TriggerStore
+
+    row = TriggerStore(base_dir=home).get(trigger_id)
+    assert row is not None, "nothing was saved"
+    return row.trigger.delivery
+
+
+def test_a_channel_for_a_task_delivers_its_result_there(channels, home):
+    """🔴 Before: refused ("a task in `message` reports its result in PersonalClaw, not on a chat
+    channel"), though a trigger made on the Triggers page sends its result to the Notify channel it
+    names. A task's result now takes that same route."""
     _discord_and_telegram(channels)
 
     out = _create(
         home,
         name="Bin night",
         when="every Wednesday at 18:00",
-        message="remind me",
+        message="summarise the week's bins",
         via="telegram",
     )
 
+    assert not isinstance(out, ToolFailure), out
+    assert "sends you what it produced on Telegram, and on no other channel" in out
+    assert _delivery_of(home, "clock:bin-night") == "channel:telegram"
+
+
+class _Ids(_Transport):
+    """A channel whose chats have ids it checks, as a real one does."""
+
+    def validate_target(self, target: str) -> str:
+        return "" if target.startswith("C") else "A chat id here starts with C, like C0123456789."
+
+
+def test_a_chat_on_the_channel_is_where_the_result_goes(channels, home, monkeypatch):
+    """`to` is a chat on the `via` channel: the result goes there, by the channel's own id."""
+    monkeypatch.setattr(channel_transports, "_transports", {})
+    channel_transports.register_transport(_Ids("chatty", "Chatty"))
+
+    out = _create(
+        home, name="Digest", when="every Monday at 9", message="digest", via="chatty", to="C0123"
+    )
+
+    assert not isinstance(out, ToolFailure), out
+    assert "on Chatty to C0123, and on no other channel" in out
+    assert _delivery_of(home, "clock:digest") == "channel:chatty:C0123"
+
+
+def test_a_chat_the_channel_does_not_take_is_refused_in_its_words(channels, home, monkeypatch):
+    monkeypatch.setattr(channel_transports, "_transports", {})
+    channel_transports.register_transport(_Ids("chatty", "Chatty"))
+
+    out = _create(
+        home, name="Digest", when="every Monday at 9", message="digest", via="chatty", to="#agent"
+    )
+
     assert isinstance(out, ToolFailure)
-    assert "`via` sends the words given in `say`" in out
+    assert "A chat id here starts with C" in out
+    from personalclaw.triggers.store import TriggerStore
+
+    assert TriggerStore(base_dir=home).load() == []
+
+
+def test_a_chat_with_no_channel_is_refused(home):
+    out = _create(home, name="Digest", when="every Monday at 9", message="digest", to="C0123")
+
+    assert isinstance(out, ToolFailure)
+    assert "give `via` too" in out
 
 
 def test_words_and_a_task_together_are_refused(home):

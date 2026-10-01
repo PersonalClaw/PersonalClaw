@@ -230,6 +230,14 @@ class RunWorkflowActionProvider(ActionProvider):
             # "fall through and launch" — which is exactly what `queue` used to do.
             raise AssertionError(f"run-workflow has no branch for OverlapAction.{action.name}")
 
+        from personalclaw.triggers.chain import CHAIN_EXTRA_KEY, carried_chain
+
+        extra = overlap_mod.queued_extra() if action == Act.QUEUE else {}
+        # A chained fire's chain rides the run it starts, so the run's end continues it
+        # (`triggers.chain`): a loop through a workflow run is still refused as a loop.
+        chain_state = carried_chain(getattr(ctx, "payload", None))
+        if chain_state:
+            extra = {**extra, CHAIN_EXTRA_KEY: chain_state}
         run = store.create(
             WorkflowRun(
                 id="",
@@ -249,7 +257,7 @@ class RunWorkflowActionProvider(ActionProvider):
                 origin=RunOrigin(kind=OriginKind.HOOK, trigger_id=ctx.trigger_id),
                 # The queued marker goes in the SAME insert as the row — marking after
                 # `create` would leave a window in which the row is an ordinary DRAFT.
-                extra=overlap_mod.queued_extra() if action == Act.QUEUE else {},
+                extra=extra,
             )
         )
         store.write_spec(run.id, spec)

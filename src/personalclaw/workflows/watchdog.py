@@ -176,6 +176,8 @@ class WorkflowWatchdog:
             memory=base.memory,
             # A run a trigger started says how it went on the trigger's route when it ends.
             report_to_trigger=base.report_to_trigger,
+            # What waits on a run hears when it ends, whichever controller drives it.
+            run_ended=base.run_ended,
         )
 
     def _publisher(self, run_id: str) -> Any:
@@ -600,6 +602,12 @@ class WorkflowWatchdog:
         run.completed_at = run.completed_at or _now()
         store.save(run)
         logger.warning("workflow run %s failed: %s", run.id, reason)
+        # Ended without a controller, so without `_finish`: what waits on the run hears here, as
+        # it does from `run_finish.chain_after_run`.
+        ended = getattr(self._services, "run_ended", None)
+        if ended is not None:
+            with contextlib.suppress(Exception):
+                ended(run, status=RunStatus.FAILED.value, summary="")
 
 
 def _now() -> str:
