@@ -3,6 +3,8 @@ import { LoopsListPage } from './LoopsListPage'
 import type { LoopDraft } from './loopDraft'
 import { LoopPlanReview } from './LoopPlanReview'
 import { LoopPlanningView } from './LoopPlanningView'
+import { cancelPlanningToEdit } from '../loop/editTask'
+import { stopLoop } from '../loop/stopLoop'
 import { LoopCockpitPage } from './LoopCockpitPage'
 import { DesignCockpitPage } from './DesignCockpitPage'
 import type { RouteProps } from '../../app/useQueryState'
@@ -83,7 +85,20 @@ export function LoopsSection({ sub, navigate, query, setQuery }: RouteProps) {
       // and clobber its kind_config on save). Route a finished design walkthrough
       // straight to the cockpit; every other kind goes to Plan Review.
       onReady={(l) => { setPlanningId(null); setResume(null); if (l.kind === 'design') navigate(`loops/${l.id}`); else setReview(draftFromLoop(l)) }}
-      onBack={() => { setPlanningId(null); setResume(null); navigate('loops') }} />
+      onBack={() => { setPlanningId(null); setResume(null); navigate('loops') }}
+      // The composer is another route, so leaving unmounts this section and its planning state.
+      onCancel={async () => {
+        const to = await cancelPlanningToEdit(activePlanningId)
+        if (to === null) return false
+        invalidateKeys('loops'); navigate(to)
+        return true
+      }}
+      onStop={async () => {
+        if (!(await stopLoop(activePlanningId))) return false
+        // The stopped loop's own page (its cockpit), which says it stopped.
+        invalidateKeys('loops'); setPlanningId(null); setResume(null); navigate(`loops/${activePlanningId}`)
+        return true
+      }} />
   }
 
   // Plan Review — from the create flow's in-memory draft, OR resumed from a
@@ -102,7 +117,7 @@ export function LoopsSection({ sub, navigate, query, setQuery }: RouteProps) {
 
   // #/loops/history → the goal list (history). A "new goal" button sits on top.
   if (seg === 'history') {
-    return <LoopsListPage onCreate={() => navigate('loops')} onOpen={(l) => navigate(loopRoute(l))} query={query} setQuery={setQuery} />
+    return <LoopsListPage onCreate={() => navigate('loops')} onOpen={(l) => navigate(loopRoute(l))} onOpenCode={() => navigate('code/history')} query={query} setQuery={setQuery} />
   }
 
   // #/loops/<id> → cockpit (deep-linkable; refresh-safe). The router fetches the loop

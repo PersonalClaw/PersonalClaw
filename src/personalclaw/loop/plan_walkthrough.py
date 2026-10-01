@@ -20,15 +20,19 @@ walkthrough (general/design today) returns ``None`` from ``Loop`` strategy's
 
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import store
-from personalclaw.loop.loop import LoopStatus
+from personalclaw.loop.loop import PRELAUNCH_STATUSES, LoopStatus
 from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep
+
+if TYPE_CHECKING:
+    from personalclaw.planning.runner import PlannerPass
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +125,21 @@ def _walkthrough_for(loop_id: str):
         return loop, None
 
 
+#: What every loop planner's session key starts with (:func:`planner_session_key`).
+PLANNER_SESSION_PREFIX = "loop-plan-"
+
+
 def planner_session_key(loop_id: str) -> str:
     """Hidden planner session key for a loop (distinct from the worker's)."""
-    return f"loop-plan-{loop_id}"
+    return f"{PLANNER_SESSION_PREFIX}{loop_id}"
+
+
+def _still_planning(loop_id: str) -> bool:
+    """Whether loop *loop_id* still wants its planner: it exists, and it has neither launched nor
+    ended. No pass starts for one that has — a Stop or a delete landing between a pass and its
+    retry used to have the retry arm the planner again, for a loop nobody would see it plan."""
+    loop = store.get(loop_id)
+    return loop is not None and LoopStatus(loop.status) in PRELAUNCH_STATUSES
 
 
 def seed_steps(session: PlanSession, steps: list[dict]) -> PlanSession:
@@ -150,7 +166,7 @@ def _loop_folder(loop) -> str:
 
 async def _run_pass(
     state, svc, loop, wt: Walkthrough, *, brief: str, sentinel: str, timeout_secs: int | None = None
-) -> str | None:
+) -> PlannerPass:
     """One planner pass via the shared runner, resolving the loop's primitives."""
     from personalclaw.planning import runner
 
@@ -178,6 +194,91 @@ async def _run_pass(
     )
 
 
+def _read_problem(text: str, *, needs: str) -> tuple[str, str]:
+    """What is wrong with a file the planner wrote that its kind could not use, in words the
+    planner and its owner can both act on: where its JSON breaks (and the file's own words
+    there), or what it lacks. ``needs`` names what a parseable object was missing (the kind's
+    parser said no to it). Returns ``(problem, the words where it breaks or "")``."""
+    start = text.find("{")
+    if start < 0:
+        return "it holds no JSON object", ""
+    try:
+        value, _end = json.JSONDecoder().raw_decode(text, start)
+    except json.JSONDecodeError as e:
+        line = (text.splitlines() or [""])[e.lineno - 1] if e.lineno > 0 else ""
+        where = f"it is not valid JSON: {e.msg} at line {e.lineno}, column {e.colno}"
+        return where, _excerpt(line, e.colno)
+    if not isinstance(value, dict):
+        return "it holds JSON, but not one object", ""
+    return f"it is valid JSON, but {needs}", ""
+
+
+def _excerpt(line: str, col: int) -> str:
+    """The words of *line* around 1-based column *col*: where a JSON error is, cut at word
+    boundaries so it reads as the file's own text, with an ellipsis where it was cut."""
+    at = col - 1
+    lo, hi = max(0, at - 40), min(len(line), at + 20)
+    if lo > 0 and (space := line.find(" ", lo, at)) >= 0:
+        lo = space + 1
+    if hi < len(line) and (space := line.rfind(" ", at + 1, hi)) > at:
+        hi = space
+    text = " ".join(line[lo:hi].split())
+    return ("\u2026" if lo > 0 else "") + text + ("\u2026" if hi < len(line) else "")
+
+
+def _no_draft_reason(result: PlannerPass, sentinel: str, *, needs: str) -> str:
+    """Why a planner pass produced nothing usable, as the sentence its owner reads."""
+    from personalclaw.planning import runner
+
+    if result.ended == runner.WROTE:
+        problem, near = _read_problem(result.text, needs=needs)
+        # The file's own words go last and unquoted: a quote mark around text full of them
+        # (and turned into a plain one on its way to a model) only blurs where it ends.
+        return f"The planner wrote {sentinel}, but {problem}." + (
+            f" Near there it reads: {near}" if near else ""
+        )
+    if result.ended == runner.TIMED_OUT:
+        return (
+            f"The planner ran out of time ({result.limit_secs / 60:g} minutes) before it "
+            f"wrote {sentinel}."
+        )
+    if result.ended == runner.STOPPED:
+        return f"The planner ended its turn without writing {sentinel}."
+    return f"The planner pass failed before it wrote {sentinel}; the gateway log says why."
+
+
+def _correction(result: PlannerPass, path: str, reason: str) -> str:
+    """The line the retry adds to the brief: what was wrong with the last attempt, and the one
+    thing to do about it. A planner that wrote the file is told what is wrong with what it wrote,
+    never that it did not write it."""
+    from personalclaw.planning import runner
+
+    head = f"\n\n# CRITICAL — your previous attempt produced nothing usable. {reason}\n"
+    if result.ended == runner.WROTE:
+        return head + (
+            f"Write the whole file `{path}` again with write_file, as ONE valid JSON object. "
+            'Inside a JSON string, write a double quote as \\" and a line break as \\n. Keep '
+            "the artifact's content as it was; only make it valid JSON."
+        )
+    if result.ended == runner.TIMED_OUT:
+        return head + (
+            "Do not start the investigation over: use what you have already found, and write "
+            f"the artifact to `{path}` with write_file now."
+        )
+    return head + (
+        f"You must persist the artifact by CALLING the write_file tool with the path `{path}` "
+        "(that exact path: the loop's own folder, not the workspace). Do NOT paste the JSON, a "
+        "diff, or a code block into your reply — only an actual write_file call creates the "
+        "file we read. Re-emit the artifact now via write_file."
+    )
+
+
+#: What a step-list file lacked when it parsed as an object but the kind refused it.
+_STEPS_NEEDS = 'it has no non-empty "steps" list'
+#: Any JSON object is a step artifact, so a parsed one is never refused for its shape.
+_ARTIFACT_NEEDS = "it is not a step artifact"
+
+
 async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
     """DYNAMIC pass-1 — investigate + design the ordered step list, seed + persist
     the session. Returns the seeded session, or None (records design_error so a
@@ -185,7 +286,7 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
     import time as _time
 
     loop, wt = _walkthrough_for(loop_id)
-    if loop is None or wt is None:
+    if loop is None or wt is None or not _still_planning(loop_id):
         return None
     try:
         store.update_status(loop_id, LoopStatus.PLANNING)
@@ -199,7 +300,7 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
         if isinstance(loop.kind_config, dict)
         else None
     )
-    raw = await _run_pass(
+    result = await _run_pass(
         state,
         svc,
         loop,
@@ -212,15 +313,16 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
         ),
         sentinel=STEPS_SENTINEL,
     )
-    parsed = wt.parse_steps_sentinel(raw or "")
+    parsed = wt.parse_steps_sentinel(result.text)
+    if not _still_planning(loop_id):
+        return None  # stopped or deleted while the planner worked: nothing of it is kept
     if parsed is None:
+        reason = _no_draft_reason(result, STEPS_SENTINEL, needs=_STEPS_NEEDS)
+        logger.info("planning %s: the design pass produced no step list: %s", loop_id, reason)
         session = loop_files.read_plan_session(loop_id) or PlanSession(
             project_id=loop_id, created_at=_time.time()
         )
-        session.design_error = (
-            "The planner couldn't produce a plan (it timed out or returned no usable "
-            "step list). Retry planning, or edit the task to be more concrete."
-        )
+        session.design_error = f"{reason} Retry planning, or edit the task to be more concrete."
         loop_files.write_plan_session(session)
         return None
     _summary, steps = parsed
@@ -239,11 +341,14 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
     the updated step, or None if nothing usable was produced. Never raises."""
     loop, wt = _walkthrough_for(loop_id)
     session = loop_files.read_plan_session(loop_id)
-    if loop is None or wt is None or session is None:
+    if loop is None or wt is None or session is None or not _still_planning(loop_id):
         return None
     step = next((s for s in session.steps if s.id == step_id), None)
     if step is None:
         return None
+    # Why the step's last pass failed, when it did: the owner's Retry re-runs it, and the planner
+    # is told what went wrong rather than handed the same brief that produced nothing.
+    last_failure = step.error
     if step.status == PS.StepStatus.PENDING.value:
         PS.mark_running(session, step_id)
         loop_files.write_plan_session(session)
@@ -257,33 +362,45 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
         workspace_dir=loop.workspace_dir or "",
         out_dir=_loop_folder(loop),
     )
-    raw = await _run_pass(state, svc, loop, wt, sentinel=ARTIFACT_SENTINEL, brief=base_brief)
-    artifact = wt.parse_artifact_sentinel(raw or "")
-    if artifact is None:
-        # The planner sometimes NARRATES the artifact (pastes a ```json/```diff block in
-        # chat) instead of WRITING the sentinel file — so nothing parses. That used to
-        # revert RUNNING→PENDING and silently dead-end: _kick_plan_advance's small pass
-        # budget is already spent, and the FE has no retry affordance for a non-running
-        # step, so the step sat PENDING forever. Retry the pass ONCE with an emphatic
-        # write-the-file correction before giving up. (observed: design step-0 narrated
-        # a diff, hung the whole walkthrough.)
-        correction = (
-            f"\n\n# CRITICAL — your previous attempt produced NO usable artifact.\n"
-            f"You must persist the artifact by CALLING the write_file tool with the path "
-            f"`{artifact_path}` (that exact path: the loop's own folder, not the "
-            f"workspace). Do NOT paste the JSON, a diff, or a code block into your reply "
-            f"— only an actual write_file call creates the file we read. Re-emit the "
-            f"artifact now via write_file."
+    if last_failure:
+        base_brief += (
+            f"\n\n# Your previous attempt at this step failed. {last_failure}\n"
+            f"Write this step's artifact to `{artifact_path}` with write_file, as one valid "
+            "JSON object."
         )
-        raw = await _run_pass(
-            state, svc, loop, wt, sentinel=ARTIFACT_SENTINEL, brief=base_brief + correction
-        )
-        artifact = wt.parse_artifact_sentinel(raw or "")
+    result = await _run_pass(state, svc, loop, wt, sentinel=ARTIFACT_SENTINEL, brief=base_brief)
+    artifact = wt.parse_artifact_sentinel(result.text)
+    if not _still_planning(loop_id):
+        return None  # stopped or deleted while the planner worked: no retry, nothing written
     if artifact is None:
-        # Still nothing after the retry — revert RUNNING → PENDING so its state stays
-        # honest and an explicit advance/retry cleanly re-runs it.
+        # Nothing usable came back: the planner narrated the artifact instead of writing it,
+        # wrote a file that is not valid JSON, or ran out of time. Retry the pass ONCE, telling
+        # it which — a planner that wrote the file and is told it never did writes the same
+        # broken text again (observed: three identical writes, an unescaped quote each time).
+        reason = _no_draft_reason(result, ARTIFACT_SENTINEL, needs=_ARTIFACT_NEEDS)
+        logger.info(
+            "planning %s %s: no usable artifact, retrying once: %s", loop_id, step_id, reason
+        )
+        result = await _run_pass(
+            state,
+            svc,
+            loop,
+            wt,
+            sentinel=ARTIFACT_SENTINEL,
+            brief=base_brief + _correction(result, artifact_path, reason),
+        )
+        artifact = wt.parse_artifact_sentinel(result.text)
+        if not _still_planning(loop_id):
+            return None
+    if artifact is None:
+        # Still nothing after the retry — revert RUNNING → PENDING so its state stays honest
+        # and an explicit retry cleanly re-runs it, with the reason on the step for the page.
+        reason = _no_draft_reason(result, ARTIFACT_SENTINEL, needs=_ARTIFACT_NEEDS)
+        logger.warning(
+            "planning %s %s: no usable artifact after a retry: %s", loop_id, step_id, reason
+        )
         session = loop_files.read_plan_session(loop_id) or session
-        if PS.mark_pending(session, step_id):
+        if PS.fail_step(session, step_id, reason):
             loop_files.write_plan_session(session)
         return None
     session = loop_files.read_plan_session(loop_id) or session

@@ -955,6 +955,7 @@ async def api_loop_action(request: web.Request) -> web.Response:
     elif action == "pause":
         await manager.pause(state, svc, cid)
     elif action == "stop":
+        await _end_planning(request.app, cid)
         await manager.stop(state, svc, cid)
     return web.json_response(_loop_view(cid))
 
@@ -1018,6 +1019,7 @@ async def api_loop_delete(request: web.Request) -> web.Response:
             return await _run_backed_delete(request, run)
     from personalclaw.triggers.nudge import get_instance
 
+    await _end_planning(request.app, cid)
     svc = get_instance()
     if svc is not None:
         try:
@@ -1288,11 +1290,28 @@ def _kick_plan_advance(request: web.Request, cid: str) -> web.Response:
             except Exception:
                 logger.debug("loop plan advance publish failed", exc_info=True)
 
-    task = asyncio.create_task(_run())
+    task = asyncio.create_task(_run(), name=_plan_task_name(cid))
     tasks = request.app.setdefault("_loop_plan_tasks", set())
     tasks.add(task)
     task.add_done_callback(lambda t: tasks.discard(t))
     return web.json_response({"ok": True, "planning": True}, status=202)
+
+
+def _plan_task_name(cid: str) -> str:
+    """The name of loop *cid*'s background walkthrough pass, so a delete can find and end it."""
+    return f"loop-plan-advance:{cid}"
+
+
+async def _end_planning(app: web.Application, cid: str) -> None:
+    """End loop *cid*'s walkthrough pass in flight, if any, before a stop or a delete: the pass's
+    own clean-up removes the planner's nudge loop and its files. Without this a deleted draft's
+    pass found its planner session gone, retried, and recreated the session for a loop that no
+    longer existed."""
+    from personalclaw.cancellation import cancel_and_wait
+
+    running = [t for t in app.get("_loop_plan_tasks", ()) if t.get_name() == _plan_task_name(cid)]
+    if running:
+        await cancel_and_wait(running, what=f"loop {cid} planning")
 
 
 async def api_loop_plan_session(request: web.Request) -> web.Response:

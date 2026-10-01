@@ -59,7 +59,7 @@ function cfg(sess: PlanSession | null): WalkthroughConfig {
 }
 
 const mount = (sess: PlanSession | null) =>
-  render(<PlanningWalkthrough id="l-1" cfg={cfg(sess)} onReady={() => {}} onBack={() => {}} />)
+  render(<PlanningWalkthrough id="l-1" cfg={cfg(sess)} onReady={() => {}} onBack={() => {}} onCancel={() => Promise.resolve(true)} onStop={() => Promise.resolve(true)} />)
 
 const retryOffered = () => screen.queryAllByText(/retry/i).length > 0
 const shows = (re: RegExp) => screen.queryAllByText(re).length > 0

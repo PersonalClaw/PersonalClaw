@@ -191,7 +191,9 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     // permanently removed.`), which is just as clear to a reader and must not be reported.
     // 🪤 AND THE RULE IS "A DIALOG OPENED FROM A LIST", which the first draft missed by reporting
     // three surfaces that each have exactly ONE subject: a project cockpit, a file viewer, a run
-    // detail. There "this run" / "this file" is the page you are on, named in its own header, and the
+    // detail. (The cockpit's one, its Stop, left for `pages/loop/stopLoop.ts` when the Code list, a
+    // project's Work board and the planning walkthrough took a Stop too: from a list it names the
+    // loop, so it needs no exemption and the cockpit is back in the census.) There "this run" / "this file" is the page you are on, named in its own header, and the
     // bodies are already the best in the app ("Work already written to the workspace is kept. Pause
     // instead…"). Interpolating a name there would add nothing.
     //
@@ -211,7 +213,6 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     // left when the gateway began refusing a stale save instead (`lib/staleWrite.ts`). With no
     // dialog it needs no exemption, so it is back in the census like any other file.)
     const SINGLE_SUBJECT_SURFACES = [
-      'pages/code/CodeCockpitPage.tsx',      // one project per cockpit
       'pages/workflows/WorkflowRunDetail.tsx',  // one run
     ]
     const anonymous: string[] = []
@@ -258,7 +259,7 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     // The vacuity floor for the exemption above: if one of these grows a second anonymous danger
     // dialog, its "the subject is the page" reason no longer covers both.
     const counts: Record<string, number> = {}
-    for (const rel of ['pages/code/CodeCockpitPage.tsx', 'pages/workflows/WorkflowRunDetail.tsx']) {
+    for (const rel of ['pages/workflows/WorkflowRunDetail.tsx']) {
       const src = strip(readFileSync(join(SRC, rel), 'utf8'))
       let n = 0
       for (const m of src.matchAll(/confirm\(\s*\{/g)) {
@@ -271,7 +272,6 @@ describe('no destructive dialog names its subject NOWHERE', () => {
       counts[rel] = n
     }
     expect(counts).toEqual({
-      'pages/code/CodeCockpitPage.tsx': 1,
       'pages/workflows/WorkflowRunDetail.tsx': 1,
     })
   })
@@ -493,7 +493,8 @@ describe('the stop-project dialog, and the file delete', () => {
     // 🔴 Stop is TERMINAL and its teardown force-removes every task worktree. The old body reassured
     // ("Work already written to the workspace is kept") without saying that in-flight work is discarded,
     // which is the one thing a terminal action owes the user.
-    const ui = web('pages/code/CodeCockpitPage.tsx')
+    // Said once for every Stop control (the cockpit's, the Code list's, the Work board's).
+    const ui = web('pages/loop/stopLoop.ts')
     expect(ui).toContain('a task still running loses its own worktree and branch')
     expect(ui, 'and it now says how kept work got there').toContain('already merged into your workspace is kept')
     // The mechanism, both halves. `--force` discards uncommitted work; `-D` takes the branch even

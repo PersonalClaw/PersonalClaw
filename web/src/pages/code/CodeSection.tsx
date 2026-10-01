@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Code2, Plus, Loader2, Trash2, FolderOpen, Search, Filter } from 'lucide-react'
+import { Code2, Plus, Loader2, Trash2, FolderOpen, Search, Filter, Square } from 'lucide-react'
 import type { CodeDraft } from './codeDraft'
 import { codeDeleteBody } from './codeMeta'
 import { CodePlanReview } from './CodePlanReview'
 import { CodePlanningView } from './CodePlanningView'
+import { cancelPlanningToEdit } from '../loop/editTask'
+import { canStopLoop, stopLoop } from '../loop/stopLoop'
 import { CodeCockpitPage } from './CodeCockpitPage'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
@@ -93,7 +96,20 @@ export function CodeSection({ sub, navigate, query, setQuery }: RouteProps) {
   if (activePlanningId && !review) {
     return <CodePlanningView projectId={activePlanningId}
       onReady={(p) => { setPlanningId(null); setResume(null); setReview({ projectId: p.id, classification: { stage_plan: p.plan, entry_stage: kindCfg(p).entry_stage, summary: p.summary } as unknown as CodeDraft['classification'], rigor: p.intake_rigor || 'grill', attended: !!p.attended }) }}
-      onBack={() => { setPlanningId(null); setResume(null); navigate('code') }} />
+      onBack={() => { setPlanningId(null); setResume(null); navigate('code') }}
+      // The composer is another route, so leaving unmounts this section and its planning state.
+      onCancel={async () => {
+        const to = await cancelPlanningToEdit(activePlanningId)
+        if (to === null) return false
+        invalidateKeys('code:projects'); navigate(to)
+        return true
+      }}
+      onStop={async () => {
+        if (!(await stopLoop(activePlanningId))) return false
+        // The stopped loop's own page (the cockpit), which says it stopped.
+        invalidateKeys('code:projects'); setPlanningId(null); setResume(null); navigate(`code/${activePlanningId}`)
+        return true
+      }} />
   }
 
   // Plan Review — from the create flow's in-memory draft, OR resumed from a
@@ -245,6 +261,13 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
   const codeHasLive = (projects ?? []).some((p) => !['complete', 'stopped', 'failed'].includes(p.status))
   useVisiblePoll(refresh, codeHasLive ? 6000 : null)
 
+  // A project at work (running, or still planning) can be stopped from its row: a planner that
+  // runs on had no way to be stopped from anywhere it showed as working.
+  async function stop(p: Loop) {
+    setActionErr(null)
+    if (await stopLoop(p.id)) load()
+  }
+
   async function del(p: Loop) {
     setActionErr(null)
     // Through the shared delete ritual (AUD-A11): confirmDelete composes the identical
@@ -362,8 +385,11 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
                 // role=button (not <button>) so the nested action buttons (needs-
                 // workspace, delete) are valid HTML and their clicks don't bubble to
                 // the row's open-navigation.
+                // Enter/Space open the row only when the ROW has focus: one pressed on a control
+                // inside it (Stop, Delete, needs workspace) is that control's, and it used to be
+                // swallowed here (`preventDefault`) and open the project instead.
                 <div key={p.id} role="button" tabIndex={0} onClick={() => onOpen(p.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(p.id) } }}
+                  onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(p.id) } }}
                   className="group flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high">
                   <Code2 size={16} className="shrink-0 text-on-surface-low" />
                   <div className="min-w-0 flex-1">
@@ -382,6 +408,12 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
                     </button>
                   )}
                   {(p.status === 'running' || p.status === 'planning' || p.status === 'intake') && <Loader2 size={12} className="shrink-0 animate-spin text-primary" />}
+                  {canStopLoop(p.status) && (
+                    <Button variant="ghost" size="xs" className="shrink-0 gap-xs"
+                      onClick={(e) => { e.stopPropagation(); void stop(p) }}>
+                      <Square size={11} /> Stop
+                    </Button>
+                  )}
                   {(() => { const es = effectiveStatus(p); return (
                     // Show the reason on hover for ANY status that carries one — blocked
                     // (the stall-pause explanation), failed, and the synthetic ended_early

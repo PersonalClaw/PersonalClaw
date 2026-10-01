@@ -117,6 +117,23 @@ class NudgeLoop:
     first_idle_secs: int = 0
 
 
+def why_it_ended(loop: Any) -> str:
+    """Why a nudge loop stopped firing BY ITSELF: ``"budget"`` (it fired ``max_cycles`` cycles)
+    or ``"errors"`` (its turns failed ``_MAX_CONSECUTIVE_ERRORS`` times in a row), else ``""``.
+
+    Both switch the loop off and keep it (:meth:`AutoNudgeService.deliver`,
+    :meth:`AutoNudgeService.notify_turn_complete`), so a loop that is GONE never ran out by
+    itself: something removed it. A loop switched off for any other reason (a pause, a stand-down)
+    is not ended either; it resumes where it stopped."""
+    max_cycles = int(getattr(loop, "max_cycles", 0) or 0)
+    if max_cycles and int(getattr(loop, "cycle_count", 0) or 0) >= max_cycles:
+        return "budget"
+    errors = int(getattr(loop, "error_count", 0) or 0)
+    if not getattr(loop, "active", True) and errors >= _MAX_CONSECUTIVE_ERRORS:
+        return "errors"
+    return ""
+
+
 def is_nudge(trigger: Any) -> bool:
     """Whether an idle trigger is a NUDGE row (delivered by this adapter, not the wake path).
 

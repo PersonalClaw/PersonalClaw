@@ -957,6 +957,8 @@ class LoopWatchdog:
         def _stranded_in_planning(loop: Loop) -> bool:
             return loop.status == LoopStatus.PLANNING.value
 
+        await self._reap_planner_rows()
+
         decided = await concurrency.boot_sweep(
             "loop", loops, survived=_lost_its_worker, decide=self._rearm_running
         )
@@ -978,6 +980,23 @@ class LoopWatchdog:
         if released:
             logger.info("loop: %d task(s) of ended loops were in progress, now open", released)
         return decided
+
+    async def _reap_planner_rows(self) -> None:
+        """Remove every planner's nudge row, at boot.
+
+        No planner pass is in flight at boot (a pass is a task of the process that ended), so a
+        planner's nudge row left on disk is a leftover: kept, it fires planner turns for a loop
+        nothing drives, a stopped or deleted one included. A loop still planning is driven again
+        by the sweep that follows, and that arms a fresh one. Best-effort, like the orphan-dir GC:
+        a row that cannot be removed must not cost the loops their boot adoption."""
+        from personalclaw.loop.plan_walkthrough import PLANNER_SESSION_PREFIX
+
+        try:
+            for row in self._svc.list_all():
+                if str(getattr(row, "session_name", "")).startswith(PLANNER_SESSION_PREFIX):
+                    await self._svc.remove(row.id)
+        except Exception:
+            logger.warning("loop: removing leftover planner nudge rows failed", exc_info=True)
 
     async def _rearm_running(self, loop: Loop) -> bool:
         """Re-arm one RUNNING loop whose worker died with the process — or park it for the
@@ -1339,21 +1358,23 @@ class LoopWatchdog:
                                 error_message="The worker produced no findings "
                                 "before the cycle budget was exhausted.",
                             )
-                            await manager.teardown_worker(self._svc, cid)
+                            await manager.stand_down(self._state, self._svc, cid)
                             self._publish(cid, "failed")
                         self._clear_liveness(cid)
                         continue
 
-                # 4b. Unresponsive check.
+                # 4b. Unresponsive check, over EVERY worker of the loop: a task worker's turn is
+                # the loop working just as the stage worker's is (the stage worker stands down
+                # while task workers run, so reading it alone took a long model call for a stall).
                 now = time.time()
-                reprompt = bool(getattr(session, "_suppress_autonudge_rearm", False))
+                turn_running, reprompt = self._worker_turns(cid)
                 if self._waiting_on_owner(cid):
                     # A worker whose call waits on its owner's answer is waiting on a person,
                     # not wedged: its approval's window bounds the wait, and the time spent in
                     # it is not a turn running too long.
                     self._running_since.pop(cid, None)
                     self._last_activity[cid] = now
-                elif (session is not None and getattr(session, "running", False)) or reprompt:
+                elif turn_running or reprompt:
                     started = self._running_since.setdefault(cid, now)
                     if now - started <= _MAX_TURN_SECS or reprompt:
                         self._last_activity[cid] = now
@@ -1367,7 +1388,7 @@ class LoopWatchdog:
                     loop_files.record_cycle_findings(cid)
                     if len(loop_files.get_findings(cid)) > count:
                         continue  # progress landed during a long turn
-                    wedged = session is not None and getattr(session, "running", False)
+                    wedged = turn_running
                     store.update_status(
                         cid,
                         LoopStatus.FAILED,
@@ -1379,7 +1400,9 @@ class LoopWatchdog:
                             else "No activity — the worker stalled. Resume to continue."
                         ),
                     )
-                    await manager.teardown_worker(self._svc, cid)
+                    # A failed run can be resumed, so it keeps what its workers made (a task
+                    # worker's worktree holds edits its owner may have approved).
+                    await manager.stand_down(self._state, self._svc, cid)
                     self._clear_liveness(cid)
                     self._publish(cid, "failed")
 
@@ -1411,6 +1434,17 @@ class LoopWatchdog:
         self._last_count.pop(cid, None)
         self._last_activity.pop(cid, None)
         self._running_since.pop(cid, None)
+
+    def _worker_turns(self, cid: str) -> tuple[bool, bool]:
+        """Whether any worker of loop *cid* (its stage worker or a task worker) has a turn
+        running, and whether any is between the re-prompt turns of one cycle."""
+        workers = [
+            self._state._sessions.get(key) for key in manager.worker_session_keys(self._state, cid)
+        ]
+        return (
+            any(getattr(w, "running", False) for w in workers),
+            any(getattr(w, "_suppress_autonudge_rearm", False) for w in workers),
+        )
 
     def _waiting_on_owner(self, cid: str) -> bool:
         """Whether any worker of loop *cid* (its stage worker or a task worker) has a call

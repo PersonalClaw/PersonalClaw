@@ -36,13 +36,15 @@ function makeCfg(loopId: string): WalkthroughConfig {
   }
 }
 
-export function LoopPlanningView({ loopId, onReady, onBack }: {
+export function LoopPlanningView({ loopId, onReady, onBack, onCancel, onStop }: {
   loopId: string
   onReady: (loop: Loop) => void
   onBack: () => void
+  onCancel: () => Promise<boolean>
+  onStop: () => Promise<boolean>
 }) {
   return (
-    <PlanningWalkthrough id={loopId} cfg={makeCfg(loopId)} onBack={onBack}
+    <PlanningWalkthrough id={loopId} cfg={makeCfg(loopId)} onBack={onBack} onCancel={onCancel} onStop={onStop}
       onReady={() => { api.uLoop(loopId).then(onReady).catch(() => {}) }} />
   )
 }

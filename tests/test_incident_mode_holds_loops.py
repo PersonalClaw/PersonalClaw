@@ -481,7 +481,7 @@ def test_a_planner_pass_waits_out_the_switch_without_timing_out(
     svc.get_by_session.return_value = _Nudge("N1", planner.key)
     state.get_or_create_session.return_value = MagicMock(_extra_tool_roots=[])
 
-    async def _go() -> str | None:
+    async def _go() -> str:
         incident.activate("a drill")
         task = asyncio.create_task(
             runner.run_planner_pass(
@@ -501,7 +501,7 @@ def test_a_planner_pass_waits_out_the_switch_without_timing_out(
         assert not task.done(), "a held planner pass timed out"
         incident.resume()
         (files_dir / "plan_steps.json").write_text('{"steps": []}')
-        return await asyncio.wait_for(task, timeout=5)
+        return (await asyncio.wait_for(task, timeout=5)).text
 
     assert asyncio.run(_go()) == '{"steps": []}'
     assert state.sessions.stopped == [f"dashboard:{planner.key}"]

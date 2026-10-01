@@ -55,7 +55,10 @@ class PlanStep:
     ``kind`` is a planner-chosen slug (e.g. ``problem_framing``, ``requirements``,
     ``design``, ``decomposition``) — open set. ``artifact`` is the step's produced
     content, a free-form dict whose shape depends on ``kind`` (the FE renders it
-    per-kind). ``comments`` accumulate across re-drafts.
+    per-kind). ``comments`` accumulate across re-drafts. ``error`` says why the step's last
+    pass produced no draft (the planner ran out of time, or wrote a file that could not be
+    read), so the walkthrough says so instead of waiting on a quiet planner; a new pass or a
+    draft clears it.
     """
 
     id: str
@@ -65,6 +68,7 @@ class PlanStep:
     status: str = StepStatus.PENDING.value
     artifact: dict = field(default_factory=dict)
     comments: list[dict] = field(default_factory=list)
+    error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,6 +87,7 @@ class PlanStep:
                 for c in (data.get("comments") or [])
                 if isinstance(c, dict) and str(c.get("text", "")).strip()
             ],
+            error=str(data.get("error", "") or ""),
         )
 
 
@@ -233,24 +238,27 @@ def comment_step(session: PlanSession, step_id: str, text: str, *, at: float = 0
 
 
 def mark_running(session: PlanSession, step_id: str) -> bool:
-    """The planner picked up a step (pending → running). Returns True if applied."""
+    """The planner picked up a step (pending → running), so its last failure is history.
+    Returns True if applied."""
     for step in session.steps:
         if step.id == step_id and step.status == StepStatus.PENDING.value:
             step.status = StepStatus.RUNNING.value
+            step.error = ""
             _touch(session)
             return True
     return False
 
 
-def mark_pending(session: PlanSession, step_id: str) -> bool:
-    """Revert a RUNNING step to pending (the planner pass produced no usable
-    artifact — timeout / garbled output). Keeps the step's state honest ("not yet
-    produced") + cleanly retryable, instead of stranding it as RUNNING with nothing.
-    Only acts on a RUNNING step (never reopens an approved/awaiting one). Returns
-    True if applied."""
+def fail_step(session: PlanSession, step_id: str, reason: str) -> bool:
+    """Revert a RUNNING step to pending because its pass produced no usable artifact, and
+    keep ``reason`` — why — on it. Keeps the step's state honest ("not yet produced") and
+    cleanly retryable, instead of stranding it as RUNNING with nothing, and the walkthrough
+    says what happened. Only acts on a RUNNING step (never reopens an approved/awaiting one).
+    Returns True if applied."""
     for step in session.steps:
         if step.id == step_id and step.status == StepStatus.RUNNING.value:
             step.status = StepStatus.PENDING.value
+            step.error = str(reason or "")
             _touch(session)
             return True
     return False
@@ -263,6 +271,7 @@ def submit_artifact(session: PlanSession, step_id: str, artifact: dict) -> bool:
         if step.id == step_id and step.status == StepStatus.RUNNING.value:
             step.artifact = dict(artifact or {})
             step.status = StepStatus.AWAITING_REVIEW.value
+            step.error = ""
             _touch(session)
             return True
     return False
@@ -296,7 +305,7 @@ def step_revision(step: PlanStep) -> str:
 
 
 #: The fields of a step that hold text the planner or the user wrote.
-_STEP_TEXT = ("title", "objective", "artifact", "comments")
+_STEP_TEXT = ("title", "objective", "artifact", "comments", "error")
 
 
 def wire(session: PlanSession) -> dict[str, Any]:

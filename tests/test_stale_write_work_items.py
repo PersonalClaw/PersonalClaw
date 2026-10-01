@@ -891,7 +891,9 @@ class TestALoopPlanEditFromAStaleDraft:
         from personalclaw.loop import plan_walkthrough as pw
 
         async def _planner_writes_a_new_draft(*_a, **_k):
-            return json.dumps({"markdown": "REDRAFTED by the planner"})
+            from personalclaw.planning.runner import WROTE, PlannerPass
+
+            return PlannerPass(json.dumps({"markdown": "REDRAFTED by the planner"}), WROTE)
 
         monkeypatch.setattr(pw, "_run_pass", _planner_writes_a_new_draft)
         monkeypatch.setattr(pw, "advance_plan", lambda *a, **k: asyncio.sleep(0, "gated"))

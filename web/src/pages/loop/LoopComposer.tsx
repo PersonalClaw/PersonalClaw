@@ -71,7 +71,7 @@ function designInputType(name: string): string {
 /** Accept filter for the design attachment picker. */
 const DESIGN_ACCEPT = '.png,.jpg,.jpeg,.gif,.webp,.svg,.avif,.bmp,.mp4,.mov,.webm,.m4v,.html,.htm,.jsx,.tsx,.js,.ts,.md'
 
-export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKind, initialWorkspace }: {
+export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKind, initialWorkspace, initialTask, initialAttended, initialCodebase }: {
   // Hand the CREATE RESPONSE + its kind to the host, which routes into the kind's
   // planning walkthrough (non-minimal rigor) or straight to the cockpit.
   //
@@ -87,18 +87,24 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   initialProjectId?: string
   initialKind?: LoopKind
   initialWorkspace?: string
+  // What was typed for a loop whose planning was cancelled to edit it ("Cancel and edit the
+  // task"): its task, its Mode and the codebase path typed for it come back with it
+  // (`editTask.composerRouteFor`).
+  initialTask?: string
+  initialAttended?: boolean
+  initialCodebase?: string
 }) {
   const composerRef = useRef<HTMLDivElement>(null)
   const [kind, setKind] = useState<LoopKind>(initialKind ?? 'goal')
-  const [task, setTask] = useState('')
+  const [task, setTask] = useState(initialTask ?? '')
   const [focused, setFocused] = useState(false)
   const [busy, setBusy] = useState(false)
   const [granularity, setGranularity] = useState<Granularity>('balanced')
-  const [attended, setAttended] = useState(false)
+  const [attended, setAttended] = useState(!!initialAttended)
   // Scratch-workspace lifecycle: when on, the loop's own dir is reclaimed after it
   // completes (its report is graduated to Artifacts first). Off = keep (default).
   const [scratch, setScratch] = useState(false)
-  const [projectKind, setProjectKind] = useState<'greenfield' | 'brownfield'>('greenfield')
+  const [projectKind, setProjectKind] = useState<'greenfield' | 'brownfield'>(initialCodebase ? 'brownfield' : 'greenfield')
   // Seeded from the deep-linked project, else the user's DEFAULT project (an account setting).
   // The default can land after the first render (its first-ever read), so it is applied when it
   // arrives — unless the user has already chosen here, which always wins. Picking a project here
@@ -118,7 +124,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   // codebase path here. Without this, a brownfield loop created off the default flow
   // (no project bound + minimal rigor skips Plan Review, where the workspace is
   // otherwise picked) lands with an empty workspace_dir and can't touch any files.
-  const [brownfieldWs, setBrownfieldWs] = useState('')
+  const [brownfieldWs, setBrownfieldWs] = useState(initialCodebase ?? '')
   const [optimizing, setOptimizing] = useState(false)
   // What failed — a microphone refused, a task the classifier or validation refused, a create
   // that did not go through. It stays until dismissed or the next send, as the chat's does.

@@ -235,7 +235,12 @@ The supervisor does not take the worker's word for it:
   worker self-report.
 - **`loop/watchdog.py`** detects stalls, and its own first poll re-arms loops left
   RUNNING/PLANNING by a gateway restart so an interrupted loop resumes rather than
-  zombifying (`LoopWatchdog._boot_sweep`). That sweep runs through
+  zombifying (`LoopWatchdog._boot_sweep`). A turn running on ANY of a loop's workers — its stage
+  worker or a task worker — counts as the loop working, so a long model call is not a stall. A
+  failed loop can be resumed, so it ends the way a pause does (`manager.stand_down`): every worker
+  is switched off and kept, its turn in flight is stopped, and each task worker keeps its worktree
+  and the edits in it; Resume switches the workers back on where they were. Only a Stop or a delete
+  removes the worktrees. That sweep runs through
   `concurrency.boot_sweep`, the ONE boot-adoption path it shares with
   `workflows/watchdog.py`. There is deliberately **no gateway boot hook**: a
   hook cannot be retried when it raises, and awaiting it delays startup by however long
@@ -246,7 +251,19 @@ The supervisor does not take the worker's word for it:
 - **`planning/`** (`session.py` data model + `runner.py` state machine) is the
   shared stepwise **gated planning walkthrough** used before launching Code
   and Goal loops: the plan is presented step by step with approve/comment
-  gates; a comment triggers a redraft of that step.
+  gates; a comment triggers a redraft of that step. A pass reports how it ended
+  (`runner.PlannerPass`): a file the kind cannot read is named for what is wrong with it (where
+  its JSON breaks), and a pass that ran out of time or ended without writing says that. The one
+  automatic retry tells the planner which, and a step that still has no draft keeps the reason
+  (`PlanStep.error`), which the walkthrough shows with its Retry. "Cancel and edit the task"
+  deletes the draft and opens the composer with the task, project, codebase and Mode it had; Stop
+  ends the loop with its plan kept. Both end the planner for good: the walkthrough pass in flight
+  is cancelled, the planner's nudge row is removed and its turn stopped (`manager.halt_planner`),
+  and no pass starts for a loop that is no longer planning. A planner's nudge row is kept on disk,
+  so at boot, when no pass can be in flight, every one is removed before the loops still planning
+  are driven again. Every surface that shows a loop at work offers its Stop — its page, the
+  walkthrough, the Code list and a project's Work board (whose rows also open their work) — and
+  the Loops list says how many code loops are at work and links to the Code list.
 - **`grill.py`** is the memory-checked goal-scoping pipeline:
   `assess_goal → check_memory → decompose(shape) → save_decisions`. It pulls
   prior decisions/lessons so a decomposition doesn't re-litigate settled
@@ -271,7 +288,10 @@ The supervisor does not take the worker's word for it:
 - **One writer at a time.** The code kind's scheduler (`CodeKind.schedule`, asked on every
   watchdog poll) never lets the stage worker and task workers write at once. A worktree is cut
   from HEAD, so a phase fans out only from a tree with no uncommitted changes to tracked files and
-  only while the stage worker is between cycles; otherwise its tasks stay the stage worker's. While
+  only while the stage worker is between cycles; otherwise its tasks stay the stage worker's. A task
+  worker that spent its cycle budget, or whose turns kept failing, asks its owner
+  (`nudge.why_it_ended`); one whose nudge loop is gone was torn down by something else, and the
+  scheduler starts it afresh, so a steer and Resume give the task a turn. While
   task workers run, the stage worker's cycles stand down, and it stands back up when they drain. A
   loop whose model's entry sends to this machine (`llm.registry.sends_to_this_machine`, which counts
   an OpenAI-compatible endpoint here too) runs one task worker at a time, since calls sent to one

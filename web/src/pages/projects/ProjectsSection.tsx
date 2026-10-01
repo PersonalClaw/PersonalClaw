@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, Upload, KeyRound, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Square, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, Upload, KeyRound, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
@@ -34,6 +34,7 @@ import { loopStatusColor, loopStatusLabel } from '../../lib/loopStatus'
 import { runLook } from '../workflows/workflowMeta'
 import { loopRoute } from '../../lib/loopKind'
 import { reportingWrite } from '../../app/reportingWrite'
+import { stopLoop } from '../loop/stopLoop'
 
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
@@ -663,6 +664,12 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   // the rest of the detail page uses — the board paints from cache, then swaps in the
   // fresh projection when it lands.
   const { data: work, loading: workLoading } = useQuery(`projects:work:${id}`, () => api.projectWork(id), { persist: true })
+  // Every row opens the work it is, where its own page is (`workRoute`), and a loop at work can
+  // be stopped from it: a loop that showed here as "Working" offered nothing to click.
+  const openWork = (row: WorkRow) => navigate(workRoute(row))
+  const stopWork = async (row: WorkRow) => {
+    if (await stopLoop(row.run_id)) invalidateKeys(`projects:work:${id}`)
+  }
   // Resume does what the work's OWN page does, then opens that page. It used to navigate to
   // `loop/<id>`, the loop COMPOSER, which ignores the id: Resume opened an empty "new loop" form
   // and resumed nothing. A failed resume still opens the work — its page says why, one look away,
@@ -978,7 +985,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
               source is per-section isolated — a failing source degrades ONE section
               (inline degraded note) rather than blanking the board. */}
           <HubColumn title={`Work · ${workCount}`}>
-            <WorkBoardColumn work={work} loading={workLoading} onResume={resumeWork} />
+            <WorkBoardColumn work={work} loading={workLoading} onResume={resumeWork} onOpen={openWork} onStop={stopWork} />
           </HubColumn>
 
           {/* TASKS — a plain list of task lists; clicking one opens its tasks in the
@@ -1070,13 +1077,27 @@ export const WORK_OUTCOME_LOOK: Record<WorkOutcome, { label: string; icon: Lucid
   declined: { label: runLook('declined').label, icon: runLook('declined').icon, tone: 'var(--color-on-surface-low)' },
 }
 
+/** Where a Work board row opens: a loop on its kind's page, a run on its run page, a task in
+ *  Tasks. Exported for the board's rail. */
+export function workRoute(row: Pick<WorkRow, 'source' | 'run_id' | 'kind'>): string {
+  if (row.source === 'loop') return loopRoute({ id: row.run_id, kind: row.kind })
+  if (row.source === 'task') return `tasks?open=${encodeURIComponent(row.run_id)}`
+  return `workflows/runs/${row.run_id}`
+}
+
+/** The board states a loop row is in while it can be stopped (`STOPPABLE_STATUSES` through the
+ *  server's `_LOOP_STATE`: at work or still planning, paused, or waiting on you). `queued` is a
+ *  loop not launched yet, and `review` a plan waiting for its review: neither has anything running. */
+const STOPPABLE_WORK: ReadonlySet<WorkState> = new Set(['working', 'suspended', 'needs_input'])
+
 /** The state-grouped Work board body. Exported so the
  *  board's contract is unit-tested directly: groups render in server order (needs-input
  *  pinned first), a failed source shows an inline degraded note WITHOUT blanking the
  *  board (the FE half of per-section isolation), a suspended row offers Resume, and a
  *  collapsed row starts collapsed. */
-export function WorkBoardColumn({ work, loading, onResume }: {
+export function WorkBoardColumn({ work, loading, onResume, onOpen, onStop }: {
   work: WorkBoard | undefined; loading: boolean; onResume: (row: WorkRow) => void
+  onOpen: (row: WorkRow) => void; onStop: (row: WorkRow) => void
 }) {
   if (loading && !work) return <ListSkeleton rows={4} />
   const board = work?.board ?? []
@@ -1105,7 +1126,7 @@ export function WorkBoardColumn({ work, loading, onResume }: {
               tone={group.state === 'needs_input' ? 'ok' : 'muted'} />
             {group.rows.map((row) => (
               <WorkRowCard key={`${row.origin}:${row.run_id}`} row={row}
-                onResume={() => onResume(row)} />
+                onResume={() => onResume(row)} onOpen={() => onOpen(row)} onStop={() => onStop(row)} />
             ))}
           </div>
         ))
@@ -1117,7 +1138,9 @@ export function WorkBoardColumn({ work, loading, onResume }: {
 /** One row on the Work board — a run, a legacy loop, or a task, rendered uniformly.
  *  Collapsed rows (subagent-tool noise) start collapsed behind a disclosure; a claimed
  *  row shows who holds it; a suspended row offers Resume (row.resumable). */
-function WorkRowCard({ row, onResume }: { row: WorkRow; onResume: () => void }) {
+function WorkRowCard({ row, onResume, onOpen, onStop }: {
+  row: WorkRow; onResume: () => void; onOpen: () => void; onStop: () => void
+}) {
   const [open, setOpen] = useState(!row.collapsed)
   if (row.collapsed && !open) {
     return (
@@ -1138,7 +1161,8 @@ function WorkRowCard({ row, onResume }: { row: WorkRow; onResume: () => void }) 
       {outcome && OutcomeIcon
         ? <OutcomeIcon size={13} className="shrink-0" style={{ color: outcome.tone }} role="img" aria-label={outcome.label} />
         : <CircleDot size={13} className="shrink-0 text-primary" />}
-      <span className="min-w-0 flex-1 truncate" title={row.title}>{row.title}</span>
+      <button type="button" onClick={onOpen} title={`Open ${row.title}`}
+        className="min-w-0 flex-1 truncate text-left hover:text-on-surface hover:underline">{row.title}</button>
       {outcome && (
         <span aria-hidden className="shrink-0 text-[0.75rem]" style={{ color: outcome.tone }}>{outcome.label}</span>
       )}
@@ -1150,6 +1174,11 @@ function WorkRowCard({ row, onResume }: { row: WorkRow; onResume: () => void }) 
       {row.resumable && (
         <Button variant="ghost" size="xs" onClick={onResume} title="Resume this suspended work">
           <RefreshCw size={12} /> Resume
+        </Button>
+      )}
+      {row.source === 'loop' && STOPPABLE_WORK.has(row.state) && (
+        <Button variant="ghost" size="xs" onClick={onStop} title="Stop this loop">
+          <Square size={12} /> Stop
         </Button>
       )}
     </div>

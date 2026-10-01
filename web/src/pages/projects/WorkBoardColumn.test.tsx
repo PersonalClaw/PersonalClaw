@@ -40,7 +40,7 @@ describe('WorkBoardColumn', () => {
         group('working', [row({ run_id: 'b', title: 'Busy', state: 'working' })]),
       ],
     })
-    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} onOpen={() => {}} onStop={() => {}} />)
     const groups = document.querySelectorAll('[data-testid^="work-group-"]')
     expect(groups[0].getAttribute('data-testid')).toBe('work-group-needs_input')
     expect(groups[1].getAttribute('data-testid')).toBe('work-group-working')
@@ -55,7 +55,7 @@ describe('WorkBoardColumn', () => {
       ],
       completeness: 'partial',
     })
-    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} onOpen={() => {}} onStop={() => {}} />)
     // the degraded note is present…
     expect(screen.getByTestId('work-section-error-tasks')).toBeTruthy()
     // …and the OK group's row still rendered (not a full-board error)
@@ -69,7 +69,7 @@ describe('WorkBoardColumn', () => {
     const wb = board({
       board: [group('suspended', [row({ run_id: 'sus1', title: 'Paused work', state: 'suspended', resumable: true })])],
     })
-    render(<WorkBoardColumn work={wb} loading={false} onResume={onResume} />)
+    render(<WorkBoardColumn work={wb} loading={false} onResume={onResume} onOpen={() => {}} onStop={() => {}} />)
     const btn = screen.getByTitle('Resume this suspended work')
     fireEvent.click(btn)
     expect(onResume).toHaveBeenCalledWith(expect.objectContaining({ run_id: 'sus1', source: 'run' }))
@@ -81,7 +81,7 @@ describe('WorkBoardColumn', () => {
         title: 'Claimed', claim: { holder: 'worker-7', expires_at: 9e9, taken_at: 0, renewals: 0 },
       })])],
     })
-    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} onOpen={() => {}} onStop={() => {}} />)
     expect(screen.getByText('worker-7')).toBeTruthy()
   })
 
@@ -89,7 +89,7 @@ describe('WorkBoardColumn', () => {
     const wb = board({
       board: [group('working', [row({ title: 'Subagent noise', collapsed: true })])],
     })
-    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} onOpen={() => {}} onStop={() => {}} />)
     // Collapsed: the disclosure button carries the title; the full CircleDot row is absent.
     const disclosure = screen.getByRole('button', { name: /Subagent noise/ })
     expect(disclosure).toBeTruthy()
@@ -99,7 +99,7 @@ describe('WorkBoardColumn', () => {
   })
 
   it('shows the empty state when every section is ok and the board is empty', () => {
-    render(<WorkBoardColumn work={board()} loading={false} onResume={() => {}} />)
+    render(<WorkBoardColumn work={board()} loading={false} onResume={() => {}} onOpen={() => {}} onStop={() => {}} />)
     expect(screen.getByText(/No work here yet/)).toBeTruthy()
   })
 
@@ -111,7 +111,7 @@ describe('WorkBoardColumn', () => {
   it('names the terminal group Closed, not Done', () => {
     expect(WORK_STATE_LABEL.done).toBe('Closed')
     const wb = board({ board: [group('done', [row({ title: 'Shipped', state: 'done', outcome: 'completed' })])] })
-    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} onOpen={() => {}} onStop={() => {}} />)
     const heading = screen.getByTestId('work-group-done').firstElementChild as HTMLElement
     expect(heading.textContent).toMatch(/^Closed/)
     expect(heading.textContent).not.toMatch(/Done/)
@@ -124,7 +124,7 @@ describe('WorkBoardColumn', () => {
         row({ run_id: 'b', title: 'Press kit outreach', state: 'done', outcome: 'cancelled' }),
       ])],
     })
-    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} onOpen={() => {}} onStop={() => {}} />)
     const rows = screen.getByTestId('work-group-done').querySelectorAll('[data-outcome]')
     const [done, cancelled] = [...rows] as HTMLElement[]
     expect(done.getAttribute('data-outcome')).toBe('completed')
@@ -147,7 +147,7 @@ describe('WorkBoardColumn', () => {
 
   it('a row that has not ended carries no ending', () => {
     const wb = board({ board: [group('queued', [row({ title: 'Assemble pricing sheet', state: 'queued' })])] })
-    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} />)
+    render(<WorkBoardColumn work={wb} loading={false} onResume={() => {}} onOpen={() => {}} onStop={() => {}} />)
     expect(screen.getByTestId('work-group-queued').querySelector('[data-outcome]')).toBeNull()
     expect(screen.queryByRole('img')).toBeNull()
   })

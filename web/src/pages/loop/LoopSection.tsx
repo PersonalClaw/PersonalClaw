@@ -65,6 +65,9 @@ export function LoopSection({ navigate, query }: RouteProps) {
   // kind, and the composer inherits that project's bound codebase.
   const kindParam = query.kind as LoopKind | undefined
   const validKind = kindParam && ['general', 'goal', 'code', 'design', 'research'].includes(kindParam) ? kindParam : undefined
+  // ?task=…&mode=attended&codebase=… bring back what was typed for a loop whose planning was
+  // cancelled to edit it (`editTask.composerRouteFor`).
   return <LoopComposer onCreated={routeCreated} onHistory={() => navigate('loops/history')}
-    initialProjectId={query.project || ''} initialKind={validKind} initialWorkspace={query.ws || ''} />
+    initialProjectId={query.project || ''} initialKind={validKind} initialWorkspace={query.ws || ''}
+    initialTask={query.task || ''} initialAttended={query.mode === 'attended'} initialCodebase={query.codebase || ''} />
 }

@@ -34,13 +34,15 @@ function makeCfg(projectId: string): WalkthroughConfig {
   }
 }
 
-export function CodePlanningView({ projectId, onReady, onBack }: {
+export function CodePlanningView({ projectId, onReady, onBack, onCancel, onStop }: {
   projectId: string
   onReady: (project: Loop) => void
   onBack: () => void
+  onCancel: () => Promise<boolean>
+  onStop: () => Promise<boolean>
 }) {
   return (
-    <PlanningWalkthrough id={projectId} cfg={makeCfg(projectId)} onBack={onBack}
+    <PlanningWalkthrough id={projectId} cfg={makeCfg(projectId)} onBack={onBack} onCancel={onCancel} onStop={onStop}
       onReady={() => { api.uLoop(projectId).then(onReady).catch(() => {}) }} />
   )
 }

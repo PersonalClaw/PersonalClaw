@@ -23,6 +23,7 @@ import logging
 import os
 import shutil
 import time
+from dataclasses import dataclass
 
 from personalclaw.guardrails.incident import incident_active
 
@@ -34,6 +35,23 @@ PLANNER_MAX_CYCLES = 3
 PLANNER_FIRST_IDLE = 10
 PLANNER_POLL_SECS = 4
 PLANNER_TIMEOUT_SECS = 600
+
+#: How a planner pass ended (:attr:`PlannerPass.ended`).
+WROTE = "wrote"  # the file appeared; ``text`` is what it holds
+TIMED_OUT = "timed_out"  # the pass ran out of time before the file appeared
+STOPPED = "stopped"  # the planner's loop stopped (its cycles spent, an error) without writing it
+FAILED = "failed"  # the pass itself could not run
+
+
+@dataclass(frozen=True)
+class PlannerPass:
+    """What one planner pass came back with: the file's text, and how the pass ended — so the
+    caller tells the planner and its owner what really happened (a file it cannot read is not a
+    file never written, and neither is a pass that ran out of time)."""
+
+    text: str = ""
+    ended: str = FAILED
+    limit_secs: float = 0.0
 
 
 def read_sentinel(files_dir: str, sentinel: str) -> str:
@@ -114,9 +132,9 @@ async def run_planner_pass(
     stop_sentinel_name: str = "STOP",
     timeout_secs: int | None = None,
     extra_sentinels: tuple[str, ...] = (),
-) -> str | None:
-    """Run ONE planner pass and return the sentinel's raw text (or None on
-    timeout/no-output). Spawns (or reuses) the planner session cwd'd to
+) -> PlannerPass:
+    """Run ONE planner pass and return what it came back with (:class:`PlannerPass`: the
+    sentinel's raw text, and how the pass ended). Spawns (or reuses) the planner session cwd'd to
     ``workspace_dir``, arms a bounded autonudge run with ``brief``, polls for
     ``sentinel`` in ``files_dir``, writes the STOP file the moment it lands to halt
     the loop, and tears the loop down in ``finally``. Never raises.
@@ -187,16 +205,15 @@ async def run_planner_pass(
             first_idle_secs=PLANNER_FIRST_IDLE,
             stop_sentinel_path=stop_path,
         )
-        deadline = time.time() + (
-            timeout_secs if timeout_secs is not None else PLANNER_TIMEOUT_SECS
-        )
+        limit = timeout_secs if timeout_secs is not None else PLANNER_TIMEOUT_SECS
+        deadline = time.time() + limit
         # Once the planner loop is gone OR deactivated (it exhausted PLANNER_MAX_CYCLES
         # without writing the sentinel — narrated but never authored the file, or hit a
         # model error), no further cycle will run, so polling to the full deadline is a
         # dead wait (a 10-min spinner). Bail after a short grace — enough polls to cover
         # a filesystem-flush lag between the agent's final write and loop deactivation —
-        # returning None so the caller reverts the step to PENDING + the FE offers Retry
-        # promptly instead of after 600s.
+        # so the caller reverts the step to PENDING + the FE offers Retry promptly instead
+        # of after 600s.
         dead_polls = 0
         _GRACE_POLLS = 2
         # The planner runs unattended, so incident mode holds it with every other runner: its
@@ -227,7 +244,7 @@ async def run_planner_pass(
                         open(stop_path, "w").close()
                     except OSError:
                         pass
-                return raw
+                return PlannerPass(raw, WROTE, limit)
             loop = svc.get_by_session(skey)
             if loop is None or not getattr(loop, "active", True):
                 dead_polls += 1
@@ -238,13 +255,16 @@ async def run_planner_pass(
                         skey,
                         sentinel,
                     )
-                    return None
+                    return PlannerPass(ended=STOPPED, limit_secs=limit)
             else:
                 dead_polls = 0
-        return None
+        logger.info(
+            "run_planner_pass: %s ran out of time (%ss) before writing %s", skey, limit, sentinel
+        )
+        return PlannerPass(ended=TIMED_OUT, limit_secs=limit)
     except Exception:
         logger.warning("run_planner_pass failed for %s (%s)", skey, sentinel, exc_info=True)
-        return None
+        return PlannerPass(ended=FAILED)
     finally:
         try:
             loop = svc.get_by_session(skey)

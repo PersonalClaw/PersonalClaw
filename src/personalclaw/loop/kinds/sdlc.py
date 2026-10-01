@@ -45,6 +45,24 @@ _POOL_CAP = 4  # max concurrent task-workers per loop
 _CONFLICT_REDO_CAP = 2  # auto-resolve a task's merge conflict at most this many times
 
 
+def _ended_worker_question(loop: Loop, task, why: str) -> str:
+    """What the owner is asked when a task's worker cannot run again by itself (``why`` is
+    :func:`~personalclaw.triggers.nudge.why_it_ended`'s answer). It names only controls the task
+    panel has: on autopilot the scheduler owns the queue, so the panel offers a steer and no
+    remove."""
+    then = (
+        "Steer it, then resume."
+        if loop.autopilot
+        else "Steer it, or remove it from the queue, then resume."
+    )
+    if why == "errors":
+        return f'Task "{task.title}" stopped: its worker\'s turns kept failing. {then}'
+    return (
+        f'Task "{task.title}" ran out of cycles without producing a result — it may be '
+        f"under-specified or blocked. {then}"
+    )
+
+
 def _pool_cap(loop: Loop) -> int:
     """How many task workers a loop runs at once: :data:`_POOL_CAP`, or one when the loop's
     model runs on this machine.
@@ -1577,6 +1595,7 @@ class CodeKind(LoopKindStrategy):
             task_session_key,
             teardown_task_worker,
         )
+        from personalclaw.triggers.nudge import why_it_ended
 
         # 1. Reap finished task-workers.
         for tid in list((loop.kind_config or {}).get("queued_task_ids", []) or []):
@@ -1596,18 +1615,18 @@ class CodeKind(LoopKindStrategy):
                 continue
             task = await self._get_task(tid)
             if task is not None and not tasks_link._is_done(task.status):
-                loop_gone = ctx.svc.get_by_session(skey) is None
-                if loop_gone and loop_files.task_finding_count(loop.id, tid) > 0:
+                worker = ctx.svc.get_by_session(skey)
+                # A worker that cannot run again by itself: the nudge service switches its loop
+                # off (and keeps it) once it spends its budget or its turns keep failing. A loop
+                # that is GONE was torn down by something else (a conflict redo, the ask below
+                # after the owner steers), so its task is not finished: step 2 starts it afresh.
+                ended = why_it_ended(worker) if worker is not None else ""
+                if (ended or worker is None) and loop_files.task_finding_count(loop.id, tid) > 0:
                     await tasks_link.mark_task_done(tid)
                     task = await self._get_task(tid) or task
-                elif loop_gone:
-                    # Worker exhausted its budget with no finding → tear down + pause.
+                elif ended:
                     await teardown_task_worker(ctx.svc, loop.id, tid)
-                    loop_files.write_question(
-                        loop.id,
-                        f'Task "{task.title}" ran out of cycles without producing a result '
-                        "— it may be under-specified or blocked. Steer it, or remove it, then resume.",  # noqa: E501
-                    )
+                    loop_files.write_question(loop.id, _ended_worker_question(loop, task, ended))
                     store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
                     ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
                     return True

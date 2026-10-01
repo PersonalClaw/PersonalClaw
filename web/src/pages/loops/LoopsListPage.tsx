@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { reportingWrite } from '../../app/reportingWrite'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Plus, Pause, Play, Square, Trash2, ExternalLink, Filter, Repeat } from 'lucide-react'
+import { Plus, Pause, Play, Square, Trash2, ExternalLink, Filter, Repeat, Code2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { IconButton } from '../../ui/IconButton'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ListControls } from '../../ui/ListControls'
@@ -26,7 +27,7 @@ import { loopKindMeta } from '../../lib/loopKind'
 import { loopToGoalLoop } from './goalAdapter'
 import { rowSubject } from '../../lib/rowSubject'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle, hasDistinctName } from './loopPhases'
-import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, loopActionSources } from '../../lib/loopStatus'
+import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, shownCycle, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, STOPPABLE_LOOP_STATUSES, loopActionSources } from '../../lib/loopStatus'
 import { PageTitle } from '../../ui/PageTitle'
 
 // The status word + accent come from `lib/loopStatus` — the ONE registry every loop
@@ -55,7 +56,7 @@ function order(a: GoalLoop, b: GoalLoop) {
  *  opens on its run page, so the id alone cannot say where to go. */
 export type OpenableLoop = Pick<GoalLoop, 'id' | 'run_id'> & { kind?: string }
 
-export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (loop: OpenableLoop) => void; onCreate: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }: { onOpen: (loop: OpenableLoop) => void; onCreate: () => void; onOpenCode: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   // Cached list (instant paint on revisit) that still polls — persist:false so the
   // live status (running / cycle counts) is never stale across a hard reload.
   // This list is the back-target for the general/goal/design cockpits (Code keeps its own
@@ -68,6 +69,14 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
   // loop" to a user whose loops were merely unreachable. The rejection propagates so the
   // one condition below (`error` with no data) can tell the two facts apart.
   const { data: loops, error: loopsErr, refresh } = useQuery<GoalLoop[]>('loops', () => api.uLoops().then((ls) => ls.filter((l) => l.kind !== 'code').map(loopToGoalLoop).sort(order)), { persist: false })
+  // Code loops are listed in Code (#/code/history), not here. How many of them are at work is said
+  // here with a link there, so a code loop running or planning is never out of sight from the list a
+  // person reaches for to find what is working. Read under the Code list's own key and fetch, so a
+  // code loop's change refreshes it and `loops` stays the non-code subset (`splitCollectionBusts`).
+  const { data: codeLoops, error: codeErr, refresh: refreshCode } = useQuery('code:projects', () => api.uLoops({ kind: 'code' }), { persist: false })
+  // A failed read says so (the line below), rather than reading as "none at work".
+  const codeUnread = codeLoops === undefined && !!codeErr
+  const codeAtWork = (codeLoops ?? []).filter((l) => l.kind === 'code' && STOPPABLE_LOOP_STATUSES.has(l.status)).length
   // Row whose delete is armed (first click), cleared on a second click or timeout.
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   // Peek: a row click opens a quick-glance side panel (URL-backed ?peek=<id>);
@@ -84,6 +93,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
   // loop appears (the `loops` dep flips hasLive on any status change).
   const hasLive = (loops ?? []).some((l) => !['complete', 'stopped', 'failed'].includes(l.status))
   useVisiblePoll(refresh, hasLive ? 4000 : null)
+  useVisiblePoll(refreshCode, codeAtWork > 0 ? 6000 : null)
 
   async function act(e: React.MouseEvent | undefined, id: string, action: 'pause' | 'resume' | 'stop') {
     e?.stopPropagation()
@@ -169,6 +179,14 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
     >
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+          {(codeAtWork > 0 || codeUnread) && (
+            <p data-type="body-s" className="mb-l flex flex-wrap items-center gap-xs text-on-surface-low">
+              <Code2 size={14} className="shrink-0" />
+              {codeUnread ? "Couldn't check the code loops at work"
+                : codeAtWork === 1 ? '1 code loop is at work' : `${codeAtWork} code loops are at work`} — Code lists them.
+              <TextLink onClick={onOpenCode}>Open the Code list</TextLink>
+            </p>
+          )}
           {loops === undefined && loopsErr ? (
             // "We couldn't load them" is a different fact from "you have none", and it is
             // the one that must NOT read as an invitation to create your first loop.

@@ -102,7 +102,8 @@ class _State:
         pass
 
 
-def _pass(state, svc, ws: Path, files_dir: Path):
+def _pass(state, svc, ws: Path, files_dir: Path) -> str:
+    """The text of the file the pass read ('' when it read none)."""
     return asyncio.run(
         R.run_planner_pass(
             state,
@@ -116,7 +117,7 @@ def _pass(state, svc, ws: Path, files_dir: Path):
             app="loops",
             extra_sentinels=("plan_steps.json", "step_artifact.json"),
         )
-    )
+    ).text
 
 
 @pytest.fixture()
@@ -143,7 +144,7 @@ def test_a_file_of_that_name_in_the_workspace_is_not_read_and_not_touched(dirs, 
     (ws / "plan_steps.json").write_text("also the user's")
     monkeypatch.setattr(R, "PLANNER_TIMEOUT_SECS", 0.2)
 
-    assert _pass(_State(), _Svc(), ws, files_dir) is None
+    assert _pass(_State(), _Svc(), ws, files_dir) == ""
     assert (ws / "step_artifact.json").read_text() == "the user's own file"
     assert (ws / "plan_steps.json").read_text() == "also the user's"
 

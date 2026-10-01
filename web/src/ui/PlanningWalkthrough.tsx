@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from './unavailable'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Loader2, Wrench, FileSearch, Check, MessageSquarePlus, CircleDot, Pencil, X, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Loader2, Wrench, FileSearch, Check, MessageSquarePlus, CircleDot, Pencil, X, RefreshCw, AlertTriangle, Square } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { listItemEnter, stagger, spring, expr } from '../design/motion'
 import { fvs, withWeight } from '../design/fontWeight'
@@ -78,11 +78,19 @@ function lastSentence(raw: string): string {
   return (parts[parts.length - 1] || '').trim()
 }
 
-export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
+export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop }: {
   id: string
   cfg: WalkthroughConfig
   onReady: () => void
+  /** The loop is gone (deleted elsewhere): leave. */
   onBack: () => void
+  /** The Cancel control (`cfg.copy.cancel`): stop this planning and go back to editing the task.
+   *  Resolves true once the host has left (it deletes the draft, which ends the planner), false
+   *  when the cancel did not go through and the walkthrough stays. */
+  onCancel: () => Promise<boolean>
+  /** Stop: end this loop where it is, plan kept (the host confirms and stops it). Resolves true
+   *  once the host has left for the stopped loop's page, false when it did not stop. */
+  onStop: () => Promise<boolean>
 }) {
   // The Investigation rail shows the concrete TOOL CALLS (what the planner is
   // actually doing) as a list…
@@ -138,6 +146,10 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
   const planKey = cfg.planSessionKey(id)
   const feedRef = useRef<HTMLDivElement>(null)
   const started = useRef(false)
+  // Set while a Cancel is deleting the draft: the poll below stops, so the draft's own 404 is not
+  // read as "deleted elsewhere" and sent through `onBack` while the host is leaving for the
+  // composer.
+  const leaving = useRef(false)
 
   // live planner activity over the shared WS (same shape the worker emits)
   useChatSocket((m: WsMessage) => {
@@ -179,13 +191,14 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
     let gone = false
     const tick = async () => {
       let s: PlanSession | null = null
+      if (leaving.current) return
       try {
         s = await cfg.api.getSession(id)
       } catch (e) {
         // A 404 means the loop was deleted (or stopped+removed) out from under the
         // walkthrough — exit to the list instead of polling a dead loop forever. A
         // transient error (5xx/network) is ignored; the next tick recovers.
-        if ((e as { status?: number })?.status === 404) { gone = true; if (alive) onBack() }
+        if ((e as { status?: number })?.status === 404 && !leaving.current) { gone = true; if (alive) onBack() }
         return
       }
       if (!alive || gone) return
@@ -341,6 +354,17 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
     finally { setBusy(false); inFlight.current = false }
     const s = await cfg.api.getSession(id).catch(() => null); if (s) setSession(s)
   }
+  // Cancel and Stop both end the planner and leave this page; while either is under way the poll
+  // stands still (`leaving`), and a refusal brings the walkthrough back as it was.
+  async function leave(how: () => Promise<boolean>) {
+    if (inFlight.current) return
+    inFlight.current = true
+    leaving.current = true
+    setBusy(true); setErr(null)
+    try { if (!(await how())) leaving.current = false }
+    catch { leaving.current = false }
+    finally { setBusy(false); inFlight.current = false }
+  }
   async function saveEdit() {
     if (editText === null || !editBase) return
     if (inFlight.current) return
@@ -359,9 +383,12 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
   // of the time, waiting on the user to approve/comment each step — during which the
   // planner is idle. A perpetual "Planning…" + spinner implied active background work
   // and nudged the user to wait instead of act. Spin only while the planner is actually
-  // drafting (current step pending/running); when a step awaits review, say so plainly.
+  // drafting (current step pending/running); when a step awaits review, say so plainly. A step
+  // whose pass failed (it carries the server's reason) has no planner working on it either.
   const awaitingReview = current?.status === 'awaiting_review'
-  const headerLabel = awaitingReview ? 'Awaiting your review' : stalled ? 'Planning paused' : 'Planning…'
+  const stepFailed = current?.status === 'pending' && !!current?.error
+  const paused = stalled || stepFailed
+  const headerLabel = awaitingReview ? 'Awaiting your review' : paused ? 'Planning paused' : 'Planning…'
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
@@ -369,13 +396,20 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
         left={<div className="flex items-center gap-2">
           {awaitingReview
             ? <CircleDot size={16} className="text-primary" />
-            : <Loader2 size={16} className={stalled ? 'text-on-surface-low' : 'animate-spin text-primary'} />}
+            : <Loader2 size={16} className={paused ? 'text-on-surface-low' : 'animate-spin text-primary'} />}
           <span data-type="title-l" className="text-on-surface">{headerLabel}</span>
           <span data-type="body-s" className="text-on-surface-low">{cfg.copy.subtitle}</span>
         </div>}
-        right={<button type="button" onClick={onBack}
-          data-type="body-s"
-          className="rounded-pill px-3 h-9 text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface">{cfg.copy.cancel}</button>}
+        right={<div className="flex items-center gap-xs">
+          <button type="button" onClick={() => void leave(onStop)} disabled={busy}
+            data-type="body-s" title="End this loop where it is; its plan so far is kept"
+            className="inline-flex items-center gap-xs rounded-pill px-m h-9 text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface">
+            <Square size={13} /> Stop
+          </button>
+          <button type="button" onClick={() => void leave(onCancel)} disabled={busy}
+            data-type="body-s"
+            className="rounded-pill px-3 h-9 text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface">{cfg.copy.cancel}</button>
+        </div>}
       />
       {/* Fixed shell: the row fills the remaining height and NEITHER the page nor
           the grid scrolls — only each pane scrolls internally. The PLAN is the
@@ -554,6 +588,23 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                       )}
                     </div>}
                   </>
+                ) : stepFailed ? (
+                  // The step's last pass ended with nothing usable and the server said why (the
+                  // planner ran out of time, or wrote a file that is not valid JSON): say it now,
+                  // rather than wait out the quiet clock below and guess.
+                  <div data-type="body-s" className="flex flex-col items-start gap-xs">
+                    <p className="inline-flex items-center gap-xs" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
+                      <AlertTriangle size={14} /> This step didn't produce a draft
+                    </p>
+                    <p className="text-on-surface-low">{current.error}</p>
+                    <button type="button" disabled={busy} onClick={retry}
+                      className="inline-flex items-center gap-xs rounded-lg border border-outline-variant/60 px-m py-xs text-on-surface-var disabled:opacity-50">
+                      <RefreshCw size={13} /> Retry this step
+                    </button>
+                    {err && (
+                      <p role="alert" data-type="body-s" style={{ color: 'var(--color-danger)' }}>{err}</p>
+                    )}
+                  </div>
                 ) : stalled ? (
                   <div data-type="body-s" className="flex flex-col items-start gap-1.5">
                     <p className="text-on-surface-low">This step has been quiet for a while — the planner may still be working, or it may have errored / the model is unavailable. Retry only if it seems stuck.</p>

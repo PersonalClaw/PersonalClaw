@@ -6339,6 +6339,9 @@ export interface PlanStep {
   status: PlanStepStatus
   artifact?: Record<string, unknown>
   comments?: { text: string; at: number }[]
+  /** Why this step's last pass produced no draft (the planner ran out of time, or wrote a file
+   *  that could not be read); '' once a new pass starts or a draft lands. */
+  error?: string
   /** The revision an edit of this step's markdown names (`lib/staleWrite.ts`) — a digest of the
    *  draft as read, so an edit of a draft a redraft replaced is refused, not saved over it. */
   revision?: string

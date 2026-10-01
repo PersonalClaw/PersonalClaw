@@ -3138,7 +3138,10 @@ class GatewayOrchestrator:
                         _sess.key,
                         turn_timeout,
                     )
+                    # The cut turn has ended (`running` reads its task): say why, stop its provider.
                     _sess._last_turn_errored = True
+                    _said = f"This turn ran past its {int(turn_timeout // 60)}-minute limit"
+                    _sess.append("error", f"{_said} and was stopped.", "msg msg-err")
                     try:
                         from personalclaw.dashboard.chat_utils import _history_key_for
 
@@ -3149,8 +3152,6 @@ class GatewayOrchestrator:
                         logger.debug(
                             "cancel after turn timeout failed for %s", _sess.key, exc_info=True
                         )
-                    finally:
-                        _sess._running = False
 
             def _cycle_still_armed(_sess: Any) -> bool:
                 """Is the loop that fired this cycle still armed to run it?

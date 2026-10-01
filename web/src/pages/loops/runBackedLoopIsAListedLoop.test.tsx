@@ -56,7 +56,7 @@ function Harness({ onOpen }: { onOpen: (l: unknown) => void }) {
     for (const [k, v] of Object.entries(patch)) { if (v == null || v === '') delete next[k]; else next[k] = v }
     return next
   })
-  return <LoopsListPage onOpen={onOpen} onCreate={() => {}} query={query} setQuery={setQuery} />
+  return <LoopsListPage onOpen={onOpen} onCreate={() => {}} onOpenCode={() => {}} query={query} setQuery={setQuery} />
 }
 
 function mountList(loops: Loop[], onOpen = vi.fn()) {

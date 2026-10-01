@@ -136,7 +136,7 @@ describe('the planning walkthrough', () => {
       copy: { subtitle: 'Planning', activityLabel: 'Investigation', activityEmpty: 'Nothing yet.', cancel: 'Back' },
       renderArtifact: () => null,
     }
-    render(<PlanningWalkthrough id="l-1" cfg={cfg} onReady={() => {}} onBack={() => {}} />)
+    render(<PlanningWalkthrough id="l-1" cfg={cfg} onReady={() => {}} onBack={() => {}} onCancel={() => Promise.resolve(true)} onStop={() => Promise.resolve(true)} />)
   }
 
   beforeEach(() => {

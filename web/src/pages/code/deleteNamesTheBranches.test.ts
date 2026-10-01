@@ -146,8 +146,11 @@ describe('VACUITY: the destruction this copy warns about is real', () => {
 
   it('🔑 the Stop dialog on the same page already said this, which is the sharpest evidence', () => {
     // Delete does strictly more than Stop and said strictly less. Kept as a rail so the two cannot
-    // drift apart again in the other direction.
-    expect(strip(read('pages/code/CodeCockpitPage.tsx')), 'Stop names the worktree + branch loss')
+    // drift apart again in the other direction. The cockpit's Stop asks the one Stop confirm every
+    // Stop control shares (`pages/loop/stopLoop.ts`), which is where its words live.
+    expect(strip(read('pages/code/CodeCockpitPage.tsx')), 'the cockpit asks the shared Stop confirm')
+      .toMatch(/confirmStopLoop\(p\.status, p\.name\)/)
+    expect(strip(read('pages/loop/stopLoop.ts')), 'Stop names the worktree + branch loss')
       .toMatch(/loses its own worktree and branch/)
   })
 })

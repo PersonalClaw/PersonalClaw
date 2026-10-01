@@ -8,6 +8,7 @@ import pytest
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, store
 from personalclaw.loop.loop import Loop
+from personalclaw.planning.runner import WROTE, PlannerPass
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
 
 
@@ -273,8 +274,8 @@ class TestStepPassRetry:
             # 1st call: planner pasted a code block (no sentinel written) → parse None.
             # 2nd call (the correction): it actually wrote the artifact.
             if calls["n"] == 1:
-                return '```json\n{"markdown":"narrated, not written"}\n```'
-            return "wrote step_artifact.json"
+                return PlannerPass('```json\n{"markdown":"narrated, not written"}\n```', WROTE)
+            return PlannerPass("wrote step_artifact.json", WROTE)
 
         def _fake_parse(raw):
             return {"markdown": "real artifact"} if "wrote" in (raw or "") else None
@@ -302,7 +303,7 @@ class TestStepPassRetry:
 
         async def _fake_run_pass(state, svc, lp, wt, *, brief, sentinel, timeout_secs=None):
             calls["n"] += 1
-            return "still just chatting, no file"
+            return PlannerPass("still just chatting, no file", WROTE)
 
         monkeypatch.setattr(pw, "_run_pass", _fake_run_pass)
         monkeypatch.setattr(

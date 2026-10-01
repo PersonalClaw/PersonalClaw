@@ -112,7 +112,7 @@ async def test_poll_exits_early_when_loop_deactivated_without_sentinel(tmp_path,
         app="code",
     )
     elapsed = time.time() - started
-    assert out is None
+    assert (out.ended, out.text) == (R.STOPPED, "")
     assert elapsed < 5  # bailed on the grace, not the 600s deadline
     assert svc.removed is True  # loop torn down in finally
 
@@ -218,7 +218,7 @@ async def test_poll_returns_sentinel_when_written(tmp_path, monkeypatch):
         brief="b",
         app="code",
     )
-    assert out == '{"steps": []}'
+    assert (out.ended, out.text) == (R.WROTE, '{"steps": []}')
     assert svc.removed is True
 
 
@@ -257,7 +257,7 @@ async def test_walkthrough_files_the_planner_wrote_into_the_workspace_do_not_sta
         app="loops",
         extra_sentinels=("plan_steps.json", "step_artifact.json"),
     )
-    assert out == '{"ok": true}'  # active sentinel captured
+    assert out.text == '{"ok": true}'  # active sentinel captured
     # neither the active output NOR the decomposition scratch is left behind
     assert not (ws / "step_artifact.json").exists()
     assert not (ws / "plan_steps.json").exists()

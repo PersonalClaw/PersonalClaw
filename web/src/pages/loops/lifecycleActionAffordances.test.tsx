@@ -92,7 +92,7 @@ function fixture(status: string): Loop {
 async function mountList(status: string): Promise<HTMLElement> {
   STORE.loops = [fixture(status)]
   render(
-    <LoopsListPage onOpen={() => {}} onCreate={() => {}} query={{ filter: 'all' }} setQuery={() => {}} />,
+    <LoopsListPage onOpen={() => {}} onCreate={() => {}} onOpenCode={() => {}} query={{ filter: 'all' }} setQuery={() => {}} />,
   )
   // The positive control: the row itself painted. Every absence assertion below is meaningless
   // without it — an empty list offers no controls either.

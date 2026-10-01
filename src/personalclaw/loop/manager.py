@@ -396,12 +396,9 @@ async def halt_turn(state, key: str) -> bool:
         return False
 
 
-async def pause(state, svc, loop_id: str) -> Loop:
-    """Pause: deactivate the main worker AND any parallel task-workers, and STOP the cycle in
-    flight (:func:`halt_worker_turns`) — so nothing more is done until Resume, which re-arms them.
-    Deactivate (not remove) so a resume re-arms them. A parallel code/design loop left only its
-    main worker paused would otherwise keep its task-workers burning cycles + editing worktrees
-    while the user thinks it's paused."""
+async def _deactivate_workers(svc, loop_id: str) -> None:
+    """Switch off the nudge loop of the main worker AND every parallel task-worker, keeping them:
+    a resume (:func:`start`) switches them back on, each with its session, budget and worktree."""
     main = svc.get_by_session(session_key(loop_id))
     if main is not None:
         await svc.update(main.id, active=False)
@@ -411,11 +408,36 @@ async def pause(state, svc, loop_id: str) -> Loop:
     for lp in svc.list_all():
         if str(getattr(lp, "session_name", "")).startswith(prefix):
             await svc.update(lp.id, active=False)
+
+
+async def pause(state, svc, loop_id: str) -> Loop:
+    """Pause: deactivate the main worker AND any parallel task-workers, and STOP the cycle in
+    flight (:func:`halt_worker_turns`) — so nothing more is done until Resume, which re-arms them.
+    Deactivate (not remove) so a resume re-arms them. A parallel code/design loop left only its
+    main worker paused would otherwise keep its task-workers burning cycles + editing worktrees
+    while the user thinks it's paused."""
+    await _deactivate_workers(svc, loop_id)
     # The status goes first, so every surface already reads "Paused" while the turn is winding
     # down — and the halt comes second, so it is disarmed nudge loops the stopping turn sees.
     paused = store.update_status(loop_id, LoopStatus.PAUSED)
     await halt_worker_turns(state, loop_id)
     return paused
+
+
+async def stand_down(state, svc, loop_id: str) -> None:
+    """Stop a loop that FAILED without throwing away what its workers made.
+
+    A failed loop says "Resume to retry", so it ends the way a pause does: every worker's nudge
+    loop is switched off and kept, the turn in flight is stopped, and each task worker keeps its
+    worktree and branch, edits its owner approved included. Resume (:func:`start`) switches the
+    workers back on where they were. Only a Stop or a delete removes the worktrees
+    (:func:`_teardown`), and the Stop dialog says so. No worker holds a task now, so one held in
+    progress goes back to open."""
+    from personalclaw.loop import tasks_link
+
+    await _deactivate_workers(svc, loop_id)
+    await halt_worker_turns(state, loop_id)
+    await tasks_link.release_in_progress(loop_id)
 
 
 async def stop(state, svc, loop_id: str) -> Loop:
@@ -427,8 +449,26 @@ async def stop(state, svc, loop_id: str) -> Loop:
     loop_files.write_stop_sentinel(loop_id)
     stopped = store.update_status(loop_id, LoopStatus.STOPPED, stop_reason=LoopStopReason.USER)
     await halt_worker_turns(state, loop_id)
+    # A loop stopped while it is still planning has a planner and no workers yet.
+    await halt_planner(state, svc, loop_id)
     await tasks_link.release_in_progress(loop_id)
     return stopped
+
+
+async def halt_planner(state, svc, loop_id: str) -> None:
+    """End loop *loop_id*'s planner: its nudge row goes and its turn in flight is stopped.
+
+    The row is kept on disk, so one left behind fires planner turns again after a restart, for a
+    loop nothing drives any more. A walkthrough pass still polling sees its planner gone, and
+    finding the loop no longer planning it starts no retry (``plan_walkthrough._still_planning``).
+    """
+    from personalclaw.loop.plan_walkthrough import planner_session_key
+
+    key = planner_session_key(loop_id)
+    row = svc.get_by_session(key)
+    if row is not None:
+        await svc.remove(row.id)
+    await halt_turn(state, key)
 
 
 async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop | None:
@@ -632,12 +672,12 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
 
 async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> str | None:
     """Start a dedicated worker session for ``task`` in its own ``worktree_dir``.
-    Returns the session key, or None. Idempotent (a live task session is returned as-is).
-    Ported from code/manager.spawn_task_worker onto the Loop entity."""
+    Returns the session key, or None. Idempotent: a task whose worker loop is armed is returned
+    as-is. A session with no worker loop gets one even mid-turn (a turn that outlived its loop),
+    or nothing would run the task again; its first cycle fires once that turn ends."""
     cfg = AppConfig.load().loops
     skey = task_session_key(loop.id, task.id)
-    existing = state._sessions.get(skey)
-    if existing is not None and getattr(existing, "running", False):
+    if svc.get_by_session(skey) is not None:
         return skey
     kinds.ensure_loaded()
     strat = kinds.get_or_none(loop.kind)
@@ -711,8 +751,9 @@ def _is_parallel(loop: Loop) -> bool:
 
 
 async def teardown_worker(svc, loop_id: str) -> None:
-    """Stop the loop's worker(s) WITHOUT deleting its Tasks — used by complete/fail, and stop
-    keeps them the same way (only :func:`teardown_for_delete` removes them). The decomposed Tasks
+    """Stop the loop's worker(s) WITHOUT deleting its Tasks — used by complete, and stop keeps
+    them the same way (only :func:`teardown_for_delete` removes them). A failure ends through
+    :func:`stand_down` instead, which keeps the workers' work for a resume. The decomposed Tasks
     remain for review; only a task a worker held in progress goes back to open, since none holds
     it now."""
     from personalclaw.loop import tasks_link
@@ -729,6 +770,7 @@ async def teardown_for_delete(state, svc, loop_id: str) -> None:
     just deleted."""
     await _teardown(svc, loop_id)
     await halt_worker_turns(state, loop_id)
+    await halt_planner(state, svc, loop_id)
     try:
         from personalclaw.loop import tasks_link
 
