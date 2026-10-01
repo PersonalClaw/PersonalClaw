@@ -92,6 +92,10 @@ PARENT_READ_EXCLUDE = {
     "/api/durability/history/{root}/timeline": (
         "_history_root validates the root against the durable-root registry"
     ),
+    "/api/inbox/{id}/attachments/{aid}": (
+        "the inbox row and then the exact attachment record are both resolved; this is child "
+        "detail (a ghost row is inbox_attachment_not_found, driven in test_message_attachments.py)"
+    ),
     "/api/knowledge/collections/{id}/items": (
         "get_collection resolves the collection before resolving its items"
     ),
@@ -278,9 +282,9 @@ def _directly_named_handlers() -> set[str]:
 
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
-    assert len(nonterminal) == 85
+    assert len(nonterminal) == 86
     assert len(deep_terminal) == 17
-    assert len(selected) == 102
+    assert len(selected) == 103
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)

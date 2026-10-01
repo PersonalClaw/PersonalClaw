@@ -162,8 +162,9 @@ def cache_hit_pct(
     cached tokens, so they must be added back to recover the turn's whole prompt.
     Evidence:
 
-    * ``llm/anthropic.py::AnthropicProvider.stream`` (and its twin
-      ``llm/anthropic.py::AnthropicProvider.complete``) assigns ``input_tokens``
+    * ``llm/anthropic.py::AnthropicProvider._stream_chat`` (and its twin
+      ``llm/anthropic.py::AnthropicProvider._complete_chat``, the requests ``stream`` and
+      ``complete`` relay) assigns ``input_tokens``
       verbatim from ``usage.input_tokens``, while the cache counts
       come from the SDK's separate ``cache_creation_input_tokens`` /
       ``cache_read_input_tokens`` fields via ``llm/anthropic.py::_read_cache_usage``.

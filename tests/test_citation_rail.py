@@ -71,12 +71,12 @@ _CITATIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     # `input_tokens` is taken verbatim from the SDK's `usage.input_tokens`, in both paths.
     (
         "llm/anthropic.py",
-        "AnthropicProvider.stream",
+        "AnthropicProvider._stream_chat",
         ('it = getattr(usage, "input_tokens", None)', "input_tokens = it"),
     ),
     (
         "llm/anthropic.py",
-        "AnthropicProvider.complete",
+        "AnthropicProvider._complete_chat",
         ('it = getattr(usage, "input_tokens", None)', "input_tokens = it"),
     ),
     # The cache counts come from the SDK's two SEPARATE fields.
