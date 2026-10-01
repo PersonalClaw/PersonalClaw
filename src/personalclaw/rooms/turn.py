@@ -164,13 +164,12 @@ async def member_session(
         raise RoomError("room_archived", f"Room {room_id!r} is archived.")
 
     key = session_key(room_id, member_name)
+    # One acquisition for either runtime, as a chat's turn makes it: an empty runtime is the
+    # binding's own (PersonalClaw), exactly as a session opened with no runtime named.
     agent, runtime = member_runtime(member.name)
-    if runtime:
-        provider, is_new, resumed = await sessions.get_or_create(
-            key, agent=agent, provider_kind=runtime
-        )
-    else:
-        provider, is_new, resumed = await sessions.get_or_create(key, agent=agent)
+    provider, is_new, resumed = await sessions.get_or_create(
+        key, agent=agent, provider_kind=runtime or None
+    )
     try:
         yield HeldSession(provider, remembers=bool(resumed or not is_new))
     finally:

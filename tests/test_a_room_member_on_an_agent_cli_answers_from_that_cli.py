@@ -144,4 +144,4 @@ async def test_a_native_member_still_takes_its_turn_in_personalclaw(monkeypatch,
         async with turn.member_session(_Sessions(), room.id, "talk-editor"):
             pass
     assert asked and asked[0]["agent"] == "talk-editor"
-    assert "provider_kind" not in asked[0]
+    assert not asked[0].get("provider_kind"), "a native member names no agent CLI to run on"
