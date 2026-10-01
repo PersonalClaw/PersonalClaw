@@ -106,11 +106,11 @@ def _loop_ended(session_key: str) -> str:
     if not session_key.startswith("loop-"):
         return ""
     from personalclaw.loop.children import why_over
-    from personalclaw.loop.manager import worker_loop_id
+    from personalclaw.loop.manager import worker_ids
 
     # A loop's stage worker or one of its task workers; a planner is not a loop's worker, so it
     # has no owner here, rather than a wrong one.
-    loop_id = worker_loop_id(session_key)
+    loop_id, _task_id = worker_ids(session_key)
     if not loop_id:
         return ""
     why = why_over(loop_id)

@@ -171,7 +171,7 @@ PRELAUNCH_STATUSES: frozenset[LoopStatus] = frozenset(
 #: classifier or planner died had **no available action at all** and ``DELETE`` was its only exit —
 #: which discards the record instead of terminating it. ``stop`` is the right home because
 #: ``STOPPED`` is terminal and needs no worker to reach: ``manager.stop`` tears down whatever is
-#: armed (``_teardown`` no-ops when nothing is) and ``store.update_status`` refuses only
+#: armed (``end_run`` no-ops when nothing is) and ``store.update_status`` refuses only
 #: transitions OUT of a terminal state, so both pre-launch states could always reach it — the guard
 #: was the only thing in the way.
 STOPPABLE_STATUSES: frozenset[LoopStatus] = ACTIVE_STATUSES | frozenset(

@@ -769,9 +769,41 @@ class MergeResult(NamedTuple):
     ok: bool
     conflicts: list[str] = []
     head: str = ""
+    #: The branch brought nothing the base lacks (its change was already there), so nothing was
+    #: merged: no commit and no merge commit, and the task's worktree and branch are removed.
+    already: bool = False
 
     def __bool__(self) -> bool:  # back-compat: callers/tests can still treat it as a bool
         return self.ok
+
+
+def new_commits(workspace: str, branch: str) -> int | None:
+    """How many of ``branch``'s commits bring a change the checked-out branch does not have.
+
+    A commit already there, as itself or as the same patch (a cherry-pick of it, or a second
+    worker that made the identical change), is not counted (``git cherry``). ``None`` when git
+    cannot say."""
+    rc, out = _git(workspace, "cherry", "HEAD", branch)
+    if rc != 0:
+        return None
+    return sum(1 for ln in out.splitlines() if ln.startswith("+"))
+
+
+def brings_nothing_new(workspace: str, branch: str) -> bool:
+    """Whether merging ``branch`` would leave the checked-out tree exactly as it is.
+
+    Every commit of it already there as the same patch, or (where git can say without touching
+    the working tree, ``merge-tree --write-tree``) a merge whose result is the tree it has. Two
+    workers that made the same change used to land it twice: the first fast-forwarded, the second
+    as its own commit joined by a merge commit that changed nothing."""
+    if new_commits(workspace, branch) == 0:
+        return True
+    rc, out = _git(workspace, "merge-tree", "--write-tree", "HEAD", branch)
+    if rc != 0:  # a conflict, or a git without --write-tree: the merge itself decides
+        return False
+    rc_head, head = _git(workspace, "rev-parse", "HEAD^{tree}")
+    merged = out.split()
+    return rc_head == 0 and bool(merged) and merged[0] == head.strip()
 
 
 def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeResult:
@@ -785,6 +817,11 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
     branch = branch_name(task_id)
     if not commit_pending(workspace, task_id, project_id):
         return MergeResult(ok=False, conflicts=[])
+    if brings_nothing_new(workspace, branch):
+        logger.info("worktree merge for %s: its change is already on the base", task_id)
+        _rc, head = _git(workspace, "rev-parse", "HEAD")
+        remove_worktree(workspace, task_id, project_id)
+        return MergeResult(ok=True, conflicts=[], head=head.strip(), already=True)
     # merge into base from the main workspace checkout. A non-fast-forward merge
     # (the common case — multiple task branches diverge from base) creates a MERGE
     # COMMIT, authored as git is configured to commit there (the caller asked
@@ -950,37 +987,87 @@ def remove_worktree(workspace: str, task_id: str, project_id: str = "") -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def cleanup_all(workspace: str, project_id: str = "") -> None:
-    """Remove the whole worktrees dir + prune registrations (project teardown).
+class TaskWork(NamedTuple):
+    """What one task's worktree and branch hold that its workspace does not.
 
-    With ``project_id`` set, only THIS project's worktree root is swept — so tearing
-    down one project on a shared workspace can't wipe another's worktrees. The
-    trailing branch sweep is still global (pclaw/task-* branches live in the one
-    shared repo) but only removes branches whose worktree we just dropped."""
+    ``commits`` counts the commits on the branch whose change the workspace's checked-out branch
+    lacks (:func:`new_commits`); ``changed`` counts the files changed in the worktree and not
+    committed (untracked ones included). Either is ``None`` when git could not say, and a count
+    it could not read is never taken for "nothing there": the work counts as unmerged and is
+    kept."""
+
+    task_id: str
+    path: str  # the task's worktree, or "" when only its branch is left
+    branch: str  # its branch, or "" when only its worktree folder is left
+    commits: int | None
+    changed: int | None
+
+    @property
+    def unmerged(self) -> bool:
+        return self.commits != 0 or self.changed != 0
+
+
+def _lines(rc: int, out: str) -> int | None:
+    """The non-blank lines of a git command's output, or ``None`` when it failed."""
+    if rc != 0:
+        return None
+    return sum(1 for ln in out.splitlines() if ln.strip())
+
+
+def task_work(workspace: str, task_ids, project_id: str = "") -> list[TaskWork]:
+    """The worktree and branch each of ``task_ids`` still has in ``workspace``, and what they
+    hold that the workspace does not. A task with neither is left out.
+
+    Scoped to the tasks named, never to everything under the worktrees root: two loops on one
+    Project share that root, and one loop's ending must not read (or remove) the other's work."""
+    if not workspace:
+        return []
+    rc, out = _git(
+        workspace, "for-each-ref", "--format=%(refname:short)", f"refs/heads/{_BRANCH_PREFIX}*"
+    )
+    branches = {ln.strip() for ln in out.splitlines() if ln.strip()} if rc == 0 else set()
+    found: list[TaskWork] = []
+    for tid in dict.fromkeys(str(t) for t in task_ids):
+        if not _safe_task_id(tid):
+            continue
+        path = worktree_path(workspace, tid, project_id)
+        branch = branch_name(tid)
+        has_dir, has_branch = os.path.isdir(path), branch in branches
+        if not (has_dir or has_branch):
+            continue
+        commits = new_commits(workspace, branch) if has_branch else 0
+        changed = (
+            _lines(*_git(path, "status", "--porcelain", "--untracked-files=all")) if has_dir else 0
+        )
+        found.append(
+            TaskWork(tid, path if has_dir else "", branch if has_branch else "", commits, changed)
+        )
+    return found
+
+
+def sweep_finished(workspace: str, task_ids, project_id: str = "") -> list[TaskWork]:
+    """At the end of a loop's run: remove each task's worktree and branch that hold nothing the
+    workspace lacks (its work was merged, or it made none), and keep the rest. Returns the kept.
+
+    The kept ones hold work nobody has merged — edits its owner may have approved among them —
+    so only their owner discards them (:func:`remove_worktree`, from the loop's page)."""
+    kept: list[TaskWork] = []
+    for work in task_work(workspace, task_ids, project_id):
+        if work.unmerged:
+            kept.append(work)
+        else:
+            remove_worktree(workspace, work.task_id, project_id)
+    if workspace:
+        _git(workspace, "worktree", "prune")
+    return kept
+
+
+def discard(workspace: str, task_ids, project_id: str = "") -> None:
+    """Remove each task's worktree and branch, whatever they hold: a deleted loop's, whose
+    delete dialog says that work not yet merged goes with it. Only the tasks named are touched,
+    so a sibling loop's worktrees under the same Project survive."""
     if not workspace:
         return
-    # Explicitly remove each registered worktree under our (PClaw-owned) dir first —
-    # `prune` only drops STALE entries, not active ones, so an in-use worktree would
-    # linger.
-    root = _worktrees_root(workspace, project_id)
-    if os.path.isdir(root):
-        for name in os.listdir(root):
-            _git(workspace, "worktree", "remove", "--force", os.path.join(root, name))
-            _git(workspace, "branch", "-D", branch_name(name))
+    for tid in dict.fromkeys(str(t) for t in task_ids):
+        remove_worktree(workspace, tid, project_id)
     _git(workspace, "worktree", "prune")
-    # Sweep ANY remaining pclaw/task-* branches — a branch whose worktree dir was
-    # already removed (merged, or a prior failed branch-delete) wouldn't be caught by
-    # the per-dir loop above, and would otherwise be left orphaned in a brownfield
-    # user's repo after the project is deleted. ONLY in legacy (no project_id) mode:
-    # with a per-project worktree root, a shared workspace may host OTHER projects'
-    # branches, and a global sweep would delete their in-flight work — the per-dir
-    # loop above already dropped this project's branches.
-    if not project_id:
-        rc, out = _git(
-            workspace, "for-each-ref", "--format=%(refname:short)", f"refs/heads/{_BRANCH_PREFIX}*"
-        )
-        if rc == 0:
-            for ref in (ln.strip() for ln in out.splitlines() if ln.strip()):
-                _git(workspace, "branch", "-D", ref)
-    if os.path.isdir(root):
-        shutil.rmtree(root, ignore_errors=True)

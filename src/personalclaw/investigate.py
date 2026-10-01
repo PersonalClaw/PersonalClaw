@@ -188,7 +188,10 @@ def _resolve_loop_finding(entity_id: str, state) -> InvestigateContext | None:
             lines.append(f"  {key}: {val}")
     try:
         verdicts = loop_files.get_verdicts(loop_id)
-        v = next((v for v in verdicts if v.get("cycle") == finding.get("cycle")), None)
+        v = next(
+            (v for v in verdicts if v.get("cycle") == finding.get("cycle") and not v.get("gate")),
+            None,
+        )
         if v:
             lines.append(
                 f"Judge verdict (cycle {cycle}): done={v.get('done')} "
@@ -643,7 +646,12 @@ def _resolve_loop_cycle(entity_id: str, state) -> InvestigateContext | None:
         lines.append("  (no finding recorded for this cycle)")
     try:
         verdict = next(
-            (v for v in loop_files.get_verdicts(loop_id) if v.get("cycle") == want), None
+            (
+                v
+                for v in loop_files.get_verdicts(loop_id)
+                if v.get("cycle") == want and not v.get("gate")
+            ),
+            None,
         )
         if verdict:
             lines.append(

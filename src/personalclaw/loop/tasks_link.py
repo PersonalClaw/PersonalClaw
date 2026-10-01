@@ -199,25 +199,29 @@ def phase_list_id(loop: Loop, phase_key: str) -> str:
     return str((loop.task_list_ids or {}).get(phase_key, ""))
 
 
+async def stage_tasks(loop: Loop, phase_key: str) -> list:
+    """The tasks of one stage of *loop* (its phase's TaskList), as the task store has them now.
+    Never raises: ``[]`` when the stage has no list or the store cannot be read."""
+    try:
+        list_id = phase_list_id(loop, phase_key)
+        if not list_id:
+            return []
+        from personalclaw.tasks import registry
+
+        tasks, _ = await registry.collect_tasks(task_list_id=list_id, provider_filter="native")
+        return list(tasks)
+    except Exception:
+        logger.debug("stage_tasks failed for %s phase %s", loop.id, phase_key, exc_info=True)
+        return []
+
+
 async def resolved_stage_task_count(loop: Loop, phase_key: str) -> int:
     """How many of a stage's tasks are terminal (done/completed/cancelled) right now.
     A monotonically-rising count across cycles is the ground-truth signal that the
     stage is making real forward progress (each module task completing), used to keep
     the anti-spin stall guard from false-pausing a working multi-task stage. Never
     raises — returns 0 on any error (the caller treats 0 as 'no observable progress')."""
-    try:
-        list_id = phase_list_id(loop, phase_key)
-        if not list_id:
-            return 0
-        from personalclaw.tasks import registry
-
-        tasks, _ = await registry.collect_tasks(task_list_id=list_id)
-        return sum(1 for t in tasks if _is_resolved(t.status))
-    except Exception:
-        logger.debug(
-            "resolved_stage_task_count failed for %s phase %s", loop.id, phase_key, exc_info=True
-        )
-        return 0
+    return sum(1 for t in await stage_tasks(loop, phase_key) if _is_resolved(t.status))
 
 
 async def ready_queued_tasks(loop: Loop, phase_key: str) -> list:
@@ -336,6 +340,27 @@ async def release_ended_loops() -> int:
     ended_values = {s.value for s in ENDED_STATUSES}
     ended = [loop for loop in store.list_all() if loop.status in ended_values]
     return await _release(ended) if ended else 0
+
+
+async def task_titles(loop: Loop) -> dict[str, str]:
+    """Every task of *loop*, by id, with its title: its own phase lists' and linked tasks (the
+    ones :func:`_owned` counts) and any it queued. These are the tasks a loop's worktrees can
+    belong to, and the only ones its ending touches.
+
+    Never raises. Tasks that cannot be read leave only the queued ids, so an ending then settles
+    fewer worktrees, never another loop's."""
+    from personalclaw.tasks import registry
+
+    titles: dict[str, str] = {}
+    lists, linked = _owned([loop])
+    try:
+        tasks, _ = await registry.collect_tasks(provider_filter="native")
+        titles = {t.id: t.title for t in tasks if t.task_list_id in lists or t.id in linked}
+    except Exception:
+        logger.warning("the tasks of loop %s could not be read", loop.id, exc_info=True)
+    for tid in (loop.kind_config or {}).get("queued_task_ids", []) or []:
+        titles.setdefault(str(tid), "")
+    return titles
 
 
 async def mark_task_done(task_id: str) -> bool:

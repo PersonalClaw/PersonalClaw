@@ -6,8 +6,8 @@
  *     "Your workspace folder and its files are left untouched."
  *
  * 🪤 THE SAME PREDICATE SELECTED THAT REASSURANCE AND ARMED THE DESTRUCTION. The copy branched on
- * `p.workspace_dir`. `loop/manager.py` runs the teardown under
- * `if loop is not None and (loop.workspace_dir or "").strip():` → `worktree.cleanup_all(…)` →
+ * `p.workspace_dir`. `loop/manager.py`'s `teardown_for_delete` ends the run with
+ * `end_run(…, discard=True)` → `worktree.discard(…)` for each of the loop's own tasks →
  * `worktree.py`'s `git worktree remove --force` **and `git branch -D`**, executed with the user's
  * workspace as cwd. Exactly when the dialog promised safety, PersonalClaw deleted branches from the
  * user's repository.
@@ -15,9 +15,9 @@
  * 🔑 THE PRECISE TRUTH, because a correction is only worth making if it is exact rather than merely
  * scarier. `_worktrees_root` puts the task worktrees under `config_dir()`, **not** inside the user's
  * folder — so the working tree and its files genuinely ARE untouched, and that clause survives. What was
- * false is the *repository*: every `pclaw/task-*` branch is force-deleted, taking any commit made on one
- * and never merged. Merged work sits on the user's own branch and is safe. Recovery is
- * `git reflog` / `git fsck --lost-found` before gc — forensics, not a product path.
+ * false is the *repository*: each of the loop's `pclaw/task-*` branches is force-deleted, taking any
+ * commit made on one and never merged. Merged work sits on the user's own branch and is safe. Recovery
+ * is `git reflog` / `git fsck --lost-found` before gc — forensics, not a product path.
  *
  * 🪤 AND "removes its plan" UNDERSTATED THE REST: `manager.py` also calls `tasks_link.teardown_tasks`,
  * deleting every task across the loop's per-phase lists. `manager.py`'s own docstring draws the line —
@@ -68,9 +68,18 @@ describe('the bound-workspace body tells the truth about the repo', () => {
 
   it('🔑 it distinguishes unmerged from merged — the difference decides whether to cancel', () => {
     // A user who has merged their work can delete freely; one who has not must not. A warning that
-    // failed to separate those would be either useless or falsely alarming.
-    expect(bound, 'the loss is scoped to unmerged commits').toMatch(/not yet merged is lost/)
+    // failed to separate those would be either useless or falsely alarming. The loss is any work not
+    // yet merged, an edit never committed included: the worktree goes with its branch.
+    expect(bound, 'the loss is scoped to unmerged work').toMatch(/not yet merged, committed or not, is lost/)
     expect(bound, 'and merged work is stated safe').toMatch(/merged is safe/)
+  })
+
+  it('it names the work the ended run kept, which this delete discards', () => {
+    const kept = codeDeleteBody({ name: 'api', status: 'complete', workspace_dir: '/repo' },
+      [{ title: 'Escape the digest titles', branch: 'pclaw/task-t-1', task_id: 't-1' }])
+    expect(kept).toMatch(/That includes the work kept from \u201cEscape the digest titles\u201d/)
+    expect(kept, 'and says how to keep it').toMatch(/merge it from the project's page first/)
+    expect(bound, 'nothing kept, nothing named').not.toMatch(/That includes the work kept/)
   })
 
   it('🪤 the TRUE half of the original clause survives', () => {
@@ -103,7 +112,7 @@ describe('one owner: the sentence cannot drift back into two copies', () => {
   it('both call sites delegate, and neither builds a body inline', () => {
     for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/CodeCockpitPage.tsx']) {
       const code = strip(read(rel))
-      expect(code, `${rel} delegates`).toMatch(/body: codeDeleteBody\(p\)/)
+      expect(code, `${rel} delegates`).toMatch(/body: codeDeleteBody\(p, kept\)/)
       // The duplication is what let the defect survive in two places at once.
       expect(code, `${rel} must not hand-roll the body again`)
         .not.toMatch(/left untouched/)
@@ -112,17 +121,20 @@ describe('one owner: the sentence cannot drift back into two copies', () => {
 })
 
 describe('VACUITY: the destruction this copy warns about is real', () => {
-  it('the teardown is armed by the SAME predicate the copy branches on', () => {
+  it('the delete discards the worktrees, armed by the SAME predicate the copy branches on', () => {
     // This is the finding in one assertion. If the guard ever stops keying on `workspace_dir`, the
     // copy's branch is wrong and this reds first.
     const mgr = py('loop/manager.py')
     expect(mgr, 'armed on a bound workspace').toMatch(
-      /if loop is not None and \(loop\.workspace_dir or ""\)\.strip\(\):/,
+      /ws = \(loop\.workspace_dir or ""\)\.strip\(\)\n\s+if not ws:\n\s+return/,
     )
-    expect(mgr, 'and it calls the worktree sweep').toMatch(/worktree\.cleanup_all\(/)
+    expect(mgr, 'a delete discards').toMatch(/end_run\(state, svc, loop_id, discard=True\)/)
+    expect(mgr, 'and discarding is the worktree discard').toMatch(
+      /if discard:\n\s+await asyncio\.to_thread\(worktree\.discard, ws, ids, project\)/,
+    )
   })
 
-  it('the sweep really force-deletes branches, with the user’s workspace as cwd', () => {
+  it('the discard really force-deletes branches, with the user’s workspace as cwd', () => {
     const wt = py('loop/worktree.py')
     expect(wt, 'worktree removal is forced').toMatch(/"worktree", "remove", "--force"/)
     expect(wt, 'and the branch is force-deleted').toMatch(/"branch", "-D"/)
@@ -141,16 +153,19 @@ describe('VACUITY: the destruction this copy warns about is real', () => {
     // The discriminator, in the codebase's own words: stop/complete/fail deliberately keep them, so
     // "permanently deleted" is right for THIS dialog and would be wrong on the Stop one. (Keeping a
     // task is not leaving it untouched: one a worker held in progress goes back to open.)
-    expect(mgr, 'stop/complete/fail keep them').toMatch(/WITHOUT deleting its Tasks/)
+    expect(mgr, 'stop/complete/fail keep them').toMatch(/The loop's Tasks stay: only a delete removes them/)
   })
 
-  it('🔑 the Stop dialog on the same page already said this, which is the sharpest evidence', () => {
-    // Delete does strictly more than Stop and said strictly less. Kept as a rail so the two cannot
-    // drift apart again in the other direction. The cockpit's Stop asks the one Stop confirm every
-    // Stop control shares (`pages/loop/stopLoop.ts`), which is where its words live.
+  it('🔑 the Stop dialog on the same page says the opposite, and both are true', () => {
+    // Delete does strictly more than Stop. Stop keeps a task's unmerged work for its owner to merge
+    // or discard (`manager.end_run`); delete discards it, and says so. Kept as a rail so the two
+    // cannot drift into the same sentence. The cockpit's Stop asks the one Stop confirm every Stop
+    // control shares (`pages/loop/stopLoop.ts`), which is where its words live.
     expect(strip(read('pages/code/CodeCockpitPage.tsx')), 'the cockpit asks the shared Stop confirm')
       .toMatch(/confirmStopLoop\(p\.status, p\.name\)/)
-    expect(strip(read('pages/loop/stopLoop.ts')), 'Stop names the worktree + branch loss')
-      .toMatch(/loses its own worktree and branch/)
+    expect(strip(read('pages/loop/stopLoop.ts')), 'Stop says the unmerged work is kept')
+      .toMatch(/isn't merged yet is kept on its own branch/)
+    expect(py('loop/manager.py'), 'and a Stop ends the run without discarding')
+      .toMatch(/stop_reason=LoopStopReason\.USER\)\n\s+await end_run\(state, svc, loop_id\)\n/)
   })
 })

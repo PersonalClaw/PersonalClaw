@@ -165,7 +165,7 @@ function ProjectListPage({ onOpen, onOpenLoops, query, setQuery }: { onOpen: (id
           // force path. Its "This can't be undone" reads as being about the loops it just listed, so a
           // user who reaches this second dialog still had no way to learn the tasks go. Named first now,
           // because it is the larger and less recoverable loss of the two.
-          body: `"${proj.name}" still has work scoped under it. Every task in the project is permanently deleted with its notes and exit criteria. Deleting it now also STOPS and REMOVES any bound loops (Goal, Code, Design, General) — their workers are halted, parallel git worktrees + branches cleaned up, and the loops deleted (not just unlinked). Project-bound chats are kept but UNBOUND (detached from this project, not deleted). This can't be undone.`,
+          body: `"${proj.name}" still has work scoped under it. Every task in the project is permanently deleted with its notes and exit criteria. Deleting it now also STOPS and REMOVES any bound loops (Goal, Code, Design, General) — their workers are halted, their task worktrees and branches deleted with any work in them that isn't merged into your workspace, and the loops deleted (not just unlinked). Project-bound chats are kept but UNBOUND (detached from this project, not deleted). This can't be undone.`,
           danger: true, confirmLabel: 'Delete anyway',
         })
         if (!force) return

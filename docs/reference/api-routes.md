@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **900 registrations** over **728 distinct paths** — 893 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **903 registrations** over **731 distinct paths** — 896 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -29,10 +29,10 @@ The 128 families the surface divides into, largest first.
 | `/api/memory` | 49 | 41 |
 | `/api/workflows` | 45 | 40 |
 | `/api/models` | 38 | 30 |
+| `/api/loops` | 26 | 21 |
 | `/api/artifacts` | 25 | 16 |
 | `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
-| `/api/loops` | 23 | 18 |
 | `/api/mcp` | 19 | 15 |
 | `/api/skills` | 19 | 15 |
 | `/api/triggers` | 19 | 16 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 893 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 896 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -617,6 +617,9 @@ The 893 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/loops/{id}/autopilot` | {on: bool} — toggle the execution drive live. |
 | `GET` | `/api/loops/{id}/design/tokens` | the RESOLVED token tree |
 | `POST` | `/api/loops/{id}/grill-tree` | guided-decomposition intake (grill's ``tree`` |
+| `GET` | `/api/loops/{id}/kept-work` | the task work an ended run kept because it was not merged. |
+| `DELETE` | `/api/loops/{id}/kept-work/{task_id}` | discard one task's kept work. |
+| `POST` | `/api/loops/{id}/kept-work/{task_id}/merge` | {tip, confirm} — merge a task's kept work. |
 | `GET` | `/api/loops/{id}/merge` | the finished work an Attended loop waits for you to merge. |
 | `POST` | `/api/loops/{id}/merge` | {tips, confirm: true} — approve merging the work you reviewed. |
 | `POST` | `/api/loops/{id}/nudge` | {text, task_id?} — steer; resume if awaiting input. |

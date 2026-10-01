@@ -576,14 +576,9 @@ def _origin_of(name: str, app: str = "") -> tuple[str, str]:
                 if name.startswith(_LOOP_PLAN_PREFIX):
                     planned = name[len(_LOOP_PLAN_PREFIX) :]
                     return origin, (planned if loop_files.valid_loop_id(planned) else "")
-                rest = name[len(prefix) :]
-                if loop_files.valid_loop_id(rest):
-                    return origin, rest  # main worker → exact loop id
-                # task-worker loop-<id>-<taskid>: the loop id is the FIRST segment (the
-                # task id itself is hyphenated, e.g. t-abc, so a trailing rsplit is
-                # wrong) — take the leading segment when it's a valid loop id.
-                head = rest.split("-", 1)[0]
-                return origin, (head if loop_files.valid_loop_id(head) else rest)
+                from personalclaw.loop.manager import worker_ids
+
+                return origin, worker_ids(name)[0]
             return origin, name[len(prefix) :]
     if app in ("loop", "code", "campaign"):
         return "loop" if app == "code" else app, ""

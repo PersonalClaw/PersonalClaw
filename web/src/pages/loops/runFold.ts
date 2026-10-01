@@ -37,6 +37,18 @@ export interface StallInfo {
   binary?: string
 }
 
+/** A worker asked again for the finding its turn ended without (`manager.announce_reprompt`):
+ *  which worker (`title`, its task's; `''` for a loop's stage worker), the file it owes, and how
+ *  many asks are left. */
+export interface RepromptInfo {
+  taskId: string
+  title: string
+  file: string
+  attempt: number
+  of: number
+  left: number
+}
+
 /** The transient, NOT-persisted flags a run's lifecycle events toggle. Mirrors the
  *  ad-hoc component state the inline cockpit folds kept (gateFail/stalled/judgeDegraded). */
 export interface RunFlags {
@@ -45,9 +57,11 @@ export interface RunFlags {
   judgeDegraded: boolean
   /** Set when a `deleted` event arrives — the run is gone; callers flip to not-found. */
   deleted: boolean
+  /** The re-prompt in flight, until the cycle moves on. */
+  reprompt: RepromptInfo | null
 }
 
-export const emptyRunFlags = (): RunFlags => ({ gate: null, stall: null, judgeDegraded: false, deleted: false })
+export const emptyRunFlags = (): RunFlags => ({ gate: null, stall: null, judgeDegraded: false, deleted: false, reprompt: null })
 
 export interface RunViewModel {
   id: string
@@ -240,14 +254,27 @@ export function foldReducer(flags: RunFlags, event: string, data?: unknown): Run
     case 'judge_error':
       return { ...flags, judgeDegraded: true }
     case 'cycle_verdict':
-      return { ...flags, judgeDegraded: false, stall: null, gate: null }
+      return { ...flags, judgeDegraded: false, stall: null, gate: null, reprompt: null }
     case 'blocked':
       // Keep the stall (it's the reason for the block); clear a stale gate banner.
       return { ...flags, gate: null }
+    case 'reprompt':
+      // A worker asked again within its cycle: not progress, so the gate and stall stand.
+      return {
+        ...flags,
+        reprompt: {
+          taskId: String(d.task_id || ''),
+          title: String(d.title || ''),
+          file: String(d.file || ''),
+          attempt: Number(d.attempt || 0),
+          of: Number(d.of || 0),
+          left: Number(d.left || 0),
+        },
+      }
     // Any OTHER lifecycle event is forward progress → clear the transient stall + gate.
     // (new_finding / stage_advance / rolled_back / complete / resume / …)
     default:
-      return { ...flags, stall: null, gate: null }
+      return { ...flags, stall: null, gate: null, reprompt: null }
   }
 }
 

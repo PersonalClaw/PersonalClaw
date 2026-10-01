@@ -412,8 +412,8 @@ class TestTaskWorker:
         assert svc.get_by_session(skey) is None
         assert loop_files.read_task_guidance(c.id, tid) == ""
 
-    def test_teardown_reaps_task_workers_with_main(self):
-        # _teardown removes the main worker AND any loop-<id>-* task-workers.
+    def test_an_ending_removes_task_workers_with_main(self):
+        # A run that cannot be resumed removes the main worker AND any loop-<id>-* task-workers.
         c = store.create(Loop(id="", name="C", kind="code", task="t" * 12, kind_config={}))
         svc = _FakeSvc()
         _run(
@@ -434,13 +434,13 @@ class TestTaskWorker:
                 stop_sentinel_path="",
             )
         )
-        _run(manager.teardown_worker(svc, c.id))
+        _run(manager.end_run(_FakeState(), svc, c.id))
         assert svc.get_by_session(manager.session_key(c.id)) is None
         assert svc.get_by_session(manager.task_session_key(c.id, "t-1")) is None
 
     def test_teardown_for_delete_cleans_up_worktrees(self, tmp_path):
-        # A parallel code loop's git worktrees + branches must be cleaned on teardown,
-        # else every deleted loop leaks .worktrees/<id> dirs + pclaw/task-* branches.
+        # A deleted parallel code loop's git worktrees + branches are discarded with it (its
+        # dialog says so), else every deleted loop leaks worktree dirs + pclaw/task-* branches.
         import subprocess
 
         from personalclaw.loop import worktree
@@ -459,14 +459,17 @@ class TestTaskWorker:
                 kind="code",
                 task="add oauth login here",
                 workspace_dir=str(ws),
-                kind_config={},
+                kind_config={"queued_task_ids": ["t-1"]},
             )
         )
         assert worktree.ensure_base_commit(str(ws))
         wt = worktree.add_worktree(str(ws), "t-1", c.tasks_project_id)
         assert wt and os.path.isdir(wt)
+        with open(os.path.join(wt, "f.txt"), "w", encoding="utf-8") as fh:
+            fh.write("an edit nobody merged")
         _run(manager.teardown_for_delete(_FakeState(), _FakeSvc(), c.id))
         assert not os.path.isdir(wt)  # worktree removed
+        assert not worktree.branch_exists(str(ws), "t-1")
 
 
 class TestBootSweep:

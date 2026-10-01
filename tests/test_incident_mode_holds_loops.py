@@ -310,16 +310,24 @@ def test_a_turn_the_hold_ended_is_not_counted_as_a_worker_failure() -> None:
     """Two failed turns in a row fail a loop. A turn that ends while the switch is on was ended by
     the hold, whatever its runtime reported on the way out."""
     loop = _running_loop()
-    wd = _watchdog(manager.session_key(loop.id), running=False)
-    incident.activate("a drill")
-    wd.record_turn_outcome(loop.id, ok=False)
-    wd.record_turn_outcome(loop.id, ok=False)
-    assert store.get(loop.id).status == LoopStatus.RUNNING.value
+    key = manager.session_key(loop.id)
+    wd = _watchdog(key, running=False)
 
-    incident.resume()  # and the count still works when the switch is off
-    wd.record_turn_outcome(loop.id, ok=False)
-    wd.record_turn_outcome(loop.id, ok=False)
+    async def _turns() -> None:
+        # The gateway reports each turn from its event loop, and a failure ends the run there.
+        incident.activate("a drill")
+        wd.record_turn_outcome(loop.id, ok=False)
+        wd.record_turn_outcome(loop.id, ok=False)
+        assert store.get(loop.id).status == LoopStatus.RUNNING.value
+
+        incident.resume()  # and the count still works when the switch is off
+        wd.record_turn_outcome(loop.id, ok=False)
+        wd.record_turn_outcome(loop.id, ok=False)
+        await asyncio.gather(*wd._endings)
+
+    asyncio.run(_turns())
     assert store.get(loop.id).status == LoopStatus.FAILED.value
+    assert wd._svc.get_by_session(key).active is False, "the failed loop's worker kept its cycles"
 
 
 # ── the cycle driver's half ──

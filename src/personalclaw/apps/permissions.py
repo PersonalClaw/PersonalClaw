@@ -1131,6 +1131,12 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/loops/classify": AppMay("analyses a draft goal; it creates and starts nothing"),
     "POST /api/loops/validate": AppMay("checks a draft; it creates and starts nothing"),
     "DELETE /api/loops/{id}": OwnerOnly("deleting your loops"),
+    "POST /api/loops/{id}/kept-work/{task_id}/merge": OwnerOnly(
+        "merging a loop's kept work into your workspace"
+    ),
+    "DELETE /api/loops/{id}/kept-work/{task_id}": OwnerOnly(
+        "discarding a loop's kept work from your repository"
+    ),
     # ── spawn ──
     "POST /api/spawn": OwnerOnly(_STARTS_AGENT_WORK),
     "DELETE /api/spawn": AppMay(_STOPS_WORK),

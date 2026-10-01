@@ -571,6 +571,11 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
                 description="The loop's own folder (status.json, brief.md, findings and guidance live here).",  # noqa: E501
             ),
             PromptVariable(
+                name="finding_file",
+                required=True,
+                description="The file this task's finding is written to, in the loop's folder (findings/task_<id>_NNN.json).",  # noqa: E501
+            ),
+            PromptVariable(
                 name="task_description",
                 type="textarea",
                 default="",
@@ -1013,7 +1018,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         filename="task-sdlc_stage_gate.md",
         kind="user",
         category="loop",
-        description="Strict SDLC stage gate: decide PASS/FAIL on whether a stage's exit criteria are fully met from cycle evidence.",  # noqa: E501
+        description="Strict SDLC stage gate: a pass, fail or can't-tell verdict, with its reason, for each of a stage's exit criteria, from the loop's own records.",  # noqa: E501
         variables=(
             PromptVariable(name="stage_title", required=True, description="The stage title."),
             PromptVariable(
@@ -1023,13 +1028,19 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
                 name="criteria",
                 type="textarea",
                 required=True,
-                description="Exit criteria, one '- <criterion>' per line.",
+                description="Exit criteria, one numbered '<n>. <criterion>' per line.",
             ),
             PromptVariable(
                 name="evidence",
                 type="textarea",
                 required=True,
-                description="Evidence from recent cycles + any automated check results.",
+                description="The stage's findings (summaries, files, recorded evidence such as test output), its tasks and their status, and the supervisor's own checks.",  # noqa: E501
+            ),
+            PromptVariable(
+                name="evidence_note",
+                type="textarea",
+                default="",
+                description="What of the evidence was cut for length, so a criterion that depends on it is answered can't tell.",  # noqa: E501
             ),
         ),
     ),
@@ -1406,6 +1417,11 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
                 name="loop_dir",
                 required=True,
                 description="The loop's own folder (status.json, brief.md, guidance and findings).",
+            ),
+            PromptVariable(
+                name="finding_file",
+                required=True,
+                description="The file this cycle's finding is written to, in the loop's folder (findings/cycle_NNN.json).",  # noqa: E501
             ),
             PromptVariable(
                 name="has_deliverables",

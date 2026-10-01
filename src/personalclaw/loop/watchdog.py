@@ -29,7 +29,7 @@ from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import instrument, kinds, manager, spend_cap, store, supervisor
-from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
+from personalclaw.loop.loop import ENDED_STATUSES, Loop, LoopStatus, LoopStopReason
 from personalclaw.workflows.supervisor_policy import policy_for_kind
 
 logger = logging.getLogger(__name__)
@@ -246,6 +246,9 @@ class LoopWatchdog:
         #: Loops this watchdog is holding for incident mode — kept only to say, once each, that a
         #: loop was held and that it carries on (the hold itself is re-decided every poll).
         self._held: set[str] = set()
+        #: Runs ended from a synchronous callback (:meth:`record_turn_outcome`), whose ending
+        #: (:func:`manager.end_run`) is async: held here until it finishes.
+        self._endings: set[asyncio.Task] = set()
 
     # ── lifecycle ──
 
@@ -255,9 +258,10 @@ class LoopWatchdog:
             logger.info("loop watchdog started")
 
     async def stop(self) -> None:
-        """Stop polling. Bounded: a poll can be running a loop's check command, a process a
-        cancel cannot always interrupt (``cancel_and_wait``)."""
-        await cancel_and_wait([self._task], what="loop watchdog")
+        """Stop polling, and any ending still running. Bounded: a poll can be running a loop's
+        check command, a process a cancel cannot always interrupt (``cancel_and_wait``). An
+        ending cut short here is finished by the next boot's sweep (:meth:`_switch_off_ended`)."""
+        await cancel_and_wait([self._task, *self._endings], what="loop watchdog")
         self._task = None
 
     def record_turn_outcome(self, loop_id: str, *, ok: bool) -> None:
@@ -290,6 +294,14 @@ class LoopWatchdog:
         except (KeyError, store.TransitionError):
             return
         self._consec_errors.pop(loop_id, None)
+        # A failed loop ends like every other ending: its workers are switched off (kept for
+        # Resume) and their turns stopped. Without it the failed loop's worker fired its next
+        # cycle on the idle timer, and the one after.
+        ending = asyncio.get_running_loop().create_task(
+            manager.end_run(self._state, self._svc, loop_id), name=f"loop-end:{loop_id}"
+        )
+        self._endings.add(ending)
+        ending.add_done_callback(self._endings.discard)
         self._publish(loop_id, "failed")
 
     def _last_worker_error(self, loop_id: str) -> str:
@@ -312,9 +324,7 @@ class LoopWatchdog:
         raises one Inbox item and its one notification for the wait, however many of its workers
         the same ceiling refuses. Resume carries on once the ceiling has room. Returns whether
         this call put the loop on hold."""
-        from personalclaw.loop.manager import worker_loop_id
-
-        loop_id = worker_loop_id(key)
+        loop_id, _task_id = manager.worker_ids(key)
         loop = store.get(loop_id) if loop_id else None
         if loop is None or loop.status != LoopStatus.RUNNING.value:
             return False
@@ -476,12 +486,13 @@ class LoopWatchdog:
         (+ a ratchet_regression flag on a regression) so the cockpit's ROI rail /
         verdict panel / judge-degraded indicator update live. No-op for a kind that
         writes no verdicts (verifiable/monitor/code) — the FE listens for these and
-        the legacy goal watchdog published them at the same point."""
+        the legacy goal watchdog published them at the same point. A stage gate's own
+        evaluation (``gate`` set) is told to the page as a ``gate_check``, not as this."""
         verdict = next(
             (
                 v
                 for v in reversed(loop_files.get_verdicts(loop_id))
-                if int(v.get("cycle", -1)) == cycle
+                if int(v.get("cycle", -1)) == cycle and not v.get("gate")
             ),
             None,
         )
@@ -591,11 +602,10 @@ class LoopWatchdog:
         )
         store.update_status(loop_id, LoopStatus.COMPLETE, stop_reason=stop_reason, **fields)
         loop_files.write_status(loop_id, LoopStatus.COMPLETE, reason=reason)
-        await manager.teardown_worker(self._svc, loop_id)
-        # What its workers started outside their turns ends with it: nothing reads it now.
-        from personalclaw.loop import children
-
-        await children.end_children(self._state, loop_id, why=children.ENDINGS["complete"])
+        # A budget that ran out ends the run with its tasks' work unmerged; the ending keeps
+        # that work and cleans up only what was merged, and ends what its workers started outside
+        # their turns, which nothing reads now (`manager.end_run`).
+        await manager.end_run(self._state, self._svc, loop_id)
         await self._reconcile_linked_tasks(loop_id)
         # P4 independent REPRODUCE: before graduating a GENUINE completion's deliverable to
         # a permanent artifact, re-confirm it with a fresh, independent ground-truth pass.
@@ -1000,6 +1010,7 @@ class LoopWatchdog:
             return loop.status == LoopStatus.PLANNING.value
 
         await self._reap_planner_rows()
+        await self._switch_off_ended(loops)
 
         decided = await concurrency.boot_sweep(
             "loop", loops, survived=_lost_its_worker, decide=self._rearm_running
@@ -1039,6 +1050,30 @@ class LoopWatchdog:
                     await self._svc.remove(row.id)
         except Exception:
             logger.warning("loop: removing leftover planner nudge rows failed", exc_info=True)
+
+    async def _switch_off_ended(self, loops: list[Loop]) -> None:
+        """Switch off the nudge loops of every loop that has ended, at boot.
+
+        An ending switches them off (:func:`manager.end_run`), but one a restart cut short — or
+        one that ended before every ending did — left a loop that has ended with a worker whose
+        nudge loop still fires cycles. A failed loop's are kept, switched off, for its Resume.
+        Best-effort, like the planner rows above. One read of the rows decides which loops have
+        any, so a home holding many ended loops costs one read, not one per loop."""
+        ended = {s.value for s in ENDED_STATUSES}
+        try:
+            with_rows = {manager.worker_ids(str(r.session_name))[0] for r in self._svc.list_all()}
+        except Exception:
+            logger.warning("loop: reading the nudge rows at boot failed", exc_info=True)
+            return
+        for loop in loops:
+            if loop.status not in ended or loop.id not in with_rows:
+                continue
+            try:
+                await manager.switch_off_nudges(self._svc, loop.id)
+            except Exception:
+                logger.warning(
+                    "loop %s: switching off its workers at boot failed", loop.id, exc_info=True
+                )
 
     async def _rearm_running(self, loop: Loop) -> bool:
         """Re-arm one RUNNING loop whose worker died with the process — or park it for the
@@ -1398,7 +1433,7 @@ class LoopWatchdog:
                                 error_message="The worker produced no findings "
                                 "before the cycle budget was exhausted.",
                             )
-                            await manager.stand_down(self._state, self._svc, cid)
+                            await manager.end_run(self._state, self._svc, cid)
                             self._publish(cid, "failed")
                         self._clear_liveness(cid)
                         continue
@@ -1442,7 +1477,7 @@ class LoopWatchdog:
                     )
                     # A failed run can be resumed, so it keeps what its workers made (a task
                     # worker's worktree holds edits its owner may have approved).
-                    await manager.stand_down(self._state, self._svc, cid)
+                    await manager.end_run(self._state, self._svc, cid)
                     self._clear_liveness(cid)
                     self._publish(cid, "failed")
 

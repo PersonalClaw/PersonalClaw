@@ -278,7 +278,9 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
     // how both copies came to promise "your workspace folder and its files are left untouched" while
     // the handler force-deleted `pclaw/task-*` branches from the user's repo. One owner now:
     // `codeMeta.codeDeleteBody`, whose doc comment carries the full chain.
-    if (!(await confirmDelete('project', p.name, { body: codeDeleteBody(p) }))) return
+    // The dialog names the work an ended run kept unmerged, which the delete discards.
+    const kept = p.workspace_dir ? await api.uLoopKeptWork(p.id).then((r) => r.kept, () => []) : []
+    if (!(await confirmDelete('project', p.name, { body: codeDeleteBody(p, kept) }))) return
     try { await api.deleteULoop(p.id) }
     catch (e) { setActionErr(`Couldn't delete that project: ${(e as Error).message || 'unknown error'}`) }
     load()

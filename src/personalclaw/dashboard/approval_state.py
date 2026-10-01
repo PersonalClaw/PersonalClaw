@@ -1360,7 +1360,7 @@ class DashboardApprovalState:
 
             # A planner's card grants the same: its later passes, and the loop's workers until
             # the run ends — a launch is a run beginning, which asks again.
-            loop_id = loop_manager.worker_loop_id(name)
+            loop_id, _task_id = loop_manager.worker_ids(name)
             if not loop_id:
                 loop_id = planner_loop_id(name)
             if loop_id:

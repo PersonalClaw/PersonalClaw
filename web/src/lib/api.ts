@@ -6056,7 +6056,12 @@ export interface LoopVerdict {
   evidence_refs?: string[]; proof?: string
   reasoning?: string; scores?: Record<string, number>; overall?: number
   shortfalls?: string[]; escalated?: boolean; escalation_reason?: string
+  // A Code loop's stage gate records each evaluation here too (`gate: 'stage'`), with the stage it
+  // judged and a verdict per exit criterion; it carries no scores, so the rail never plots it.
+  gate?: 'stage'; stage?: string; criteria?: StageGateCriterion[]; note?: string
 }
+/** One exit criterion of a stage, as its gate judged it on the loop's records. */
+export interface StageGateCriterion { criterion: string; verdict: 'pass' | 'fail' | 'cant_tell'; reason: string }
 export interface LoopNudge { text: string; sent_at: number; sent_at_cycle: number; applied_cycle: number | null }
 export interface RosterMember { role: string; persona: string; role_hint?: string; agent_name?: string }
 export interface GoalLoop {
@@ -6215,7 +6220,21 @@ export interface CodeProject {
   nudges?: { text: string; sent_at?: number; sent_at_cycle?: number; applied_cycle?: number | null }[]
   // Task ids the user queued for execution (task-driven model); run once ready.
   queued_task_ids?: string[]
+  // The loop's ledger verdicts, the stage gate's evaluations among them (`LoopVerdict.gate`).
+  verdicts?: LoopVerdict[]
 }
+/** One task's work an ended Code loop kept because its workspace does not have it. `commits` and
+ *  `changed` are what its branch and worktree hold beyond the workspace; `null` where git could not
+ *  say (the work is kept all the same). `path` is `''` when only the branch is left. */
+export interface KeptWork {
+  task_id: string; title: string; branch: string; path: string
+  commits: number | null; changed: number | null
+  /** What merging it would bring in, as a waiting merge's review shows it (`worktree.merge_review`):
+   *  the commit its branch is at (what a merge names), its commits, and its files and diff. */
+  tip: string; log: string[]; stat: string; diff: string
+}
+/** The work an ended run kept, for review (`GET /api/loops/{id}/kept-work`). */
+export interface KeptWorkReview { into: string; kept: KeptWork[]; cut: boolean; resumable: boolean }
 /** Finished work an Attended code loop paused on, waiting for its owner to merge it (`loop/kinds/sdlc`). */
 export interface LoopMergeWaiting {
   /** The workspace's checked-out branch the work would go into. */
@@ -8564,6 +8583,14 @@ export const api = {
   /** Approve merging the reviewed work, each task at the commit the review showed; the loop resumes. */
   uLoopMerge: (id: string, tips: Record<string, string>) =>
     post<{ ok: boolean; loop: Loop }>(`/api/loops/${encodeURIComponent(id)}/merge`, { tips, confirm: true }),
+  // The task work an ended run kept because it was not merged (`loop/kept_work.py`): its owner
+  // merges it into the workspace or discards it, one task at a time.
+  uLoopKeptWork: (id: string) => get<KeptWorkReview>(`/api/loops/${encodeURIComponent(id)}/kept-work`),
+  /** Merge one task's kept work at the commit its review showed (`tip`). */
+  uLoopKeptMerge: (id: string, taskId: string, tip: string) =>
+    post<{ ok: boolean } & KeptWorkReview>(`/api/loops/${encodeURIComponent(id)}/kept-work/${encodeURIComponent(taskId)}/merge`, { tip, confirm: true }),
+  uLoopKeptDiscard: (id: string, taskId: string) =>
+    del(`/api/loops/${encodeURIComponent(id)}/kept-work/${encodeURIComponent(taskId)}`),
   uLoopPlanSession: (id: string) => get<{ session: PlanSession | null }>(`/api/loops/${encodeURIComponent(id)}/plan-session`).then((d) => d.session),
   uLoopPlanStart: (id: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/start`, {}),
   uLoopPlanRetry: (id: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/retry`, {}),

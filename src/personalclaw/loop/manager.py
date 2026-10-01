@@ -28,14 +28,122 @@ def session_key(loop_id: str) -> str:
     return f"loop-{loop_id}"
 
 
-def worker_loop_id(key: str) -> str:
-    """The loop whose worker *key* is, or ``""``: ``loop-<id>`` is its stage worker and
-    ``loop-<id>-<task>`` a parallel task worker (a loop id carries no dash). The planner's
-    ``loop-plan-<id>`` is not a worker, and ``plan`` is not a loop id, so it names none."""
+def worker_ids(key: str) -> tuple[str, str]:
+    """``(loop id, task id)`` of the worker whose session is *key*, or ``("", "")``.
+
+    The ONE reading of a worker's session key, the inverse of :func:`session_key` and
+    :func:`task_session_key`: ``loop-<id>`` is a loop's stage worker (task id ``""``) and
+    ``loop-<id>-<task>`` one of its parallel task workers. A loop id carries no dash, so it is the
+    first segment and the task id is all the rest: a task id has a dash of its own
+    (``t-2b9c41fe``), which is why reading up to the LAST dash named a loop that does not exist.
+    The planner's ``loop-plan-<id>`` is not a worker, and ``plan`` is not a loop id, so it names
+    none."""
     if not key.startswith("loop-"):
-        return ""
-    loop_id = key[len("loop-") :].split("-", 1)[0]
-    return loop_id if loop_files.valid_loop_id(loop_id) else ""
+        return "", ""
+    loop_id, _, task_id = key[len("loop-") :].partition("-")
+    if not loop_files.valid_loop_id(loop_id):
+        return "", ""
+    if task_id and not loop_files.valid_task_guidance_id(task_id):
+        return "", ""
+    return loop_id, task_id
+
+
+def worker_finding_count(key: str) -> int:
+    """How many findings worker *key* has delivered: a task worker its own task's, a stage worker
+    its loop's. A finding file the worker wrote this turn is ingested first, so it is counted at
+    once (the watchdog's poll ingests on its own clock, and the cycle driver asks the moment the
+    turn ends)."""
+    loop_id, task_id = worker_ids(key)
+    if not loop_id:
+        return 0
+    loop_files.record_cycle_findings(loop_id)
+    if task_id:
+        return loop_files.task_finding_count(loop_id, task_id)
+    return len(loop_files.get_findings(loop_id))
+
+
+async def reprompt_due(key: str, before: int) -> tuple[bool, str]:
+    """Whether worker *key*, whose turn just ended, is asked again for its cycle's finding, and
+    its task's title (``""`` for a stage worker).
+
+    Only a worker that still owes the finding is: none since *before*
+    (:func:`worker_finding_count`) and, for a task worker, a task that is still open. A task that
+    is done (or cancelled) is NEVER re-prompted, whatever the count says: asking a finished task
+    again only re-checks finished work, a whole model turn over its context and, on an Attended
+    loop, an approval its owner has to answer. A task that cannot be read is not re-prompted
+    either, because a re-prompt is sent only for work known to be owed."""
+    if worker_finding_count(key) > before:
+        return False, ""
+    _loop_id, task_id = worker_ids(key)
+    if not task_id:
+        return True, ""
+    from personalclaw.loop import tasks_link
+    from personalclaw.tasks import registry
+
+    try:
+        task = await registry.get_task(task_id, provider_name="native")
+    except Exception:
+        logger.warning("loop: task %s could not be read, so it is not re-prompted", task_id)
+        return False, ""
+    if task is None or tasks_link._is_resolved(task.status):
+        return False, ""
+    return True, str(getattr(task, "title", "") or "")
+
+
+def cycle_reprompt(key: str) -> str:
+    """What worker *key* is told when its turn ended without its cycle's finding. It names the
+    file the worker's own prompt names (``files.finding_file``), in the loop's folder: a task
+    worker told a bare ``findings/cycle_NNN.json`` wrote a stage worker's finding into its own
+    checkout, and the finding it owed was never counted."""
+    loop_id, task_id = worker_ids(key)
+    d = loop_files.loop_dir(loop_id) if loop_id else None
+    target = loop_files.finding_file(str(d) if d else "", task_id)
+    if task_id:
+        return (
+            "You ended the turn without writing this task's finding. Do it NOW, in THIS turn, "
+            f"before you stop: write {target} (next sequential N) with {{cycle, stage, task_id, "
+            "summary, key_insight, files_touched, evidence}, and mark the task done if its "
+            "done-conditions hold. Do not just describe it — write the file, then end the turn."
+        )
+    return (
+        "You ended the turn without writing this cycle's deliverable. Do it NOW, in THIS turn, "
+        f"before you stop: use your file-write/editor tools to actually write {target} (next "
+        "sequential N) with the structured finding, and (if the goal has a document "
+        "deliverable) create or update it in the loop dir. Do not just describe them — write "
+        "the files, then end the turn."
+    )
+
+
+def announce_reprompt(state, key: str, attempt: int, of: int, title: str = "") -> None:
+    """Tell the loop's page that worker *key* is being asked again for its finding: which worker
+    (its task's *title*), why, and how many asks are left. A re-prompt is a model turn the owner
+    pays for, so it is never silent."""
+    loop_id, task_id = worker_ids(key)
+    if not loop_id:
+        return
+    d = loop_files.loop_dir(loop_id)
+    data = {
+        "loop_id": loop_id,
+        "task_id": task_id,
+        "title": title,
+        "attempt": attempt,
+        "of": of,
+        "left": max(0, of - attempt),
+        "file": loop_files.finding_file(str(d) if d else "", task_id).rsplit("/", 1)[-1],
+    }
+    logger.warning(
+        "loop %s: worker %s ended its turn without its finding — re-prompt %d of %d",
+        loop_id,
+        key,
+        attempt,
+        of,
+    )
+    try:
+        from personalclaw.loop.watchdog import registry_key
+
+        state.loop_sse().publish(registry_key(loop_id), "reprompt", data)
+    except Exception:
+        logger.debug("loop: re-prompt publish failed for %s", key, exc_info=True)
 
 
 #: Loops whose owner said "every tool, for the rest of this run" on one of their workers'
@@ -356,7 +464,8 @@ async def halt_turn(state, key: str) -> bool:
     stop, on a session that is not one of the loop's workers."""
     from personalclaw.constants import dashboard_session_key
 
-    session = state._sessions.get(key)
+    # No dashboard state (a project force-delete from a task-only app) runs no turns to stop.
+    session = (getattr(state, "_sessions", None) or {}).get(key)
     if session is None:
         return False
     queue = getattr(session, "_queue", None)
@@ -375,27 +484,32 @@ async def halt_turn(state, key: str) -> bool:
         return False
 
 
-async def _deactivate_workers(svc, loop_id: str) -> None:
-    """Switch off the nudge loop of the main worker AND every parallel task-worker, keeping them:
-    a resume (:func:`start`) switches them back on, each with its session, budget and worktree."""
-    main = svc.get_by_session(session_key(loop_id))
-    if main is not None:
-        await svc.update(main.id, active=False)
+async def _switch_off_workers(svc, loop_id: str, *, keep: bool) -> None:
+    """Switch off the nudge loop of the stage worker AND every parallel task worker.
+
+    ``keep`` keeps them, switched off, so a resume (:func:`start`) switches them back on, each
+    with its session, budget and worktree; otherwise they are removed. A parallel code/design
+    loop that switched off only its stage worker would keep its task workers burning cycles and
+    editing worktrees while its owner thinks it stopped."""
+    rows = [svc.get_by_session(session_key(loop_id))]
     prefix = f"{session_key(loop_id)}-"
     # `list_all()` (the public surface) rather than the old `svc._loops` peek — the nudge
     # service no longer keeps an in-memory dict (its rows live in the trigger store).
-    for lp in svc.list_all():
-        if str(getattr(lp, "session_name", "")).startswith(prefix):
-            await svc.update(lp.id, active=False)
+    rows += [lp for lp in svc.list_all() if str(getattr(lp, "session_name", "")).startswith(prefix)]
+    for row in rows:
+        if row is None:
+            continue
+        if keep:
+            await svc.update(row.id, active=False)
+        else:
+            await svc.remove(row.id)
 
 
 async def pause(state, svc, loop_id: str) -> Loop:
-    """Pause: deactivate the main worker AND any parallel task-workers, and STOP the cycle in
-    flight (:func:`halt_worker_turns`) — so nothing more is done until Resume, which re-arms them.
-    Deactivate (not remove) so a resume re-arms them. A parallel code/design loop left only its
-    main worker paused would otherwise keep its task-workers burning cycles + editing worktrees
-    while the user thinks it's paused."""
-    await _deactivate_workers(svc, loop_id)
+    """Pause: switch off the stage worker AND any parallel task workers, keeping them, and STOP
+    the cycle in flight (:func:`halt_worker_turns`) — so nothing more is done until Resume, which
+    switches them back on."""
+    await _switch_off_workers(svc, loop_id, keep=True)
     # The status goes first, so every surface already reads "Paused" while the turn is winding
     # down — and the halt comes second, so it is disarmed nudge loops the stopping turn sees.
     paused = store.update_status(loop_id, LoopStatus.PAUSED)
@@ -403,60 +517,111 @@ async def pause(state, svc, loop_id: str) -> Loop:
     return paused
 
 
-async def stand_down(state, svc, loop_id: str) -> None:
-    """Stop a loop that FAILED without throwing away what its workers made.
+async def switch_off_nudges(svc, loop_id: str, *, discard: bool = False) -> bool:
+    """Switch off every nudge loop of loop *loop_id* — its stage worker's, each task worker's and
+    its planner's — and return whether the workers' loops were KEPT, switched off, for a Resume.
 
-    A failed loop says "Resume to retry", so it ends the way a pause does: every worker's nudge
-    loop is switched off and kept, the turn in flight is stopped, and each task worker keeps its
-    worktree and branch, edits its owner approved included. Resume (:func:`start`) switches the
-    workers back on where they were. Only a Stop or a delete removes the worktrees
-    (:func:`_teardown`), and the Stop dialog says so. No worker holds a task now, so one held in
-    progress goes back to open. What a worker started outside its worktree — a batch run, a
-    background subagent — is no worker's work to keep: nothing would read what it found, so it ends
-    with the failure (`children.end_children`)."""
+    A failed loop can be resumed (``RESUMABLE_ENDED_STATUSES``), so its workers' loops are kept
+    and :func:`start` switches them back on where they were; any other ending, and a delete
+    (``discard``), removes them. The planner's always goes: a loop past planning has nothing for
+    it to plan, and its row is kept on disk, so one left behind fires planner turns again after a
+    restart, for a loop nothing drives any more. Part of :func:`end_run`, and what the boot sweep
+    runs for every loop that has ended."""
+    from personalclaw.loop.loop import RESUMABLE_ENDED_STATUSES
+    from personalclaw.loop.plan_walkthrough import planner_session_key
+
+    loop = store.get(loop_id)
+    keep = not discard and loop is not None and LoopStatus(loop.status) in RESUMABLE_ENDED_STATUSES
+    await _switch_off_workers(svc, loop_id, keep=keep)
+    planner = svc.get_by_session(planner_session_key(loop_id))
+    if planner is not None:
+        await svc.remove(planner.id)
+    return keep
+
+
+async def end_run(state, svc, loop_id: str, *, discard: bool = False) -> None:
+    """End loop *loop_id*'s run. EVERY ending comes here, once the loop's status says how it
+    ended: a completion (a spent cycle, cost or time budget included), a failure, a Stop, and a
+    delete (``discard``, before the row goes).
+
+    * Every nudge loop the loop has is switched off (:func:`switch_off_nudges`): a failed loop
+      keeps its workers' for Resume, any other ending removes them, and the planner's goes.
+    * The turn in flight on each worker, and the planner's, is stopped. A walkthrough pass still
+      polling then finds its planner gone and the loop no longer planning, and starts no retry
+      (``plan_walkthrough._still_planning``).
+    * No task worktree goes with work its workspace does not have. A failed loop keeps every one
+      for Resume. A finished or stopped loop removes those whose work was merged (or that made
+      none) and keeps the rest, which its page names with what each holds and where, to merge or
+      discard (``loop.kept_work``). Only a delete discards them, and its dialog says so.
+    * What its workers started outside their turns (a batch run, a background subagent) ends
+      with it, saying how the loop ended, a failed loop's too: nothing would read what it found
+      (``children.end_children``).
+    * A task a worker held in progress goes back to open: no worker holds it now.
+    * A question its scheduler asked (a merge to approve) is cleared: the work that waited is the
+      kept work, which the loop's page puts to its owner (``loop.kept_work``).
+    * The loop's Tasks stay: only a delete removes them (:func:`teardown_for_delete`).
+    """
     from personalclaw.loop import children, tasks_link
+    from personalclaw.loop.plan_walkthrough import planner_session_key
 
-    await _deactivate_workers(svc, loop_id)
-    await children.end_children(state, loop_id, why=children.ENDINGS["failed"])
+    _LOOP_GRANTS.discard(loop_id)
+    kept_for_resume = await switch_off_nudges(svc, loop_id, discard=discard)
+    # After the status, so an answer to one of its children's approvals meanwhile already finds
+    # the loop over (`approval_owner`); before the turns, so what a turn started ends as the loop's.
+    why = children.DELETED if discard else children.why_over(loop_id)
+    if why:
+        await children.end_children(state, loop_id, why=why)
+    await halt_turn(state, planner_session_key(loop_id))
     await halt_worker_turns(state, loop_id)
+    loop = store.get(loop_id)
+    if loop is not None and not kept_for_resume:
+        await _settle_worktrees(loop, discard=discard)
     await tasks_link.release_in_progress(loop_id)
+    # A question the scheduler asked (a merge to approve, an identity to set) asks nothing of a run
+    # that has ended: what was waiting to merge is the work the ending kept, listed on the page.
+    asked = loop_files.pending_question(loop_id) or {}
+    if asked.get("asked_by") == loop_files.SCHEDULER_QUESTION:
+        loop_files.clear_question(loop_id)
+
+
+async def _settle_worktrees(loop: Loop, *, discard: bool) -> None:
+    """The worktree half of :func:`end_run`, for an ending that cannot be resumed: only this
+    loop's tasks' worktrees are touched, so a sibling loop under the same Project keeps its own.
+    Best-effort: a git failure leaves the worktrees where they are, which loses nothing."""
+    import asyncio
+
+    from personalclaw.loop import tasks_link, worktree
+
+    ws = (loop.workspace_dir or "").strip()
+    if not ws:
+        return
+    ids = list(await tasks_link.task_titles(loop))
+    project = loop.tasks_project_id
+    try:
+        if discard:
+            await asyncio.to_thread(worktree.discard, ws, ids, project)
+            return
+        kept = await asyncio.to_thread(worktree.sweep_finished, ws, ids, project)
+        # What a kept worktree holds and has not committed is committed on its own branch, as git
+        # is configured to commit there (never under a name of the loop's own), so the review its
+        # owner reads is what a merge would bring in. With no identity it stays uncommitted.
+        if kept and await asyncio.to_thread(worktree.commit_identity, ws) is not None:
+            for work in kept:
+                if work.path and work.changed != 0:
+                    await asyncio.to_thread(worktree.commit_pending, ws, work.task_id, project)
+    except Exception:
+        logger.warning("loop %s: settling its task worktrees failed", loop.id, exc_info=True)
 
 
 async def stop(state, svc, loop_id: str) -> Loop:
-    """Stop (terminal): tear down, drop the STOP sentinel, end everything the loop started
-    (`children.end_children`: its batch runs, its subagents and what they were waiting on), and
-    stop the turn in flight. Then no worker has a task any more, so each task one held in
-    progress goes back to open."""
-    from personalclaw.loop import children, tasks_link
-
-    await _teardown(svc, loop_id)
+    """Stop (terminal): drop the STOP sentinel, say so, and end the run (:func:`end_run`): its
+    workers and planner are switched off and their turns stopped, what they started (its batch
+    runs, its subagents and what those waited on) ends saying the loop was stopped, merged work is
+    cleaned up and work not merged is kept for its owner to merge or discard."""
     loop_files.write_stop_sentinel(loop_id)
     stopped = store.update_status(loop_id, LoopStatus.STOPPED, stop_reason=LoopStopReason.USER)
-    # After the status, so an answer arriving for one of its children's approvals meanwhile
-    # already finds the loop stopped (`approval_owner`); before the turns, so what a turn started
-    # ends as the loop's.
-    await children.end_children(state, loop_id, why="was stopped")
-    await halt_worker_turns(state, loop_id)
-    # A loop stopped while it is still planning has a planner and no workers yet.
-    await halt_planner(state, svc, loop_id)
-    await tasks_link.release_in_progress(loop_id)
+    await end_run(state, svc, loop_id)
     return stopped
-
-
-async def halt_planner(state, svc, loop_id: str) -> None:
-    """End loop *loop_id*'s planner: its nudge row goes and its turn in flight is stopped.
-
-    The row is kept on disk, so one left behind fires planner turns again after a restart, for a
-    loop nothing drives any more. A walkthrough pass still polling sees its planner gone, and
-    finding the loop no longer planning it starts no retry (``plan_walkthrough._still_planning``).
-    """
-    from personalclaw.loop.plan_walkthrough import planner_session_key
-
-    key = planner_session_key(loop_id)
-    row = svc.get_by_session(key)
-    if row is not None:
-        await svc.remove(row.id)
-    await halt_turn(state, key)
 
 
 async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop | None:
@@ -604,6 +769,7 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
         if c.get("description")
     )
     pending = loop_files.read_task_guidance(loop.id, task.id)
+    finding = loop_files.finding_file(loop_dir, task.id)
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     rendered = render_use_case_prompt(
@@ -614,6 +780,7 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
             "task_id": task.id,
             "worktree_dir": worktree_dir,
             "loop_dir": loop_dir,
+            "finding_file": finding,
             "task_description": getattr(task, "description", ""),
             "plan": plan,
             "criteria": crit,
@@ -651,7 +818,7 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
         f"Mark the task in_progress now (task_update {task.id} in_progress). Implement it "
         "end-to-end in this checkout, validate its done-conditions, then mark it done "
         f"(task_update {task.id} done). Before you end the turn you MUST write "
-        f"{loop_dir}/findings/task_{task.id}_NNN.json (next sequential N) with "
+        f"{finding} (next sequential N) with "
         "{cycle, stage, task_id, summary, key_insight, files_touched, evidence}. Write "
         "real code with your file tools; end the turn.",
     ]
@@ -735,59 +902,17 @@ def _is_parallel(loop: Loop) -> bool:
     return bool(loop.kind_config.get("queued_task_ids"))
 
 
-async def teardown_worker(svc, loop_id: str) -> None:
-    """Stop the loop's worker(s) WITHOUT deleting its Tasks — used by complete, and stop keeps
-    them the same way (only :func:`teardown_for_delete` removes them). A failure ends through
-    :func:`stand_down` instead, which keeps the workers' work for a resume. The decomposed Tasks
-    remain for review; only a task a worker held in progress goes back to open, since none holds
-    it now."""
-    from personalclaw.loop import tasks_link
-
-    await _teardown(svc, loop_id)
-    await tasks_link.release_in_progress(loop_id)
-
-
 async def teardown_for_delete(state, svc, loop_id: str) -> None:
-    """Full teardown before the loop row + dir are DELETED: stop the worker AND its turn in
-    flight AND delete the backing Tasks Project (else each create-and-delete orphans a Project
-    + its lists + tasks). Must run BEFORE store.delete (reads links off the row), and before the
-    worker session is reaped — a turn still running there would re-save the transcript the reap
-    just deleted. What the loop started ends with it (`children.end_children`)."""
-    from personalclaw.loop import children
-
-    await _teardown(svc, loop_id)
-    await children.end_children(state, loop_id, why=children.DELETED)
-    await halt_worker_turns(state, loop_id)
-    await halt_planner(state, svc, loop_id)
+    """Everything before the loop row + dir are DELETED: the run ends discarding its task
+    worktrees (:func:`end_run`), then the backing Tasks Project goes (else each create-and-delete
+    orphans a Project + its lists + tasks). Must run BEFORE store.delete (reads links off the
+    row), and before the worker session is reaped — a turn still running there would re-save the
+    transcript the reap just deleted. What the loop started ends with it, saying the loop was
+    deleted (``children.end_children``)."""
+    await end_run(state, svc, loop_id, discard=True)
     try:
         from personalclaw.loop import tasks_link
 
         await tasks_link.teardown_tasks(loop_id)
     except Exception:
         logger.debug("teardown_tasks failed for %s", loop_id, exc_info=True)
-
-
-async def _teardown(svc, loop_id: str) -> None:
-    """Deactivate + remove the main worker loop AND any parallel task-workers, then
-    clean up the loop's git worktrees + branches. Without the worktree cleanup, every
-    parallel code loop that's torn down (stop/delete) leaks its `.worktrees/<id>` dirs
-    + `pclaw/task-*` branches in the user's repo."""
-    _LOOP_GRANTS.discard(loop_id)
-    main = svc.get_by_session(session_key(loop_id))
-    if main is not None:
-        await svc.remove(main.id)
-    prefix = f"{session_key(loop_id)}-"
-    # `list_all()`, the service's public surface — the same fix `pause` got. The nudge service
-    # keeps no `_loops` dict any more, so the old `getattr(svc, "_loops", {})` peek read
-    # an empty dict and a stopped or deleted parallel loop's task-workers were never removed.
-    for lp in svc.list_all():
-        if str(getattr(lp, "session_name", "")).startswith(prefix):
-            await svc.remove(lp.id)
-    loop = store.get(loop_id)
-    if loop is not None and (loop.workspace_dir or "").strip():
-        try:
-            from personalclaw.loop import worktree
-
-            worktree.cleanup_all(loop.workspace_dir, loop.tasks_project_id)
-        except Exception:
-            logger.debug("worktree cleanup failed for %s", loop_id, exc_info=True)

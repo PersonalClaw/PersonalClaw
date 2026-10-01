@@ -134,13 +134,13 @@ def test_delete_teardown_stops_the_turn_before_the_session_is_reaped() -> None:
     assert state.sessions.stopped == [f"dashboard:{key}"]
 
 
-def test_teardown_removes_task_workers_through_the_public_surface() -> None:
-    """At `origin/main` `_teardown` read `getattr(svc, "_loops", {})` — an empty dict on the real
-    service — so a stopped parallel loop's task-worker nudge loops were never removed."""
+def test_an_ending_removes_task_workers_through_the_public_surface() -> None:
+    """The teardown once read `getattr(svc, "_loops", {})` — an empty dict on the real service —
+    so a stopped parallel loop's task-worker nudge loops were never removed."""
     loop = _running_loop()
     main, task = manager.session_key(loop.id), manager.task_session_key(loop.id, "t1")
     svc = _Svc(main, task)
-    asyncio.run(manager.teardown_worker(svc, loop.id))
+    asyncio.run(manager.end_run(_State(), svc, loop.id))
     assert svc.list_all() == [], [n.session_name for n in svc.list_all()]
 
 

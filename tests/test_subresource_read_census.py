@@ -118,6 +118,7 @@ PARENT_READ_EXCLUDE = {
     "/api/knowledge/items/{id}/staleness": "staleness_for rejects an unknown item",
     "/api/knowledge/items/{id}/thumbnail": "_serve_item_path rejects an item without a thumbnail",
     "/api/loops/{id}/design/tokens": "loop store resolves the design loop before token projection",
+    "/api/loops/{id}/kept-work": "_kept_loop resolves the loop (404 when absent) before listing",
     "/api/loops/{id}/merge": "the loop (404) and its waiting merge (409) resolve before a review",
     "/api/loops/{id}/plan-session": "loop store resolves the loop before nullable plan state",
     "/api/loops/{id}/report": "loop store resolves the loop before reading empty-on-missing files",
@@ -282,9 +283,9 @@ def _directly_named_handlers() -> set[str]:
 
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
-    assert len(nonterminal) == 86
+    assert len(nonterminal) == 87
     assert len(deep_terminal) == 17
-    assert len(selected) == 103
+    assert len(selected) == 104
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)

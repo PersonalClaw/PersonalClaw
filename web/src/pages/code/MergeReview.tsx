@@ -67,23 +67,7 @@ export function MergeReview({ loopId, waiting, onMerged }: {
         <p data-type="caption" className="mt-s text-on-surface-low">Reading the changes…</p>
       ) : (
         <div className="mt-s flex flex-col gap-s">
-          {review.tasks.map((t) => (
-            <details key={t.task_id} className="rounded-md bg-surface p-s">
-              <summary className="cursor-pointer text-on-surface">
-                {t.title || t.task_id} <span data-type="caption" className="text-on-surface-low">· {t.branch} · {t.commits.length} {t.commits.length === 1 ? 'commit' : 'commits'}</span>
-              </summary>
-              {t.commits.length > 0 && (
-                <ul data-type="caption" className="mt-xs font-mono text-on-surface-var">
-                  {t.commits.map((c) => <li key={c}>{c}</li>)}
-                </ul>
-              )}
-              {t.stat && (
-                <pre tabIndex={0} aria-label={`Files ${t.title || t.task_id} changes`} data-type="caption"
-                  className="mt-xs overflow-x-auto font-mono text-on-surface-low">{t.stat}</pre>
-              )}
-              <UnifiedDiff patch={t.diff || '(no changes)'} label={`Changes of ${t.title || t.task_id}`} className="mt-xs max-h-[40vh] overflow-auto font-mono leading-snug" />
-            </details>
-          ))}
+          {review.tasks.map((t) => <TaskChanges key={t.task_id} {...t} />)}
           {review.cut && (
             <p data-type="caption" className="text-on-surface-low">The diff is longer than one review shows; the rest is on the branches above.</p>
           )}
@@ -96,6 +80,34 @@ export function MergeReview({ loopId, waiting, onMerged }: {
         </div>
       )}
     </section>
+  )
+}
+
+/** One task's unmerged work, as every review of it shows it — a waiting merge's here, and the
+ *  work an ended run kept (`KeptWork`): its branch, its commits, the files it changes and its diff
+ *  against your branch, the same text git shows. */
+export function TaskChanges({ task_id, title, branch, commits, stat, diff, summary }: {
+  task_id: string; title: string; branch: string; commits: string[]; stat: string; diff: string
+  /** What the row is called where the task is already named above it (`KeptWork`). */
+  summary?: string
+}) {
+  const name = title || task_id
+  return (
+    <details className="rounded-md bg-surface p-s">
+      <summary className="cursor-pointer text-on-surface">
+        {summary || name} <span data-type="caption" className="text-on-surface-low">· {branch} · {commits.length} {commits.length === 1 ? 'commit' : 'commits'}</span>
+      </summary>
+      {commits.length > 0 && (
+        <ul data-type="caption" className="mt-xs font-mono text-on-surface-var">
+          {commits.map((c) => <li key={c}>{c}</li>)}
+        </ul>
+      )}
+      {stat && (
+        <pre tabIndex={0} aria-label={`Files ${name} changes`} data-type="caption"
+          className="mt-xs overflow-x-auto font-mono text-on-surface-low">{stat}</pre>
+      )}
+      <UnifiedDiff patch={diff || '(no changes)'} label={`Changes of ${name}`} className="mt-xs max-h-[40vh] overflow-auto font-mono leading-snug" />
+    </details>
   )
 }
 

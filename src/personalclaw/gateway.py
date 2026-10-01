@@ -85,7 +85,6 @@ from personalclaw.llm_helpers import (
     PromptBusyExhaustedError,
     stream_and_collect,
 )
-from personalclaw.loop import files as loop_files
 from personalclaw.memory import MemoryStore
 from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.security import (
@@ -194,24 +193,17 @@ _END_TURNS_SECS = 3.0
 # Mirrors the watchdog's _MAX_TURN_SECS so the two agree.
 _NUDGE_TURN_TIMEOUT = 1800.0
 
-# A loop cycle's deliverable is its finding file (findings/cycle_NNN.json).
-# Some ACP worker agents (notably claude-code) end their turn after the "orient"
-# phase — reading status/brief/findings and DESCRIBING a plan — without invoking
-# any write tool, because the agent self-paces a single prompt to end_turn once
-# it stops emitting. When a loop worker turn ends but the finding count did NOT
-# advance, re-prompt the SAME logical cycle with a forceful continuation (up to
-# _MAX_CYCLE_REPROMPTS) so the agent actually executes the work + writes. The
-# re-prompt loop runs inside the turn task and suppresses autonudge re-arm so the
-# idle timer can't fire a competing next-cycle nudge mid-loop. Native workers
-# write in one turn so the finding count advances immediately and this never fires.
+# A loop cycle's deliverable is its finding file (`loop.files.finding_file`: a stage worker's
+# findings/cycle_NNN.json, a task worker's findings/task_<id>_NNN.json). Some ACP worker agents
+# (notably claude-code) end their turn after the "orient" phase — reading status/brief/findings
+# and DESCRIBING a plan — without invoking any write tool, because the agent self-paces a single
+# prompt to end_turn once it stops emitting. When a loop worker turn ends with no new finding and
+# (for a task worker) its task not done, re-prompt the SAME logical cycle with a forceful
+# continuation (up to _MAX_CYCLE_REPROMPTS, each one shown on the loop's page) so the agent
+# actually executes the work + writes. The re-prompt loop runs inside the turn task and
+# suppresses autonudge re-arm so the idle timer can't fire a competing next-cycle nudge mid-loop.
+# Native workers write in one turn so their finding is counted at once and this never fires.
 _MAX_CYCLE_REPROMPTS = 3
-_CYCLE_REPROMPT_MSG = (
-    "You ended the turn without writing this cycle's deliverable. Do it NOW, in "
-    "THIS turn, before you stop: use your file-write/editor tools to actually "
-    "write findings/cycle_NNN.json (next sequential N) with the structured "
-    "finding, and (if the goal has a document deliverable) create or update it in "
-    "the loop dir. Do not just describe them — write the files, then end the turn."
-)
 
 # Conservative per-message chunk limit for channel delivery (fits Slack's
 # 3000-char Block Kit section.text bound, the tightest known transport).
@@ -3201,14 +3193,11 @@ class GatewayOrchestrator:
 
             def _finding_count(_key: str) -> int:
                 try:
+                    from personalclaw.loop.manager import worker_finding_count
 
-                    # loop-<id> (main) or loop-<id>-<taskid> (parallel task-worker);
-                    # findings live on the parent loop in both cases.
-                    _lid = _key.split("loop-", 1)[-1]
-                    if loop_files.loop_dir(_lid) is None and "-" in _lid:
-                        _lid = _lid.rsplit("-", 1)[0]
-                    return len(loop_files.get_findings(_lid))
+                    return worker_finding_count(_key)
                 except Exception:
+                    logger.debug("finding count failed for %s", _key, exc_info=True)
                     return 0
 
             async def _run_one(_sess, _msg, turn_timeout: float) -> None:
@@ -3278,14 +3267,25 @@ class GatewayOrchestrator:
                 # doesn't fire a competing next-cycle nudge mid-loop; re-arm once
                 # at the end. Native workers write in one turn → loop exits
                 # immediately, fresh-session never invoked.
+                from personalclaw.loop import manager as _loop_manager
+
                 before = _finding_count(_sess.key)
                 _sess._suppress_autonudge_rearm = True
                 try:
                     await _run_one(_sess, _msg, turn_timeout)
                     for attempt in range(_MAX_CYCLE_REPROMPTS):
-                        if _finding_count(_sess.key) > before or getattr(
-                            _sess, "_last_turn_errored", False
-                        ):
+                        if getattr(_sess, "_last_turn_errored", False):
+                            break
+                        # Asked again only for a finding still owed (never a finished task's):
+                        # a check that fails asks nothing.
+                        try:
+                            due, _title = await _loop_manager.reprompt_due(_sess.key, before)
+                        except Exception:
+                            logger.warning(
+                                "re-prompt check failed for %s", _sess.key, exc_info=True
+                            )
+                            due, _title = False, ""
+                        if not due:
                             break
                         if not _cycle_still_armed(_sess):
                             # The loop was paused, stopped or deleted while this cycle ran. The
@@ -3298,11 +3298,8 @@ class GatewayOrchestrator:
                                 _sess.key,
                             )
                             break
-                        logger.info(
-                            "AutoNudge: %s produced no finding (re-prompt %d/%d) — fresh ACP session + re-prompt",  # noqa: E501
-                            _sess.key,
-                            attempt + 1,
-                            _MAX_CYCLE_REPROMPTS,
+                        _loop_manager.announce_reprompt(
+                            dstate, _sess.key, attempt + 1, _MAX_CYCLE_REPROMPTS, _title
                         )
                         # Re-engage: a no-op'd ACP session won't service a repeat
                         # prompt, so begin a fresh agent session on the live
@@ -3335,11 +3332,8 @@ class GatewayOrchestrator:
                         # to write" continuation is meaningless — re-send the FULL
                         # self-contained cycle prompt (loop id, dir, protocol)
                         # plus an explicit write reminder.
-                        retry_msg = (
-                            (_msg + "\n\n" + _CYCLE_REPROMPT_MSG)
-                            if fresh_started
-                            else _CYCLE_REPROMPT_MSG
-                        )
+                        _reprompt = _loop_manager.cycle_reprompt(_sess.key)
+                        retry_msg = (_msg + "\n\n" + _reprompt) if fresh_started else _reprompt
                         _sess.append("nudge", retry_msg, "msg msg-nudge")
                         # The re-prompt is this cycle's turn too, so the session reads as
                         # running through it. `run_chat` clears `task` as each turn ends, and a
@@ -3378,12 +3372,12 @@ class GatewayOrchestrator:
             # silently. A turn that ends with an `error` message (how run_chat
             # records a crash) counts as a failed cycle.
             # The unified watchdog supervises every kind (sessions are app="loop",
-            # keyed loop-<id>); report each worker turn's outcome so a broken worker
-            # fails fast. A parallel code task-worker is keyed loop-<id>-<taskid>, so
-            # its id-split yields "<id>-<taskid>" which is not a real loop id — the
-            # watchdog's record_turn_outcome no-ops on it (only the main worker's id
-            # matches a loop), exactly the per-worker isolation the legacy split gave.
+            # keyed loop-<id>); it counts the STAGE worker's turns. A parallel task
+            # worker (loop-<id>-<taskid>) is not reported: its own nudge loop switches
+            # off after its turns keep failing, and the scheduler asks its owner
+            # (`nudge.why_it_ended`).
             if getattr(session, "_app", "") == "loop" and self.loop_watchdog is not None:
+                from personalclaw.loop.manager import worker_ids
 
                 def _report_turn(_t: "asyncio.Task", _key: str = session.key) -> None:
                     sess = (
@@ -3391,15 +3385,16 @@ class GatewayOrchestrator:
                     )
                     errored = bool(sess and getattr(sess, "_last_turn_errored", False))
                     refusal = getattr(sess, "_last_turn_refusal", None) if sess else None
-                    cid = _key.split("loop-", 1)[-1]
-                    if self.loop_watchdog is None:
+                    cid, task_id = worker_ids(_key)
+                    if not cid or self.loop_watchdog is None:
                         return
                     # A spend ceiling's refusal is no fault of the worker's: the loop waits for
                     # its owner, rather than counting toward failing it.
                     if refusal is not None:
                         self.loop_watchdog.hold_for_spend_cap(_key, refusal)
                         return
-                    self.loop_watchdog.record_turn_outcome(cid, ok=not errored)
+                    if not task_id:
+                        self.loop_watchdog.record_turn_outcome(cid, ok=not errored)
 
                 task.add_done_callback(_report_turn)
             self._session_tasks[session.key] = task

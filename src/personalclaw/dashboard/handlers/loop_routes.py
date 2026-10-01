@@ -1062,6 +1062,103 @@ async def api_loop_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": deleted})
 
 
+# ── the work an ended run kept (``loop.kept_work``) ──
+
+
+def _kept_loop(request: web.Request) -> Loop | web.Response:
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return json_error("invalid_id", status=400)
+    loop = store.get(cid)
+    if loop is None:
+        return json_error("not_found", status=404)
+    return loop
+
+
+async def api_loop_kept_work(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/kept-work — the task work an ended run kept because it was not merged.
+
+    For each task, what merging it would bring in, as an Attended loop's merge review shows it:
+    its branch, the commit it is at (``tip``), its commits (``log``) and its diff against
+    ``into``, the workspace's branch; ``cut`` says the diffs were longer than one review shows."""
+    from personalclaw.loop import kept_work
+
+    loop = _kept_loop(request)
+    if isinstance(loop, web.Response):
+        return loop
+    review = await kept_work.kept_review(loop)
+    return web.json_response({**review, "resumable": kept_work.resumable(loop)})
+
+
+async def _kept_work_act(request: web.Request, act: str, *args: str) -> web.Response:
+    from personalclaw.loop import kept_work
+    from personalclaw.triggers.nudge import get_instance
+
+    loop = _kept_loop(request)
+    if isinstance(loop, web.Response):
+        return loop
+    task_id = request.match_info["task_id"]
+    outcome = await getattr(kept_work, act)(get_instance(), loop, task_id, *args)
+    if outcome.code:
+        return _kept_work_refusal(outcome)
+    try:
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("loop kept-work publish failed", exc_info=True)
+    return web.json_response({"ok": True, **await kept_work.kept_review(loop)})
+
+
+def _kept_work_refusal(outcome) -> web.Response:
+    """The refusal a merge or a discard of kept work answers with (``kept_work.Outcome``)."""
+    if outcome.code == "not_found":
+        return json_error("not_found", status=404)
+    if outcome.code == "loop_still_at_work":
+        return json_error("loop_still_at_work", status=409)
+    if outcome.code == "workspace_not_committed":
+        return json_error("workspace_not_committed", status=409)
+    if outcome.code == "kept_work_conflicts":
+        return json_error(
+            "kept_work_conflicts",
+            status=409,
+            error_extra={"detail": {"conflicts": list(outcome.conflicts)}},
+        )
+    if outcome.code == "loop_merge_moved":
+        return json_error("loop_merge_moved", status=409)
+    if outcome.code == "kept_work_no_identity":
+        return json_error("kept_work_no_identity", status=409)
+    if outcome.code == "kept_work_other_name":
+        return json_error(
+            "kept_work_other_name",
+            status=409,
+            error_extra={"detail": {"commits": list(outcome.named)}},
+        )
+    return json_error("kept_work_unmerged", status=500)
+
+
+async def api_loop_kept_work_merge(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/kept-work/{task_id}/merge {tip, confirm} — merge a task's kept work.
+
+    It goes into the loop's workspace at ``tip``, the commit the review showed, the way the
+    scheduler merges a finished task. That writes a commit into the owner's repository, so the
+    request says it means to (``confirm: true``), and names what it read."""
+    from personalclaw.safety_flags import confirm_granted
+
+    body = await json_object_body(request)
+    if not confirm_granted(body):
+        return json_error("confirm_required", status=400)
+    tip = body.get("tip")
+    if not isinstance(tip, str) or not tip.strip():
+        return json_error(
+            "invalid_request", message="'tip' must name the commit the review showed", status=400
+        )
+    return await _kept_work_act(request, "merge", tip.strip())
+
+
+async def api_loop_kept_work_discard(request: web.Request) -> web.Response:
+    """DELETE /api/loops/{id}/kept-work/{task_id} — discard one task's kept work."""
+    return await _kept_work_act(request, "discard")
+
+
 async def api_loop_nudge(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/nudge {text, task_id?} — steer; resume if awaiting input."""
     cid = request.match_info["id"]
@@ -1637,6 +1734,9 @@ def register_unified_loop_routes(app: web.Application) -> None:
     app.router.add_put("/api/loops/{id}", api_loop_update)
     app.router.add_patch("/api/loops/{id}", api_loop_action)
     app.router.add_delete("/api/loops/{id}", api_loop_delete)
+    app.router.add_get("/api/loops/{id}/kept-work", api_loop_kept_work)
+    app.router.add_post("/api/loops/{id}/kept-work/{task_id}/merge", api_loop_kept_work_merge)
+    app.router.add_delete("/api/loops/{id}/kept-work/{task_id}", api_loop_kept_work_discard)
     app.router.add_post("/api/loops/{id}/nudge", api_loop_nudge)
     app.router.add_post("/api/loops/{id}/queue", api_loop_queue)
     app.router.add_post("/api/loops/{id}/autopilot", api_loop_autopilot)

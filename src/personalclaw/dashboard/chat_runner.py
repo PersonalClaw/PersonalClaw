@@ -3189,13 +3189,12 @@ async def run_chat(
                 try:
                     from personalclaw.loop import kinds as _kinds
                     from personalclaw.loop import store as _loop_store
+                    from personalclaw.loop.manager import worker_ids
 
-                    _lid = session.key.split("loop-", 1)[-1]
-                    _loop = _loop_store.get(_lid)
                     # A parallel task-worker (loop-<id>-<taskid>) resolves its parent
                     # loop — its caps = the active stage's, same as the main worker.
-                    if _loop is None and "-" in _lid:
-                        _loop = _loop_store.get(_lid.rsplit("-", 1)[0])
+                    _lid, _task_id = worker_ids(session.key)
+                    _loop = _loop_store.get(_lid) if _lid else None
                     if _loop is not None:
                         _kinds.ensure_loaded()
                         _strat = _kinds.get_or_none(_loop.kind)

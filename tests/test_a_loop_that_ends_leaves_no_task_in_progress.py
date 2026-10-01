@@ -134,13 +134,13 @@ def test_only_the_tasks_in_progress_move_and_done_work_stays_done():
 
 
 def test_a_loop_that_fails_or_finishes_releases_its_tasks_too():
-    # The watchdog's failed and complete paths end the loop through `teardown_worker`.
+    # The watchdog's failed and complete paths end the loop through `end_run`.
     loop, (working,) = _code_loop("Check the headings")
     _mark(working, "in_progress")
     store.update_status(loop.id, LoopStatus.RUNNING)
     store.update_status(loop.id, LoopStatus.FAILED)
 
-    _run(manager.teardown_worker(_Svc(), loop.id))
+    _run(manager.end_run(_State(), _Svc(), loop.id))
 
     assert _status(working) == "open"
 

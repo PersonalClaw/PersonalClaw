@@ -62,6 +62,9 @@ export function loopStatusLook(status: string): LoopStatusLook {
   return LOOP_STATUS[status] ?? { label: status, accent: '' }
 }
 
+/** The statuses a run has ended in (the backend's `loop.ENDED_STATUSES`): it takes no more turns. */
+export const ENDED_LOOP_STATUSES: ReadonlySet<string> = new Set(['complete', 'failed', 'stopped'])
+
 /** Friendly label for a loop/code status; falls through to the raw value for any
  *  unmapped/future status (never blanks). */
 export function loopStatusLabel(status: string): string {

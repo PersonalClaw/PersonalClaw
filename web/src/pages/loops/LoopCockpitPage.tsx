@@ -37,6 +37,7 @@ import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
 import { loopToGoalLoop } from './goalAdapter'
 import { RunPhaseTrail } from './RunPhaseTrail'
 import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
+import { RepromptNotice } from './RepromptNotice'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { belongsToLoop } from '../workflows/containerKey'
@@ -828,6 +829,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               <CirclePause size={14} className="shrink-0" /> {c.held}
             </div>
           )}
+          <RepromptNotice reprompt={runFlags.reprompt} className="rounded-md px-m py-s" />
           {judgeDegraded && running && (
             <div data-type="body-s" className="rounded-md px-m py-2 flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--color-warning) 12%, transparent)', color: 'var(--color-warning)' }}>
               <AlertTriangle size={14} className="shrink-0" /> Done-ness check was unavailable on a recent cycle — the loop keeps running on its cycle budget. It’ll resume quality assessment automatically.

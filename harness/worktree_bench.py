@@ -480,10 +480,11 @@ def measure_fanout(
         # its first creation — otherwise the first row of every benchmark carries a `git ls-files`
         # the later rows do not, and the mean would be reporting the instrumentation.
         files = worktree.repo_file_count(str(repo_path))
+        tasks = [f"t-bench{i:03d}" for i in range(width)]
         try:
             with collect_timing_rows() as rows:
-                for i in range(width):
-                    worktree.add_worktree(str(repo_path), f"t-bench{i:03d}")
+                for task in tasks:
+                    worktree.add_worktree(str(repo_path), task)
             return FanOutBaseline(
                 repo=str(repo_path),
                 repo_files=files,
@@ -493,7 +494,7 @@ def measure_fanout(
                 contended=contended,
             )
         finally:
-            worktree.cleanup_all(str(repo_path))
+            worktree.discard(str(repo_path), tasks)
 
 
 def run_benchmark(

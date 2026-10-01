@@ -5,7 +5,7 @@ A loop's worker starts work that outlives the turn that started it. Two or more 
 Each records the worker session it was started from: the run its ``origin.session_key``
 (``workflows.service.start_run``, from the call's session header), the subagent its
 ``parent_session_key``. That is the link, and it is exact: a loop's worker sessions are
-``loop-<id>`` and ``loop-<id>-<task>`` (``manager.worker_loop_id``), and nothing else is named so.
+``loop-<id>`` and ``loop-<id>-<task>`` (``manager.worker_ids``), and nothing else is named so.
 
 When the loop ends, that work has nobody left to report to. Stopping a loop ends every child it
 started (:func:`end_children`), and so do its failing and its deletion: each workflow run is
@@ -21,7 +21,7 @@ resumed.
 
 "Ended" is the loop's own ENDED phase — stopped, failed, finished — or gone: the same rule the
 decision path holds a loop's worker's own approvals to. A FAILED loop keeps its workers' worktrees
-for a Resume (``manager.stand_down``), but a batch run is no worker's: its turn was stopped with the
+for a Resume (``manager.end_run``), but a batch run is no worker's: its turn was stopped with the
 failure, nothing would read what it found, and asking her to allow its steps would start agents for
 a loop that has failed. A paused loop has not ended, and its children go on.
 """
@@ -45,9 +45,9 @@ def loop_of(session_key: str) -> str:
     """The loop whose worker session *session_key* is (in either form: bare or ``dashboard:``),
     or ``""`` when it is no loop worker's."""
     from personalclaw.constants import DASHBOARD_SESSION_PREFIX
-    from personalclaw.loop.manager import worker_loop_id
+    from personalclaw.loop.manager import worker_ids
 
-    return worker_loop_id(str(session_key or "").removeprefix(DASHBOARD_SESSION_PREFIX))
+    return worker_ids(str(session_key or "").removeprefix(DASHBOARD_SESSION_PREFIX))[0]
 
 
 def why_over(loop_id: str) -> str:

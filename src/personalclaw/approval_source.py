@@ -24,7 +24,7 @@ def loop_name_of(session: str) -> str | None:
     from personalclaw.loop import manager as loop_manager
     from personalclaw.loop.plan_walkthrough import planner_loop_id
 
-    loop_id = loop_manager.worker_loop_id(session)
+    loop_id, _task_id = loop_manager.worker_ids(session)
     if not loop_id:
         loop_id = planner_loop_id(session)
     if not loop_id:

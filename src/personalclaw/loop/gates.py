@@ -126,6 +126,74 @@ def verdict_rendered(raw: str | None) -> bool:
     return m is not None and m.group().upper() in ("PASS", "PASSED", "FAIL", "FAILED")
 
 
+#: What a stage-gate judge may answer for ONE exit criterion: met, not met, or not answerable
+#: from the evidence it was shown.
+CRITERION_VERDICTS = ("pass", "fail", "cant_tell")
+_CANT_TELL_SPELLINGS = {"cannot_tell": "cant_tell", "can't_tell": "cant_tell"}
+
+
+def _criteria_object(raw: str) -> dict | None:
+    """The first JSON object in *raw* that carries a ``criteria`` list, or None."""
+    import json
+
+    decoder = json.JSONDecoder()
+    at = raw.find("{")
+    while at >= 0:
+        try:
+            value, _end = decoder.raw_decode(raw, at)
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, dict) and isinstance(value.get("criteria"), list):
+            return value
+        at = raw.find("{", at + 1)
+    return None
+
+
+def criteria_verdicts(raw: str | None, criteria: list[str]) -> tuple[list[dict], bool]:
+    """A stage-gate judge's answer, one verdict per exit criterion, and whether it rendered one.
+
+    The judge answers ``{"criteria": [{"n": 1, "verdict": "pass"|"fail"|"cant_tell", "reason":
+    "…"}]}`` (``task-sdlc_stage_gate``). Each criterion gets ``{"criterion", "verdict",
+    "reason"}``; one the judge did not answer, or answered with a word outside
+    :data:`CRITERION_VERDICTS`, is ``cant_tell`` and says so. A one-word PASS or FAIL for the
+    whole stage still counts as an answer: PASS passes every criterion, a FAIL that names none is
+    ``cant_tell`` for each, because nothing says which one failed. No answer at all (an empty or
+    unreadable reply: the judge's model was unavailable) is ``cant_tell`` for each, and not
+    rendered, so the caller can tell a refusal from an outage (:func:`verdict_rendered`)."""
+    text = raw or ""
+    found = _criteria_object(text)
+    if found is not None:
+        answers: dict[int, dict] = {}
+        for item in found["criteria"]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                n = int(item["n"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            word = str(item.get("verdict") or "").strip().lower().replace("-", "_")
+            word = _CANT_TELL_SPELLINGS.get(word, word)
+            reason = " ".join(str(item.get("reason") or "").split())[:400]
+            if word not in CRITERION_VERDICTS:
+                word, reason = "cant_tell", "the judge's answer was not pass, fail or can't tell"
+            answers[n] = {"verdict": word, "reason": reason}
+        missing = {"verdict": "cant_tell", "reason": "the judge gave no answer for this criterion"}
+        return [
+            {"criterion": c, **answers.get(i, missing)} for i, c in enumerate(criteria, 1)
+        ], True
+    if verdict_rendered(text):
+        if verdict_is_pass(text):
+            whole = {"verdict": "pass", "reason": "the judge passed the stage as a whole"}
+        else:
+            whole = {
+                "verdict": "cant_tell",
+                "reason": "the judge failed the stage as a whole without saying which criterion",
+            }
+        return [{"criterion": c, **whole} for c in criteria], True
+    none = {"verdict": "cant_tell", "reason": "the judge gave no verdict"}
+    return [{"criterion": c, **none} for c in criteria], False
+
+
 async def judge_verdict(prompt: str, *, loop_id: str) -> str:
     """One-shot judge over the JUDGE axis (the robust bridge path, not the
     config-only one_shot helper) — ``loops.judge_use_case``, 'reasoning' by default,

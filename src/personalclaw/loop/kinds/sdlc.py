@@ -132,7 +132,87 @@ def _pool_cap(loop: Loop) -> int:
     return 1 if ref and sends_to_this_machine(ref.split(":", 1)[0]) else _POOL_CAP
 
 
-_STALL_FINDINGS = 5  # a stage grinding this many findings w/o clearing its gate is "stuck"
+_STALL_FINDINGS = 5  # a stage grinding this many cycles of work w/o clearing its gate is "stuck"
+
+#: How much of a stage's findings its judge is shown (characters), and how much of any one
+#: finding's recorded evidence (test output, say). Over either, the oldest findings and the
+#: middle of a long evidence block are cut, and the judge is told so.
+_GATE_EVIDENCE_BUDGET = 16000
+_GATE_EVIDENCE_PER_FINDING = 2400
+
+
+def _evidence_text(raw) -> str:
+    """A finding's recorded evidence as text: a string as it is, a list or a mapping (a worker
+    may record checks as ``{"pytest": "13 passed"}``) one item per line."""
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        return "\n".join(f"{k}: {v}" for k, v in raw.items()).strip()
+    if isinstance(raw, list):
+        return "\n".join(_evidence_text(v) for v in raw).strip()
+    return str(raw).strip()
+
+
+def _cut_middle(text: str, limit: int) -> tuple[str, bool]:
+    """*text* within *limit* characters, its head and tail kept (a test run's summary and its
+    failures sit at the end), and whether it was cut."""
+    if len(text) <= limit:
+        return text, False
+    head = limit // 4
+    tail = limit - head
+    cut = len(text) - head - tail
+    return f"{text[:head]}\n… [{cut} characters cut] …\n{text[-tail:]}", True
+
+
+def _finding_block(finding: dict, task_titles: dict[str, str]) -> tuple[str, bool]:
+    """One finding as its stage's judge reads it, and whether its evidence was cut."""
+    tid = str(finding.get("task_id") or "")
+    who = f", task \u201c{task_titles.get(tid) or tid}\u201d" if tid else ""
+    summary = " ".join(str(finding.get("summary") or "").split())[:600]
+    lines = [f"- cycle {finding.get('cycle', '?')}{who}: {summary}"]
+    insight = " ".join(str(finding.get("key_insight") or "").split())[:400]
+    if insight:
+        lines.append(f"  key insight: {insight}")
+    files = finding.get("files_touched")
+    if isinstance(files, list) and files:
+        lines.append("  files touched: " + ", ".join(str(f) for f in files[:20]))
+    evidence, cut = _cut_middle(_evidence_text(finding.get("evidence")), _GATE_EVIDENCE_PER_FINDING)
+    if evidence:
+        lines.append("  evidence it recorded:")
+        lines.extend(f"    {ln}" for ln in evidence.splitlines())
+    return "\n".join(lines), cut
+
+
+def _not_judged(criteria: list[str], why: str) -> list[dict]:
+    """Every criterion as can't tell, because the gate stopped before its judge (*why*)."""
+    reason = f"not judged: {why}"
+    return [{"criterion": c, "verdict": "cant_tell", "reason": reason} for c in criteria]
+
+
+def _gate_sentence(criteria: list[dict]) -> str:
+    """What a stage gate decided, in one sentence a person can act on: which exit criteria are
+    not met and which the record could not show, each with its reason."""
+
+    def _named(rows: list[dict]) -> str:
+        return "; ".join(
+            f"\u201c{r['criterion']}\u201d" + (f" ({r['reason']})" if r.get("reason") else "")
+            for r in rows
+        )
+
+    failed = [r for r in criteria if r.get("verdict") == "fail"]
+    unknown = [r for r in criteria if r.get("verdict") == "cant_tell"]
+    if not failed and not unknown:
+        n = len(criteria)
+        return f"All {n} exit criteria are met." if n != 1 else "The exit criterion is met."
+    parts = []
+    if failed:
+        parts.append(f"Not met: {_named(failed)}.")
+    if unknown:
+        parts.append(f"Can't tell from the record: {_named(unknown)}.")
+    return " ".join(parts)
+
 
 # Manifests that signal a workspace is buildable by a given toolchain. A verify/test
 # command only gates a stage once the project it drives actually exists — else a
@@ -359,8 +439,10 @@ class CodeKind(LoopKindStrategy):
         # Per-(loop:task) merge-conflict auto-resolve budget (in-memory; the loser
         # rebases up to _CONFLICT_REDO_CAP times before pausing for the user).
         self._conflict_redos: dict[str, int] = {}
-        # "<loop>:<stage>" keys already escalated as stalled (one-shot per stuck stage).
-        self._stall_notified: set[str] = set()
+        # "<loop>:<stage>" → the cycles of work the stage had when it was last escalated as
+        # stalled. It escalates again only after as many more cycles of work without clearing,
+        # so a steer that does not unstick it is not followed by cycles spun to the budget.
+        self._stall_notified: dict[str, int] = {}
         # "<loop>:<stage>" → the resolved-task count observed the last time the stall
         # check ran for that stage. A stage that keeps RESOLVING tasks (model→store→
         # service→cli, one per cycle) is making real forward progress, not spinning —
@@ -377,6 +459,9 @@ class CodeKind(LoopKindStrategy):
         # set only by the owner's own approval route: nothing a loop's workers can write (its
         # folder is theirs to write) stands for it, and after a restart the loop asks again.
         self._merge_approvals: dict[str, dict[str, str]] = {}
+        # Loops a task's work landed in during this poll's scheduling (:meth:`_reap_merge_done`),
+        # so the stage is judged then (:meth:`_judge_on_drain`). Read and cleared by `schedule`.
+        self._landed: set[str] = set()
 
     def _is_parallel(self, loop: Loop) -> bool:
         """Parallel mode: queued work + a git workspace (worktrees available). Set
@@ -748,7 +833,9 @@ class CodeKind(LoopKindStrategy):
 
         return re.sub(r"[\s_\-]+", " ", (s or "").strip().lower()).strip()
 
-    def _findings_for_stage(self, loop: Loop, idx: int, findings: list[dict]) -> list[dict]:
+    def _findings_for_stage(
+        self, loop: Loop, idx: int, findings: list[dict], *, explicit_only: bool = False
+    ) -> list[dict]:
         """Findings attributed to the stage at ``idx`` — matched by stage id OR title
         (the worker records either, since the cycle directive shows the title), tolerant
         of the ``"N — title"`` ordinal prefix the directive induces AND of separator-slug
@@ -820,9 +907,43 @@ class CodeKind(LoopKindStrategy):
         out = []
         for f in findings:
             owner = _owner(f)
-            if owner == idx or (owner < 0 and idx == active_idx):
+            if owner == idx or (not explicit_only and owner < 0 and idx == active_idx):
                 out.append(f)
         return out
+
+    @staticmethod
+    def _last_gate(loop_id: str, stage: str) -> str:
+        """The sentence of the last gate evaluation of *stage* that did not pass (which criteria
+        are not met, and which the record could not show), or ``""``."""
+        for v in reversed(loop_files.get_verdicts(loop_id)):
+            if v.get("gate") == "stage" and v.get("stage") == stage:
+                return "" if v.get("passed") else str(v.get("done_reason") or "")
+        return ""
+
+    async def _cycles_of_work(self, loop: Loop, stage: str, stage_findings: list[dict]) -> int:
+        """How many of a stage's cycles did work toward it, for the stall counter.
+
+        Each of the stage worker's own cycles counts, and so does each finding of a task still
+        open. A task that is done counts once: its further findings re-check finished work (a
+        worker asked again after its task was done), and busywork must never read as a stage
+        that is stuck."""
+        from personalclaw.loop import tasks_link
+
+        done = {
+            t.id
+            for t in await tasks_link.stage_tasks(loop, stage)
+            if tasks_link._is_resolved(t.status)
+        }
+        worked = 0
+        counted_done: set[str] = set()
+        for f in stage_findings:
+            tid = str(f.get("task_id") or "")
+            if tid in done:
+                if tid in counted_done:
+                    continue
+                counted_done.add(tid)
+            worked += 1
+        return worked
 
     async def _escalate_stall_if_stuck(
         self, loop: Loop, idx: int, stage: str, findings: list[dict], ctx, *, cause: str = "gate"
@@ -843,9 +964,14 @@ class CodeKind(LoopKindStrategy):
         if not stage:
             return False
         key = f"{loop.id}:{stage}"
-        if key in self._stall_notified:
+        from personalclaw.loop import tasks_link
+
+        stage_findings = self._findings_for_stage(loop, idx, findings)
+        floor = self._stall_notified.get(key, 0) + _STALL_FINDINGS
+        if len(stage_findings) < floor:
             return False
-        if len(self._findings_for_stage(loop, idx, findings)) < _STALL_FINDINGS:
+        worked = await self._cycles_of_work(loop, stage, stage_findings)
+        if worked < floor:
             return False
         # Progress guard: a stage that keeps RESOLVING tasks (each module task
         # completing, one per cycle) is making real forward progress, not spinning.
@@ -856,8 +982,6 @@ class CodeKind(LoopKindStrategy):
         # count is flat across _STALL_FINDINGS findings is the stage genuinely stuck.
         # (A stage with no queued tasks — e.g. a doc-only stage — reports 0 and is
         # gated by the finding count alone, exactly as before.)
-        from personalclaw.loop import tasks_link
-
         resolved_now = await tasks_link.resolved_stage_task_count(loop, stage)
         if resolved_now > self._stall_progress.get(key, 0):
             self._stall_progress[key] = resolved_now
@@ -880,7 +1004,7 @@ class CodeKind(LoopKindStrategy):
                     missing_command = (label, command, runnable)
                     cause = "binary"
                     break
-        self._stall_notified.add(key)
+        self._stall_notified[key] = worked
         from personalclaw.loop import store
         from personalclaw.loop.loop import LoopStatus
         from personalclaw.loop.manager import session_key
@@ -928,10 +1052,12 @@ class CodeKind(LoopKindStrategy):
                 "Edit the stored command, then resume."
             )
         elif cause == "gate":
+            judged = self._last_gate(loop.id, stage)
+            why = f" {judged}" if judged else ""
             error_message = (
-                f"Stage '{title}' produced {_STALL_FINDINGS}+ cycles without clearing its exit "
-                "criteria — paused to avoid spinning. Steer it (or relax a criterion), then "
-                "resume."
+                f"Stage '{title}' produced {_STALL_FINDINGS}+ cycles of work without clearing its "
+                f"exit criteria — paused to avoid spinning.{why} Steer it (or relax a "
+                "criterion), then resume."
             )
         else:
             error_message = (
@@ -1136,7 +1262,7 @@ class CodeKind(LoopKindStrategy):
         store.set_phase_status(cid, stage, "done")
         # Cleared its gate → drop any stall flag + progress baseline so the in-memory
         # state doesn't leak (and a later re-entry of this key starts fresh).
-        self._stall_notified.discard(f"{cid}:{stage}")
+        self._stall_notified.pop(f"{cid}:{stage}", None)
         self._stall_progress.pop(f"{cid}:{stage}", None)
         # The supervisor (not the worker) is the authority the stage is met — close its
         # still-open tasks so the cockpit doesn't show a done stage with open tasks.
@@ -1186,7 +1312,7 @@ class CodeKind(LoopKindStrategy):
         counts = dict(cfg.get("rollbacks_on_stage", {}) or {})
         counts[str(idx)] = int(counts.get(str(idx), 0)) + 1
         store.merge_kind_config(cid, {"rollbacks_on_stage": counts})
-        self._stall_notified.discard(f"{cid}:{stage}")
+        self._stall_notified.pop(f"{cid}:{stage}", None)
         self._stall_progress.pop(f"{cid}:{stage}", None)
         refreshed = store.get(cid)
         if refreshed is not None:
@@ -1263,6 +1389,12 @@ class CodeKind(LoopKindStrategy):
                         "stage": stage,
                     },
                 )
+                self._record_gate(
+                    loop,
+                    stage,
+                    findings,
+                    _not_judged(exit_criteria, f"the deliverable `{deliverable}` is not on disk"),
+                )
                 return False
             if path is not None:
                 # Slice B — feed the deliverable's REAL content to the judge, not just an
@@ -1289,12 +1421,7 @@ class CodeKind(LoopKindStrategy):
                         "content_bytes": len(content),
                     },
                 )
-        from personalclaw.loop.gates import (
-            judge_verdict,
-            run_verify_command,
-            verdict_is_pass,
-            verdict_rendered,
-        )
+        from personalclaw.loop.gates import criteria_verdicts, judge_verdict, run_verify_command
 
         checks = _stage_commands(loop, stage)
         passed_a_command = False  # a deterministic check actually RAN and PASSED
@@ -1338,6 +1465,12 @@ class CodeKind(LoopKindStrategy):
                         "stage": stage,
                     },
                 )
+                self._record_gate(
+                    loop,
+                    stage,
+                    findings,
+                    _not_judged(exit_criteria, f"the stage's {label} command failed"),
+                )
                 return False
             if ok is True:
                 passed_a_command = True
@@ -1345,15 +1478,8 @@ class CodeKind(LoopKindStrategy):
             # ok is None → couldn't run; fall through to the judge.
         if checks:
             ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "ok": True, "stage": stage})
-        recent = stage_findings[-4:]
-        evidence = (
-            "\n".join(
-                f"- cycle {f.get('cycle')}: {str(f.get('summary', '') or f.get('key_insight', ''))[:300]}"  # noqa: E501
-                for f in recent
-            )
-            + check_evidence
-        )
-        criteria = "\n".join(f"- {c}" for c in exit_criteria)
+        evidence, evidence_note = await self._gate_evidence(loop, stage, stage_findings)
+        criteria = "\n".join(f"{n}. {c}" for n, c in enumerate(exit_criteria, 1))
         # The stage-gate instruction lives in the prompt system (bundled
         # ``task-sdlc-stage-gate``), rendered with the stage + evidence.
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
@@ -1365,35 +1491,127 @@ class CodeKind(LoopKindStrategy):
                     "stage_title": phase.get("title", stage),
                     "objective": phase.get("objective", ""),
                     "criteria": criteria,
-                    "evidence": evidence,
+                    "evidence": evidence + check_evidence,
+                    "evidence_note": evidence_note,
                 },
             )
             or ""
         )
         raw = await judge_verdict(prompt, loop_id=loop.id)
-        if verdict_is_pass(raw):
-            return True
-        # The judge said no — but distinguish a genuine FAIL from a can't-judge. If the
-        # judge rendered a real verdict (FAIL), respect it: keep cycling. If it produced
-        # NO parseable verdict (empty/prose — provider unavailable or the stream errored,
-        # e.g. a model timeout), do NOT treat that as FAIL when a deterministic check
-        # already PASSED: otherwise a flaky judge permanently blocks a stage whose build/
-        # test gate is green + tasks done + no queued work (observed: a complete engine
-        # stage stuck for cycles on judge timeouts). Fall back to the deterministic pass;
-        # only block when there's no deterministic pass to stand on.
-        if not verdict_rendered(raw) and passed_a_command:
+        verdicts, rendered = criteria_verdicts(raw, exit_criteria)
+        passed = all(v["verdict"] == "pass" for v in verdicts)
+        # A judge that rendered NO verdict (empty/prose — provider unavailable or the stream
+        # errored, e.g. a model timeout) is a can't-judge, not a FAIL, when a deterministic
+        # check already PASSED: otherwise a flaky judge permanently blocks a stage whose build/
+        # test gate is green + tasks done + no queued work (observed: a complete engine stage
+        # stuck for cycles on judge timeouts). Fall back to the deterministic pass; only block
+        # when there's no deterministic pass to stand on. Either way the criteria are recorded.
+        fallback = not rendered and passed_a_command
+        self._record_gate(
+            loop,
+            stage,
+            findings,
+            verdicts,
+            ctx=ctx,
+            passed=passed or fallback,
+            note="judge unavailable; passed on deterministic checks" if fallback else "",
+        )
+        return passed or fallback
+
+    async def _gate_evidence(
+        self, loop: Loop, stage: str, stage_findings: list[dict]
+    ) -> tuple[str, str]:
+        """What a stage's judge reads, from the loop's own records, and a note on what was cut.
+
+        The stage's tasks and their status (observed by the supervisor, not reported), then its
+        findings: each with its summary, key insight, the files it touched and the evidence it
+        recorded (a task worker's test output among it), so a criterion that names a task's
+        output is judged on that output. A record too long for one judge call keeps its newest
+        findings, and the middle of a long evidence block; the note says what is not shown, so a
+        criterion that depends on it is answered can't tell rather than guessed."""
+        from personalclaw.loop import tasks_link
+
+        tasks = await tasks_link.stage_tasks(loop, stage)
+        titles = {t.id: str(t.title or "") for t in tasks}
+        lines: list[str] = []
+        if tasks:
+            lines.append("Tasks of this stage, from its task list (observed by the supervisor):")
+            lines.extend(f"- [{getattr(t.status, 'value', t.status)}] {t.title}" for t in tasks)
+            lines.append("")
+        blocks = [_finding_block(f, titles) for f in stage_findings]
+        kept: list[str] = []
+        used = 0
+        cut_evidence = False
+        for block, cut in reversed(blocks):
+            if kept and used + len(block) > _GATE_EVIDENCE_BUDGET:
+                break
+            kept.append(block)
+            used += len(block)
+            cut_evidence = cut_evidence or cut
+        left_out = len(blocks) - len(kept)
+        lines.append("Findings of this stage, oldest first:")
+        lines.extend(reversed(kept))
+        notes: list[str] = []
+        if left_out:
+            notes.append(
+                f"The {left_out} earliest finding{'s' if left_out != 1 else ''} of this stage "
+                "are not shown, for length."
+            )
+        if cut_evidence:
+            notes.append("Some findings' recorded evidence is cut in the middle, for length.")
+        if notes:
+            notes.append(
+                "If a criterion depends on evidence that is not shown, answer cant_tell and say "
+                "what is missing."
+            )
+        return "\n".join(lines), " ".join(notes)
+
+    def _record_gate(
+        self,
+        loop: Loop,
+        stage: str,
+        findings: list[dict],
+        verdicts: list[dict],
+        *,
+        ctx=None,
+        passed: bool = False,
+        note: str = "",
+    ) -> None:
+        """Record one stage-gate evaluation on the loop's ledger: a verdict for each exit
+        criterion (pass, fail or can't tell, each with its reason) and the sentence that sums it
+        up, which the loop's page shows and a Blocked message quotes. With *ctx* it is told to
+        the page live too; without, the evaluation stopped at a check that already said so."""
+        from personalclaw.workflows.judge_contract import Verdict
+
+        sentence = _gate_sentence(verdicts) if not passed or not note else note
+        record = {
+            "gate": "stage",
+            "stage": stage,
+            "verdict": (Verdict.PASS if passed else Verdict.REJECT).value,
+            "passed": passed,
+            "done_reason": sentence,
+            "criteria": verdicts,
+            "shortfalls": [v["criterion"] for v in verdicts if v["verdict"] != "pass"],
+        }
+        if note:
+            record["note"] = note
+        try:
+            loop_files.write_verdict(loop.id, len(findings), record)
+        except Exception:
+            logger.warning("code: recording the gate of %s failed", loop.id, exc_info=True)
+        if ctx is not None:
             ctx.publish(
                 loop.id,
                 "gate_check",
                 {
                     "loop_id": loop.id,
-                    "ok": True,
+                    "label": "exit criteria",
+                    "ok": passed,
                     "stage": stage,
-                    "note": "judge unavailable; passed on deterministic checks",
+                    "criteria": verdicts,
+                    "output": "" if passed else sentence,
                 },
             )
-            return True
-        return False
 
     async def _check_work_post_gate(self, loop: Loop, idx: int, findings: list[dict], ctx) -> bool:
         """HARNESS-CRAFT §3.2 post-gate hook — the unattended half of check-work.
@@ -1508,7 +1726,7 @@ class CodeKind(LoopKindStrategy):
             logger.debug("autopilot_queue failed for %s", cid, exc_info=True)
             return None
 
-    async def schedule(self, loop: Loop, ctx) -> bool:
+    async def schedule(self, loop: Loop, ctx, *, judge_on_drain: bool = True) -> bool:
         """Keep the active stage's work moving with ONE writer at a time — the watchdog asks this
         every poll, and :meth:`on_new_cycle` asks it before it judges a stage.
 
@@ -1517,8 +1735,11 @@ class CodeKind(LoopKindStrategy):
         worker runs, and stand it back up when none does (:meth:`_one_writer`). Asked every poll,
         not only when a finding lands, so a stage fans out before the stage worker's first cycle
         on it rather than after the stage worker has already done the work in the main tree.
-        Returns True iff the loop paused for its owner (a merge the scheduler could not settle,
-        a task that ran out of cycles)."""
+        When the last of a stage's task workers is reaped, the stage is judged then and there
+        (:meth:`_judge_on_drain`; *judge_on_drain* is off for :meth:`on_new_cycle`, which judges
+        next anyway). Returns True iff the loop stopped running: it paused for its owner (a merge
+        the scheduler could not settle, a task that ran out of cycles) or that judgement ended
+        it."""
         from personalclaw.loop import store, worktree
 
         # Every commit of the loop's, the stage worker's in the workspace itself as much as a
@@ -1536,11 +1757,48 @@ class CodeKind(LoopKindStrategy):
             return False
         if self._is_parallel(loop):
             stage = self.phase_key((loop.plan or [])[idx])
+            working = bool(self._live_task_workers(loop, ctx.svc))
+            self._landed.discard(loop.id)
             if await self._schedule_parallel(loop, stage, (loop.workspace_dir or "").strip(), ctx):
+                return True
+            loop = store.get(loop.id) or loop
+            # The stage's work is in when its last task worker is reaped, or when work its owner
+            # approved merging lands (an Attended loop's tasks wait for that, their workers gone).
+            drained = working or loop.id in self._landed
+            self._landed.discard(loop.id)
+            if judge_on_drain and drained and await self._judge_on_drain(loop, idx, stage, ctx):
                 return True
             loop = store.get(loop.id) or loop
         await self._one_writer(loop, ctx)
         return False
+
+    async def _judge_on_drain(self, loop: Loop, idx: int, stage: str, ctx) -> bool:
+        """The stage's last task worker was just reaped: judge the stage now, on its tasks' work.
+
+        A task worker writes its finding and ends its turn, and is reaped a poll or two later,
+        once that turn is over; the finding's own cycle found it still at work and left the stage
+        unjudged. Nothing judged it after that until the stage worker, stood back up, spent a
+        turn re-checking finished work and wrote a finding of its own, and a loop whose every
+        task was done spun on like that. Judged only for a running loop, when every task of the
+        stage is resolved and no finding is still to be credited (the watchdog judges that cycle
+        itself, in this same poll). True iff the loop is no longer running: it completed, or its
+        gate paused it."""
+        from personalclaw.loop import store, tasks_link
+
+        if loop.status != LoopStatus.RUNNING.value:
+            return False
+        if self._live_task_workers(loop, ctx.svc) or self.active_stage_index(loop) != idx:
+            return False
+        tasks = await tasks_link.stage_tasks(loop, stage)
+        if not tasks or not all(tasks_link._is_resolved(t.status) for t in tasks):
+            return False
+        loop_files.record_cycle_findings(loop.id)
+        findings = loop_files.get_findings(loop.id)
+        if len(findings) > loop_files.credited_cycles(loop.id):
+            return False
+        await self._judge_from(loop, findings, ctx)
+        now = store.get(loop.id)
+        return now is None or now.status != LoopStatus.RUNNING.value
 
     async def _one_writer(self, loop: Loop, ctx) -> None:
         """The stage worker and the task workers never write at once.
@@ -1575,15 +1833,42 @@ class CodeKind(LoopKindStrategy):
         cid = loop.id
         # The scheduler first, so a task worker that just finished is merged before its stage
         # is judged. A merge conflict it can't auto-resolve pauses the loop.
-        if await self.schedule(loop, ctx):
+        if await self.schedule(loop, ctx, judge_on_drain=False):
             return False  # paused NEEDS_INPUT — watchdog stops the cycle
         loop = store.get(cid) or loop
-        plan = loop.plan or []
-        idx = self.active_stage_index(loop)
-        if idx < 0:
+        if self.active_stage_index(loop) < 0:
             # No stage plan: complete once a finding lands AND any verify/test passes
             # (the project-level "prove it" gate). Otherwise keep going.
             return await self._no_stage_done(loop, findings)
+        return await self._judge_from(loop, findings, ctx)
+
+    async def _judge_from(self, loop: Loop, findings: list[dict], ctx) -> bool:
+        """Judge the active stage, and each stage it hands over to. True iff the loop completed.
+
+        A stage that advances hands over to the next at once, which is judged in the same cycle
+        when its work is already there: a worker that ran ahead into it, or its tasks all done.
+        Without that a loop whose every task was done waited for one more finding per stage, and
+        spun re-checking finished work instead."""
+        from personalclaw.loop import store
+
+        for ahead in range(len(loop.plan or [])):
+            judged = await self._judge_active_stage(loop, findings, ctx, ahead=bool(ahead))
+            if judged is not None:
+                return judged
+            loop = store.get(loop.id) or loop
+        return False
+
+    async def _judge_active_stage(self, loop: Loop, findings: list[dict], ctx, *, ahead: bool):
+        """Judge the active stage once: True when the loop completed, False when it keeps
+        cycling (or paused), None when the stage advanced and the next is to be judged now.
+
+        *ahead* is the stage just handed over by an advance in this same cycle: it is judged only
+        when its work is already there — findings that name it, or every task of it done — so an
+        untouched stage is never passed on the evidence of the stage before it."""
+        plan = loop.plan or []
+        idx = self.active_stage_index(loop)
+        if idx < 0:
+            return False
         stage = self.phase_key(plan[idx])
         # Don't let a lenient gate advance a stage while it still has READY QUEUED
         # tasks the worker hasn't run — that would skip the user's other queued work.
@@ -1594,6 +1879,8 @@ class CodeKind(LoopKindStrategy):
             return False  # real queued work pending → keep cycling
         if self._live_task_workers(loop, ctx.svc):
             return False  # task-workers still running → wait for them
+        if ahead and not await self._stage_work_is_there(loop, idx, stage, findings):
+            return False
         # ── P6: the stepwise lifecycle decision IS the one pure tick.evaluate ────────
         # Observe the two inputs the decision needs — the adapter's I/O, per the tick
         # purity contract (loop/tick.py): the STRUCTURAL gate (the supervisor runs the
@@ -1618,14 +1905,17 @@ class CodeKind(LoopKindStrategy):
         if decision.action is tick.Action.ROLLBACK:
             return await self._apply_rollback(loop, idx, stage, decision, ctx)
         if decision.action in (tick.Action.ADVANCE, tick.Action.COMPLETE):
-            return await self._apply_advance(loop, idx, stage, decision, metric, ctx)
+            if await self._apply_advance(loop, idx, stage, decision, metric, ctx):
+                return True
+            return None  # the next stage is judged now, if its work is there
         # EXECUTE / HOLD / WAITING → keep cycling this stage. A stage that grinds
         # _STALL_FINDINGS+ cycles without ever advancing is stuck — whether it's failing
         # the STRUCTURAL gate (busywork the gate rejects) OR persistently HOLDing below
         # its quality metric_pass (refinement that never clears the bar). Both burn to
-        # budget silently otherwise, so escalate ONCE either way and let the user steer /
-        # relax the bar. The escalation's own finding-count threshold prevents it firing on
-        # a stage that's only briefly holding. (WAITING — a worker turn still in flight —
+        # budget silently otherwise, so escalate either way and let the user steer / relax
+        # the bar, and again if as many more cycles of work pass without clearing (a steer
+        # that did not unstick it). The escalation's own cycles-of-work threshold prevents it
+        # firing on a stage that's only briefly holding. (WAITING — a worker turn still in flight —
         # is transient and shouldn't accrue toward a stall; escalate only on EXECUTE/HOLD.)
         if decision.action in (tick.Action.EXECUTE, tick.Action.HOLD):
             # HOLD is always a quality-metric hold (the structural gate passed but the
@@ -1633,6 +1923,18 @@ class CodeKind(LoopKindStrategy):
             cause = "metric" if decision.action is tick.Action.HOLD else "gate"
             await self._escalate_stall_if_stuck(loop, idx, stage, findings, ctx, cause=cause)
         return False
+
+    async def _stage_work_is_there(
+        self, loop: Loop, idx: int, stage: str, findings: list[dict]
+    ) -> bool:
+        """Whether a stage just handed over already holds work to judge: findings that name it
+        (a worker that ran ahead into it), or tasks that are all done."""
+        if self._findings_for_stage(loop, idx, findings, explicit_only=True):
+            return True
+        from personalclaw.loop import tasks_link
+
+        tasks = await tasks_link.stage_tasks(loop, stage)
+        return bool(tasks) and all(tasks_link._is_resolved(t.status) for t in tasks)
 
     async def _get_task(self, task_id: str):
         from personalclaw.tasks import registry
@@ -1713,6 +2015,8 @@ class CodeKind(LoopKindStrategy):
         if slots <= 0:
             return False
         ready = await tasks_link.ready_queued_tasks(loop, phase_key)
+        if ready:
+            ready = await self._merged_prerequisites(loop, phase_key, ws, ready)
         if not ready:
             return False
         stage_worker = ctx.state._sessions.get(session_key(loop.id))
@@ -1802,13 +2106,19 @@ class CodeKind(LoopKindStrategy):
             return await self._reap_merge_done(loop, tid, task, ws, ctx, by=MERGED_BY_LOOP)
         if not worktree.commit_pending(ws, tid, loop.tasks_project_id):
             return False  # nothing to review yet; the next poll tries again
-        if not worktree.branch_commits(ws, tid):
-            # The task changed nothing, so there is nothing to merge or to ask about.
+        if worktree.brings_nothing_new(ws, worktree.branch_name(tid)):
+            # The task changed nothing the branch lacks (nothing at all, or a change already
+            # there, the same patch another task landed): nothing to merge or to ask about.
             from personalclaw.loop import store
 
+            already = bool(worktree.branch_commits(ws, tid))
             worktree.remove_worktree(ws, tid, loop.tasks_project_id)
             store.unqueue_tasks(loop.id, [tid])
-            ctx.publish(loop.id, "task_done", {"loop_id": loop.id, "task_id": tid, "merged": False})
+            ctx.publish(
+                loop.id,
+                "task_done",
+                {"loop_id": loop.id, "task_id": tid, "merged": False, "already_on_base": already},
+            )
             return False
         if self._asks_about_another_name(loop, tid, task, ws, ctx):
             return True
@@ -1886,6 +2196,29 @@ class CodeKind(LoopKindStrategy):
         ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
         return True
 
+    async def _merged_prerequisites(self, loop: Loop, phase_key: str, ws: str, ready: list) -> list:
+        """The ready tasks whose done prerequisites' work is merged into the workspace.
+
+        A task's worktree is cut from the workspace's HEAD. A prerequisite marked done is merged
+        only once its worker's turn is over, so a task started in between was cut without that
+        work and did it again: one task's work in two workers, and the workspace given the same
+        change twice. Such a task waits for the merge (the next poll, as a rule)."""
+        from personalclaw.loop import tasks_link, worktree
+
+        done = {
+            t.id
+            for t in await tasks_link.stage_tasks(loop, phase_key)
+            if tasks_link._is_done(t.status)
+        }
+        return [
+            t
+            for t in ready
+            if not any(
+                d.depends_on_task_id in done and worktree.branch_exists(ws, d.depends_on_task_id)
+                for d in (t.dependencies or [])
+            )
+        ]
+
     async def _reap_merge_done(self, loop: Loop, tid: str, task, ws: str, ctx, *, by: str) -> bool:
         """Merge a done task's branch into base, as git is configured to commit there, and note it
         on the loop's page (*by*: who merged it). Clean → unqueue + task_done. Conflict
@@ -1903,19 +2236,31 @@ class CodeKind(LoopKindStrategy):
         if result.ok:
             self._conflict_redos.pop(redo_key, None)
             store.unqueue_tasks(loop.id, [tid])
-            loop_files.record_merge(
+            self._landed.add(loop.id)
+            if not result.already:
+                loop_files.record_merge(
+                    loop.id,
+                    {
+                        "task_id": tid,
+                        "title": str(getattr(task, "title", "") or tid),
+                        "branch": branch,
+                        "into": into,
+                        "commits": commits,
+                        "head": result.head,
+                        "by": by,
+                    },
+                )
+            ctx.publish(
                 loop.id,
+                "task_done",
                 {
+                    "loop_id": loop.id,
                     "task_id": tid,
-                    "title": str(getattr(task, "title", "") or tid),
-                    "branch": branch,
-                    "into": into,
-                    "commits": commits,
-                    "head": result.head,
-                    "by": by,
+                    "merged": True,
+                    # Its change was already on the base: nothing was committed for it.
+                    "already_on_base": result.already,
                 },
             )
-            ctx.publish(loop.id, "task_done", {"loop_id": loop.id, "task_id": tid, "merged": True})
             return False
         conflicts = result.conflicts
         if conflicts:
@@ -2006,7 +2351,7 @@ class CodeKind(LoopKindStrategy):
             lines += ["", directive]
         lines += [
             "",
-            f"Before you end this turn you MUST write findings/cycle_NNN.json to {loop_dir} "
+            f"Before you end this turn you MUST write {loop_files.finding_file(loop_dir)} "
             "(next sequential N) — the deliverable of this cycle, not optional. The finding "
             "is {cycle, stage, summary, key_insight, files_touched, evidence}. Keep the "
             "stage's TaskList honest with the task_list/task_update tools as you work "

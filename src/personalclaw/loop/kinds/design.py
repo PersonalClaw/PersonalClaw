@@ -460,7 +460,7 @@ class DesignKind(LoopKindStrategy):
                 "if present; (4) advance the CURRENT design step (tokens, a component, a "
                 "palette decision) toward the design system.",
                 "",
-                f"Before you end this turn you MUST write findings/cycle_NNN.json to {loop_dir} "
+                f"Before you end this turn you MUST write {loop_files.finding_file(loop_dir)} "
                 "(next sequential N) — {cycle, step, summary, key_insight, artifacts}. Save "
                 f"design outputs as artifacts tagged `loop:{loop.id}` via artifact_save:",
                 f"  • Each React COMPONENT → `artifact_save(kind='react', tags=['loop:{loop.id}'])` "  # noqa: E501

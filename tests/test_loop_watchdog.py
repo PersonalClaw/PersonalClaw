@@ -78,7 +78,7 @@ class _FakeSvc:
         return next((lp for lp in self._loops.values() if lp.session_name == session_name), None)
 
     def list_all(self):
-        # The real service's public surface (`triggers/nudge.py`); `manager._teardown` scans it.
+        # The real service's public surface (`triggers/nudge.py`); `manager.end_run` scans it.
         return list(self._loops.values())
 
     async def update(self, loop_id, **kw):
@@ -423,6 +423,25 @@ class TestCycleVerdictPublish:
         )
         wd._publish_cycle_verdict(c.id, 1)
         assert [e for e, _ in events] == ["cycle_verdict"]
+
+    def test_a_stage_gates_evaluation_is_not_published_as_the_cycles_score(self):
+        """A Code stage's gate records its evaluation in the same ledger, at the same cycle, with
+        no scores; the cycle's verdict is the scored one beside it."""
+        c = _running()
+        wd, events = self._captured_wd()
+        loop_files.write_verdict(
+            c.id, 2, {"done": False, "marginal_value": 0.5, "quality_score": 3.0}
+        )
+        loop_files.write_verdict(
+            c.id, 2, {"gate": "stage", "stage": "implementation", "passed": False}
+        )
+        wd._publish_cycle_verdict(c.id, 2)
+        (verdict,) = [d for e, d in events if e == "cycle_verdict"]
+        assert verdict["marginal_value"] == 0.5 and verdict["quality_score"] == 3.0
+        events.clear()
+        loop_files.write_verdict(c.id, 4, {"gate": "stage", "stage": "x", "passed": False})
+        wd._publish_cycle_verdict(c.id, 4)
+        assert events == []
 
 
 class TestJudgeErrorOnlyWhenACheckExists:

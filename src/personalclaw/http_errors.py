@@ -1144,6 +1144,40 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "changed."
     ),
     "model_rate_unsaved": "The price could not be saved.",
+    # ── the work an ended code loop kept (dashboard/handlers/loop_routes.py —
+    #    POST …/kept-work/{task_id}/merge and DELETE …/kept-work/{task_id} under /api/loops/{id}) ──
+    # 409 `loop_still_at_work`: the run has not ended, so its scheduler merges its own tasks.
+    # 409 `workspace_not_committed`: the workspace has changes not committed; nothing was merged.
+    # 409 `kept_work_conflicts`: the branch conflicts with the workspace; the merge was undone and
+    # the work is kept (`error.detail.conflicts` names the files). 500 `kept_work_unmerged`: git
+    # could not merge it for another reason; the work is kept.
+    "loop_still_at_work": (
+        "This loop is still at work, so it merges its own tasks; its kept work waits for its end."
+    ),
+    "workspace_not_committed": (
+        "Your workspace has changes that are not committed, so nothing was merged into it. "
+        "Commit or set them aside, then merge again."
+    ),
+    "kept_work_conflicts": (
+        "This work conflicts with your workspace, so the merge was undone and the work is kept."
+    ),
+    "kept_work_unmerged": (
+        "This work could not be merged (a git error, not a conflict); it is kept."
+    ),
+    # 409 `kept_work_no_identity`: git has no name and email set to commit as in the workspace, so
+    # nothing was merged (every commit a loop's work makes is made as git is configured there).
+    # 409 `kept_work_other_name`: the branch holds commits made under another name than the one git
+    # commits as there (`error.detail.commits` names them), so it was not merged; the work is kept.
+    # A merge whose branch is not at the commit reviewed answers `loop_merge_moved`, as a waiting
+    # merge's does.
+    "kept_work_no_identity": (
+        "Git has no name and email set to commit as in this workspace, so nothing was merged. "
+        "Set them there, then merge again."
+    ),
+    "kept_work_other_name": (
+        "This work has commits made under another name than yours, so it was not merged; it is "
+        "kept."
+    ),
 }
 
 

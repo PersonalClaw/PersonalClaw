@@ -9,6 +9,7 @@ is the generic mechanics, not domain breakdown.
 
 from __future__ import annotations
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop.kinds import LoopKindStrategy, attendedness_lines, register
 from personalclaw.loop.loop import Loop
 
@@ -115,7 +116,7 @@ class GeneralKind(LoopKindStrategy):
                 f"{loop_dir}/guidance.txt "
                 "if present; (4) do ONE adaptive step toward the goal.",
                 "",
-                f"Before you end this turn you MUST write findings/cycle_NNN.json to {loop_dir} "
+                f"Before you end this turn you MUST write {loop_files.finding_file(loop_dir)} "
                 "(next sequential N) — {cycle, summary, key_insight, files_touched, evidence}. "
                 "`files_touched` is the list of workspace files you created or modified this cycle "
                 "(so they surface as the loop's outputs) — [] if none. Report what you "

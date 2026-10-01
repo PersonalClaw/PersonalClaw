@@ -485,29 +485,33 @@ describe('four more bodies, all already true — pinned so they stay that way', 
 })
 
 describe('the stop-project dialog, and the file delete', () => {
-  it('warns that a running task loses its worktree — the half that costs work', () => {
-    // 🔴 Stop is TERMINAL and its teardown force-removes every task worktree. The old body reassured
-    // ("Work already written to the workspace is kept") without saying that in-flight work is discarded,
-    // which is the one thing a terminal action owes the user.
+  it('says a running task keeps its unmerged work — the half that used to cost work', () => {
+    // 🔴 Stop is TERMINAL. Its teardown used to force-remove every task worktree, so a task still
+    // at work lost its edits, approved ones included, and the dialog had to warn of it. Every ending
+    // now keeps work nobody merged and the project's page lists it to merge or discard.
     // Said once for every Stop control (the cockpit's, the Code list's, the Work board's).
     const ui = web('pages/loop/stopLoop.ts')
-    expect(ui).toContain('a task still running loses its own worktree and branch')
-    expect(ui, 'and it now says how kept work got there').toContain('already merged into your workspace is kept')
-    // The mechanism, both halves. `--force` discards uncommitted work; `-D` takes the branch even
-    // unmerged, so committed-but-unmerged work goes too.
-    const wt = pyMethod(py('loop/worktree.py'), 'def cleanup_all')
-    expect(wt, 'the worktree is force-removed').toMatch(/"worktree", "remove", "--force"/)
-    expect(wt, 'and its branch force-deleted').toMatch(/"branch", "-D", branch_name\(name\)/)
-    // …and the reason the "kept" half is true: a FINISHED task is merged back first.
+    expect(ui).toContain("a task's work that isn't merged yet is kept on its own branch")
+    // …a running task's and, on an Attended loop, finished work still waiting for her merge.
+    expect(ui, 'both kinds of unmerged work').toContain('a task still running and finished work waiting for you to merge it alike')
+    expect(ui, 'and where it can be acted on').toContain('lists it for you to review and merge or discard')
+    expect(ui, 'and how merged work got there').toContain('already merged into your workspace stays there')
+    // The mechanism, both halves. The sweep removes only a worktree holding nothing unmerged…
+    const sweep = pyMethod(py('loop/worktree.py'), 'def sweep_finished')
+    expect(sweep, 'unmerged work is kept').toMatch(/if work\.unmerged:\n\s+kept\.append\(work\)/)
+    expect(sweep, 'and only the rest removed').toMatch(/remove_worktree\(workspace, work\.task_id/)
+    // …and the reason the "merged" half is true: a FINISHED task is merged back first.
     expect(py('loop/kinds/sdlc.py'), 'a finished task merges into the workspace')
       .toMatch(/worktree\.merge_worktree\(ws, tid/)
   })
 
-  it('stop really is terminal, which is why the warning matters', () => {
+  it('stop really is terminal, and ends its run the way every ending does', () => {
     const stop = pyMethod(py('loop/manager.py'), 'async def stop')
-    expect(stop, 'teardown then a terminal status').toMatch(/_teardown\(svc, loop_id\)[\s\S]{0,200}LoopStatus\.STOPPED/)
-    expect(pyMethod(py('loop/manager.py'), 'async def _teardown'), 'and teardown is what cleans worktrees')
-      .toMatch(/worktree\.cleanup_all\(loop\.workspace_dir/)
+    expect(stop, 'a terminal status, then the one ending').toMatch(/LoopStatus\.STOPPED[\s\S]{0,200}await end_run\(state, svc, loop_id\)/)
+    const settle = pyMethod(py('loop/manager.py'), 'async def _settle_worktrees')
+    expect(settle, 'whose worktree half sweeps, not discards')
+      .toMatch(/kept = await asyncio\.to_thread\(worktree\.sweep_finished, ws, ids, project\)/)
+    expect(settle, 'and only a delete discards').toMatch(/if discard:\n\s+await asyncio\.to_thread\(worktree\.discard/)
   })
 
   it('the folder delete really recurses', () => {
@@ -766,11 +770,13 @@ describe('three more bodies, checked against their handlers', () => {
     // composing exactly what confirmDelete() composes, so the hand-roll was drift, and it kept both
     // sites outside every ratchet keyed on `confirmDelete(` callers. They ride the helper now. The
     // custom body remains the point of these dialogs, so the pin still requires one to be passed
-    // rather than falling back to the default.
+    // rather than falling back to the default. The body is handed the work the ended run kept
+    // (`api.uLoopKeptWork`), the one thing a delete discards without asking task by task.
     for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/CodeCockpitPage.tsx']) {
       const src = web(rel)
       expect(src, `${rel} rides the shared ritual with a custom body`)
-        .toMatch(/confirmDelete\('project', p\.name, \{ body: \w+\(p\) \}\)/)
+        .toMatch(/confirmDelete\('project', p\.name, \{ body: \w+\(p, kept\) \}\)/)
+      expect(src, `${rel} asks what the run kept before it asks`).toContain('api.uLoopKeptWork(')
       expect(src, `${rel} keeps no hand-rolled project-delete dialog`)
         .not.toMatch(/confirm\(\{ title: `Delete project/)
       // 🪤 And neither may rebuild the sentence locally again — the duplication is what let one wrong

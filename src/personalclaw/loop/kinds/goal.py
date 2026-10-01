@@ -325,7 +325,7 @@ class GoalKind(LoopKindStrategy):
             f"{loop_dir}/guidance.txt "
             "if present; (4) do ONE adaptive step toward the goal.",
             "",
-            f"Before you end this turn you MUST write findings/cycle_NNN.json to {loop_dir} "
+            f"Before you end this turn you MUST write {loop_files.finding_file(loop_dir)} "
             "(next sequential N) — this is the deliverable, not optional, and the turn is "
             "incomplete without it. The finding is the structured cycle record "
             "{cycle, summary, key_insight, sources_checked, new_findings_count, "
@@ -373,6 +373,7 @@ class GoalKind(LoopKindStrategy):
             {
                 "loop_id": loop.id,
                 "loop_dir": loop_dir,
+                "finding_file": loop_files.finding_file(loop_dir),
                 "has_deliverables": bool(deliverables),
                 "deliverables_count": len(deliverables),
                 "deliverables_names": ", ".join(deliverables),

@@ -314,6 +314,16 @@ def clear_stop_sentinel(loop_id: str) -> None:
 
 
 # Findings (sequential cycle_NNN.json + parallel task_<id>_NNN.json).
+def finding_file(loop_folder: str, task_id: str = "") -> str:
+    """The file a worker writes its cycle's finding to, in its loop's folder: a stage worker's
+    ``findings/cycle_NNN.json``, a task worker's ``findings/task_<id>_NNN.json`` (NNN the next
+    number). The ONE spelling: every worker prompt and the re-prompt name the file through here,
+    and these are the two names :func:`_read_raw_finding_files` ingests. A task worker works in
+    its own checkout, so the path is whole: a relative one is written into the checkout."""
+    name = f"task_{task_id}_NNN.json" if task_id else "cycle_NNN.json"
+    return f"{loop_folder}/findings/{name}" if loop_folder else f"findings/{name}"
+
+
 def _read_raw_finding_files(loop_id: str) -> list[dict]:
     """The worker's per-cycle deliverable files, in ledger order (cycle_* by index, then task_*
     by mtime), redacted and with `task_id` resolved from the filename. INGEST-ONLY — the reader

@@ -464,6 +464,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/loops/{id}/autopilot` — {on: bool} — toggle the execution drive live.
 - `GET /api/loops/{id}/design/tokens` — the RESOLVED token tree
 - `POST /api/loops/{id}/grill-tree` — guided-decomposition intake (grill's ``tree``
+- `GET /api/loops/{id}/kept-work` — the task work an ended run kept because it was not merged.
+- `DELETE /api/loops/{id}/kept-work/{task_id}` — discard one task's kept work.
+- `POST /api/loops/{id}/kept-work/{task_id}/merge` — {tip, confirm} — merge a task's kept work.
 - `GET /api/loops/{id}/merge` — the finished work an Attended loop waits for you to merge.
 - `POST /api/loops/{id}/merge` — {tips, confirm: true} — approve merging the work you reviewed.
 - `POST /api/loops/{id}/nudge` — {text, task_id?} — steer; resume if awaiting input.

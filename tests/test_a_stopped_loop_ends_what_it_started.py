@@ -285,7 +285,8 @@ async def test_a_loop_that_fails_ends_its_batch_run_too(stopped_world):
     approval_id = await _until_spawn_waits(w)
     loop_store.update_status(w.loop.id, LoopStatus.FAILED)
 
-    await loop_manager.stand_down(w.state, _NudgeService(), w.loop.id)
+    # The failure's ending: every ending of a loop's runs through `manager.end_run`.
+    await loop_manager.end_run(w.state, _NudgeService(), w.loop.id)
 
     assert await asyncio.wait_for(driving, timeout=10) is RunStatus.CANCELLED
     assert store.get(w.run.id).error_message == f"Stopped because its loop “{LOOP_NAME}” failed."

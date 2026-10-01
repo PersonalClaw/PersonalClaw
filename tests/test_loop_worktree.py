@@ -122,8 +122,8 @@ class TestWorktreeLifecycle:
         assert pa and pb
         assert "/projects/p-aaaa1111/worktrees/" in pa.replace(os.sep, "/")
         assert "/projects/p-bbbb2222/worktrees/" in pb.replace(os.sep, "/")
-        # tearing down project A leaves project B's worktree intact
-        wt.cleanup_all(str(d), "p-aaaa1111")
+        # discarding project A's task leaves project B's worktree intact
+        wt.discard(str(d), ["t-1"], "p-aaaa1111")
         assert not os.path.isdir(pa)
         assert os.path.isdir(pb)
 
@@ -234,24 +234,21 @@ class TestWorktreeLifecycle:
         assert p1 == p2
         wt.remove_worktree(str(d), "t-x")
 
-    def test_cleanup_all_removes_worktrees_dir(self, tmp_path):
+    def test_discard_removes_only_the_tasks_named(self, tmp_path):
         d = tmp_path / "repo"
         d.mkdir()
         _init_repo(str(d))
         p1 = wt.add_worktree(str(d), "t-1")
-        wt.add_worktree(str(d), "t-2")
-        # the worktrees root is PClaw-owned (outside the workspace) and is removed
-        root = os.path.dirname(p1)
-        assert os.path.isdir(root)
-        wt.cleanup_all(str(d))
-        assert not os.path.isdir(root)
+        p2 = wt.add_worktree(str(d), "t-2")
+        wt.discard(str(d), ["t-1"])
+        assert not os.path.isdir(p1) and not wt.branch_exists(str(d), "t-1")
+        assert os.path.isdir(p2) and wt.branch_exists(str(d), "t-2")
         # and nothing was ever created inside the user's checkout
         assert not os.path.isdir(os.path.join(str(d), ".pclaw-worktrees"))
 
-    def test_cleanup_all_sweeps_orphan_task_branch(self, tmp_path):
-        # A pclaw/task-* branch whose worktree dir is already gone (merged, or a prior
-        # failed branch-delete) must still be swept — else it`s orphaned in the user`s
-        # brownfield repo after the project is deleted.
+    def test_discard_removes_a_task_branch_whose_worktree_is_gone(self, tmp_path):
+        # A pclaw/task-* branch whose worktree dir is already gone (a prior failed
+        # branch-delete) is still removed — else it's orphaned in the user's repo.
         d = tmp_path / "repo"
         d.mkdir()
         _init_repo(str(d))
@@ -262,12 +259,49 @@ class TestWorktreeLifecycle:
             cwd=str(d),
             check=True,
         )
-        branch = wt.branch_name("t-orphan")
-        rc, out = wt._git(str(d), "for-each-ref", "--format=%(refname:short)", "refs/heads/")
-        assert branch in out  # branch still present before cleanup
-        wt.cleanup_all(str(d))
-        rc2, out2 = wt._git(str(d), "for-each-ref", "--format=%(refname:short)", "refs/heads/")
-        assert branch not in out2  # swept
+        assert wt.branch_exists(str(d), "t-orphan")  # branch still present before discard
+        wt.discard(str(d), ["t-orphan"])
+        assert not wt.branch_exists(str(d), "t-orphan")
+
+    def test_task_work_counts_what_the_workspace_lacks(self, tmp_path):
+        d = tmp_path / "repo"
+        d.mkdir()
+        _init_repo(str(d))
+        clean = wt.add_worktree(str(d), "t-clean")
+        edited = wt.add_worktree(str(d), "t-edited")
+        with open(os.path.join(edited, "notes.md"), "w", encoding="utf-8") as fh:
+            fh.write("a new file\n")
+        found = {w.task_id: w for w in wt.task_work(str(d), ["t-clean", "t-edited", "t-none"])}
+        assert set(found) == {"t-clean", "t-edited"}, "a task with no worktree is left out"
+        assert (found["t-clean"].commits, found["t-clean"].changed) == (0, 0)
+        assert not found["t-clean"].unmerged
+        assert found["t-edited"].changed == 1 and found["t-edited"].unmerged
+        assert found["t-edited"].path == edited and found["t-clean"].path == clean
+
+    def test_sweep_finished_keeps_the_unmerged_and_removes_the_rest(self, tmp_path):
+        d = tmp_path / "repo"
+        d.mkdir()
+        _init_repo(str(d))
+        clean = wt.add_worktree(str(d), "t-clean")
+        committed = wt.add_worktree(str(d), "t-committed")
+        with open(os.path.join(committed, "notes.md"), "w", encoding="utf-8") as fh:
+            fh.write("committed on the branch, never merged\n")
+        subprocess.run(["git", "add", "-A"], cwd=committed, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "w"],
+            cwd=committed,
+            check=True,
+        )
+        kept = wt.sweep_finished(str(d), ["t-clean", "t-committed"])
+        assert [(w.task_id, w.commits, w.changed) for w in kept] == [("t-committed", 1, 0)]
+        assert not os.path.isdir(clean) and not wt.branch_exists(str(d), "t-clean")
+        assert os.path.isdir(committed) and wt.branch_exists(str(d), "t-committed")
+
+    def test_a_count_git_cannot_read_is_kept(self):
+        # Fail closed: work whose size cannot be read is never taken for none.
+        assert wt.TaskWork("t-1", "/x", "pclaw/task-t-1", None, 0).unmerged
+        assert wt.TaskWork("t-1", "/x", "pclaw/task-t-1", 0, None).unmerged
+        assert not wt.TaskWork("t-1", "/x", "pclaw/task-t-1", 0, 0).unmerged
 
 
 class TestConflictDetection:

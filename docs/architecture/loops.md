@@ -147,10 +147,17 @@ The loop surfaces do not care which home a loop has:
 
 For a loops-table loop, pause, stop and delete also stop the worker's turn IN FLIGHT
 (`manager.halt_worker_turns`) — disarming the nudge loop only stops the NEXT cycle — and the cycle
-driver checks the loop is still armed before each re-prompt.
+driver checks the loop is still armed before each re-prompt. A worker whose turn ended without its
+finding is re-prompted at most three times, and only while it owes one: a worker's session key is
+read by one parser (`manager.worker_ids`, the loop id then the task id), its new finding is counted
+the moment the turn ends (`manager.worker_finding_count` ingests it first), a task worker whose task
+is done is not asked again, the re-prompt names the file the worker's own prompt names, in the
+loop's folder (`files.finding_file`), and each re-prompt is told to the loop's page (a `reprompt`
+event: which worker, the file it owes, how many asks are left).
 
-Stop and delete also end what the loop STARTED (`loop/children.py`). A worker's `subagent_run` of
-two or more tasks runs as a workflow run, and one task as a background subagent; each records the
+Every ending also ends what the loop STARTED (`manager.end_run` calls `loop/children.py`'s
+`end_children`, after the status and before the turns). A worker's `subagent_run` of two or more
+tasks runs as a workflow run, and one task as a background subagent; each records the
 worker session it came from (the run's `origin.session_key`, the subagent's `parent_session_key`,
 `dashboard:loop-<id>[-<task>]`), which is the exact link. `end_children` cancels each run with the
 reason "its loop “…” was stopped" (`store.request_cancel(reason=…)`, which the controller ends the run
@@ -308,14 +315,47 @@ The supervisor does not take the worker's word for it:
 - The **SDLC gate** reads the deliverable *content* (not just existence), and
   the **goal judge** re-runs commands / reads artifacts — ground truth over
   worker self-report.
+- A Code stage's **exit criteria are judged one by one** (`kinds/sdlc._stage_gate_passed`). The
+  judge is shown the stage's tasks with their status and every finding's summary and recorded
+  evidence (test output, quoted assertions), cut to a budget per finding and in all, which keeps
+  the newest findings; what was cut or left out is said in the prompt, and a criterion the shown
+  record cannot answer is `cant_tell`. Its answer is read by `gates.criteria_verdicts`: pass, fail
+  or can't tell for each criterion, with a reason. Every evaluation is a `judge_verdict` row with `gate: "stage"` (and
+  a `gate_check` event labelled "exit criteria"), so the Code loop's page shows the last one for
+  the stage at work, and a stall that blocks the loop quotes its unmet criteria. The stall counter
+  counts cycles of work toward the stage: a done task's findings count once, so re-checks of
+  finished work never read as a stuck stage, and a steered loop is escalated again after five more
+  cycles of work rather than never. A stage is judged the moment its last task worker is reaped
+  (`schedule` → `_judge_on_drain`), not at the stage worker's next finding, and when a stage
+  passes the next is judged in the same cycle if its own work is already there (a worker that ran
+  ahead), so a loop whose tasks are all done ends complete instead of spending turns re-checking
+  them.
 - **`loop/watchdog.py`** detects stalls, and its own first poll re-arms loops left
   RUNNING/PLANNING by a gateway restart so an interrupted loop resumes rather than
   zombifying (`LoopWatchdog._boot_sweep`). A turn running on ANY of a loop's workers — its stage
-  worker or a task worker — counts as the loop working, so a long model call is not a stall. A
-  failed loop can be resumed, so it ends the way a pause does (`manager.stand_down`): every worker
-  is switched off and kept, its turn in flight is stopped, and each task worker keeps its worktree
-  and the edits in it; Resume switches the workers back on where they were. Only a Stop or a delete
-  removes the worktrees. That sweep runs through
+  worker or a task worker — counts as the loop working, so a long model call is not a stall.
+  **Every ending goes through one function**, `manager.end_run`, once the loop's status says how it
+  ended: a completion (a spent cycle, cost or time budget included), a failure (two failed turns in
+  a row, an exhausted budget with nothing to show, a stall), a Stop, and a delete. It switches off
+  every nudge loop the loop has (its stage worker's, its task workers' and its planner's), stops the
+  turns in flight, and puts a task a worker held back to open. A failed loop can be resumed, so its
+  workers' nudge loops are kept, switched off, and every task worktree with them; Resume switches
+  them back on where they were. A finished or stopped loop removes the task worktrees whose work was
+  merged (or that made none) and keeps the rest (`worktree.sweep_finished`): work nobody merged is
+  never thrown away by an ending. What a kept worktree holds and has not committed is committed on
+  its own branch, as git is configured to commit there (left uncommitted when git has no identity),
+  and the loop's page puts it to its owner the way an Attended loop puts a waiting merge, with the
+  same review (`loop/kept_work.py`, `GET /api/loops/{id}/kept-work`, read by `worktree.merge_review`:
+  each task's branch, the commit it is at, its commits and its diff; the page's `TaskChanges`).
+  She merges each task at exactly the commit she reviewed (`POST …/kept-work/{task_id}/merge` with
+  `tip` and `{"confirm": true}`), by the same rules: git's configured identity, nothing committed
+  under another name, a branch that moved is read again (`loop_merge_moved`), and the merge is
+  recorded on the page (`files.record_merge`). Or she discards it. Stopping a loop whose finished
+  work waits for her merge keeps that work the same way and clears the merge question. Only a delete
+  discards it unasked, and its dialog names it. Each of
+  these touches only the loop's own tasks' worktrees, so two loops under one Project (which share a
+  worktree root) never settle each other's. The boot sweep switches off the nudge loops of every
+  loop that has ended, in case its ending was cut short. That sweep runs through
   `concurrency.boot_sweep`, the ONE boot-adoption path it shares with
   `workflows/watchdog.py`. There is deliberately **no gateway boot hook**: a
   hook cannot be retried when it raises, and awaiting it delays startup by however long
@@ -333,7 +373,7 @@ The supervisor does not take the worker's word for it:
   (`PlanStep.error`), which the walkthrough shows with its Retry. "Cancel and edit the task"
   deletes the draft and opens the composer with the task, project, codebase and Mode it had; Stop
   ends the loop with its plan kept. Both end the planner for good: the walkthrough pass in flight
-  is cancelled, the planner's nudge row is removed and its turn stopped (`manager.halt_planner`),
+  is cancelled, the planner's nudge row is removed and its turn stopped (`manager.end_run`),
   and no pass starts for a loop that is no longer planning. A planner's nudge row is kept on disk,
   so at boot, when no pass can be in flight, every one is removed before the loops still planning
   are driven again. Every surface that shows a loop at work offers its Stop — its page, the
@@ -358,8 +398,9 @@ The supervisor does not take the worker's word for it:
 - **`loop/worktree.py`** — parallel task execution: workers run several tasks
   of a phase at once, each in its own git worktree under
   `projects/<project_id>/worktrees/<task_id>` (never the user's workspace);
-  a finished task's branch merges back into the workspace's checked-out branch. A non-git
-  workspace falls back to sequential execution.
+  a finished task's branch merges back into the workspace's checked-out branch, and one not merged
+  when the run ends is kept for its owner (see `manager.end_run` above). A non-git workspace falls
+  back to sequential execution.
 - **Where a task's work lands, and under whose name.** Every commit a loop makes (a task's
   leftover edits on its branch, a merge commit, the first commit of an empty repository) is made
   as git is configured to commit in that workspace, `user.name` and `user.email` from the
@@ -400,6 +441,13 @@ The supervisor does not take the worker's word for it:
   loop whose model's entry sends to this machine (`llm.registry.sends_to_this_machine`, which counts
   an OpenAI-compatible endpoint here too) runs one task worker at a time, since calls sent to one
   machine's model at once only queue behind each other.
+- **One change lands once.** A task is started only once the work of each prerequisite marked done
+  is merged (`CodeKind._merged_prerequisites`): a done task is merged when its worker's turn is
+  over, and a dependent cut from HEAD before that would redo its work. A task branch that brings
+  nothing the workspace lacks (every commit already there as the same patch, `git cherry`, or a
+  merge whose result is the tree it has, `merge-tree --write-tree`) merges nothing: no commit, no
+  merge commit, its worktree and branch removed (`MergeResult.already`). The same count says what an
+  ended run kept, so a copy of merged work is not kept as unmerged.
 - **The planner's files.** The planner works in the bound workspace, but the files it writes for the
   walkthrough (`plan_steps.json`, `step_artifact.json`) go to the loop's own folder: its brief names
   the absolute path, and the runner (`planning/runner.py`) reads and clears only there. A file of

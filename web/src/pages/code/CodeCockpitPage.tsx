@@ -55,6 +55,9 @@ import { TypingReveal } from './TypingReveal'
 import { DiffReveal } from './DiffReveal'
 import { withArticle } from '../../lib/article'
 import { codeDeleteBody } from './codeMeta'
+import { KeptWork } from './KeptWork'
+import { StageGateVerdict } from './StageGateVerdict'
+import { RepromptNotice } from '../loops/RepromptNotice'
 import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { LoopApprovals } from '../loops/LoopApprovals'
@@ -356,9 +359,11 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       if (event === 'gate_check') {
         const d = (data ?? {}) as { ok?: boolean; label?: string; output?: string }
         if (d.ok === false && d.label === 'merge') setToast({ kind: 'conflict', text: d.output || 'A merge conflict needs your attention.' })
+        // A stage's exit criteria were judged: the per-criterion verdict is on the loop's ledger.
+        if (d.label === 'exit criteria') load()
         return
       }
-      if (event === 'stage_stalled') return
+      if (event === 'stage_stalled' || event === 'reprompt') return
       // A task finished (merged) → drop its per-task activity bucket. Buckets are
       // otherwise only cleared on a clean chat_done; a task-worker reaped on merge
       // doesn't emit one, so without this the bucket lingers for the whole cockpit
@@ -584,7 +589,12 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     // error message is the actionable reason; without this the user clicks Start and
     // nothing visibly happens.
     setActing(true)
-    try { setProject(loopToCodeProject(await api.uLoopAction(id, action))); setToast(null) }
+    try {
+      setProject(loopToCodeProject(await api.uLoopAction(id, action))); setToast(null)
+      // The action answers once the run has ended (a Stop puts a task its worker held back to
+      // open), which is after the lifecycle event the rail refreshed on: read the tasks again.
+      setTasksNonce((n) => n + 1)
+    }
     catch (e) {
       setToast({ kind: 'error', text: `Couldn't ${action} this project: ${(e as Error).message || 'unknown error'}` })
       load()
@@ -637,7 +647,9 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     // wrong function — and so did its twin. Neither read `teardown_for_delete`, which runs FIRST and
     // force-deletes `pclaw/task-*` branches in the user's repository. `codeMeta.codeDeleteBody` owns
     // the sentence now, verified against the handler rather than the callee.
-    if (!(await confirmDelete('project', p.name, { body: codeDeleteBody(p) }))) return
+    // The dialog names the work an ended run kept unmerged, which the delete discards.
+    const kept = p.workspace_dir ? await api.uLoopKeptWork(id).then((r) => r.kept, () => []) : []
+    if (!(await confirmDelete('project', p.name, { body: codeDeleteBody(p, kept) }))) return
     // Only navigate away on a CONFIRMED delete — a swallowed failure used to call
     // onDeleted() regardless, so a failed delete (teardown error, 404, network) sent
     // the user back to a list where the "deleted" project was still present, with no
@@ -786,6 +798,9 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           </span>
         </motion.div>
       )}
+
+      {/* A worker asked again for its finding: why, and how many asks are left. */}
+      <RepromptNotice reprompt={runFlags.reprompt} className="shrink-0 border-b border-outline-variant/40 px-l py-s" />
 
       {/* A ready brownfield draft can't start until a workspace is chosen — make
           that explicit + actionable instead of a silent failed Start. */}
@@ -3460,6 +3475,11 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
           </div>
         )}
         <OutcomeBanner project={project} findings={findings} />
+        {/* A run that ended with tasks still at work kept their work: what, where, and Merge / Discard. */}
+        {project.workspace_dir && <KeptWork loopId={project.id} status={project.status} />}
+        {/* The stage's exit criteria as its gate last judged them: which are met, which are not,
+            and which the loop's records could not show. What a steer or a relaxed criterion is for. */}
+        <StageGateVerdict project={project} />
         {/* BLOCKED — persisted (reload-safe) explanation of WHY the build paused (e.g.
             the stall-pause: a stage produced many cycles without clearing its gate).
             The transient `stalled` SSE banner below only shows while running; once the
