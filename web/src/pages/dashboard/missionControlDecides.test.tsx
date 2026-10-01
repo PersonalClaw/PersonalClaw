@@ -53,6 +53,7 @@ const PENDING: PendingApproval = {
   id: 'spawn:207dceb3', request_id: 'spawn:207dceb3', source: 'subagent',
   tool: 'subagent_run(Advance one round of deep research)', tool_purpose: '',
   session: 'workflow:df5827ca:sweep', ts: 100, session_title: '', agent: '', risk: '', grant_agent: '',
+  source_label: 'workflow “deep-research” · step “sweep”',
 }
 
 /** The Inbox row `_raise_approval_row` raises for it: same decision, second listing. */
@@ -86,15 +87,16 @@ beforeEach(() => {
   chatSessions.mockResolvedValue([])
 })
 
-const approveButtons = () => screen.queryAllByRole('button', { name: /^Approve .*subagent_run/ })
+const approveButtons = () => screen.queryAllByRole('button', { name: /^Allow subagent_run/ })
 
 describe('Mission Control renders the verbs its header promises', () => {
-  it('offers Approve and Reject on a pending approval — once, not once per listing', async () => {
+  it('offers Allow and Deny on a pending approval — once, not once per listing', async () => {
     render(<MissionControl />)
     await waitFor(() => expect(approveButtons()).toHaveLength(1))
-    expect(screen.getAllByRole('button', { name: /^Reject .*subagent_run/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^Deny subagent_run/ })).toHaveLength(1)
     const lane = screen.getByRole('region', { name: 'Needs approval' })
-    expect(within(lane).getAllByRole('listitem')).toHaveLength(1)
+    // One card in the lane (its "what this can touch" chips are a list of their own).
+    expect(within(lane).getAllByRole('group', { name: /^Permission needed to run / })).toHaveLength(1)
   })
 
   it('Approve goes through the one decision path, by the registry id', async () => {

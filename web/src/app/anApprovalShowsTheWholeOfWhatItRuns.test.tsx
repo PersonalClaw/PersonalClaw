@@ -3,12 +3,13 @@
  *
  * A subagent's start was announced as "subagent_run(Do the next meaningful step on this task, then
  * stop and report. Task: Draft a s)" on the Inbox, the bell and the detail pane, and nothing showed
- * the rest of the task. The start now carries its whole task as its input, and the row shows a line
- * of it cut at a word; the decision under the row shows it whole, read live from the registry. An
- * input the row already shows whole (a short shell command) is not said twice.
+ * the rest of the task. The start now carries its whole task as its input, and the decision under
+ * the row is the one approval card, read live from the registry: a line of the input cut at a word,
+ * all of it a click away, and where the call came from.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { PendingApproval } from '../lib/api'
 
 const approvals = vi.fn<() => Promise<PendingApproval[]>>()
@@ -28,36 +29,36 @@ function pending(over: Partial<PendingApproval>): PendingApproval {
   return {
     id: 'spawn:fa8ed388', request_id: 'spawn:fa8ed388', source: 'subagent', tool: 'subagent_run',
     tool_input: TASK, tool_purpose: 'Starts a subagent on this task.', session: 'workflow:fb54446b:work',
-    ts: 0, session_title: '', agent: '', risk: 'caution', grant_agent: '', ...over,
+    ts: 0, session_title: '', agent: '', risk: 'caution', grant_agent: '',
+    source_label: 'workflow “weekly” · step “work”', ...over,
   }
 }
 
 beforeEach(() => { approvals.mockReset() })
 
 describe('an approval’s decision', () => {
-  it('🔴 shows the whole task a subagent’s start would work on', async () => {
+  it('🔴 shows the whole task a subagent’s start would work on, and who asked', async () => {
     approvals.mockResolvedValue([pending({})])
-    const row = 'The “work” step of a workflow run is waiting for your decision on subagent_run (risk: caution).\n'
-      + 'Starts a subagent on this task.\n'
-      + 'Do the next meaningful step on this task, then stop and report. Task: Draft a short note…'
-    render(<ApprovalDecision approvalId="spawn:fa8ed388" shown={row} />)
-    const whole = await screen.findByLabelText('What subagent_run would run')
-    expect(whole.textContent).toBe(TASK)
-    expect(screen.getByRole('button', { name: 'Approve: subagent_run' })).toBeTruthy()
+    render(<ApprovalDecision approvalId="spawn:fa8ed388" />)
+    const allow = await screen.findByRole('button', { name: /^Allow subagent_run/ })
+    expect(allow).toBeTruthy()
+    expect(screen.getByText('workflow “weekly” · step “work”')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Show all of what subagent_run would run' }))
+    expect(screen.getByRole('group', { name: 'Tool arguments' }).textContent).toBe(TASK)
   })
 
-  it('does not repeat an input the row already shows whole', async () => {
+  it('shows a short input whole, with nothing to open', async () => {
     approvals.mockResolvedValue([pending({ tool: 'bash', tool_input: '{"command": "ls -F"}', risk: 'safe' })])
-    const row = 'A workflow step is waiting for your decision on bash (risk: safe).\n{"command": "ls -F"}'
-    render(<ApprovalDecision approvalId="spawn:fa8ed388" shown={row} />)
-    await screen.findByRole('button', { name: 'Approve: bash' })
-    expect(screen.queryByLabelText('What bash would run')).toBeNull()
+    render(<ApprovalDecision approvalId="spawn:fa8ed388" />)
+    await screen.findByRole('button', { name: /^Allow bash/ })
+    expect(screen.getByText('bash({"command": "ls -F"})')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Show all/ })).toBeNull()
   })
 
   it('shows nothing extra for a call with no input', async () => {
     approvals.mockResolvedValue([pending({ tool: 'memory_recall', tool_input: '' })])
-    render(<ApprovalDecision approvalId="spawn:fa8ed388" shown="" />)
-    await screen.findByRole('button', { name: 'Approve: memory_recall' })
-    expect(screen.queryByLabelText(/would run/)).toBeNull()
+    render(<ApprovalDecision approvalId="spawn:fa8ed388" />)
+    await screen.findByRole('button', { name: /^Allow memory_recall/ })
+    expect(screen.queryByRole('button', { name: /Show all/ })).toBeNull()
   })
 })

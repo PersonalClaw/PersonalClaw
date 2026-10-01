@@ -28,6 +28,7 @@ const pending: PendingApproval = {
   tool: 'subagent_run(Advance one round of deep research)', tool_purpose: '',
   session: 'workflow:df5827ca:sweep', ts: 0, request_id: 'spawn:207dceb3',
   session_title: '', agent: '', risk: '', grant_agent: '',
+  source_label: 'workflow “deep-research” · step “sweep”',
 }
 
 beforeEach(() => {
@@ -42,7 +43,7 @@ describe('the run page drops an approval the moment it ends', () => {
     approvals.mockResolvedValue([pending])
     const { RunToolApprovals } = await import('./RunToolApprovals')
     await act(async () => { render(<RunToolApprovals runId="df5827ca" />) })
-    expect(await screen.findByRole('button', { name: /Approve: subagent_run/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /^Allow subagent_run/ })).toBeTruthy()
 
     // The run was cancelled: the registry no longer lists it, and the frame says so.
     approvals.mockResolvedValue([])
@@ -54,7 +55,7 @@ describe('the run page drops an approval the moment it ends', () => {
       } as WsMessage)
     })
 
-    await waitFor(() => expect(screen.queryByRole('button', { name: /Approve: subagent_run/ })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Allow subagent_run/ })).toBeNull())
     expect(screen.queryByText(/needs your approval/)).toBeNull()
     expect(resolveApproval).not.toHaveBeenCalled()
   })
@@ -65,6 +66,6 @@ describe('the run page drops an approval the moment it ends', () => {
     await act(async () => { render(<RunToolApprovals runId="df5827ca" />) })
     approvals.mockResolvedValue([pending])
     await act(async () => { socket.handler?.({ type: 'approval', data: pending } as unknown as WsMessage) })
-    expect(await screen.findByRole('button', { name: /Approve: subagent_run/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /^Allow subagent_run/ })).toBeTruthy()
   })
 })

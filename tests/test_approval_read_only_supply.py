@@ -223,13 +223,15 @@ class TestBothPermissionSurfacesAgree:
     name would describe a shell call by "bash" rather than by what its command does.
     """
 
-    #: The surfaces that read an approval's radius off the wire.
+    #: The surfaces that read an approval's radius off the wire. A registry row reaches every
+    #: queue card (the run page, Mission Control, To triage, the Inbox, a loop's page) through
+    #: the one segment adapter, `approvalSegment.ts`.
     READERS = [
         "app/useApprovalToasts.ts",
         "pages/ChatPage.tsx",
+        "pages/chat/approvalSegment.ts",
         "pages/chat/chatTypes.ts",
         "pages/companion/CompanionPage.tsx",
-        "pages/loops/LoopApprovals.tsx",
     ]
 
     def test_every_reader_decodes_the_radius_through_the_one_decoder(self) -> None:

@@ -7,6 +7,7 @@ import { Checkbox } from '../../ui/forms'
 import { approvalOutcome } from './approvalOutcome'
 import { establishedFacets, mayDestroy, type BlastRadius } from './approvalMeta'
 import type { ApprovalSegment } from './chatTypes'
+import type { ApprovalDensity } from '../../ui/ApprovalPrompt'
 
 // Risk indicator (tool risk taxonomy): a purely INFORMATIONAL chip so the human
 // can weigh the decision — it does not gate (an explicit trust/YOLO still
@@ -177,6 +178,12 @@ function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean) {
 
 /** Inline approval prompt — appears when the agent needs permission to run a tool.
  *
+ *  The one approval card: the chat's transcript, a loop's cockpit, the workflow run page, Mission
+ *  Control, Home's To triage and the Inbox all render it (the queue surfaces through
+ *  `app/PendingApprovalCard`), so a call is shown the same way wherever it is answered: its tool
+ *  and risk, what it can touch, its whole input a click away, and, away from the work that asked,
+ *  where it came from.
+ *
  *  A four-zone decision brief (Design "Approval brief", Contract C2): WHAT (tool +
  *  arguments) · WHY (the runner's one-line purpose, when it supplied one) · WHAT IT CAN
  *  TOUCH (established blast-radius facets) · HOW FAR THE ANSWER REACHES (the
@@ -196,11 +203,27 @@ function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean) {
  *  is what is genuinely chat's: the transcript segment shape, the settled-outcome collapse,
  *  the risk chip, the blast-radius chips, and the chat-scoped trust vocabulary.
  */
-export function ApprovalCard({ seg, onAct, scopeWords = 'chat' }: {
+export function ApprovalCard({
+  seg, onAct, scopeWords = 'chat', answers = 'scoped', source, sourceHref, subject, busy, density,
+}: {
   seg: ApprovalSegment
   onAct: (id: string, action: Action) => void
   /** The scopes' words: a chat's, or a loop's on the loop's own page. */
   scopeWords?: ScopeWords
+  /** `scoped`: the remember-scope picker, for a surface that answers through the asking chat's
+   *  own approve route. `once`: Allow and Deny for this call alone, for a surface that answers
+   *  through the approvals queue (`POST /api/approvals/{id}/{action}`), which remembers nothing. */
+  answers?: 'scoped' | 'once'
+  /** Where the call came from (`PendingApproval.source_label`), on a surface that is not it. */
+  source?: string
+  /** Where that work opens, when this surface is not already it. */
+  sourceHref?: string
+  /** What the verbs' accessible names call this call, when the tool alone would not tell it from
+   *  the cards beside it. */
+  subject?: string
+  /** An answer for this card is on its way. */
+  busy?: boolean
+  density?: ApprovalDensity
 }) {
   // The narrowest scope is the initial one: a click on Allow with nothing else touched
   // grants once and remembers nothing. Broadening is always a deliberate act.
@@ -228,19 +251,23 @@ export function ApprovalCard({ seg, onAct, scopeWords = 'chat' }: {
   // Resolve against what is actually OFFERED, not the whole vocabulary. That is what makes
   // un-ticking the unlock fall back to Allow-once instead of leaving a withdrawn standing
   // grant selected — a scope the user can no longer see must not be the one Allow posts.
-  const offered = offeredScopes(seg.risk, widened)
+  const offered = answers === 'once' ? [REMEMBER_SCOPES[0]] : offeredScopes(seg.risk, widened)
   const chosen = offered.find((s) => s.key === scope) ?? offered[0]
   const chosenWords = wordsFor(chosen, scopeWords)
   const promise = chosenWords.promise(seg.grantAgent || '')
+  const named = subject || seg.tool
   return (
     <ApprovalPrompt
+      density={density}
       tool={seg.tool}
       args={seg.input}
       purpose={seg.purpose}
+      source={source}
+      sourceHref={sourceHref}
       badge={seg.risk ? <RiskChip risk={seg.risk} /> : undefined}
       meta={<BlastRadiusChips radius={seg.blastRadius} />}
       scope={
-        <div className="mt-2 flex flex-col gap-1">
+        answers === 'once' ? undefined : <div className="mt-2 flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
             <span data-type="caption" className="text-on-surface-low">Remember this choice</span>
             <Segmented size="sm" ariaLabel="Remember this choice"
@@ -278,14 +305,17 @@ export function ApprovalCard({ seg, onAct, scopeWords = 'chat' }: {
           // The SAME promise string the visible line shows, not a second copy of it: a
           // truthful sentence beside an over-claiming accessible name is the same defect for
           // the user who only hears one of them (#541).
-          name: `Allow ${seg.tool} — ${chosenWords.label.toLowerCase()}: ${promise}`,
+          // With no picker (`once`) there is no scope to name: the call alone is answered.
+          name: answers === 'once' ? `Allow ${named}` : `Allow ${named} — ${chosenWords.label.toLowerCase()}: ${promise}`,
+          busy,
           onClick: () => onAct(seg.id, chosen.action),
         },
         {
           key: 'rejected', icon: Ban, label: 'Deny', tone: 'danger',
           // Deny is single-shot whatever the scope says: no backend action persists a
           // refusal, so the name states that rather than letting the picker imply it.
-          name: `Deny ${seg.tool} — nothing is remembered`,
+          name: answers === 'once' ? `Deny ${named}` : `Deny ${named} — nothing is remembered`,
+          busy,
           onClick: () => onAct(seg.id, 'rejected'),
         },
       ]}

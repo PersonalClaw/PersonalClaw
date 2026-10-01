@@ -638,6 +638,7 @@ class GatewayOrchestrator:
             # owner-response wait; core races it against the dashboard prompt via the
             # on_prompted hook (which hands us the channel's pending future so a dashboard
             # click resolves both).
+            from personalclaw.approval_source import source_label_in
             from personalclaw.channel_delivery import approval_delivery
 
             origin = ""
@@ -705,7 +706,14 @@ class GatewayOrchestrator:
                     try:
                         approved = await asker.request_approval(
                             event,
-                            source=source,
+                            # Where it came from, in the words the registry's entry names it by
+                            # (`approval_source_label`): a workflow's step, a trigger, a loop.
+                            source=source_label_in(
+                                getattr(self.dashboard_state, "_sessions", None),
+                                source=source,
+                                session=asked_in,
+                                trigger=asked_by,
+                            ),
                             parent_session_key=parent_session_key,
                             sessions=self.sessions,
                             on_prompted=_on_prompted,

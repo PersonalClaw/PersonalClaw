@@ -83,15 +83,17 @@ describe('ActionCenter tells a failed lane apart from an empty queue', () => {
 
   it('Retry re-runs just that lane and clears the failure', async () => {
     let ok = false
-    const appr = { id: 'a1', tool: 'shell', tool_purpose: 'run ls', source: '', session: 's1' }
+    const appr = { id: 'a1', request_id: 'a1', tool: 'shell', tool_purpose: 'run ls', source: '', session: 's1', source_label: 'chat' }
     mockApi({ approvals: () => (ok ? Promise.resolve([appr]) : Promise.reject(new Error('down'))) })
     await mount()
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
     ok = true
     await userEvent.click(screen.getByRole('button', { name: /Retry/i }))
-    // The recovered read renders the row that the failure had hidden, and the alert clears.
-    await waitFor(() => expect(screen.getByText('Run shell')).toBeInTheDocument())
-    expect(screen.queryByRole('alert'), 'a successful retry clears the failure').toBeNull()
+    // The recovered read renders the approval the failure had hidden, and the failure clears. (The
+    // approval card's own "Permission needed" is an alert of its own, so the failure is found by
+    // its words.)
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Permission needed to run shell' })).toBeInTheDocument())
+    expect(screen.queryByText(/load pending approvals/), 'a successful retry clears the failure').toBeNull()
   })
 
   it('a failed lane does not bury the lanes that loaded', async () => {

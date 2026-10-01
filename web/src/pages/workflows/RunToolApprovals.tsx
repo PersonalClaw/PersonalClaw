@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, ShieldQuestion, X } from 'lucide-react'
-import { Button } from '../../ui/Button'
-import { BUSY_REASON } from '../../ui/unavailable'
 import { api, type PendingApproval } from '../../lib/api'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { reportingWrite } from '../../app/reportingWrite'
 import { workflowApprovalOf } from '../../app/approvalDestination'
+import { PendingApprovalCard } from '../../app/PendingApprovalCard'
 
 /** Pending TOOL approvals raised by this run, answerable here (#258).
  *
@@ -22,9 +20,10 @@ import { workflowApprovalOf } from '../../app/approvalDestination'
  *  `workflowApprovalOf` — ONE parse of the `workflow:<run>:<node>` session key — so a link that
  *  arrives here and a row that appears here cannot disagree about which run owns an approval.
  *
- *  Deliberately NOT a second approval renderer with risk chips and argument inspection: that is
- *  `pages/chat/ApprovalCard`, reached by the chat path. What a blocked run owes its watcher is
- *  the question and the two verbs.
+ *  Each is the one approval card (`PendingApprovalCard`): the tool and its risk, what it can touch,
+ *  the whole command or question a click away, and the step that asked. It used to say "This step
+ *  needs your approval to run bash" with Approve and Reject and nothing of the command, while the
+ *  Inbox showed it, so the run's watcher approved it unseen.
  */
 export function RunToolApprovals({ runId }: { runId: string }) {
   const [pending, setPending] = useState<PendingApproval[]>([])
@@ -51,12 +50,8 @@ export function RunToolApprovals({ runId }: { runId: string }) {
     if (m.type === 'approval' || m.type === 'approval_resolved') load()
   }, load)
 
-  // Keyed by `<id>:<action>`, not by id alone, so the in-flight state names WHICH verb is running.
-  // That is what lets each button publish `aria-busy` for its OWN operation (`loading`) while the
-  // other reads as merely blocked (`disabledReason`) — gating both on one row-level flag would
-  // announce two concurrent operations, which is the lie `busyIsNotAnnounced` exists to catch.
   const decide = useCallback(async (a: PendingApproval, action: 'approve' | 'reject') => {
-    setBusy(`${a.id}:${action}`)
+    setBusy(a.id)
     // `reportingWrite` so a refused decision says the server's own sentence instead of leaving
     // the row in place with nothing happening twice.
     await reportingWrite(`${action} this approval`, () => api.resolveApproval(a.id, action))
@@ -69,38 +64,8 @@ export function RunToolApprovals({ runId }: { runId: string }) {
   return (
     <div className="flex flex-col gap-m">
       {pending.map((a) => (
-        <div key={a.id} className="flex flex-col gap-s rounded-xl border border-outline-variant p-l">
-          <span data-type="body-s" className="inline-flex items-center gap-s text-on-surface">
-            {/* Decorative: the sentence beside it carries the fact, so it is `aria-hidden` rather
-                than named — the form `IntrospectPanel` uses for the same warn-toned glyph, and the
-                branch `approvalShieldNamed`'s pages sweep exempts. Naming it would make a
-                screen reader read the warning twice. */}
-            <ShieldQuestion size={14} className="shrink-0 text-warning" aria-hidden />
-            This step needs your approval to run <span className="font-mono">{a.tool}</span>
-          </span>
-          {a.tool_purpose && (
-            <p data-type="caption" className="text-on-surface-low">{a.tool_purpose}</p>
-          )}
-          <div className="flex items-center gap-s">
-            <Button onClick={() => decide(a, 'approve')}
-              loading={busy === `${a.id}:approve`} loadingLabel="Approving…"
-              disabled={busy !== null} disabledReason={BUSY_REASON}
-              ariaLabel={`Approve: ${a.tool}`}>
-              <Check size={14} /> Approve
-            </Button>
-            {/* Ghost, not danger-styled, for the same reason `WorkflowAsk`'s Deny is quiet:
-                refusing a call is a normal answer and red would imply the run broke. Both verbs
-                are `Button` rather than the quieter sibling because both need `ariaLabel` — a run
-                can hold two approvals, and "Approve"/"Reject" twice over is two pairs of controls
-                with one name each. */}
-            <Button variant="ghost" onClick={() => decide(a, 'reject')}
-              loading={busy === `${a.id}:reject`} loadingLabel="Rejecting…"
-              disabled={busy !== null} disabledReason={BUSY_REASON}
-              ariaLabel={`Reject: ${a.tool}`}>
-              <X size={13} /> Reject
-            </Button>
-          </div>
-        </div>
+        <PendingApprovalCard key={a.id} approval={a} busy={busy === a.id}
+          onDecide={(action) => decide(a, action)} />
       ))}
     </div>
   )

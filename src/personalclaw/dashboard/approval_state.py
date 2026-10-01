@@ -95,26 +95,6 @@ def chat_approval_id(session_key: str, request_id: str | int) -> str:
     return f"{session_key}:{request_id}"
 
 
-def _loop_name_of(session: str) -> str | None:
-    """The name of the loop whose worker or planner holds *session* ("" for a loop with none, or
-    one that is gone), or None when *session* is not one of a loop's."""
-    from personalclaw.loop import manager as loop_manager
-    from personalclaw.loop.plan_walkthrough import planner_loop_id
-
-    loop_id = loop_manager.worker_loop_id(session)
-    if not loop_id:
-        loop_id = planner_loop_id(session)
-    if not loop_id:
-        return None
-    try:
-        from personalclaw.loop import store
-
-        loop = store.get(loop_id)
-    except Exception:  # noqa: BLE001 - a wording helper never fails the approval it describes
-        return ""
-    return str(getattr(loop, "name", "") or "").strip() if loop is not None else ""
-
-
 def _who_asked(entry: dict[str, Any]) -> str:
     """Who is waiting on an approval, as the Inbox says it — the chat's agent and the chat, a
     loop's worker and the loop, a subagent of a chat, or a background task. The one wording both
@@ -124,7 +104,9 @@ def _who_asked(entry: dict[str, Any]) -> str:
     if agent:
         # Only a chat-held approval names its agent; that is how the two origins are told apart.
         # A loop's worker asks on the chat path too, and it is the loop the owner knows it by.
-        loop_name = _loop_name_of(str(entry.get("session") or ""))
+        from personalclaw.approval_source import loop_name_of
+
+        loop_name = loop_name_of(str(entry.get("session") or ""))
         if loop_name is not None:
             return f"{agent} in the loop “{loop_name}”" if loop_name else f"{agent} in a loop"
         return f"{agent} in “{title}”" if title else f"{agent} in a chat"
@@ -444,12 +426,14 @@ class DashboardApprovalState:
         ``trigger`` is known only to a trigger's run, and its name
         is read once, here, so the ask and its note name it the same way. ``asked_by`` is the
         principal that raised it, which may never answer it (``approval_answer``, rule 2).
+        ``source_label`` is where it came from in words
+        (:func:`~personalclaw.approval_source.approval_source_label`).
         """
+        from personalclaw.approval_source import approval_source_label, live_chat_name
         from personalclaw.triggers.store import trigger_name
 
-        live = self._sessions.get(session) if session else None
-        # A session's title defaults to its key until the chat is named; a key is not a title.
-        title = live.title if live is not None and live.title and live.title != live.key else ""
+        title = redact_field(live_chat_name(self._sessions, session))
+        named = redact_field(trigger_name(trigger)) if trigger else ""
         return {
             "id": approval_id,
             # How the WAITER addresses this call. Equal to `id` for a background origin; for a
@@ -460,14 +444,19 @@ class DashboardApprovalState:
             "tool_input": redact_field(tool_input),
             "tool_purpose": redact_field(tool_purpose),
             "session": session,
-            "session_title": redact_field(title),
+            "session_title": title,
             "agent": agent,
             "risk": risk,
             "is_read_only": is_read_only,
             "blast_radius": blast_radius,
             "grant_agent": grant_agent,
             "trigger": trigger,
-            "trigger_name": redact_field(trigger_name(trigger)) if trigger else "",
+            "trigger_name": named,
+            # Where it came from, in the words every surface shows it by: the dashboard's cards,
+            # its Inbox row, and the tag a channel's prompt carries.
+            "source_label": approval_source_label(
+                source=source, session=session, trigger=trigger, trigger_name=named, title=title
+            ),
             "asked_by": asked_by,
             "ts": time.time(),
         }
@@ -522,7 +511,7 @@ class DashboardApprovalState:
         try:
             from personalclaw.inbox import ItemKind, emit_attention_item
 
-            refs = {"approval": str(entry["id"])}
+            refs = {"approval": str(entry["id"]), "source_label": str(entry["source_label"])}
             if entry.get("session"):
                 refs["session"] = str(entry["session"])
             emit_attention_item(
@@ -992,7 +981,9 @@ class DashboardApprovalState:
             try:
                 approved = await ask(
                     event,
-                    source=str(entry.get("source") or "chat"),
+                    # Where it came from, as every surface names it: a loop's worker asks on
+                    # the chat path, and its prompt still says the loop.
+                    source=str(entry["source_label"]),
                     on_prompted=_on_prompted,
                     **where,
                 )
@@ -1032,7 +1023,8 @@ class DashboardApprovalState:
         what = str(entry.get("tool") or "a tool call")
         why = str(entry.get("tool_purpose") or "")
         link = dashboard_link(f"#/companion?approval={approval_id}")
-        text = f"PersonalClaw is waiting for your approval: {what}" + (f", to {why}" if why else "")
+        text = f"PersonalClaw is waiting for your approval: {what}, from {entry['source_label']}"
+        text += f", to {why}" if why else ""
         text += f". Answer it here: {link}" if link else ". Answer it in PersonalClaw."
         outcome = None
         for provider in providers:

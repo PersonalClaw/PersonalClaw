@@ -7,13 +7,14 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 // and "To triage" listed nothing — the approval existed only inside its chat. The registry now
 // lists it (`GET /api/approvals`) AND raises its Inbox row, so it reaches Home on two slices.
 // These rails mount the REAL DashboardLiveProvider around the real widgets and pin that:
-//   1. To triage shows it ONCE, as the approval row that carries Approve/Reject, saying what the
-//      call would do and who is asking — not as that row plus its Inbox listing;
+//   1. To triage shows it ONCE, as the one approval card that carries Allow/Deny, saying what the
+//      call would do and where it came from — not as that card plus its Inbox listing;
 //   2. an Inbox row whose approval is NOT listed stays visible — degrade, never vanish;
 //   3. Home's pills count it once: 1 approval waiting, and the inbox pill counts it zero times;
-//   4. Approve answers it by its REGISTRY id.
+//   4. Allow answers it by its REGISTRY id.
 
 const APPROVAL = {
+  source_label: 'chat “Clean the scratch dir”',
   id: 'chat-a:1', request_id: '1', source: '', tool: 'bash',
   tool_input: '{"command": "rm -rf /tmp/scratch"}', tool_purpose: '',
   session: 'chat-a', session_title: 'Clean the scratch dir', agent: 'researcher',
@@ -72,11 +73,13 @@ async function mount(Widget: 'ActionCenter' | 'HeroPulse') {
 }
 
 describe('To triage lists a pending chat approval once, with enough to decide', () => {
-  it('renders the approval row — what it would do, who asks — and not its Inbox listing', async () => {
+  it('renders the approval card — what it would do, where it came from — and not its Inbox listing', async () => {
     mockApi()
     await mount('ActionCenter')
-    expect(screen.getByText('Run bash')).toBeTruthy()
-    expect(screen.getByText(/rm -rf \/tmp\/scratch.*researcher in “Clean the scratch dir”/)).toBeTruthy()
+    const card = screen.getByRole('group', { name: 'Permission needed to run bash' })
+    expect(card.textContent).toContain('bash({"command": "rm -rf /tmp/scratch"})')
+    expect(card.textContent).toContain('From chat “Clean the scratch dir”')
+    expect(card.textContent).toContain('Destructive')
     expect(screen.queryByText(/the listing of chat-a:1/)).toBeNull()
   })
 
@@ -91,7 +94,7 @@ describe('To triage lists a pending chat approval once, with enough to decide', 
     mockApi()
     await mount('ActionCenter')
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^Approve: Run bash/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Allow bash — chat “Clean the scratch dir”/ }))
       await new Promise((res) => setTimeout(res, 0))
     })
     expect(resolveApproval).toHaveBeenCalledWith('chat-a:1', 'approve')

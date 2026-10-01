@@ -166,6 +166,7 @@ export function CompanionPage({ navigate, query }: RouteProps) {
                   tool={ap.tool}
                   args={argsText(ap.tool_input)}
                   purpose={ap.tool_purpose}
+                  source={ap.source_label || undefined}
                   meta={<ApprovalMeta ap={ap} />}
                   choices={[
                     // The accessible name carries the tool, because a queue paints one card
@@ -347,10 +348,10 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
   )
 }
 
-/** Where the request came from, how long it has been waiting, and what the call can touch
- *  — the context that turns a tool name into a decision. `session` is empty for
- *  gateway-originated approvals (a cron fire, a channel message, a subagent), so the row
- *  is omitted rather than shown blank.
+/** How long the request has been waiting, and what the call can touch — the context that turns a
+ *  tool name into a decision. Where it came from is the card's own "From" line, in the registry's
+ *  words (`source_label`): this block used to print the raw session key (`loop-0a1b2c3d-t-…`) and
+ *  the relay's source word (`subagent`).
  *
  *  The blast-radius facets are the radius the backend composed for this call
  *  (`blast_radius`), in the same words the chat card uses. The two surfaces that ask a human
@@ -363,8 +364,6 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
  *  presentation is per-surface, exactly as the toast already does it. */
 function ApprovalMeta({ ap }: { ap: PendingApproval }) {
   const rows: [string, string][] = []
-  if (ap.session) rows.push(['Session', ap.session])
-  if (ap.source) rows.push(['Requested by', ap.source])
   const waited = waitedFor(ap.ts)
   if (waited) rows.push(['Waiting', waited])
   // `establishedFacets` returns ONLY what is positively established, so an empty list

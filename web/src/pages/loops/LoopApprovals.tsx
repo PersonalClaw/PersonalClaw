@@ -4,30 +4,9 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { loopApprovalOf } from '../../app/approvalDestination'
 import { ApprovalCard } from '../chat/ApprovalCard'
-import { approvalRiskOf, blastRadiusOf } from '../chat/approvalMeta'
-import type { ApprovalSegment } from '../chat/chatTypes'
+import { approvalSegmentOf } from '../chat/approvalSegment'
 
 type Action = 'approved' | 'rejected' | 'trust' | 'trust_agent'
-
-/** The card's arguments line: the call's input as the worker sent it. */
-function inputText(raw: unknown): string {
-  if (raw === undefined || raw === null) return ''
-  return typeof raw === 'string' ? raw : JSON.stringify(raw)
-}
-
-function segmentOf(a: PendingApproval): ApprovalSegment {
-  return {
-    kind: 'approval',
-    // The worker's own id for the call, which its session's approve route takes.
-    id: a.request_id,
-    tool: a.tool || 'a tool',
-    input: inputText(a.tool_input),
-    purpose: a.tool_purpose || '',
-    risk: approvalRiskOf(a.risk),
-    blastRadius: blastRadiusOf(a.blast_radius),
-    grantAgent: a.grant_agent || '',
-  }
-}
 
 /** The tool calls this loop's workers are waiting on you for, answerable on the loop's own page.
  *
@@ -70,7 +49,7 @@ export function LoopApprovals({ loopId, className = '' }: { loopId: string; clas
   return (
     <div role="group" aria-label="Waiting on your approval" className={`flex flex-col gap-s ${className}`}>
       {pending.map((a) => (
-        <ApprovalCard key={a.id} seg={segmentOf(a)} scopeWords="loop"
+        <ApprovalCard key={a.id} seg={approvalSegmentOf(a)} scopeWords="loop"
           onAct={(_id, action) => decide(a, action)} />
       ))}
     </div>

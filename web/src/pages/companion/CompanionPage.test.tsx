@@ -52,7 +52,7 @@ const AP: PendingApproval = {
   id: 'ap-1', request_id: 'ap-1', source: 'cron', tool: 'Bash',
   tool_input: 'rm -rf /tmp/scratch', tool_purpose: 'Clear the scratch directory',
   session: 'cron:nightly', ts: Math.round(Date.now() / 1000) - 90,
-  session_title: '', agent: '', risk: '', grant_agent: '',
+  session_title: '', agent: '', risk: '', grant_agent: '', source_label: 'trigger “Nightly sweep”',
 }
 
 const route = { sub: '', navigate: vi.fn(), navEpoch: 0, query: {}, setQuery: vi.fn() }
@@ -80,8 +80,9 @@ describe('the companion approvals queue', () => {
     expect(card.textContent).toContain('Bash')
     expect(card.textContent).toContain('rm -rf /tmp/scratch')
     expect(card.textContent).toContain('Clear the scratch directory')
-    expect(card.textContent).toContain('cron:nightly')
-    expect(card.textContent).toContain('cron')
+    // Where it came from is the registry's words for it, not its session key or relay source.
+    expect(card.textContent).toContain('From trigger “Nightly sweep”')
+    expect(card.textContent).not.toContain('cron:nightly')
     // And it interrupts — the agent is halted until this is answered.
     expect(card.querySelector('[role="alert"]')?.textContent).toBe('Permission needed')
   })

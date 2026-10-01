@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, X } from 'lucide-react'
-import { Button } from '../ui/Button'
 import { InlineLoadError } from '../ui/ListScaffold'
-import { BUSY_REASON } from '../ui/unavailable'
 import { api, type PendingApproval } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
+import { PendingApprovalCard } from './PendingApprovalCard'
 import { reportingWrite } from './reportingWrite'
 
 /** Approve or deny ONE pending approval, on a surface that announced it.
@@ -23,28 +21,15 @@ import { reportingWrite } from './reportingWrite'
  *  elsewhere, out of time, or the work that asked has stopped — and offering Approve then would
  *  promise a decision nothing is waiting on.
  *
- *  What the call would run is shown WHOLE here, from that same live read, whenever the announcing
- *  text (`shown`) does not already hold it: a row's line is cut to fit a list, and a subagent's
- *  start carries its whole task, so the one place she decides is the one place she can read all of
- *  what she allows. A short input the row already shows whole is not repeated. */
-/** An approval's input as text: the registry sends a string, a native call's dict as JSON. */
-function inputText(raw: unknown): string {
-  if (raw === undefined || raw === null) return ''
-  return typeof raw === 'string' ? raw : JSON.stringify(raw)
-}
-
-/** `text` on one line, so an input compares with a row that folded its line breaks. */
-function oneLine(text: string): string {
-  return text.split(/\s+/).join(' ').trim()
-}
-
-export function ApprovalDecision({ approvalId, onDecided, shown = '' }: {
+ *  The decision is the one approval card (`PendingApprovalCard`), from that same live read: a row's
+ *  line is cut to fit a list, and a subagent's start carries its whole task, so the one place she
+ *  decides shows the tool and its risk, what it can touch, all of what it would run a click away,
+ *  and where it came from. */
+export function ApprovalDecision({ approvalId, onDecided }: {
   /** The registry id: an Inbox row's `refs.approval`, which its notification carries as `approval`. */
   approvalId: string
   /** After an answer the registry took. */
   onDecided?: () => void
-  /** The text the surface already shows for this approval (its row's or notification's body). */
-  shown?: string
 }) {
   // undefined: not read yet · null: nothing is waiting under this id.
   const [pending, setPending] = useState<PendingApproval | null | undefined>(undefined)
@@ -106,35 +91,8 @@ export function ApprovalDecision({ approvalId, onDecided, shown = '' }: {
       </p>
     )
   }
-  const input = inputText(pending.tool_input)
-  const whole = input && !oneLine(shown).includes(oneLine(input)) ? input : ''
   return (
-    <div className="flex flex-col gap-s">
-      <p data-type="body-s" className="text-on-surface-var">
-        Approve lets <span className="font-mono">{pending.tool}</span> run. Deny refuses it.
-      </p>
-      {whole && (
-        <pre aria-label={`What ${pending.tool} would run`} data-type="caption"
-          className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-high p-s font-mono text-on-surface">
-          {whole}
-        </pre>
-      )}
-      <div className="flex flex-wrap items-center gap-s">
-        <Button size="sm" onClick={() => decide(pending, 'approve')}
-          loading={busy === 'approve'} loadingLabel="Approving…"
-          disabled={busy !== null} disabledReason={BUSY_REASON}
-          ariaLabel={`Approve: ${pending.tool}`}>
-          <Check size={14} /> Approve
-        </Button>
-        {/* Quiet, not danger-styled: refusing a call is an ordinary answer, and red would read as
-            the work having broken — the reasoning the workflow run view's Deny gives. */}
-        <Button size="sm" variant="ghost" onClick={() => decide(pending, 'reject')}
-          loading={busy === 'reject'} loadingLabel="Denying…"
-          disabled={busy !== null} disabledReason={BUSY_REASON}
-          ariaLabel={`Deny: ${pending.tool}`}>
-          <X size={14} /> Deny
-        </Button>
-      </div>
-    </div>
+    <PendingApprovalCard approval={pending} busy={busy !== null} opensSource
+      onDecide={(action) => decide(pending, action)} />
   )
 }

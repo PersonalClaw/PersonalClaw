@@ -13,7 +13,7 @@ import type { PendingApproval } from '../../lib/api'
 // 🪤 FIXING ONLY THE LINK WOULD BE A NICER DEAD END. `approvalNudgeResolves.test.tsx` proves the
 // nudge now lands on `#/workflows/runs/<run>?node=<node>`; that is worth nothing unless the
 // question can be answered there. So this asserts the REACHABLE control and its EFFECT — the row
-// is on screen and pressing Approve calls `resolveApproval` with that approval's id — not that a
+// is on screen and pressing Allow calls `resolveApproval` with that approval's id — not that a
 // component was imported.
 //
 // 🪤 AND THE FILTER IS THE WHOLE MECHANISM. `/api/approvals` is global. A card that rendered every
@@ -34,7 +34,8 @@ const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   tool: 'subagent_run(Write ONE consolidated article)',
   tool_purpose: 'Consolidate the recalled material into one article',
   session: 'workflow:11b9a34c:synthesize', ts: 0,
-  request_id: 'spawn:b961a327', session_title: '', agent: '', risk: '', grant_agent: '', ...over,
+  request_id: 'spawn:b961a327', session_title: '', agent: '', risk: '', grant_agent: '',
+  source_label: 'workflow “research” · step “synthesize”', ...over,
 })
 
 async function mountFor(runId: string, queue: PendingApproval[]) {
@@ -51,24 +52,24 @@ async function mountFor(runId: string, queue: PendingApproval[]) {
 beforeEach(() => { cleanup() })
 
 describe('a run view can answer the approval its own stage raised', () => {
-  it('shows the blocked call with Approve and Reject', async () => {
+  it('shows the blocked call with Allow and Deny', async () => {
     await mountFor('11b9a34c', [approval()])
-    expect(await screen.findByRole('button', { name: /Approve: subagent_run/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Reject: subagent_run/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /^Allow subagent_run/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Deny subagent_run/ })).toBeTruthy()
     // The purpose is what tells the watcher what they are approving.
     expect(screen.getByText(/Consolidate the recalled material/)).toBeTruthy()
   })
 
-  it('Approve RESOLVES that approval — the effect, not the button', async () => {
+  it('Allow RESOLVES that approval — the effect, not the button', async () => {
     await mountFor('11b9a34c', [approval()])
-    const btn = await screen.findByRole('button', { name: /Approve: subagent_run/ })
+    const btn = await screen.findByRole('button', { name: /^Allow subagent_run/ })
     await userEvent.click(btn)
     await waitFor(() => expect(resolveApproval).toHaveBeenCalledWith('spawn:b961a327', 'approve'))
   })
 
-  it('Reject resolves it the other way', async () => {
+  it('Deny resolves it the other way', async () => {
     await mountFor('11b9a34c', [approval()])
-    await userEvent.click(await screen.findByRole('button', { name: /Reject: subagent_run/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Deny subagent_run/ }))
     await waitFor(() => expect(resolveApproval).toHaveBeenCalledWith('spawn:b961a327', 'reject'))
   })
 })
@@ -77,13 +78,13 @@ describe('🪤 VACUITY: it claims ONLY its own run\'s approvals', () => {
   it('another run\'s approval is not shown here', async () => {
     await mountFor('11b9a34c', [approval({ session: 'workflow:deadbeef:synthesize' })])
     await waitFor(() => expect(approvals).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /Approve:/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Allow / })).toBeNull()
   })
 
   it('a CHAT approval is not shown here — the chat card owns that one', async () => {
     await mountFor('11b9a34c', [approval({ session: 'main' })])
     await waitFor(() => expect(approvals).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /Approve:/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Allow / })).toBeNull()
   })
 
   it('an empty queue renders nothing at all (no empty card on every run)', async () => {

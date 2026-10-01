@@ -20,7 +20,7 @@ import { approvalDestination } from './approvalDestination'
  *  context, where the arguments are also visible).
  */
 export function approvalToastMessage(input: {
-  /** "A subagent" / "A background task" / "A loop" / "Another chat session". */
+  /** Where the call came from, from the start of a sentence: `Loop “Fix the README”`. */
   who: string
   tool: string
   session: string

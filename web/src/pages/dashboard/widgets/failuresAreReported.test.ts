@@ -34,9 +34,10 @@ describe('ActionCenter actions report their failures (#324)', () => {
   })
 
   it('every withBusy caller supplies a human sentence for the toast', () => {
-    // Three action kinds × two buttons − the navigate-only reply = 5 labelled calls.
+    // A proposal's two buttons, the inbox row's Dismiss (its Reply only navigates), and the one
+    // decision both of an approval card's verbs go through = 4 labelled calls.
     const calls = [...CODE.matchAll(/withBusy\(e\.key, `[^`]+`/g)]
-    expect(calls.length).toBeGreaterThanOrEqual(5)
+    expect(calls.length).toBeGreaterThanOrEqual(4)
   })
 })
 

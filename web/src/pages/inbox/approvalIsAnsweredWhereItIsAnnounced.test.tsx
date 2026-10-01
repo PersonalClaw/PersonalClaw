@@ -7,7 +7,7 @@
  *  run asks with no chat behind it, so only Home › To triage carried the verbs. The run waited
  *  21 minutes while its owner read about it twice.
  *
- *  Both surfaces now carry Approve and Deny, through the decision path every surface outside a
+ *  Both surfaces now carry Allow and Deny, through the decision path every surface outside a
  *  chat uses, and read the approval LIVE — so a row that outlived its approval says so instead of
  *  offering a decision nothing is waiting on. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,6 +46,7 @@ const PENDING = {
   id: ID, request_id: ID, source: 'subagent', tool: 'subagent_run', session: '', ts: 1,
   session_title: '', agent: '', risk: 'high', grant_agent: '', trigger: 'schedule:clock:morning-brief',
   trigger_name: 'Morning brief', asked_by: 'trigger:schedule:clock:morning-brief',
+  source_label: 'trigger “Morning brief”',
 } as PendingApproval
 
 /** Its Inbox row, as `DashboardApprovalState._raise_inbox_row` writes it. */
@@ -76,7 +77,7 @@ describe('the Inbox row that announces an approval', () => {
   it('approves it there', async () => {
     const onChanged = vi.fn()
     render(<InboxDetail item={ROW} onChanged={onChanged} navigate={() => {}} />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Approve: subagent_run' }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow subagent_run/ }))
     await waitFor(() => expect(API.resolveApproval).toHaveBeenCalledWith(ID, 'approve'))
     expect(await screen.findByText(/^Approved\./)).toBeInTheDocument()
     expect(onChanged).toHaveBeenCalled()
@@ -84,7 +85,7 @@ describe('the Inbox row that announces an approval', () => {
 
   it('denies it there', async () => {
     render(<InboxDetail item={ROW} onChanged={() => {}} navigate={() => {}} />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Deny: subagent_run' }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Deny subagent_run/ }))
     await waitFor(() => expect(API.resolveApproval).toHaveBeenCalledWith(ID, 'reject'))
     expect(await screen.findByText(/^Denied\./)).toBeInTheDocument()
   })
@@ -93,7 +94,7 @@ describe('the Inbox row that announces an approval', () => {
     API.approvals.mockResolvedValue([])
     render(<InboxDetail item={ROW} onChanged={() => {}} navigate={() => {}} />)
     expect(await screen.findByText(/Nothing is waiting on this any more/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Approve/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Allow/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Deny/ })).toBeNull()
   })
 
@@ -101,7 +102,7 @@ describe('the Inbox row that announces an approval', () => {
     const { refs: _approval, ...plain } = ROW
     render(<InboxDetail item={{ ...plain, refs: {} } as InboxItem} onChanged={() => {}} navigate={() => {}} />)
     await screen.findByRole('button', { name: /Mark handled/ })
-    expect(screen.queryByRole('button', { name: /Approve/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Allow/ })).toBeNull()
     expect(API.approvals).not.toHaveBeenCalled()
   })
 })
@@ -109,14 +110,14 @@ describe('the Inbox row that announces an approval', () => {
 describe('the notification that announces an approval', () => {
   it('approves it there, and marks the note read', async () => {
     render(<NotificationsPage query={{ open: NOTE.ts }} setQuery={vi.fn()} navigate={vi.fn()} />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Approve: subagent_run' }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow subagent_run/ }))
     await waitFor(() => expect(API.resolveApproval).toHaveBeenCalledWith(ID, 'approve'))
     await waitFor(() => expect(API.ackNotification).toHaveBeenCalledWith(NOTE.ts))
   })
 
   it('denies it there', async () => {
     render(<NotificationsPage query={{ open: NOTE.ts }} setQuery={vi.fn()} navigate={vi.fn()} />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Deny: subagent_run' }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Deny subagent_run/ }))
     await waitFor(() => expect(API.resolveApproval).toHaveBeenCalledWith(ID, 'reject'))
   })
 })

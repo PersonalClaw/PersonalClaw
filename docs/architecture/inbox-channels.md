@@ -190,7 +190,7 @@ reads that entry:
 
 | Surface | Reads |
 |---|---|
-| Home's approvals count and **To triage**, Mission Control, the phone companion, the workflow run view, the desktop tray, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
+| Home's approvals count and **To triage**, Mission Control, the phone companion, the workflow run view, a loop's cockpit, the desktop tray, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
 | The chat card, the out-of-context nudge | the `approval` WS frame — the same entry |
 | The phone push, the `ApprovalRequest` lifecycle hook | fired from the registration |
 | The Inbox, and that row's notification (the bell, Notifications) | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}`; its notification carries the same refs |
@@ -210,10 +210,22 @@ A subagent's start asks the same way a tool call does (`subagent_ask.spawn_ask`)
 cut at a word (`textfmt.clip_words`), and the decision under it (`ApprovalDecision`) shows the
 whole input from the live entry whenever the row could not.
 
-Mission Control labels each card by the work that asked (`attentionLanes.approvalRaisedBy` and
-`inboxRaisedBy`): an approval by its trigger, else by its session key's owner (a workflow's step,
-a loop's worker, a trigger's session, an MCP server, a chat), and an Inbox row by the refs its
-emitter stamped (`workflow`, `trigger_park`, `loop`, the control bridge). An Inbox row's sender
+The entry also says where the call came from, in words (`source_label`, from
+`approval_source.approval_source_label`): `chat “Trip planning”`, `loop “Fix the README”`,
+`workflow “deep-research” · step “sweep”`, `trigger “Friday digest”`, `subagent of chat “…”`,
+`MCP server “…”`. Every surface that answers an approval renders the one approval card
+(`pages/chat/ApprovalCard`;
+`app/PendingApprovalCard` for the queue surfaces: the workflow run view, Mission Control, Home's To
+triage, the Inbox row and its notification): the tool and its risk, what it can touch, its whole
+input a click away (Show all), and, away from the work that asked, "From <source_label>", a link
+to that work on a surface that lists approvals from everywhere. A channel's prompt is tagged with
+the same words (`ChannelDelivery.request_approval`'s `source`), for a chat's approval asked on a
+channel and for a background one the gateway asks alike; a loop's worker asks on the chat path,
+and its prompt names the loop. The approval's Inbox row keeps the words in `refs.source_label`.
+
+Mission Control labels each card by the work that asked (`attentionLanes.inboxRaisedBy`): an
+approval by its `source_label`, and an Inbox row by the refs its emitter stamped (`workflow`,
+`trigger_park`, `loop`, the control bridge). An Inbox row's sender
 is its notification pair's source, which is `loop` for a workflow's gate, a trigger's question
 and the control bridge's confirm alike, so it is shown only when the refs name no work.
 

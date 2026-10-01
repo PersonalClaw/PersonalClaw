@@ -10,8 +10,8 @@ import type { InboxItem, PendingApproval } from '../../lib/api'
 // raised read "loop", and an approval card said nothing about who wanted the call. Each Inbox row
 // here is shaped the way `emit_attention_item` writes it — sender and channel are the notification
 // pair's source, which for all of these is "loop" — and each approval the way
-// `approval_state._approval_entry` does. The lane derivation is the REAL one, so what is asserted
-// is the card a user sees.
+// `approval_state._approval_entry` does, with the words it names its source by (`source_label`).
+// The lane derivation is the REAL one, so what is asserted is the card a user sees.
 
 const inboxOpen = vi.fn()
 const approvals = vi.fn()
@@ -79,10 +79,10 @@ beforeEach(() => {
     }),
   ])
   approvals.mockResolvedValue([
-    approval({ id: 'chat', source: '', tool: 'shell.run', session: 'dashboard:abc', session_title: 'Trip planning' }),
-    approval({ id: 'step', tool: 'web.search', session: 'workflow:df5827ca:sweep' }),
-    approval({ id: 'fire', tool: 'notes.write', session: 'cron:balance', trigger: 'balance', trigger_name: 'Check my balance' }),
-    approval({ id: 'worker', tool: 'fs.write', session: 'loop-abc123' }),
+    approval({ id: 'chat', source: '', tool: 'shell.run', session: 'dashboard:abc', session_title: 'Trip planning', source_label: 'chat “Trip planning”' }),
+    approval({ id: 'step', tool: 'web.search', session: 'workflow:df5827ca:sweep', source_label: 'workflow “deep-research” · step “sweep”' }),
+    approval({ id: 'fire', tool: 'notes.write', session: 'cron:balance', trigger: 'balance', trigger_name: 'Check my balance', source_label: 'trigger “Check my balance”' }),
+    approval({ id: 'worker', tool: 'fs.write', session: 'loop-0a1b2c3d', source_label: 'loop “Fix the README”' }),
   ])
 })
 
@@ -104,10 +104,10 @@ describe('Mission Control names what asked', () => {
     render(<MissionControl />)
     await screen.findByText('shell.run')
 
-    expect(within(card('Needs approval', 'shell.run')).getByText('Chat · Trip planning')).toBeTruthy()
-    expect(within(card('Needs approval', 'web.search')).getByText('Workflow · sweep step')).toBeTruthy()
-    expect(within(card('Needs approval', 'notes.write')).getByText('Trigger · Check my balance')).toBeTruthy()
-    expect(within(card('Needs approval', 'fs.write')).getByText('Loop')).toBeTruthy()
+    expect(within(card('Needs approval', 'shell.run')).getByText('chat “Trip planning”')).toBeTruthy()
+    expect(within(card('Needs approval', 'web.search')).getByText('workflow “deep-research” · step “sweep”')).toBeTruthy()
+    expect(within(card('Needs approval', 'notes.write')).getByText('trigger “Check my balance”')).toBeTruthy()
+    expect(within(card('Needs approval', 'fs.write')).getByText('loop “Fix the README”')).toBeTruthy()
     // A bare session key is not a line a person reads.
     expect(screen.queryByText('workflow:df5827ca:sweep')).toBeNull()
   })
@@ -116,7 +116,7 @@ describe('Mission Control names what asked', () => {
     render(<MissionControl />)
     await screen.findByText('web.search')
 
-    expect(screen.getByRole('button', { name: /^Approve web\.search — Workflow · sweep step/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /^Approve notes\.write — Trigger · Check my balance/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Allow web\.search — workflow “deep-research” · step “sweep”/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Allow notes\.write — trigger “Check my balance”/ })).toBeTruthy()
   })
 })

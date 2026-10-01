@@ -5,6 +5,7 @@ import { messageEnter } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { clipWords } from '../lib/clipWords'
 import { Button } from './Button'
+import { TextLink } from './TextLink'
 
 /** ONE renderer for "the agent is blocked waiting on your permission".
  *
@@ -53,13 +54,20 @@ export interface ApprovalChoice {
 }
 
 export function ApprovalPrompt({
-  tool, args, purpose, badge, meta, scope, choices, density = 'compact', className,
+  tool, args, purpose, source, sourceHref, badge, meta, scope, choices, density = 'compact', className,
 }: {
   tool: string
   /** The tool's arguments, raw. `compact` cuts them at a word and shows all of them on demand;
    *  `roomy` shows all of them. */
   args?: string
   purpose?: string
+  /** Where the call came from, in the registry's words (`PendingApproval.source_label`):
+   *  `loop “Fix the README”`, `workflow “deep-research” · step “sweep”`. Shown as "From …" on every
+   *  surface that is not the place it came from, so the same call is never approved there blind
+   *  to who asked. */
+  source?: string
+  /** Where that work can be opened, when the surface is not already it. The source becomes a link. */
+  sourceHref?: string
   /** Optional chip beside the heading (the chat's risk indicator). */
   badge?: ReactNode
   /** Context block under the arguments — the chat's blast-radius chips, the
@@ -106,6 +114,13 @@ export function ApprovalPrompt({
             <CompactArgs tool={tool} args={args} />
           )}
           {purpose && <p data-type={roomy ? 'body-s' : 'caption'} className="mt-1 text-on-surface-low">{purpose}</p>}
+          {source && (
+            <p data-type={roomy ? 'body-s' : 'caption'} className="mt-xs break-words text-on-surface-low">
+              From {sourceHref
+                ? <TextLink href={sourceHref} ink="emphasis" aria-label={`Open ${source}`}>{source}</TextLink>
+                : <span className="text-on-surface-var">{source}</span>}
+            </p>
+          )}
           {meta}
           {/* How far the answer reaches, read BEFORE the verbs — the scope has to be
               settled while the reader is still weighing the call, not after they have

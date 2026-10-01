@@ -74,7 +74,7 @@ import { join } from 'node:path'
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
 const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
   id: 'appr-1', request_id: 'appr-1', source: 'chat', tool: 'shell.run', session: 'nightly-sweep', ts: 1,
-  session_title: '', agent: '', risk: '', grant_agent: '', ...over,
+  session_title: '', agent: '', risk: '', grant_agent: '', source_label: 'chat', ...over,
 })
 
 /** A live session row, shaped the way `ChatSession.to_dict()` sends it — including the two fields
@@ -171,31 +171,31 @@ describe('approving from a lane', () => {
 
   it('names WHICH item the approve button acts on', async () => {
     render(<MissionControl />)
-    // Asked through the accessibility tree, not by class or test id: "Approve" alone is ambiguous
+    // Asked through the accessibility tree, not by class or test id: "Allow" alone is ambiguous
     // the moment two cards are on screen, and this view guarantees four lanes of them.
-    const btn = await screen.findByRole('button', { name: /^Approve .*shell\.run/ })
+    const btn = await screen.findByRole('button', { name: /^Allow shell\.run/ })
     expect(btn).toBeTruthy()
-    // The reject verb is distinguishable from approve by NAME, not only by position.
-    expect(screen.getByRole('button', { name: /^Reject .*shell\.run/ })).toBeTruthy()
+    // The deny verb is distinguishable from allow by NAME, not only by position.
+    expect(screen.getByRole('button', { name: /^Deny shell\.run/ })).toBeTruthy()
   })
 
   it('POSTs the approval id and the approve action, then shows the card resolved', async () => {
     resolveApproval.mockResolvedValue({ ok: true })
     render(<MissionControl />)
-    await userEvent.click(await screen.findByRole('button', { name: /^Approve/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow/ }))
 
     // The call itself — not merely that a handler ran.
     expect(resolveApproval).toHaveBeenCalledWith('appr-1', 'approve')
     // ...and the outcome is on the card, announced, in words.
     expect(await screen.findByRole('status')).toHaveTextContent('Approved.')
     // The verbs are gone, so a resolved id cannot be approved a second time.
-    await waitFor(() => expect(screen.queryByRole('button', { name: /^Approve/ })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Allow/ })).toBeNull())
   })
 
   it('rejecting posts the reject action', async () => {
     resolveApproval.mockResolvedValue({ ok: true })
     render(<MissionControl />)
-    await userEvent.click(await screen.findByRole('button', { name: /^Reject/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Deny/ }))
     expect(resolveApproval).toHaveBeenCalledWith('appr-1', 'reject')
   })
 
@@ -204,16 +204,19 @@ describe('approving from a lane', () => {
     // user clicks again — on an id whose approval may already have landed.
     resolveApproval.mockRejectedValue(new Error('approval appr-1 has expired'))
     render(<MissionControl />)
-    await userEvent.click(await screen.findByRole('button', { name: /^Approve/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Allow/ }))
 
-    const alert = await screen.findByRole('alert')
+    // The card's own "Permission needed" is an alert too, so the failure is found by its words.
+    const failure = () => screen.getAllByRole('alert').find((a) => /has expired/.test(a.textContent ?? ''))
+    await waitFor(() => expect(failure()).toBeTruthy())
+    const alert = failure()!
     // The gateway's own sentence, verbatim — it is the only part that says which knob to turn.
     expect(alert).toHaveTextContent('approval appr-1 has expired')
     // ...and something to do about it.
     expect(alert).toHaveTextContent(/try again/i)
     // NOT resolved: no success announcement, and the verb is still there to retry with.
     expect(screen.queryByRole('status')).toBeNull()
-    expect(screen.getByRole('button', { name: /^Approve/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Allow/ })).toBeTruthy()
   })
 })
 

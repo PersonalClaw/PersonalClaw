@@ -44,7 +44,7 @@ function plannerAsk(over: Partial<PendingApproval> = {}): PendingApproval {
     id: `chat:${PLANNER}:call-1`, request_id: 'call-1', source: '', tool: 'bash',
     tool_input: '{"command": "uv run pytest -q"}', tool_purpose: '', session: PLANNER, ts: 0,
     session_title: '', agent: 'personalclaw-code-planner', risk: 'destructive', grant_agent: '',
-    ...over,
+    source_label: 'loop “Fix the digest titles”', ...over,
   }
 }
 

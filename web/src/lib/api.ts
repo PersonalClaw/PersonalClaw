@@ -5261,6 +5261,11 @@ export interface PendingApproval {
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */
   trigger_name?: string
+  /** Where the call came from, in the words every surface names it by
+   *  (`approval_source.approval_source_label`): `chat “Trip planning”`, `loop “Fix the README”`,
+   *  `workflow “deep-research” · step “sweep”`, `trigger “Friday digest”`. A card away from that
+   *  work says "From <this>", and a channel's prompt is tagged with it. */
+  source_label: string
   /** Who asked, as `kind:name` (`agent:dashboard:…`, `app:…`, `run:…`, `trigger:…`). Only you
    *  answer an approval, and never the party that asked it (`approval_answer`). */
   asked_by?: string

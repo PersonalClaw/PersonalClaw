@@ -3,7 +3,7 @@ import { api } from '../lib/api'
 import { useChatSocket } from '../lib/useChatSocket'
 import { playCue } from '../design/soundCues'
 import { approvalToastMessage } from './approvalToast'
-import { approvalDestination, loopApprovalSession } from './approvalDestination'
+import { approvalDestination } from './approvalDestination'
 import { blastRadiusOf } from '../pages/chat/approvalMeta'
 
 /** Shell-level watcher: surfaces a toast when a tool-approval is requested for a
@@ -37,14 +37,10 @@ export function useApprovalToasts(activeSession: string) {
     seen.current.add(id)
     if (seen.current.size > 200) seen.current = new Set([...seen.current].slice(-100))
     const tool = String(d.tool ?? 'a tool')
-    // Ordinary chat-session approvals broadcast NO source key (only the
-    // subagent/background paths set one) — don't mislabel them as background.
-    const source = String(d.source ?? '')
-    // A loop's worker asks through the chat path, so its frame carries no source either: its
-    // session key is what says a loop is asking.
-    const who = source === 'subagent' ? 'A subagent'
-      : source ? 'A background task'
-        : loopApprovalSession(session) ? 'A loop' : 'Another chat session'
+    // Who is asking, in the registry's words for where the call came from (`source_label`): the
+    // loop, the workflow's step, the trigger, the chat.
+    const label = String(d.source_label ?? '')
+    const who = label ? label.charAt(0).toUpperCase() + label.slice(1) : 'PersonalClaw'
     // The compact form of the same brief the card renders — one shared facet
     // vocabulary, two presentations, no second approval renderer. The radius rides the same
     // `approval` frame the card reads it from, decoded the same way: a shape this build cannot

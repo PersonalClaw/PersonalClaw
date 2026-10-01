@@ -225,7 +225,7 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
           whose approval already ended says so instead of offering a decision nothing awaits. */}
       {approvalId && (
         <Section label="Approval">
-          <ApprovalDecision approvalId={approvalId} onDecided={onChanged} shown={item.message} />
+          <ApprovalDecision approvalId={approvalId} onDecided={onChanged} />
         </Section>
       )}
 

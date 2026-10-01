@@ -47,7 +47,7 @@ function ask(over: Partial<PendingApproval> = {}): PendingApproval {
     id: `chat:loop-${LOOP_ID}:req-1`, request_id: 'req-1', source: '', tool: 'bash',
     tool_input: '{"command": "sed -i s/escape/plain/ src/feedsmith/digest.py"}', tool_purpose: '',
     session: `loop-${LOOP_ID}`, ts: 0, session_title: '', agent: 'personalclaw-coder',
-    risk: 'caution', grant_agent: '', ...over,
+    risk: 'caution', grant_agent: '', source_label: 'loop “Digest titles”', ...over,
   }
 }
 
@@ -89,7 +89,7 @@ describe('where a loop worker’s ask is answered', () => {
     expect(loopApprovalOf('loop-plan-99999999', LOOP_ID)).toBe(false)
   })
 
-  it('the nudge says a loop is asking, and links to it', async () => {
+  it('the nudge names the loop that is asking, and links to it', async () => {
     let onMessage: ((m: WsMessage) => void) | null = null
     vi.resetModules()
     vi.doMock('../../lib/useChatSocket', () => ({
@@ -104,12 +104,12 @@ describe('where a loop worker’s ask is answered', () => {
     window.addEventListener('ne:toast', onToast)
     try {
       renderHook(() => useApprovalToasts(''))
-      act(() => onMessage!({ type: 'approval', data: { session: `loop-${LOOP_ID}-t-1a2b3c4d`, id: 'ap-1', tool: 'bash' } }))
+      act(() => onMessage!({ type: 'approval', data: { session: `loop-${LOOP_ID}-t-1a2b3c4d`, id: 'ap-1', tool: 'bash', source_label: 'loop “Digest titles”' } }))
     } finally {
       window.removeEventListener('ne:toast', onToast)
     }
     expect(toasts).toHaveLength(1)
-    expect(toasts[0].message).toMatch(/^A loop needs approval to run bash/)
+    expect(toasts[0].message).toMatch(/^Loop “Digest titles” needs approval to run bash/)
     expect(toasts[0].message).toContain(`open loop ${LOOP_ID} to respond.`)
     expect(toasts[0].href).toBe(`#/loops/${LOOP_ID}`)
   })

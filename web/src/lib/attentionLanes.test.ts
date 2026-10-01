@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { LANES, laneFor, isKnownKind, KNOWN_KINDS, toLanes, approvalRaisedBy, inboxRaisedBy } from './attentionLanes'
+import { LANES, laneFor, isKnownKind, KNOWN_KINDS, toLanes, inboxRaisedBy } from './attentionLanes'
 import type { ActivityInput, ApprovalInput, AttentionInput, Lane, LaneCard } from './attentionLanes'
 import type { InboxItemKind, InboxItemStatus } from './api'
 
@@ -36,7 +36,10 @@ function mkItem(over: Partial<AttentionInput> = {}): AttentionInput {
 }
 
 function mkApproval(over: Partial<ApprovalInput> = {}): ApprovalInput {
-  return { id: 'req-1', source: 'chat', tool: 'Bash', session: 's1', ts: 1000, ...over }
+  return {
+    id: 'req-1', request_id: 'req-1', tool: 'Bash', session: 's1', ts: 1000, risk: '', grant_agent: '',
+    source_label: 'chat', ...over,
+  }
 }
 
 function mkSession(over: Partial<ActivityInput> = {}): ActivityInput {
@@ -447,17 +450,16 @@ describe('who raised a card', () => {
     expect(inboxRaisedBy(mkItem({ sender_name: '', channel_name: 'general' }))).toBe('general')
   })
 
-  it('names who an approval is for, from its trigger and its session', () => {
+  it('names who an approval is for in the registry\'s words, from the start of a line', () => {
+    // The registry names where every approval came from (`approval_source.approval_source_label`);
+    // the card used to guess it from the session key, and a loop's worker read as a chat elsewhere.
     const cases: Array<[string, ApprovalInput]> = [
-      ['Chat · Trip planning', mkApproval({ source: '', session: 'dashboard:abc', session_title: 'Trip planning' })],
-      ['Chat', mkApproval({ source: 'subagent', session: 'abc', session_title: '' })],
-      ['Workflow · sweep step', mkApproval({ source: 'subagent', session: 'workflow:df5827ca:sweep' })],
-      ['Trigger · Check my balance', mkApproval({ source: 'subagent', session: 'cron:balance', trigger: 'balance', trigger_name: 'Check my balance' })],
-      ['Trigger · balance', mkApproval({ source: 'subagent', session: 'cron:balance' })],
-      ['Loop', mkApproval({ source: 'subagent', session: 'loop-abc123' })],
-      ['MCP server · github', mkApproval({ source: 'mcp:github', session: '' })],
+      ['Chat “Trip planning”', mkApproval({ source_label: 'chat “Trip planning”' })],
+      ['Workflow “deep-research” · step “sweep”', mkApproval({ source_label: 'workflow “deep-research” · step “sweep”', session: 'workflow:df5827ca:sweep' })],
+      ['Trigger “Check my balance”', mkApproval({ source_label: 'trigger “Check my balance”' })],
+      ['Loop “Fix the README”', mkApproval({ source_label: 'loop “Fix the README”', session: 'loop-0a1b2c3d' })],
+      ['MCP server “github”', mkApproval({ source_label: 'MCP server “github”', session: '' })],
     ]
-    for (const [label, a] of cases) expect(approvalRaisedBy(a)).toBe(label)
     const cards = toLanes([], cases.map(([, a], i) => ({ ...a, id: `a${i}` })))['needs-approval']
     expect(new Map(cards.map((c) => [c.id, c.raisedBy]))).toEqual(
       new Map(cases.map(([label], i) => [`a${i}`, label])),
@@ -465,17 +467,18 @@ describe('who raised a card', () => {
   })
 
   it('keeps what the tool is for as the approval card\'s line, and no longer a bare session key', () => {
-    const [withPurpose] = toLanes([], [mkApproval({ tool_purpose: 'List the build folder', session: 'workflow:r1:sweep' })])['needs-approval']
-    expect([withPurpose.raisedBy, withPurpose.subtitle]).toEqual(['Workflow · sweep step', 'List the build folder'])
-    const [bare] = toLanes([], [mkApproval({ tool_purpose: '', session: 'workflow:r1:sweep' })])['needs-approval']
-    expect([bare.raisedBy, bare.subtitle]).toEqual(['Workflow · sweep step', undefined])
+    const at = { session: 'workflow:r1:sweep', source_label: 'workflow · step “sweep”' }
+    const [withPurpose] = toLanes([], [mkApproval({ ...at, tool_purpose: 'List the build folder' })])['needs-approval']
+    expect([withPurpose.raisedBy, withPurpose.subtitle]).toEqual(['Workflow · step “sweep”', 'List the build folder'])
+    const [bare] = toLanes([], [mkApproval({ ...at, tool_purpose: '' })])['needs-approval']
+    expect([bare.raisedBy, bare.subtitle]).toEqual(['Workflow · step “sweep”', undefined])
     // An approval that names nobody says nothing about who asked, rather than guessing.
-    const [unnamed] = toLanes([], [mkApproval({ source: 'hook', session: '' })])['needs-approval']
+    const [unnamed] = toLanes([], [mkApproval({ source_label: '', session: '' })])['needs-approval']
     expect(unnamed.raisedBy).toBeUndefined()
   })
 
-  it('names an approval\'s own Inbox row by the approval\'s session once the approval has left the list', () => {
-    const row = mkItem({ item_kind: 'agent_request', sender_name: 'system', channel_name: 'system', refs: { approval: 'gone', session: 'workflow:r1:sweep' } })
-    expect(inboxRaisedBy(row)).toBe('Workflow · sweep step')
+  it('names an approval\'s own Inbox row by the words the registry kept on it once the approval has left the list', () => {
+    const row = mkItem({ item_kind: 'agent_request', sender_name: 'system', channel_name: 'system', refs: { approval: 'gone', session: 'workflow:r1:sweep', source_label: 'workflow “nightly” · step “sweep”' } })
+    expect(inboxRaisedBy(row)).toBe('Workflow “nightly” · step “sweep”')
   })
 })

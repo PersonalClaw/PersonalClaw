@@ -47,6 +47,7 @@ const PENDING: PendingApproval = {
   tool: 'subagent_run(Write ONE consolidated article)',
   session: 'workflow:11b9a34c:synthesize', ts: 0,
   session_title: '', agent: '', risk: '', grant_agent: '',
+  source_label: 'workflow “research” · step “synthesize”',
 }
 
 vi.mock('../pages/workflows/useWorkflowStream', () => ({ useWorkflowStream: () => ({ connected: true }) }))
@@ -161,8 +162,8 @@ describe('the approval nudge for a workflow stage resolves to a surface that can
     // the surface the nudge sent the user to.
     const nudge = await nudgeFor('workflow:11b9a34c:synthesize')
     await mountRouteAt(nudge.href)
-    expect(await screen.findByRole('button', { name: /Approve: subagent_run/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Reject: subagent_run/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /^Allow subagent_run/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Deny subagent_run/ })).toBeTruthy()
   })
 
   it('🪤 VACUITY: landing without the node param opens no drawer', async () => {

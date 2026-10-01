@@ -219,6 +219,10 @@ class ChannelDelivery(Protocol):
         for the owner's response, and should coordinate with the dashboard via the
         ``on_prompted`` hook (invoked with the pending record) when provided by the
         caller. ``sessions`` is the live SessionManager for cross-surface reconcile.
+        ``source`` is where the call came from, in the words every PersonalClaw surface names it
+        by (``approval_source.approval_source_label``: ``chat “Trip planning”``,
+        ``loop “Fix the README”``, ``workflow “deep-research” · step “sweep”``): show it on the
+        prompt as written, as text, since a chat's or a loop's name is in it.
 
         **How it ends.** The pending record carries a ``future``. The owner's press on this
         channel resolves it with ``"approved"`` or ``"rejected"``. However else the approval ends,

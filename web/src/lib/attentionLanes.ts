@@ -58,10 +58,10 @@
  *  shown. Neither is a fallthrough — both branches are written out.
  */
 import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, SkillProposal, WorkflowRunSummary } from './api'
-import { workflowApprovalSession } from '../app/approvalDestination'
 import { loopRoute } from './loopKind'
 import { shownCycle } from './loopStatus'
 import { sessionTitle } from './sessionTitle'
+import type { ApprovalCardInput } from '../pages/chat/approvalSegment'
 
 export const LANES = ['needs-approval', 'your-turn', 'working', 'idle'] as const
 export type Lane = (typeof LANES)[number]
@@ -75,10 +75,9 @@ export type AttentionInput = Pick<
 >
 
 /** `GET /api/approvals` rows. No status field exists on `PendingApproval` — presence in the list is
- *  the pending-ness — so every one of these is a Needs-approval card. The three names who asked
- *  (`approvalRaisedBy`) are optional here: a row without them is still an approval to decide. */
-export type ApprovalInput = Pick<PendingApproval, 'id' | 'source' | 'tool' | 'tool_purpose' | 'session' | 'ts'>
-  & Partial<Pick<PendingApproval, 'session_title' | 'trigger' | 'trigger_name'>>
+ *  the pending-ness — so every one of these is a Needs-approval card, and the card is the one
+ *  approval card (`app/PendingApprovalCard`), which reads the call off it. */
+export type ApprovalInput = ApprovalCardInput & Pick<PendingApproval, 'ts'>
 
 /** The only in-flight evidence on the wire (see fact 3). `running`/`stopping` are observed, not
  *  inferred. Optional: omit it and Working is empty rather than guessed.
@@ -114,7 +113,7 @@ interface LaneCardBase {
   title: string
   subtitle?: string
   /** What raised an approval or an Inbox card, in words: "Workflow · release", "Trigger · Check my
-   *  balance", "Loop", "Chat · Trip planning" (`approvalRaisedBy`, `inboxRaisedBy`). */
+   *  balance", "Loop", and an approval by the registry's `source_label` (`inboxRaisedBy`). */
   raisedBy?: string
   at: number | null
   refs?: Record<string, unknown>
@@ -332,9 +331,8 @@ function firstLine(text: unknown): string {
 // `emit_attention_item` writes the pair's source as the row's `sender_name`, so the one word a
 // card showed about where it came from named a delivery rule. The refs each emitter stamps say
 // which work asked (`workflow`, `trigger_park`, `loop`), so the label is read off those. An
-// approval card said nothing about who wanted the call at all: it has its session key, whose
-// grammar `approvalDestination` and the backend's `approval_owner.py` already read, and the
-// trigger its run belongs to.
+// approval says it itself: the registry names where it came from (`source_label`), once, for
+// every surface and every channel, and its Inbox row keeps those words in its refs.
 
 function named(what: string, name: unknown): string {
   const n = firstLine(name)
@@ -346,23 +344,9 @@ function refString(refs: Record<string, unknown> | undefined, key: string): stri
   return typeof v === 'string' ? v : ''
 }
 
-/** Which work a pending approval is for: a trigger's run, a workflow's step, a loop, a chat, or an
- *  MCP server's question — '' when the approval names none of them. */
-export function approvalRaisedBy(
-  a: Partial<Pick<PendingApproval, 'source' | 'session' | 'session_title' | 'trigger' | 'trigger_name'>>,
-): string {
-  if (typeof a.trigger === 'string' && a.trigger !== '') return named('Trigger', a.trigger_name || a.trigger)
-  const session = typeof a.session === 'string' ? a.session : ''
-  const step = workflowApprovalSession(session)
-  if (step) return named('Workflow', `${step.nodeId} step`)
-  // A loop's worker chat is `loop-<id>` (or `loop-<id>-<task>`, or the planner's `loop-plan-<id>`).
-  if (session.startsWith('loop-')) return 'Loop'
-  if (session.startsWith('cron:')) return named('Trigger', session.slice('cron:'.length))
-  const source = typeof a.source === 'string' ? a.source : ''
-  if (source.startsWith('mcp:')) return named('MCP server', source.slice('mcp:'.length))
-  // Any other session is a chat (a subagent's call asks under the chat that started it) — the
-  // same default `approvalDestination` links to.
-  return session !== '' ? named('Chat', a.session_title) : ''
+/** A registry label as a card's first line: `loop “Fix the README”` reads `Loop “Fix the README”`. */
+function sentenceStart(label: string): string {
+  return label ? label.charAt(0).toUpperCase() + label.slice(1) : ''
 }
 
 /** What raised an Inbox card: the work its refs name, the app that raised it by the name it goes by,
@@ -378,11 +362,10 @@ export function inboxRaisedBy(item: Pick<AttentionInput, 'refs' | 'sender_name' 
   if (refString(refs, 'loop')) return 'Loop'
   if (refString(refs, 'workflow')) return named('Workflow', refString(refs, 'workflow_name'))
   if (refString(refs, 'source') === 'control_bridge') return 'Control bridge'
-  // An approval's own row, carded only once the approval has left the list (fact 2): it names the
-  // approval's session, read the way the approval card reads it.
-  if (mirroredApprovalId(item) !== '') {
-    const from = approvalRaisedBy({ session: refString(refs, 'session') })
-    if (from) return from
+  // An approval's own row, carded only once the approval has left the list (fact 2): it is named by
+  // the words the registry named the approval by.
+  if (mirroredApprovalId(item) !== '' && refString(refs, 'source_label')) {
+    return sentenceStart(refString(refs, 'source_label'))
   }
   // An app's proposal: the name the app goes by, which the platform keeps on the row when it is
   // raised (`app_display_name`, the manifest's `displayName`), else the app's own name. Its sender
@@ -460,7 +443,7 @@ export function toLanes(
     const id = typeof a.id === 'string' ? a.id : ''
     if (id === '') continue
     approvalIds.add(id)
-    const raisedBy = approvalRaisedBy(a)
+    const raisedBy = typeof a.source_label === 'string' ? sentenceStart(a.source_label) : ''
     out['needs-approval'].push({
       key: `approval:${id}`,
       lane: 'needs-approval',
@@ -468,7 +451,7 @@ export function toLanes(
       id,
       title: firstLine(a.tool) || 'a tool',
       // What the call is for. This fell back to the bare session key (`workflow:df5827ca:sweep`);
-      // `raisedBy` says who asked in words, and every key it reads names someone.
+      // `raisedBy` says who asked, in the registry's words.
       subtitle: firstLine(a.tool_purpose) || undefined,
       raisedBy: raisedBy || undefined,
       at: typeof a.ts === 'number' && Number.isFinite(a.ts) ? a.ts : null,

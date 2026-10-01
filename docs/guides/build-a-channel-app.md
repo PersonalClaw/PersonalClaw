@@ -123,9 +123,12 @@ relays without core, is yours to mask (`personalclaw.sdk.channel.redact`).
 Render `request_approval`'s prompt from `personalclaw.sdk.channel.approval_brief_for(event)`: the
 tool, its arguments (`input`), the purpose the runner gave, and the `summary` line (what the call
 can touch, and its risk). That is what the dashboard's approval card shows, and a prompt showing
-less asks the owner to approve a call they cannot see. Every string in the brief is already masked
-with core's mask, so print it as it is and add no masking of your own. When the prompt is too long
-for one message, split it the way you split a reply and put the buttons on the last part. The same
+less asks the owner to approve a call they cannot see. Tag it with `source`, where the call came
+from in the words the dashboard names it by (`loop “Fix the README”`, `workflow “deep-research” ·
+step “sweep”`), and show that as text too: a chat's or a loop's name is in it. Every string in
+the brief is already masked with core's mask, so print it as it is and add no masking of your
+own. When the prompt is too long for one message, split it the way you split a reply and put the
+buttons on the last part. The same
 read composes a brief for an approval your own turn raised, so a channel that runs its own turns
 renders both from one place.
 

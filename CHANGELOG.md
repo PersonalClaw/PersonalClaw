@@ -162,6 +162,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Every approval card shows what it would run and where it came from: the workflow run page, Mission Control, Home's To triage and the Inbox show the tool, its risk, what it can touch, the whole command or path behind Show all, and the loop, workflow step, trigger or chat that asked; a channel's prompt names that source too, where a loop's call read "[chat]".**
 - **The agent's `grep` leaves out binary files, as `grep -I` does, rather than returning lines of a database's or an image's bytes.**
 - **An MCP server that lists a tool with no description, or a tool whose name a model provider does not accept, no longer fails every chat turn: the tool is offered with a description written from its name and inputs (shown on the Tools page too) and under a name every provider accepts, and one that still cannot be offered is left out and logged.**
 - **An MCP server's card says how its start really ended: it exited, with its exit code and the line that says why, or it did not answer in time; what it wrote to its error output is behind Details (`McpServerInfo.detail`: an SDK addition no app has to change for), and the card updates as soon as the gateway knows, without a reload.**

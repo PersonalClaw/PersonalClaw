@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
-import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide-react'
+import { Check, X, Inbox, Sparkles, CheckCheck, Send } from 'lucide-react'
 import { api, type PendingApproval } from '../../../lib/api'
 import { reportingWrite } from '../../../app/reportingWrite'
-import { approvalDestination } from '../../../app/approvalDestination'
+import { PendingApprovalCard } from '../../../app/PendingApprovalCard'
 import { inboxRaisedBy, mirroredApprovalId, mirroredProposalId, proposalSummary, proposalTitle } from '../../../lib/attentionLanes'
 import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
@@ -13,19 +13,11 @@ import { ListSkeleton } from '../../../ui/ListScaffold'
 import type { RouteProps } from '../../../app/useQueryState'
 import { invalidateKeys } from '../../../lib/data'
 
-type Kind = 'approval' | 'inbox' | 'proposal'
-interface Entry { key: string; kind: Kind; title: string; sub: string; id: string; session?: string }
-
-/** One line saying what an approval would do and who is asking — the row carries Approve, so it
- *  has to carry what is being approved. The purpose when the agent gave one, else the call's own
- *  (server-redacted) arguments; then the chat's agent and name, or the background origin. */
-function approvalSubtitle(a: PendingApproval): string {
-  const input = typeof a.tool_input === 'string' ? a.tool_input
-    : a.tool_input == null ? '' : JSON.stringify(a.tool_input)
-  const what = (a.tool_purpose || input).replace(/\s+/g, ' ').trim()
-  const who = a.agent ? (a.session_title ? `${a.agent} in “${a.session_title}”` : a.agent) : a.source
-  return [what, who].filter(Boolean).join(' · ') || 'Tool approval'
-}
+type Kind = 'inbox' | 'proposal'
+interface Row { key: string; kind: Kind; title: string; sub: string; id: string }
+/** One queued item: an approval is the approval itself, rendered as the one approval card. */
+interface ApprovalEntry { key: string; kind: 'approval'; approval: PendingApproval }
+type Entry = Row | ApprovalEntry
 
 /** Action Center — the unified triage queue merging pending tool approvals, inbox
  *  items awaiting a reply, and skill proposals. Approvals + proposals resolve
@@ -77,14 +69,16 @@ export function ActionCenter({ navigate }: RouteProps) {
     (i) => !proposalIds.has(mirroredProposalId(i)) && !approvalIds.has(mirroredApprovalId(i)),
   )
   const allEntries: Entry[] = [
-    ...approvals.map((a) => ({ key: `a:${a.id}`, kind: 'approval' as const, id: a.id, title: `Run ${a.tool}`, sub: approvalSubtitle(a), session: a.session })),
+    // An approval is the one approval card (`PendingApprovalCard`), as everywhere else it is
+    // answered: the row read "Run bash" over one cut line, and that was what Approve approved.
+    ...approvals.map((a) => ({ key: `a:${a.id}`, kind: 'approval' as const, approval: a })),
     // Named by who raised it (`inboxRaisedBy`), as Mission Control names it: a channel message by
     // its sender, a row the platform raised by its work or its app — never by the notification
     // source it rode (`app:demo-proposer`, `loop`), which is what its sender holds.
     ...liveInbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: inboxRaisedBy(i) || 'Message', sub: i.message?.slice(0, 90) || '' })),
     // Named and summarised as Mission Control's Your turn names it: one item, one rendering.
     ...proposals.map((p) => ({ key: `p:${p.id}`, kind: 'proposal' as const, id: p.id, title: proposalTitle(p), sub: proposalSummary(p) })),
-  ].filter((e) => !done.has(e.key))
+  ].filter((e): e is Entry => !done.has(e.key))
 
   // A lane whose READ failed keeps its last-good rows, so a partial failure would otherwise vanish
   // into the queue — or into "All clear" when every lane is empty. Surface each failed lane with a
@@ -134,17 +128,11 @@ export function ActionCenter({ navigate }: RouteProps) {
   const entries = allEntries.slice(0, CAP)
   const overflow = allEntries.length - entries.length
 
-  const icon = { approval: ShieldCheck, inbox: Inbox, proposal: Sparkles }
-  const tone = { approval: 'var(--color-warn)', inbox: 'var(--color-secondary)', proposal: 'var(--color-primary)' }
-  const routeFor = (e: Entry) => {
-    // The row's OPEN target, through the one parse of an approval session key
-    // (`approvalDestination`). This used to spell `chat/<session>` for every approval, which
-    // #258 names as the third place that 404s: a workflow stage's key is
-    // `workflow:<run>:<node>`, not a chat, so the only row in this widget that could resolve
-    // the approval also sent the user nowhere if they opened it instead of pressing Approve.
-    // `navigate` strips the leading `#/` and preserves the `?node=` verbatim (`useHashRoute`).
-    if (e.kind === 'approval' && e.session) return approvalDestination(e.session).href
-    if (e.kind === 'approval') return 'chat'
+  const icon = { inbox: Inbox, proposal: Sparkles }
+  const tone = { inbox: 'var(--color-secondary)', proposal: 'var(--color-primary)' }
+  // An approval opens where it came from through its card's source link, by the one parse of its
+  // session key (`approvalDestination`): a workflow step's run, a loop, a chat.
+  const routeFor = (e: Row) => {
     // 🔑 THE ITEM, NOT THE LIST — the same defect #258 names, on the lane that was left behind.
     // `?open=<id>` is the inbox's own deep link: `InboxPage` reads the `open` param, and its
     // `WindowedList` carries an `anchorKey` added precisely so a deep-linked row scrolls into view.
@@ -157,18 +145,19 @@ export function ActionCenter({ navigate }: RouteProps) {
     return 'skills?mode=proposals'
   }
 
-  const primary = (e: Entry) => {
-    if (e.kind === 'approval') withBusy(e.key, `approve “${rowSubject([e.title, e.sub])}”`, () => api.resolveApproval(e.id, 'approve'))
-    else if (e.kind === 'proposal') withBusy(e.key, `accept “${rowSubject([e.title, e.sub])}”`, () => api.acceptSkillProposal(e.id).then(bustProposals))
+  const decide = (e: ApprovalEntry, action: 'approve' | 'reject') =>
+    withBusy(e.key, `${action === 'approve' ? 'approve' : 'deny'} “${rowSubject([e.approval.tool, e.approval.source_label])}”`,
+      () => api.resolveApproval(e.approval.id, action))
+  const primary = (e: Row) => {
+    if (e.kind === 'proposal') withBusy(e.key, `accept “${rowSubject([e.title, e.sub])}”`, () => api.acceptSkillProposal(e.id).then(bustProposals))
     // Reply resolves through `routeFor`, not its own spelling. The row body and the Reply control are
     // two entrances to ONE destination, and this line read `navigate('inbox')` beside a comment
     // promising "the detail where the draft editor lives" — the comment described the intent and the
     // call did something else. One derivation is what stops the two drifting apart again.
     else navigate(routeFor(e))
   }
-  const secondary = (e: Entry) => {
-    if (e.kind === 'approval') withBusy(e.key, `reject “${rowSubject([e.title, e.sub])}”`, () => api.resolveApproval(e.id, 'reject'))
-    else if (e.kind === 'proposal') withBusy(e.key, `reject “${rowSubject([e.title, e.sub])}”`, () => api.rejectSkillProposal(e.id).then(bustProposals))
+  const secondary = (e: Row) => {
+    if (e.kind === 'proposal') withBusy(e.key, `reject “${rowSubject([e.title, e.sub])}”`, () => api.rejectSkillProposal(e.id).then(bustProposals))
     else withBusy(e.key, `dismiss “${rowSubject([e.title, e.sub])}”`, () => api.updateInboxItem(e.id, { status: 'dismissed' }))
   }
 
@@ -181,6 +170,12 @@ export function ActionCenter({ navigate }: RouteProps) {
       ))}
       <AnimatePresence initial={false}>
         {entries.map((e) => {
+          if (e.kind === 'approval') {
+            return (
+              <PendingApprovalCard key={e.key} approval={e.approval} busy={busy.has(e.key)} opensSource
+                onDecide={(action) => decide(e, action)} />
+            )
+          }
           const Icon = icon[e.kind]
           const isBusy = busy.has(e.key)
           // 🪤 `e.title` ALONE IS NOT THE ROW. For an inbox entry it is the sender/channel, so eight
@@ -208,8 +203,8 @@ export function ActionCenter({ navigate }: RouteProps) {
                     </>
                   ) : (
                     <>
-                      <RowAction tone="ok" onClick={() => primary(e)} title={e.kind === 'approval' ? 'Approve' : 'Accept'}
-                        ariaLabel={`${e.kind === 'approval' ? 'Approve' : 'Accept'}: ${subject}`}><Check size={14} /> {e.kind === 'approval' ? 'Approve' : 'Accept'}</RowAction>
+                      <RowAction tone="ok" onClick={() => primary(e)} title="Accept"
+                        ariaLabel={`Accept: ${subject}`}><Check size={14} /> Accept</RowAction>
                       <RowAction tone="danger" onClick={() => secondary(e)} title="Reject"
                         ariaLabel={`Reject: ${subject}`}><X size={14} /></RowAction>
                     </>

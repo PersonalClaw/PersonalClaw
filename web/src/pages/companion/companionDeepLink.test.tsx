@@ -40,7 +40,7 @@ vi.mock('../../lib/api', async (orig) => {
 
 const AP = (id: string, tool: string): PendingApproval => ({
   id, request_id: id, source: 'cron', tool, tool_input: `run ${tool}`, tool_purpose: '', session: '', ts: 0,
-  session_title: '', agent: '', risk: '', grant_agent: '',
+  session_title: '', agent: '', risk: '', grant_agent: '', source_label: 'background task',
 })
 
 const OFF: PushStatus = {

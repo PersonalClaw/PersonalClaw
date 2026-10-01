@@ -54,6 +54,7 @@ const asked: PendingApproval = {
   tool: 'subagent_run(Judge the draft in two sentences.)', tool_purpose: '',
   session: 'workflow:df5827ca:judge', ts: 0, request_id: 'spawn:5c0ffee1',
   session_title: '', agent: '', risk: '', grant_agent: '',
+  source_label: 'workflow “research” · step “judge”',
 }
 
 // The approval's Inbox row, raised with it.
@@ -101,12 +102,12 @@ describe('an approval raised while the socket was down', () => {
     render(<RunToolApprovals runId="df5827ca" />)
     latest().open()
     await settle()
-    expect(screen.queryByRole('button', { name: /Approve: subagent_run/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Allow subagent_run/ })).toBeNull()
 
     await restart(() => approvals.mockResolvedValue([asked]))
 
     expect(
-      screen.queryByRole('button', { name: /Approve: subagent_run/ }),
+      screen.queryByRole('button', { name: /^Allow subagent_run/ }),
       'the run page shows no Approve for the approval its resumed step raised',
     ).toBeTruthy()
   })
@@ -176,11 +177,11 @@ describe('an approval answered while the socket was down', () => {
     render(<ApprovalDecision approvalId={asked.id} />)
     latest().open()
     await settle()
-    expect(screen.queryByRole('button', { name: /Approve: subagent_run/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Allow subagent_run/ })).toBeTruthy()
 
     await restart(() => approvals.mockResolvedValue([]))
 
-    expect(screen.queryByRole('button', { name: /Approve: subagent_run/ }),
+    expect(screen.queryByRole('button', { name: /^Allow subagent_run/ }),
       'an approval answered elsewhere still offers Approve').toBeNull()
     expect(screen.getByText(/Nothing is waiting on this any more/)).toBeTruthy()
   })

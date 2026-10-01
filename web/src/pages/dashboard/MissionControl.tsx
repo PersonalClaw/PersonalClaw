@@ -11,6 +11,7 @@ import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { LANES, toLanes, type ActivityInput, type Lane, type LaneCard } from '../../lib/attentionLanes'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { PendingApprovalCard } from '../../app/PendingApprovalCard'
 
 // ── Mission Control — the locked four-lane attention view ──────────────────────────────────
 //
@@ -324,7 +325,7 @@ export function MissionControl() {
       api
         .resolveApproval(approvalId, action)
         .then(() => {
-          mark(cardKey, { state: 'done', text: action === 'approve' ? 'Approved.' : 'Rejected.' })
+          mark(cardKey, { state: 'done', text: action === 'approve' ? 'Approved.' : 'Denied.' })
           refresh()
         })
         .catch((err) => {
@@ -521,21 +522,33 @@ function AttentionCard({
   const proposal = card.origin === 'proposal' ? card.proposal : null
   const item = card.origin === 'inbox' ? card.item : null
   const question = questionOf(item)
-  // ONE subject string feeds every control's accessible name on this card, capped by the shared
-  // `rowSubject` rule. "Approve" alone is ambiguous the moment two cards are on screen — and this
-  // view guarantees four lanes of them — so each name carries what it acts on.
-  // `raisedBy` rather than the row's channel: an Inbox row's channel is its notification pair's
-  // source, which read "loop" on a workflow's, a trigger's and the control bridge's cards alike.
-  const subject = rowSubject([
-    card.title,
-    approval?.tool,
-    card.raisedBy,
-    card.subtitle,
-    approval?.session,
-  ])
   // Answered, or nothing left to answer: either way the verbs go.
   const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const busy = outcome?.state === 'busy'
+
+  if (approval) {
+    // The one approval card, as the chat, the run page and the Inbox show it: the tool and its
+    // risk, what it can touch, the whole command or path a click away, and where it came from,
+    // which opens. It read "Loop · write_file" with Approve and Reject, and nothing of the call.
+    return (
+      <div className="flex min-w-0 flex-col gap-xs">
+        {settled ? (
+          <p data-type="label-m" className="min-w-0 truncate text-on-surface-var">{card.title}</p>
+        ) : (
+          <PendingApprovalCard approval={approval} busy={busy} opensSource
+            onDecide={(action) => onResolve(card.key, approval.id, action)} />
+        )}
+        <CardOutcome outcome={outcome} />
+      </div>
+    )
+  }
+
+  // ONE subject string feeds every control's accessible name on this card, capped by the shared
+  // `rowSubject` rule. "Accept" alone is ambiguous the moment two cards are on screen — and this
+  // view guarantees four lanes of them — so each name carries what it acts on.
+  // `raisedBy` rather than the row's channel: an Inbox row's channel is its notification pair's
+  // source, which read "loop" on a workflow's, a trigger's and the control bridge's cards alike.
+  const subject = rowSubject([card.title, card.raisedBy, card.subtitle])
 
   return (
     <div className="flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s">
@@ -574,65 +587,13 @@ function AttentionCard({
         </TextLink>
       ) : null}
 
-      {/* The outcome, in words, in a live region. A resolved card that only changed colour is a
-          card a screen-reader user cannot tell from a pending one — and the colour is also the
-          only thing stopping a sighted user from clicking approve twice. */}
-      {outcome?.state === 'done' ? (
-        <p
-          role="status"
-          data-type="body-s"
-          className="flex min-w-0 items-center gap-xs text-on-surface-var"
-        >
-          <CheckCircle2 size={14} className="shrink-0 text-success" aria-hidden="true" />
-          {outcome.text}
-        </p>
-      ) : null}
-      {outcome?.state === 'ended' ? (
-        <p
-          role="status"
-          data-type="body-s"
-          className="flex min-w-0 items-start gap-xs text-on-surface-var"
-        >
-          <Ban size={14} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
-          {outcome.text}
-        </p>
-      ) : null}
-      {outcome?.state === 'failed' ? (
-        <p role="alert" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
-          {outcome.text}
-        </p>
-      ) : null}
+      <CardOutcome outcome={outcome} />
 
       {/* Settled ⇒ the verbs are GONE, not disabled. A disabled approve on a resolved card is
           still an invitation to try, and the second attempt on an already-resolved id is a real
           action. A FAILED card keeps its verbs: retrying is the whole point of being told. */}
       {settled ? null : (
         <div className="flex min-w-0 flex-wrap items-center gap-xs">
-          {approval ? (
-            <>
-              <Button
-                size="xs"
-                variant="primary"
-                loading={busy}
-                disabled={busy}
-                ariaLabel={`Approve ${subject}`}
-                onClick={() => onResolve(card.key, approval.id, 'approve')}
-              >
-                <Check size={13} aria-hidden="true" /> Approve
-              </Button>
-              <Button
-                size="xs"
-                variant="secondary"
-                disabled={busy} disabledReason={BUSY_REASON}
-                ariaLabel={`Reject ${subject}`}
-                onClick={() => onResolve(card.key, approval.id, 'reject')}
-              >
-                <X size={13} aria-hidden="true" /> Reject
-              </Button>
-            </>
-          ) : null}
-
           {proposal ? (
             <>
               {/* `loading` on both, as a question's Approve and Deny: while the decision is on its
@@ -670,6 +631,43 @@ function AttentionCard({
         </div>
       )}
     </div>
+  )
+}
+
+/** How a card's answer went, in words, in a live region. */
+function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
+  return (
+    <>
+      {/* The outcome, in words, in a live region. A resolved card that only changed colour is a
+          card a screen-reader user cannot tell from a pending one — and the colour is also the
+          only thing stopping a sighted user from clicking approve twice. */}
+      {outcome?.state === 'done' ? (
+        <p
+          role="status"
+          data-type="body-s"
+          className="flex min-w-0 items-center gap-xs text-on-surface-var"
+        >
+          <CheckCircle2 size={14} className="shrink-0 text-success" aria-hidden="true" />
+          {outcome.text}
+        </p>
+      ) : null}
+      {outcome?.state === 'ended' ? (
+        <p
+          role="status"
+          data-type="body-s"
+          className="flex min-w-0 items-start gap-xs text-on-surface-var"
+        >
+          <Ban size={14} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
+          {outcome.text}
+        </p>
+      ) : null}
+      {outcome?.state === 'failed' ? (
+        <p role="alert" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+          {outcome.text}
+        </p>
+      ) : null}
+    </>
   )
 }
 
