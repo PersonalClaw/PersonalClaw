@@ -185,6 +185,28 @@ def hold_from_someone_new(
     return item
 
 
+def open_inbox_items(*, kind: str = "", state=None) -> list[InboxItem] | None:
+    """The Inbox rows still wanting the owner (``OPEN_STATUSES``), newest first, for an agent.
+
+    ``None`` when no dashboard state is wired, which is "the Inbox could not be read", never an
+    empty Inbox. Reads only: it takes in what another writer put in the file first (as the
+    Inbox's own list does), and marks nothing seen. ``kind`` narrows to one item kind. Called on
+    the loop that owns the store, as the Inbox's routes are: taking in another writer's rows
+    changes the store, and nothing changes it off that loop.
+    """
+    st = state or _dashboard_state
+    if st is None:
+        return None
+    store = _store_from_state(st)
+    store.refresh()
+    items = [
+        i
+        for i in store.open_items()
+        if not kind or str(getattr(i.item_kind, "value", i.item_kind) or "message") == kind
+    ]
+    return sorted(items, key=lambda i: float(i.created_at or 0.0), reverse=True)
+
+
 def post_to_inbox(
     message: str,
     *,

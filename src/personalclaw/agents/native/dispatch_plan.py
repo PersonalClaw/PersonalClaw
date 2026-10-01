@@ -243,6 +243,7 @@ _RESERVATIONS = {
     "project_run_start": _ns(WRITE, NS_TASKS),
     # inbox + stored tool results
     "post_to_inbox": _ns(WRITE, NS_INBOX),
+    "inbox_list": _ns(READ, NS_INBOX),
     "tool_result_get": _ns(READ, NS_TOOL_RESULTS),
 }
 

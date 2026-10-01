@@ -11,7 +11,7 @@ import { type ReactNode } from 'react'
 import {
   Wrench, Terminal, FileText, FilePen, FilePlus, Search, Globe, Bot, List,
   Trash2, FolderInput, Brain, BookOpen, ListChecks, Database, GitBranch,
-  MessageSquare, type LucideIcon,
+  MessageSquare, Inbox, type LucideIcon,
 } from 'lucide-react'
 import { Markdown } from '../../../ui/Markdown'
 import { fvs } from '../../../design/fontWeight'
@@ -266,7 +266,7 @@ const ICON_BY_NAME: Record<string, LucideIcon> = {
   project_run_list: ListChecks,
   // web / memory / misc
   web_search: Globe, web_fetch: Globe, memory_recall: Brain, memory_remember: Brain,
-  tool_result_get: FileText, post_to_inbox: MessageSquare,
+  tool_result_get: FileText, post_to_inbox: MessageSquare, inbox_list: Inbox,
 }
 
 const _BY_KIND: Record<string, LucideIcon> = {
@@ -319,7 +319,7 @@ const LABEL_BY_NAME: Record<string, string> = {
   // web / memory / misc
   web_search: 'Web search', web_fetch: 'Fetch page', memory_recall: 'Recall',
   memory_remember: 'Remember', tool_result_get: 'Fetch full result',
-  post_to_inbox: 'Notify',
+  post_to_inbox: 'Notify', inbox_list: 'Read the Inbox',
 }
 export function labelForTool(seg: ToolSegment): string {
   const raw = seg.tool || ''

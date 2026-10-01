@@ -107,6 +107,9 @@ class TriageResult:
             # The ordinal→provenance map, so a surface opened after this process exited can
             # still redeem an ordinal without re-collecting. See `Manifest.projection`.
             "items": self.manifest.projection(),
+            # The ordinals the gate kept, so a surface shows each item it counts once and never
+            # one the user's rules filtered (`surface.build_digest_view`).
+            "kept": [item.ordinal for item in self.gate.kept],
             "dropped": len(self.gate.dropped),
             "surfaced": len(self.gate.surfaced),
             "proposable": len(self.gate.proposable),
@@ -372,6 +375,11 @@ async def run_triage(
         dropped_count=len(gate.dropped),
         degraded=batch.degraded,
         auto_lines=render_auto_lines(auto) if auto is not None else (),
+        acted_on=(
+            frozenset(a.proposal.item_id for a in auto.executed)
+            if auto is not None
+            else frozenset()
+        ),
     )
     delivered = bool(deliver(digest))
 

@@ -874,6 +874,30 @@ class TestTheCollectors:
         got = {i.source_id for i in collect_inbox(store)}
         assert got == {"a", "c"}
 
+    def test_a_row_raised_since_the_gateway_started_is_collected(self, tmp_path) -> None:
+        # A row raised in this process kept its default status as the `ItemStatus` member, and
+        # `str()` of that member is "ItemStatus.PENDING", which is in no status set: the digest
+        # skipped every row raised since the last restart (a loop's "Needs you" among them)
+        # until the file was read again. The default is now the value a file read gives.
+        from personalclaw.inbox import InboxItem, InboxStore
+        from personalclaw.proactive.collect import collect_inbox
+
+        store = InboxStore(path=tmp_path / "inbox.json")
+        store.add(
+            InboxItem(
+                id="needs_input_e0",
+                channel="loop",
+                channel_name="loop",
+                thread_ts=None,
+                message="Loop stopped at its budget",
+                sender_id="loop",
+                sender_name="loop",
+                created_at=100.0,
+            )
+        )
+        assert str(store.items["needs_input_e0"].status) == "pending"
+        assert [i.source_id for i in collect_inbox(store)] == ["needs_input_e0"]
+
     def test_only_unanswered_channel_sessions_are_collected(self) -> None:
         from personalclaw.proactive.collect import collect_channels
 
@@ -921,9 +945,52 @@ class TestTheCollectors:
         from personalclaw.proactive.collect import _run_materiality
 
         assert _run_materiality("failed", 0) == "error"
-        assert _run_materiality("completed", 2) == "action"
-        assert _run_materiality("completed", 0) == "response"
+        # Handed to you: it needs a human, which is what `error` means here.
+        assert _run_materiality("escalated", 4) == "error"
+        assert _run_materiality("complete", 2) == "action"
+        assert _run_materiality("complete", 0) == "response"
         assert _run_materiality("running", 0) == "none"
+
+    def test_a_run_still_going_is_not_an_outcome_whatever_it_wrote(self) -> None:
+        # The digest's own run is RUNNING while it collects, and had written an effect: it was
+        # listed under "What your machine did" as "morning-triage: running (1 effect)". A run that
+        # has not ended is not something the machine did, whatever it has written so far.
+        from personalclaw.proactive.collect import _run_materiality
+
+        for status in ("running", "paused", "needs_input", "draft"):
+            assert _run_materiality(status, 1) == "none", status
+        # Not a status the run store writes: nothing is known about it, so it is not collected.
+        assert _run_materiality("completed", 0) == "none"
+
+    def test_the_digest_does_not_collect_its_own_run(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        import personalclaw.ledger as ledger
+        from personalclaw.proactive import collect
+        from personalclaw.workflows import store as run_store
+
+        runs = [
+            SimpleNamespace(
+                id="r-own",
+                created_at="2026-09-30T22:52:00+00:00",
+                status="running",
+                workflow_name="morning-triage",
+                error_message="",
+            ),
+            SimpleNamespace(
+                id="r-onb",
+                created_at="2026-09-30T18:20:00+00:00",
+                status="escalated",
+                workflow_name="general-project",
+                error_message="",
+            ),
+        ]
+        monkeypatch.setattr(run_store, "list_runs", lambda limit: (runs, len(runs)))
+        effects = {"r-own": [{}], "r-onb": [{}, {}, {}, {}]}
+        monkeypatch.setattr(ledger, "read_events", lambda store, run_id, kinds: effects[run_id])
+
+        got = {item.source_id: item.materiality for item in collect.collect_runs()}
+        assert got == {"r-onb": "error"}
 
 
 def test_the_prompts_the_pipeline_asks_for_actually_ship() -> None:
@@ -1051,3 +1118,30 @@ class TestTheProviderDrivesTheRealPipelineEndToEnd:
         assert proposal["item_id"] == keep
         assert (proposal["tier"], proposal["clamped"]) == ("medium", True)
         assert len(summary["proposals"]) <= MAX_PROPOSALS
+
+
+def test_the_window_starts_at_the_last_digest_that_completed(monkeypatch) -> None:
+    """The window is "since the last digest", read off the run store by its own status word.
+
+    It asked for ``status="completed"``, which the run store never writes (``RunStatus.COMPLETE``
+    is ``"complete"``), so no digest was ever found and every run looked back the fallback day.
+    """
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from personalclaw.action_providers import triage_digest_provider as provider
+    from personalclaw.workflows import store as run_store
+
+    asked: dict[str, Any] = {}
+
+    def list_runs(**kw: Any):
+        asked.update(kw)
+        if kw.get("status") != "complete":
+            return [], 0
+        return [SimpleNamespace(completed_at="2026-09-30T12:00:00Z", created_at="")], 1
+
+    monkeypatch.setattr(run_store, "list_runs", list_runs)
+    since_ts, since_iso = provider._window({})
+    assert asked["workflow_name"] == "morning-triage"
+    assert since_iso == "2026-09-30T12:00:00Z"
+    assert since_ts == datetime.fromisoformat("2026-09-30T12:00:00+00:00").timestamp()

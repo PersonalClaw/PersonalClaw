@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AlertTriangle, CheckCheck, Clock, ExternalLink, Power, RotateCcw, ScrollText, Sparkles } from 'lucide-react'
+import { AlertTriangle, CheckCheck, Clock, ExternalLink, Inbox, Power, RotateCcw, ScrollText, Sparkles } from 'lucide-react'
 import { api, type TriageDigestNotice, type TriageDigestView, type TriageNoticeOutcome, type TriagePending } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { Surface } from '../../ui/Surface'
@@ -236,6 +236,8 @@ export function TriageDigestCard() {
 
   const autoDone = view.auto_done || []
   const pending = view.pending || []
+  const ran = view.ran || []
+  const waiting = view.waiting || []
   const ledger = view.machine_did || []
 
   return (
@@ -278,8 +280,9 @@ export function TriageDigestCard() {
       <SectionHead icon={CheckCheck} title="What your machine did" />
       {!view.auto_stage_ran ? (
         // NOT "0 actions". The stage never ran, which is a different fact and the default one.
+        // It speaks for the digest only: the runs listed under it ran on their own triggers.
         <p data-type="body-s" className="text-on-surface-low">
-          Auto-execution is off — nothing ran without you. Everything below is a proposal.
+          Auto-execution is off — the digest acted on nothing without you. What it proposes waits for you below.
         </p>
       ) : autoDone.length === 0 ? (
         <p data-type="body-s" className="text-on-surface-low">
@@ -312,6 +315,25 @@ export function TriageDigestCard() {
         </ul>
       )}
 
+      {/* The runs that ended in the window — what the digest's own body lists under this heading.
+          The card counted them in "N items in this window" and showed none of them. */}
+      {ran.length > 0 && (
+        <ul aria-label="Runs that ended in this window" className="mt-s flex flex-col gap-s">
+          {ran.map((row) => (
+            <li key={row.ordinal} className="flex items-center gap-m rounded-lg bg-surface-high px-m py-s">
+              <p data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{row.title || `item ${row.ordinal}`}</p>
+              {row.needs_you && <Badge tone="warn">needs you</Badge>}
+              {row.item_permalink && (
+                <TextLink href={row.item_permalink} ink="emphasis" size="xs" className="shrink-0"
+                  aria-label={`Open the run ${row.title || `item ${row.ordinal}`}`}>
+                  open
+                </TextLink>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
       {/* ── Needs you ── */}
       <SectionHead icon={AlertTriangle} title="Needs you" count={pending.length} />
       {pending.length === 0 ? (
@@ -324,6 +346,27 @@ export function TriageDigestCard() {
         </ul>
       )}
       {help && <p data-type="caption" className="mt-s text-warn" role="status">{help}</p>}
+
+      {/* ── Also waiting: what else the gate kept that no proposal is about ── */}
+      {waiting.length > 0 && (
+        <>
+          <SectionHead icon={Inbox} title="Also waiting" count={waiting.length} />
+          <ul aria-label="Also waiting" className="flex flex-col gap-s">
+            {waiting.map((row) => (
+              <li key={row.ordinal} className="flex items-center gap-m rounded-lg bg-surface-high px-m py-s">
+                <p data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{row.title || `item ${row.ordinal}`}</p>
+                {row.source && <span data-type="caption" className="shrink-0 text-on-surface-low">{row.source}</span>}
+                {row.item_permalink && (
+                  <TextLink href={row.item_permalink} ink="emphasis" size="xs" className="shrink-0"
+                    aria-label={`Open ${row.title || `item ${row.ordinal}`}`}>
+                    open
+                  </TextLink>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       {/* ── The ledger ── */}
       <SectionHead icon={ScrollText} title="In the run journal" count={ledger.length} />

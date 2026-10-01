@@ -1,8 +1,10 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { ShieldQuestion, type LucideIcon } from 'lucide-react'
 import { messageEnter } from '../design/motion'
 import { fvs } from '../design/fontWeight'
+import { clipWords } from '../lib/clipWords'
+import { Button } from './Button'
 
 /** ONE renderer for "the agent is blocked waiting on your permission".
  *
@@ -14,8 +16,8 @@ import { fvs } from '../design/fontWeight'
  *  so the shell lives here once and each surface supplies an adapter.
  *
  *  Two densities, because the difference is real and not cosmetic:
- *   • `compact` — the chat column. The argument line is a single truncated mono row; the
- *     card sits inline between turns.
+ *   • `compact` — the chat column and the code cockpit. The argument line is one mono row cut
+ *     at a word, with the whole input a click away; the card sits inline between turns.
  *   • `roomy` — the companion. FULL arguments (a phone approval is the whole decision, so
  *     truncating the thing being approved would hide what is being consented to), a metadata
  *     block, and ≥44px action targets for a thumb.
@@ -54,7 +56,8 @@ export function ApprovalPrompt({
   tool, args, purpose, badge, meta, scope, choices, density = 'compact', className,
 }: {
   tool: string
-  /** The tool's arguments, raw. `compact` truncates; `roomy` shows all of it. */
+  /** The tool's arguments, raw. `compact` cuts them at a word and shows all of them on demand;
+   *  `roomy` shows all of them. */
   args?: string
   purpose?: string
   /** Optional chip beside the heading (the chat's risk indicator). */
@@ -100,7 +103,7 @@ export function ApprovalPrompt({
               )}
             </>
           ) : (
-            <div data-type="caption" className="mt-0.5 truncate font-mono text-on-surface-var">{tool}{args ? `(${args.replace(/\s+/g, ' ').slice(0, 60)})` : ''}</div>
+            <CompactArgs tool={tool} args={args} />
           )}
           {purpose && <p data-type={roomy ? 'body-s' : 'caption'} className="mt-1 text-on-surface-low">{purpose}</p>}
           {meta}
@@ -114,6 +117,41 @@ export function ApprovalPrompt({
         {choices.map((c) => <ApprovalChoiceButton key={c.key} choice={c} roomy={roomy} />)}
       </div>
     </motion.div>
+  )
+}
+
+/** How much of the arguments the compact line shows before it offers the rest. */
+const COMPACT_ARGS = 60
+
+/** The compact argument line: `tool(args)`, the arguments cut at a word, and all of them on demand.
+ *
+ *  It was `args.slice(0, 60)` under a CSS truncate, so the cockpit asked to allow
+ *  `bash({"command": "find /home/user/src/feedsmith -name \"C)` and nothing on the card showed the
+ *  rest: she allowed a command she could not read. The line is cut at a word (`clipWords`, the
+ *  server's `textfmt.clip_words` rule) and wraps rather than truncating, and when it is cut the
+ *  whole input opens in the same scrollable block the roomy card shows. */
+function CompactArgs({ tool, args }: { tool: string; args?: string }) {
+  const [open, setOpen] = useState(false)
+  const whole = (args ?? '').split(/\s+/).filter(Boolean).join(' ')
+  const line = clipWords(whole, COMPACT_ARGS)
+  const cut = line !== whole
+  return (
+    <>
+      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-s">
+        <div data-type="caption" className="min-w-0 break-all font-mono text-on-surface-var">{tool}{line ? `(${line})` : ''}</div>
+        {cut && (
+          <Button variant="ghost" size="xs" ariaExpanded={open}
+            ariaLabel={open ? `Hide what ${tool} would run` : `Show all of what ${tool} would run`}
+            onClick={() => setOpen((o) => !o)}>
+            {open ? 'Hide' : 'Show all'}
+          </Button>
+        )}
+      </div>
+      {cut && open && (
+        <pre tabIndex={0} role="group" aria-label="Tool arguments" data-type="caption"
+          className="mt-xs max-h-[14rem] overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-high p-s font-mono text-on-surface-var">{args}</pre>
+      )}
+    </>
   )
 }
 

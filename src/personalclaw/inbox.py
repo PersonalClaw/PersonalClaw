@@ -319,10 +319,14 @@ class InboxItem:
     sender_id: str
     sender_name: str
     thread_context: list[dict[str, str]] = field(default_factory=list)
-    classification: str = Classification.NEEDS_REPLY
+    # The VALUES, as a row read back from the file holds them. With the enum members as defaults,
+    # a row raised in this process differed from the same row after a restart: `str()` of a member
+    # is "ItemStatus.PENDING", so a reader comparing `str(item.status)` (the triage digest's
+    # collector) skipped every row raised since the gateway started.
+    classification: str = Classification.NEEDS_REPLY.value
     draft: str = ""
-    confidence: str = Confidence.NEEDS_REVIEW
-    status: str = ItemStatus.PENDING
+    confidence: str = Confidence.NEEDS_REVIEW.value
+    status: str = ItemStatus.PENDING.value
     created_at: float = 0.0
     context_summary: str = ""  # what context the LLM used for drafting
     # Which source provider produced this item — its ``source_name`` (native /

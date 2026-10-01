@@ -26,6 +26,10 @@ against core protocols). Paths are relative to
   at most `DRAFT_INSTRUCTIONS_MAX_CHARS`; longer is refused with `instructions_too_long`
   before the model runs) hands it to the model after the `inbox_draft` prompt, outside the
   fence around the sender's text, so it is followed whatever prompt is bound for drafting.
+- **Agents read it** with `inbox_list` (`agents/native/inbox_tool_defs.py`): the open items
+  (`OPEN_STATUSES`), newest first, with what each is, who raised it, when, and its text, the
+  sender and text fenced as untrusted data. It declares itself a read, so a read-only automation
+  (a scheduled briefing) may call it, and it marks nothing seen. `post_to_inbox` is the write.
 - **Sources** — `inbox_providers/` ships native push + filesystem sources;
   the seam is entry-point discoverable (`provider_registry.py`) and apps
   contribute their own. A **channel app is expected to register one**: the

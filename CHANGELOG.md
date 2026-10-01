@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An agent can read what is waiting in your Inbox (`inbox_list`), so a Morning briefing that asks about your Inbox can answer.**
 - **An email's attachments are listed in the Inbox by name, type and size, each with a download, and an agent reading the message is given each one's text inside a fence: `IncomingMessage.files` and `ChannelMessage.files` carry `personalclaw.sdk.inbox.Attachment` (`personalclaw.sdk.channel.Attachment`), used by `mail-inbox` and `email-channel`.**
 - **An automation that starts an agent can name the files its job changes (Files it may change): its agent may write those and nothing else, and its Allow says what its agent may do.**
 - **"Make me a button that runs …" makes an automation that runs when you run it, and the chat shows it with its Run now.**
@@ -148,6 +149,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The phone's Recent list shows your newest notifications first.**
+- **The Morning triage card shows every item it counts: the runs that ended and what else is waiting. Its digest collects what reached your Inbox since the gateway started, looks back to the last digest, and no longer lists its own run as something your machine did or an item it acted on as still waiting.**
+- **A permission card in a chat or the Code cockpit cuts what it runs at a word, and Show all opens the whole of it.**
+- **The Code cockpit's "worker needs your input" toast stays out of the way of the Tasks panel it points to, says what the worker is waiting on, and its Respond opens the panel.**
 - **Saving a file as an artifact again while its artifact is being deleted answers that the artifact is not found (404 `not_found`) instead of an empty success.**
 - **Audio transcribes in the container image again: the image and the desktop app install exactly the dependency versions the tests ran (`uv.lock`) instead of the newest each range allows, and `personalclaw[stt]` keeps PyAV below 19, whose `av.open` faster-whisper cannot call.**
 - **Files › Go to path opens a file given its path, on the folder that holds it, reads a relative path against the folder it shows, and offers files as well as folders.**

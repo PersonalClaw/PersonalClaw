@@ -85,9 +85,12 @@ def _window(config: dict[str, Any]) -> tuple[float, str]:
     fallback = time.time() - max(0.0, hours) * 3600.0
 
     try:
+        from personalclaw.workflows.models import RunStatus
         from personalclaw.workflows.store import list_runs
 
-        runs, _total = list_runs(workflow_name=TRIAGE_WORKFLOW, status="completed", limit=1)
+        # The run store's own word (`RunStatus.COMPLETE`, "complete"): "completed" matched no
+        # run, so the window never started at the last digest.
+        runs, _total = list_runs(workflow_name=TRIAGE_WORKFLOW, status=RunStatus.COMPLETE, limit=1)
     except Exception:  # noqa: BLE001 - no run store → the fallback window is correct
         runs = []
     if runs:

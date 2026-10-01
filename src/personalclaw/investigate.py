@@ -115,11 +115,6 @@ async def _resolve_inbox_item(entity_id: str, state) -> InvestigateContext | Non
         return None
     from personalclaw.inbox import SOURCE_DECLARABLE_KINDS, ItemKind
 
-    def _word(value: Any) -> str:
-        # The stored word: a row made in this process holds the dataclass's enum defaults, which
-        # format as `Classification.NEEDS_REPLY` rather than the word the store writes.
-        return str(getattr(value, "value", value))
-
     lines = [
         f"Inbox item {item.id}",
         f"From: {item.sender_name or item.sender_id}",
@@ -129,12 +124,10 @@ async def _resolve_inbox_item(entity_id: str, state) -> InvestigateContext | Non
         # The triage verdict of a channel message. Every other row carries the store's default
         # (`needs_reply`, high confidence) that nobody made: quoted, it tells the chat that a note
         # she wrote to herself is waiting on her reply.
-        lines.append(
-            f"Classification: {_word(item.classification)} (confidence: {_word(item.confidence)})"
-        )
+        lines.append(f"Classification: {item.classification} (confidence: {item.confidence})")
     else:
         lines.append(f"Kind: {item.item_kind}")
-    lines.append(f"Status: {_word(item.status)}")
+    lines.append(f"Status: {item.status}")
     for turn in (item.thread_context or [])[-8:]:
         who = str(turn.get("sender_name") or turn.get("sender") or "someone")
         txt = str(turn.get("text") or "").strip()

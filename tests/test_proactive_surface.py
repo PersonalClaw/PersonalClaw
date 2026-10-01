@@ -513,3 +513,79 @@ class TestTheReplyLedgerKindIsVisible:
         from personalclaw.ledger.kinds import TRIAGE_REPLY
 
         assert TRIAGE_REPLY in MACHINE_DID_KINDS
+
+
+#: A run-lane item and the window that holds it beside the three-item fixture: what the digest's
+#: body lists under "What your machine did".
+_RUN_ITEM = {
+    "ordinal": "4",
+    "source": "run",
+    "source_id": "r-onb",
+    "title": "general-project: escalated (4 effects)",
+    "permalink": "#/workflows/runs/r-onb",
+    "materiality": "error",
+}
+
+
+def _with_run(**overrides: Any) -> dict:
+    out = _output(**overrides)
+    out["items"] = [*out["items"], _RUN_ITEM]
+    out["collected"] = _FIXTURE_ITEMS + 1
+    out["lanes"] = {"inbox": 2, "channel": 1, "run": 1}
+    return out
+
+
+class TestTheCardShowsWhatItCounts:
+    """The card said "2 items in this window" and showed neither: its sections held only the
+    proposals and the auto-executed actions, while the digest's body also listed the runs that
+    finished and what else was waiting. Every item the gate kept now has one place on the card."""
+
+    def test_the_summary_records_which_items_the_gate_kept(self, window: Manifest) -> None:
+        from personalclaw.proactive.gate import GateResult
+
+        kept = (window.items[0], window.items[2])
+        summary = TriageResult(
+            manifest=window, gate=GateResult(proposable=kept[:1], surfaced=kept[1:])
+        ).summary()
+        assert summary["kept"] == ["1", "3"]
+
+    def test_every_kept_item_has_one_place(self) -> None:
+        view = build_digest_view(
+            enabled=True, installed=True, run=_RUN, output=_with_run(kept=["1", "2", "3", "4"])
+        )
+        pending = [row["ordinal"] for row in view["pending"]]
+        ran = [row["ordinal"] for row in view["ran"]]
+        waiting = [row["ordinal"] for row in view["waiting"]]
+        assert (pending, ran, waiting) == (["1", "2"], ["4"], ["3"])
+        # Counted and shown agree: nothing kept is missing, nothing appears twice.
+        shown = pending + ran + waiting
+        assert sorted(shown) == ["1", "2", "3", "4"] and len(shown) == view["collected"]
+
+    def test_a_run_that_needs_you_says_so(self) -> None:
+        view = build_digest_view(
+            enabled=True, installed=True, run=_RUN, output=_with_run(kept=["1", "2", "3", "4"])
+        )
+        (row,) = view["ran"]
+        assert row["title"] == "general-project: escalated (4 effects)"
+        assert row["item_permalink"] == "#/workflows/runs/r-onb"
+        assert row["needs_you"] is True
+
+    def test_an_item_the_rules_filtered_is_counted_not_shown(self) -> None:
+        view = build_digest_view(
+            enabled=True,
+            installed=True,
+            run=_RUN,
+            output=_output(kept=["1", "3"], dropped=1, proposals=[]),
+        )
+        assert [row["ordinal"] for row in view["waiting"]] == ["1", "3"]
+        titles = {row["title"] for row in view["waiting"] + view["ran"]}
+        assert "Dependabot bumped left-pad" not in titles
+        assert view["dropped"] == 1
+
+    def test_an_action_already_taken_is_not_also_waiting(self) -> None:
+        view = build_digest_view(
+            enabled=True, installed=True, run=_RUN, output=_auto_ran(kept=["1", "2", "3"])
+        )
+        assert [row["ordinal"] for row in view["auto_done"]] == ["2"]
+        assert [row["ordinal"] for row in view["pending"]] == ["1"]
+        assert [row["ordinal"] for row in view["waiting"]] == ["3"]

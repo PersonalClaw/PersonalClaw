@@ -1324,6 +1324,8 @@ class TestTheCallSite:
         assert "What your machine did:" in body
         assert "auto-archive on #1" in body
         assert "Needs you:" not in body
+        # Nor under "Also waiting": the item the machine just archived is not waiting on anyone.
+        assert "Also waiting:" not in body
 
         # 4. The undo the row promised actually resolves.
         from personalclaw.action_providers.registry import get_action_provider

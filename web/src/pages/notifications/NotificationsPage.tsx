@@ -22,7 +22,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type NotificationItem } from '../../lib/api'
 import { useAutonomyLadder } from '../../lib/rungs'
-import { noteMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg, notificationLink } from './notificationMeta'
+import { noteMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg, notificationLink, newestFirst } from './notificationMeta'
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
@@ -99,8 +99,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
     load()
   }
 
-  // newest first (the log is appended chronologically)
-  const ordered = useMemo(() => (items ? [...items].reverse() : null), [items])
+  const ordered = useMemo(() => (items ? newestFirst(items) : null), [items])
   const unread = items?.filter((n) => !n.acked).length ?? 0
   const kinds = useMemo(() => (items ? kindsPresent(items) : []), [items])
 

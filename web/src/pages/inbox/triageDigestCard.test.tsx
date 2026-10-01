@@ -195,6 +195,47 @@ describe('an unmeasured value is not rendered as a zero', () => {
   })
 })
 
+describe('the card shows the items it counts', () => {
+  // The card said "2 items in this window" and showed neither: its sections held only proposals
+  // and actions taken, while the digest's own notification listed the two under "What your machine
+  // did". Every item the gate kept now has one place: the runs that ended, and what else waits.
+  const RAN = {
+    ordinal: '2', title: 'general-project: escalated (4 effects)', source: 'run',
+    item_permalink: '#/workflows/runs/fb54446b', materiality: 'error', needs_you: true,
+  }
+  const WAITING = {
+    ordinal: '1', title: 'Can you look at the venue contract?', source: 'inbox',
+    item_permalink: '', materiality: 'response',
+  }
+
+  it('🔴 lists the runs that ended under what your machine did, and what needs you among them', async () => {
+    proactiveDigest.mockResolvedValue(view({ collected: 1, dropped: 0, auto_stage_ran: false, ran: [RAN] }))
+    render(<TriageDigestCard />)
+    const runs = await screen.findByRole('list', { name: 'Runs that ended in this window' })
+    expect(runs.textContent).toContain('general-project: escalated (4 effects)')
+    expect(runs.textContent).toContain('needs you')
+    expect(screen.getByRole('link', { name: 'Open the run general-project: escalated (4 effects)' }).getAttribute('href'))
+      .toBe('#/workflows/runs/fb54446b')
+    // The off-stage sentence no longer claims that everything below is a proposal: a run is not.
+    expect(screen.queryByText(/Everything below is a proposal/)).toBeNull()
+  })
+
+  it('🔴 lists what else is waiting', async () => {
+    proactiveDigest.mockResolvedValue(view({ collected: 1, dropped: 0, waiting: [WAITING] }))
+    render(<TriageDigestCard />)
+    const rest = await screen.findByRole('list', { name: 'Also waiting' })
+    expect(rest.textContent).toContain('Can you look at the venue contract?')
+  })
+
+  it('shows neither list when nothing is in it', async () => {
+    proactiveDigest.mockResolvedValue(view({ ran: [], waiting: [] }))
+    render(<TriageDigestCard />)
+    await screen.findByText(/items in this window/)
+    expect(screen.queryByRole('list', { name: 'Runs that ended in this window' })).toBeNull()
+    expect(screen.queryByRole('list', { name: 'Also waiting' })).toBeNull()
+  })
+})
+
 describe('the auto-done section offers undo where an undo exists', () => {
   it('undoes through the platform reversal handle', async () => {
     proactiveDigest.mockResolvedValue(view({ auto_done: [AUTO_DONE] }))

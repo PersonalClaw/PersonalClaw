@@ -10,10 +10,12 @@ Three lanes, three functions, one rule each about what "accumulated" means:
 * **channel** — a `channel:` session whose last turn is not the assistant's. That is the
   cheapest honest reading of "unresolved": the machine has the ball. Sessions the user has
   since answered themselves fall out with no bookkeeping.
-* **run** — the Run Ledger's own rows for recent runs (AUTO-R2 materiality), NOT a fresh
-  classification. A run that wrote something is `action`, one that failed is `error`, one that
-  only produced words is `response`. This plan adds zero run instrumentation, so a materiality
-  this module computed itself would be a second dialect for a question the ledger answers.
+* **run** — the Run Ledger's own rows for recent runs that have ENDED (the substrate's
+  materiality), NOT a fresh classification. A run that failed, was cancelled or was handed to you
+  is `error`, one that wrote something is `action`, one that only produced words is `response`. A
+  run still going — the digest's own run among them — is not an outcome and is not collected.
+  This plan adds zero run instrumentation, so a materiality this module computed itself would be
+  a second dialect for a question the ledger answers.
 
 Every collector is **defensive by construction**: a lane that cannot be read contributes zero
 items and a warning, never an exception. A digest is a scheduled unattended run, so one broken
@@ -151,14 +153,28 @@ def collect_channels(state: Any, *, since_ts: float = 0.0) -> list[CollectedItem
 
 
 def _run_materiality(status: str, effects: int) -> str:
-    """AUTO-R2's weight for a finished run, read off the ledger rather than re-judged."""
-    if status in ("failed", "cancelled"):
+    """A run's materiality, read off the run store's own status and the ledger.
+
+    Only an ENDED run (``RUN_PHASES``) is an outcome. The digest collects while its own run is
+    running, and that run had written an effect, so checking effects first listed it under "What
+    your machine did" as "morning-triage: running (1 effect)". The statuses are the run store's
+    (``RunStatus``): this read ``"completed"``, which the store never writes, so a finished run that
+    only produced words was never collected. A status the store does not know is not collected.
+    """
+    from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase, RunStatus
+
+    try:
+        run_status = RunStatus(status)
+    except ValueError:
+        return MATERIALITY_NONE
+    if RUN_PHASES[run_status] is not LifecyclePhase.ENDED:
+        return MATERIALITY_NONE
+    # Failed, stopped, or handed to you: each needs a human, which is what `error` means here.
+    if run_status in (RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.ESCALATED):
         return MATERIALITY_ERROR
     if effects:
         return MATERIALITY_ACTION
-    if status == "completed":
-        return MATERIALITY_RESPONSE
-    return MATERIALITY_NONE
+    return MATERIALITY_RESPONSE
 
 
 def collect_runs(*, since: str = "", limit: int = RUN_SCAN_LIMIT) -> list[CollectedItem]:
@@ -200,8 +216,8 @@ def collect_runs(*, since: str = "", limit: int = RUN_SCAN_LIMIT) -> list[Collec
                 effects = 0
             materiality = _run_materiality(status, effects)
             if materiality == MATERIALITY_NONE:
-                # An unfinished run is not an outcome. Collecting it would put a running job in
-                # the "what your machine did" section, which is a claim about the past.
+                # A run that has not ended is not an outcome. Collecting it would put a running
+                # job in the "what your machine did" section, which is a claim about the past.
                 continue
             wrote = f" ({effects} effect{'s' if effects != 1 else ''})" if effects else ""
             out.append(

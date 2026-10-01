@@ -75,7 +75,7 @@ def test_app_categories_are_the_installable_entities():
         "decision_list",
         "decision_resolve",
     }
-    assert _names(BT.create_inbox_tools_provider()) == {"post_to_inbox"}
+    assert _names(BT.create_inbox_tools_provider()) == {"post_to_inbox", "inbox_list"}
     runs = _names(BT.create_project_tools_provider())
     assert {
         "project_run_create",

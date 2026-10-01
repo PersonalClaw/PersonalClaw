@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
-import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Code2, Play, Pause, Square, Trash2, Loader2, ListChecks, FolderTree,
@@ -54,9 +53,10 @@ import { codeDeleteBody } from './codeMeta'
 import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { LoopApprovals } from '../loops/LoopApprovals'
+import { CockpitToast, useOnScreenReport, type CodeToastState } from './CodeToast'
 import { useMode } from '../../app/theme'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
-import { overlayEnter, messageEnter, listItemEnter, stagger, physics } from '../../design/motion'
+import { messageEnter, listItemEnter, stagger, physics } from '../../design/motion'
 import { Expandable } from '../../ui/motion'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -308,9 +308,16 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   const gateFail = runFlags.gate
   const stalled = runFlags.stall
   // A prominent toast when the worker needs the user — a question (attended) or a
-  // merge conflict. Surfaced over everything so the user attends even if scrolled
-  // away from the activity panel; dismissable, with a jump-to-answer action.
-  const [toast, setToast] = useState<{ kind: 'question' | 'conflict' | 'error' | 'ok'; text: string } | null>(null)
+  // merge conflict — dismissable, with a jump-to-answer action. It stands only while the Tasks
+  // rail's answer panel is off screen (`CodeToast`): over the panel, it covered the very
+  // buttons it pointed at.
+  const [toast, setToast] = useState<CodeToastState | null>(null)
+  const [answerOnScreen, setAnswerOnScreen] = useState(false)
+  // The toast's Respond: bring the rail's answer panel on screen (it may be collapsed, or a
+  // task's detail open in its place) and put the cursor in its steer box. Held until the panel
+  // has done it, so a panel that mounts after the click still does.
+  const [answerWanted, setAnswerWanted] = useState(false)
+  const answerShown = useCallback(() => setAnswerWanted(false), [])
   // Bumped on each lifecycle event (+ a slow poll while running) so the task rail
   // re-fetches — the worker marks tasks in_progress/done and creates new ones
   // mid-cycle, which the once-on-mount fetch would otherwise miss (stale rail).
@@ -360,10 +367,10 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
         // fall through: a task_done also advances the rail/queue (load + tasksNonce)
       }
       // The worker paused for the user (attended question / conflict) → toast it.
-      // The precise question lives in the activity-panel banner; the toast grabs
-      // attention + offers a jump. (load() below refreshes pending_question.)
+      // The precise question lives in the rail's answer panel, and the toast repeats it from
+      // the project as the panel shows it. (load() below refreshes pending_question.)
       if (event === 'needs_input') {
-        setToast({ kind: 'question', text: 'The worker has a question and is waiting for your answer.' })
+        setToast({ kind: 'question', text: '' })
       } else {
         setToast(null)  // any forward progress dismisses a stale toast
       }
@@ -799,7 +806,8 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
         <CollapsiblePanel side="right" panelKey="code-right" def={340} min={260} max={520}
           icon={ListChecks} label="Tasks">
           <RightPanel project={p} onTasksChanged={refetchTasks} tasksNonce={tasksNonce}
-            activityBySession={activityBySession} gateFail={gateFail} stalled={stalled} onNudged={load} onStartNew={onStartNew} />
+            activityBySession={activityBySession} gateFail={gateFail} stalled={stalled} onNudged={load} onStartNew={onStartNew}
+            onAnswerOnScreen={setAnswerOnScreen} answerWanted={answerWanted} onAnswerShown={answerShown} />
         </CollapsiblePanel>
       </div>
 
@@ -807,61 +815,15 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
         <WorkspacePicker mode="brownfield" onClose={() => setPickWs(false)} onPick={pickWorkspace} />
       )}
       <AnimatePresence>
-        {toast && (
-          <CodeToast kind={toast.kind} text={toast.text} onDismiss={() => setToast(null)}
-            onRespond={(toast.kind === 'error' || toast.kind === 'ok') ? undefined : () => { setToast(null); window.dispatchEvent(new CustomEvent('ne:code-focus-steer')) }} />
-        )}
+        <CockpitToast toast={toast} answerOnScreen={answerOnScreen} question={p.pending_question?.question}
+          onDismiss={() => setToast(null)}
+          onRespond={() => {
+            setToast(null)
+            setAnswerWanted(true)
+            window.dispatchEvent(new CustomEvent('ne:code-expand-panel', { detail: 'code-right' }))
+          }} />
       </AnimatePresence>
     </div>
-  )
-}
-
-/** A prominent, dismissable toast (bottom-right) for when the worker needs the
- *  user — an attended question or a merge conflict. Portaled over everything so
- *  it's seen regardless of scroll position; "Respond" focuses the steer box. */
-function CodeToast({ kind, text, onDismiss, onRespond }: {
-  kind: 'question' | 'conflict' | 'error' | 'ok'; text: string; onDismiss: () => void; onRespond?: () => void
-}) {
-  // The `ok` toast auto-dismisses (a success confirmation — purely informational,
-  // e.g. "saved as artifact"). error / conflict / question PERSIST: each needs the
-  // user to read + act/acknowledge, so they stay until dismissed.
-  // The timer keys off the toast IDENTITY (kind+text) only — NOT onDismiss, which the
-  // parent passes as a fresh arrow each render. A running project re-renders often
-  // (SSE/poll); depending on onDismiss restarted the timer every re-render, so a
-  // transient toast could outlive its timeout indefinitely. A ref holds the latest
-  // onDismiss so the fire-once timer still calls the current closure.
-  const dismissRef = useRef(onDismiss); dismissRef.current = onDismiss
-  useEffect(() => {
-    if (kind !== 'ok') return
-    const t = setTimeout(() => dismissRef.current(), 4000)
-    return () => clearTimeout(t)
-  }, [kind, text])
-  const tone = kind === 'error' ? 'var(--color-danger)'
-    : kind === 'conflict' ? 'var(--color-warn)' : kind === 'ok' ? 'var(--color-ok)' : 'var(--color-info)'
-  const Icon = kind === 'error' ? XCircle : kind === 'conflict' ? AlertTriangle : kind === 'ok' ? CheckCircle2 : HelpCircle
-  return createPortal(
-    <motion.div role="alert" aria-live="assertive"
-      variants={overlayEnter} initial="initial" animate="animate" exit="exit"
-      className="fixed bottom-4 right-4 z-[var(--z-toast)] w-[360px] max-w-[calc(100vw-2rem)] rounded-xl border border-outline-variant/50 bg-surface-container p-3.5 shadow-lg">
-      <div className="flex items-start gap-2.5">
-        <Icon size={18} className="mt-0.5 shrink-0" style={{ color: tone }} />
-        <div className="min-w-0 flex-1">
-          <p data-type="label-s" className="text-on-surface" style={fvs(600)}>
-            {kind === 'error' ? "That didn't work" : kind === 'conflict' ? 'Merge conflict — needs you' : kind === 'ok' ? 'Done' : 'The worker needs your input'}
-          </p>
-          <p data-type="caption" className="mt-0.5 text-on-surface-var">{text}</p>
-          <div className="mt-2 flex items-center gap-2">
-            {/* Respond keeps its per-kind tone background (error/conflict/input) —
-                a dynamic solid fill the Button variants deliberately don't cover. */}
-            {onRespond && <button type="button" onClick={onRespond}
-              data-type="caption" className="rounded-md px-2.5 py-1" style={{ background: tone, color: 'var(--color-on-primary)' }}>Respond</button>}
-            <Button variant="ghost" size="xs" onClick={onDismiss}>Dismiss</Button>
-          </div>
-        </div>
-        <IconButton icon={X} label="Dismiss" onClick={onDismiss} size={24} iconSize={14} className="shrink-0" />
-      </div>
-    </motion.div>,
-    document.body,
   )
 }
 
@@ -1313,34 +1275,25 @@ function FileFinder({ ws }: { ws: string }) {
 // ── right panel: Tasks (agent loop events live IN TASK SCOPE — under each task
 //    card — not a separate global feed) + project-level banners + a steer box. ──
 
-function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, gateFail, stalled, onNudged, onStartNew }: {
+function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, gateFail, stalled, onNudged, onStartNew, onAnswerOnScreen, answerWanted, onAnswerShown }: {
   project: CodeProject; onTasksChanged: () => void; tasksNonce: number
   activityBySession: Record<string, ActivityItem[]>; gateFail: { label: string; command: string; output: string } | null
   stalled: StallInfo | null; onNudged: () => void; onStartNew?: () => void
+  /** Whether the answer panel (the project footer) is on screen, for the cockpit's toast. */
+  onAnswerOnScreen?: (onScreen: boolean) => void
+  /** The toast's Respond asked for the answer panel; `onAnswerShown` once its steer box has the cursor. */
+  answerWanted?: boolean; onAnswerShown?: () => void
 }) {
   // Navigable Tasks panel: a list view (all tasks, grouped by stage) and a per-task
   // DETAIL view (task plan + its agent loop events + a task-scoped steer box). The
   // selected task makes "what is the user steering" unambiguous for both sides.
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  // The needs-input toast's "Respond" dispatches ne:code-focus-steer, which only the
-  // project-level ProjectFooter steer box listens for. If a TASK is open, that footer
-  // is unmounted (the detail view replaces it) → "Respond" focused nothing (dead click).
-  // A project-level question belongs in the project footer anyway, so clear the
-  // selection here first; the footer then mounts. The footer's OWN focus listener is
-  // added on mount, AFTER this event already fired, so re-dispatch once on the next
-  // tick for it to catch. Only when a task WAS open (else the footer is already mounted
-  // and caught the original event — no re-dispatch needed, avoids a double-focus).
-  const selectedRef = useRef<string | null>(selectedTaskId); selectedRef.current = selectedTaskId
+  // The toast's Respond is a project-level answer, and the project footer that takes it is
+  // unmounted while a TASK is open (the detail view replaces it), so a Respond then closes the
+  // task. The footer mounts with the request still standing and takes the cursor itself.
   useEffect(() => {
-    const onFocusSteer = () => {
-      if (selectedRef.current !== null) {
-        setSelectedTaskId(null)
-        setTimeout(() => window.dispatchEvent(new CustomEvent('ne:code-focus-steer')), 0)
-      }
-    }
-    window.addEventListener('ne:code-focus-steer', onFocusSteer)
-    return () => window.removeEventListener('ne:code-focus-steer', onFocusSteer)
-  }, [])
+    if (answerWanted) setSelectedTaskId(null)
+  }, [answerWanted])
   const links = project.task_list_ids ?? {}
   const [tasksByList, setTasksByList] = useState<Record<string, TaskItem[]>>({})
   const [loading, setLoading] = useState(true)
@@ -1495,7 +1448,8 @@ function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, ga
           mainActivity={activityBySession[`loop-${project.id}`] ?? []} />
       </div>
       {/* Project-level signals + steer box (list view): not task-scoped. */}
-      <ProjectFooter project={project} gateFail={gateFail} stalled={stalled} onNudged={onNudged} onStartNew={onStartNew} />
+      <ProjectFooter project={project} gateFail={gateFail} stalled={stalled} onNudged={onNudged} onStartNew={onStartNew}
+        onAnswerOnScreen={onAnswerOnScreen} answerWanted={answerWanted} onAnswerShown={onAnswerShown} />
     </div>
   )
 }
@@ -3329,7 +3283,10 @@ function FindingCard({ finding: f, ws }: { finding: CodeFinding; ws: string }) {
 /** Project-level footer for the Tasks panel: signals that aren't task-scoped
  *  (attended question, gate failure, stall, terminal outcome) + the steer box.
  *  Per-task agent loop events live under each task card (StageTasks), not here. */
-function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { project: CodeProject; gateFail: { label: string; command: string; output: string } | null; stalled: StallInfo | null; onNudged: () => void; onStartNew?: () => void }) {
+export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew, onAnswerOnScreen, answerWanted, onAnswerShown }: { project: CodeProject; gateFail: { label: string; command: string; output: string } | null; stalled: StallInfo | null; onNudged: () => void; onStartNew?: () => void; onAnswerOnScreen?: (onScreen: boolean) => void; answerWanted?: boolean; onAnswerShown?: () => void }) {
+  // The answer panel reports whether it is on screen, so the cockpit's toast that points here
+  // never stands over it (`CodeToast`).
+  const answerRef = useOnScreenReport(onAnswerOnScreen)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   // Synchronous double-send guard (sending state is async — rapid double Enter/click
@@ -3340,11 +3297,14 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
   const steerRef = useRef<HTMLTextAreaElement>(null)
   // Auto-grow the box to fit a multi-line steer (and shrink back after send clears it).
   useEffect(() => { autoGrowTextarea(steerRef.current) }, [text])
+  // A standing Respond, whether this footer was on screen when it was pressed or mounted after it
+  // (the rail opened, a task's detail closed): take the cursor, then say it is done.
   useEffect(() => {
-    const onFocus = () => { steerRef.current?.focus(); steerRef.current?.scrollIntoView({ block: 'nearest' }) }
-    window.addEventListener('ne:code-focus-steer', onFocus)
-    return () => window.removeEventListener('ne:code-focus-steer', onFocus)
-  }, [])
+    if (!answerWanted) return
+    steerRef.current?.focus()
+    steerRef.current?.scrollIntoView({ block: 'nearest' })
+    onAnswerShown?.()
+  }, [answerWanted, onAnswerShown])
   const [steers, setSteers] = useState<{ text: string; failed?: boolean }[]>([])
   const findings = project.findings ?? []
   const missingCommands = missingCommandNotices(project.command_runnability)
@@ -3382,7 +3342,7 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
   })()
 
   return (
-    <div className="shrink-0 border-t border-outline-variant/40">
+    <div ref={answerRef} className="shrink-0 border-t border-outline-variant/40">
       <div className="max-h-[40vh] overflow-y-auto px-2 pt-2">
         {/* An Attended build's workers ask before they act, and their asks are answered here. */}
         <LoopApprovals loopId={project.id} className="mb-2" />

@@ -213,6 +213,8 @@ def build_digest_view(
             }
         )
 
+    ran, waiting = _the_rest(output, items, placed={row["ordinal"] for row in auto_done + pending})
+
     dropped = _int(output.get("dropped"))
     refused = len(_rows(output.get("refused")))
     recorded = _int(output.get("ledger_rows"))
@@ -241,6 +243,8 @@ def build_digest_view(
         "auto_stage_ran": auto_stage_ran,
         "auto_done": auto_done,
         "pending": pending,
+        "ran": ran,
+        "waiting": waiting,
         "budget_breached": bool(output.get("budget_breached")),
         "budget_reason": str(output.get("budget_reason", "") or ""),
         "degraded": bool(output.get("degraded")),
@@ -249,6 +253,30 @@ def build_digest_view(
         "ledger_complete": recorded > 0 or (dropped == 0 and refused == 0),
         "ledger_rows": recorded,
     }
+
+
+def _the_rest(
+    output: Mapping[str, Any], items: Mapping[str, Mapping[str, Any]], *, placed: set[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The kept items no other section holds: the runs that ended, and what else is waiting.
+
+    The digest's body lists both ("What your machine did", "Also waiting"), and the card counted
+    them in "N items in this window" while showing neither. ``kept`` is the gate's own record of
+    what it let through (`TriageResult.summary`), so an item the user's rules filtered is counted
+    in ``dropped`` and never shown; an item already ``placed`` as a proposal or an action taken is
+    not shown twice. In the manifest's ordinal order.
+    """
+    kept = [str(o) for o in output.get("kept") or [] if str(o) in items and str(o) not in placed]
+    ran: list[dict[str, Any]] = []
+    waiting: list[dict[str, Any]] = []
+    for ordinal in kept:
+        row = {"ordinal": ordinal, **_provenance(items, ordinal)}
+        if row["source"] == "run":
+            # A run that failed, was stopped or was handed to you (`collect._run_materiality`).
+            ran.append({**row, "needs_you": row["materiality"] == "error"})
+        else:
+            waiting.append(row)
+    return ran, waiting
 
 
 def _provenance(items: Mapping[str, Mapping[str, Any]], ordinal: str) -> dict[str, str]:

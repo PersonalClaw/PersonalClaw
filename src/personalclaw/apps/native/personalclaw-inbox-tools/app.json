@@ -2,7 +2,7 @@
   "name": "personalclaw-inbox-tools",
   "version": "1.0.0",
   "displayName": "Inbox Tools",
-  "description": "Surface a message to the user's Inbox triage queue \u2014 notifications, questions, and FYIs the agent raises when no one is watching the chat.",
+  "description": "Surface a message to the user's Inbox triage queue \u2014 notifications, questions, and FYIs the agent raises when no one is watching the chat \u2014 and read what is waiting there.",
   "icon": "Inbox",
   "author": "PersonalClaw",
   "tags": [

@@ -148,6 +148,16 @@ export function toneChipBg(tone: string): string {
   return `color-mix(in srgb, ${tone} 16%, transparent)`
 }
 
+/** The notification log newest first, the order every list of it shows.
+ *
+ *  `GET /api/notifications` answers in the log's own order, oldest first (it is appended as notes
+ *  arrive). Each reader reversed it inline, and the phone's Recent list was the one that did not:
+ *  it showed her six oldest notes and hid the ones that had just landed. One helper, so a list of
+ *  notes cannot be the one that forgets. */
+export function newestFirst<T>(log: readonly T[]): T[] {
+  return [...log].reverse()
+}
+
 /** Distinct kinds present in a list, for the filter row: each kind's key and the first note of it,
  *  whose `noteMeta` names the kind. */
 export function kindsPresent(items: NotificationItem[]): Array<{ kind: string; note: NotificationItem }> {

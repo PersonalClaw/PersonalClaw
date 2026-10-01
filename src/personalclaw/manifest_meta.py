@@ -795,6 +795,17 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "inbox_list": {
+        "response_type": "inbox.list.result",
+        "error_codes": [],
+        "examples": [
+            {"summary": "Read what is waiting in the Inbox", "args": {"limit": 10}},
+            {
+                "summary": "Read only what a run is waiting on you for",
+                "args": {"kind": "needs_input"},
+            },
+        ],
+    },
     # ── personalclaw-knowledge-tools ─────────────────────────────────────────
     "knowledge_search": {
         "response_type": "knowledge.search.results",

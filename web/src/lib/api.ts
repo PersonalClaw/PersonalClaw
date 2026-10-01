@@ -4543,6 +4543,15 @@ export interface TriagePending {
   permalink: string; title: string; source: string; item_permalink: string; materiality: string
 }
 
+/** A kept item no proposal or action is about: a run that ended (`TriageDigestView.ran`) or
+ *  something else waiting (`waiting`). Provenance only, from the run's own manifest. */
+export interface TriageItemRow {
+  ordinal: string; title: string; source: string; item_permalink: string; materiality: string
+}
+
+/** A run that ended in the window. `needs_you`: it failed, was stopped or was handed to you. */
+export interface TriageRanRow extends TriageItemRow { needs_you: boolean }
+
 /** One ledger row in the "what your machine did" section, permalinked to the run journal. */
 export interface TriageLedgerRow {
   kind: string; seq: number; ordinal: string; action_type: string; rule: string
@@ -4651,6 +4660,11 @@ export interface TriageDigestView {
   auto_stage_ran?: boolean
   auto_done?: TriageAutoDone[]
   pending?: TriagePending[]
+  /** The runs that ended in the window — the body's "What your machine did". With `pending`,
+   *  `auto_done` and `waiting`, every item the gate kept, each once. */
+  ran?: TriageRanRow[]
+  /** What else the gate kept that no proposal is about — the body's "Also waiting". */
+  waiting?: TriageItemRow[]
   budget_breached?: boolean
   budget_reason?: string
   degraded?: boolean

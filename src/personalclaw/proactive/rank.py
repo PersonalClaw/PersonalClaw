@@ -103,6 +103,7 @@ def render_digest(
     dropped_count: int,
     degraded: bool = False,
     auto_lines: tuple[str, ...] = (),
+    acted_on: frozenset[str] = frozenset(),
 ) -> Digest:
     """Assemble the digest body from typed fields — no model call, no free-text passthrough.
 
@@ -120,7 +121,9 @@ def render_digest(
     **`proposals` must be the PENDING set, not the batch.** The caller auto-executes before
     rendering (`pipeline.run_triage`), so anything that ran is in `auto_lines`; passing the
     whole batch here would list an item under "needs you" that the machine had already handled
-    seconds earlier, which is the one thing a digest cannot get wrong.
+    seconds earlier, which is the one thing a digest cannot get wrong. ``acted_on`` is the
+    ordinals it handled, for the same reason one section down: an item the machine archived is
+    not "also waiting".
     """
     ranked = rank_items(kept)
     ranked_proposals = rank_proposals(proposals, manifest)
@@ -149,7 +152,11 @@ def render_digest(
     elif degraded:
         sections.append("Needs you:\n  (no proposals this run — the proposal stage was refused)")
 
-    rest = [i for i in ranked if i.source != SOURCE_RUN and i.ordinal not in proposal_ids]
+    rest = [
+        i
+        for i in ranked
+        if i.source != SOURCE_RUN and i.ordinal not in proposal_ids and i.ordinal not in acted_on
+    ]
     if rest:
         lines = ["Also waiting:"]
         lines.extend(_line(item) for item in rest)

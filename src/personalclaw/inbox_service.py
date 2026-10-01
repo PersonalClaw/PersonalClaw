@@ -674,7 +674,7 @@ class InboxService:
         # sorts it sensibly, but never downgrade an escalate.
         updates: dict = {"draft": draft, "context_summary": "AI-drafted reply"}
         if draft and item.classification == Classification.NOISE:
-            updates["classification"] = Classification.NEEDS_REPLY
+            updates["classification"] = Classification.NEEDS_REPLY.value
         return self.inbox.update(item_id, **updates)
 
     async def generate_digest(self, channel_id: str, hours: float = 4.0) -> InboxItem | None:
@@ -722,9 +722,9 @@ class InboxService:
             message=summary,
             sender_id="",
             sender_name=f"Digest · last {hours:g}h",
-            classification=Classification.FYI,
-            confidence=Confidence.HIGH,
-            status=ItemStatus.PENDING,
+            classification=Classification.FYI.value,
+            confidence=Confidence.HIGH.value,
+            status=ItemStatus.PENDING.value,
             created_at=ts,
             context_summary=f"AI digest of {len(messages)} messages",
             source="digest",

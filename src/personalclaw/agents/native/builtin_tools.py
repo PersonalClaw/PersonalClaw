@@ -28,6 +28,12 @@ from typing import TYPE_CHECKING, Any, cast
 from personalclaw import cancellation
 from personalclaw.agents.native import read_gate
 from personalclaw.agents.native.decision_tool_defs import decision_tool_definitions
+from personalclaw.agents.native.inbox_tool_defs import (
+    INBOX_LIST_DEFAULT,
+    INBOX_LIST_MAX,
+    inbox_item_text,
+    inbox_tool_definitions,
+)
 from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_definitions
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions
@@ -211,6 +217,7 @@ _CATEGORY_OF: dict[str, str] = {
     "project_run_list": "projects",
     # inbox (installable app)
     "post_to_inbox": "inbox",
+    "inbox_list": "inbox",
 }
 
 # The platform (always-on) categories — surfaced by the core platform provider,
@@ -791,30 +798,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "required": ["command"],
                 },
             ),
-            ToolDefinition(
-                name="post_to_inbox",
-                provider=self.name,
-                requires_approval=False,
-                # CAUTION: surfaces an outward message to the user (a bounded
-                # side-effect — a store write + WS broadcast), not a read.
-                risk_level=RiskLevel.CAUTION,
-                description=(
-                    "Surface a message to the user in their Inbox triage queue — use when "
-                    "you finish something worth reporting, need a decision, or have a heads-up, "
-                    "and no one is watching the chat live. Args: message (str), kind "
-                    "('notification'|'question'|'fyi', default 'notification'; 'question' asks "
-                    "for a reply), optional context (str — why/what you used)."
-                ),
-                parameters={
-                    **s,
-                    "properties": {
-                        "message": {"type": "string"},
-                        "kind": {"type": "string", "enum": ["notification", "question", "fyi"]},
-                        "context": {"type": "string"},
-                    },
-                    "required": ["message"],
-                },
-            ),
+            # ── Inbox: post to it, and read what is waiting ──
+            # Schemas in ``inbox_tool_defs``; the dispatch methods stay below.
+            *inbox_tool_definitions(self.name, s),
             # ── Knowledge library ──
             # Schemas in ``knowledge_tool_defs``; the dispatch methods stay below.
             *knowledge_tool_definitions(self.name, s),
@@ -1728,6 +1714,28 @@ class NativeBuiltinToolProvider(ToolProvider):
         if item is None:
             return ToolResult(success=False, error="inbox sink unavailable")
         return ToolResult(success=True, output=f"posted to inbox ({kind}) — item {item.id}")
+
+    async def _t_inbox_list(self, a: dict) -> ToolResult:
+        try:
+            limit = int(a.get("limit", INBOX_LIST_DEFAULT) or INBOX_LIST_DEFAULT)
+        except (ValueError, TypeError):
+            limit = INBOX_LIST_DEFAULT
+        limit = max(1, min(limit, INBOX_LIST_MAX))
+        kind = str(a.get("kind", "") or "").strip().lower()
+        from personalclaw.inbox_providers.native_source import open_inbox_items
+
+        # On the loop, not in an executor: taking in another writer's rows changes the store.
+        items = open_inbox_items(kind=kind)
+        if items is None:
+            return ToolResult(success=False, error="the Inbox cannot be read from this run")
+        if not items:
+            return ToolResult(success=True, output="Nothing is waiting in the Inbox.")
+        shown = items[:limit]
+        noun = "item" if len(items) == 1 else "items"
+        count = f"{len(items)}" if len(shown) == len(items) else f"{len(shown)} of {len(items)}"
+        lines = [f"{count} open {noun} in the Inbox, newest first:"]
+        lines.extend(inbox_item_text(n, item) for n, item in enumerate(shown, 1))
+        return _ok_capped("\n\n".join(lines), session_key=self._session_key)
 
     async def _t_knowledge_search(self, a: dict) -> ToolResult:
         query = str(a.get("query", "")).strip()

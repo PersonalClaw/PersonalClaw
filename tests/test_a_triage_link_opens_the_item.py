@@ -22,7 +22,7 @@ def test_a_finished_run_in_the_digest_links_to_its_page(monkeypatch) -> None:
     run = SimpleNamespace(
         id="r-5e1f",
         created_at="2026-03-02T08:00:00+00:00",
-        status="completed",
+        status="complete",
         workflow_name="general-project",
         error_message="",
     )
