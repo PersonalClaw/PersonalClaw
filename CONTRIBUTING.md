@@ -200,16 +200,17 @@ pip, or Docker), which never requires Node or a manual SPA build.
 
 **Check your Python first — a bare `python3` is the most common way this goes wrong.**
 `pyproject.toml` requires `>=3.12,<3.14`, and the `python3` on `PATH` is older than that on
-stock macOS and on several LTS distros. It fails at the *install* step, after the venv has
-already been created, with a message that does not mention the venv:
+stock macOS and on several LTS distros, and newer than that wherever 3.14 is the default. It
+fails at the *install* step, after the venv has already been created, with a message that does
+not mention the venv:
 
 ```
 ERROR: Package 'personalclaw' requires a different Python: 3.9.6 not in '<3.14,>=3.12'
 ```
 
-If `python3 --version` is below 3.12, create the venv with an explicit interpreter
-(`python3.12 -m venv .venv`) or let `uv` supply one (`uv venv --python 3.12`), which is what
-CI and the end-user install path both do.
+If `python3 --version` is not 3.12.x or 3.13.x, create the venv with an explicit interpreter
+(`python3.13 -m venv .venv`) or let `uv` supply one (`uv venv --python 3.13`, the version the
+one-line installer installs on).
 
 **git 2.12 or newer.** PersonalClaw's own git refuses an older one
 (`net/git.py::MIN_GIT_VERSION`), which ignores the settings that stop a repository's own
@@ -219,7 +220,7 @@ too. `git version` says which you have.
 ```bash
 # from the repo root
 python3 --version            # must be 3.12.x or 3.13.x
-python3 -m venv .venv        # …or: uv venv --python 3.12
+python3 -m venv .venv        # …or: uv venv --python 3.13
 source .venv/bin/activate
 
 pip install -e ".[dev]"

@@ -35,7 +35,7 @@ Budgets are for your clock, not theirs. Never tell a participant they are runnin
 
 | Check | Why it bites |
 |---|---|
-| Python **3.12+** on their machine | the install fails late and cryptically on older versions |
+| Python **3.12 or 3.13** on their machine, if they take the pip or pipx path (the one-liner and `uv tool` fetch their own) | the install fails late and cryptically on any other version |
 | They can install software on it | a locked-down work laptop ends the session at task 1 |
 | Screen-share or in person | you must see hesitation, not just outcomes |
 | Paper + pen for the sheet in [§5](#5-observation-sheet) | typing during think-aloud makes participants stop talking |

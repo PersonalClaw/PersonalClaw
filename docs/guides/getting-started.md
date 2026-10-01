@@ -21,11 +21,11 @@ channels. This guide takes you from **nothing installed** to your first chat.
   program. `personalclaw doctor` shows the git it found and its version.
 
 You do **not** need to install Python or Node yourself for the recommended
-paths: `uv` provides its own Python 3.12, and the release wheel ships the
-prebuilt dashboard. The base Python package also carries the IANA timezone
-database, so minimal Linux installs do not need an operating-system `tzdata`
-package before `personalclaw setup`. (Contributors who build from source need
-Python 3.12+ and Node 18+ — see
+paths: they ask `uv` for Python 3.13, which it downloads when your machine has
+none, and the release wheel ships the prebuilt dashboard. The base Python
+package also carries the IANA timezone database, so minimal Linux installs do
+not need an operating-system `tzdata` package before `personalclaw setup`.
+(Contributors who build from source need Python 3.12 or 3.13 and Node 18+ — see
 [CONTRIBUTING](../../CONTRIBUTING.md#development-setup).)
 
 ## 1. Install
@@ -35,10 +35,10 @@ per-channel special builds.
 
 | Path | Command | Best for |
 |---|---|---|
-| **uv tool** *(recommended)* | `uv tool install personalclaw` | anyone — `uv` brings its own Python 3.12 |
+| **uv tool** *(recommended)* | `uv tool install --python 3.13 personalclaw` | anyone — `uv` downloads Python 3.13 if it's missing |
 | **Bootstrap one-liner** | `curl -fsSL https://personalclaw.dev/install \| sh` | fastest start; installs `uv` if absent, then the above |
-| pipx | `pipx install personalclaw` | Python users who like isolated tools |
-| pip | `pip install personalclaw` | inside an existing Python 3.12+ venv |
+| pipx | `pipx install --python python3.13 personalclaw` | Python users who like isolated tools (needs `python3.13` on your PATH) |
+| pip | `pip install personalclaw` | inside an existing Python 3.12 or 3.13 venv |
 | **Docker** | see [§ Docker](#docker) | one container, no checkout, no `.env` |
 | **Docker Compose** | see [§ Docker Compose](#docker-compose) | self-hosters; Windows |
 | Git checkout | see [CONTRIBUTING](../../CONTRIBUTING.md#development-setup) | contributors / development |
@@ -46,9 +46,15 @@ per-channel special builds.
 After a uv/pipx/pip install the `personalclaw` command is on your PATH:
 
 ```bash
-uv tool install personalclaw
+uv tool install --python 3.13 personalclaw
 personalclaw setup      # interactive: workspace directory + timezone
 ```
+
+The `--python` matters: uv does not enforce the top of the Python range a
+package declares, so without it uv builds the install on the newest Python it
+can find or download, which may be one PersonalClaw does not support, such as
+3.14. `personalclaw doctor` checks the Python an install runs on against that
+range and fails it, with the command that moves it, when it is outside.
 
 `setup` does **not** ask for a model provider credential — on a fresh install
 there is no provider app to hold one yet. Providers arrive in
@@ -110,7 +116,7 @@ dependency; extras are the plain-pip path):
 | `js-render` | `pip install 'personalclaw[js-render]'` | JS-rendered web fetch (Playwright) | large (browser) |
 | `models` | `pip install 'personalclaw[models]'` | local inference: embeddings + STT + TTS | large (ML) |
 
-> With `uv tool`, add an extra with `uv tool install 'personalclaw[bedrock]'`.
+> With `uv tool`, add an extra with `uv tool install --python 3.13 'personalclaw[bedrock]'`.
 > `personalclaw doctor` reports which optional dependencies are missing and
 > prints the exact command to add them.
 
@@ -330,7 +336,11 @@ defaults flipped, and some routes refuse input they used to accept. Run
   chained automations never did. Adjust the command rather than the guardrail.
 - **Hooks, cron scripts and app backends no longer inherit PersonalClaw's environment.**
   Use `sandbox.env_passthrough`; credential-shaped names stay refused even if declared.
-- **Python 3.14 is refused at install time**: `requires-python` is `>=3.12,<3.14`.
+- **Python 3.14 is not supported**: `requires-python` is `>=3.12,<3.14`. pip refuses it, but
+  uv does not enforce the upper bound, so an install made with a bare `uv tool install` may be
+  running on 3.14, and `personalclaw update` keeps the Python it runs on. `personalclaw doctor`
+  says so (`python: ❌`); for a uv tool install the fix it prints is
+  `uv tool upgrade --python '<3.14,>=3.12' personalclaw`.
 - **Config fields removed** (a stored value is ignored on load): `workflows.max_active_runs`,
   `knowledge.conflict_model_pass`, `knowledge.lint_every_n_persists`,
   `learning.min_session_score`, `knowledge.idempotent_persist`,

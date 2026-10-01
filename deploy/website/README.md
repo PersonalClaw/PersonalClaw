@@ -118,7 +118,8 @@ extras remain the plain-pip/uv path for users who don't install an app.
 ## Owner real-world steps (already handled per owner, or pending)
 
 - **T2.1** — first PyPI publish via `release.yml` (env `release`) + verify
-  `uv tool install personalclaw` / `pipx install personalclaw` on a clean machine.
+  `uv tool install --python 3.13 personalclaw` / `pipx install --python python3.13 personalclaw`
+  on a clean machine.
 - **V1** — clean-VM/empty-container wheel install → onboarding → first chat, Node
   absent (the CI verify-wheel step already exercises the Node-free serve path).
 - **V2** — follow the new getting-started verbatim on a clean machine (uv path).

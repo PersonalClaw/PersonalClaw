@@ -39,7 +39,7 @@ _RANGE_INSTALLS = {
         "the public installer installs the published wheel from PyPI, whose metadata carries "
         "pyproject's ranges and no lock"
     ),
-    (".github/workflows/full.yml", "uv tool install ."): (
+    (".github/workflows/full.yml", "uv tool install --python"): (
         "rehearses the public installer on this checkout, so it resolves exactly what that "
         "installer will"
     ),

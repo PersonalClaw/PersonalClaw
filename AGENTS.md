@@ -1,7 +1,7 @@
 # AGENTS.md — brief for coding agents
 
 You are contributing to **PersonalClaw core**: a self-hosted, local-first,
-provider-agnostic personal AI gateway (Python 3.12+ aiohttp backend + React/Vite
+provider-agnostic personal AI gateway (Python 3.12–3.13 aiohttp backend + React/Vite
 SPA). This file is the compressed contract — the mechanical gotchas, the doctrine,
 the git rules, and the session discipline every roadmap task runs under. The long
 form is [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -13,7 +13,7 @@ is a trap, not a second document.
 ## Build / test / lint (run from the repo root)
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3.13 -m venv .venv && source .venv/bin/activate   # 3.12 or 3.13: requires-python refuses 3.14
 pip install -e ".[dev]"
 make web-build          # build the SPA once (npm workspace, from root — never `cd web`)
 make serve              # dev gateway on :10000, state under ./.dev-home (NEVER ~/.personalclaw)

@@ -185,7 +185,7 @@ Install with one command — every path installs the **same release artifact** (
 per-channel special builds), and you don't need to install Python or Node yourself:
 
 ```bash
-uv tool install personalclaw && personalclaw setup     # recommended — uv brings Python 3.12
+uv tool install --python 3.13 personalclaw && personalclaw setup   # recommended — uv downloads Python 3.13 if it's missing
 ```
 
 Or use the bootstrap one-liner (installs `uv` if it's missing, then the above):
@@ -208,9 +208,9 @@ personalclaw gateway
 
 | Path | Command | Best for |
 |---|---|---|
-| **uv tool** *(recommended)* | `uv tool install personalclaw` | anyone — `uv` provides Python 3.12 |
+| **uv tool** *(recommended)* | `uv tool install --python 3.13 personalclaw` | anyone — `uv` downloads Python 3.13 if it's missing |
 | **Bootstrap** | `curl -fsSL https://personalclaw.dev/install \| sh` | the fastest start |
-| pipx | `pipx install personalclaw` | isolated Python tools |
+| pipx | `pipx install --python python3.13 personalclaw` | isolated Python tools (needs `python3.13` on your PATH) |
 | pip | `pip install personalclaw` | inside an existing Python 3.12 or 3.13 venv |
 | Homebrew | `brew install personalclaw/tap/personalclaw` | macOS · `brew upgrade` tracks releases |
 | Nix | `nix profile install github:PersonalClaw/PersonalClaw#personalclaw` | a fully pinned, reproducible closure |

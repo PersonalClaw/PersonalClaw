@@ -139,10 +139,10 @@ this section is for running PersonalClaw directly in WSL2.
 ### 1. Install in WSL2
 
 From a WSL2 shell (Ubuntu or any distro), install exactly as on Linux — with
-`uv`, which brings its own Python 3.12:
+`uv`, which downloads Python 3.13 if the distro has none:
 
 ```bash
-uv tool install personalclaw
+uv tool install --python 3.13 personalclaw
 personalclaw setup      # interactive: workspace directory + timezone
 personalclaw gateway
 ```

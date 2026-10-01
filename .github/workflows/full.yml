@@ -386,7 +386,9 @@ jobs:
       # This source-tree leg closes the pre-publication gap: install the wheel this checkout
       # builds, remove every system timezone search path, and run the setup command a fresh user
       # is told to run. `TZ` is an authored IANA name here, so persisting it proves zoneinfo
-      # loaded the package's Python tzdata fallback rather than an OS database.
+      # loaded the package's Python tzdata fallback rather than an OS database. It names the
+      # installer's Python (`PC_PYTHON`) as the installer does: uv ignores the upper bound of
+      # requires-python, so a bare install here would build on the newest Python uv downloads.
       - name: smoke — current checkout install + setup timezone
         run: |
           set -eu
@@ -399,7 +401,7 @@ jobs:
           export UV_TOOL_DIR UV_TOOL_BIN_DIR HOME PERSONALCLAW_HOME TZ PYTHONTZPATH
           mkdir -p "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR" "$HOME" "$PERSONALCLAW_HOME"
           PATH="$UV_TOOL_BIN_DIR:$PATH"; export PATH
-          uv tool install .
+          uv tool install --python 3.13 .
           personalclaw setup
           grep -F '"timezone": "America/Los_Angeles"' "$PERSONALCLAW_HOME/config.json"
       # ── Leg 1: the staged file, which is the one we can fix ─────────────────────────────────

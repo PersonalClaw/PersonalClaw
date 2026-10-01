@@ -159,6 +159,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Code cockpit's "worker needs your input" toast stays out of the way of the Tasks panel it points to, says what the worker is waiting on, and its Respond opens the panel.**
 - **A chat open in a second tab shows a new turn as soon as it starts: the question, "Thinking…" and Stop**
 - **A read-only room member is offered only the tools that read, says so when one is refused, and reaches the folders you allowed agents to work in**
+- **The one-line installer and every documented uv and pipx install put PersonalClaw on Python 3.13 (uv ignores the top of a package's Python range, so a bare `uv tool install` landed on 3.14), re-running the installer moves an install off 3.14, and `personalclaw doctor` fails an install running outside the release's supported range with the command that moves it.**
 - **Saving a file as an artifact again while its artifact is being deleted answers that the artifact is not found (404 `not_found`) instead of an empty success.**
 - **Audio transcribes in the container image again: the image and the desktop app install exactly the dependency versions the tests ran (`uv.lock`) instead of the newest each range allows, and `personalclaw[stt]` keeps PyAV below 19, whose `av.open` faster-whisper cannot call.**
 - **Files › Go to path opens a file given its path, on the folder that holds it, reads a relative path against the folder it shows, and offers files as well as folders.**

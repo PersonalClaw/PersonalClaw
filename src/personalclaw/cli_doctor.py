@@ -31,6 +31,7 @@ from personalclaw.dashboard.origin import (
     resolve_bind_host,
     tailnet_ip,
 )
+from personalclaw.python_support import python_support, rebuild_command
 from personalclaw.transcribe import ensure_ffmpeg_in_path
 
 
@@ -700,6 +701,35 @@ def _probe_python_version(python: str | Path) -> str:
     return result.stdout.strip().removeprefix("Python ").strip()
 
 
+def _interpreter_row(label: str, interpreter: object, version: str, issues: list[str]) -> None:
+    """One interpreter's row, judged against the installed release's own ``Requires-Python``.
+
+    The ✅ is earned by that comparison and names the range it was made against. Outside the
+    range the row fails the doctor and hands back the fix: uv does not enforce the upper bound,
+    so an install can be running on a Python the release was never tested on and not know it.
+    With no range to compare with (a source tree run without an install) the row says so and
+    certifies nothing.
+    """
+    head = f"  {label + ':':<13}"
+    support = python_support(version)
+    if support.supported is None:
+        print(f"{head}⏹  {interpreter} ({support.version}; {support.unknown})")
+        return
+    if support.supported:
+        print(f"{head}✅ {interpreter} ({support.version}; supported: {support.requires})")
+        return
+    print(
+        f"{head}❌ {interpreter} ({support.version}) — PersonalClaw {_pc_version} supports "
+        f"Python {support.requires} only"
+    )
+    fix = rebuild_command(support.requires) or (
+        f"recreate this environment on a Python matching {support.requires}, "
+        "then reinstall PersonalClaw into it"
+    )
+    print(f"               Fix: {fix}")
+    issues.append(f"{label} version")
+
+
 def _doctor(*, start_agent_clis: bool = False) -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity.
 
@@ -968,16 +998,16 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
 
     # ── Python Runtime ──
     print("\nRuntime")
-    print(f"  python:      ✅ {sys.executable} ({sys.version.split()[0]})")
+    _interpreter_row("python", sys.executable, sys.version.split()[0], issues)
     print(f"  backend:     ✅ {_pc_version}")
     if venv_py is not None:
         try:
             ver = _probe_python_version(venv_py)
-            print(f"  venv python: ✅ {venv_py} ({ver})")
         except Exception as exc:
             print(f"  venv python: ❌ broken: {exc}")
             issues.append("venv python")
         else:
+            _interpreter_row("venv python", venv_py, ver, issues)
             try:
                 subprocess.run(
                     [str(venv_py), "-c", "import websockets, aiohttp"],

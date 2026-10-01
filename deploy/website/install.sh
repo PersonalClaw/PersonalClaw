@@ -1,9 +1,9 @@
 #!/bin/sh
 # PersonalClaw bootstrap installer — the `curl -fsSL https://personalclaw.dev/install | sh` one-liner.
 #
-# Plan 34 (DISTRIBUTION) §E / T2.2. THIS FILE IS THE SOURCE OF TRUTH for the bytes
-# served at https://personalclaw.dev/install. It is staged here — rather than living only
-# in the website repo (personalclaw.dev, plan 36 owns) — because the rail below is here.
+# THIS FILE IS THE SOURCE OF TRUTH for the bytes served at https://personalclaw.dev/install.
+# It is staged here — rather than living only in the website repo (personalclaw.dev) —
+# because the rail below is here.
 # The website repo's public/install is a MIRROR: re-apply it whenever this file changes,
 # and update install.sh.sha256 in the same commit (deploy/website/README.md §1).
 #
@@ -22,9 +22,10 @@
 # What it does (idempotent — re-running upgrades):
 #   1. `--container` → print the Docker Compose snippet and exit (no install).
 #   2. Ensure `uv` is present (installs via the official installer if missing).
-#   3. `uv tool install --upgrade personalclaw>=$PC_MIN_VERSION` (uv brings its own Python
-#      3.12). The floor bounds a downgrade attack without giving up --upgrade — see
-#      PC_MIN_VERSION below for why it lags the current release by one.
+#   3. `uv tool install --upgrade --python $PC_PYTHON personalclaw>=$PC_MIN_VERSION` (uv
+#      downloads that Python when the machine has none). The floor bounds a downgrade attack
+#      without giving up --upgrade — see PC_MIN_VERSION below for why it lags the current
+#      release by one, and PC_PYTHON for why the Python is named.
 #   4. Print next steps and offer to run `personalclaw setup`.
 #
 # POSIX sh only (no bashisms) so it runs under dash/ash/sh on Linux + macOS.
@@ -53,6 +54,14 @@ PC_PACKAGE="personalclaw"
 # copies drifted three weeks). tests/test_website_installer.py pins this constant to
 # CHANGELOG.md's second-newest release heading, so it reds the release after it goes stale.
 PC_MIN_VERSION="0.1.3"
+# The Python the tool environment is built on, named because uv will not choose a supported one
+# by itself: it ignores the upper bound of a package's Requires-Python, so an install that names
+# none lands on the newest interpreter uv finds or downloads (measured, uv 0.12.19: a wheel
+# declaring <3.14,>=3.12 installed on CPython 3.14.7, exit 0, no warning). Re-running this file
+# moves an environment built on another Python onto this one. The rails that keep it inside
+# pyproject's requires-python and full.yml's test matrix, and every documented install command
+# on the same version, are in tests/test_every_install_names_a_supported_python.py.
+PC_PYTHON="3.13"
 UV_INSTALLER_URL="https://astral.sh/uv/install.sh"
 
 # ── tiny output helpers ──────────────────────────────────────────────────────
@@ -146,12 +155,13 @@ ensure_uv() {
 
 # ── install / upgrade personalclaw ───────────────────────────────────────────
 install_personalclaw() {
-    step "Installing $PC_PACKAGE with uv (this brings its own Python 3.12)…"
+    step "Installing $PC_PACKAGE with uv on Python $PC_PYTHON (uv downloads it if this machine has none)…"
     # --upgrade makes re-runs idempotent: a fresh install the first time, an
     # in-place upgrade to the latest release afterwards. The >= floor does not narrow that —
     # --upgrade still resolves to the newest release; it only refuses an index that offers
-    # nothing at or above PC_MIN_VERSION. See PC_MIN_VERSION at the top of this file.
-    uv tool install --upgrade "$PC_PACKAGE>=$PC_MIN_VERSION"
+    # nothing at or above PC_MIN_VERSION. See PC_MIN_VERSION at the top of this file, and
+    # PC_PYTHON beside it for the --python.
+    uv tool install --upgrade --python "$PC_PYTHON" "$PC_PACKAGE>=$PC_MIN_VERSION"
     have personalclaw || {
         warn "personalclaw installed but not yet on PATH."
         warn "Run 'uv tool update-shell' (or open a new shell), then 'personalclaw setup'."

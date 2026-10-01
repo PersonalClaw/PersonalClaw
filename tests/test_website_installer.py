@@ -1213,7 +1213,7 @@ class TestLiveInstallerLegIsWired:
         """The release's first real command must run before the release reaches PyPI."""
         _jid, body = leg
         code = code_only(body)
-        assert re.search(r"\buv\s+tool\s+install\s+\.", code)
+        assert re.search(r"^\s*uv\s+tool\s+install\b.*\s\.\s*$", code, re.MULTILINE)
         assert 'PYTHONTZPATH=""' in code
         assert 'TZ="America/Los_Angeles"' in code
         assert re.search(r"\bpersonalclaw\s+setup\b", code)
