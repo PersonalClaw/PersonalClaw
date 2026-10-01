@@ -528,10 +528,16 @@ def _endpoint_here(entry: ProviderEntry, capability: ProviderCapability | None) 
     sends. An entry with no endpoint either way sends nowhere this can see: not here."""
     from personalclaw.net.guard import reaches_this_machine
 
+    endpoint = _endpoint_of(entry, capability)
+    return bool(endpoint) and reaches_this_machine(endpoint)
+
+
+def _endpoint_of(entry: ProviderEntry, capability: ProviderCapability | None) -> str:
+    """The endpoint *entry* sends to: the one it names, else its type's default; ``""`` for none."""
     endpoint = entry.endpoint
     if not endpoint and capability is not None:
         endpoint = capability.default_endpoint.strip()
-    return bool(endpoint) and reaches_this_machine(endpoint)
+    return endpoint or ""
 
 
 def served_on_this_machine(name: str) -> bool:
@@ -581,6 +587,26 @@ def sends_to_this_machine(name: str) -> bool:
     if capability is not None and capability.in_process:
         return True
     return _endpoint_here(entry, capability)
+
+
+def model_server_here(name: str) -> str:
+    """The server on this machine that the provider entry named *name* sends its requests to, as
+    one name, or ``""`` when :func:`sends_to_this_machine` says its requests go elsewhere.
+
+    Its endpoint, so two entries for one server (a chat instance and a background instance of the
+    same local runtime) name the same one, or ``in-process:<entry>`` for a type that runs its models
+    inside the gateway's own process. The local-model queue reads it to know a model runs here
+    (``guardrails.local_queue.queue_key``), and calls to one model here take turns, whichever
+    entry sends them.
+    """
+    entry, capability = _entry_and_capability(name)
+    if entry is None:
+        return ""
+    if capability is not None and capability.in_process:
+        return f"in-process:{entry.name}"
+    if not _endpoint_here(entry, capability):
+        return ""
+    return _endpoint_of(entry, capability).strip().rstrip("/").lower()
 
 
 # Config-type → base-registry-type aliases. EMPTY after the model-provider-as-app

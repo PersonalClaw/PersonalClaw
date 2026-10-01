@@ -285,11 +285,10 @@ UNSYNTHESISED_BODY = "Digest synthesis was unavailable. The collected items are 
 async def _synthesise(prompt: str, completion_fn: Callable[..., Awaitable[str]] | None) -> str:
     """The background one-shot. No narrative becomes a plain-text digest, not a lost run.
 
-    An EMPTY completion takes the same path as a raised one. ``one_shot_completion`` returns a
-    falsy value rather than raising when nothing is bound — which is exactly the degraded case —
-    so the original ``or ""`` handed an empty string onward and the digest wrote an empty note,
-    notified with an empty body, and advanced the cursor anyway. The docstring already promised a
-    plain-text digest; only the exception path delivered it.
+    An EMPTY completion takes the same path as a raised one. ``one_shot_completion`` raises for an
+    empty answer itself (``EmptyCompletion``), after its chain's next models were asked; an
+    injected ``completion_fn`` may still answer ``""``, and an empty string handed onward used to
+    write an empty note, notify with an empty body, and advance the cursor anyway.
     """
     try:
         if completion_fn is not None:

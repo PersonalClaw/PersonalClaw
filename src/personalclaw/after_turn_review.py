@@ -658,6 +658,11 @@ def _build_ladder_prompt(
     )
 
 
+def _ladder_problem(raw: str) -> str:
+    """What makes a skill-ladder answer unusable, ``""`` when it holds a decision object."""
+    return "" if _parse_ladder_json(raw) else "no decision object"
+
+
 def _parse_ladder_json(raw: str) -> dict | None:
     """Extract the JSON object from a one-shot response (tolerant of code fences)."""
     import json
@@ -900,16 +905,32 @@ async def _ladder_pass(
         assistant_text=assistant_text,
         loaded_skills=loaded_skills,
     )
+    from personalclaw.guardrails.failure import OutputContractError
+    from personalclaw.llm_helpers import expecting
+
     try:
-        raw = await completion(prompt)
+        # An answer with no decision object in it is that model failing the call: the next
+        # model of the chain is asked inside the call (`expecting`).
+        with expecting(_ladder_problem):
+            raw = await completion(prompt)
+    except OutputContractError as exc:
+        raw = exc.raw  # every model answered, none with a decision: read as unparsable below
     except Exception as exc:
         # Stays DEBUG for the traceback; the WARNING that says the pass died is the
-        # wrapper's single verdict line, so a failure is not reported twice.
+        # wrapper's single verdict line, so a failure is not reported twice. The detail is
+        # why no model answered, in the words the Proposals page shows: the review could not
+        # run, which no reader may take for a review that found nothing.
         logger.debug("skill-ladder review: completion failed", exc_info=True)
-        return "provider_error", type(exc).__name__, None
+        from personalclaw.llm_helpers import why_no_model_answered
+
+        return "provider_error", why_no_model_answered(exc), None
     decision = _parse_ladder_json(raw)
     if not decision:
-        return "unparsable", f"{len(raw or '')} chars returned", None
+        return (
+            "unparsable",
+            f"no model's answer held a decision ({len(raw or '')} characters)",
+            None,
+        )
     action = str(decision.get("action", "none")).strip().lower()
     if action == "template":
         summary = await _review_template_candidate(decision, session_key=session_key)

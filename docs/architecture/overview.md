@@ -161,6 +161,33 @@ directory on `sys.path`, and registers its contributions through a typed
 | Actions (triggers) | `action_providers/` registry | native action bundles |
 | Artifacts | `artifacts/` provider registry | native filesystem provider |
 
+### A local model takes one call at a time, yours first
+
+A model on this machine (`llm.registry.sends_to_this_machine`) answers one request at a time, so
+every call to one takes its turn in that model's queue first (`guardrails/local_queue.py`): one
+call at a time per local model, whichever entry or address sends to it, in two lanes. A guarded
+call takes it in `ModelCallGuard`; a chat's, a room member's or a code turn's reply, which resolves
+unguarded, takes it in the native loop (`agents/native/local_turn.py`). A call somebody is
+waiting for, a chat's reply, a chat tool's step or a page waiting on its answer, says so (the
+native loop for a reply, `one_shot_completion(attended=Attended(step, session))` for a step) and is
+given the model before any background call, that chat's own title and consolidation included;
+background work (knowledge processing, skill reviews, digests, chat chores) waits while one is
+waiting, so it never holds the model for more than the call it is already making. The wait for a
+turn counts against the call's own limits: the guard's clock, else the provider's Request Timeout.
+A waited-for call whose chain has another model gives a busy local model `ATTENDED_WAIT_SECS`
+(15 s), then that model answers in its place and the substitution says what the first waited
+behind ("it waited 15 s behind background work on this machine"), not that it was slow.
+
+While somebody waits, the wait is published: `GET /api/models/waits` lists what is waiting, on
+which model, what the model is busy with, and which model is asked next and when;
+`POST /api/models/waits/{id}/move-on` asks the next model now. A `refresh` frame naming
+`model_waits` says the list changed. The chat shows its own turn's waits beside the transcript,
+and the shell shows a page's over the page. A model that answers with nothing has failed
+(`guardrails.failure.EmptyCompletion`), and so has one whose answer misses the shape its caller
+named inside the call (`one_shot_completion(output_type=…, validate=…)`, or `llm_helpers.expecting`
+around a call made through a completion function the caller was handed): the chain asks its next
+model either way, and only the last model is reminded of the shape and asked again.
+
 ## Subsystem index
 
 | Subsystem | Doc | Core modules |

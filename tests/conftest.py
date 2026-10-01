@@ -514,14 +514,18 @@ def _reset_model_call_breakers():
 
     Also clears the ``guardrails.autonomy`` action-type registry, which is
     process-global for the same reason: a rung ladder registered by one test would
-    otherwise decide ``resolve_rung`` in the next one.
+    otherwise decide ``resolve_rung`` in the next one. And the chores no model answered
+    (``owed_chores``): one owed by a test would be tried, against that test's state, by the next
+    test's heartbeat.
     """
     from personalclaw.guardrails.autonomy import reset_action_types
     from personalclaw.guardrails.breaker import reset_breakers
     from personalclaw.guardrails.budgets import reset_meter
     from personalclaw.guardrails.ceiling import reset_ceiling, reset_clamp_reports
     from personalclaw.guardrails.incident import reset_incident_mirror
+    from personalclaw.owed_chores import reset_owed
 
+    reset_owed()
     reset_breakers()
     reset_meter()
     reset_incident_mirror()
@@ -533,6 +537,7 @@ def _reset_model_call_breakers():
     reset_ceiling()
     reset_clamp_reports()
     yield
+    reset_owed()
     reset_breakers()
     reset_meter()
     reset_incident_mirror()

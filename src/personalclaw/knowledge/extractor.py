@@ -51,15 +51,24 @@ class EntityExtractor:
         Exception`` swallowed the pool's failure into an empty result, so a cold model
         reported ``done``, i.e. "extraction ran and found nothing new" (#759).
 
-        A parse failure stays an empty result on purpose. A model that answered with
-        junk DID answer, and the graph gaining nothing from it is the honest outcome.
+        A parse failure stays an empty result on purpose, once the chain's next model has been
+        asked in its place (``expecting``): every model answered with junk, and the graph
+        gaining nothing from it is the honest outcome.
         """
         if not self._pool or not chunk.strip():
             return _empty_result()
+        from personalclaw.guardrails.failure import OutputContractError
+        from personalclaw.llm_helpers import expecting
+
         try:
             prompt = _extraction_prompt(chunk[:MAX_EXTRACTION_CHARS])
-            response = await self._pool.send(prompt, timeout=EXTRACTION_TIMEOUT)
+            # An answer with no JSON object in it is that model failing the call: the next
+            # model of the chain is asked inside the call (`expecting`).
+            with expecting(self.answer_problem):
+                response = await self._pool.send(prompt, timeout=EXTRACTION_TIMEOUT)
             return self._parse_response(response)
+        except OutputContractError as exc:
+            return self._parse_response(exc.raw)  # every model answered; none usably
         except WorkerError:
             raise
         except Exception:
@@ -71,14 +80,37 @@ class EntityExtractor:
             return [_empty_result() for _ in chunks]
         non_empty_indices = [i for i, c in enumerate(chunks) if c.strip()]
         prompts = [_extraction_prompt(chunks[i][:MAX_EXTRACTION_CHARS]) for i in non_empty_indices]
+        from personalclaw.llm_helpers import expecting
+
         try:
-            responses = await self._pool.send_batch(prompts, timeout=EXTRACTION_TIMEOUT)
+            with expecting(self.answer_problem):
+                responses = await self._pool.send_batch(prompts, timeout=EXTRACTION_TIMEOUT)
             results = [_empty_result() for _ in chunks]
             for idx, response in zip(non_empty_indices, responses):
                 results[idx] = self._parse_response(response)
             return results
         except Exception:
             return [_empty_result() for _ in chunks]
+
+    @classmethod
+    def answer_problem(cls, response: str) -> str:
+        """What makes an extraction answer unusable, ``""`` when a JSON object can be read from
+        it, by the same reading :meth:`_parse_response` does."""
+        for text in (response, cls._extract_code_block(response)):
+            if text:
+                try:
+                    if isinstance(json.loads(text), dict):
+                        return ""
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        m = re.search(r"\{[\s\S]*\}", response or "")
+        if m:
+            try:
+                if isinstance(json.loads(m.group()), dict):
+                    return ""
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return "no JSON object"
 
     def _parse_response(self, response: str) -> dict:
         for text in (response, self._extract_code_block(response)):

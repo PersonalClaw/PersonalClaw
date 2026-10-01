@@ -115,6 +115,9 @@ MODEL_ROUTES: list[tuple[str, str, Any]] = [
         {"key": f"{YOURS}:{YOUR_MODEL}", "in_per_mtok": 0, "out_per_mtok": 0},
     ),
     ("DELETE", "/api/models/rates", None),
+    # what your chats and pages are waiting for, and sending a waiting prompt to your next model
+    ("GET", "/api/models/waits", None),
+    ("POST", "/api/models/waits/{id}/move-on", None),
     # your Hugging Face token
     ("GET", "/api/models/hf-token/status", None),
     ("PUT", "/api/models/hf-token", {"token": "fake-hf-token-theirs"}),

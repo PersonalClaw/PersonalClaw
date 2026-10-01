@@ -78,7 +78,10 @@ export function emptyHint(last: SkillLadderReview | null): string {
   }
   const when = new Date(last.at).toLocaleString()
   if (!LADDER_HEALTHY.has(last.verdict)) {
-    return `The reviewer last ran ${when} but did not finish (${last.verdict}). That is a failure, not an idle queue — check the agent log and your background model provider.`
+    // Why it could not run, in the gateway's words when it gave them (which model failed and
+    // how), else the verdict itself: never a sentence a reader could take for "found nothing".
+    const why = last.detail?.trim() || last.verdict
+    return `The reviewer could not run at ${when} (${last.verdict}): ${why}. That is a failure, not an idle queue — check your background model provider.`
   }
   return `The reviewer ran ${when} and had nothing worth proposing. That is the healthy case: it only proposes when a session teaches it something durable, and it never installs on its own.`
 }

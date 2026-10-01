@@ -410,7 +410,12 @@ async def regenerate_synthesis(store: Any, item_id: str, *, completion: Any = No
     # A second prompt here would mean two definitions of what a synthesis may say.
     prompt = consolidation.synthesis_prompt(consolidation.Cluster(items=sources))
     caller = completion or _synthesis_completion
-    text = str(await caller(prompt) or "").strip()
+    from personalclaw.guardrails.failure import EmptyCompletion
+
+    try:
+        text = str(await caller(prompt) or "").strip()
+    except EmptyCompletion:
+        text = ""  # every model answered nothing: no synthesis, said as one below
     if not text:
         raise SynthesisUnavailable(
             "regeneration needs a model and none produced a synthesis — bind one for the "

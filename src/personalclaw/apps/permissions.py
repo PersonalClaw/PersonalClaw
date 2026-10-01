@@ -942,6 +942,12 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "setting the price your spend caps and the Usage page count a model's calls at"
     ),
     "DELETE /api/models/rates": OwnerOnly("removing a price you set for a model"),
+    "GET /api/models/waits": OwnerOnly(
+        "what your chats and pages are waiting for while a local model is busy, and what with"
+    ),
+    "POST /api/models/waits/{id}/move-on": OwnerOnly(
+        "moving a request you are waiting for on to your next model, which is sent its prompt"
+    ),
     "GET /api/models/health": OwnerOnly(
         "how your model providers are answering — the failures and latency of your model calls"
     ),

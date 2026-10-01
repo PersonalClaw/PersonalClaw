@@ -206,7 +206,9 @@ puts no clock of its own on a call whose provider instance keeps one (`ModelProv
 an Ollama instance's Request Timeout, the wait for the first word and then between the parts of the
 answer); for a provider that keeps none it stops the call at 300 s. A call stopped either way says
 which model on which instance, how long it waited, and that a faster model can be bound to Loops in
-Settings → Models (`guardrails.failure.ModelCallTimeout`).
+Settings → Models (`guardrails.failure.ModelCallTimeout`). On a local model the call first waits for
+its turn ([overview.md](overview.md#a-local-model-takes-one-call-at-a-time-yours-first)), and that
+wait counts against the same limit.
 
 A loop stays on the machine that ran it. The watchdog's first poll re-arms every loop it finds
 running with no worker (`watchdog._boot_sweep`), so `loop/loops.db` and each loop's folder under

@@ -5,10 +5,12 @@ and history modules.
 """
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -37,6 +39,7 @@ class PromptBusyExhaustedError(Exception):
 
 if TYPE_CHECKING:
     from personalclaw.approval_grants import ToolDecision
+    from personalclaw.guardrails.local_queue import Attended
     from personalclaw.history import ConversationLog
     from personalclaw.hooks import HookManager
     from personalclaw.usage_ledger import Attribution
@@ -72,6 +75,7 @@ async def stream_and_collect(
     on_tool_approval: "Callable[[LLMEvent], Awaitable[bool | ToolDecision]] | None" = None,
     on_complete: Callable[[LLMEvent], None] | None = None,
     on_substitution: Callable[[str], None] | None = None,
+    validate: Callable[[str], str] | None = None,
 ) -> str:
     """Stream a message through an LLM provider and collect the full response.
 
@@ -97,6 +101,10 @@ async def stream_and_collect(
             lets the turn fall back at all (``NativeAgentRuntime.announce_failover``): a
             caller with nowhere to show the sentence keeps the failure, since another
             model's reply would read as the chosen one's.
+        validate: With ``on_substitution``, what the caller reads the answer as: ``""`` for an
+            answer it can use, else what is wrong with it. An answer that is empty or misses it
+            is its model failing, and the next model of the chain answers instead
+            (:func:`let_fail_over`).
 
     Returns:
         The complete response text.
@@ -109,9 +117,7 @@ async def stream_and_collect(
         # (`_resolve_permission`), every other call once, at its result.
         asked: set[str] = set()
         if on_substitution is not None:
-            announce_failover = getattr(provider, "announce_failover", None)
-            if callable(announce_failover):
-                announce_failover()
+            let_fail_over(provider, validate)
         try:
             async for event in provider.stream(message):
                 if event.kind == EVENT_TEXT_CHUNK:
@@ -201,7 +207,9 @@ async def stream_and_collect_json(
 
     Combines ``stream_and_collect`` with ``parse_llm_json``; ``on_complete`` and
     ``on_substitution`` are passed through, so the call's usage row is written and a fallback
-    model is allowed and said exactly as ``stream_and_collect`` does them.
+    model is allowed and said exactly as ``stream_and_collect`` does them. With a fallback
+    allowed, an answer that holds no JSON object is its model failing too
+    (:func:`json_object_problem`), and the next model answers.
     Returns parsed dict or None on failure.
     """
     text = await stream_and_collect(
@@ -211,8 +219,41 @@ async def stream_and_collect_json(
         hooks=hooks,
         on_complete=on_complete,
         on_substitution=on_substitution,
+        validate=json_object_problem,
     )
     return parse_llm_json(text)
+
+
+def json_object_problem(text: str) -> str:
+    """What is wrong with *text* read as a JSON object (``parse_llm_json``), ``""`` when it holds
+    one."""
+    return "" if parse_llm_json(text) is not None else "no JSON object"
+
+
+def any_answer(_text: str) -> str:
+    """The check of a caller that reads any text as an answer: every answer that says something
+    passes (an empty one is a failure whatever the check)."""
+    return ""
+
+
+def let_fail_over(provider: object, validate: Callable[[str], str] | None = None) -> None:
+    """Let *provider*'s next turn go to the next model of its chain when its model fails before
+    it replies, for a caller that says the substitute (it handles ``EVENT_MODEL_SUBSTITUTION``).
+
+    One rule, the one a one-shot call's chain walk follows (:func:`run_over_use_case_chain`): a
+    provider error, a timeout and an open breaker hand the turn on
+    (``NativeAgentRuntime.announce_failover``), and with *validate*, which a caller that reads the
+    whole answer passes, so do an empty answer and one *validate* rejects
+    (``NativeAgentRuntime.expect_answer``). A provider without the seam (an ACP runtime) is left
+    as it is.
+    """
+    announce = getattr(provider, "announce_failover", None)
+    if callable(announce):
+        announce()
+    if validate is not None:
+        expect = getattr(provider, "expect_answer", None)
+        if callable(expect):
+            expect(validate)
 
 
 def say_background_substitution(chore: str) -> Callable[[str], None]:
@@ -492,6 +533,21 @@ class ChainExhausted(RuntimeError):
         self.failures = list(failures)
 
 
+def why_no_model_answered(exc: BaseException) -> str:
+    """Why a call got no answer, as a person reads it: what each model of an exhausted chain did
+    ("here:tiny failed before it replied (it answered with nothing), and so did …"), else the
+    failure's own sentence with its kind."""
+    failures = getattr(exc, "failures", None)
+    if isinstance(exc, ChainExhausted) and failures:
+        from personalclaw.guardrails.failure import failed_before_replying
+        from personalclaw.providers.provider_bridge import substitution_reason
+
+        clauses = [(ref, substitution_reason(err)[0]) for ref, err in failures]
+        return f"{failures[0][0]} " + failed_before_replying(clauses).removeprefix("it ")
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}"[:300] if text else type(exc).__name__
+
+
 def is_timeout_failure(exc: BaseException) -> bool:
     """Whether *exc* is a model that did not answer in time, rather than one that failed or
     was not there: a timeout of the call, the guard's, a first-token one, or the HTTP
@@ -547,7 +603,6 @@ async def run_over_use_case_chain(
     run: Callable[[Any], Awaitable[_ChainResult]],
     *,
     entry_kwargs: Callable[[str], Awaitable[dict]] | None = None,
-    no_advance: tuple[type[BaseException], ...] = (),
     label: str = "chain",
 ) -> _ChainResult:
     """Run ``run`` against ``chain`` entry 0, advancing to N+1 on a call failure.
@@ -560,20 +615,22 @@ async def run_over_use_case_chain(
 
     ``run`` receives one resolved provider and owns its whole lifecycle (start / stream /
     shutdown); it must RAISE on failure, because a swallowed error is indistinguishable
-    from a good answer and would pin the walk to entry 0 forever.
+    from a good answer and would pin the walk to entry 0 forever. An answer that is empty text
+    is a failure too (:class:`~personalclaw.guardrails.failure.EmptyCompletion`): a model that
+    spent its output budget thinking and said nothing has not answered, and the next model may.
 
     ``entry_kwargs`` derives the per-ENTRY build kwargs (budget/constraint) for the ref
     about to run — per entry, not once, because the walk can advance from a capable model
     to an incapable one mid-call.
 
-    ``no_advance`` names the exception types that must NOT burn the chain. The canonical
-    member is ``OutputContractError``: the model RESPONDED, so a contract miss is a prompt
-    problem, and walking a whole chain of models for it would spend N calls on the same
-    bad prompt. It is re-raised unchanged.
+    An answer that missed its requested shape (``OutputContractError``) advances as well: the
+    model answered, but not usably, and a measured miss is a model too small for the shape far
+    more often than a prompt no model could follow.
 
     An exhausted chain raises ONE :class:`ChainExhausted` (a ``RuntimeError``) naming the
     axis, the chain length and the last error — one clear error, not N stack traces — and
-    carrying what each entry did.
+    carrying what each entry did. When the last entry answered in the wrong shape, its
+    ``OutputContractError`` is raised instead, so a caller can still read the text it returned.
 
     An entry that serves after the head failed serves IN ITS PLACE, and the provider carries
     that (``provider_bridge.stamp_substitution``), so the call the guard records says "ran on
@@ -583,7 +640,12 @@ async def run_over_use_case_chain(
 
     Every entry resolves metered (``provider_bridge.resolve_metered_model``): each consumer of
     this walk is automation, whichever axis it walks, so each call counts against the daily cap.
+
+    Each attempt names the entry after it (``local_queue.next_entry``): a call somebody is waiting
+    for gives a busy local model a short wait only when there is a next model to answer instead.
     """
+    from personalclaw.guardrails.failure import EmptyCompletion, OutputContractError
+    from personalclaw.guardrails.local_queue import next_entry
     from personalclaw.llm.base import ModelSubstitution
     from personalclaw.providers.provider_bridge import (
         resolve_metered_model,
@@ -616,9 +678,13 @@ async def run_over_use_case_chain(
                 ),
             )
         try:
-            return await run(provider)
-        except no_advance:
-            raise
+            # What this attempt moves on to if it does not serve: a call somebody is waiting for
+            # gives a busy local model a short wait only when there is somewhere to go.
+            with next_entry(chain[i + 1] if i + 1 < len(chain) else ""):
+                result = await run(provider)
+            if isinstance(result, str) and not result.strip():
+                raise EmptyCompletion(ref)
+            return result
         except Exception as exc:  # noqa: BLE001 — a failed call advances
             last_exc = exc
             failures.append((ref, exc))
@@ -633,12 +699,33 @@ async def run_over_use_case_chain(
                     ref,
                     type(exc).__name__,
                 )
+    if isinstance(last_exc, OutputContractError):
+        raise last_exc
     raise ChainExhausted(
         f"every model in the {use_case!r} fallback chain failed "
         f"({len(chain)} entr{'y' if len(chain) == 1 else 'ies'}); "
         f"last error: {last_exc}",
         failures,
     ) from last_exc
+
+
+#: What the one-shot calls of a block expect their answer to be (:func:`expecting`).
+_EXPECTED_SHAPE: contextvars.ContextVar[Callable[[str], str] | None] = contextvars.ContextVar(
+    "personalclaw_one_shot_expected_shape", default=None
+)
+
+
+@contextlib.contextmanager
+def expecting(check: Callable[[str], str]) -> Iterator[None]:
+    """The one-shot calls in this block need answers *check* accepts: ``validate=`` for a call
+    made through a completion function the caller was handed (a classifier's ``ask``, a triage
+    run's ``completion``), whose signature it does not own. *check* gets the answer's text and
+    returns ``""`` when it can be used, else what is wrong with it."""
+    token = _EXPECTED_SHAPE.set(check)
+    try:
+        yield
+    finally:
+        _EXPECTED_SHAPE.reset(token)
 
 
 async def one_shot_completion(
@@ -650,6 +737,8 @@ async def one_shot_completion(
     temperature: float | None = None,
     usage: "Attribution | None" = None,
     attempt_timeout: float | None = None,
+    attended: "Attended | None" = None,
+    validate: Callable[[str], str] | None = None,
 ) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
@@ -672,17 +761,24 @@ async def one_shot_completion(
 
     On a chain with fallbacks, a ``CircuitOpenError``/provider failure from entry N
     advances to entry N+1 for this call (bounded by chain length) — the
-    call-failure walk that complements the seam's resolution-time breaker skip.
+    call-failure walk that complements the seam's resolution-time breaker skip. An answer
+    with no text is such a failure on every path: it raises
+    :class:`~personalclaw.guardrails.failure.EmptyCompletion`, so a chain moves on and a
+    caller never has to tell an empty string from a failure.
 
     ``output_type`` (AUTONOMY-GUARDRAILS §2.4) opts into typed structured output:
     pass ``dict`` or ``list`` to require the response parse as that JSON shape.
-    On a parse miss the call is retried ONCE with a targeted correction note
-    injected (the dominant real-world cause is the schema not being visible), and
-    if it still fails an :class:`~personalclaw.guardrails.failure.OutputContractError`
-    is raised — replacing the silent ``None`` degrade that ``parse_llm_json``
-    returned at every call site. Returns the raw text unchanged when ``output_type``
-    is ``None`` (the response is still a ``str``; typed callers parse the returned
-    text, e.g. via ``json.loads``).
+    ``validate`` checks the shape the caller needs inside it: it is given the answer's text and
+    returns ``""`` when the caller can use it, else what is wrong with it ("no 'proposals'
+    array"). An answer that misses either is the model failing this call, so the chain asks its
+    next model; the last model (or the only one) is asked ONCE more with a targeted correction
+    note naming what was wrong (the dominant real-world cause is the schema not being visible),
+    and if that misses too an :class:`~personalclaw.guardrails.failure.OutputContractError` is
+    raised, carrying the last answer's text for a caller that salvages it. A caller therefore
+    never checks the shape after the fact to decide whether another model should have been
+    asked. A caller that calls through a completion function it was handed binds the same check
+    around the call instead (:func:`expecting`). The response is always returned as text (typed
+    callers parse it, e.g. via ``json.loads``).
 
     ``output_type`` ALSO rides the bridge as a build kwarg (AG-9) — but only to an entry
     whose provider advertised ``StructuredOutput.JSON_SCHEMA``, so a natively capable
@@ -740,8 +836,52 @@ async def one_shot_completion(
     while its second model was still answering, so a slow first model was the end of the call
     however the chain went on — which is how a busy local model left library items reading
     "model unavailable" while two more models were bound behind it. ``None`` leaves each attempt
-    to the model-call guard's own limit.
+    to the model-call guard's own limit. Either limit includes the time a call waits for its turn
+    on a local model (``guardrails.local_queue``).
+
+    ``attended`` says somebody is waiting for this call — a chat tool's step, a page waiting on
+    its answer — and what the wait is (:class:`~personalclaw.guardrails.local_queue.Attended`). On
+    a model that runs on this machine it is given the model before any background call, it waits
+    for a busy one only briefly when its chain has another model to try, and while it waits the
+    page can say why. ``None`` is background work: it waits its turn behind them.
     """
+    from personalclaw.guardrails.local_queue import attending, next_entry
+
+    # The shape this call needs is its own (the argument, else the block's), and no call it
+    # makes on its way inherits it.
+    check = validate or _EXPECTED_SHAPE.get()
+    shape_token = _EXPECTED_SHAPE.set(None)
+    try:
+        # Bound here, inside the coroutine, so a sync bridge that runs it on a thread of its
+        # own still carries it to the guard. What it moves on to is its own chain's to say, so
+        # nothing a caller's walk bound reaches it.
+        with attending(attended), next_entry(""):
+            return await _one_shot_completion(
+                prompt,
+                use_case=use_case,
+                output_type=output_type,
+                model=model,
+                temperature=temperature,
+                usage=usage,
+                attempt_timeout=attempt_timeout,
+                validate=check,
+            )
+    finally:
+        _EXPECTED_SHAPE.reset(shape_token)
+
+
+async def _one_shot_completion(
+    prompt: str,
+    *,
+    use_case: str,
+    output_type: type | None,
+    model: str,
+    temperature: float | None,
+    usage: "Attribution | None",
+    attempt_timeout: float | None,
+    validate: Callable[[str], str] | None,
+) -> str:
+    """:func:`one_shot_completion`, with whoever is waiting for it already bound."""
     from personalclaw.providers.provider_bridge import metered, resolve_metered_model
     from personalclaw.providers.use_cases import VALID_USE_CASES
     from personalclaw.usage_ledger import UNATTENDED, recorder
@@ -758,7 +898,7 @@ async def one_shot_completion(
     else:
         resolved_uc = "reasoning"
 
-    from personalclaw.guardrails.failure import OutputContractError
+    from personalclaw.guardrails.failure import EmptyCompletion, OutputContractError
 
     # A pinned sampling temperature rides EVERY resolution path as a build kwarg
     # (pin / chain-advance / plain / last-resort), so a fallback entry samples at the
@@ -813,25 +953,54 @@ async def one_shot_completion(
             logger.debug("one_shot_completion: budget derivation failed for %r", model_ref)
         return kw
 
+    expected = (
+        getattr(output_type, "__name__", str(output_type))
+        if output_type is not None
+        else "the shape asked for"
+    )
+
+    def _miss(text: str) -> str:
+        """What makes *text* unusable to the caller, ``""`` when nothing does."""
+        if output_type is not None and _parse_llm(text, output_type) is None:
+            return f"it did not parse as {expected}"
+        if validate is None:
+            return ""
+        try:
+            return str(validate(text) or "")
+        except Exception as exc:  # noqa: BLE001 — an answer its reader fails on is unusable
+            return f"it could not be read ({type(exc).__name__})"
+
     async def _run(provider) -> str:
+        from personalclaw.guardrails.local_queue import moving_on_to
+
         try:
             await provider.start()
             on_complete = recorder(provider, who)
+            served = str(getattr(provider, "served_ref", "") or "")
             text = await stream_and_collect(provider, prompt, on_complete=on_complete)
-            if output_type is None:
+            # No text is no answer, on every path: the chain moves on, and a caller with one
+            # model sees a failure rather than an empty string it would have to tell apart.
+            if not text.strip():
+                raise EmptyCompletion(served)
+            miss = _miss(text)
+            if not miss:
                 return text
-            # Typed path: parse; on a miss, ONE targeted correction-note retry.
-            if _parse_llm(text, output_type) is not None:
-                return text
+            # The wrong shape. With another model to ask, that model is asked rather than this
+            # one again: a model that missed once is the likelier one to miss twice, and on a
+            # slow local model a second try costs as long as the first.
+            if moving_on_to():
+                raise OutputContractError(expected, text, why=miss)
             from personalclaw.guardrails.failure import FailureMode, correction_note
 
-            retry_prompt = f"{prompt}\n\n{correction_note(FailureMode.SCHEMA_VIOLATION)}"
+            note = correction_note(FailureMode.SCHEMA_VIOLATION)
+            retry_prompt = f"{prompt}\n\n{note} What was wrong: {miss}."
             retry_text = await stream_and_collect(provider, retry_prompt, on_complete=on_complete)
-            if _parse_llm(retry_text, output_type) is not None:
+            if not retry_text.strip():
+                raise EmptyCompletion(served)
+            miss = _miss(retry_text)
+            if not miss:
                 return retry_text
-            raise OutputContractError(
-                getattr(output_type, "__name__", str(output_type)), retry_text
-            )
+            raise OutputContractError(expected, retry_text, why=miss)
         finally:
             try:
                 await provider.shutdown()
@@ -855,13 +1024,11 @@ async def one_shot_completion(
             resolve_metered_model(resolved_uc, model_override=model, **(await _entry_kw(model)))
         )
 
-    # Call-failure chain advance: with a multi-entry
-    # chain declared, a CircuitOpenError/provider failure from entry N advances to
-    # entry N+1 for THIS call — once per remaining entry, bounded by chain length.
-    # An OutputContractError does NOT advance (the model responded; the contract
-    # miss is not a provider outage). A one-entry/empty chain takes the plain
-    # resolution path below — today's exact behavior. The walk itself is
-    # :func:`run_over_use_case_chain`, shared with the other non-interactive
+    # Call-failure chain advance: with a multi-entry chain declared, a failure from entry N
+    # (a provider error, an open breaker, a busy local model, an empty answer or one in the
+    # wrong shape) advances to entry N+1 for THIS call — once per remaining entry, bounded by
+    # chain length. A one-entry/empty chain takes the plain resolution path below. The walk
+    # itself is :func:`run_over_use_case_chain`, shared with the other non-interactive
     # consumers of the chain so there is exactly one answer to "advance?".
     _chain = use_case_chain(resolved_uc)
     if len(_chain) > 1:
@@ -870,7 +1037,6 @@ async def one_shot_completion(
             _chain,
             _attempt,
             entry_kwargs=_entry_kw,
-            no_advance=(OutputContractError,),
             label="one_shot chain",
         )
 
@@ -1153,7 +1319,9 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     from personalclaw.acp.errors import AcpTimeoutError
     from personalclaw.errors import ERROR_CODES, AgentError
     from personalclaw.guardrails.failure import (
+        CircuitOpenError,
         FirstTokenTimeout,
+        LocalModelBusy,
         ModelCallTimeout,
         NoModelAnswered,
         PromptExceedsWindow,
@@ -1175,7 +1343,10 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
         )
     if isinstance(exc, ToolSchemaRejected):
         return exc.sentence()
-    if isinstance(exc, (NoModelAnswered, FirstTokenTimeout, ModelCallTimeout)):
+    if isinstance(
+        exc,
+        (NoModelAnswered, FirstTokenTimeout, ModelCallTimeout, CircuitOpenError, LocalModelBusy),
+    ):
         return exc.sentence(room_member=room_member)
     if isinstance(exc, ProviderResolutionError) and str(exc).strip():
         return str(exc).strip()
@@ -1314,7 +1485,21 @@ def failure_clause(exc: BaseException) -> str:
     error the same failure shows cannot describe it differently. For a failure that reading does
     not recognize, the clause is the failure's own words — the detail the chat shows it with —
     since "doesn't recognize" says nothing about what failed in a line that names each model.
+    A model that was busy, answered nothing or answered in the wrong shape raised no error worth
+    quoting, and reads as what it did ("it answered with nothing"); a chain none of whose models
+    answered reads as what each did, whoever's chain it was.
     """
+    from personalclaw.guardrails.failure import (
+        EmptyCompletion,
+        LocalModelBusy,
+        NoModelAnswered,
+        OutputContractError,
+    )
+
+    if isinstance(exc, (EmptyCompletion, LocalModelBusy, OutputContractError)):
+        return exc.reason()
+    if isinstance(exc, NoModelAnswered):
+        return f"no model of its chain answered: {exc.tried()}"
     text = (_known_failure_sentence(exc) or _own_words(exc)).strip()
     first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].rstrip(".!?")
     if len(first) > _CLAUSE_CAP:

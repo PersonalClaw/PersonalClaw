@@ -38,6 +38,7 @@ from personalclaw.proactive.gate import (
     GateResult,
     GateRule,
     apply_gate,
+    dispositions_problem,
     open_gate,
     parse_gate_output,
     should_call_gate,
@@ -54,6 +55,7 @@ from personalclaw.proactive.proposals import (
     ProposalBatch,
     RefusedProposal,
     parse_proposals,
+    proposals_problem,
 )
 from personalclaw.proactive.rank import Digest, render_digest
 
@@ -256,6 +258,7 @@ async def run_triage(
     the gateway's wiring.
     """
     from personalclaw.guardrails.audit import caller_scope
+    from personalclaw.llm_helpers import expecting
 
     completion = completion or _default_completion
     deliver = deliver or make_notify_deliver(run_id=run_id, trigger_id=trigger_id)
@@ -289,7 +292,9 @@ async def run_triage(
             notes.append("gate prompt unresolvable: gate defaulted open")
             gate = open_gate(manifest)
         else:
-            with caller_scope("triage_gate"):
+            # A reply that is not a `dispositions` object is the model failing the call: the
+            # chain asks its next model inside the call (`expecting`).
+            with caller_scope("triage_gate"), expecting(dispositions_problem):
                 raw = await _ask(completion, prompt, scope=GATE_SCOPE)
             llm_calls += 1
             gate_called = True
@@ -325,8 +330,10 @@ async def run_triage(
                 notes.append("proposal prompt unresolvable: plain digest")
                 batch = ProposalBatch(degraded=True)
             else:
-                # Spend decision 4: ONE call. No retry loop against the schema.
-                with caller_scope("triage_propose"):
+                # Spend decision 4: ONE call, no loop of our own against the schema. A reply with
+                # no `proposals` array is that model failing the call, so the one-shot asks the
+                # chain's next model in its place (`expecting`), and only the last is reminded.
+                with caller_scope("triage_propose"), expecting(proposals_problem):
                     raw = await _ask(completion, prompt, scope=PROPOSE_SCOPE)
                 llm_calls += 1
                 if raw is None:

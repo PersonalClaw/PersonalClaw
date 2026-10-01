@@ -942,10 +942,12 @@ async def _probe_model_providers(ctx: DoctorContext) -> ProbeResult:
         remedy=(
             " ".join(measured)
             + (" " if measured else "")
-            + "No automatic fix, and none is needed once it answers again: its chain entries are "
-            "skipped meanwhile, the next call after a short wait tests it, and a success brings it "
-            "back. If calls keep failing, check its address, key and status under Settings → "
-            "Providers."
+            + "No automatic fix, and none is needed once it answers again. Meanwhile chats, "
+            "one-shot calls and background chores move on to the next model of their chain, a use "
+            "case with no other model fails until it answers, and a background chore no model "
+            "answered is tried again once one does. A call after a short wait tests it, and a "
+            "success brings it back. If calls keep failing, check its address, key and status "
+            "under Settings → Providers."
             if failing
             else ""
         ),

@@ -12,6 +12,13 @@ from aiohttp import web
 
 from personalclaw.context import ContextBuilder
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm_helpers import (
+    failure_clause,
+    is_model_call_failure,
+    let_fail_over,
+    say_background_substitution,
+)
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY, chore_usage
@@ -173,8 +180,9 @@ def _time_context() -> str:
     return f"## Current Time\n{datetime.now().strftime('%A, %B %d %Y at %H:%M')}"
 
 
-def _parse_suggestions(text: str) -> list[str]:
-    """Parse LLM response into a list of suggestion strings."""
+def _parse_suggestions(text: str, *, quiet: bool = False) -> list[str]:
+    """Parse LLM response into a list of suggestion strings; ``[]`` when it holds none, said in the
+    log unless *quiet* (the check a fallback is decided by reads the same answer first)."""
     text = text.strip()
     # Strip markdown fences if present
     if text.startswith("```"):
@@ -189,8 +197,14 @@ def _parse_suggestions(text: str) -> list[str]:
     except (json.JSONDecodeError, TypeError):
         pass
 
-    logger.warning("Failed to parse suggestions response: %s", text[:200])
+    if not quiet:
+        logger.warning("Failed to parse suggestions response: %s", text[:200])
     return []
+
+
+def _suggestions_problem(text: str) -> str:
+    """What is wrong with *text* as a suggestions answer, ``""`` when it holds suggestions."""
+    return "" if _parse_suggestions(text, quiet=True) else "no JSON list of suggestions"
 
 
 def _redact_suggestions(suggestions: list[str]) -> list[str]:
@@ -246,13 +260,19 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
 
     text = ""
     record = recorder(client, chore_usage())
+    say = say_background_substitution("Suggestions")
     try:
 
         async def _stream() -> str:
             nonlocal text
+            # A first model of the background chain that fails, is paused or answers no list
+            # hands the call to the next one, said in the log.
+            let_fail_over(client, _suggestions_problem)
             async for event in client.stream(prompt):
                 if event.kind == EVENT_TEXT_CHUNK:
                     text += event.text
+                elif event.kind == EVENT_MODEL_SUBSTITUTION:
+                    say(event.text)
                 elif event.kind == EVENT_PERMISSION_REQUEST:
                     # Suggestions are text; a call this turn asks for is refused, and the row says
                     # what refused it, as every decision row does.
@@ -289,14 +309,23 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
 
 
 async def refresh_suggestions(state: "DashboardState", cache: SuggestionsCache) -> None:
-    """Background task: regenerate suggestions."""
+    """Background task: regenerate suggestions.
+
+    A refresh no model answered keeps the suggestions there are and is asked again by the next
+    poll. It is said in one line with what happened; its traceback, which holds only the HTTP
+    client's frames, is at debug. A defect keeps its traceback.
+    """
     async with cache._lock:
         try:
             suggestions = await generate_suggestions(state)
             cache.suggestions = suggestions
             cache.generated_at = time.time()
-        except Exception:
-            logger.warning("Suggestions generation failed", exc_info=True)
+        except Exception as exc:
+            if is_model_call_failure(exc):
+                logger.warning("Suggestions generation failed: %s", failure_clause(exc))
+                logger.debug("Suggestions generation failure", exc_info=exc)
+            else:
+                logger.warning("Suggestions generation failed", exc_info=True)
 
 
 async def maybe_refresh(state: "DashboardState", cache: SuggestionsCache) -> None:

@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from personalclaw import attachments, shutdown_event
 from personalclaw import trace_recorder as _trace
 from personalclaw.guardrails.audit import caller_scope
+from personalclaw.guardrails.local_queue import Attended
 from personalclaw.identity import contributor_label, current_username, operator_name
 from personalclaw.inbox import (
     SOURCE_DECLARABLE_KINDS,
@@ -686,8 +687,15 @@ class InboxService:
             # (the error carries the retry text) — never a silent drop.
             # `caller_scope` so the attempt row names WHICH background pass spent this
             # (`G47`): triage, drafting and digests all resolve on the same axis.
+            # An answer naming no known classification is that model failing the call: the
+            # chain's next model is asked inside it.
             with caller_scope("inbox_triage"):
-                raw = await one_shot_completion(prompt, use_case="background", output_type=dict)
+                raw = await one_shot_completion(
+                    prompt,
+                    use_case="background",
+                    output_type=dict,
+                    validate=_classification_problem,
+                )
         except OutputContractError as exc:
             raw = exc.raw
         except Exception:
@@ -766,9 +774,13 @@ class InboxService:
             parts.append(f"Keep the whole reply within {limit} words: {user}'s limit.")
         prompt = "\n\n".join(parts)
         try:
+            # Asked for from the Inbox page, which waits on the draft.
             with caller_scope("inbox_triage"):
                 kind, text = _draft_answer(
-                    await one_shot_completion(prompt, use_case="background") or ""
+                    await one_shot_completion(
+                        prompt, use_case="background", attended=Attended("Drafting the reply")
+                    )
+                    or ""
                 )
         except Exception:
             logger.warning("inbox draft failed for %s", item_id, exc_info=True)
@@ -801,9 +813,13 @@ class InboxService:
             f"everything they asked for, and answer with only the new reply.\n\n{quoted}"
         )
         try:
+            # The Inbox page still waits on this draft.
             with caller_scope("inbox_triage"):
                 kind, text = _draft_answer(
-                    await one_shot_completion(again, use_case="background") or ""
+                    await one_shot_completion(
+                        again, use_case="background", attended=Attended("Shortening the reply")
+                    )
+                    or ""
                 )
         except Exception:
             logger.warning("inbox draft: the shorter draft failed for %s", item_id, exc_info=True)
@@ -841,8 +857,14 @@ class InboxService:
             or ""
         )
         try:
+            # Asked for from the Inbox page, which waits on the digest.
             with caller_scope("inbox_triage"):
-                summary = (await one_shot_completion(prompt, use_case="background") or "").strip()
+                summary = (
+                    await one_shot_completion(
+                        prompt, use_case="background", attended=Attended("Writing the digest")
+                    )
+                    or ""
+                ).strip()
         except Exception:
             logger.warning("inbox digest failed for %s", channel_id, exc_info=True)
             return None
@@ -930,6 +952,15 @@ def run_live_inbox_maintenance() -> str:
         return "no inbox service running"
     removed = svc.run_maintenance_threadsafe()
     return f"inbox maintenance: {removed} item(s) removed"
+
+
+def _classification_problem(raw: str) -> str:
+    """What makes a classify answer unusable, ``""`` when it names a known classification."""
+    from personalclaw.llm_helpers import parse_llm_json
+
+    data = parse_llm_json(raw)
+    label = str(data.get("classification", "")).lower() if isinstance(data, dict) else ""
+    return "" if label in {c.value for c in Classification} else "no known 'classification'"
 
 
 def _parse_classification(raw: str) -> tuple[str, str]:

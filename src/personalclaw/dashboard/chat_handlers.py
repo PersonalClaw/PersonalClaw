@@ -3124,9 +3124,15 @@ async def api_nav_resolve_links(request: web.Request) -> web.Response:
         return web.json_response({"summaries": []})
 
     try:
+        from personalclaw.guardrails.local_queue import Attended
         from personalclaw.llm_helpers import one_shot_completion
 
-        text = await one_shot_completion(_build_nav_links_prompt(links), use_case="background")
+        # The caller waits on the summaries.
+        text = await one_shot_completion(
+            _build_nav_links_prompt(links),
+            use_case="background",
+            attended=Attended("Summarizing the links"),
+        )
     except Exception:
         logger.warning("nav link resolve failed", exc_info=True)
         # Soft-fail: the UI keeps its structured fallback labels.

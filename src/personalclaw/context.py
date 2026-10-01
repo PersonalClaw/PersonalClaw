@@ -924,6 +924,7 @@ async def compress_thread_history(
     from personalclaw.agents.defaults import LITE_AGENT_NAME
     from personalclaw.history import MODEL_VIEW_ROLES, model_window  # circular import
     from personalclaw.llm_helpers import (  # circular import
+        any_answer,
         say_background_substitution,
         stream_and_collect,
     )
@@ -990,6 +991,7 @@ async def compress_thread_history(
             prompt,
             on_complete=recorder(client, chore_usage(session_key)),
             on_substitution=say_background_substitution("Thread history compression"),
+            validate=any_answer,
         )
         if not result:
             return None

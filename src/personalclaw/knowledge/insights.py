@@ -65,14 +65,27 @@ class InsightsExtractor:
         item ``partial`` instead of silently leaving it ``done`` with stale insights."""
         if not self._pool or not (content or "").strip():
             return {}
+        from personalclaw.guardrails.failure import OutputContractError
+        from personalclaw.llm_helpers import expecting
+
         try:
             prompt = _insights_prompt(content[: self._max_chars])
-            response = await self._pool.send(prompt, timeout=INSIGHTS_TIMEOUT)
+            # An answer with no JSON object in it is that model failing the call: the next
+            # model of the chain is asked inside the call (`expecting`).
+            with expecting(self.answer_problem):
+                response = await self._pool.send(prompt, timeout=INSIGHTS_TIMEOUT)
             return self._parse(response)
+        except OutputContractError as exc:
+            return self._parse(exc.raw)  # every model answered; none usably
         except Exception:
             if raise_on_error:
                 raise
             return {}
+
+    @classmethod
+    def answer_problem(cls, response: str) -> str:
+        """What makes an insights answer unusable, ``""`` when it holds a JSON object."""
+        return "" if isinstance(cls._loads(response), dict) else "no JSON object"
 
     def _parse(self, response: str) -> dict:
         data = self._loads(response)

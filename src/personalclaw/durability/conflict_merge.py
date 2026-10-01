@@ -35,6 +35,7 @@ from personalclaw.durability.conflicts import (
     ConflictRecord,
 )
 from personalclaw.guardrails.audit import caller_scope
+from personalclaw.guardrails.failure import OutputContractError
 from personalclaw.llm_helpers import one_shot_completion
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,11 @@ def pending(queue: ConflictQueue, *, limit: int = DEFAULT_LIMIT) -> list[Conflic
     return out[: max(0, int(limit))]
 
 
+def _merge_problem(text: str) -> str:
+    """What makes a merge answer unusable, ``""`` when it is a {merged, rationale} object."""
+    return "" if _parse(text)[0] is not None else "not a {merged, rationale} object"
+
+
 def _parse(text: str) -> tuple[dict | None, str]:
     """``(merged, rationale)`` from the model's answer; ``(None, "")`` on anything unusable.
 
@@ -144,19 +150,14 @@ async def draft_proposals(home: Path, *, limit: int = DEFAULT_LIMIT, now: str = 
         )
         try:
             # Attributed on the attempt ledger: a sync-conflict merge is an
-            # unattended pass whose cost should be separable from the other three.
+            # unattended pass whose cost should be separable from the other three. An answer
+            # that is not a {merged, rationale} object is that model failing the call, so the
+            # chain's next model is asked inside it.
             with caller_scope("conflict_merge"):
-                text = await one_shot_completion(prompt, use_case="background")
-        except Exception as exc:  # noqa: BLE001 — fail-open: keep the conflict, lose the draft
-            logger.warning(
-                "conflict merge: no proposal for %s/%s (%s)", rec.entry_id, rec.entity_id, exc
-            )
-            rec.proposal_error = f"{type(exc).__name__}: {exc}"[:300]
-            queue.update(rec)
-            report.failed += 1
-            continue
-        merged, rationale = _parse(text)
-        if merged is None:
+                text = await one_shot_completion(
+                    prompt, use_case="background", validate=_merge_problem
+                )
+        except OutputContractError:
             logger.warning(
                 "conflict merge: unusable draft for %s/%s — left as needs-review with no proposal",
                 rec.entry_id,
@@ -166,6 +167,15 @@ async def draft_proposals(home: Path, *, limit: int = DEFAULT_LIMIT, now: str = 
             queue.update(rec)
             report.failed += 1
             continue
+        except Exception as exc:  # noqa: BLE001 — fail-open: keep the conflict, lose the draft
+            logger.warning(
+                "conflict merge: no proposal for %s/%s (%s)", rec.entry_id, rec.entity_id, exc
+            )
+            rec.proposal_error = f"{type(exc).__name__}: {exc}"[:300]
+            queue.update(rec)
+            report.failed += 1
+            continue
+        merged, rationale = _parse(text)
         rec.proposal = merged
         rec.rationale = rationale
         rec.proposed_at = now

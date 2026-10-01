@@ -194,6 +194,27 @@ def proposal_schema(allowed_ordinals: frozenset[str] | set[str] | None = None) -
     }
 
 
+def _proposals_payload(raw: object) -> tuple[dict | None, str]:
+    """The reply as a dict carrying a ``proposals`` list, or ``None`` and what is wrong with it."""
+    import json
+
+    payload: object = raw
+    if isinstance(raw, str):
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return None, "not JSON"
+    if not isinstance(payload, dict) or not isinstance(payload.get("proposals"), list):
+        return None, "no 'proposals' array"
+    return payload, ""
+
+
+def proposals_problem(raw: str) -> str:
+    """What makes a proposal reply unusable, ``""`` when it carries a ``proposals`` array: the
+    check the proposal call asks its chain to meet (``llm_helpers.expecting``)."""
+    return _proposals_payload(raw)[1]
+
+
 def parse_proposals(
     raw: object,
     *,
@@ -205,20 +226,10 @@ def parse_proposals(
     dict carrying a `proposals` list is a degraded batch — zero proposals, one `unparseable`
     refusal — and the caller renders a plain digest.
     """
-    import json
-
-    payload: object = raw
-    if isinstance(raw, str):
-        try:
-            payload = json.loads(raw)
-        except ValueError:
-            return ProposalBatch(
-                refused=(RefusedProposal(reason=REFUSE_UNPARSEABLE, detail="not JSON"),),
-                degraded=True,
-            )
-    if not isinstance(payload, dict) or not isinstance(payload.get("proposals"), list):
+    payload, why = _proposals_payload(raw)
+    if payload is None:
         return ProposalBatch(
-            refused=(RefusedProposal(reason=REFUSE_UNPARSEABLE, detail="no 'proposals' array"),),
+            refused=(RefusedProposal(reason=REFUSE_UNPARSEABLE, detail=why),),
             degraded=True,
         )
 

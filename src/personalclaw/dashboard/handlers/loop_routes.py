@@ -341,13 +341,18 @@ async def api_loop_classify(request: web.Request) -> web.Response:
             status=409,
         )
     strat = kinds.get(kind)
+    from personalclaw.guardrails.local_queue import Attended
     from personalclaw.llm_helpers import one_shot_completion
     from personalclaw.usage_ledger import Attribution
 
     async def _ask(prompt: str) -> str:
         # Loop spend, for a loop that has no id yet: the composer asks before it creates one.
+        # The composer waits on the answer, so it goes ahead of background work.
         return await one_shot_completion(
-            prompt, use_case="background", usage=Attribution(source="loop")
+            prompt,
+            use_case="background",
+            usage=Attribution(source="loop"),
+            attended=Attended("Analyzing the task"),
         )
 
     skills_catalog, workflows_catalog = await _installed_capability_catalogs()
@@ -388,13 +393,16 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
         return web.json_response({"error": "Goal too short to decompose"}, status=400)
 
     from personalclaw import grill
+    from personalclaw.guardrails.local_queue import Attended
     from personalclaw.llm_helpers import one_shot_completion
     from personalclaw.usage_ledger import Attribution
 
     who = Attribution(source="loop", session_key=manager.usage_key(cid))
+    # The intake page waits on the questions.
+    waiting = Attended("Preparing the questions")
 
     async def _ask(prompt: str) -> str:
-        return await one_shot_completion(prompt, use_case="background", usage=who)
+        return await one_shot_completion(prompt, use_case="background", usage=who, attended=waiting)
 
     # Wire recall to the SAME L3 seam the Memory Studio recall uses (semantic_context),
     # so the decomposition sees the agent's own memory view + can't drift from it.

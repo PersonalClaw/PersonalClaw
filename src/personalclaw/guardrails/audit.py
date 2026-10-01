@@ -68,9 +68,13 @@ def _audit_path() -> Path:
 #: (PROACTIVE-ASSISTANT §1.2/§1.3), and they are TWO values rather than one `triage`: the
 #: whole point of the gate is that it is the cheap call, so a spend audit that could not tell
 #: it apart from the proposal call could not answer whether the gate is earning its keep.
+#: `knowledge` is the knowledge library's processing of an item (its pipeline's model nodes and
+#: its worker pool), which is also what a busy local model is busy with when a person waits
+#: behind it (``guardrails.local_queue.BUSY_WITH`` names every caller here in those words).
 CALLERS: tuple[str, ...] = (
     "conflict_merge",
     "inbox_triage",
+    "knowledge",
     "nl_to_cron",
     "skill_ladder",
     "triage_gate",

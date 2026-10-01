@@ -432,6 +432,7 @@ async def _reply(use_case: str, ref: str, messages: list[dict[str, Any]]) -> str
     """One completion of ``messages`` on the model ``ref`` names, resolved as ``use_case``
     resolves it — the model itself, pinned (no fallback chain), behind the spend guard — with its
     usage row written as an evaluation's."""
+    from personalclaw.guardrails.local_queue import Attended, attending
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
     from personalclaw.providers.provider_bridge import resolve_metered_model
     from personalclaw.usage_ledger import Attribution, recorder
@@ -443,11 +444,13 @@ async def _reply(use_case: str, ref: str, messages: list[dict[str, Any]]) -> str
     parts: list[str] = []
     await provider.start()
     try:
-        async for event in provider.complete(messages):
-            if event.kind == EVENT_TEXT_CHUNK:
-                parts.append(getattr(event, "text", "") or "")
-            elif event.kind == EVENT_COMPLETE:
-                record(event)
+        # The row's Test waits on this, so on a local model it goes ahead of background work.
+        with attending(Attended("Testing the model")):
+            async for event in provider.complete(messages):
+                if event.kind == EVENT_TEXT_CHUNK:
+                    parts.append(getattr(event, "text", "") or "")
+                elif event.kind == EVENT_COMPLETE:
+                    record(event)
     finally:
         try:
             await provider.shutdown()

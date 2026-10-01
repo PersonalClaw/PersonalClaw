@@ -110,8 +110,13 @@ def _assess_prompt(goal: str) -> str:
 
 async def assess_goal(goal: str, ask: AskFn) -> tuple[bool, list[str]]:
     """Return ``(ambiguous, clarifying_questions)``. Never raises."""
+    from personalclaw.llm_helpers import expecting
+
     try:
-        raw = await ask(_assess_prompt(goal))
+        # Each grill answer has a shape, and one without it is that model failing the call: the
+        # next model of the chain is asked inside the call (`expecting`).
+        with expecting(_object_problem):
+            raw = await ask(_assess_prompt(goal))
         data = _parse_obj(raw)
     except Exception:
         return False, []
@@ -158,16 +163,19 @@ async def grill(
 
     prior = await check_memory(goal, recall)
     result.memory_hits = 1 if prior else 0
+    from personalclaw.llm_helpers import expecting
 
     try:
         if shape == "flat":
-            raw = await ask(_flat_prompt(goal, prior))
+            with expecting(_list_problem):
+                raw = await ask(_flat_prompt(goal, prior))
             items = _parse_list(raw)
             result.sub_goals = [
                 str(s).strip() for s in (items or []) if isinstance(s, str) and str(s).strip()
             ][:20]
         else:
-            raw = await ask(_tree_prompt(goal, prior))
+            with expecting(_phases_problem):
+                raw = await ask(_tree_prompt(goal, prior))
             data = _parse_obj(raw)
             phases = data.get("phases") if isinstance(data, dict) else None
             result.phases = _normalize_phases(phases or [])
@@ -208,6 +216,23 @@ def _normalize_phases(phases: list) -> list[dict]:
             }
         )
     return out
+
+
+def _object_problem(raw: str) -> str:
+    return "" if isinstance(_parse_obj(raw), dict) else "no JSON object"
+
+
+def _list_problem(raw: str) -> str:
+    return "" if _parse_list(raw) is not None else "no JSON array"
+
+
+def _phases_problem(raw: str) -> str:
+    data = _parse_obj(raw)
+    return (
+        ""
+        if isinstance(data, dict) and isinstance(data.get("phases"), list)
+        else ("no 'phases' array")
+    )
 
 
 def _parse_list(raw: str) -> list | None:

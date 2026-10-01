@@ -171,6 +171,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An agent CLI's Test that fails says why: the agent's refusal in its own words, how its program ended (its exit code and last output), and what to check.**
 - **An agent CLI's turn waits for its answer however long it thinks after its last step, instead of ending after 90 seconds of silence, and an answer that arrives after its turn ended is never shown in the next one.**
 - **Each step a knowledge item skipped says why and what fixes it (a video with no Image · Modality model names it for its classifier, OCR and Vision), a step that does not apply says so, and the item offers to run again once the missing model or OCR app is there.**
+- **A reply or a step you are waiting for (a chat's answer, its schedule, a page's task analysis) goes ahead of background work on a local model, moves on to your next model after a short wait, and says why while it waits.**
+- **A model that answers with nothing, or not in the shape asked for, hands the call to the next model of its chain.**
+- **When the skill reviewer could not run, the Proposals page says so and why (which model failed, and how), never that it found nothing.**
+- **Background chores (a chat's title, its memory consolidation, the suggestions) move on to the next model of their chain when the first is paused after repeated failures, and a title or consolidation no model could answer is done once one answers again.**
+- **A background call is cut after five minutes and capped in what it may write, so a local model is never held for twenty minutes by one chore that answers nothing.**
 - **Every model in Settings → Models has a Test for the use case it is listed under, hosted or on this machine, and one that can't be tested says why: `untestable_reason()` on the speech, voice, diarization, embedding and image provider classes (an SDK addition no app has to change for).**
 - **An app's log lines reach `gateway.log`, `personalclaw logs` and Settings → Diagnostics → Live logs from the moment its code loads, an app installed after the gateway started and a module logging under its own name included, and those three and the console show the same lines.**
 - **`personalclaw logs` on a macOS service shows the gateway's log lines (launchd's `gateway.err`), not only what the gateway printed.**

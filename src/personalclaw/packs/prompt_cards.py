@@ -100,6 +100,7 @@ async def convert_card(card: str) -> dict[str, Any]:
     (and so the fencing is assertable on its own). Raises :class:`PromptCardError` on an empty
     or oversized card and on an answer that is not a usable object.
     """
+    from personalclaw.guardrails.local_queue import Attended
     from personalclaw.llm_helpers import one_shot_completion
 
     text = (card or "").strip()
@@ -111,7 +112,13 @@ async def convert_card(card: str) -> dict[str, Any]:
         )
 
     prompt = f"{_INSTRUCTIONS}\n{_fence(text)}\n"
-    raw = await one_shot_completion(prompt, use_case="background", output_type=dict)
+    # Asked for from the import form, which waits on the answer.
+    raw = await one_shot_completion(
+        prompt,
+        use_case="background",
+        output_type=dict,
+        attended=Attended("Reading the prompt card"),
+    )
     try:
         parsed = json.loads(raw) if isinstance(raw, str) else raw
     except (ValueError, TypeError) as exc:

@@ -339,8 +339,13 @@ class DesignKind(LoopKindStrategy):
         prompt = render_use_case_prompt("design_phases", {"task": task}) or ""
         if not prompt:
             return [dict(p) for p in self._DEFAULT_PHASES]
+        from personalclaw.llm_helpers import expecting
+
         try:
-            raw = await ask(prompt)
+            # An answer with no JSON array of phases is that model failing the call: the next
+            # model of the chain is asked inside the call (`expecting`).
+            with expecting(_phases_problem):
+                raw = await ask(prompt)
             start, end = raw.find("["), raw.rfind("]")
             if start != -1 and end > start:
                 rows = _json.loads(raw[start : end + 1])
@@ -559,3 +564,17 @@ class _DesignWalkthrough:
 
 
 register(DesignKind())
+
+
+def _phases_problem(raw: str) -> str:
+    """What makes a design-phases answer unusable, ``""`` when it holds a JSON array."""
+    import json
+
+    start, end = raw.find("["), raw.rfind("]")
+    if start == -1 or end <= start:
+        return "no JSON array"
+    try:
+        rows = json.loads(raw[start : end + 1])
+    except ValueError:
+        return "no JSON array"
+    return "" if isinstance(rows, list) else "no JSON array"

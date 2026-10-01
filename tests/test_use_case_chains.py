@@ -442,9 +442,12 @@ class TestCallFailureAdvance:
             await llm_helpers.one_shot_completion("hi", use_case="background")
 
     @pytest.mark.asyncio
-    async def test_output_contract_error_does_not_advance(self, isolated_store, monkeypatch):
-        """A schema miss means the model RESPONDED — never burn the fallback chain
-        on it (the chain exists for provider outages)."""
+    async def test_output_contract_error_advances_and_the_last_is_raised(
+        self, isolated_store, monkeypatch
+    ):
+        """A model that answered, but not in the shape asked for, has not served the call: the
+        next entry is asked. When none can, the caller gets the last one's contract error, whose
+        text it may still salvage."""
         from unittest.mock import AsyncMock, patch
 
         from personalclaw import llm_helpers
@@ -472,7 +475,7 @@ class TestCallFailureAdvance:
             pytest.raises(OutputContractError),
         ):
             await llm_helpers.one_shot_completion("hi", use_case="background", output_type=dict)
-        assert calls == ["p1:m1"]  # entry 1 never tried
+        assert calls == ["p1:m1", "p2:m2"]
 
     @pytest.mark.asyncio
     async def test_single_entry_chain_takes_plain_path(self, isolated_store, monkeypatch):

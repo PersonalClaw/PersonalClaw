@@ -1,8 +1,8 @@
 """Heartbeat service — periodic background maintenance, and the HEARTBEAT.md task format.
 
-The service runs on a configurable interval (default 60s): idle-session consolidation,
-background compression, session reindex, auto-archive and due-commitment delivery — the
-user-facing behaviors §4.4 explicitly KEEPS here.
+The service runs on a configurable interval (default 60s): idle-session consolidation, the
+chores no model answered (``owed_chores``), background compression, session reindex, auto-archive
+and due-commitment delivery — the user-facing behaviors §4.4 explicitly KEEPS here.
 
 **The HEARTBEAT.md task queue is not run here.** It ran every 60 s with no UI — no schedule, no
 last run, no way to turn it off — an automation nobody could see. It is the
@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Coroutine
 
-from personalclaw import shutdown_event
+from personalclaw import owed_chores, shutdown_event
 from personalclaw.atomic_write import atomic_write
 from personalclaw.memory import workspace_dir
 from personalclaw.owner_grants import GrantBook, seal
@@ -300,6 +300,14 @@ class HeartbeatService:
         # Check for idle sessions needing history consolidation (every tick)
         if self._consolidator:
             self._consolidator.check_idle_sessions()
+
+        # Chores no model answered (a chat's title, a consolidation): each is tried again once
+        # its wait is over, and all at once after a provider whose breaker opened answers again,
+        # in a pass this tick does not wait for.
+        try:
+            owed_chores.start_due()
+        except Exception:
+            logger.warning("Owed chores pass failed to start", exc_info=True)
 
         # Background compression pass (Context Economy §4) — hourly, budgeted, off the
         # request path. Summarizes old idle at-rest chats for the model, beside the

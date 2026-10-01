@@ -271,9 +271,17 @@ async def match_intent(
     """
     if not pool or not (content or "").strip() or not intent.goal.strip():
         return None
+    from personalclaw.guardrails.failure import OutputContractError
+    from personalclaw.llm_helpers import expecting
+
     try:
-        resp = await pool.send(build_match_prompt(intent, content), timeout=180.0)
+        # An answer with no JSON object in it is that model failing the call: the next model of
+        # the chain is asked inside the call (`expecting`).
+        with expecting(_answer_problem):
+            resp = await pool.send(build_match_prompt(intent, content), timeout=180.0)
         parsed = _parse_json(resp)
+    except OutputContractError as exc:
+        parsed = _parse_json(exc.raw)  # every model answered, none usably: not relevant
     except Exception:
         logger.debug("intent %s match failed", intent.id, exc_info=True)
         if raise_on_error:
@@ -316,6 +324,11 @@ async def run_intents(
         return_exceptions=True,
     )
     return [m for m in results if isinstance(m, IntentMatch)]
+
+
+def _answer_problem(response: str) -> str:
+    """What makes a match answer unusable, ``""`` when it holds a JSON object."""
+    return "" if isinstance(_parse_json(response), dict) else "no JSON object"
 
 
 def _parse_json(response: str) -> object:

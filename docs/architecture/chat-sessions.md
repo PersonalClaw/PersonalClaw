@@ -174,8 +174,11 @@ chat, channel thread, loop worker, webhook, subagent).
    as it started, and each session's next turn rebuilds its runtime from the
    agent as it now reads.
    **A turn falls back down its chain** (`agents/native/failover.py`). When the
-   model a chat turn runs on fails with a provider error or a timeout before
-   anything of the turn was shown, and its one retry fails too, the native loop
+   model a chat turn runs on fails before anything of the turn was shown (a
+   provider error or a timeout, after its one retry; its breaker is open, since a
+   runtime keeps the model it was built on; or, on this machine, it stays busy with
+   background work past the turn's short wait, `guardrails/local_queue.py`), the
+   native loop
    moves the turn's inner model to the next model in the same order (the chat's
    pick, the agent's pin, then the chain), once each, skipping one that cannot be
    built, cannot use the turn's tools or cannot take its images. The one that
@@ -205,10 +208,21 @@ chat, channel thread, loop worker, webhook, subagent).
    turn starts on X again. When every model fails, the error names each one and why (`NoModelAnswered`, in a
    room's words on a room). Only a caller that says so asks for this
    (`NativeAgentRuntime.announce_failover`: the chat runner, a room through
-   `stream_and_collect(on_substitution=…)`, and the background chores that write the
-   substitute to the log — history consolidation, thread compression and the chat
-   title, through `llm_helpers.say_background_substitution`): a loop keeps the
+   `stream_and_collect(on_substitution=…)`, and every chore of the background
+   session, which writes the substitute to the log through
+   `llm_helpers.say_background_substitution` — history consolidation, thread
+   compression, the chat title, suggestions, follow-up chips and a folder's icon,
+   each through `llm_helpers.let_fail_over`, a census in
+   `tests/test_an_open_breaker_moves_the_chain_on.py`): a loop keeps the
    failure rather than another model's reply presented as the chosen one's. A
+   chore also names what it reads the answer as
+   (`NativeAgentRuntime.expect_answer`): its text is held until each inference is
+   complete, so an empty answer or one in the wrong shape is that model failing and
+   the next one answers, the same four failures a one-shot call's chain walk moves
+   on from. A title or a consolidation that no model could answer is owed
+   (`owed_chores`): the heartbeat tries it again, at once after a provider whose
+   breaker opened answers again, and an ended chat is sealed only after its
+   consolidation ran. A
    one-shot call walks its chain the same way with a time budget per model
    (`one_shot_completion(attempt_timeout=…)`, which knowledge enrichment uses), so a
    slow first model hands over instead of spending the whole wait, and a chain that

@@ -543,10 +543,13 @@ async def test_a_cancel_counts_the_generations_it_cut_off_and_keeps_one_duration
         fake.hold = asyncio.Event()
         run_id = await _start(supervisor, n=4)
         for _ in range(200):
-            if fake.held >= 4:
+            if fake.held >= 1:
                 break
             await asyncio.sleep(0.05)
-        assert fake.held == 4, f"only {fake.held} generations were in flight"
+        await asyncio.sleep(0.3)
+        # A model on this machine is sent one request at a time (`guardrails.local_queue`): one
+        # candidate is generating, and the other three wait their turn without being sent.
+        assert fake.held == 1, f"{fake.held} generations were sent to one local model at once"
 
         assert service.cancel_run(run_id, supervisor=supervisor).get("ok")
         assert await _terminal(supervisor, run_id) is RunStatus.CANCELLED
@@ -560,17 +563,17 @@ async def test_a_cancel_counts_the_generations_it_cut_off_and_keeps_one_duration
         assert stats["duration_secs"] == pytest.approx(
             run.elapsed_seconds, abs=0.01
         ), f"the header says {run.elapsed_seconds:.1f}s and Introspect {stats['duration_secs']}s"
-        # Four generations were running when the cancel landed: that is spend nobody measured,
-        # not "nothing costing money".
-        assert stats.get("calls_cut_off") == 4, stats
+        # A generation was running when the cancel landed: that is spend nobody measured, not
+        # "nothing costing money". The three still waiting for their turn were never sent.
+        assert stats.get("calls_cut_off") == 1, stats
         assert stats["tokens_recorded"] is False and stats["priced"] is False
         assert stats["models"] == [MODEL]
 
         cut = J.ledger(run_id, kinds={"step_cancelled"})
-        assert [(r["node_id"], r["model_calls_open"]) for r in cut] == [("sample", 4)], cut
+        assert [(r["node_id"], r["model_calls_open"]) for r in cut] == [("sample", 1)], cut
         assert (cut[0]["model"], cut[0]["provider"]) == (MODEL, ENTRY)
-        # None of the four finished, so no provider reported anything: `null`, not a zero that
-        # reads as four calls measured at nothing.
+        # The one sent did not finish, so no provider reported anything: `null`, not a zero that
+        # reads as a call measured at nothing.
         assert (cut[0]["tokens"], cut[0]["cost_usd"]) == (None, None)
         assert any(row["kind"] == "step_cancelled" for row in body["answers"]["changed"])
 
@@ -604,25 +607,26 @@ async def test_a_model_still_generating_is_not_killed_as_stalled(monkeypatch, tm
 async def test_a_model_that_sends_nothing_is_still_stopped_and_its_calls_are_counted(
     monkeypatch, tmp_path
 ):
-    """Silence is still a stall. And the step it stops had called the model twice, which its row
-    has to say: the row carried no usage, and Introspect read "Models: none recorded"."""
+    """Silence is still a stall. And the step it stops had called the model, which its row has to
+    say: the row carried no usage, and Introspect read "Models: none recorded"."""
     monkeypatch.setattr("personalclaw.workflows.controller.TICK_WAKE_SECS", TICK_SECS)
     async with _wired(monkeypatch, tmp_path, node_timeout_stall=STALL_SECS) as (fake, supervisor):
         fake.up = True
         fake.hold = asyncio.Event()  # every request is accepted and never answered
         run_id = await _start(supervisor, n=2)
         assert await _terminal(supervisor, run_id) is RunStatus.FAILED
-        assert fake.held == 2
+        # One local model, one request at a time: the second candidate waited its turn unsent.
+        assert fake.held == 1
 
         (row,) = [r for r in J.ledger(run_id, kinds={J.STEP_FAILED}) if r["node_id"] == "sample"]
         assert row["failure"]["class"] == "timeout" and "timeout_stall" in row["error"], row
-        assert row["model_calls_open"] == 2, row
+        assert row["model_calls_open"] == 1, row
         assert (row["model"], row["provider"]) == (MODEL, ENTRY)
         # Neither call finished, so neither provider reported usage: unknown, never zero.
         assert (row["tokens"], row["cost_usd"]) == (None, None)
 
         stats = run_cockpit.introspect(run_id)["stats"]
-        assert stats["calls_cut_off"] == 2
+        assert stats["calls_cut_off"] == 1
         assert stats["models"] == [MODEL]
         assert stats["tokens_recorded"] is False and stats["priced"] is False
 

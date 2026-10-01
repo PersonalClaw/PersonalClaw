@@ -39,6 +39,7 @@ import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { ComposerNoticeLine, useComposerNotice } from '../ui/composer/ComposerNotice'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
+import { ModelWaits } from '../ui/ModelWaitNotice'
 import { joinsATurnStartedElsewhere } from './chat/joinTurn'
 import { MEMORY_MODES, MEMORY_MODE_NOTICE } from './chat/memoryModeCopy'
 import { sessionRowMeta } from './chat/sessionRowMeta'
@@ -3856,6 +3857,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                       <StreamingIndicator statusText={statusText} activity={latestActivity} />
                     )}
                   </AnimatePresence>
+                  {/* A step of this turn waiting for a busy local model: why, and what next. */}
+                  {streaming && sessionId && <ModelWaits session={sessionId} className="py-s" />}
                   <div ref={endRef} />
                   {/* visually-hidden polite live region — narrates the turn lifecycle to screen
                       readers (the glow/Thinking cue is visual-only): that a turn started, its

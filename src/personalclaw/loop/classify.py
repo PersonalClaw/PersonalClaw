@@ -160,8 +160,13 @@ async def classify(
     prompt = render_use_case_prompt("goal_classify", {"catalog": catalog, "goal": goal})
     if not prompt:
         return Classification(classified=False)
+    from personalclaw.llm_helpers import expecting
+
     try:
-        raw = await ask(prompt)
+        # An answer with no JSON object in it is that model failing the call: the next model of
+        # the chain is asked inside the call (`expecting`).
+        with expecting(answer_problem):
+            raw = await ask(prompt)
         data = _parse_obj(raw)
     except Exception:
         logger.debug("classify failed", exc_info=True)
@@ -313,6 +318,11 @@ def _normalize_roster(roster) -> list[dict]:
             }
         )
     return out[:5]
+
+
+def answer_problem(raw: str) -> str:
+    """What makes a classifier answer unusable, ``""`` when it holds a JSON object."""
+    return "" if isinstance(_parse_obj(raw), dict) else "no JSON object"
 
 
 def _parse_obj(raw: str) -> object:

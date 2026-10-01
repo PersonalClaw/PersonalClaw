@@ -137,6 +137,30 @@ def _coerce_disposition(raw: object) -> GateDisposition | None:
     return None
 
 
+def _dispositions(raw: object) -> tuple[list | None, str]:
+    """The reply's ``dispositions`` list, or ``None`` and what is wrong with the reply."""
+    import json
+
+    payload: object = raw
+    if isinstance(raw, str):
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return None, "not JSON"
+    if not isinstance(payload, dict):
+        return None, "not a JSON object"
+    entries = payload.get("dispositions")
+    if not isinstance(entries, list):
+        return None, "no 'dispositions' array"
+    return entries, ""
+
+
+def dispositions_problem(raw: str) -> str:
+    """What makes a gate reply unusable, ``""`` when it is a ``dispositions`` object: the check the
+    gate's one-shot call asks its chain to meet (``llm_helpers.expecting``)."""
+    return _dispositions(raw)[1]
+
+
 def parse_gate_output(raw: object, manifest: Manifest) -> dict[str, GateOutcome]:
     """Read the gate's strict-JSON reply into per-ordinal outcomes, failing OPEN.
 
@@ -149,18 +173,8 @@ def parse_gate_output(raw: object, manifest: Manifest) -> dict[str, GateOutcome]
     the gate drop an item that does not exist and, worse, would make the id space negotiable
     one stage before the proposal contract depends on it being fixed.
     """
-    import json
-
-    payload: object = raw
-    if isinstance(raw, str):
-        try:
-            payload = json.loads(raw)
-        except ValueError:
-            return {}
-    if not isinstance(payload, dict):
-        return {}
-    entries = payload.get("dispositions")
-    if not isinstance(entries, list):
+    entries, _why = _dispositions(raw)
+    if entries is None:
         return {}
 
     allowed = manifest.ordinals()

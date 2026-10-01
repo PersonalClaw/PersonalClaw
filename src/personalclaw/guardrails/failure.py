@@ -138,11 +138,95 @@ class ModelCallTimeout(GuardError):
         )
 
 
+#: How a model that was never sent the request because it was busy begins its clause.
+WAITED_BEHIND = "it waited"
+
+
+class LocalModelBusy(GuardError):
+    """A model on this machine was busy with other calls for as long as this one could wait, so
+    it was never sent (``guardrails.local_queue``).
+
+    ``moved_on`` says the wait was cut short so the next model of the chain could answer: a call
+    somebody is waiting for gives a busy local model only a short wait, or the person asked to move
+    on now. Otherwise the call waited out its own limit. ``TIMEOUT``, so a chain walk moves on and
+    a caller that tells a slow model from a missing one reads it as slow. Nothing was sent, so the
+    provider's breaker is not told.
+    """
+
+    mode = FailureMode.TIMEOUT
+
+    def __init__(
+        self, *, provider: str, model: str, busy_with: str, waited_secs: float, moved_on: bool
+    ) -> None:
+        self.provider = provider
+        self.model = model
+        self.busy_with = busy_with
+        self.waited_secs = waited_secs
+        self.moved_on = moved_on
+        secs = max(1, int(round(waited_secs)))
+        then = "so the next model was asked" if moved_on else "so the call was stopped"
+        super().__init__(
+            f"{model or provider} on {provider} was busy with {busy_with} for {secs} "
+            f"second{'' if secs == 1 else 's'}, {then}."
+        )
+
+    def reason(self) -> str:
+        """Why it did not serve, as the substitution sentence of the model that did reads it: it
+        waited, and behind what. Not that it was slow: it was never sent the request."""
+        secs = max(1, int(round(self.waited_secs)))
+        return f"{WAITED_BEHIND} {secs} s behind {self.busy_with} on this machine"
+
+    def sentence(self, *, room_member: str = "") -> str:
+        """The failure as the chat shows it when no other model could answer instead."""
+        secs = max(1, int(round(self.waited_secs)))
+        fix = (
+            f"give the {room_member} agent a second model on the Agents page"
+            if room_member
+            else "add a second model after it in Settings → Models"
+        )
+        return (
+            f"{self.model or self.provider} on this machine was busy with {self.busy_with} for "
+            f"{secs} s, so this was never sent to it. Try again once it is free, or {fix}."
+        )
+
+
+class EmptyCompletion(GuardError):
+    """A model finished its answer and the answer held no text.
+
+    A failure like any other, so a chain walk moves on to its next model and no caller has to
+    tell "answered nothing" apart from "failed". Measured: a local model spent its whole output
+    budget thinking and returned no text, and a digest that read the empty string as an answer
+    was written unsynthesised while the next model of its chain went unasked.
+    """
+
+    mode = FailureMode.PROVIDER_ERROR
+
+    def __init__(self, ref: str) -> None:
+        self.ref = ref
+        super().__init__(f"{ref or 'The model'} finished without answering: its reply was empty.")
+
+    def reason(self) -> str:
+        """Why it did not serve, as the substitution sentence of the model that did reads it."""
+        return "it answered with nothing"
+
+
+def breaker_open_reason(provider: str) -> str:
+    """Why a model whose provider's breaker is open did not serve, as a clause: one wording for
+    the resolution that passes over it and the call it refuses."""
+    return f"calls to {provider!r} are paused after it failed repeatedly"
+
+
+#: What brings a provider whose breaker opened back, as the fix of a substitution sentence.
+BREAKER_OPEN_FIX = "it is tried again automatically once the pause ends"
+
+
 class CircuitOpenError(GuardError):
     """The provider's circuit breaker is OPEN — the call was refused without work.
 
     Carries ``provider`` (the breaker key) and ``retry_after`` seconds so a caller
-    or the health view can show when the half-open probe becomes eligible.
+    or the health view can show when the half-open probe becomes eligible. A chain walk and a
+    turn's fallback move on from it to the next model, as from any model that failed: a runtime
+    or a call resolved before the breaker opened still holds the provider it refuses.
     """
 
     mode = FailureMode.CIRCUIT_OPEN
@@ -155,24 +239,44 @@ class CircuitOpenError(GuardError):
             f"retry eligible in ~{retry_after:.0f}s"
         )
 
+    def reason(self) -> str:
+        """Why it did not serve, as the substitution sentence of the model that did reads it."""
+        return breaker_open_reason(self.provider)
+
+    def fix(self) -> str:
+        return BREAKER_OPEN_FIX
+
+    def sentence(self, *, room_member: str = "") -> str:
+        """The failure as the chat shows it: what is paused, and when it is asked again."""
+        wait = max(1, int(round(self.retry_after)))
+        return (
+            f"Calls to {self.provider!r} are paused after it failed repeatedly. It is asked again "
+            f"in about {wait} s; if it keeps failing, check it under Settings → Providers."
+        )
+
 
 class OutputContractError(GuardError):
-    """A typed ``output_type`` call could not produce a value of the requested shape.
+    """A structured call's answer was not in the shape its caller asked for.
 
-    Raised only after the guard's targeted retry is exhausted, so a caller that
-    asked for typed output gets a loud, actionable failure instead of the silent
-    ``None`` degrade that ``parse_llm_json`` returned at every call site before.
+    ``expected`` names the shape (``dict``, or "the shape asked for" when only the caller's
+    check said so), ``why`` what was wrong, and ``raw`` the answer, which a caller may still
+    salvage. A loud failure instead of the silent ``None`` degrade that ``parse_llm_json``
+    returned at every call site before, and one a chain walk moves on from.
     """
 
     mode = FailureMode.SCHEMA_VIOLATION
 
-    def __init__(self, expected: str, raw: str) -> None:
+    def __init__(self, expected: str, raw: str, *, why: str = "") -> None:
         self.expected = expected
         self.raw = raw
+        self.why = why
         preview = (raw or "").strip().replace("\n", " ")[:160]
-        super().__init__(
-            f"model output did not parse as {expected} after a targeted retry; " f"got: {preview!r}"
-        )
+        because = f" ({why})" if why else ""
+        super().__init__(f"model output was not {expected}{because}; got: {preview!r}")
+
+    def reason(self) -> str:
+        """Why it did not serve, as the substitution sentence of the model that did reads it."""
+        return f"its answer was not {self.expected}" + (f" ({self.why})" if self.why else "")
 
 
 #: Why a spend ceiling refused a call before it was made (:attr:`BudgetExceededError.why`).
@@ -515,10 +619,13 @@ def failed_before_replying(failures: list[tuple[str, str]]) -> str:
 
     ``failures`` is ``(ref, clause)`` per model tried, in order, the first being the one the turn
     started on. One wording for the substitution a fallback answers under and for the turn no
-    fallback could answer, so the two cannot describe the same failures differently.
+    fallback could answer, so the two cannot describe the same failures differently. A first
+    model that was never sent the request because it was busy (:class:`LocalModelBusy`) did not
+    fail, and its clause is said as it is: "it waited 15 s behind background work on this
+    machine".
     """
     (_first, why), *rest = failures
-    text = f"it failed before it replied ({why})"
+    text = why if why.startswith(WAITED_BEHIND) else f"it failed before it replied ({why})"
     return text + "".join(f", and so did {ref} ({clause})" for ref, clause in rest)
 
 
@@ -536,9 +643,13 @@ class NoModelAnswered(GuardError):
         self.failures = list(failures)
         super().__init__(self.sentence())
 
+    def tried(self) -> str:
+        """What each model tried did: "a:1 failed before it replied (…), and so did b:2 (…)"."""
+        return f"{self.failures[0][0]} {failed_before_replying(self.failures).removeprefix('it ')}"
+
     def sentence(self, *, room_member: str = "") -> str:
         """The sentence for a chat, or for a room member, whose models are its agent's."""
-        tried = f"{self.failures[0][0]} {failed_before_replying(self.failures).removeprefix('it ')}"
+        tried = self.tried()
         if room_member:
             return (
                 f"None of {room_member}'s models answered: {tried}. Try again in a moment, or "

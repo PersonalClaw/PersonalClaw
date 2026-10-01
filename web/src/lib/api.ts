@@ -6801,6 +6801,25 @@ export interface ModelRatesView {
   unreadable: string
 }
 
+/** A request you are waiting for while the local model it needs is busy
+ *  (`GET /api/models/waits`, `guardrails.local_queue` on the gateway).
+ *
+ *  · `step` — what is waiting, as you read it ("Analyzing the task").
+ *  · `session` — the chat whose turn is waiting, by its name; `''` when a page is.
+ *  · `model` — the `"provider:model"` ref it waits for; `busy_with` — what that model is doing.
+ *  · `next` — the ref it moves on to when the wait runs out, `''` when it has no other model.
+ *  · `left_secs` — how long until then, as of the read; `null` when it waits as long as it takes. */
+export interface ModelWait {
+  id: string
+  step: string
+  session: string
+  model: string
+  busy_with: string
+  next: string
+  waited_secs: number
+  left_secs: number | null
+}
+
 /** One per-model efficiency row for a (use_case, query_class) bucket
  *  (MRT-1d/1e). Observation only — the fold supplies
  *  n/success/feedback/cost, the audit tail supplies p50/p95 latency, and
@@ -7188,6 +7207,11 @@ export const api = {
   setModelRate: (rate: { key: string } & ModelRateFields) =>
     put<ModelRatesView>('/api/models/rates', rate),
   clearModelRate: (key: string) => del(`/api/models/rates?key=${encodeURIComponent(key)}`),
+  // The requests you are waiting for while a local model is busy, and moving one on to its next
+  // model now. A `refresh` frame naming `model_waits` says the list changed.
+  modelWaits: () => get<{ waits: ModelWait[] }>('/api/models/waits'),
+  moveOnModelWait: (id: string) =>
+    post<{ ok: boolean }>(`/api/models/waits/${encodeURIComponent(id)}/move-on`, {}),
   // The per-day spend fold: the same per-call ledger grouped by purpose and day, plus a
   // census of the guarded model calls no row counts. Read-only, derived on request; a deleted
   // fold self-heals.

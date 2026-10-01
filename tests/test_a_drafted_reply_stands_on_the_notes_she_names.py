@@ -191,8 +191,11 @@ async def test_mail_text_is_treated_as_data_and_reads_nothing(monkeypatch, tmp_p
     # The sender's text is inside exactly one fence that opens before it and closes after it.
     start = prompt.index("<untrusted_content")
     assert start < prompt.index(ACCEPTANCE[:40]) < prompt.index("</untrusted_content>")
-    # One completion, on the background axis, and nothing that could hand the model a tool.
-    assert model.kwargs == [{"use_case": "background"}]
+    # One completion, on the background axis, marked as one the page waits for, and nothing that
+    # could hand the model a tool.
+    from personalclaw.guardrails.local_queue import Attended
+
+    assert model.kwargs == [{"use_case": "background", "attended": Attended("Drafting the reply")}]
 
     # With nothing said, a message naming a note still reads nothing at all.
     quiet = _Model("Thank you, I'm glad it was accepted.")

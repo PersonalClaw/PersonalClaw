@@ -6,6 +6,10 @@ stream, the cheap-first pipeline this slice owns:
 
     circuit-breaker check  →  call with hard wall-clock timeout  →  attempt audit
 
+A call to a model on this machine also takes its turn in that model's queue before it is sent
+(``guardrails.local_queue``), inside the same clock, so a call somebody is waiting for goes ahead
+of background work.
+
 Later stages (secret/PII scan, spend metering, typed-output enforcement, ordered
 fallback) compose in front of / behind this same seam in Sessions 2–4.
 
@@ -56,6 +60,7 @@ from personalclaw.guardrails.failure import (
     PromptInjectionBlocked,
     SecretLeakBlocked,
 )
+from personalclaw.guardrails.local_queue import Turn, queue_key, take_turn
 from personalclaw.guardrails.scan import scan_outbound
 from personalclaw.guardrails.wire import record_outbound
 from personalclaw.llm.base import (
@@ -80,6 +85,13 @@ logger = logging.getLogger(__name__)
 # bounded by that alone: it says how long a request waits to start and between the parts of its
 # answer, and is deliberately not a cap on the whole answer.
 _DEFAULT_TIMEOUT_SECS = 300.0
+
+#: The whole-call ceiling of a call on the Background axis (a chat's chores, a one-shot call), with
+#: or without a Request Timeout: nobody watches such a call, its chain has a model to ask next, and
+#: a Request Timeout bounds only how long the answer takes to start and between its parts. Measured:
+#: a memory consolidation on a local model streamed for 1,224 s, ended with no answer, and held the
+#: model the whole time.
+_BACKGROUND_CALL_SECS = 300.0
 
 
 def new_audit_id() -> str:
@@ -262,6 +274,10 @@ def _joined_content(messages: list[dict]) -> str:
 class ModelCallGuard(ModelProvider):
     """Wraps ``inner`` with breaker + hard timeout + attempt-level audit."""
 
+    #: Every call through the guard takes its own turn on a model on this machine
+    #: (``guardrails.local_queue``), so a caller holding a guarded model takes none for it.
+    takes_local_turns = True
+
     def __init__(
         self,
         inner: ModelProvider,
@@ -289,7 +305,10 @@ class ModelCallGuard(ModelProvider):
         # which is what lets a stalled local model hand over to the next model quickly). With
         # none, an instance that keeps a Request Timeout is bounded by it alone and raises its own
         # sentence naming the setting (``FirstTokenTimeout``), so the guard adds no second clock;
-        # a provider that keeps none gets the guard's default ceiling. 0 means no clock here.
+        # a provider that keeps none gets the guard's default ceiling. A Background call keeps
+        # its own ceiling either way (:data:`_BACKGROUND_CALL_SECS`). 0 means no clock here.
+        if timeout_secs is None and use_case == "background":
+            timeout_secs = _BACKGROUND_CALL_SECS
         if timeout_secs is None:
             timeout_secs = 0.0 if self.request_timeout_secs else _DEFAULT_TIMEOUT_SECS
         # Where the three settings above are read from at EACH call (`guardrails.budgets` and
@@ -326,6 +345,10 @@ class ModelCallGuard(ModelProvider):
         # prices a local model by and routing orders one by: what its entry's type is and where
         # it sends. An endpoint here that passes the prompt on (a proxy for a cloud API) is not.
         self._local = served_on_this_machine(provider_name)
+        # The queue this model's calls take turns in when it runs on this machine
+        # (``guardrails.local_queue``): one call at a time, a call somebody is waiting for first.
+        # ``""`` for a model anywhere else.
+        self._queue_key = queue_key(provider_name, model)
         # The routing query class of the CURRENT call, set by the entry point that has
         # the prompt text (stream/complete/stream_command) and stamped onto each attempt
         # audit row. "" until a call classifies.
@@ -549,6 +572,9 @@ class ModelCallGuard(ModelProvider):
         request (*prompt_chars*): it sets aside what it may cost, and whatever ends it, that is
         replaced by what it cost or given back.
 
+        A model on this machine is then asked for its turn (``local_queue.take_turn``), within the
+        same deadline; the turn is held until the answer is complete.
+
         Success is recorded the moment ``EVENT_COMPLETE`` is observed — BEFORE it is
         yielded — because the canonical consumer (``stream_and_collect``) ``break``s
         on ``EVENT_COMPLETE`` rather than draining to ``StopAsyncIteration``: a guard
@@ -588,26 +614,42 @@ class ModelCallGuard(ModelProvider):
             raise
 
         loop = asyncio.get_running_loop()
+        # The clock starts before the call waits for its turn on a local model, so the wait is
+        # part of the time the call is given, not extra.
         deadline = loop.time() + self._timeout_secs if self._timeout_secs > 0 else None
-        started = now_ms()
-        tokens_in = tokens_out = 0
-        recorded = False
-        # The call is published to whoever bound a `guardrails.calls` log — the workflow step
-        # that is making it, a best-of-N candidate — only now, past every refusal above: a
-        # breaker or budget refusal sent nothing to a provider and is not a model call.
-        # Read at call time, not wrap time: a chain walk stamps the substitution on the provider
-        # it resolved AFTER the resolution seam wrapped it, because only the walk knows the entry
-        # before it could not serve.
-        substituted = self.substituted_for
-        call = open_call(
-            self._provider_name,
-            self._model,
-            temperature=self.sampling_temperature,
-            unsent=self.unsent_options,
-            substitution=substituted.sentence() if substituted is not None else "",
-        )
-
+        turn: Turn | None = None
         try:
+            if self._queue_key:
+                try:
+                    turn = await take_turn(
+                        self._queue_key,
+                        provider=self._provider_name,
+                        model=self._model,
+                        within=self._turn_wait(deadline, loop.time()),
+                    )
+                except BaseException:
+                    # Busy for as long as it could wait, or stopped while waiting: nothing was
+                    # sent, so it is no model call and the breaker is not told.
+                    await self._aclose(source)
+                    raise
+            started = now_ms()
+            tokens_in = tokens_out = 0
+            recorded = False
+            # The call is published to whoever bound a `guardrails.calls` log — the workflow step
+            # that is making it, a best-of-N candidate — only now, past every refusal above: a
+            # breaker or budget refusal, or a local model too busy to take the call, sent nothing
+            # to a provider and is not a model call.
+            # Read at call time, not wrap time: a chain walk stamps the substitution on the
+            # provider it resolved AFTER the resolution seam wrapped it, because only the walk
+            # knows the entry before it could not serve.
+            substituted = self.substituted_for
+            call = open_call(
+                self._provider_name,
+                self._model,
+                temperature=self.sampling_temperature,
+                unsent=self.unsent_options,
+                substitution=substituted.sentence() if substituted is not None else "",
+            )
             try:
                 while True:
                     if deadline is not None:
@@ -656,6 +698,10 @@ class ModelCallGuard(ModelProvider):
                         )
                         self._settle_call(call, tokens_in, tokens_out, price)
                         recorded = True
+                        # The answer is complete, so the model is free for the next call: its turn
+                        # is given back now, not whenever the consumer closes this stream.
+                        if turn is not None:
+                            turn.release()
                         # The usage this event carries is this call's, and the row a caller writes
                         # from it (`usage_ledger.record_from_event`) keeps the id: that is the join
                         # that keeps the model-call census from counting the call a second time.
@@ -722,15 +768,31 @@ class ModelCallGuard(ModelProvider):
                 )
                 self._settle_call(call, tokens_in, tokens_out, price)
         finally:
+            if turn is not None:
+                turn.release()
             # Whatever ended the call, nothing it set aside stays set aside: a settled call's hold
             # is already gone, and a failed or stopped one charged nothing.
             self._meter.release(hold)
 
+    def _turn_wait(self, deadline: float | None, now: float) -> float | None:
+        """How long this call may wait for its turn on a local model: the shorter of what is left
+        of its own clock and its provider's Request Timeout (how long a request may wait to
+        start), else as long as it takes. The queue shortens it for a call somebody is waiting
+        for."""
+        limits = [max(0.0, deadline - now)] if deadline is not None else []
+        if self.request_timeout_secs:
+            limits.append(float(self.request_timeout_secs))
+        return min(limits) if limits else None
+
     def _record_success(self) -> None:
         """Close the breaker; a provider that had tripped it is answering again, so its measured
-        connection is re-checked and stops reading "not answering" (:func:`_recheck_connection`)."""
+        connection is re-checked and stops reading "not answering" (:func:`_recheck_connection`),
+        and the chores no model answered meanwhile are tried now (``owed_chores.answered``)."""
         if self._breaker.record_success():
             _recheck_connection(self._provider_name)
+            from personalclaw import owed_chores
+
+            owed_chores.answered()
 
     def _record_failure(self) -> None:
         """Count a failed call; the failure that trips the breaker re-checks the provider's

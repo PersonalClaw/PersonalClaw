@@ -1,16 +1,21 @@
 """Title generation — auto-title and rename."""
 
 import logging
+from collections.abc import Callable
+from functools import partial
 
 from aiohttp import web
 
+from personalclaw import owed_chores
 from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
 from personalclaw.llm_helpers import (
+    any_answer,
     failure_clause,
     is_model_call_failure,
+    let_fail_over,
     say_background_substitution,
 )
 from personalclaw.request_validation import require_string
@@ -51,14 +56,19 @@ def _build_title_prompt(messages: list[dict[str, str]]) -> str | None:
 
 
 async def _stream_background_prompt(
-    state: DashboardState, prompt: str, *, usage: Attribution
+    state: DashboardState,
+    prompt: str,
+    *,
+    usage: Attribution,
+    validate: Callable[[str], str] = any_answer,
 ) -> str:
     """Stream *prompt* through the shared background session and collect the text.
 
     The call writes its usage row for *usage* (``session.chore_usage``): whose spend it is.
 
-    A first model of the background chain that fails or does not answer in time before it
-    says anything falls back to the next one, and the substitute is said in the log
+    A first model of the background chain that fails before it says anything (an error, a
+    timeout, an open breaker, an empty answer or one *validate* rejects) falls back to the next
+    one, and the substitute is said in the log
     (:func:`~personalclaw.llm_helpers.say_background_substitution`): a chore that never
     announced a fallback kept a slow first model's failure however many were bound behind it.
     """
@@ -70,9 +80,7 @@ async def _stream_background_prompt(
         # Clear accumulated history so prior utility prompts don't confuse the model
         if hasattr(client, "_history"):
             client._history.clear()
-        announce_failover = getattr(client, "announce_failover", None)
-        if callable(announce_failover):
-            announce_failover()
+        let_fail_over(client, validate)
         async for event in client.stream(prompt):
             if event.kind == EVENT_TEXT_CHUNK:
                 text += event.text
@@ -91,12 +99,23 @@ async def _stream_background_prompt(
     return text
 
 
-async def _stream_chat_chore(state: DashboardState, session: _ChatSession, prompt: str) -> str:
+async def _stream_chat_chore(
+    state: DashboardState,
+    session: _ChatSession,
+    prompt: str,
+    *,
+    validate: Callable[[str], str] = any_answer,
+) -> str:
     """:func:`_stream_background_prompt` for a chore made for *session*: the chat's spend, under
     the key its own turns are recorded by."""
     return await _stream_background_prompt(
-        state, prompt, usage=chore_usage(_history_key_for(session.key))
+        state, prompt, usage=chore_usage(_history_key_for(session.key)), validate=validate
     )
+
+
+def _title_problem(text: str) -> str:
+    """What is wrong with *text* as a title reply, ``""`` when it holds a title line."""
+    return "" if parse_title(text) else "no title line"
 
 
 async def _generate_title_via_provider(
@@ -110,7 +129,7 @@ async def _generate_title_via_provider(
         return ""
 
     logger.debug("Title generation prompt (%d chars): %s", len(prompt), prompt[:120])
-    text = await _stream_background_prompt(state, prompt, usage=usage)
+    text = await _stream_background_prompt(state, prompt, usage=usage, validate=_title_problem)
     return parse_title(text)
 
 
@@ -251,7 +270,46 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
     session (the tag instructions are appended to the title prompt — no second
     roundtrip). Tags are only applied when the user hasn't tagged the session
     themselves and the session isn't restricted (incognito/temporary).
+
+    A title no model could be asked for is owed (``owed_chores``) and asked for again once a
+    model answers, rather than waiting on a next turn that may never come.
     """
+    try:
+        await _title_once(state, session)
+    except Exception as exc:
+        # The chat keeps its first line as the title either way. A model that did not answer
+        # is said in one line — its traceback holds only the HTTP client's frames — and a
+        # defect keeps its traceback.
+        if is_model_call_failure(exc):
+            owed = owed_chores.no_model_answered(exc)
+            logger.warning(
+                "Auto-title failed for session %s: %s%s",
+                session.key,
+                failure_clause(exc),
+                "; it is asked again once a model answers" if owed else "",
+            )
+            logger.debug("Auto-title failure for session %s", session.key, exc_info=exc)
+            if owed:
+                owed_chores.owe(
+                    f"title:{session.key}",
+                    f"the title of {session.key}",
+                    partial(_owed_title, state, session.key),
+                )
+        else:
+            logger.warning("Auto-title failed for session %s", session.key, exc_info=True)
+
+
+async def _owed_title(state: DashboardState, key: str) -> bool:
+    """Ask again for the title of the chat *key* (``owed_chores``); a chat that has its title
+    by now, or is gone, owes none. A model that still cannot answer raises."""
+    session = state._sessions.get(key)
+    if session is not None:
+        await _title_once(state, session)
+    return True
+
+
+async def _title_once(state: DashboardState, session: _ChatSession) -> None:
+    """Title *session* once, if it still wants one; a model that could not answer raises."""
     if session._titled:
         return
     if session.blocks_reads:
@@ -268,29 +326,19 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
     # Piggyback tag proposal on the title call only when it can actually apply:
     # flag on, user hasn't tagged, session isn't restricted.
     want_tags = not session.is_restricted and not session.tags and _auto_tag_enabled()
-    try:
-        prompt = _build_title_prompt(session.messages)
-        if not prompt:
-            logger.debug("Title generation skipped — no usable messages")
-            return
+    prompt = _build_title_prompt(session.messages)
+    if not prompt:
+        logger.debug("Title generation skipped — no usable messages")
+        return
+    if want_tags:
+        prompt += _build_tags_suffix(state)
+    text = await _stream_chat_chore(state, session, prompt, validate=_title_problem)
+    title = parse_title(text)
+    logger.info("Auto-title: agent returned %r for session %s", title, session.key)
+    if title:
+        _apply_title(state, session, title)
         if want_tags:
-            prompt += _build_tags_suffix(state)
-        text = await _stream_chat_chore(state, session, prompt)
-        title = parse_title(text)
-        logger.info("Auto-title: agent returned %r for session %s", title, session.key)
-        if title:
-            _apply_title(state, session, title)
-            if want_tags:
-                _apply_auto_tags(state, session, _parse_tags_line(text))
-    except Exception as exc:
-        # The chat keeps its first line as the title either way. A model that did not answer
-        # is said in one line — its traceback holds only the HTTP client's frames — and a
-        # defect keeps its traceback.
-        if is_model_call_failure(exc):
-            logger.warning("Auto-title failed for session %s: %s", session.key, failure_clause(exc))
-            logger.debug("Auto-title failure for session %s", session.key, exc_info=exc)
-        else:
-            logger.warning("Auto-title failed for session %s", session.key, exc_info=True)
+            _apply_auto_tags(state, session, _parse_tags_line(text))
 
 
 async def api_chat_session_generate_title(request: web.Request) -> web.Response:

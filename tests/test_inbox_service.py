@@ -77,7 +77,7 @@ async def test_draft_reply_fences_input_and_stores(monkeypatch):
     svc = _svc_with(item)
     seen: dict = {}
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+    async def fake_one_shot(prompt: str, *, use_case: str = "background", attended=None) -> str:
         seen["prompt"] = prompt
         return "Sure — I'll review it this afternoon."
 
@@ -97,7 +97,7 @@ async def test_draft_reply_follows_what_the_owner_says_it_should_contain(monkeyp
     svc = _svc_with(item)
     seen: dict = {}
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+    async def fake_one_shot(prompt: str, *, use_case: str = "background", attended=None) -> str:
         seen["prompt"] = prompt
         return "Thank you! My abstract: a short tour of reading feeds well."
 
@@ -118,7 +118,7 @@ async def test_draft_reply_with_nothing_said_asks_as_before(monkeypatch):
     svc = _svc_with(item)
     prompts: list[str] = []
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+    async def fake_one_shot(prompt: str, *, use_case: str = "background", attended=None) -> str:
         prompts.append(prompt)
         return "Sure."
 
@@ -134,7 +134,7 @@ async def test_draft_reply_skip_sentinel_leaves_empty_draft(monkeypatch):
     item = _item(message="Thanks!")
     svc = _svc_with(item)
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+    async def fake_one_shot(prompt: str, *, use_case: str = "background", attended=None) -> str:
         return "SKIP"
 
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", fake_one_shot)
@@ -168,7 +168,9 @@ async def test_classify_parses_json_and_persists(monkeypatch):
     item = _item()
     svc = _svc_with(item)
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background", output_type=None) -> str:
+    async def fake_one_shot(
+        prompt: str, *, use_case: str = "background", output_type=None, validate=None
+    ) -> str:
         assert "<untrusted_content" in prompt  # fenced
         return '{"classification": "needs_reply", "confidence": "high"}'
 
@@ -184,7 +186,9 @@ async def test_classify_malformed_json_defaults_safe(monkeypatch):
     item = _item()
     svc = _svc_with(item)
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background", output_type=None) -> str:
+    async def fake_one_shot(
+        prompt: str, *, use_case: str = "background", output_type=None, validate=None
+    ) -> str:
         # Mirror the real typed-output contract: a parse miss under output_type
         # raises OutputContractError, which classify() catches and safe-defaults.
         if output_type is not None:
@@ -214,7 +218,7 @@ async def test_generate_digest_summarizes_stored_channel(monkeypatch):
 
     seen: dict = {}
 
-    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+    async def fake_one_shot(prompt: str, *, use_case: str = "background", attended=None) -> str:
         seen["prompt"] = prompt
         return "3 messages about a PR review."
 

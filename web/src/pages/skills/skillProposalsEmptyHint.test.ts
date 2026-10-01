@@ -40,16 +40,26 @@ describe('skill-proposals empty state', () => {
 
   it('names a FAILED pass as a failure rather than an idle queue', () => {
     const hint = emptyHint(review({ verdict: 'provider_error' }))
-    expect(hint).toMatch(/did not finish/i)
+    expect(hint).toMatch(/could not run/i)
     expect(hint).toContain('provider_error') // the raw verdict is on the surface, not swallowed
     expect(hint).not.toMatch(/healthy/i)
+    expect(hint).not.toMatch(/nothing worth proposing/i)
+  })
+
+  it('says WHY a pass could not run when every model failed', () => {
+    // Measured: every model of the chain answered with nothing, and the page went on to read as
+    // a review that found nothing. The reason the gateway recorded is the sentence shown.
+    const detail = 'local:tiny failed before it replied (it answered with nothing), and so did cloud:swift (it answered with nothing)'
+    const hint = emptyHint(review({ verdict: 'provider_error', detail }))
+    expect(hint).toContain(`: ${detail}.`)
+    expect(hint).not.toMatch(/nothing worth proposing/i)
   })
 
   it('treats an UNMAPPED verdict as something to look at, not as health', () => {
     // Mirrors the backend, which logs an unrecognised verdict at WARNING deliberately. A
     // default branch that swallowed the unknown into "all is well" is the defect class itself.
     const hint = emptyHint(review({ verdict: 'some_future_verdict' }))
-    expect(hint).toMatch(/did not finish/i)
+    expect(hint).toMatch(/could not run/i)
     expect(hint).toContain('some_future_verdict')
   })
 

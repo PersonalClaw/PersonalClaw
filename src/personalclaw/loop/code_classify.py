@@ -194,8 +194,13 @@ async def classify(
     prompt = render_use_case_prompt("code_classify", {"catalog": catalog, "task": task})
     if not prompt:
         return _fallback_classification()
+    from personalclaw.llm_helpers import expecting
+
     try:
-        raw = await ask(prompt)
+        # An answer with no JSON object in it is that model failing the call: the next model of
+        # the chain is asked inside the call (`expecting`).
+        with expecting(answer_problem):
+            raw = await ask(prompt)
         data = _parse_obj(raw)
     except Exception:
         # WARNING, not debug: a failed classify silently degrades every Code intake
@@ -509,6 +514,11 @@ def _first_json_object(raw: str) -> str | None:
             if depth == 0:
                 return raw[start : i + 1]
     return None
+
+
+def answer_problem(raw: str) -> str:
+    """What makes a classifier answer unusable, ``""`` when it holds a JSON object."""
+    return "" if isinstance(_parse_obj(raw), dict) else "no JSON object"
 
 
 def _parse_obj(raw: str) -> object:

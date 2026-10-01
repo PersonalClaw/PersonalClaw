@@ -1709,15 +1709,22 @@ def _live_summarizer() -> Any:
         return None
 
     def summarize(intent_text: str) -> str:
+        from personalclaw.guardrails.local_queue import Attended
         from personalclaw.llm_helpers import one_shot_completion
+        from personalclaw.mcp_core import get_current_session_key
 
         prompt = (
             "Rephrase this workflow request as a short, plain description of the desired OUTCOME, "
             "in one sentence, using concrete nouns. Do not name any template or tool.\n\n"
             f"Request: {intent_text}"
         )
+        # The agent turn whose tool asked is waiting on this. Its session is read here, in the
+        # tool's own context, before `_run` may carry the call to another thread.
+        waiting = Attended("Matching a workflow", session=get_current_session_key())
         try:
-            return str(_run(one_shot_completion(prompt, use_case="background")) or "").strip()
+            return str(
+                _run(one_shot_completion(prompt, use_case="background", attended=waiting)) or ""
+            ).strip()
         except Exception:
             logger.debug("T5 summarizer completion failed", exc_info=True)
             return ""

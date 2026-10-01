@@ -30,6 +30,7 @@ import threading
 import time as _time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -1305,6 +1306,10 @@ class HistoryConsolidator:
         # Track last activity per session for idle-based history consolidation
         self._last_activity: dict[str, float] = {}
         self._history_consolidated: dict[str, float] = {}  # key → last history consolidation time
+        # Consolidations no model answered (``owed_chores``): the failure of each key's last call,
+        # and the ending sessions whose seal waits for the consolidation that runs before it.
+        self._unanswered: dict[str, BaseException] = {}
+        self._owed_seal: set[str] = set()
         # Separate offset for prefs-only consolidation (doesn't advance main offset)
         self._prefs_offset: dict[str, int] = {}
         # Autonomous episodic→semantic promotion: count history consolidations to
@@ -1368,6 +1373,8 @@ class HistoryConsolidator:
 
         def _on_done(fut: asyncio.Task, k: str = key, off: int = total) -> None:  # type: ignore[type-arg]  # noqa: E501
             self._tasks.discard(fut)
+            # A preferences pass is not owed: the history consolidation reads the same messages.
+            self._unanswered.pop(k, None)
             if not fut.cancelled() and fut.exception() is None:
                 self._prefs_offset[k] = off
 
@@ -1400,8 +1407,19 @@ class HistoryConsolidator:
         working memory into a durable in-scope record and sweep unpromoted
         session-scoped records (memory-architecture.md §3.5). Sealing deepens
         tier (working→episodic) at scope=session — it does NOT write to global;
-        the heat gate (run on the maintenance cadence) is the only path to global."""
+        the heat gate (run on the maintenance cadence) is the only path to global.
+
+        A consolidation no model answered is owed (``owed_chores``), and the seal waits for it:
+        the session is sealed once its messages are consolidated, never before."""
         ran = await self.consolidate_now(key)
+        if self._owe_if_unanswered(key, ending=True):
+            return ran
+        self._seal(key)
+        return ran
+
+    def _seal(self, key: str) -> None:
+        """Seal the ended session *key* and mirror memory to the vault
+        (:meth:`consolidate_session`)."""
         try:
             swept = self._svc.seal_session(key)
             if swept:
@@ -1417,7 +1435,38 @@ class HistoryConsolidator:
             mirror_after_consolidation(self._svc)
         except Exception:
             logger.debug("memory vault mirror failed for %s", key, exc_info=True)
-        return ran
+
+    def _owe_if_unanswered(self, key: str, *, ending: bool) -> bool:
+        """Owe *key*'s consolidation when no model answered its call and messages are left to
+        consolidate (``owed_chores``); True when it is owed. *ending* also owes the seal of the
+        session it ended (:meth:`consolidate_session`)."""
+        failure = self._unanswered.pop(key, None)
+        if failure is None or self._log.unconsolidated_count(key) < 1:
+            return False
+        if ending:
+            self._owed_seal.add(key)
+        from personalclaw import owed_chores
+
+        owed_chores.owe(
+            f"consolidation:{key}",
+            f"the consolidation of {key}",
+            partial(self._owed_consolidation, key),
+        )
+        return True
+
+    async def _owed_consolidation(self, key: str) -> bool:
+        """Consolidate *key* again, and seal it if it had ended (``owed_chores``). False while no
+        model answers, or while another consolidation of it is running."""
+        if key in self._running or incident_active():
+            return False
+        if self._log.unconsolidated_count(key) >= 1:
+            await self.consolidate_now(key)
+            if self._unanswered.pop(key, None) is not None:
+                return False
+        if key in self._owed_seal:
+            self._owed_seal.discard(key)
+            self._seal(key)
+        return True
 
     def check_idle_sessions(self) -> None:
         """Check all tracked sessions for idle-based history consolidation."""
@@ -1445,6 +1494,7 @@ class HistoryConsolidator:
                 self._tasks.discard(fut)
                 if not fut.cancelled() and fut.exception() is None:
                     self._history_consolidated[k] = ts
+                    self._owe_if_unanswered(k, ending=False)
 
             t.add_done_callback(_on_idle_done)
 
@@ -2351,7 +2401,8 @@ class HistoryConsolidator:
 
         Uses the shared background ACP agent process (no spawn/teardown cost).
         Returns parsed JSON dict or None on failure. The call's usage row is the consolidated
-        chat's (*chat_key*), as its compression's is.
+        chat's (*chat_key*), as its compression's is. A failure no model answered is kept for
+        *chat_key* (``_unanswered``), so the consolidation it was for is owed rather than lost.
         """
         if not self._sessions:
             logger.warning("LLM consolidation skipped — no session manager")
@@ -2380,14 +2431,17 @@ class HistoryConsolidator:
                 session_key, agent="personalclaw-lite"
             )
             acquired = True
-            # A slow or failing first model of the background chain falls back to the next
-            # one rather than ending the consolidation, and the substitute is said.
-            return await stream_and_collect_json(
+            # A first model of the background chain that fails, is paused or answers no JSON
+            # falls back to the next one rather than ending the consolidation, and the
+            # substitute is said.
+            result = await stream_and_collect_json(
                 client,
                 prompt,
                 on_complete=recorder(client, chore_usage(chat_key)),
                 on_substitution=say_background_substitution("History consolidation"),
             )
+            self._unanswered.pop(chat_key, None)
+            return result
         except Exception as exc:
             # A model that did not answer is said in one line, with what happened; its
             # traceback holds only the HTTP client's frames. A defect keeps its traceback.
@@ -2396,6 +2450,10 @@ class HistoryConsolidator:
                 logger.debug("LLM consolidation failure", exc_info=exc)
             else:
                 logger.warning("LLM consolidation call failed", exc_info=True)
+            from personalclaw import owed_chores
+
+            if owed_chores.no_model_answered(exc):
+                self._unanswered[chat_key] = exc
             return None
         finally:
             if acquired:

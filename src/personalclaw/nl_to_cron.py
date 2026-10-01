@@ -125,9 +125,14 @@ async def nl_to_cron(
             # Attributed on the attempt ledger — otherwise a schedule translation
             # and an inbox triage are the same anonymous `background` row.
             from personalclaw.guardrails.audit import caller_scope
+            from personalclaw.guardrails.local_queue import Attended
+            from personalclaw.mcp_core import get_current_session_key
 
+            # The turn whose automation tool asked is waiting on this: it goes ahead of
+            # background work on a local model, and its chat says why while it waits.
+            waiting = Attended("Working out the schedule", session=get_current_session_key())
             with caller_scope("nl_to_cron"):
-                return await one_shot_completion(p, use_case="background")
+                return await one_shot_completion(p, use_case="background", attended=waiting)
 
     from personalclaw.timezones import resolve_zone, resolve_zone_name
 
@@ -152,12 +157,36 @@ async def nl_to_cron(
     )
     if not prompt:
         return Schedule(error="Could not load the schedule-interpretation prompt.")
+    from personalclaw.guardrails.failure import OutputContractError
+    from personalclaw.llm_helpers import expecting
+
+    def _problem(answer: str) -> str:
+        return schedule_problem(answer, now=clock.timestamp(), zone=zone)
+
     try:
-        raw = await ask(prompt)
+        # An answer that reads as no schedule at all is that model failing the call: the
+        # one-shot asks its chain's next model (`expecting`).
+        with expecting(_problem):
+            raw = await ask(prompt)
+    except OutputContractError as exc:
+        raw = exc.raw  # every model answered, none as a schedule: say what the last one said
     except Exception:
         logger.debug("nl_to_cron LLM call failed", exc_info=True)
         raw = ""
     if not str(raw or "").strip():
-        # The one-shot completion answers "" when no model resolves, rather than raising.
+        # No model answered: none resolved, every one failed, or every one answered nothing.
         return Schedule(error="Could not reach a model to interpret the schedule.")
     return parse_cron_response(raw, now=clock.timestamp(), zone=zone)
+
+
+def schedule_problem(raw: str, *, now: float | None = None, zone: str = "") -> str:
+    """What makes a model's answer unusable as a schedule, ``""`` when it is one.
+
+    ``NONE`` is an answer: the phrase names no time. Anything else :func:`parse_cron_response`
+    refuses is not: a line it cannot read as a cron expression or a ``ONCE`` time, an invalid
+    expression, or a time already past, which the model was told the clock to avoid."""
+    text = re.sub(r"```[a-z]*", "", (raw or "").strip()).replace("`", "").strip()
+    first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    if first_line.upper() == "NONE":
+        return ""
+    return parse_cron_response(raw, now=now, zone=zone).error

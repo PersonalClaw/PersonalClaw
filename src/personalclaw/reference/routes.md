@@ -589,6 +589,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/models/unload` — {provider} — free what a provider holds. Idempotent.
 - `GET /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `PUT /api/models/use-cases/{use_case}/settings` — _(no summary)_
+- `GET /api/models/waits` — the requests waiting for a busy local model, oldest first.
+- `POST /api/models/waits/{id}/move-on` — stop a wait now, so its next model answers.
 - `DELETE /api/notifications` — delete a single notification by timestamp.
 - `GET /api/notifications` — the delivery log, plus how many of ITS rows are unacked.
 - `POST /api/notifications/ack` — mark a single notification as read.

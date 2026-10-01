@@ -21,6 +21,8 @@ import re
 from typing import TYPE_CHECKING
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm_helpers import let_fail_over, say_background_substitution
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY, chore_usage
@@ -134,6 +136,18 @@ def _build_exchange(session: "_ChatSession") -> str:
     return "\n".join(lines)
 
 
+def _followups_problem(text: str) -> str:
+    """What is wrong with *text* as a follow-ups answer, ``""`` when it is a JSON list."""
+    body = text.strip()
+    if body.startswith("```"):
+        parts = body.split("\n")
+        body = "\n".join(parts[1:-1] if parts[-1].startswith("```") else parts[1:]).strip()
+    try:
+        return "" if isinstance(json.loads(body), list) else "not a JSON list"
+    except (json.JSONDecodeError, TypeError):
+        return "not JSON"
+
+
 def _parse_followups(text: str) -> list[str]:
     """Parse the LLM response into ≤3 short follow-up strings."""
     text = text.strip()
@@ -187,6 +201,7 @@ async def _generate_followups(state: "DashboardState", session: "_ChatSession") 
     # emits no event (chips simply don't render).
     client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
     record = recorder(client, chore_usage(_history_key_for(session.key)))
+    say = say_background_substitution("Follow-ups")
     text = ""
     try:
 
@@ -195,9 +210,14 @@ async def _generate_followups(state: "DashboardState", session: "_ChatSession") 
             # Clear accumulated background history so prior utility prompts don't bleed in.
             if hasattr(client, "_history"):
                 client._history.clear()
+            # A first model of the background chain that fails, is paused or answers no list
+            # hands the call to the next one, said in the log.
+            let_fail_over(client, _followups_problem)
             async for event in client.stream(prompt):
                 if event.kind == EVENT_TEXT_CHUNK:
                     text += event.text
+                elif event.kind == EVENT_MODEL_SUBSTITUTION:
+                    say(event.text)
                 elif event.kind == EVENT_PERMISSION_REQUEST:
                     await client.reject_tool(event.request_id)
                 elif event.kind == EVENT_COMPLETE:

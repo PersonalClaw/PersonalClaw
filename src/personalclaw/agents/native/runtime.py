@@ -34,7 +34,12 @@ from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
 from personalclaw.agents.native.catalog_refresh import CatalogRefresh
 from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
-from personalclaw.agents.native.failover import FAILOVER_MODES
+from personalclaw.agents.native.failover import (
+    FAILOVER_MODES,
+    TurnFallback,
+    resending_cannot_help,
+)
+from personalclaw.agents.native.local_turn import check_held_answer, take_local_turn
 from personalclaw.agents.native.owed_reply import OwedReply, owed_note_message
 from personalclaw.agents.native.tool_names import name_census
 from personalclaw.agents.native.tools import (
@@ -53,14 +58,7 @@ from personalclaw.cancellation import (
 )
 from personalclaw.file_scope import file_places_note
 from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
-from personalclaw.guardrails.failure import (
-    FailureMode,
-    FirstTokenTimeout,
-    GuardError,
-    NoModelAnswered,
-    correction_note,
-    is_retryable,
-)
+from personalclaw.guardrails.failure import FailureMode, GuardError, correction_note, is_retryable
 from personalclaw.guardrails.loop_breaker import (
     WARN_THRESHOLD,
     LoopBreaker,
@@ -292,12 +290,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # runtime whose basis no longer holds, so a rebind or an instance edit reaches the next
         # turn of every open session instead of waiting for an idle hour or a restart.
         self.resolved_from: ResolutionBasis | None = None
-        self._failover_announced = False
-        # Per turn: the models still to try, the (ref, why) of each one that failed, and the
-        # sentence the fallback that answers says before its reply.
-        self._failover_queue: list[str] = []
-        self._turn_failures: list[tuple[str, str]] = []
-        self._pending_substitution = ""
+        self._fallback = TurnFallback()
+        # The current turn and the model it started on: a turn's cleanup restores only its own.
+        self._turn_seq = 0
+        self._turn_home: tuple[Any, str] | None = None
         self._extra_deny = list(extra_deny_patterns or [])
 
         # Conversation history — owned by the loop (complete() is stateless).
@@ -886,6 +882,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     async def stream(self, message: str) -> AsyncIterator[AgentEvent]:
         """Run the ReAct loop for one user turn (``message`` is the full,
         context-built turn-0 prompt the chat runner already assembled)."""
+        self._turn_seq += 1
+        turn = self._turn_seq
         self._cancel.begin_turn()
         self._breaker.reset()
         self._stop_note = ""
@@ -949,12 +947,13 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # ends the turn, and the surface says the turn has no answer.
         owed = self._owed = OwedReply()
         # The model this turn starts on, put back when it ends: a turn that fell back must not
-        # leave the next one answering on the fallback with nothing saying so.
-        home = (self._model, self._definition.model)
-        announced = self._failover_announced and self.failover is not None
-        self._failover_queue = list(self.failover.candidates) if announced and self.failover else []
-        self._turn_failures = []
-        self._pending_substitution = ""
+        # leave the next one answering on the fallback with nothing saying so (nor a previous
+        # turn whose cleanup has not run yet, see the `finally` below).
+        if self._turn_home is not None:
+            self._model, self._definition.model = self._turn_home
+        home = self._turn_home = (self._model, self._definition.model)
+        # A chore's check (`expect_answer`): each inference's text is held until it is complete.
+        expect = self._fallback.begin(self.failover)
         fallbacks = 0  # how many models this turn fell back to
 
         # end_turn() in a finally, not at each return: a stop arriving in the window
@@ -1038,34 +1037,55 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 # guard's own isolation contract.
                 while True:
                     visible_streamed = False
+                    held: list[AgentEvent] | None = [] if expect is not None else None
                     attempt_started = now_ms()
                     try:
-                        async for ev in self._model.complete(
-                            msgs,
-                            tools=tools_kwarg,
-                            model=self._definition.model or None,
-                            reasoning_effort=self._reasoning_effort,
+                        # Its place in line on a local model; only a first inference moves on.
+                        local_turn = await take_local_turn(
+                            self._model,
+                            served_ref=self.served_model_ref,
+                            session_key=self._session_key,
+                            unattended=self._unattended,
+                            next_ref=self._fallback.next_ref() if turns == 1 else "",
+                        )
+                        try:
+                            async for ev in self._model.complete(
+                                msgs,
+                                tools=tools_kwarg,
+                                model=self._definition.model or None,
+                                reasoning_effort=self._reasoning_effort,
+                            ):
+                                if self._cancelled:
+                                    break
+                                if self._fallback.pending:
+                                    # A fallback is answering: said before anything it streams.
+                                    yield AgentEvent(
+                                        kind=EVENT_MODEL_SUBSTITUTION,
+                                        text=self._fallback.take_pending(),
+                                    )
+                                agg_events += 1
+                                if ev.kind in (EVENT_TEXT_CHUNK, EVENT_THINKING_CHUNK):
+                                    if ev.kind == EVENT_TEXT_CHUNK:
+                                        assistant_text += ev.text
+                                    if held is not None:
+                                        held.append(ev)
+                                    else:
+                                        visible_streamed = True
+                                        yield ev
+                                elif ev.kind == EVENT_TOOL_CALL:
+                                    tool_calls.append(ev)
+                                elif ev.kind == EVENT_COMPLETE:
+                                    usage = ev
+                        finally:
+                            if local_turn is not None:
+                                local_turn.release()
+                        if (
+                            expect is not None
+                            and self._fallback.queue
+                            and not tool_calls
+                            and not self._cancelled
                         ):
-                            if self._cancelled:
-                                break
-                            if self._pending_substitution:
-                                # A fallback is answering: said before anything it streams.
-                                yield AgentEvent(
-                                    kind=EVENT_MODEL_SUBSTITUTION, text=self._pending_substitution
-                                )
-                                self._pending_substitution = ""
-                            agg_events += 1
-                            if ev.kind == EVENT_TEXT_CHUNK:
-                                assistant_text += ev.text
-                                visible_streamed = True
-                                yield ev
-                            elif ev.kind == EVENT_THINKING_CHUNK:
-                                visible_streamed = True
-                                yield ev
-                            elif ev.kind == EVENT_TOOL_CALL:
-                                tool_calls.append(ev)
-                            elif ev.kind == EVENT_COMPLETE:
-                                usage = ev
+                            check_held_answer(expect, assistant_text, ref=self.served_model_ref)
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
@@ -1137,11 +1157,12 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                             # unchanged history: the only retry an overflow gets is the
                             # compacting one above, and only when it reclaimed something.
                             and not overflow
-                            # Nor does a model that did not START answering in time: the
-                            # identical request is read again from its first token and takes
-                            # as long again, so a resend only doubles the wait for the same
-                            # failure. The next model of the chain may still answer (below).
-                            and not isinstance(exc, FirstTokenTimeout)
+                            # Nor a failure the same request fails again (a model that did not
+                            # start answering in time, a missed check, a busy local model, a cut
+                            # call): the next model of the chain may still answer (below).
+                            and not resending_cannot_help(
+                                exc, can_move_on=bool(self._fallback.queue)
+                            )
                         )
                         self._audit_inference_attempt(
                             fmode,
@@ -1224,6 +1245,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         )
                     break
 
+                # A held answer that passed its check, or had no next model, reaches the caller.
+                for ev in held or ():
+                    yield ev
                 owed.answered(assistant_text)
 
                 if usage is not None:
@@ -1345,15 +1369,18 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             )
         finally:
             # A fallback answered THIS turn only: the next one starts on the model it was chosen
-            # for, and asks again whether it may fall back.
-            self._model, self._definition.model = home
-            self._failover_announced = False
-            self._failover_queue = []
-            self._pending_substitution = ""
-            self._turn_images = []
-            self._turn_message = None
-            self._owed.pending = False
-            self._cancel.end_turn()
+            # for. Only while this turn is still the current one: a caller that stops reading at
+            # its last event (a chore, at EVENT_COMPLETE) leaves it to be closed when collected,
+            # after the next turn may have begun (measured: a title's cleanup undid its chat's
+            # follow-ups' fallback).
+            if self._turn_seq == turn:
+                self._model, self._definition.model = home
+                self._turn_home = None
+                self._fallback.end()
+                self._turn_images = []
+                self._turn_message = None
+                self._owed.pending = False
+                self._cancel.end_turn()
 
     def _tool_schema_budget(self, window: Window) -> int | None:
         """The characters of full tool schemas this turn's *window* affords, or ``None``.
@@ -2445,53 +2472,28 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         turn. A caller that never calls this keeps a turn that fails, failing, rather than a
         reply from another model presented as the chosen one's.
         """
-        self._failover_announced = True
+        self._fallback.announced = True
+
+    def expect_answer(self, check: Callable[[str], str]) -> None:
+        """Hold the next turn's answer to *check* (``""`` for a usable answer, else what is wrong),
+        for a caller that reads the whole answer (a chore): an empty or missed answer is its model
+        failing, and with :meth:`announce_failover` the next model answers in its place. With none
+        left the answer reaches the caller as it is. Lasts one turn."""
+        self._fallback.expect = check
 
     async def _fail_over(self, exc: BaseException, *, tools: list | None) -> bool:
-        """Move this turn to the next model of its chain that can take it; True when one was found.
-
-        Called once the turn's model has failed before any output and its retry is spent. A model
-        that cannot be built now, cannot use the tools this turn offers, or does not take images
-        on a turn carrying some (the platform's record, as the turn's own model was asked) is
-        passed over. False when there is nothing to try, and then the failure stands as it is.
-        Raises :class:`NoModelAnswered` when models were tried in its place and failed too,
-        because then no single provider's error says what happened.
-        """
-        failover = self.failover
-        if failover is None or (not self._failover_queue and not self._turn_failures):
-            return False
-        self._turn_failures.append(
-            (self.served_model_ref or failover.requested, failover.describe(exc))
+        """Move this turn to the next model of its chain that can take it
+        (:meth:`TurnFallback.move_on`); True when one was found."""
+        found = await self._fallback.move_on(
+            self.failover,
+            exc,
+            current=self.served_model_ref,
+            tools=bool(tools),
+            images=bool(self._turn_images),
         )
-        while self._failover_queue:
-            ref = self._failover_queue.pop(0)
-            try:
-                provider, model_id = failover.build(ref)
-            except Exception as build_exc:  # noqa: BLE001 — a fallback that cannot build is passed
-                logger.warning(
-                    "native: fallback %s cannot be built, passed over: %r", ref, build_exc
-                )
-                continue
-            if tools and not getattr(provider, "supports_tools", False):
-                logger.info("native: fallback %s cannot use tools, passed over", ref)
-                continue
-            if self._turn_images and not await failover.takes_images(ref):
-                logger.info("native: fallback %s does not take images, passed over", ref)
-                continue
-            logger.warning(
-                "native: %s failed before any output (%r) — falling back to %s",
-                self._turn_failures[-1][0],
-                exc,
-                ref,
-            )
-            self._model = provider
-            self._definition.model = model_id
-            served = self.served_model_ref or ref
-            self._pending_substitution = failover.substitution(served, self._turn_failures).notice()
-            return True
-        if len(self._turn_failures) > 1:
-            raise NoModelAnswered(self._turn_failures) from exc
-        return False
+        if found is not None:
+            self._model, self._definition.model = found
+        return found is not None
 
     def drain_tool_outcomes(self) -> list[tuple[str, str]]:
         """Return this run's accumulated ``(tool, outcome)`` pairs and clear them.

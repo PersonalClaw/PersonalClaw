@@ -372,8 +372,15 @@ class TestProposeOnly:
     async def test_unparseable_answer_is_also_fail_open(self, tmp_path, monkeypatch):
         q = self._queued(tmp_path)
 
-        async def junk(prompt, **kw):
-            return "sure! here's a merge, roughly"
+        async def junk(prompt, *, validate=None, **kw):
+            # Mirror the one-shot contract: an answer the caller's check refuses is raised as a
+            # contract miss once every model of the chain gave one.
+            from personalclaw.guardrails.failure import OutputContractError
+
+            answer = "sure! here's a merge, roughly"
+            if validate is not None and validate(answer):
+                raise OutputContractError("the shape asked for", answer, why=validate(answer))
+            return answer
 
         monkeypatch.setattr(conflict_merge, "one_shot_completion", junk)
         report = await conflict_merge.draft_proposals(tmp_path, now="T1")

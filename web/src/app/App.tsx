@@ -7,6 +7,7 @@ import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, Fold
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
+import { ModelWaits } from '../ui/ModelWaitNotice'
 import { SignedOutScreen } from './SignedOutScreen'
 import { useSignedOut } from '../lib/signedOut'
 import { ChatPage } from '../pages/ChatPage'
@@ -695,6 +696,14 @@ function AppInner() {
         {/* Guardrails incident banner — spans the content area on every page while
             incident mode is active. Renders nothing otherwise. */}
         <IncidentBanner />
+        {/* A request a page is waiting for while the local model it needs is busy: why, and what
+            happens next. Over the page, below the corner band (TopBar's own clearance), rather than
+            in its flow, so nothing moves under you for the few seconds it shows. A chat's own
+            waits show in that chat. */}
+        <div className="pointer-events-none absolute inset-x-0 z-30 px-l"
+          style={{ top: 'max(var(--shell-corner-lh, 52px), var(--shell-corner-rh, 44px))' }}>
+          <ModelWaits session="" floating className="mx-auto w-full max-w-[36rem]" />
+        </div>
         <ErrorBoundary resetKey={rendered}>
           {/* Route cross-fade (Slice 5 global choreography): the new page fades+
               rises in on each route change — keyed on `rendered` so switching

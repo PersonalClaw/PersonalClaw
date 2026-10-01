@@ -111,6 +111,8 @@ class ProviderWorker(Worker):
         (``one_shot_completion(attempt_timeout=…)``). One timeout around the whole call cut
         the chain off during its second model's answer, so a slow first model ended every
         call however many were bound behind it."""
+        from personalclaw.guardrails.audit import caller_scope
+        from personalclaw.guardrails.failure import OutputContractError
         from personalclaw.llm_helpers import (
             ChainExhausted,
             is_timeout_failure,
@@ -118,7 +120,16 @@ class ProviderWorker(Worker):
         )
 
         try:
-            return await one_shot_completion(prompt, use_case="ingestion", attempt_timeout=timeout)
+            # Knowledge processing: background work, which a call somebody is waiting for on the
+            # same local model goes ahead of, and which that call's page names.
+            with caller_scope("knowledge"):
+                return await one_shot_completion(
+                    prompt, use_case="ingestion", attempt_timeout=timeout
+                )
+        except OutputContractError:
+            # Every model answered, none in the shape its caller asked for (``expecting``): an
+            # answer the caller reads, not a model or transport failure.
+            raise
         except ChainExhausted as exc:
             if exc.failures and all(is_timeout_failure(e) for _, e in exc.failures):
                 tried = ", ".join(ref for ref, _ in exc.failures)

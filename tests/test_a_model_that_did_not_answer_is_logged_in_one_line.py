@@ -113,7 +113,7 @@ class _Session:
 
 
 def _auto_title_failing_with(monkeypatch, caplog, error: BaseException) -> logging.LogRecord:
-    async def _fails(state, session, prompt):
+    async def _fails(state, session, prompt, **_kw):
         raise error
 
     monkeypatch.setattr(chat_title, "_stream_chat_chore", _fails)
@@ -132,7 +132,7 @@ def test_an_auto_title_whose_model_timed_out_is_one_line(monkeypatch, caplog):
     assert record.exc_info is None
     assert record.getMessage() == (
         "Auto-title failed for session chat-4: the model provider at 127.0.0.1:11434 did not "
-        "answer in time, so the request timed out"
+        "answer in time, so the request timed out; it is asked again once a model answers"
     )
 
 
@@ -142,7 +142,8 @@ def test_an_auto_title_says_which_model_did_not_start_answering(monkeypatch, cap
     assert record.exc_info is None
     assert record.getMessage() == (
         "Auto-title failed for session chat-4: gemma4:12b on Ollama at 127.0.0.1:11434 did not "
-        "start answering within 120 seconds, so the request was stopped"
+        "start answering within 120 seconds, so the request was stopped; it is asked again once "
+        "a model answers"
     )
 
 

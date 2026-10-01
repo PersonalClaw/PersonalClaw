@@ -10,6 +10,8 @@ from aiohttp import web
 from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm_helpers import any_answer, let_fail_over, say_background_substitution
 from personalclaw.request_validation import (
     RequestValidationError,
     json_object_body,
@@ -53,9 +55,15 @@ async def _generate_folder_icon(state: DashboardState, folder: dict) -> None:
     async def _stream(client) -> str:  # type: ignore[no-untyped-def]
         t = ""
         record = recorder(client, chore_usage())
+        say = say_background_substitution("Folder icon")
+        # A first model of the background chain that fails, is paused or answers nothing hands
+        # the call to the next one, said in the log.
+        let_fail_over(client, any_answer)
         async for event in client.stream(prompt):
             if event.kind == EVENT_TEXT_CHUNK:
                 t += event.text
+            elif event.kind == EVENT_MODEL_SUBSTITUTION:
+                say(event.text)
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 await client.reject_tool(event.request_id)
             elif event.kind == EVENT_COMPLETE:

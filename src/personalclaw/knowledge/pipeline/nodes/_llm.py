@@ -42,7 +42,18 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
     chain walk resolves through too), on the model itself: a node on the chat axis used to be
     handed the native agent, which has no ``complete()``, so video consolidation always fell back
     to the raw transcript, and none of a node's calls counted against the daily cap.
+
+    Each call is knowledge processing (``caller_scope("knowledge")``): background work, which a
+    call somebody is waiting for on the same local model goes ahead of, and which that call's page
+    names as what the model is busy with.
     """
+    from personalclaw.guardrails.audit import caller_scope
+
+    with caller_scope("knowledge"):
+        return await _complete_text(use_case, prompt, images)
+
+
+async def _complete_text(use_case: str, prompt: str, images: list[str] | None) -> str:
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
     from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
     from personalclaw.usage_ledger import UNATTENDED, recorder

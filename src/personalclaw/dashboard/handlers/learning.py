@@ -709,10 +709,14 @@ async def api_learning_identity_report_deliver(request: web.Request) -> web.Resp
     days = _report_window(request)
     if days is None:
         return json_error("bad_request", message="`days` must be an integer.", status=400)
+    from personalclaw.guardrails.local_queue import Attended, attending
+
     vs = _report_vs(request, "learning.identity_report_deliver")
-    delivery = await deliver_identity_report(
-        request.app["state"], window_days=days, vs=vs, narrate=True
-    )
+    # Asked for by hand, so the page waits on it; the scheduled delivery is background work.
+    with attending(Attended("Writing the report")):
+        delivery = await deliver_identity_report(
+            request.app["state"], window_days=days, vs=vs, narrate=True
+        )
     _audit(
         request,
         "learning.identity_report_deliver",

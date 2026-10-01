@@ -521,11 +521,21 @@ def substitution_reason(exc: BaseException) -> tuple[str, str]:
 
     A spend ceiling that refused it says which one and what lifts it, as a person reads it: past
     a spent dollar budget, a chain's model that costs nothing serving in a paid one's place is the
-    usual case, not a fault."""
-    from personalclaw.guardrails.failure import BudgetExceededError
+    usual case, not a fault. A local model that was busy says what with, a model that answered
+    nothing or not in the shape asked for says so, and a provider whose breaker opened says that
+    its calls are paused: none raised an error worth quoting."""
+    from personalclaw.guardrails.failure import (
+        BudgetExceededError,
+        CircuitOpenError,
+        EmptyCompletion,
+        LocalModelBusy,
+        OutputContractError,
+    )
 
-    if isinstance(exc, BudgetExceededError):
+    if isinstance(exc, (BudgetExceededError, CircuitOpenError)):
         return exc.reason(), exc.fix()
+    if isinstance(exc, (LocalModelBusy, EmptyCompletion, OutputContractError)):
+        return exc.reason(), ""
     agent_error = getattr(exc, "agent_error", None)
     why = str(getattr(agent_error, "why", "") or "")
     if why:
@@ -715,6 +725,14 @@ def _build_native_runtime(
     from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES
 
     inner_axis = model_axis if model_axis in CHAT_SUBCATEGORIES else "chat"
+    # A Background turn's every inference carries an output cap, as a one-shot call's does
+    # (``one_shot_completion``'s per-entry ``max_tokens``): its models are built with it, the one
+    # it falls back to included. Measured without one: a memory consolidation on a local model
+    # wrote 26,164 tokens over 1,224 s and answered nothing.
+    if inner_axis == "background":
+        from personalclaw.local_models.budgets import DEFAULT_OUTPUT_TOKENS
+
+        kwargs.setdefault("max_tokens", DEFAULT_OUTPUT_TOKENS)
     # Read BEFORE resolving: a rebind that lands while this builds then reads as moved, and the
     # runtime is rebuilt at its next acquire rather than kept on what it was built from.
     basis = ResolutionBasis.read(inner_axis)
@@ -1496,6 +1514,7 @@ def resolve_provider_for_use_case(
         # provider is down — don't burn a build + timeout to rediscover it.
         try:
             from personalclaw.guardrails.breaker import get_breaker
+            from personalclaw.guardrails.failure import BREAKER_OPEN_FIX, breaker_open_reason
 
             if get_breaker(provider_name).is_open() and has_later:
                 logger.warning(
@@ -1503,10 +1522,7 @@ def resolve_provider_for_use_case(
                 )
                 _log_chain_skip(use_case, ref, "breaker_open")
                 if ref == _head:
-                    _head_skipped = (
-                        f"calls to {provider_name!r} kept failing, so its circuit breaker is open",
-                        "it is tried again automatically once the breaker recovers",
-                    )
+                    _head_skipped = (breaker_open_reason(provider_name), BREAKER_OPEN_FIX)
                 continue
         except Exception:  # noqa: BLE001 — breaker introspection must never break resolution
             pass
