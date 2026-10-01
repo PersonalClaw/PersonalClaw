@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, TextIO
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, atomic_write_bytes, private_file
 from personalclaw.sqlite_compat import sqlite3
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -52,6 +52,11 @@ def _data_filter(info: tarfile.TarInfo, _dest: str = "") -> tarfile.TarInfo | No
 
     Also rejects path traversal, symlinks, and hardlinks to eliminate TOCTOU
     race between pre-scan and extraction.
+
+    Every member is owned by its reader alone: a file 0600, a folder 0700, both when a snapshot is
+    written and when one is extracted. A snapshot holds the audit log's signing key and every
+    memory, and the mode a member carries is the mode a restore's staging copy, the files a restore
+    puts back, and a ``tar -x`` by hand all make.
     """
     # Reject path traversal
     if ".." in PurePosixPath(info.name).parts or info.name.startswith("/"):
@@ -63,7 +68,7 @@ def _data_filter(info: tarfile.TarInfo, _dest: str = "") -> tarfile.TarInfo | No
         return None
     info.uid = info.gid = 0
     info.uname = info.gname = ""
-    info.mode = 0o755 if info.isdir() else 0o644
+    info.mode = 0o700 if info.isdir() else 0o600
     return info
 
 
@@ -596,6 +601,20 @@ def _copy_tree_no_overwrite(src: Path, dst: Path, *, entry_path: str = "") -> No
 # ── Snapshot ──────────────────────────────────────────────────────────────────
 
 
+def _write_archive(stage: Path, outfile: Path) -> Path:
+    """Write the staged snapshot ``stage`` to ``outfile`` as a gzipped tar; return ``outfile``.
+
+    Through the private writer (``atomic_write.private_file``): the archive holds the audit log's
+    signing key and every memory, so it is 0600 from its first byte, in a folder made 0700, and it
+    appears under its name only once it is whole. The tar is named for the archive, so the gzip
+    header records ``<name>.tar`` rather than the temp file's name.
+    """
+    with private_file(outfile) as fh:
+        with tarfile.open(name=str(outfile), mode="w:gz", fileobj=fh) as tar:
+            tar.add(str(stage), arcname=stage.name, filter=_data_filter)
+    return outfile
+
+
 def snapshot_main(
     argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None
 ) -> int:
@@ -805,17 +824,7 @@ def snapshot_main(
         }
         atomic_write(stage / "MANIFEST.json", json.dumps(manifest, indent=2))
 
-        # Tarball — write to temp file and rename atomically to avoid corrupt partials
-        out.mkdir(parents=True, exist_ok=True)
-        outfile = out / f"{name}.tar.gz"
-        tmp_tar = outfile.with_suffix(".tar.gz.tmp")
-        try:
-            with tarfile.open(str(tmp_tar), "w:gz") as tar:
-                tar.add(str(stage), arcname=name, filter=_data_filter)
-            tmp_tar.rename(outfile)
-        except BaseException:
-            tmp_tar.unlink(missing_ok=True)
-            raise
+        outfile = _write_archive(stage, out / f"{name}.tar.gz")
 
         # Manifest sidecar, so the archive browser can show this snapshot's per-domain
         # counts without streaming-decompressing the whole tarball to find one member.
@@ -826,7 +835,6 @@ def snapshot_main(
         has_hmac_key = (stage / "sel_hmac.key").exists()
 
     sz = outfile.stat().st_size
-    os.chmod(str(outfile), 0o600)  # contains sel_hmac.key — restrict access
     human = f"{sz // 1024}K" if sz < 1024 * 1024 else f"{sz / 1024 / 1024:.1f}M"
     print(f"✅ Snapshot created: {outfile} ({human})")
     if has_hmac_key:
@@ -1645,9 +1653,11 @@ def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str) -> None
             if os.path.islink(snap / f):
                 print(f"⚠️  Skipping symlinked file from snapshot: {snap / f}")
                 continue
-            shutil.copy2(str(snap / f), str(pc / f))
             if component == "security":
-                os.chmod(str(pc / f), 0o600)
+                # Key material: written 0600 from its first byte, never copied and then tightened.
+                atomic_write_bytes(pc / f, (snap / f).read_bytes())
+            else:
+                shutil.copy2(str(snap / f), str(pc / f))
 
 
 def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
@@ -1895,7 +1905,7 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
         _add("model_calls.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on audit_id")
     if _want(components, "security"):
         for name in CORE_FILES["security"]:
-            _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing, chmod 0600")
+            _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing, 0600")
         _add("security_events.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on event_id; HMAC-key gated")
     if _want(components, "workspace"):
         _add("workspace", inv.MERGE_UNION_BY_ID, "tree, no overwrite")
@@ -2073,8 +2083,8 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
         for f in CORE_FILES["security"]:
             s, d = snap / f, pc / f
             if s.is_file() and not d.is_file():
-                shutil.copy2(str(s), str(d))
-                os.chmod(str(d), 0o600)
+                # Key material: written 0600 from its first byte, never copied and then tightened.
+                atomic_write_bytes(d, s.read_bytes())
                 print(f"  {f}: restored (was missing)")
         # The SEL audit log, whose declared `append_dedup` had no executor. Placed AFTER the key
         # copy above, because whether the imported rows can verify depends on which key won.

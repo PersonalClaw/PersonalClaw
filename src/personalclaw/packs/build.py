@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+from personalclaw.atomic_write import write_private_file
 from personalclaw.config import loader as config_loader
 from personalclaw.packs import deny
 
@@ -553,7 +554,6 @@ def build_pack(
     }
 
     out = out_path if out_path is not None else (_config_dir() / "packs" / f"{name}.pclaw")
-    out.parent.mkdir(parents=True, exist_ok=True)
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
@@ -563,7 +563,7 @@ def build_pack(
             # closure only ever put allowlisted-store bytes into `payloads`.
             zf.writestr(str(PurePosixPath(comp.path)), preview.payloads[comp.path])
 
-    out.write_bytes(buf.getvalue())
+    write_private_file(out, buf.getvalue())
     logger.info(
         "pack: wrote %s (%d component(s), %d requirement(s))",
         out,

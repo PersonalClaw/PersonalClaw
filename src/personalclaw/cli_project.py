@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from personalclaw.atomic_write import write_private_file
 from personalclaw.workflows import project_archive as pa
 
 
@@ -89,11 +90,10 @@ def _export(args: argparse.Namespace) -> int:
         else Path.cwd()
         / pa.archive_filename(project.name, project.id, encrypted=bool(args.passphrase))
     )
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(raw)
-    # 0600: an unencrypted archive holds the project's brief and context, which is the user's own
-    # writing about their work, and a world-readable copy in a shared /tmp is a leak with no upside.
-    out.chmod(0o600)
+    # Private from its first byte (`atomic_write.write_private_file`): an unencrypted archive holds
+    # the project's brief and context, which is the user's own writing about their work, and a
+    # world-readable copy in a shared /tmp is a leak with no upside.
+    write_private_file(out, raw)
 
     size = len(raw)
     human = f"{size // 1024}K" if size < 1024 * 1024 else f"{size / 1024 / 1024:.1f}M"

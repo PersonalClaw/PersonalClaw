@@ -1264,7 +1264,7 @@ def test_the_restore_does_NOT_re_plant_SECRETS(tmp_path: Path) -> None:
 
     Capture writes a local 0600 archive; restore writes into a live home. The two directions do not
     warrant the same default, so the generic path excludes `secret_paths()` and the named `security`
-    component stays the deliberate route (copy-if-missing, chmod 0600).
+    component stays the deliberate route (copy-if-missing, written 0600).
     """
     from personalclaw.snapshot import _do_merge
 

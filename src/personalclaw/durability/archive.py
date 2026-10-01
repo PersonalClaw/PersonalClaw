@@ -39,11 +39,16 @@ def sidecar_path(archive: Path) -> Path:
 def write_sidecar(archive: Path, manifest: dict) -> None:
     """Write ``archive``'s manifest beside it. Never raises — a missing sidecar is
     recoverable (it gets backfilled on read), but a snapshot that FAILS because its
-    sidecar could not be written would trade a real backup for a cosmetic one."""
-    from personalclaw.atomic_write import atomic_write
+    sidecar could not be written would trade a real backup for a cosmetic one.
+
+    Private like the archive it describes (``atomic_write.private_file``): it names the host, the
+    user and the home, and counts what each domain holds."""
+    from personalclaw.atomic_write import write_private_file
 
     try:
-        atomic_write(sidecar_path(archive), json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        write_private_file(
+            sidecar_path(archive), json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+        )
     except OSError:
         logger.debug("archive: could not write manifest sidecar for %s", archive.name)
 

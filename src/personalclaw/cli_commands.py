@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
 
-from personalclaw.atomic_write import atomic_json_write, atomic_write
+from personalclaw.atomic_write import atomic_json_write, write_private_file
 from personalclaw.cli_run import RunError, mint_local_token, owner_headers, probe_gateway
 from personalclaw.config import config_dir
 from personalclaw.config.loader import AgentProfile, AppConfig
@@ -1679,7 +1679,8 @@ def _memory_cmd(args: argparse.Namespace) -> None:
             output = json.dumps(data, indent=2, default=str)
             out_file = getattr(args, "output", None)
             if out_file:
-                atomic_write(out_file, output)
+                # Every memory: private from its first byte, wherever the user writes it.
+                write_private_file(out_file, output)
                 print(f"Exported to {out_file}")
             else:
                 print(output)

@@ -21,8 +21,21 @@ theirs 0600. A file too large to write whole — an upload's parts, streamed chu
 the same mode through :func:`open_streamed`. A file written any other way (a log, a lock, a SQLite
 database, a few ``write_text`` caches) keeps the umask mode; the 0700 home it sits in is what
 shields it. An explicit mode wider than 0600 for a home path is REFUSED, not honoured — that
-refusal is the rail. Outside the home (an export the user saves into Downloads) the umask default
-still applies: that file is theirs to share.
+refusal is the rail. Outside the home the umask default still applies to these writers: a file
+written there is the user's to share.
+
+🔴 **An archive or an export of the user's data is private wherever it is written.** A snapshot
+carries the audit log's signing key and every memory; a shard export, a project archive and a
+memory export carry the user's records. :func:`private_file` (and :func:`write_private_file`) is
+the one writer for those: the bytes go to a temp file beside the destination that is created 0600
+— ``mkstemp`` opens it ``O_CREAT|O_EXCL`` at that mode, whatever the umask — and the finished file
+is renamed over the destination, so no reader ever sees it partial or readable by anyone else, in
+the home, in a folder the user named, or in a temp folder. The folders it makes for one are 0700
+(:func:`make_private_dirs`). A writer that opens the destination itself and tightens it afterwards
+leaves it readable for as long as the write takes: a snapshot's temp file was ``-rw-r--r--`` for
+the minute its 400 MB took. Every archive core writes to disk goes through it, a pack's too (its
+owner hands it on by reading it, which 0600 allows), and ``tests/test_archive_writer_census.py``
+holds every archive writer and every declared export writer to it.
 """
 
 import json
@@ -32,9 +45,10 @@ import shutil
 import stat
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import IO, Any, BinaryIO, cast
 
 logger = logging.getLogger(__name__)
 
@@ -310,14 +324,96 @@ def _atomic_write(
     else:
         ensure_private_dir(path.parent)
         mode = home_mode
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    with _replacing(
+        path,
+        mode if mode is not None else _get_default_mode(),
+        text=text,
+        fsync=fsync,
+        replace_fallback=replace_fallback,
+    ) as f:
+        f.write(payload)
+
+
+def make_private_dirs(directory: Path | str) -> None:
+    """Make ``directory`` and each missing folder above it 0700, whatever the umask.
+
+    For the folders an archive or an export is written into (:func:`private_file`). A folder that
+    is already there keeps the mode it has — one the user named and made is theirs — except under
+    the home, where every folder a file is written into is 0700 (:func:`ensure_private_dir`).
+    ``Path.mkdir(parents=True)`` would make every folder above the last at the umask's mode.
+    """
+    d = Path(directory)
+    ensure_home_for(d)
+    missing: list[Path] = []
+    probe = d
+    while not probe.exists() and probe != probe.parent:
+        missing.append(probe)
+        probe = probe.parent
+    for folder in reversed(missing):
+        try:
+            folder.mkdir(mode=PRIVATE_DIR_MODE)
+        except FileExistsError:
+            if not folder.is_dir():
+                raise
+            continue  # another writer made it a moment ago, at the mode it chose
+        # The umask can only take bits away from 0700, never add one; this pins it exact.
+        os.chmod(folder, PRIVATE_DIR_MODE)
+    if is_in_home(d):
+        ensure_private_dir(d)
+
+
+@contextmanager
+def private_file(path: Path | str, *, fsync: bool = True) -> Iterator[BinaryIO]:
+    """Stream an archive or an export of the user's data into ``path``: private and atomic.
+
+    Yields a binary file. Its bytes go to ``<name>.<random>.tmp`` beside ``path``, created 0600
+    before its first byte, in a folder :func:`make_private_dirs` makes 0700; when the ``with``
+    block ends, the file is flushed (and fsynced unless ``fsync`` is false) and renamed over
+    ``path``. If the block raises, the temp file is removed and ``path`` is left as it was.
+    Inside the home or outside it alike: see the module docstring.
+    """
+    target = Path(path)
+    make_private_dirs(target.parent)
+    with _replacing(
+        target, PRIVATE_FILE_MODE, text=False, fsync=fsync, prefix=f"{target.name}."
+    ) as f:
+        yield cast(BinaryIO, f)  # opened "wb"
+
+
+def write_private_file(path: Path | str, payload: "str | bytes", *, fsync: bool = False) -> None:
+    """Write a whole archive or export (a shard, a manifest, an archive built in memory) through
+    :func:`private_file`. Text is written as UTF-8."""
+    data = payload.encode("utf-8") if isinstance(payload, str) else payload
+    with private_file(path, fsync=fsync) as f:
+        f.write(data)
+
+
+@contextmanager
+def _replacing(
+    path: Path,
+    mode: int,
+    *,
+    text: bool,
+    fsync: bool,
+    prefix: str = "tmp",
+    replace_fallback: bool = False,
+) -> Iterator[IO[Any]]:
+    """The temp file every writer here writes through, renamed over ``path`` when it is done.
+
+    ``mkstemp`` creates it ``O_CREAT|O_EXCL`` at 0600 (narrower under an unusual umask, never
+    wider), and its mode is pinned to ``mode`` before the caller writes a byte. A rename the
+    filesystem refuses falls back to copying over ``path`` when ``replace_fallback`` is set (see
+    :func:`atomic_json_write`). On any failure the temp file is removed. The write is announced
+    to the post-write subscribers once it has landed.
+    """
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=prefix, suffix=".tmp")
     open_mode = "w" if text else "wb"
     encoding = "utf-8" if text else None
     try:
         with os.fdopen(fd, open_mode, encoding=encoding) as f:
             fd = -1  # fdopen took ownership; prevent double-close
-            os.fchmod(f.fileno(), mode if mode is not None else _get_default_mode())
-            f.write(payload)
+            os.fchmod(f.fileno(), mode)
+            yield f
             if fsync:
                 f.flush()
                 os.fsync(f.fileno())

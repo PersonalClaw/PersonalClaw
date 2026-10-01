@@ -35,6 +35,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from personalclaw.atomic_write import write_private_file
+
 logger = logging.getLogger(__name__)
 
 #: Where the authored source trees live inside the package (wheel package-data): one
@@ -253,7 +255,6 @@ def build_bundled(name: str, out_path: Path) -> Path:
             if member == "pack.json":
                 continue  # the derived manifest replaces the authored one
             zf.writestr(str(PurePosixPath(member)), raw)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(buf.getvalue())
+    write_private_file(out_path, buf.getvalue())
     logger.info("bundled pack %s built at %s (%d component(s))", name, out_path, len(components))
     return out_path

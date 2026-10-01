@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from personalclaw.atomic_write import write_private_file
 from personalclaw.http_download import safe_download_stem
 from personalclaw.workflows.project_export import (
     MANIFEST_SCHEMA,
@@ -324,8 +325,7 @@ def _open_archive(path: Path, passphrase: str = "") -> tuple[Path, Path | None]:
         data = decrypt_archive(data, passphrase)
         tmp = Path(tempfile.mkdtemp(prefix="pclaw-project-decrypt-"))
         plain = tmp / "archive.zip"
-        plain.write_bytes(data)
-        os.chmod(str(plain), 0o600)
+        write_private_file(plain, data)
         return plain, tmp
     return path, None
 

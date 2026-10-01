@@ -935,6 +935,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **A watched folder takes in only what is inside it: a link to a file or folder outside it is left out, and its row in Knowledge › Sources says how many; a link to a note inside comes in once, and a note taken in through a link out of the folder is removed at the next scan.**
+- **A snapshot, the manifest beside it, a `backup export` folder, a project export, a memory export and a pack are readable only by you from their first byte, wherever they are written, and a snapshot's files extract the same way; a snapshot being written was readable by anyone on the machine until it was done.**
 - **A sender's pairing code lets someone in only while the channel's rule for strangers asks for one: a code Email found in a mail paired its sender under "only you let them in", Pair someone is offered only under the rule that takes codes, and changing the rule ends a code still outstanding.**
 - **A transcription no longer puts the folder holding ffmpeg in front of the gateway's `PATH`; every tool server, hook and script starts with the `PATH` and `TMPDIR` the gateway was launched with, and a Restart starts from that launch environment, so a stdio server's command never resolves to a program from a folder you never put on your `PATH`.**
 - **A secret named after a variable that decides which programs run (`PATH`, `NODE_OPTIONS`, `LD_PRELOAD` and the like) is stored and resolved like any other, but never put into the gateway's environment.**

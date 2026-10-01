@@ -30,6 +30,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
+from personalclaw.atomic_write import private_file
+
 logger = logging.getLogger(__name__)
 
 #: The one-link document's own version. Independent of the pack ``schema_version`` it carries:
@@ -188,8 +190,10 @@ def materialize(
             raise OneLinkError(f"one-link pack exceeds {TOTAL_MAX_BYTES} bytes")
         materialized[name] = raw
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(str(out_path), "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    with (
+        private_file(out_path, fsync=False) as fh,
+        zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf,
+    ):
         for name in sorted(materialized):
             zf.writestr(str(PurePosixPath(name)), materialized[name])
     return out_path

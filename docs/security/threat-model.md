@@ -426,6 +426,14 @@ Data leaving the running system:
   that way; `.local_secret`, `telemetry_salt` and `.app_secret` have writers of their own that
   create them 0600. A file written some other way (a log, a lock, a database) keeps the umask
   mode inside the 0700 home.
+- **Private archives and exports** (`atomic_write.private_file`): a snapshot, the manifest beside
+  it, a `backup export` folder and its manifest, a project export, a memory export and a pack are
+  0600 from their first byte, in folders made 0700, wherever they are written: the bytes go to a
+  temp file beside the destination that is created 0600, and the finished file is renamed into
+  place. A snapshot's members are stamped 0600 (folders 0700), so a restore's staging copy, the
+  files a restore puts back and a `tar -x` by hand are private too, and a restore writes the audit
+  key back 0600 from its first byte. `tests/test_archive_writer_census.py` holds every archive
+  writer to it.
 - **Credential-free snapshots** (`durability/inventory.py`, `credential=True`): `.env`,
   `.env.pre-keychain`, `.local_secret`, and an older release's `credentials.json` (kept only
   while the Doctor lists a value in it the boot move could not settle) never enter a snapshot,

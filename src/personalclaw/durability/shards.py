@@ -56,7 +56,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from personalclaw.atomic_write import atomic_write, atomic_write_bytes
+from personalclaw.atomic_write import atomic_write, make_private_dirs, write_private_file
 from personalclaw.durability import inventory as inv
 from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
 from personalclaw.sqlite_compat import sqlite3
@@ -487,9 +487,7 @@ def _write_shard(root: Path, rel: str, rows: list[dict]) -> list[ShardFile]:
     total = sum(len(b) for b in lines)
     if total <= PART_SPLIT_BYTES:
         body = b"".join(lines)
-        out = root / rel
-        out.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes(out, body)
+        write_private_file(root / rel, body)
         return [ShardFile(path=rel, bytes=len(body), rows=len(rows), sha256=_sha256(body))]
 
     # Deterministic split: fill each part until adding the next row would exceed
@@ -507,9 +505,7 @@ def _write_shard(root: Path, rel: str, rows: list[dict]) -> list[ShardFile]:
     for index, chunk in enumerate(parts):
         body = b"".join(chunk)
         part_rel = f"{stem}.part-{index:04d}.jsonl"
-        out = root / part_rel
-        out.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes(out, body)
+        write_private_file(root / part_rel, body)
         written.append(
             ShardFile(path=part_rel, bytes=len(body), rows=len(chunk), sha256=_sha256(body))
         )
@@ -528,9 +524,7 @@ def _stage_db_copy(out_dir: Path, entry_id: str, src_copy: Path) -> DbCopy | Non
         logger.debug("shards: cannot stage db copy for %s", entry_id, exc_info=True)
         return None
     rel = f"db/{entry_id}.db"
-    dest = out_dir / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_bytes(dest, data)
+    write_private_file(out_dir / rel, data)
     return DbCopy(path=rel, entry_id=entry_id, bytes=len(data), sha256=_sha256(data))
 
 
@@ -558,7 +552,7 @@ def export_shards(
     byte-identical across runs by nature.
     """
     result = ExportResult()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    make_private_dirs(out_dir)
     wanted = set(entries) if entries else None
     temporary: frozenset[Path] | None = None
 
@@ -716,7 +710,7 @@ def _write_manifest(home: Path, out_dir: Path, result: ExportResult) -> None:
             for d in result.databases
         ],
     }
-    atomic_write(out_dir / _MANIFEST, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    write_private_file(out_dir / _MANIFEST, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
 # ── validation ──────────────────────────────────────────────────────────────
@@ -1096,7 +1090,7 @@ def clear_shards(out_dir: Path) -> None:
     """
     if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
         raise ValueError(f"{out_dir} is not a folder")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    make_private_dirs(out_dir)
     if not _is_an_export(out_dir):
         if any(out_dir.iterdir()):
             raise ValueError(
