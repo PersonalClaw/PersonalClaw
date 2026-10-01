@@ -39,6 +39,7 @@ from personalclaw.agents.native.project_run_tool_defs import project_run_tool_de
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions
 from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text
 from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal, store_named_in
+from personalclaw.file_view import BINARY_SNIFF_BYTES, is_binary
 from personalclaw.knowledge_providers.dir_source import note_path
 from personalclaw.security import (
     MASK_CONFLICT,
@@ -687,7 +688,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Search file contents (substring by default, or a Python regex with regex=true), with no approval: under the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Skips .git/node_modules/venv/build dirs. Args: query (str), optional path (str), optional glob (str), optional regex (bool), optional max_results (int).",  # noqa: E501
+                description="Search file contents (substring by default, or a Python regex with regex=true), with no approval: under the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Skips .git/node_modules/venv/build dirs and binary files. Args: query (str), optional path (str), optional glob (str), optional regex (bool), optional max_results (int).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {
@@ -1000,9 +1001,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             # A NUL byte in the head means binary (image/compiled artifact/etc.) —
             # decoding it with errors='replace' would hand the model a wall of mojibake
             # it can't use and might act on as if it were source. Flag it honestly.
-            # Check only the first 8KB — git's own binary heuristic, and matches the
-            # FE file-read handler (api_file_read) so both read paths agree.
-            if b"\x00" in raw[:8192]:
+            # The Files view and grep ask the same question (`file_view.is_binary`).
+            if is_binary(raw):
                 return _BINARY
             # The digest is over the FULL bytes, not the capped slice, so the read gate
             # invalidates the observation when ANY part of the file changes — including a
@@ -1303,9 +1303,13 @@ class NativeBuiltinToolProvider(ToolProvider):
                 if scope.admits(str(p)) is None:
                     continue
                 try:
-                    for i, line in enumerate(
-                        p.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
-                    ):
+                    with p.open("rb") as fh:
+                        head = fh.read(BINARY_SNIFF_BYTES)
+                        # A binary file has no lines to match, as for `grep -I`.
+                        if is_binary(head):
+                            continue
+                        text = (head + fh.read()).decode("utf-8", errors="ignore")
+                    for i, line in enumerate(text.splitlines(), 1):
                         if matcher.search(line) if matcher else query in line:
                             hits.append(f"{scope.shown(p)}:{i}: {line.strip()[:200]}")
                             if len(hits) >= max_results:

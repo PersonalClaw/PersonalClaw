@@ -16,11 +16,29 @@ from __future__ import annotations
 
 from personalclaw.security import redact_for_display
 
-__all__ = ["FILE_READ_CAP", "file_as_read", "read_head", "whole_text"]
+__all__ = [
+    "BINARY_SNIFF_BYTES",
+    "FILE_READ_CAP",
+    "file_as_read",
+    "is_binary",
+    "read_head",
+    "whole_text",
+]
 
 #: How much of a file the explorer reads. A longer file is served TRUNCATED, and the editor opens a
 #: truncated file read-only, so a save cannot cut off the part it never loaded.
 FILE_READ_CAP = 512_000
+
+#: How much of a file's head :func:`is_binary` looks at.
+BINARY_SNIFF_BYTES = 8192
+
+
+def is_binary(head: bytes) -> bool:
+    """Whether a file whose first bytes are *head* is binary: a NUL byte in its first
+    :data:`BINARY_SNIFF_BYTES`, git's own heuristic and ``grep -I``'s. The Files view, the agent's
+    ``read_file`` and its ``grep`` all ask this, so a file one of them treats as text the others
+    do too."""
+    return b"\x00" in head[:BINARY_SNIFF_BYTES]
 
 
 def read_head(path: str) -> bytes:
@@ -43,7 +61,7 @@ def file_as_read(raw: bytes) -> tuple[str, bool, bool]:
     """
     truncated = len(raw) > FILE_READ_CAP
     raw = raw[:FILE_READ_CAP]
-    if b"\x00" in raw[:8192]:
+    if is_binary(raw):
         return "", truncated, True
     return redact_for_display(raw.decode("utf-8", errors="replace")), truncated, False
 

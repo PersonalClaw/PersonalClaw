@@ -48,6 +48,19 @@ never reached the library. The poll therefore stops at the cap; a change it did 
 uncommitted, exactly like one still settling, and is emitted by the next poll. A first scan
 bigger than one poll arrives over several, and the cursor says how many are still to come.
 
+**A folder takes in what is inside it, and nothing a link reaches outside it.** A link in the
+folder names a file or folder somewhere else; she shared the folder, not where its links point.
+So every path the scan meets is taken in under the path it really is (:func:`resolve_in`, links
+and ``..`` resolved first): one that resolves outside the folder is left out, and the cursor
+records how many, so the sources page can say it (:meth:`DirSourceProvider.links_outside`); one
+that resolves to a file inside is that file, which the walk meets under its own name, so it
+comes in once. The agent's file tools (``file_scope``) ask the same two questions of a path in a
+watched folder, :func:`resolve_in` and :func:`takes`, so what the library takes from a folder and
+what the agent may read in it cannot differ. A note an earlier scan took in through a link out
+of the folder is removed outright at the next scan, with its sighting
+(:meth:`DirSourceProvider._withdraw`): what it holds was never in the folder, and an archived
+item keeps its text.
+
 **Save-time validation runs at POLL time too** (:meth:`validate_spec`). The spec is data in
 a SQLite row that an MCP tool, an app, or a hand-edit can change after the fact, so a guard
 that only ran on the create path would be one edit away from being bypassed — the same
@@ -63,7 +76,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, NamedTuple
 
 from personalclaw.knowledge_providers.base import (
     CHANGE_CREATED,
@@ -153,7 +166,8 @@ class _DirCursor:
     means it has not — a new source, a cursor that could not be read, or one written before
     the first scan brought files in, whose baseline listed every file while none of them
     reached the library. ``waiting`` is how many settled changes the last poll left for the
-    next one at the engine's per-poll cap.
+    next one at the engine's per-poll cap. ``outside`` is how many links the last scan left out
+    because they resolve outside the folder.
     """
 
     first_scan: dict[str, int] | None = None
@@ -161,6 +175,7 @@ class _DirCursor:
     gone: dict[str, float] = field(default_factory=dict)
     tombstones: dict[str, float] = field(default_factory=dict)
     waiting: int = 0
+    outside: int = 0
 
     @classmethod
     def parse(cls, raw: str) -> _DirCursor:
@@ -199,10 +214,11 @@ class _DirCursor:
                     target[str(k)] = float(v)
                 except (TypeError, ValueError):
                     continue
-        try:
-            out.waiting = max(0, int(data.get("waiting") or 0))
-        except (TypeError, ValueError):
-            out.waiting = 0
+        for attr in ("waiting", "outside"):
+            try:
+                setattr(out, attr, max(0, int(data.get(attr) or 0)))
+            except (TypeError, ValueError):
+                setattr(out, attr, 0)
         return out
 
     def dump(self) -> str:
@@ -213,6 +229,7 @@ class _DirCursor:
                 "gone": self.gone,
                 "tombstones": self.tombstones,
                 "waiting": self.waiting,
+                "outside": self.outside,
             },
             sort_keys=True,
         )
@@ -246,6 +263,23 @@ def _signature(path: Path) -> list | None:
     return [float(st.st_mtime), int(st.st_size)]
 
 
+def _open_no_link(path: str, flags: int) -> int:
+    """``open``'s opener for a file the scan took in: it does not follow a link put in its place
+    since."""
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0))
+
+
+class FolderScan(NamedTuple):
+    """What one scan found in a watched folder."""
+
+    #: ``{relative_path: [mtime, size]}`` of every file the folder takes in.
+    sigs: dict[str, list]
+    #: How many of those files could not be stat'ed.
+    unreadable: int
+    #: The paths (files and folders) it left out because they resolve outside the folder.
+    outside: tuple[str, ...]
+
+
 def matchers(spec: dict) -> tuple[str, ...]:
     """The file-name patterns a folder's *spec* takes in: its ``include``, else
     :data:`DEFAULT_INCLUDE`."""
@@ -256,14 +290,28 @@ def matchers(spec: dict) -> tuple[str, ...]:
     return pats or DEFAULT_INCLUDE
 
 
+def resolve_in(root: str, path: str | os.PathLike) -> str | None:
+    """Where *path* really is in the watched folder whose real path is *root*: its real path
+    relative to the folder (``"."`` for the folder itself), or ``None`` when it resolves outside.
+
+    Links and ``..`` are resolved first, so a link out of the folder is outside it, and a link
+    to a file inside is that file's own path. The scan and the agent's file tools
+    (``file_scope``) both ask this and then :func:`takes` of the path it gives."""
+    real = os.path.realpath(path)
+    if real != root and not real.startswith(root.rstrip(os.sep) + os.sep):
+        return None
+    return Path(os.path.relpath(real, root)).as_posix()
+
+
 def takes(spec: dict, rel: str, *, is_dir: bool) -> bool:
     """Whether the folder *spec* watches takes in *rel*, a path relative to that folder.
 
     A folder (*is_dir*) is one :meth:`DirSourceProvider.scan` walks into, and a file one it
     brings in: no part of the path hidden or a :data:`SKIP_DIRS` name, nothing below the top
     when the spec is not recursive, and a file's name matching the spec's patterns. The scan
-    and the agent's file tools (``file_scope``) both ask this, so what the library takes from a
-    folder and what the agent may read in it are one rule."""
+    and the agent's file tools (``file_scope``) both ask this of where a path really is
+    (:func:`resolve_in`), so what the library takes from a folder and what the agent may read in
+    it are one rule."""
     parts = [part for part in PurePosixPath(rel).parts if part not in ("", ".")]
     folders = parts if is_dir else parts[:-1]
     if any(part in SKIP_DIRS or part.startswith(".") for part in folders):
@@ -392,24 +440,46 @@ class DirSourceProvider(KnowledgeSourceProvider):
 
     # ── the signature-diff observation ──────────────────────────────────────────────
 
-    def scan(self, spec: dict) -> tuple[dict[str, list], int]:
-        """Signature map ``{relative_path: [mtime, size]}`` plus the count of files that
-        could not be read. Sorted-and-capped so the cap bites deterministically rather
-        than depending on directory iteration order."""
-        root = Path(canonical) if (canonical := self._resolved_path(spec)) else None
-        if root is None:
-            return {}, 0
+    def scan(self, spec: dict) -> FolderScan:
+        """What the folder holds now (:class:`FolderScan`). Sorted-and-capped so the cap bites
+        deterministically rather than depending on directory iteration order.
+
+        Every path is taken in under the path it really is (:func:`resolve_in`). ``os.walk``
+        lists a link to a folder without entering it and a link to a file as a file: a link that
+        resolves outside the folder is left out and named in ``outside``, and one that resolves
+        inside is left to the walk, which meets what it names under that name when the folder
+        takes it in."""
+        canonical = self._resolved_path(spec)
+        if not canonical:
+            return FolderScan({}, 0, ())
+        root = Path(canonical)
         cap = min(int((spec or {}).get("max_files") or MAX_FILES_PER_SOURCE), MAX_FILES_PER_SOURCE)
         found: list[tuple[str, Path]] = []
+        outside: list[str] = []
+
+        def really(dirpath: str, name: str, rel: str) -> bool:
+            full = os.path.join(dirpath, name)
+            # The walk starts at the folder's real path and enters no link, so an entry that is
+            # not a link is where it says it is, and only a link costs the resolution.
+            if not os.path.islink(full):
+                return True
+            at = resolve_in(canonical, full)
+            if at is None:
+                outside.append(rel)
+            return at == rel
+
         for dirpath, dirnames, filenames in os.walk(root):
             here = Path(dirpath).relative_to(root)
             # Prune in place so os.walk never descends into the noise directories at all.
-            dirnames[:] = sorted(
-                d for d in dirnames if takes(spec, (here / d).as_posix(), is_dir=True)
-            )
+            dirnames[:] = [
+                d
+                for d in sorted(dirnames)
+                if takes(spec, (rel := (here / d).as_posix()), is_dir=True)
+                and really(dirpath, d, rel)
+            ]
             for fname in sorted(filenames):
                 rel = (here / fname).as_posix()
-                if takes(spec, rel, is_dir=False):
+                if takes(spec, rel, is_dir=False) and really(dirpath, fname, rel):
                     found.append((rel, Path(dirpath) / fname))
         found.sort()
         sigs: dict[str, list] = {}
@@ -420,7 +490,7 @@ class DirSourceProvider(KnowledgeSourceProvider):
                 errors += 1
                 continue
             sigs[rel] = sig
-        return sigs, errors
+        return FolderScan(sigs, errors, tuple(outside))
 
     def _resolved_path(self, spec: dict) -> str:
         from personalclaw.triggers.pathguard import canonicalize
@@ -435,10 +505,11 @@ class DirSourceProvider(KnowledgeSourceProvider):
         An HTML file (a folder the spec widens to ``*.html``) is stored as its words, through
         the same conversion an uploaded ``.html`` takes; every other file is text already."""
         root = self._resolved_path(spec)
-        if not root:
+        if not root or resolve_in(root, os.path.join(root, rel)) != rel:
+            # Gone, or swapped for a link since the scan: what a link names is not read.
             return None
         try:
-            with open(Path(root) / rel, "rb") as fh:
+            with open(os.path.join(root, rel), "rb", opener=_open_no_link) as fh:
                 raw = fh.read(MAX_FILE_BYTES)
         except OSError:
             return None
@@ -476,6 +547,12 @@ class DirSourceProvider(KnowledgeSourceProvider):
             sigs=left_out,
             tombstones=dict(prior.tombstones),
         )
+
+    @staticmethod
+    def links_outside(cursor: str) -> int:
+        """How many links the folder's last scan left out because they resolve outside it, for
+        the sources page."""
+        return _DirCursor.parse(cursor).outside
 
     @staticmethod
     def first_scan_status(cursor: str) -> dict[str, int] | None:
@@ -523,13 +600,17 @@ class DirSourceProvider(KnowledgeSourceProvider):
             # (an unmounted volume), or remounting would archive every item at once.
             return SourcePollResult(error=err)
         try:
-            sigs, read_errors = self.scan(spec)
+            scan = self.scan(spec)
         except OSError as exc:
             return SourcePollResult(error=f"scan failed: {exc}"[:200])
+        sigs, read_errors = scan.sigs, scan.unreadable
 
         state = _DirCursor.parse(cursor)
         if state.first_scan is None:
             state = self._first_scan(sigs, state)
+        for rel in scan.outside:
+            self._withdraw(source_id, rel, state)
+        state.outside = len(scan.outside)
 
         now = float(self._now_fn())
         window = float(spec.get("debounce_secs") or DEFAULT_DEBOUNCE_SECS)
@@ -611,6 +692,19 @@ class DirSourceProvider(KnowledgeSourceProvider):
             else:
                 logger.debug("dir source %s: %d file(s) unreadable", source_id, read_errors)
         return result
+
+    def _withdraw(self, source_id: str, rel: str, state: _DirCursor) -> None:
+        """Remove what an earlier scan took in through *rel*, a link out of the folder: its note
+        and its sighting, outright, and *rel* from the baseline.
+
+        Not an archive, which keeps a note's text: what this one holds was never in the folder
+        she shared. The sighting goes with it, so a file she later saves under that name comes in
+        as new. A link left in place costs one lookup at each scan after the first."""
+        state.sigs.pop(rel, None)
+        state.gone.pop(rel, None)
+        state.tombstones.pop(rel, None)
+        if self._store.find_source_item(source_id, rel) is not None:
+            self._store.forget_source_item(source_id, rel)
 
     def _emit(self, spec: dict, rel: str, change: str, now: float) -> SourceItem | None:
         """Build the sighting for a settled change (content read only for a live file)."""

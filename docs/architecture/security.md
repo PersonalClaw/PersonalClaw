@@ -397,8 +397,11 @@ at every call:
   Read and change; a change meets the same approval, with the same diff, as one in the workspace,
   and a turn's rewind restores it (the folder is recorded with the turn's checkpoint).
 - **the folders added as knowledge sources** (a Watched Directory in Knowledge → Sources, while it
-  is on). Read only, and only the files that source takes in (`dir_source.takes`, the rule its own
-  scan uses: its file patterns, nothing hidden, nothing below the top when it is not recursive).
+  is on). Read only, and only the files that source takes in (`dir_source.resolve_in` and
+  `dir_source.takes`, the rule its own scan uses: inside the folder once links are resolved, its
+  file patterns, nothing hidden, nothing below the top when it is not recursive). The scan leaves
+  out a link to a file or folder outside the folder and says how many on the source's row, so a
+  link cannot carry content she did not share into the library either.
   `knowledge_search` and `knowledge_get` name a note's file, so the agent can open it.
 
 Everywhere else is refused, read or change, with a sentence that says which folders the tools

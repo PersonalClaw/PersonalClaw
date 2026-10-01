@@ -160,6 +160,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The agent's `grep` leaves out binary files, as `grep -I` does, rather than returning lines of a database's or an image's bytes.**
 - **A note the agent cites in a chat opens from the chat, by its path or its file name alone, and so does a file in a folder the agent may read.**
 - **A workflow step, a batch's review leaf included, reads the folder its batch was started in and its project's folder, read only, instead of finding only its empty working folder.**
 - **The agent no longer reads the knowledge library's own database as a file or from the shell; it is pointed to `knowledge_search` and `knowledge_get` instead.**
@@ -922,6 +923,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A watched folder takes in only what is inside it: a link to a file or folder outside it is left out, and its row in Knowledge › Sources says how many; a link to a note inside comes in once, and a note taken in through a link out of the folder is removed at the next scan.**
 - **A sender's pairing code lets someone in only while the channel's rule for strangers asks for one: a code Email found in a mail paired its sender under "only you let them in", Pair someone is offered only under the rule that takes codes, and changing the rule ends a code still outstanding.**
 - **A transcription no longer puts the folder holding ffmpeg in front of the gateway's `PATH`; every tool server, hook and script starts with the `PATH` and `TMPDIR` the gateway was launched with, and a Restart starts from that launch environment, so a stdio server's command never resolves to a program from a folder you never put on your `PATH`.**
 - **A secret named after a variable that decides which programs run (`PATH`, `NODE_OPTIONS`, `LD_PRELOAD` and the like) is stored and resolved like any other, but never put into the gateway's environment.**

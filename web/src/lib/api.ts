@@ -4054,6 +4054,9 @@ export interface WatchedSource {
    *  were past the scan's bound (they come in when they change), and `waiting` are taken but
    *  not yet read in (a poll reads a capped number). `null` for every other kind. */
   first_scan?: { found: number; left_out: number; waiting: number } | null
+  /** How many links a watched folder's last scan left out because they lead outside the
+   *  folder (a folder takes in only what is inside it). `null` for every other kind. */
+  links_outside?: number | null
   created_at?: string; updated_at?: string
   last_poll_at?: string | null; next_poll_at?: string | null
   last_new_count?: number

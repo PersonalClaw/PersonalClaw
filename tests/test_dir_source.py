@@ -493,7 +493,11 @@ def test_neither_provider_nor_engine_can_hard_delete_an_item():
 
     An archive-on-delete implementation that also carried a `DELETE FROM items` one branch
     away would pass every behavioural test above and still be one edit from data loss.
+
+    The folder's one removal is not a change it observes: `_withdraw` forgets a note an earlier
+    scan took in through a link out of the folder, and only the scan's `outside` paths reach it.
     """
+    import ast
     from pathlib import Path
 
     import personalclaw.knowledge.source_engine as engine_mod
@@ -503,6 +507,33 @@ def test_neither_provider_nor_engine_can_hard_delete_an_item():
         src = Path(mod.__file__).read_text(encoding="utf-8")
         assert "DELETE FROM items" not in src, f"{mod.__name__} must never hard-delete an item"
         assert "delete_item" not in src, f"{mod.__name__} must not reach a delete path"
+    engine_src = Path(engine_mod.__file__).read_text(encoding="utf-8")
+    assert "forget_source_item" not in engine_src
+
+    tree = ast.parse(Path(dir_mod.__file__).read_text(encoding="utf-8"))
+    forgets, withdraws = [], []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr == "forget_source_item":
+                    forgets.append(fn.name)
+                if node.func.attr == "_withdraw":
+                    withdraws.append((fn.name, ast.unparse(node.args[1])))
+    assert forgets == ["_withdraw"]
+    assert withdraws == [("poll", "rel")]
+    poll = next(f for f in ast.walk(tree) if getattr(f, "name", "") == "poll")
+    loops = [
+        ast.unparse(n.iter)
+        for n in ast.walk(poll)
+        if isinstance(n, ast.For)
+        and any(
+            isinstance(c, ast.Call) and getattr(c.func, "attr", "") == "_withdraw"
+            for c in ast.walk(n)
+        )
+    ]
+    assert loops == ["scan.outside"], "only a path the scan found outside the folder is withdrawn"
 
 
 # ── fail-open + guards ─────────────────────────────────────────────────────────
@@ -619,14 +650,15 @@ def test_scan_skips_noise_dirs_and_honours_include_and_cap(store, watched):
     _write(watched / "top.md", "top", mtime=clock.t)
     _write(watched / "skip.bin", "binary", mtime=clock.t)
 
-    sigs, errors = prov.scan({"path": str(watched)})
-    assert set(sigs) == {"top.md", "deep/n.md"}
-    assert errors == 0
-    flat, _ = prov.scan({"path": str(watched), "recursive": False})
+    scan = prov.scan({"path": str(watched)})
+    assert set(scan.sigs) == {"top.md", "deep/n.md"}
+    assert scan.unreadable == 0
+    assert scan.outside == ()
+    flat = prov.scan({"path": str(watched), "recursive": False}).sigs
     assert set(flat) == {"top.md"}
-    capped, _ = prov.scan({"path": str(watched), "max_files": 1})
+    capped = prov.scan({"path": str(watched), "max_files": 1}).sigs
     assert len(capped) == 1
-    widened, _ = prov.scan({"path": str(watched), "include": ["*.bin"]})
+    widened = prov.scan({"path": str(watched), "include": ["*.bin"]}).sigs
     assert set(widened) == {"skip.bin"}
 
 

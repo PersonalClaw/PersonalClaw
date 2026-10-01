@@ -1062,11 +1062,7 @@ class KnowledgeStore:
             self.db.execute(
                 "DELETE FROM entity_relations WHERE source_id NOT IN (SELECT id FROM entities) OR target_id NOT IN (SELECT id FROM entities)"  # noqa: E501
             )
-            self.db.execute("""
-                DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM mentions)
-                AND id NOT IN (SELECT source_id FROM entity_relations)
-                AND id NOT IN (SELECT target_id FROM entity_relations)
-            """)
+            self._drop_orphan_entities()
             self.db.execute("COMMIT")
         except Exception:
             self.db.execute("ROLLBACK")
@@ -1820,7 +1816,8 @@ class KnowledgeStore:
         return True
 
     def forget_source_item(self, source_id: str, guid: str) -> bool:
-        """Drop a source item AND its ``source_seen`` row, in one transaction.
+        """Drop a source item (with the entities only it named) AND its ``source_seen`` row, in
+        one transaction.
 
         The counterpart to :meth:`archive_source_item`, for the opposite kind of upstream.
         A watched directory is not ours: its file may be back tomorrow, so the library row
@@ -1834,7 +1831,9 @@ class KnowledgeStore:
         :meth:`create_typed_item`'s novelty gate would then refuse to index an artifact
         re-created under the same slug — forever, silently. Deleting only the seen row
         would leave the mirror. One transaction is what makes "the sighting never happened"
-        atomic. Returns True when an item was actually removed.
+        atomic. A watched folder asks it too, for a note an earlier scan took in through a link
+        out of the folder (``DirSourceProvider._withdraw``): that sighting should never have
+        happened either. Returns True when an item was actually removed.
         """
         if not (source_id and guid):
             return False
@@ -1845,6 +1844,7 @@ class KnowledgeStore:
         try:
             if row:
                 self._delete_item_cascade(row["id"])
+                self._drop_orphan_entities()
             self.db.execute(
                 "DELETE FROM source_seen WHERE source_id = ? AND guid = ?", (source_id, guid)
             )
@@ -3421,6 +3421,15 @@ class KnowledgeStore:
         self.db.execute("UPDATE intent_outcomes SET item_id = NULL WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM items WHERE id = ?", (item_id,))
 
+    def _drop_orphan_entities(self) -> None:
+        """Delete every entity no item mentions and no relation names. Caller owns the
+        transaction."""
+        self.db.execute("""
+            DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM mentions)
+            AND id NOT IN (SELECT source_id FROM entity_relations)
+            AND id NOT IN (SELECT target_id FROM entity_relations)
+        """)
+
     def delete_item(self, item_id):
         # Collect the pages that will need re-rendering BEFORE the cascade takes the
         # rows away. Deleting an item removes its typed edges and its citations, which changes
@@ -3433,12 +3442,7 @@ class KnowledgeStore:
         self.db.execute("BEGIN")
         try:
             self._delete_item_cascade(item_id)
-            # Remove orphan entities (no mentions and no relations)
-            self.db.execute("""
-                DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM mentions)
-                AND id NOT IN (SELECT source_id FROM entity_relations)
-                AND id NOT IN (SELECT target_id FROM entity_relations)
-            """)
+            self._drop_orphan_entities()
             self.db.execute("COMMIT")
         except Exception:
             self.db.execute("ROLLBACK")
@@ -3479,11 +3483,7 @@ class KnowledgeStore:
         so a re-ingest doesn't duplicate. Caller owns the commit (no BEGIN here)."""
         self.db.execute("DELETE FROM mentions WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
-        self.db.execute("""
-            DELETE FROM entities WHERE id NOT IN (SELECT entity_id FROM mentions)
-            AND id NOT IN (SELECT source_id FROM entity_relations)
-            AND id NOT IN (SELECT target_id FROM entity_relations)
-        """)
+        self._drop_orphan_entities()
         self._load_graph()
 
     @staticmethod

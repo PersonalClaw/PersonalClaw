@@ -16,7 +16,7 @@ import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { notify } from '../../app/appSdk'
 import { relFuture, relPast } from '../schedule/scheduleMeta'
 import { fvs } from '../../design/fontWeight'
-import { RAW_ENRICHMENT, TONE_CLASS, cadenceNote, eventDrivenMetaLine, firstScanLine, fmtInterval, formIcon, healthMeta } from './sourceMeta'
+import { RAW_ENRICHMENT, TONE_CLASS, cadenceNote, eventDrivenMetaLine, firstScanLine, fmtInterval, formIcon, healthMeta, linksOutsideLine } from './sourceMeta'
 import { HELD_CHANGE_REASON, sameDocument } from '../../lib/staleWrite'
 import { withArticle } from '../../lib/article'
 
@@ -160,6 +160,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
   const [busy, setBusy] = useState(false)
   const cadence = cadenceNote(source)
   const scanLine = firstScanLine(source.first_scan)
+  const outsideLine = linksOutsideLine(source.links_outside)
 
   async function setEnabled(on: boolean) {
     setBusy(true)
@@ -231,6 +232,8 @@ export function SourceRow({ source, index, kinds, onChanged }: {
           )}
           {/* A folder's first scan, while it has files still to read in or left for later. */}
           {scanLine && <p data-type="caption" className="mt-xs text-on-surface-low">{scanLine}</p>}
+          {/* The links its scan left out because they lead outside the folder. */}
+          {outsideLine && <p data-type="caption" className="mt-xs text-on-surface-low">{outsideLine}</p>}
           {!!source.last_escalations?.length && (
             // The expensive tier, made visible. WS-3 records escalations on success too,
             // because an escalation nobody can see is indistinguishable from a cheap poll.

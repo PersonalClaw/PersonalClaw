@@ -3468,7 +3468,9 @@ def _serialize_source(
     ``first_scan`` is a watched folder's first scan (``found`` / ``left_out`` /
     ``waiting``, :meth:`DirSourceProvider.first_scan_status`), so the page can say that
     files are still coming in, or that the scan's bound left the older ones out; ``None``
-    for every other kind and before the first scan.
+    for every other kind and before the first scan. ``links_outside`` is how many links its last
+    scan left out because they lead outside the folder
+    (:meth:`DirSourceProvider.links_outside`); ``None`` for every other kind.
 
     ``event_driven`` is the honest answer for a source nothing polls BY DESIGN (PEP-7's
     ``artifact://`` mirror, which is fed by an in-process change listener). Without it that
@@ -3490,9 +3492,11 @@ def _serialize_source(
     if sources_cfg is None:
         sources_cfg = AppConfig.load().sources
     provider = providers.get(str(source.get("provider") or ""))
-    first_scan = None
+    first_scan = links_outside = None
     if isinstance(provider, DirSourceProvider) and source.get("id"):
-        first_scan = DirSourceProvider.first_scan_status(store.get_source_cursor(source["id"]))
+        cursor = store.get_source_cursor(source["id"])
+        first_scan = DirSourceProvider.first_scan_status(cursor)
+        links_outside = DirSourceProvider.links_outside(cursor)
     return {
         **source,
         "revision": revision_of(_source_settings(source)),
@@ -3501,6 +3505,7 @@ def _serialize_source(
         "remediation": _remediation(source),
         "poll_every_secs": int(effective_interval(source, sources_cfg, provider)),
         "first_scan": first_scan,
+        "links_outside": links_outside,
     }
 
 

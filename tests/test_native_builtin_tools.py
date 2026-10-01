@@ -175,6 +175,24 @@ async def test_grep_regex_and_skip_dirs(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_grep_skips_a_binary_file_as_grep_dash_i_does(tmp_path):
+    """A file with a NUL byte in its head is binary (the rule read_file and the Files view use),
+    so grep leaves it out instead of handing back lines of its bytes; text files still match."""
+    (tmp_path / "notes.md").write_text("the invoice number is 4417\n")
+    (tmp_path / "cache.db").write_bytes(
+        b"SQLite format 3\x00\x10\x00" + b"invoice number 4417\n" * 3
+    )
+    (tmp_path / "late.bin").write_bytes(b"invoice number 4417\n" + b" " * 9000 + b"\x00tail")
+    p = NativeBuiltinToolProvider(tmp_path)
+
+    r = await p.invoke("grep", {"query": "invoice number"})
+    assert r.success, r.error
+    assert "notes.md:1:" in r.output
+    assert "cache.db" not in r.output
+    assert "late.bin" in r.output, "a NUL past the head reads as text, as in grep and read_file"
+
+
+@pytest.mark.asyncio
 async def test_grep_signals_max_results_cap(tmp_path):
     # More matches than max_results → the worker must be told the result is capped
     # (no-silent-truncation), so it can narrow or raise the cap rather than assume

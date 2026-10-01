@@ -13,8 +13,9 @@ The native file tools (``read_file``, ``list_dir``, ``glob``, ``grep``, ``repo_m
   (``agent.subagent_cwd_allowed_roots``). Read and change. A change meets the same approval, with
   its diff, as a change in the workspace: this module decides only WHERE a tool reaches.
 * **the folders the owner added as knowledge sources** (a Watched Directory in Knowledge ›
-  Sources). Read only, and only what that source itself takes in (``dir_source.takes``: its file
-  patterns, nothing hidden), because that is what the owner chose to share.
+  Sources). Read only, and only what that source itself takes in (``dir_source.resolve_in`` and
+  ``dir_source.takes``, the rule its own scan uses: inside the folder once links are resolved, its
+  file patterns, nothing hidden), because that is what the owner chose to share.
 
 Everywhere else is refused. The answer depends only on the call's own arguments, the session's
 folder and the owner's settings, so it can be given before anyone is asked to approve the call:
@@ -110,10 +111,10 @@ class Place:
         """Whether a read may open *real*, a real path inside this place."""
         if self.kind != SOURCE:
             return True
-        from personalclaw.knowledge_providers.dir_source import takes
+        from personalclaw.knowledge_providers.dir_source import resolve_in, takes
 
-        rel = os.path.relpath(real, self.root)
-        return takes(self.spec, Path(rel).as_posix(), is_dir=os.path.isdir(real))
+        rel = resolve_in(self.root, real)
+        return rel is not None and takes(self.spec, rel, is_dir=os.path.isdir(real))
 
     def patterns(self) -> str:
         """A knowledge source's file patterns, as a phrase (``*.md``)."""

@@ -335,6 +335,33 @@ def test_a_folder_row_carries_its_first_scan_and_the_kind_states_the_bound(
     assert kind["first_scan_max_bytes"] == dir_source.FIRST_SCAN_MAX_BYTES
 
 
+def test_a_folder_row_says_how_many_links_lead_outside_it(store, registered, tmp_path):
+    watched = tmp_path / "notes"
+    watched.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "b.md").write_text("b", encoding="utf-8")
+    (watched / "a.md").write_text("a", encoding="utf-8")
+    (watched / "b.md").symlink_to(elsewhere / "b.md")
+    _resp, created = _create(
+        store, name="Notes", provider="watched-dir", spec={"path": str(watched)}
+    )
+    _create(
+        store,
+        name="Feed",
+        provider="watched-feed",
+        spec={"kind": "rss", "url": "https://feeds.example.com/a.xml"},
+    )
+    sid = created["source"]["id"]
+
+    result = _run(registered.dir.poll(sid, ""))
+    store.record_poll(sid, cursor=result.cursor, new_count=len(result.items))
+    _resp, body = _get_sources(store)
+    by_name = {s["name"]: s for s in body["sources"]}
+    assert by_name["Notes"]["links_outside"] == 1
+    assert by_name["Feed"]["links_outside"] is None
+
+
 # ── create: `item_type` is the third enum on the body, not a free string ─────────────
 #
 # `provider` and `enrichment` were already checked against their vocabularies; `item_type`

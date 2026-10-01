@@ -112,6 +112,15 @@ export function firstScanLine(scan: WatchedSource['first_scan']): string {
   return parts.join(' ')
 }
 
+/** The links a watched folder's scan left out because they lead outside it: a folder source
+ *  takes in only what is inside the folder. '' when there are none, and for every source that is
+ *  not a folder. */
+export function linksOutsideLine(count: WatchedSource['links_outside']): string {
+  if (!count) return ''
+  return `${count} ${count === 1 ? 'link here leads' : 'links here lead'} outside this folder, `
+    + `so what ${count === 1 ? 'it points' : 'they point'} to is not read in: a folder source reads only what is inside it.`
+}
+
 /** What a folder's first check does, stated from the provider's own bound (the kind catalog
  *  ships it), so the create form cannot promise a number the scan does not apply. */
 export function firstScanPromise(kind: Pick<SourceKind, 'first_scan_max_files' | 'first_scan_max_bytes'>): string {

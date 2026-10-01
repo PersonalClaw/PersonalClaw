@@ -189,6 +189,14 @@ advancing the cursor only after every item is durable.
   are recorded as seen and come in when they change. It stops at the cap and
   counts what is still to come, and the sources list shows the scan
   (`first_scan`: found, left out, waiting).
+- **A watched folder takes in only what is inside it.** Each path is taken in
+  under the path it really is, links resolved first (`dir_source.resolve_in`,
+  then `takes`, the rule the agent's file tools ask of the same folder): a link
+  to a file or folder outside the folder is left out, and the sources list
+  counts them (`links_outside`); a link to a file inside comes in once, as that
+  file. A note an earlier scan took in through a link out of the folder is
+  removed at the next scan with its sighting (`forget_source_item`), not
+  archived.
 
 ### Search
 

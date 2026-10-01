@@ -214,6 +214,22 @@ describe("a watched folder's first scan is stated on its row", () => {
     expect(screen.queryByText(/waiting to be read in|first scan/)).toBeNull()
   })
 
+  it('says how many links lead outside the folder, and why they are not read in', () => {
+    render(
+      <SourceRow source={source({ provider: 'watched-dir', kind: 'dir', links_outside: 2 })} kinds={FOLDER} onChanged={() => {}} />,
+    )
+
+    expect(screen.getByText('2 links here lead outside this folder, so what they point to is not read in: a folder source reads only what is inside it.')).toBeTruthy()
+  })
+
+  it('says nothing about links when none lead out', () => {
+    render(
+      <SourceRow source={source({ provider: 'watched-dir', kind: 'dir', links_outside: 0 })} kinds={FOLDER} onChanged={() => {}} />,
+    )
+
+    expect(screen.queryByText(/outside this folder/)).toBeNull()
+  })
+
   it('the create form states the bound the scan applies', () => {
     expect(firstScanPromise({ first_scan_max_files: 1000, first_scan_max_bytes: 100 * 1024 * 1024 }))
       .toBe('Its first check reads in what is already there, newest first — up to 1,000 files or 100 MB. Older files come in when they change.')
