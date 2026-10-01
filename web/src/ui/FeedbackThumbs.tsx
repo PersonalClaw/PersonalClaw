@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ThumbsUp, ThumbsDown } from 'lucide-react'
 import { api, isSwitchedOff, type FeedbackTargetKind, type FeedbackProducer } from '../lib/api'
 import { cx } from './cx'
@@ -28,6 +28,7 @@ export function FeedbackThumbs({ targetKind, targetId, producer, snapshot, class
   const [whyOpen, setWhyOpen] = useState(false)
   const [why, setWhy] = useState('')
   const whyRef = useRef<HTMLInputElement>(null)
+  const whyId = useId()
 
   useEffect(() => {
     let alive = true
@@ -78,7 +79,7 @@ export function FeedbackThumbs({ targetKind, targetId, producer, snapshot, class
           {/* click-away records WITHOUT a reason (skippable by design) */}
           <div className="fixed inset-0 z-40" aria-hidden onClick={() => record('down', why)} />
           <div className="absolute right-0 top-7 z-50 w-64 rounded-lg border border-outline-variant/40 bg-surface-container p-2 shadow-lg">
-            <input ref={whyRef} value={why} maxLength={500} placeholder="Why was this wrong? (optional)"
+            <input ref={whyRef} id={whyId} autoComplete="off" value={why} maxLength={500} placeholder="Why was this wrong? (optional)"
               aria-label="Why was this wrong (optional)"
               onChange={(e) => setWhy(e.target.value)}
               onKeyDown={(e) => {

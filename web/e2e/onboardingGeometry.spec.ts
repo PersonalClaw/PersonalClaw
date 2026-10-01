@@ -577,6 +577,109 @@ for (const vp of VIEWPORTS) {
   })
 }
 
+// ── The navigation bar spans the window, at every width ─────────────────────────────────────────
+//
+// On a wide window the bar stopped at a fixed width and was cut off abruptly, where a shell bar uses
+// the full available width. It sat inside the 760px column its buttons keep to, so its surface
+// and top border ended 16px past that column, mid-screen, with the bare canvas on either side. At
+// 1280 that is a 792px bar in a 1280px window, and it only got worse wider. The heights don't matter
+// here, and the widths are the ones a desktop actually has; 390 keeps the phone, where the bar was
+// always the full width, from regressing.
+//
+// Measured with this leg, the bar's left–right edge, BEFORE → AFTER (the buttons did not move):
+//
+//   1280   244–1036 → 0–1280        1920   564–1356 → 0–1920        390   0–390 → 0–390
+//   1600   404–1196 → 0–1600        2560   884–1676 → 0–2560
+const BAR_VIEWPORTS = [
+  { label: '1280x800', width: 1280, height: 800 },
+  { label: '1600x900', width: 1600, height: 900 },
+  { label: '1920x1080', width: 1920, height: 1080 },
+  { label: '2560x1440', width: 2560, height: 1440 },
+  { label: '390x844', width: 390, height: 844 },
+] as const
+
+for (const vp of BAR_VIEWPORTS) {
+  test.describe(`the navigation bar spans the window at ${vp.label}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } })
+
+    test('its surface runs edge to edge, and its buttons stay on the steps` axis', async ({ page }) => {
+      await renderFirstRun(page)
+      await advanceToImportStep(page)
+      const m = await page.evaluate(() => {
+        const s = Array.from(document.querySelectorAll<HTMLElement>('div')).find((el) => {
+          const oy = getComputedStyle(el).overflowY
+          return oy === 'auto' || oy === 'scroll'
+        })
+        const bar = document.querySelector<HTMLElement>('[data-form-footer]')
+        const steps = document.querySelector<HTMLElement>('ol')
+        if (!s || !bar || !steps) return null
+        const sr = s.getBoundingClientRect()
+        const br = bar.getBoundingClientRect()
+        const st = steps.getBoundingClientRect()
+        // The buttons' LAYOUT boxes, from the offset chain up to the bar: a rect would include a
+        // hover's scale, and the pointer is left where step 1's Continue was clicked, which is where
+        // step 2's primary action now sits.
+        const layoutLeft = (el: HTMLElement) => {
+          let x = 0
+          for (let n: HTMLElement | null = el; n && n !== bar; n = n.offsetParent as HTMLElement | null) x += n.offsetLeft
+          return br.left + x
+        }
+        const buttons = Array.from(bar.querySelectorAll<HTMLElement>('button'))
+          .filter((b) => b.offsetWidth > 0)
+          .map((b) => ({ left: layoutLeft(b), right: layoutLeft(b) + b.offsetWidth }))
+        // The row the buttons wrap in: the bar's one child.
+        const row = (bar.firstElementChild as HTMLElement | null)?.getBoundingClientRect()
+        return {
+          // The scroller's client box: the window, less its own scrollbar.
+          boxLeft: sr.left + s.clientLeft,
+          boxRight: sr.left + s.clientLeft + s.clientWidth,
+          boxBottom: sr.top + s.clientTop + s.clientHeight,
+          scrollerWidth: sr.width,
+          barLeft: br.left,
+          barRight: br.right,
+          barBottom: br.bottom,
+          buttons: buttons.length,
+          buttonsLeft: Math.min(...buttons.map((r) => r.left)),
+          buttonsRight: Math.max(...buttons.map((r) => r.right)),
+          rowLeft: row?.left ?? 0,
+          rowRight: row?.right ?? 0,
+          stepsCentre: (st.left + st.right) / 2,
+        }
+      })
+      expect(m, 'no scroller, no bar or no step list: this measured some other page').not.toBeNull()
+      const g = m!
+      // The floors: first run is the whole window, and the bar has buttons to keep to the column.
+      expect(g.scrollerWidth, 'first run does not fill the window').toBeGreaterThanOrEqual(vp.width - EPS)
+      expect(g.buttons, 'the bar holds no buttons').toBeGreaterThan(1)
+
+      // 🔑 THE PROPERTY: the surface reaches both edges of the box it is drawn in.
+      const short =
+        `the bar stops short of the window at ${vp.label}: it runs ${g.barLeft.toFixed(1)}–` +
+        `${g.barRight.toFixed(1)} in a box of ${g.boxLeft.toFixed(1)}–${g.boxRight.toFixed(1)}. A width cap on\n` +
+        'the bar or on the column it sits in cuts its surface off mid-screen; cap the row of buttons\n' +
+        'INSIDE it instead.'
+      expect(Math.abs(g.barLeft - g.boxLeft), short).toBeLessThanOrEqual(EPS)
+      expect(Math.abs(g.barRight - g.boxRight), short).toBeLessThanOrEqual(EPS)
+      // …and it is still at the foot of the screen, not a strip somewhere in the content.
+      expect(Math.abs(g.barBottom - g.boxBottom), 'the bar is no longer at the foot of the screen').toBeLessThanOrEqual(EPS)
+
+      // The buttons keep to the column the steps are centred in: every one inside the row, and the
+      // row no wider than 760px and centred on the steps' axis.
+      const outside = g.buttonsLeft < g.rowLeft - EPS || g.buttonsRight > g.rowRight + EPS
+      expect(
+        outside,
+        `a button sits outside the bar's row: the buttons span ${g.buttonsLeft.toFixed(1)}–${g.buttonsRight.toFixed(1)}, ` +
+          `the row ${g.rowLeft.toFixed(1)}–${g.rowRight.toFixed(1)}`,
+      ).toBe(false)
+      expect(g.rowRight - g.rowLeft, 'the row of buttons spread past the column').toBeLessThanOrEqual(760 + EPS)
+      expect(
+        Math.abs((g.rowLeft + g.rowRight) / 2 - g.stepsCentre),
+        'the row of buttons drifted off the steps` axis',
+      ).toBeLessThanOrEqual(EPS)
+    })
+  })
+}
+
 // ── Focus, which is the same property expressed in the keyboard's terms ──────────────────────────
 //
 // Unreachable content is unreachable by Tab too, so these legs live with the geometry rather than in

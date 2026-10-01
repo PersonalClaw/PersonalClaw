@@ -70,7 +70,7 @@ describe('the sign-in username is committed by a button that exists', () => {
     const src = stripped()
     expect(src, 'the standalone Field must be gone').not.toMatch(/<Field label="Sign-in username"/)
     expect(src, 'and the input sits in the credential Field with its own name')
-      .toMatch(/<TextInput value=\{userDraft\} onChange=\{setUserDraft\} placeholder="you" ariaLabel="Sign-in username" \/>/)
+      .toMatch(/<TextInput value=\{userDraft\} onChange=\{setUserDraft\} placeholder="you" ariaLabel="Sign-in username" autoComplete="username" \/>/)
   })
 
   it('the label and hint state that both are saved together', () => {

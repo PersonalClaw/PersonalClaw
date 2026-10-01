@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { unavailableWhen } from './unavailable'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2, Wrench, FileSearch, Check, MessageSquarePlus, CircleDot, Pencil, X, RefreshCw, AlertTriangle, Square } from 'lucide-react'
@@ -107,6 +107,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
   const sayBuf = useRef('')
   const [session, setSession] = useState<PlanSession | null>(null)
   const [comment, setComment] = useState('')
+  const commentFieldId = useId()
   const [busy, setBusy] = useState(false)
   // In-flight guard: the action buttons use disabled={busy}, but setBusy is async —
   // two rapid clicks (e.g. double-click Retry, which RE-SPAWNS a planner pass) both
@@ -119,6 +120,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
   const [err, setErr] = useState<string | null>(null)
   // In-place edit of the current artifact's markdown body (null = not editing).
   const [editText, setEditText] = useState<string | null>(null)
+  const editFieldId = useId()
   // 🔴 AN EDIT REPLACES THE WHOLE BODY, so it names the draft it was made on: the step's markdown
   // when Edit was clicked, with the revision the same poll reported. A redraft landing while the
   // editor was open — a comment sent from another tab — used to be overwritten by this save, the old
@@ -511,7 +513,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
                         )}
                         {/* Read-only while a refused edit is held: what the notice reapplies is the
                             text as it was refused, so typing on would be dropped by the reapply. */}
-                        <textarea autoFocus value={editText} onChange={(e) => setEditText(e.target.value)} rows={14} readOnly={held}
+                        <textarea autoFocus id={editFieldId} value={editText} onChange={(e) => setEditText(e.target.value)} rows={14} readOnly={held}
                           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!busy && !held) void saveEdit() } }}
                           placeholder="Write the step's prose body in markdown…"
                           data-type="caption"
@@ -565,7 +567,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
                       </motion.div>
                     )}
                     {editText === null && <div className="mt-3 flex flex-col gap-2">
-                      <textarea value={comment} onChange={(e) => setComment(e.target.value)}
+                      <textarea id={commentFieldId} value={comment} onChange={(e) => setComment(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!busy && comment.trim()) void sendComment(current) } }}
                         placeholder="Comment to refine this step (⌘↵ to send), or approve as-is…" rows={2}
                         data-type="body-s"

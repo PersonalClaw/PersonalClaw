@@ -48,6 +48,7 @@ export function ColorControl({ token }: { token: ColorToken }) {
   const { mode } = useMode()
   const val = colorValue(token, mode)
   const [draft, setDraft] = useState<string | null>(null)
+  const fieldId = `tokencolor-${useId()}`
   const typed = draft ?? val
   return (
     <div className="flex items-center gap-m py-2">
@@ -58,6 +59,7 @@ export function ColorControl({ token }: { token: ColorToken }) {
         >
           <input
             type="color"
+            id={`${fieldId}-swatch`}
             value={val}
             onChange={(e) => setColor(token.varName, mode, e.target.value)}
             className="absolute inset-0 opacity-0 cursor-pointer"
@@ -69,6 +71,8 @@ export function ColorControl({ token }: { token: ColorToken }) {
       {/* 🔴 No name, ×28: the swatch beside it says "<token> color" and this field said nothing, so
           a screen reader announced twenty-eight bare "edit text" fields in the color editor. */}
       <input
+        id={`${fieldId}-hex`}
+        autoComplete="off"
         value={typed}
         onChange={(e) => { const v = e.target.value; setDraft(v); if (HEX_COLOR.test(v)) setColor(token.varName, mode, v) }}
         onBlur={() => setDraft(null)}
@@ -126,6 +130,7 @@ export function SelectControl({ token }: { token: SelectToken }) {
 export function ScalarControl({ token }: { token: ScalarToken }) {
   const { scalarValue, setScalar, resetToken } = useAppearance()
   const val = scalarValue(token)
+  const fieldId = `tokenscalar-${useId()}`
   // Format by the token's declared unit: px/% round to an integer; a specific
   // unit (s, °, …) is appended to a 1-decimal value; a UNITLESS token is a
   // multiplier, shown as "1.00×".
@@ -141,6 +146,7 @@ export function ScalarControl({ token }: { token: ScalarToken }) {
       <span data-type="body-s" className="w-[56px] text-right text-on-surface-low font-mono tabular-nums">{display}</span>
       <input
         type="range"
+        id={fieldId}
         min={token.min} max={token.max} step={token.step}
         value={val}
         onChange={(e) => setScalar(token.varName, Number(e.target.value))}

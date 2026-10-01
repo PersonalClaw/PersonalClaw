@@ -48,6 +48,7 @@ const docs: UiDoc[] = [
     props: [
       { name: 'ariaLabel', description: 'Explicit accessible name — used when the control has its own `name` (so it does not claim a Field label) or sits outside any Field. A `name` attribute is not an accessible name, so it never suppresses this.' },
       { name: 'autoFocus', description: 'Focus the input on mount.' },
+      { name: 'autoComplete', description: "The native autocomplete token; defaults to 'off'. This is the app's configuration field, where the browser offering a person's saved name, address or an earlier entry is wrong (and, for a secret, a leak). A field that asks for the person's own details passes the token that says which — 'name', 'username', 'email', 'new-password' — so autofill offers exactly that." },
       { name: 'leadingIcon', description: 'A leading glyph pinned inside the left edge; adds the canonical pl-9 inset that clears the fixed left-3 icon. Pass the raw icon (e.g. `<Search size={14} />`) and it inherits the muted tone.' },
       { name: 'mono', description: 'Monospace — for technical values (commands, endpoints, keys).' },
       { name: 'name', description: 'Stable form name (also the id). When set, the control uses its own name instead of claiming the Field label, so pass ariaLabel too.' },

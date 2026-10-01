@@ -596,6 +596,7 @@ export function StrListField({ label, hint, cfg, field, editList, placeholder = 
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
   const list = Array.isArray(cfg[field]) ? (cfg[field] as string[]) : []
   const [adding, setAdding] = useState('')
+  const addId = `list-add-${useId()}`
   const commit = (next: string[]) => editList(field, next, flash, label)
   const add = () => { commit([...list, adding.trim()]); setAdding('') }
   return (
@@ -610,7 +611,7 @@ export function StrListField({ label, hint, cfg, field, editList, placeholder = 
         {/* A RAW input inside this module's Field cannot claim the Field's published label — only the
             form-family components read FieldLabelCtx. So it names itself, from `label`, which keeps
             it correct across every call site. */}
-        <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder={placeholder}
+        <input id={addId} autoComplete="off" value={adding} onChange={(e) => setAdding(e.target.value)} placeholder={placeholder}
           aria-label={`Add to ${label.toLowerCase()}`}
           onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) add() }}
           data-type="caption" className="h-8 w-40 rounded-md bg-surface-high px-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />

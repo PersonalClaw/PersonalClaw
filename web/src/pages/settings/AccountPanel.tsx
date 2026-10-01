@@ -118,7 +118,7 @@ export function AccountPanel() {
       <Section title="Identity">
         <Field label="Your name" hint="Used in greetings and where the system refers to you. Saved on the server, so it follows you across browsers and machines.">
           <div className="flex items-center gap-s">
-            <div className="flex-1" style={{ maxWidth: 280 }}><TextInput value={draft} onChange={setDraft} placeholder="Your name" /></div>
+            <div className="flex-1" style={{ maxWidth: 280 }}><TextInput value={draft} onChange={setDraft} placeholder="Your name" autoComplete="name" /></div>
             {/* `aria-disabled` rather than the native attribute: a natively disabled button leaves
                 the tab order, so a keyboard user tabbed past this Save without learning there is
                 nothing to save. The dimming has to name BOTH selectors — `disabled:opacity-40`
@@ -310,9 +310,9 @@ function LoginSection() {
       <Field label={state.credential_configured ? 'Change the sign-in username or password' : 'Set a sign-in username and password'}
         hint="Both are saved together, in one step — so changing the username means entering the password again. At least 12 characters: length matters more than symbols. Stored as an argon2id hash; it is never shown again, and never leaves this box.">
         <div className="flex flex-col gap-s" style={{ maxWidth: 280 }}>
-          <TextInput value={userDraft} onChange={setUserDraft} placeholder="you" ariaLabel="Sign-in username" />
-          <TextInput type="password" value={pwDraft} onChange={setPwDraft} placeholder="New password" ariaLabel="New password" />
-          <TextInput type="password" value={pwConfirm} onChange={setPwConfirm} placeholder="Confirm password" ariaLabel="Confirm password" />
+          <TextInput value={userDraft} onChange={setUserDraft} placeholder="you" ariaLabel="Sign-in username" autoComplete="username" />
+          <TextInput type="password" value={pwDraft} onChange={setPwDraft} placeholder="New password" ariaLabel="New password" autoComplete="new-password" />
+          <TextInput type="password" value={pwConfirm} onChange={setPwConfirm} placeholder="Confirm password" ariaLabel="Confirm password" autoComplete="new-password" />
           <div className="flex items-center gap-s">
             {/* Names whichever requirement is outstanding. The sibling hint below only appears
                 once something has been typed, so the button was the sole affordance for an

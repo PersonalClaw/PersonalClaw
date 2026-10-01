@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, Feather, RotateCcw } from 'lucide-react'
@@ -69,6 +69,7 @@ function cleanAgentHint(desc?: string): string {
 
 export function AgentPill({ data, value, onSelect, openSignal }: { data?: ComposerData; value: string; onSelect: (agent: string) => void; openSignal?: number }) {
   const [q, setQ] = useState('')
+  const searchId = `agent-search-${useId()}`
   const nativeAgents = data?.agents ?? []
   const discoveredEntries = Object.entries(data?.discovered ?? {})
   const total = nativeAgents.length + discoveredEntries.reduce((n, [, a]) => n + a.length, 0)
@@ -96,7 +97,7 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
           {showSearch && (
             <div className="relative shrink-0 px-1 pb-1">
               <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
+              <input id={searchId} autoComplete="off" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
                 data-type="body-s"
                 className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>

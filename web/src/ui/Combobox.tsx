@@ -68,6 +68,10 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
 
   // Ids for the listbox relationship. `aria-activedescendant` needs a stable id per rendered row.
   const listId = `combo-list-${useId()}`
+  // The filter field's id, so the browser can tell it from any other field on the page; its
+  // autocomplete is off because the listbox below IS the completion, and a browser dropdown of
+  // earlier entries would open over it.
+  const searchId = `combo-search-${useId()}`
   const optId = useCallback((i: number) => `${listId}-opt-${i}`, [listId])
 
   // 🔴 The arrow cursor moved without the list following it. Measured on `#/triggers/new` with 19
@@ -146,7 +150,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
                   and 0 options** — pressing ArrowDown moved the visual highlight and changed NOTHING
                   in the accessibility tree. The keyboard model was already right (arrows + Enter, and
                   the doc says so); what was missing was saying so. */}
-              <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setActive(0) }} onKeyDown={onKey}
+              <input ref={inputRef} id={searchId} autoComplete="off" value={q} onChange={(e) => { setQ(e.target.value); setActive(0) }} onKeyDown={onKey}
                 role="combobox" aria-expanded aria-controls={listId} aria-autocomplete="list"
                 aria-activedescendant={flat[active] ? optId(active) : undefined}
                 placeholder="Search…" data-type="body-s" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />

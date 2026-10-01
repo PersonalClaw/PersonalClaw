@@ -453,6 +453,33 @@ describe('🔴 the navigation is one bar, the same on every step', () => {
     const steps = document.querySelector('ol') as HTMLElement
     expect(steps.compareDocumentPosition(navBar()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
+
+  // On a wide window the bar stopped at a fixed width and was cut off abruptly, where a shell bar
+  // uses the full available width. The bar sat inside the 760px column its buttons keep to,
+  // so its surface and top border ended 16px past that column, mid-screen, with the bare canvas on
+  // either side. A width cap anywhere from the bar up to the screen stops the surface short again,
+  // so the walk covers every box it sits in, not just the bar. jsdom lays nothing out, so this pins
+  // the cause; `e2e/onboardingGeometry.spec.ts` measures the bar against the window.
+  it('🔴 the bar runs the full width of the screen, and only its buttons keep to the column', async () => {
+    renderFlow()
+    await mounted()
+    const bar = navBar()
+    const capped: string[] = []
+    for (let el: HTMLElement | null = bar; el; el = el.parentElement) {
+      if (el.style.maxWidth || Array.from(el.classList).some((c) => /^max-w-/.test(c))) {
+        capped.push(`<${el.tagName.toLowerCase()} class="${el.className}" style="${el.getAttribute('style') ?? ''}">`)
+      }
+    }
+    expect(capped, 'a width cap on the bar or a box it sits in').toEqual([])
+    // The buttons sit in ONE centred row at the width they had, so they still line up with the
+    // steps above, and every button the bar shows is in it.
+    expect(bar.children).toHaveLength(1)
+    const row = bar.firstElementChild as HTMLElement
+    expect(row.style.maxWidth).toBe('760px')
+    expect(row.classList).toContain('mx-auto')
+    expect(row.querySelectorAll('button').length).toBe(bar.querySelectorAll('button').length)
+    expect(barButtons()).toEqual(['Skip setup for now', 'Continue'])
+  })
 })
 
 describe('🔴 skip says what it costs and where to come back', () => {

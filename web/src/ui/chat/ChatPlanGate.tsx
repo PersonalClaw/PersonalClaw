@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Check, MessageSquarePlus, Pencil, X } from 'lucide-react'
 import { Button } from '../Button'
 import { Markdown } from '../Markdown'
@@ -44,6 +44,8 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
   const [parked, setParked] = useState(false)
   const [comment, setComment] = useState('')
   const [editText, setEditText] = useState<string | null>(null)
+  const commentFieldId = useId()
+  const editFieldId = useId()
   // 🔴 AN EDIT REPLACES THE WHOLE DRAFT, so it names the draft it was made on: the step's markdown
   // when Edit was clicked, with the revision the same read reported. A comment sent from another tab
   // redrafts the plan while this editor is open, and saving here used to put the old draft — plus
@@ -126,7 +128,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
         <div className="flex flex-col gap-2">
           {/* Read-only while a refused edit is held: what the notice reapplies is the text as it was
               refused, so typing on would be dropped by the reapply. */}
-          <textarea autoFocus value={editText} onChange={(e) => setEditText(e.target.value)} rows={12} readOnly={blocked}
+          <textarea autoFocus id={editFieldId} value={editText} onChange={(e) => setEditText(e.target.value)} rows={12} readOnly={blocked}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !blocked) { e.preventDefault(); void saveEdits(editText) } }}
             aria-label="Plan markdown"
             placeholder="Write the plan in markdown…"
@@ -170,7 +172,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
             </div>
           )}
           <div className="mt-2 flex flex-col gap-2">
-            <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2}
+            <textarea id={commentFieldId} value={comment} onChange={(e) => setComment(e.target.value)} rows={2}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && comment.trim()) { e.preventDefault(); void run(() => api.chatPlanComment(session, step.id, comment.trim())) } }}
               aria-label="Comment on this plan"
               placeholder="Comment to refine the plan (⌘↵ to send), or approve as-is…"

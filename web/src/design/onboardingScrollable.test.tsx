@@ -68,7 +68,7 @@ describe('the onboarding shell scrolls at every viewport', () => {
     // scroller's content area, the steps are centred in a `flex-1` box within it (above the
     // navigation bar), and once the content is taller the column grows and the centring has
     // nothing left to distribute.
-    expect(ONB).toMatch(/className="mx-auto flex min-h-full w-full flex-col"/)
+    expect(ONB).toMatch(/className="flex min-h-full w-full flex-col"/)
     expect(ONB).toMatch(/className="mx-auto flex w-full flex-1 flex-col justify-center pb-2xl"/)
   })
 
@@ -76,7 +76,7 @@ describe('the onboarding shell scrolls at every viewport', () => {
     // A sticky box moves only within its parent. The bar is the design system's sticky footer,
     // and it has to be a direct child of the full-height column — inside a wrapper of its own
     // height it would have nowhere to stick, and would scroll away with a long step.
-    const column = ONB.indexOf('className="mx-auto flex min-h-full w-full flex-col"')
+    const column = ONB.indexOf('className="flex min-h-full w-full flex-col"')
     const bar = ONB.indexOf('<FormFooter>', column)
     expect(column).toBeGreaterThan(-1)
     expect(bar, 'the bar is ui/FormFooter, inside the column').toBeGreaterThan(column)

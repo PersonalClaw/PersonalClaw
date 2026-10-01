@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { AlertTriangle } from 'lucide-react'
@@ -166,18 +166,21 @@ function PromptFieldRow({ field, value, error, autoFocus, onChange, onSubmit }: 
   onSubmit: () => void
 }) {
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+  // The field's id, which is also what ties the visible label to it: without one the label
+  // named the field for sighted users only, and the browser could not tell the fields apart.
+  const fieldId = `dialog-field-${useId()}`
   useEffect(() => { if (autoFocus) ref.current?.focus() }, [autoFocus])
   const base = 'w-full rounded-lg bg-surface-high px-3 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   return (
     <div>
-      {field.label && <label data-type="body-s" className="mb-1 block text-on-surface-var">{field.label}</label>}
+      {field.label && <label htmlFor={fieldId} data-type="body-s" className="mb-1 block text-on-surface-var">{field.label}</label>}
       {field.type === 'textarea' ? (
-        <textarea ref={ref as React.RefObject<HTMLTextAreaElement>} value={value} placeholder={field.placeholder} rows={4}
+        <textarea ref={ref as React.RefObject<HTMLTextAreaElement>} id={fieldId} value={value} placeholder={field.placeholder} rows={4}
           onChange={(e) => onChange(e.target.value)} data-type="body-m"
           className={`${base} py-2 resize-y min-h-[88px] ${error ? 'ring-2 ring-danger/50' : ''}`} />
       ) : (
         <input ref={ref as React.RefObject<HTMLInputElement>} type={field.type === 'password' ? 'password' : 'text'}
-          value={value} placeholder={field.placeholder}
+          id={fieldId} autoComplete="off" value={value} placeholder={field.placeholder}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSubmit() } }}
           data-type="body-m"

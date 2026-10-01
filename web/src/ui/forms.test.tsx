@@ -435,3 +435,36 @@ describe('Checkbox', () => {
     expect(box.indeterminate).toBe(false)
   })
 })
+
+// ── Every field names itself, and says whether the browser may fill it ────────────────────────────
+// A field with no id and no name is one the browser cannot tell from its neighbours: it flags the
+// form ("A form field element should have an id or name attribute") and cannot autofill it. The
+// family's own fields now always carry an id. `TextInput` is the app's configuration field, so the
+// browser's saved name, address or earlier entry is wrong there by default (and a leak for a secret):
+// it renders `autocomplete="off"` unless the caller says what the field really asks for.
+describe('the form family names its fields and says how they autofill', () => {
+  it('🔴 TextInput turns autofill off by default, for text and for a secret alike', () => {
+    render(<><TextInput value="" onChange={() => {}} ariaLabel="Endpoint" /><TextInput type="password" value="" onChange={() => {}} ariaLabel="API key" /></>)
+    expect(screen.getByLabelText('Endpoint').getAttribute('autocomplete')).toBe('off')
+    expect(screen.getByLabelText('API key').getAttribute('autocomplete')).toBe('off')
+  })
+
+  it('TextInput passes the token a caller asks for', () => {
+    render(<><TextInput value="" onChange={() => {}} ariaLabel="Your name" autoComplete="name" /><TextInput type="password" value="" onChange={() => {}} ariaLabel="New password" autoComplete="new-password" /></>)
+    expect(screen.getByLabelText('Your name').getAttribute('autocomplete')).toBe('name')
+    expect(screen.getByLabelText('New password').getAttribute('autocomplete')).toBe('new-password')
+  })
+
+  it('🔴 NumberField and Checkbox render an id of their own, distinct per instance', () => {
+    render(<>
+      <NumberField value={3} onChange={() => {}} ariaLabel="Retries" />
+      <NumberField value={4} onChange={() => {}} ariaLabel="Timeout" />
+      <Checkbox checked={false} onChange={() => {}} ariaLabel="Pick one" />
+      <Checkbox checked={false} onChange={() => {}} ariaLabel="Pick two" />
+    </>)
+    const ids = ['Retries', 'Timeout', 'Pick one', 'Pick two'].map((l) => screen.getByLabelText(l).id)
+    expect(ids.every(Boolean), `an id on each: ${ids.join(', ')}`).toBe(true)
+    expect(new Set(ids).size).toBe(4)
+    expect(screen.getByLabelText('Retries').getAttribute('autocomplete')).toBe('off')
+  })
+})

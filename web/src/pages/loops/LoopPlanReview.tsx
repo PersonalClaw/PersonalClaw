@@ -587,27 +587,32 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
           QuestionSlider owns the whole walk's navigation there (its Back exits to the prior step,
           its Submit advances), so a competing outer bar would double the controls. While a refused
           launch is held, the walk stays here: an edit made on another step would not be part of
-          what the notice reapplies. */}
+          what the notice reapplies.
+          The bar's hairline runs the pane's full width, like every create page's footer; only its
+          row of buttons keeps to the content width. Capped as a whole, the line stopped short on
+          both sides at any width preset narrower than the pane. */}
       {!onQuestions && (
-        <div className="shrink-0 border-t border-outline-variant/30 px-l py-m flex items-center justify-between" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
-          <Button variant="ghost" size="sm" onClick={() => step === 0 ? onBack() : setStep((s) => s - 1)}
-            disabled={held} disabledReason={HELD_REASON}>
-            <ArrowLeft size={15} /> {step === 0 ? 'Cancel' : 'Back'}
-          </Button>
-          {onLaunch ? (
-            // `launching` is owned by this button — nothing else reads it — and the label ternary was
-            // a hand-rolled `loadingLabel`. The verb is kept rather than faded: launching a loop is
-            // the last confirmation in a multi-step review, so "still going" has to stay legible.
-            <Button onClick={launch} loading={launching} loadingLabel="Launching…"
-              disabled={held} disabledReason={HELD_REASON}><Play size={16} /> Launch</Button>
-          ) : (
-            <Button size="sm" onClick={() => setStep((s) => s + 1)}>
-              {onOverview ? 'Capabilities'
-                : onCapabilities && hasPlan ? 'Review plan'
-                : hasQuestions ? 'Answer questions'
-                : 'Continue'} <ArrowRight size={15} />
+        <div className="shrink-0 border-t border-outline-variant/30 py-m">
+          <div className="mx-auto flex w-full items-center justify-between px-l" style={{ maxWidth: 'var(--content-width)' }}>
+            <Button variant="ghost" size="sm" onClick={() => step === 0 ? onBack() : setStep((s) => s - 1)}
+              disabled={held} disabledReason={HELD_REASON}>
+              <ArrowLeft size={15} /> {step === 0 ? 'Cancel' : 'Back'}
             </Button>
-          )}
+            {onLaunch ? (
+              // `launching` is owned by this button — nothing else reads it — and the label ternary was
+              // a hand-rolled `loadingLabel`. The verb is kept rather than faded: launching a loop is
+              // the last confirmation in a multi-step review, so "still going" has to stay legible.
+              <Button onClick={launch} loading={launching} loadingLabel="Launching…"
+                disabled={held} disabledReason={HELD_REASON}><Play size={16} /> Launch</Button>
+            ) : (
+              <Button size="sm" onClick={() => setStep((s) => s + 1)}>
+                {onOverview ? 'Capabilities'
+                  : onCapabilities && hasPlan ? 'Review plan'
+                  : hasQuestions ? 'Answer questions'
+                  : 'Continue'} <ArrowRight size={15} />
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </div>

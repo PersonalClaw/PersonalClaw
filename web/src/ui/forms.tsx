@@ -199,7 +199,7 @@ const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surfac
  *  screen-reader user tabbing the field heard nothing about it and discovered the requirement by failing.
  *  (WCAG 3.3.2, level A: instructions are provided when content requires user input.) A VISIBLE marker is
  *  a separate, owner-facing decision; this is the invisible half, which is unambiguous. */
-export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max }: {
+export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max, autoComplete = 'off' }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
@@ -214,6 +214,12 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   ariaLabel?: string
   /** Publishes `aria-required`. Visual treatment is deliberately unchanged. */
   required?: boolean
+  /** The native `autocomplete` token. Defaults to `off`: this is the app's configuration field —
+   *  names of things, paths, commands, endpoints, keys — where the browser offering a person's
+   *  saved name, address or an earlier entry is wrong, and for a secret it is a leak. A field that
+   *  really asks for the person's own details passes the token that says which (`name`,
+   *  `username`, `email`, `new-password`), so autofill can offer exactly that. */
+  autoComplete?: string
   /** Native `maxlength`. For a field the BACKEND bounds, pass the same limit here so the cap is
    *  reachable before a save instead of only as a rejection afterwards. */
   maxLength?: number
@@ -281,7 +287,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
     ? cx(leadingIcon ? 'pl-9' : 'pl-m', trailingSlot ? 'pr-10' : 'pr-m')
     : 'px-m'
   const input = (
-    <input value={value} type={type} autoFocus={autoFocus} name={name} id={id || name || autoId}
+    <input value={value} type={type} autoFocus={autoFocus} name={name} id={id || name || autoId} autoComplete={autoComplete}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId}
       aria-required={required || undefined}
@@ -388,6 +394,9 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
   // Re-synced when the committed value CHANGES out from under us (external patch, clamp, another
   // editor), never on mount — see `useSyncedDraft` (the #624 rollback rail flaked ~7% on that).
   const [local, setLocal] = useSyncedDraft(String(value))
+  // Every field carries an id: without an id or a name the browser cannot tell one field from
+  // another (for autofill, or for a `<label for>`), and flags the form for it.
+  const fieldId = useId()
   const commit = () => {
     const n = Number(local)
     if (local === '' || Number.isNaN(n)) { setLocal(String(value)); return }
@@ -396,7 +405,7 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
     if (clamped !== value) onChange(clamped)
   }
   return (
-    <input type="number" value={local} min={min} max={max} step={step ?? 1}
+    <input type="number" id={fieldId} autoComplete="off" value={local} min={min} max={max} step={step ?? 1}
       aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel} aria-describedby={hintId}
       onChange={(e) => setLocal(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -618,12 +627,14 @@ export function Checkbox({ checked, onChange, ariaLabel, className, indeterminat
   // only when the prop changes: a click clears the property natively, so a parent that answers the
   // click by staying mixed would otherwise leave the box showing a state the prop no longer says.
   const ref = useRef<HTMLInputElement>(null)
+  const fieldId = useId()
   useLayoutEffect(() => {
     if (ref.current) ref.current.indeterminate = indeterminate
   })
   return (
     <input
       ref={ref}
+      id={fieldId}
       type="checkbox"
       checked={checked}
       aria-label={ariaLabel}

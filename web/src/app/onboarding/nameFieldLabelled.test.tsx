@@ -124,3 +124,30 @@ describe('the onboarding name field is programmatically labelled', () => {
     expect(screen.getByPlaceholderText('Your name')).toBeTruthy()
   })
 })
+
+// ── …and the browser can tell the two fields apart, and fill them ──────────────────────────────
+//
+// Both pills carried only an `aria-label`: no id, no name, no `autocomplete`. The browser flagged the
+// form ("A form field element should have an id or name attribute", count 2), and autofill could not
+// offer the person's own name on the first field they ever fill in. Each field now names itself and
+// says how it may be filled. The handle's is `off`, not `username`: the hint under it says it is a
+// label, not a login, and the sign-in username is a separate field in Settings → Account. (`nickname`,
+// the spec's word for a handle, is a value Chrome rejects with an issue of its own.)
+describe('the onboarding identity fields can be told apart and autofilled', () => {
+  it('🔴 each field carries an id, a name and the autocomplete value for what it asks', async () => {
+    await renderFlow()
+    const name = screen.getByLabelText('Your name')
+    const handle = screen.getByLabelText('Username')
+    expect({ id: name.id, name: name.getAttribute('name'), autocomplete: name.getAttribute('autocomplete') })
+      .toEqual({ id: 'onboarding-name', name: 'name', autocomplete: 'name' })
+    expect({ id: handle.id, name: handle.getAttribute('name'), autocomplete: handle.getAttribute('autocomplete') })
+      .toEqual({ id: 'onboarding-handle', name: 'handle', autocomplete: 'off' })
+  })
+
+  it('no field on the step is left without an id or a name', async () => {
+    await renderFlow()
+    const fields = Array.from(document.querySelectorAll('input, textarea, select'))
+    expect(fields.length, 'the step rendered its fields').toBeGreaterThanOrEqual(2)
+    expect(fields.filter((f) => !f.id && !f.getAttribute('name')).map((f) => f.outerHTML.slice(0, 80))).toEqual([])
+  })
+})

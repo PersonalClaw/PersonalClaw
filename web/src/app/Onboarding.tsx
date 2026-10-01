@@ -573,14 +573,18 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
 
           `design/onboardingScrollable.test.tsx` is the rail; it also explains why jsdom cannot
           measure this and what it asserts instead. */}
-      {/* Two widths, both centred on one axis: the steps read at 540px, and the navigation bar at
-          the foot of the column may run to 760px. Back, the door out, a step's own alternative and
-          its main action are four labelled buttons — "Back to bring your setup over", "Skip the rest
-          of setup", "Set up later", "Continue" measure 727px together — so inside 540px the bar
-          wrapped on every desktop step but the first, stranding the main action on a row of its
-          own. On a phone both are the full width, and the bar wraps by design. */}
+      {/* Two widths, both centred on one axis: the steps read at 540px, and the navigation bar's
+          buttons may run to 760px. Back, the door out, a step's own alternative and its main action
+          are four labelled buttons — "Back to bring your setup over", "Skip the rest of setup", "Set
+          up later", "Continue" measure 727px together — so inside 540px the bar wrapped on every
+          desktop step but the first, stranding the main action on a row of its own. On a phone both
+          are the full width, and the bar wraps by design.
+          The column itself is the full width, and the 760px belongs to the bar's ROW of buttons, not
+          to the column: the bar is a shell bar, so its surface runs edge to edge. Capped at the
+          column, it ended 16px past the buttons, mid-screen, with the bare canvas on both sides — a
+          792px strip in a 1920px window. */}
       <div ref={scrollRef} className="relative h-full overflow-y-auto px-l pt-3xl">
-        <div className="mx-auto flex min-h-full w-full flex-col" style={{ maxWidth: 760 }}>
+        <div className="flex min-h-full w-full flex-col">
           <div className="mx-auto flex w-full flex-1 flex-col justify-center pb-2xl" style={{ maxWidth: 540 }}>
           <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialSlow}
             className="relative w-full">
@@ -758,8 +762,10 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
               a screen and a half down.
 
               It is `ui/FormFooter`, the design system's sticky action bar, not a new one: sticky
-              at the foot of the scroller, bleeding to the column's edges so its buttons line up
-              with the steps above, and in DOM order after the steps, so Tab reaches it last.
+              at the foot of the scroller, bleeding past the column's padding to the window's edges,
+              and in DOM order after the steps, so Tab reaches it last. Its buttons sit in one row
+              inside it, centred at 760px on the steps' axis, so they line up with the steps above
+              however wide the window is.
 
               Back is non-destructive by construction — it navigates, and nothing in `goTo` clears a
               draft, a record or the high-water mark. Skipping everything is quieter than a step's
@@ -770,23 +776,25 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
               a 4.5 floor at 13px/400 and had to take the emphasis ink; as buttons on the bar's
               surface they carry the on-surface ink, and no accent text is left on the canvas. */}
           <FormFooter>
-            {/* On a phone the step's name is spoken but not drawn ("Back to bring your setup over"
-                is 250px of a 358px bar), which keeps the bar to two rows there: the way back and the
-                way out on top, the step's own actions beneath. */}
-            {previousOf(step) && (
-              <Button variant="ghost" size="md" className="mr-auto" onClick={() => goTo(previousOf(step) as StepId)}>
-                <ArrowLeft size={16} aria-hidden="true" />
-                {/* The space sits OUTSIDE the hidden span: inside it, the accessible-name computation
-                    trims it away and the button is announced "Backto your name". */}
-                <span>Back <span className="sr-only sm:not-sr-only">to {TITLES[previousOf(step) as StepId].toLowerCase()}</span></span>
-              </Button>
-            )}
-            {step !== 'ready' && (
-              <Button variant="ghost" size="md" onClick={skipSetup}>
-                {step === 'name' ? 'Skip setup for now' : 'Skip the rest of setup'}
-              </Button>
-            )}
-            <div ref={setActionSlot} className="contents" data-testid="onboarding-step-actions" />
+            <div className="mx-auto flex w-full flex-wrap items-center justify-end gap-s" style={{ maxWidth: 760 }}>
+              {/* On a phone the step's name is spoken but not drawn ("Back to bring your setup over"
+                  is 250px of a 358px bar), which keeps the bar to two rows there: the way back and the
+                  way out on top, the step's own actions beneath. */}
+              {previousOf(step) && (
+                <Button variant="ghost" size="md" className="mr-auto" onClick={() => goTo(previousOf(step) as StepId)}>
+                  <ArrowLeft size={16} aria-hidden="true" />
+                  {/* The space sits OUTSIDE the hidden span: inside it, the accessible-name computation
+                      trims it away and the button is announced "Backto your name". */}
+                  <span>Back <span className="sr-only sm:not-sr-only">to {TITLES[previousOf(step) as StepId].toLowerCase()}</span></span>
+                </Button>
+              )}
+              {step !== 'ready' && (
+                <Button variant="ghost" size="md" onClick={skipSetup}>
+                  {step === 'name' ? 'Skip setup for now' : 'Skip the rest of setup'}
+                </Button>
+              )}
+              <div ref={setActionSlot} className="contents" data-testid="onboarding-step-actions" />
+            </div>
           </FormFooter>
         </div>
       </div>
@@ -816,13 +824,19 @@ function NameStep({ value, onChange, onSubmit, handle, onHandleChange }: {
       {/* Enter in either field submits; the step's Continue is the bar's, like every other step's.
           It used to be an arrow inside this pill — a second Continue, in a different place from
           the one on every step after it. */}
-      <PillField value={value} onChange={onChange} onEnter={onSubmit} autoFocus
+      {/* Each field names itself, so the browser can tell the two apart, and says how it may be
+          filled. The name is `name`, so autofill offers the person's own. The handle is `off`: the
+          hint below says it is a label, not a login, and the sign-in username is a different field
+          (Settings → Account), so `username` would invite a password manager to offer a login here.
+          `nickname`, the spec's word for a handle, is one Chrome does not accept, and it raises an
+          issue of its own. The handle is suggested from the name as it is typed anyway. */}
+      <PillField id="onboarding-name" name="name" autoComplete="name" value={value} onChange={onChange} onEnter={onSubmit} autoFocus
         ariaLabel="Your name" placeholder="Your name" />
       {/* The hint is wired with `aria-describedby` rather than left as adjacent prose: the
           rule it states (normalized, optional, not a login) is the whole reason an operator
           would leave this empty on purpose, and a screen-reader user who only hears the
           label "Username" has no way to reach it. */}
-      <PillField value={handle} onChange={onHandleChange} onEnter={onSubmit}
+      <PillField id="onboarding-handle" name="handle" autoComplete="off" value={handle} onChange={onHandleChange} onEnter={onSubmit}
         ariaLabel="Username" placeholder="your-handle" describedBy="onboarding-handle-hint" />
       <p id="onboarding-handle-hint" data-type="caption" className="px-m leading-relaxed" style={{ color: 'var(--color-on-surface-low)' }}>
         Optional. A short handle stamped onto things you create, so contributions stay
@@ -847,7 +861,13 @@ function NameStep({ value, onChange, onSubmit, handle, onHandleChange }: {
  *  mean overriding all of it — the case `primitiveAdoption.baseline.json` already records twice.
  *  Local to this file for the same reason: the flow is its only caller, and `ui/` is for chrome more
  *  than one surface actually shares. */
-function PillField({ value, onChange, onEnter, ariaLabel, placeholder, describedBy, autoFocus }: {
+function PillField({ id, name, autoComplete, value, onChange, onEnter, ariaLabel, placeholder, describedBy, autoFocus }: {
+  /** The field's id and name, so the browser can tell the two fields apart, and its `autocomplete`
+   *  token, so autofill knows what each one asks for. Required: a pill with none of them is a form
+   *  field the browser can neither fill nor tell from the one beside it. */
+  id: string
+  name: string
+  autoComplete: string
   value: string
   onChange: (v: string) => void
   onEnter: () => void
@@ -858,7 +878,7 @@ function PillField({ value, onChange, onEnter, ariaLabel, placeholder, described
 }) {
   return (
     <div className="flex items-center gap-s rounded-pill bg-surface-high px-s py-1.5 ring-1 ring-outline/40 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
-      <input autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)}
+      <input id={id} name={name} autoComplete={autoComplete} autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') onEnter() }}
         aria-label={ariaLabel}
         aria-describedby={describedBy}

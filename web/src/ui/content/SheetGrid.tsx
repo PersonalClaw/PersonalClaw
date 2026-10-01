@@ -26,7 +26,7 @@
  *  branch, and extracting a "shared" contract against code nobody can read is how two
  *  branches become a three-way conflict.)
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Bold, FileWarning, FunctionSquare, Italic, Loader2, Save, Type } from 'lucide-react'
 import { api, ApiError, type DocumentLossReport, type SheetModelJson } from '../../lib/api'
 import { Button } from '../Button'
@@ -76,6 +76,8 @@ function SheetLossList({ loss }: { loss: DocumentLossReport }) {
 }
 
 export function SheetGrid({ slug, title, readOnly, onDirty, onSaved }: DocumentEditorProps) {
+  // Each cell's field id: the grid's own, then the cell's place in it.
+  const gridId = `sheet-${useId()}`
   const [loaded, setLoaded] = useState<{ model: SheetModelJson; loss: DocumentLossReport; version: number } | null>(null)
   const [model, setModel] = useState<SheetModelJson | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -320,6 +322,8 @@ export function SheetGrid({ slug, title, readOnly, onDirty, onSaved }: DocumentE
                     <td key={col} className="border-b border-r border-outline/20 p-0">
                       <input
                         type="text"
+                        id={`${gridId}-${sheetIndex}-${rowIndex}-${col}`}
+                        autoComplete="off"
                         value={cellText(cell)}
                         readOnly={!editing}
                         disabled={!editing}

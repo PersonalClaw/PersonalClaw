@@ -312,8 +312,9 @@ export function InlineSelect({ value, options, onPick, ariaLabel }: {
   value: string; options: { value: string; label: string }[]; onPick: (v: string) => void | Promise<void>; ariaLabel?: string
 }) {
   const [busy, setBusy] = useState(false)
+  const fieldId = `inline-select-${useId()}`
   return (
-    <select value={value} aria-label={ariaLabel} disabled={busy}
+    <select id={fieldId} value={value} aria-label={ariaLabel} disabled={busy}
       onClick={(e) => e.stopPropagation()}
       onChange={async (e) => { e.stopPropagation(); setBusy(true); try { await onPick(e.target.value) } finally { setBusy(false) } }}
       data-type="caption" className="pointer-events-auto max-w-[10rem] truncate rounded-md bg-surface-high px-2 h-7 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60">

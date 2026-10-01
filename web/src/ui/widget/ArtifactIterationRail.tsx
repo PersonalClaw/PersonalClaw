@@ -9,6 +9,7 @@
  *  the shared primitives (Slider / Toggle / Select / Button / SquareIconButton) so a
  *  tweak rail looks like the rest of the app rather than like a widget's own chrome.
  */
+import { useId } from 'react'
 import { Check, Crosshair, Save, Sliders, X } from 'lucide-react'
 import { Button } from '../Button'
 import { SquareIconButton } from '../SquareIconButton'
@@ -26,6 +27,7 @@ function ParamControl({ param, value, onChange }: {
   value: string
   onChange: (next: string) => void
 }) {
+  const colourId = `param-colour-${useId()}`
   if (param.type === 'color') {
     const hex = hexForPicker(value)
     // A non-hex authored colour (oklch/hsl/named) cannot seed a native picker, so it
@@ -36,7 +38,7 @@ function ParamControl({ param, value, onChange }: {
     return (
       <div className="flex items-center gap-s">
         <span className="relative size-6 overflow-hidden rounded-sm border border-outline-variant" style={{ background: value }}>
-          <input type="color" value={hex} onChange={(e) => onChange(e.target.value)}
+          <input type="color" id={colourId} value={hex} onChange={(e) => onChange(e.target.value)}
             className="absolute inset-0 cursor-pointer opacity-0" aria-label={`${param.label} colour`} />
         </span>
         <span data-type="caption" className="font-mono text-on-surface-low">{hex}</span>
