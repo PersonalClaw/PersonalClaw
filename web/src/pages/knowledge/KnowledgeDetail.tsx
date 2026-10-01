@@ -18,6 +18,7 @@ import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES, journalDayHasPassed } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
 import { GistEditor } from './GistEditor'
+import { OUTCOME_WORDS, PhaseOutcomes, outcomeSentence, stepLabel } from './PhaseOutcomes'
 import { confirm } from '../../ui/dialog'
 import { api } from '../../lib/api'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -186,10 +187,12 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     }
     const onComplete = (e: MessageEvent) => {
       try { const d = JSON.parse(e.data); setProcStatus(d.status || 'done') } catch { setProcStatus('done') }
-      // Refresh what this component shows (the item itself + its contributed-intents),
-      // computed DURING enrichment, so a panel opened mid-processing fills in on finish.
+      // Refresh what this component shows (the item itself + its contributed-intents + each
+      // step's recorded outcome), computed DURING enrichment, so a panel opened mid-processing
+      // fills in on finish — the live phases carry no reasons, the recorded outcomes do.
       getKnowledge(item.id).then((d) => d && setFull(d)).catch(() => {})
       api.knowledgeItemIntents(item.id).then((r) => setItemIntents(r.outcomes || [])).catch(() => {})
+      api.knowledgeItemGraph(item.id).then((g) => { setIngestGraph(g); setNodePhases({}) }).catch(() => {})
       // Tell the parent (the dedicated page) enrichment finished so its own copies —
       // the list, and the page's "More details" pool/entities/relations/related —
       // refresh too; otherwise that side panel stays empty after a mid-processing open.
@@ -213,6 +216,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       setStanding(d.queue ?? null)
       if (d.processing_status !== 'queued' && d.processing_status !== 'processing') {
         setFull(d); setProcStatus(d.processing_status ?? ''); onChanged()
+        api.knowledgeItemGraph(item.id).then((g) => { setIngestGraph(g); setNodePhases({}) }).catch(() => {})
       }
     }).catch(() => {})
   }, procStatus === 'queued' || procStatus === 'processing' ? 10_000 : null, { immediate: false })
@@ -809,39 +813,34 @@ function FileRow({ item, tm }: { item: KnowledgeItem; tm: ReturnType<typeof reso
   )
 }
 
-type NodePhase = 'pending' | 'running' | 'done' | 'skipped' | 'failed'
+type NodePhase = 'pending' | 'running' | 'done' | 'skipped' | 'failed' | 'not_applicable'
+const SETTLED: ReadonlySet<string> = new Set(['running', 'done', 'skipped', 'failed', 'not_applicable'])
 
-/** Resolve each pipeline node's phase: live SSE events win; otherwise infer from the
- *  item's final status + the persisted skip/fail reason (so a reloaded item still
- *  shows an accurate per-node picture, not blanks). */
+/** Resolve each pipeline node's phase: live SSE events win; otherwise the outcome the
+ *  ingest recorded for it (so a reloaded item still shows an accurate per-node picture,
+ *  not blanks). */
 function resolveNodePhases(
   graph: import('../../lib/api').KnowledgeIngestGraph,
   live: Record<string, string>,
   status: string,
   error?: string,
 ): Record<string, NodePhase> {
-  // Ground truth (when present): the per-node phase map persisted at ingest end.
+  // Ground truth (when present): the per-step outcome map persisted at ingest end.
   // A live SSE phase (this render is mid-processing) always wins over it; then the
-  // persisted map; then — only for older items with no persisted map — a lossy
-  // reconstruction from processing_error.
+  // persisted map; then — only for items processed before any map was persisted — a lossy
+  // reconstruction of the failed steps from processing_error ("node: reason; node2: reason").
   const persisted = graph.node_phases || {}
-  // processing_error carries EITHER a benign "Skipped (optional steps unavailable):
-  // a, b" list OR a real node-failure list "node: reason; node2: reason" (backend
-  // runner.py). Parse both (for 'partial' too) as the legacy fallback.
-  const skipOnly = (error || '').startsWith('Skipped (optional steps unavailable):')
-  const skipped = new Set(skipOnly ? error!.split(':').slice(1).join(':').split(',').map((s) => s.trim()) : [])
-  const hasRealFailure = !skipOnly && !!error && (status === 'failed' || status === 'unreachable' || status === 'partial')
+  const hasRealFailure = !!error && (status === 'failed' || status === 'unreachable' || status === 'partial')
   const failed = new Set(hasRealFailure ? error!.split(';').map((s) => s.split(':')[0].trim()).filter(Boolean) : [])
   const out: Record<string, NodePhase> = {}
   for (const n of graph.nodes) {
     const nt = n.node_type
     const lv = live[nt]
-    if (lv === 'running' || lv === 'done' || lv === 'skipped' || lv === 'failed') { out[nt] = lv as NodePhase; continue }
-    const p = persisted[nt]
-    if (p === 'done' || p === 'skipped' || p === 'failed') { out[nt] = p as NodePhase; continue }
+    if (SETTLED.has(lv)) { out[nt] = lv as NodePhase; continue }
+    const p = persisted[nt]?.status
+    if (p && SETTLED.has(p)) { out[nt] = p as NodePhase; continue }
     // Legacy fallback (no persisted phase for this node): reconstruct from error.
     if (failed.has(nt)) { out[nt] = 'failed'; continue }
-    if (skipped.has(nt)) { out[nt] = 'skipped'; continue }
     if (Object.keys(persisted).length) out[nt] = 'pending'  // persisted map exists but omits this node → not reached
     else if (status === 'done' || status === 'partial') out[nt] = 'done'
     else out[nt] = 'pending'
@@ -923,26 +922,29 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying, 
 
   // The DAG itself is the indicator: the running step expands inline with a spinner +
   // its name; when finished, the last node stays expanded with a check + "Processed".
+  // Once a run has finished, each step that was skipped or failed says why on its own line
+  // (`PhaseOutcomes`), so the status line below it is shown only for what those lines do not
+  // already say: there are none, or the item is unsearchable (a verdict about the item, not
+  // about one step). While a run is going, the recorded outcomes are the PREVIOUS run's.
+  const outcomes = !active ? (graph!.node_phases ?? {}) : {}
+  const hasLines = Object.values(outcomes).some((o) => o?.status === 'skipped' || o?.status === 'failed')
+  const showError = !!error && (!hasLines || status === 'unsearchable')
   return (
     <div data-type="body-s" className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-      <MiniDag graph={graph!} phases={resolveNodePhases(graph!, nodePhases, status, error)} status={status} />
+      <MiniDag graph={graph!} phases={resolveNodePhases(graph!, nodePhases, status, error)} outcomes={outcomes} status={status} />
       {retryBtn}
       {waitCaption}
-      {error && <span data-type="caption" className="basis-full" style={{ color: status === 'failed' ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{error}</span>}
+      {showError && <span data-type="caption" className="basis-full" style={{ color: status === 'failed' ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{error}</span>}
+      {/* Retry already re-runs the whole item; a second button for the same run would be noise. */}
+      <PhaseOutcomes graph={graph!} phases={outcomes} onRunAgain={retryBtn ? undefined : onRetry} running={retrying} />
     </div>
   )
-}
-
-/** Humanize a node_type for the expanded step label (e.g. document_read → "Document read"). */
-function nodeLabel(nodeType: string): string {
-  const s = nodeType.replace(/_/g, ' ')
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 const _dagDotColor = (p: NodePhase) => p === 'done' ? 'var(--color-success)'
   : p === 'failed' ? 'var(--color-danger)'
   : p === 'running' ? 'var(--color-primary)'
-  : p === 'skipped' ? 'var(--color-on-surface-low)'
+  : p === 'skipped' || p === 'not_applicable' ? 'var(--color-on-surface-low)'
   : 'var(--color-outline-variant)'
 
 /** A structural mini-DAG of the ingestion pipeline: nodes laid out in COLUMNS by
@@ -950,8 +952,9 @@ const _dagDotColor = (p: NodePhase) => p === 'done' ? 'var(--color-success)'
  *  video graph's audio ∥ video branches read as parallel), columns joined by
  *  connectors, and any bounded loop back-edge (video_classify ⟲ frame_extract) shown
  *  as a ⟲ badge on the loop target with its max-iteration cap. Each node shows its
- *  phase (pending outline / running spinner / done check / skipped dash / failed ✕). */
-function MiniDag({ graph, phases }: { graph: import('../../lib/api').KnowledgeIngestGraph; phases: Record<string, NodePhase>; status: string }) {
+ *  phase (pending outline / running spinner / done check / skipped dash / not needed dotted /
+ *  failed ✕), and its tooltip says why when the run recorded a reason. */
+function MiniDag({ graph, phases, outcomes }: { graph: import('../../lib/api').KnowledgeIngestGraph; phases: Record<string, NodePhase>; outcomes: Record<string, import('../../lib/api').PhaseOutcome>; status: string }) {
   const level = dagLevels(graph)
   const maxLevel = Math.max(0, ...[...level.values()])
   // Group node_types by level → columns; preserve input order within a column.
@@ -966,18 +969,23 @@ function MiniDag({ graph, phases }: { graph: import('../../lib/api').KnowledgeIn
     const ph = phases[nt] ?? 'pending'
     const c = _dagDotColor(ph)
     const loop = loopByTarget.get(nt)
-    const stateWord = ph === 'running' ? 'processing' : ph
+    const label = stepLabel(graph, nt)
+    const stateWord = ph === 'running' ? 'processing' : ph === 'pending' ? 'pending' : OUTCOME_WORDS[ph]
+    // The recorded outcome speaks for the dot only when it is what the dot shows (a live phase
+    // mid-run is newer than the record).
+    const recorded = outcomes[nt]?.status === ph ? outcomes[nt] : undefined
+    const said = recorded ? outcomeSentence(label, recorded) : `${label}: ${stateWord}`
     return (
-      <span className="inline-flex items-center gap-1" title={`${nt.replace(/_/g, ' ')}: ${ph}${loop ? ` (⟲ resamples up to ${loop.max}×)` : ''}`}>
+      <span className="inline-flex items-center gap-1" title={`${said}${loop ? ` (⟲ resamples up to ${loop.max}×)` : ''}`}>
         <span className="grid size-3.5 shrink-0 place-items-center rounded-full"
-          style={{ border: `1.5px ${ph === 'pending' ? 'dashed' : 'solid'} ${c}`,
+          style={{ border: `1.5px ${ph === 'pending' ? 'dashed' : ph === 'not_applicable' ? 'dotted' : 'solid'} ${c}`,
                    background: ph === 'done' ? 'color-mix(in srgb, var(--color-success) 22%, transparent)' : 'transparent' }}>
           {ph === 'running' && <Loader2 size={8} className="animate-spin" style={{ color: c }} />}
           {ph === 'done' && <Check size={8} strokeWidth={3} style={{ color: c }} />}
           {ph === 'failed' && <X size={8} style={{ color: c }} />}
         </span>
         <span data-type="caption" className="whitespace-nowrap" style={{ color: ph === 'pending' ? 'var(--color-on-surface-low)' : c }}>
-          {nodeLabel(nt)}{loop && <RefreshCw size={9} className="ml-0.5 inline-block align-[-1px]" style={{ color: 'var(--color-primary)' }} />}
+          {label}{loop && <RefreshCw size={9} className="ml-0.5 inline-block align-[-1px]" style={{ color: 'var(--color-primary)' }} />}
         </span>
         <span className="sr-only">{stateWord}</span>
       </span>

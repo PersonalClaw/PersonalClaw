@@ -64,6 +64,22 @@ one case the label exists for. A push never fails the local write.
   - Media types (`image`, `audio`, `video`) → media graphs (`ImageGraph` runs
     exif ∥ ocr + vision); **model-backed nodes degrade gracefully** — no bound
     vision model means the node is skipped, never a hard failure.
+  - **Every step records what became of it** (`pipeline/outcomes.py`), and the
+    runner persists the map as `file_metadata.node_phases`:
+    `{status, reason, fix, needs}` per graph node and terminal stage. `done`;
+    `failed` (the reason is the error); `skipped` — it could not run for want of
+    something the owner can add, with the fix (each `{text, href}`, an in-app
+    route) and the capability it needs (a use case, or `ocr_engine`);
+    `not_applicable` — it does not apply to this item (a branch not taken, no
+    intents to match, a no-AI source), with no fix. A step that waited on a
+    skipped one is skipped too and carries that one's reason and fix: a video
+    with no Image · Modality model says why its classifier, OCR and Vision did
+    not run, each on its own line. An `ocr` step that a model OR an installed
+    OCR app could have run names both. The item-graph read adds `ready` to a
+    skipped step whose need is there now, asked of the probes the executor
+    asks (for Image · Modality, of its binding, so the read never waits on a
+    catalog listing), and the item page then offers to run the item again. The item's
+    status line (`processing_error`) carries only what went wrong.
   - **A bound model that cannot answer fails its step, with the reason.**
     `transcribe_audio(_detailed)` return a transcript (empty text = no speech)
     or raise `SttError` with the sentence saying why there is none;
@@ -225,7 +241,7 @@ document ingested with no embedding provider bound (zero rows in `chunks`, no
 item vector).
 
 - **The named status** is `unsearchable` — a distinct value, because `partial`
-  already means "an OPTIONAL step was skipped" and is routinely benign. The
+  already means "an OPTIONAL step was skipped or failed" and is often benign. The
   token is not the claim: for every reason except `no_extractable_text` the
   item's text is indexed, so **keyword search reaches it** and only semantic
   search cannot.

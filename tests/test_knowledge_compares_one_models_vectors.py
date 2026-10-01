@@ -164,7 +164,8 @@ def test_the_ingest_dedup_never_archives_on_a_cosine_between_two_models(store, m
     newer = _note(store, "Quarterly plan", content="second copy")
     _embed_items(store, monkeypatch, MODEL_A)
 
-    assert _dedup(store, newer, _Embedder()) == ("done", None)
+    phase, verdict = _dedup(store, newer, _Embedder())
+    assert (phase.status, verdict) == ("done", None)
     archived = {r[0] for r in store.db.execute("SELECT id FROM items WHERE is_archived = 1")}
     assert archived == set(), "a score between two models' vectors archived a document"
 
@@ -173,7 +174,7 @@ def test_the_ingest_dedup_never_archives_on_a_cosine_between_two_models(store, m
     third = _note(store, "Quarterly plan", content="third copy")
     _embed_items(store, monkeypatch, MODEL_A)
     phase, verdict = _dedup(store, third, _Embedder())
-    assert phase == "done" and verdict is not None
+    assert phase.status == "done" and verdict is not None
     assert {verdict["winner_id"], verdict["loser_id"]} == {newer, third}
     assert older not in {verdict["winner_id"], verdict["loser_id"]}
 

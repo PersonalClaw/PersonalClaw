@@ -419,13 +419,19 @@ def test_cleanup_orphaned_artifacts_removes_derived_only(tmp_path, monkeypatch):
     assert keep.exists()  # another item's file untouched
 
 
+def _statuses(store, item_id) -> dict:
+    """Each step's recorded status, from the item's per-step outcome map."""
+    phases = (store.get_item(item_id).get("file_metadata") or {}).get("node_phases") or {}
+    return {step: outcome.get("status") for step, outcome in phases.items()}
+
+
 def test_runner_persists_node_phases(store):
     # The ground-truth per-node phase map is persisted so the UI shows what actually
     # ran on reload (not a reconstruction). A clean note run → the graph node is 'done'.
     ensure_nodes_registered()
     iid = store.create_typed_item(item_type="note", title="N", content="hi there")
     _run(ingest_item(store, iid))
-    phases = (store.get_item(iid).get("file_metadata") or {}).get("node_phases") or {}
+    phases = _statuses(store, iid)
     assert phases.get("passthrough") == "done"
     # terminal stages recorded too
     assert phases.get("insights") in ("done", "failed")
@@ -447,7 +453,7 @@ def test_embed_phase_is_skipped_when_no_vector_is_written(store):
     # No embedder at all (embeddings disabled) → skipped, and no vector on the item.
     off = store.create_typed_item(item_type="note", title="Off", content="body text")
     _run(ingest_item(store, off, embedder=None))
-    phases = (store.get_item(off).get("file_metadata") or {}).get("node_phases") or {}
+    phases = _statuses(store, off)
     assert phases.get("embed") == "skipped"
     assert not store.get_item(off).get("has_embedding")
 
@@ -459,7 +465,7 @@ def test_embed_phase_is_skipped_when_no_vector_is_written(store):
 
     none_vec = store.create_typed_item(item_type="note", title="None", content="body text")
     _run(ingest_item(store, none_vec, embedder=_NoVector()))
-    phases = (store.get_item(none_vec).get("file_metadata") or {}).get("node_phases") or {}
+    phases = _statuses(store, none_vec)
     assert phases.get("embed") == "skipped"
     assert not store.get_item(none_vec).get("has_embedding")
 
@@ -467,7 +473,7 @@ def test_embed_phase_is_skipped_when_no_vector_is_written(store):
     # so the fix reports the outcome rather than merely never saying 'done'.
     on = store.create_typed_item(item_type="note", title="On", content="body text")
     _run(ingest_item(store, on, embedder=BoundEmbedder()))
-    phases = (store.get_item(on).get("file_metadata") or {}).get("node_phases") or {}
+    phases = _statuses(store, on)
     assert phases.get("embed") == "done"
     assert store.get_item(on).get("has_embedding")
 
@@ -476,11 +482,20 @@ def test_terminal_stage_phases_reflect_each_stage_outcome(store):
     """The other two forced phases (#481). `intents` is wholly model-dependent — with no
     pool it cannot match, so it reports 'skipped'. `entities` is NOT: its alias pre-pass is
     a deliberate model-free guarantee that still links, so it reports 'done'. The two must
-    not be collapsed into one blanket value."""
+    not be collapsed into one blanket value. With no intent defined there is nothing to
+    match at all, which is neither: not applicable."""
+    from personalclaw.knowledge.intents import Intent, IntentStore
+    from personalclaw.knowledge.pipeline.runner import _intents_path
+
     ensure_nodes_registered()
+    none_defined = store.create_typed_item(item_type="note", title="N0", content="Redis caches.")
+    _run(ingest_item(store, none_defined, insights_pool=None))
+    assert _statuses(store, none_defined).get("intents") == "not_applicable"
+
+    IntentStore(_intents_path(store)).save([Intent(id="caching", goal="Track caching notes")])
     iid = store.create_typed_item(item_type="note", title="N", content="Redis caches sessions.")
     _run(ingest_item(store, iid, insights_pool=None))
-    phases = (store.get_item(iid).get("file_metadata") or {}).get("node_phases") or {}
+    phases = _statuses(store, iid)
     assert phases.get("intents") == "skipped"  # no pool → nothing matched
     assert phases.get("entities") == "done"  # the pre-pass ran without a model
 
@@ -494,7 +509,7 @@ def test_terminal_stage_phases_reflect_each_stage_outcome(store):
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(extractor_mod.EntityExtractor, "extract", _boom)
         _run(ingest_item(store, other, insights_pool=object()))
-    phases = (store.get_item(other).get("file_metadata") or {}).get("node_phases") or {}
+    phases = _statuses(store, other)
     assert phases.get("entities") == "failed"
 
 
@@ -784,8 +799,8 @@ def test_a_model_that_returns_nothing_still_leaves_the_item_done(store):
 def test_runner_insights_failure_not_masked_by_optional_skips(store, tmp_path, monkeypatch):
     """When a graph already goes 'partial' from benign optional-node skips (e.g. an image
     with no ocr/vision model) AND the insights stage also fails, the insights failure must
-    still surface — it must NOT be hidden behind the benign 'Skipped (…)' message that the
-    list UI suppresses. The reason string must LEAD with the insights failure."""
+    still surface on the status line, and lead it. The skips are told by their own steps'
+    outcomes, never by a catch-all line on the status line."""
     pytest.importorskip("PIL")
     from PIL import Image
 
@@ -807,9 +822,9 @@ def test_runner_insights_failure_not_masked_by_optional_skips(store, tmp_path, m
     assert status == "partial"
     item = store.get_item(iid)
     err = item.get("processing_error") or ""
-    # The actionable insights failure must lead — never be suppressed by the benign prefix.
+    # The actionable insights failure leads, and the status line carries no skip list.
     assert err.startswith("insights:")
-    assert not err.startswith("Skipped (optional steps unavailable):")
+    assert "optional steps unavailable" not in err
 
 
 def test_runner_sets_ai_title_and_promotes_for_files(store):
@@ -1208,9 +1223,9 @@ def test_runner_persists_exif_metadata_onto_item(store, tmp_path):
 
 
 def test_runner_records_skip_reason_on_partial(store, tmp_path, monkeypatch):
-    """An image with no model pool skips its vision/ocr nodes → partial. The reason
-    must be persisted (not left blank) so the detail UI explains the badge after a
-    reload, when the live per-node SSE phases are gone."""
+    """An image with no model pool skips its vision/ocr nodes → partial. Each skipped step's
+    reason must be persisted (not left blank) on its own outcome, so the detail UI explains
+    the badge after a reload, when the live per-node SSE phases are gone."""
     try:
         from PIL import Image
     except ImportError:
@@ -1242,9 +1257,10 @@ def test_runner_records_skip_reason_on_partial(store, tmp_path, monkeypatch):
     )  # no model → vision/ocr skip
     item = store.get_item(iid)
     assert status == "partial"
-    err = item.get("processing_error") or ""
-    assert err.startswith("Skipped (optional steps unavailable):")
-    assert "vision" in err or "ocr" in err
+    phases = item["file_metadata"]["node_phases"]
+    for step in ("vision", "ocr"):
+        assert phases[step]["status"] == "skipped", phases[step]
+        assert "No image model is set up." in phases[step]["reason"], phases[step]
 
 
 def test_graph_for_known_types():
@@ -1315,7 +1331,7 @@ def test_dedup_archives_format_recall_loser_on_confirmed_dup(store):
     )
     phase, res = _dedup(store, thin, _StubEmbedder())
     assert res is not None, "a confirmed fuzzy dup should fire"
-    assert phase == "done"  # it compared AND resolved
+    assert phase.status == "done"  # it compared AND resolved
     # Format-recall keeps the richer copy → the THIN one is archived, the rich one stays.
     assert res["loser_id"] == thin and res["winner_id"] == rich
     assert store.get_item(thin)["is_archived"] is True
@@ -1333,7 +1349,7 @@ def test_dedup_respects_the_series_date_gate(store):
     phase, res = _dedup(store, d2, _StubEmbedder())
     assert res is None, "differing series dates → NOT a dup"
     # It DID run the comparison and correctly declined — a completed pass, not a skip.
-    assert phase == "done"
+    assert phase.status == "done"
     assert store.get_item(d1)["is_archived"] is False
     assert store.get_item(d2)["is_archived"] is False
 
@@ -1346,8 +1362,10 @@ def test_dedup_noop_without_embedder(store):
     v = [1.0, 0.0, 0.0, 0.0]
     _seed_item(store, title="Architecture Overview", vec=v, item_type="note")
     thin = _seed_item(store, title="Architecture Overview.pdf", vec=v, item_type="note")
-    assert _dedup(store, thin, None) == ("skipped", None)  # no embedder
-    assert _dedup(store, thin, _StubEmbedder(available=False)) == ("skipped", None)  # unavailable
+    for embedder in (None, _StubEmbedder(available=False)):  # no embedder / unavailable
+        phase, verdict = _dedup(store, thin, embedder)
+        assert (phase.status, verdict) == ("skipped", None)
+        assert phase.needs == ("embedding",), phase  # it says what it needs
     assert store.get_item(thin)["is_archived"] is False
 
 
@@ -1365,15 +1383,15 @@ def test_dedup_phase_follows_whether_the_comparison_ACTUALLY_ran(store):
 
     # (a) prerequisite absent — no embedder at all → the stage never ran.
     thin = _seed_item(store, title="Architecture Overview.pdf", vec=v, item_type="note")
-    assert _dedup(store, thin, None)[0] == "skipped"
+    assert _dedup(store, thin, None)[0].status == "skipped"
 
     # (b) prerequisite absent — an embedder, but THIS item has no vector to compare. The
     #     distinction matters: embeddings can be on while an individual item is unembedded.
     novec = store.create_typed_item(item_type="note", title="No Vector", content="body")
-    assert _dedup(store, novec, _StubEmbedder())[0] == "skipped"
+    assert _dedup(store, novec, _StubEmbedder())[0].status == "skipped"
 
-    # (c) the item is gone (deleted mid-ingest) → nothing to compare.
-    assert _dedup(store, "does-not-exist", _StubEmbedder())[0] == "skipped"
+    # (c) the item is gone (deleted mid-ingest) → nothing to compare, and nothing to fix.
+    assert _dedup(store, "does-not-exist", _StubEmbedder())[0].status == "not_applicable"
 
     # (d) the attempt ERRORS → 'failed'. Previously this was swallowed to a bare None and
     #     reported as 'done' — a fault announced as a success.
@@ -1383,11 +1401,11 @@ def test_dedup_phase_follows_whether_the_comparison_ACTUALLY_ran(store):
             raise RuntimeError("candidate query exploded")
 
         mp.setattr(type(store), "find_fuzzy_dup_candidates", _raise, raising=True)
-        assert _dedup(store, thin, _StubEmbedder())[0] == "failed"
+        assert _dedup(store, thin, _StubEmbedder())[0].status == "failed"
 
     # (e) the positive control — it really ran → 'done'. Without this the fix could be
     #     satisfied by never saying 'done' at all, which is a different lie.
-    assert _dedup(store, thin, _StubEmbedder())[0] == "done"
+    assert _dedup(store, thin, _StubEmbedder())[0].status == "done"
 
 
 def test_every_terminal_stage_reports_a_phase(store):
@@ -1404,11 +1422,11 @@ def test_every_terminal_stage_reports_a_phase(store):
     ensure_nodes_registered()
     iid = store.create_typed_item(item_type="note", title="N", content="Redis caches.")
     _run(ingest_item(store, iid))
-    phases = (store.get_item(iid).get("file_metadata") or {}).get("node_phases") or {}
+    phases = _statuses(store, iid)
     missing = [s for s in TERMINAL_STAGES if s not in phases]
     assert not missing, f"terminal stages with no reported phase: {missing}"
     # And every reported phase is drawn from the closed vocabulary — no invented words.
-    assert set(phases.values()) <= {"done", "skipped", "failed"}
+    assert set(phases.values()) <= {"done", "skipped", "failed", "not_applicable"}
 
 
 def test_no_terminal_stage_claims_done_with_its_prerequisite_absent(store):
@@ -1417,7 +1435,8 @@ def test_no_terminal_stage_claims_done_with_its_prerequisite_absent(store):
     prerequisite absent — and no stage may report ``done`` unless it genuinely did work
     without one. ``entities`` legitimately does (its alias pre-pass is model-free) and
     ``insights`` treats an empty result as nothing-to-do; the model/vector-dependent
-    stages must not."""
+    stages must not. (With no intent defined, intent matching has nothing to do at all:
+    not applicable, which is not ``done`` either.)"""
     ensure_nodes_registered()
     # Capture the LIVE SSE phases too. There are two reports of the same run — the stream a
     # watching UI sees, and the map a reloading UI reads — and the bug was present in BOTH
@@ -1431,18 +1450,18 @@ def test_no_terminal_stage_claims_done_with_its_prerequisite_absent(store):
     iid = store.create_typed_item(item_type="note", title="N", content="Redis caches.")
     _run(ingest_item(store, iid, embedder=None, insights_pool=None, publish=publish))
     item = store.get_item(iid)
-    phases = (item.get("file_metadata") or {}).get("node_phases") or {}
+    phases = _statuses(store, iid)
 
     # Vector-dependent stages: no embedder → no vector was written and no comparison ran.
     assert phases["embed"] == "skipped"
     assert not item.get("has_embedding"), "phase and artifact must agree"
     assert phases["dedup"] == "skipped"
-    # Model-dependent matching: no pool → nothing was matched.
-    assert phases["intents"] == "skipped"
+    # Matching: no intent is defined → nothing to match.
+    assert phases["intents"] == "not_applicable"
     # The stream said the same thing the stored map says.
     assert live["dedup"] == "skipped"
     assert live["embed"] == "skipped"
-    assert live["intents"] == "skipped"
+    assert live["intents"] == "not_applicable"
 
 
 def test_reenrich_refreshes_when_user_tags_are_a_permutation_of_the_ai_topics(store):

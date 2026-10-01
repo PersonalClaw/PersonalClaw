@@ -13,7 +13,9 @@ import json
 import logging
 
 from personalclaw.knowledge.pipeline import ensure_nodes_registered, graph_for
+from personalclaw.knowledge.pipeline import outcomes as oc
 from personalclaw.knowledge.pipeline.executor import PipelineExecutor
+from personalclaw.knowledge.pipeline.outcomes import PhaseOutcome
 from personalclaw.knowledge.pipeline.types import NodeContext
 from personalclaw.knowledge.searchability import UNSEARCHABLE, reason_detail, verdict_for_ingest
 from personalclaw.knowledge_providers.base import ENRICHMENT_FULL, ENRICHMENT_RAW
@@ -66,6 +68,11 @@ TERMINAL_STAGES = ("insights", "entities", "intents", "embed", "dedup")
 # arithmetic over vectors, so neither is gated on the LLM pool (this is why both still run
 # for a `raw` source, whose promise is only about the model-backed three).
 MODEL_BACKED_TERMINAL_STAGES = frozenset({"insights", "entities", "intents"})
+
+#: Why a model-backed terminal stage did not run for an item from a no-AI source.
+NO_AI_SOURCE = "The source this came from is set to no AI."
+#: Why a stage that reads the item's text had nothing to do.
+NO_TEXT = "There is no text to read."
 
 
 async def ingest_item(
@@ -219,9 +226,9 @@ async def ingest_item(
             # The three model-backed terminal stages are NOT CALLED for a raw source.
             # Not "called with a disabled pool" — not reached at all, which is the only form
             # of the promise that survives someone binding a model later. They report
-            # "skipped" (never "done"), so the detail UI distinguishes a no-AI source from
-            # an item whose enrichment silently produced nothing.
-            insights_phase = entities_phase = intents_phase = "skipped"
+            # "not applicable" (never "done"), so the detail UI distinguishes a no-AI source
+            # from an item whose enrichment silently produced nothing.
+            insights_phase = entities_phase = intents_phase = oc.not_applicable(NO_AI_SOURCE)
             insights_failure = None  # nothing failed; a raw item is not under-enriched
             # Derived from the model-backed set, not re-listed: a fourth model-backed stage
             # added later must announce its skip here without anyone remembering to edit a
@@ -229,12 +236,12 @@ async def ingest_item(
             # emit order (a frozenset's iteration order is not).
             for stage in TERMINAL_STAGES:
                 if stage in MODEL_BACKED_TERMINAL_STAGES:
-                    _emit("node", node=stage, phase="skipped")
+                    _emit("node", node=stage, phase=oc.NOT_APPLICABLE)
         else:
             _emit("node", node="insights", phase="running")
             insights_failure = await _run_insights(store, item_id, consolidated, insights_pool)
-            insights_phase = "done" if insights_failure is None else "failed"
-            _emit("node", node="insights", phase=insights_phase)
+            insights_phase = _insights_outcome(consolidated, insights_failure)
+            _emit("node", node="insights", phase=insights_phase.status)
 
             # Contradictions are flagged AT INGEST. Runs here, right
             # after insights, because `insights.key_points` is the claim-shaped output this path
@@ -248,7 +255,7 @@ async def ingest_item(
             # (one logical doc = one extraction; no per-chunk fan-out).
             _emit("node", node="entities", phase="running")
             entities_phase = await _run_entities_stage(store, item_id, consolidated, insights_pool)
-            _emit("node", node="entities", phase=entities_phase)
+            _emit("node", node="entities", phase=entities_phase.status)
 
             # Tier-3 intent matching — natural-language user intents run against the
             # consolidated text; relevant matches are recorded as intent_outcomes by value.
@@ -256,12 +263,12 @@ async def ingest_item(
             intents_phase = await _run_intents_stage(
                 store, item_id, item_type, consolidated, insights_pool
             )
-            _emit("node", node="intents", phase=intents_phase)
+            _emit("node", node="intents", phase=intents_phase.status)
 
         # Terminal: embed (title + summary), reusing the existing embedder path.
         _emit("node", node="embed", phase="running")
         embed_phase = _embed(store, item_id, embedder)
-        _emit("node", node="embed", phase=embed_phase)
+        _emit("node", node="embed", phase=embed_phase.status)
 
         # P12 TIER-2 semantic dedup — must run AFTER embed (the vector doesn't exist at
         # create time). Fuzzy-matches this item against same-type neighbours (filename +
@@ -269,7 +276,7 @@ async def ingest_item(
         # Inert when no embedder / no vector (behaves as pre-P12); never fails the ingest.
         _emit("node", node="dedup", phase="running")
         dedup_phase, dedup_result = _dedup(store, item_id, embedder)
-        _emit("node", node="dedup", phase=dedup_phase)
+        _emit("node", node="dedup", phase=dedup_phase.status)
         if dedup_result:
             _emit("dedup", **dedup_result)
     except Exception as exc:
@@ -295,10 +302,10 @@ async def ingest_item(
         return "failed"
 
     status = result.status
-    # On a non-clean run, surface WHY so the detail UI shows a reason instead of a
-    # bare "partial"/"failed" badge after a reload (live SSE node phases are gone by
-    # then). Prefer real failures; otherwise explain the skips (the common case is
-    # model-backed nodes — vision/ocr — gracefully skipped with no model configured).
+    # On a failed step, surface WHY so the item's status line, its list badge and an agent
+    # reading it show a reason instead of a bare "partial"/"failed" badge. A step that was only
+    # SKIPPED is told by its own outcome in `node_phases` (its reason and its fix), not here:
+    # a catch-all "skipped: a, b" line named some of the steps and none of the reasons.
     proc_error = None
     if status in ("failed", "partial") and result.failed:
         msgs = []
@@ -321,14 +328,10 @@ async def ingest_item(
             only_scrape_failed = result.failed == ["bookmark_scrape"]
             if only_scrape_failed and scrape_meta.get("error_kind") == "unreachable":
                 status = "unreachable"
-    elif status == "partial" and result.skipped:
-        proc_error = "Skipped (optional steps unavailable): " + ", ".join(result.skipped[:12])
     # The insights stage failing (model error / cold pool) must not leave the item
     # silently under-enriched — downgrade to 'partial' and say why so a re-enrich isn't
-    # needed to discover the gap. This is an actionable failure, so it must surface even
-    # when the graph already went 'partial' from benign optional-node skips: lead with
-    # the insights reason (the benign "Skipped (…)" prefix is what the UI suppresses, so
-    # never let it mask a real failure) and append the skip context if present.
+    # needed to discover the gap. It leads the status line: of everything that went wrong,
+    # it is the one a person acts on first (Regenerate).
     if insights_failure is not None:
         if status == "done":
             status = "partial"
@@ -337,25 +340,19 @@ async def ingest_item(
             proc_error = insights_msg
         elif not proc_error.startswith(insights_msg):
             proc_error = f"{insights_msg}; {proc_error}"
-    # Persist the GROUND-TRUTH per-node phase map so the detail UI shows what actually
-    # ran on reload — not a lossy reconstruction from processing_error (which can't
-    # tell a skipped node from a done one once a real failure also occurred). Covers
-    # the graph nodes (ran/failed/skipped) + the terminal stages (insights/entities/
-    # intents/embed). A node absent from all three sets never became ready → skipped.
-    node_phases: dict[str, str] = {}
-    for nt in result.ran:
-        node_phases[nt] = "done"
-    for nt in result.failed:
-        node_phases[nt] = "failed"
-    for nt in result.skipped:
-        node_phases[nt] = "skipped"
-    for nt in getattr(graph, "nodes", {}):
-        node_phases.setdefault(nt, "skipped")
+    # Persist the GROUND-TRUTH per-step outcome map so the detail UI shows what actually
+    # happened on reload — each step's status, the reason in plain words, and the fix
+    # (`pipeline.outcomes`). Covers the graph nodes (the executor's outcome for each) + the
+    # terminal stages. A graph node the run never reached carries a skip saying so.
+    node_phases: dict[str, dict] = {
+        nt: result.outcomes.get(nt, oc.skipped("It never became ready to run.")).to_dict()
+        for nt in getattr(graph, "nodes", {})
+    }
     # The terminal stages are NOT graph nodes, so nothing above ever supplies them —
-    # each one reports the phase its own run returned. These were previously forced to
+    # each one reports the outcome its own run returned. These were previously forced to
     # "done" unconditionally, which reported a step that never ran as healthy: with no
     # embedding model bound, `embed` claimed "done" while writing zero vectors. A stage
-    # that legitimately had nothing to do says "skipped", not "done".
+    # with nothing to do says "not applicable", one missing a model says "skipped".
     # Keyed by TERMINAL_STAGES so the set of stages that REPORT is the same object as the
     # set that RUNS. `dedup` used to be absent from this map entirely while the live SSE
     # stream claimed `done` for it — so on reload its phase was unknowable, and while the
@@ -363,14 +360,14 @@ async def ingest_item(
     # it reds if TERMINAL_STAGES gains a member this mapping does not cover. Deliberately
     # NOT a runtime raise — `ingest_item` promises never to raise, and a reporting gap must
     # not become a failed ingest.
-    terminal_phases = {
+    terminal_phases: dict[str, PhaseOutcome] = {
         "insights": insights_phase,
         "entities": entities_phase,
         "intents": intents_phase,
         "embed": embed_phase,
         "dedup": dedup_phase,
     }
-    node_phases.update(terminal_phases)
+    node_phases.update({stage: outcome.to_dict() for stage, outcome in terminal_phases.items()})
 
     # The searchability verdict, computed from what actually LANDED (rows in
     # `chunks`, a vector on the item, text in the content) rather than from any stage's
@@ -395,11 +392,10 @@ async def ingest_item(
             proc_error = detail
         elif detail not in proc_error:
             # Lead with the searchability reason: an item search cannot fully reach is the
-            # more actionable fact than a skipped optional node, and the UI suppresses the
-            # benign "Skipped (…)" prefix — so it must never be what a user reads first. The
-            # detail ends in a full stop, so the rest follows as its own sentence rather than
-            # after a `.;` seam. (Only the first letter moves: the degraded-mode drain matches
-            # "model unavailable" further in, case-insensitively.)
+            # more actionable fact than a failed optional step. The detail ends in a full
+            # stop, so the rest follows as its own sentence rather than after a `.;` seam.
+            # (Only the first letter moves: the degraded-mode drain matches "model
+            # unavailable" further in, case-insensitively.)
             proc_error = f"{detail} {proc_error[:1].upper()}{proc_error[1:]}"[:500]
     else:
         # A re-ingest that NOW lands (a provider was bound, a text version uploaded) must
@@ -792,7 +788,7 @@ def _grounded_aliases(ent: dict, content: str, name: str) -> list[str]:
     return [surface for surface in candidates if surface in present]
 
 
-async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
+async def _run_entities_stage(store, item_id: str, content: str, pool) -> PhaseOutcome:
     """Link + extract entities for the item, writing to the entity graph.
 
     Two passes, deliberately in this order:
@@ -812,13 +808,14 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
     a re-ingest doesn't dup — and the pre-pass is re-applied after that clear, so its links
     survive the very stage that wipes them.
 
-    Returns the phase to report. Unlike the intents stage, this one is NOT wholly
+    Returns the outcome to report. Unlike the intents stage, this one is NOT wholly
     model-dependent: pass 1 is the deliberate model-free guarantee, so with no pool the stage
-    still ran and linked — ``done``, not ``skipped``. Only a contentless item skips outright;
-    an errored extraction reports ``failed`` (pass 1's links stand regardless).
+    still ran and linked — ``done``, not ``skipped``. A contentless item has nothing to link
+    (not applicable); an errored extraction reports ``failed`` (pass 1's links stand
+    regardless).
     """
     if not content.strip():
-        return "skipped"
+        return oc.not_applicable(NO_TEXT)
 
     # Pass 1 runs unconditionally — no model required, and no reason to make linking wait on
     # one. Best-effort: a failure here must not stop extraction from running.
@@ -830,18 +827,18 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
         logger.debug("alias pre-pass failed for %s", item_id, exc_info=True)
 
     if pool is None:
-        return "done"  # pass 1 (the model-free half) ran — the stage did its work
+        return oc.done()  # pass 1 (the model-free half) ran — the stage did its work
     try:
         from personalclaw.knowledge.extractor import EntityExtractor
 
         extraction = await EntityExtractor(pool=pool).extract(content)
     except Exception:
         logger.debug("entity extraction failed for %s", item_id, exc_info=True)
-        return "failed"
+        return oc.failed("The model could not be asked for the names in it.")
     entities = extraction.get("entities") or []
     relations = extraction.get("relations") or []
     if not entities:
-        return "done"  # extraction ran and found nothing new to add
+        return oc.done()  # extraction ran and found nothing new to add
     try:
         # SNAPSHOT the pre-pass links before clearing, then restore them after.
         #
@@ -936,10 +933,10 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
         store.db.commit()
         # Rebuild the in-memory graph so cleared edges drop and the new ones show.
         store._load_graph()
-        return "done"
+        return oc.done()
     except Exception:
         logger.debug("entity graph write failed for %s", item_id, exc_info=True)
-        return "failed"
+        return oc.failed("The names it found could not be saved.")
 
 
 def _run_conflict_pass(store, item_id: str) -> None:
@@ -968,6 +965,16 @@ def _run_conflict_pass(store, item_id: str) -> None:
 #: (``resilience/degraded.py``) re-runs the items carrying "model unavailable" once a model
 #: comes back, so these words are also that queue's marker.
 INSIGHTS_UNAVAILABLE = "insights: model unavailable (insights not refreshed — try regenerating)"
+
+
+def _insights_outcome(content: str, failure: str | None) -> PhaseOutcome:
+    """The insights stage's outcome from what :func:`_run_insights` returned: its failure
+    sentence (the status line's words, less the stage's own name), nothing to read, or done."""
+    if failure is not None:
+        return oc.failed(failure.removeprefix("insights: "))
+    if not content.strip():
+        return oc.not_applicable(NO_TEXT)
+    return oc.done()
 
 
 async def _run_insights(store, item_id: str, content: str, pool) -> str | None:
@@ -1085,39 +1092,41 @@ def _intents_path(store):
     return Path(db_path).parent / "intents.json" if db_path else Path("intents.json")
 
 
-async def _run_intents_stage(store, item_id: str, item_type: str, content: str, pool) -> str:
+async def _run_intents_stage(
+    store, item_id: str, item_type: str, content: str, pool
+) -> PhaseOutcome:
     """Run Tier-3 user intents over the consolidated content. Each relevant match is
     persisted as an outcome BY VALUE in the intent_outcomes table, with only a soft
     back-reference to this item — so the gathered insight survives item deletion.
 
-    Returns the phase to report: ``skipped`` when the stage had nothing to run (no
-    content, no user intents defined, or no model to match with — matching is the whole
-    stage, so without a pool nothing happened), ``failed`` when the run errored,
-    ``done`` when intents were actually matched against the content."""
+    Returns the outcome to report: ``not_applicable`` when the stage had nothing to do (no
+    content, no user intents defined), ``skipped`` when there was no model to match with —
+    matching is the whole stage, so without a pool nothing happened — ``failed`` when the run
+    errored, ``done`` when intents were actually matched against the content."""
     if not content.strip():
-        return "skipped"
+        return oc.not_applicable(NO_TEXT)
     try:
         from personalclaw.knowledge.intents import IntentStore, run_intents
 
         intents = IntentStore(_intents_path(store)).load()
         if not intents:
-            return "skipped"
+            return oc.not_applicable("You have no intents for it to look for.")
         # `run_intents` returns [] both for "no model bound" and "no intent matched".
         # Only the former is a step that did not run, so check the pool here rather than
         # inferring it from an empty match list.
         if not pool:
-            return "skipped"
+            return oc.skipped("No model was available to match your intents.")
         matches = await run_intents(intents, item_type, content, pool=pool)
     except Exception:
         logger.debug("intent stage failed for %s", item_id, exc_info=True)
-        return "failed"
+        return oc.failed("Matching your intents against it did not finish.")
     # Clear this item's prior outcomes before recording the current matches, so a
     # re-ingest of edited content can't leave a stale outcome from the old content
     # (e.g. an item that no longer matches an intent it once did). Outcomes orphaned
     # by a deleted item (item_id NULL) are preserved — only THIS item's are cleared.
     store.clear_item_intent_outcomes(item_id)
     if not matches:
-        return "done"  # the intents ran; nothing this item matched
+        return oc.done()  # the intents ran; nothing this item matched
     item = store.get_item(item_id)
     item_title = (item or {}).get("title") or (item or {}).get("ai_title") or ""
     by_id = {i.id: i for i in intents}
@@ -1133,11 +1142,20 @@ async def _run_intents_stage(store, item_id: str, item_type: str, content: str, 
             )
         except Exception:
             logger.debug("recording outcome for intent %s failed", m.intent_id, exc_info=True)
-    return "done"
+    return oc.done()
 
 
-def _embed(store, item_id: str, embedder) -> str:
-    """Embed the item and return the phase to report: ``done`` only when a vector was
+def _no_embedding_model() -> PhaseOutcome:
+    """The skip for a step that needs an embedding model when none is there to use, in the
+    probe's words (none chosen, or the chosen one can't run) and with its fix."""
+    from personalclaw.knowledge.pipeline.registry import unserved_reason_sync
+
+    reason = unserved_reason_sync("embedding") or "The Embedding model gave no vector."
+    return oc.no_model("embedding", reason)
+
+
+def _embed(store, item_id: str, embedder) -> PhaseOutcome:
+    """Embed the item and return the outcome to report: ``done`` only when a vector was
     actually written, ``skipped`` when there was no embedder / no vector to write (the
     common case — no embedding model bound), ``failed`` when the attempt errored.
 
@@ -1150,13 +1168,13 @@ def _embed(store, item_id: str, embedder) -> str:
     Chunks are ADDITIVE — the item row keeps its own vector; the chunk index is what
     gives retrieval reach into content deep in a long document."""
     if not embedder:
-        return "skipped"
+        return _no_embedding_model()
     try:
         from personalclaw.knowledge.embedder import floats_to_bytes
 
         item = store.get_item(item_id)
         if not item:
-            return "skipped"
+            return oc.not_applicable("The item was removed while it was being read.")
         # The whole-item vector is a compact title+summary identity/topic signal; the
         # body's semantic recall lives in the chunk index built below (KL-9 clean break —
         # the old body top-up is gone; see compose_item_text).
@@ -1168,7 +1186,7 @@ def _embed(store, item_id: str, embedder) -> str:
         if not vec:
             # An unavailable/unbound embedding model returns None rather than raising —
             # a graceful degradation, not a fault. No vector was written either way.
-            return "skipped"
+            return _no_embedding_model()
         # With the model that wrote it (the fingerprint, as a chunk carries it), so the
         # re-index re-embeds only the items the model bound now has not.
         from personalclaw.knowledge.embedding_fingerprint import active_fingerprint
@@ -1181,10 +1199,10 @@ def _embed(store, item_id: str, embedder) -> str:
         )
         store.db.commit()
         embed_item_chunks(store, item_id, item.get("content") or "", embedder)
-        return "done"
+        return oc.done()
     except Exception:
         logger.debug("knowledge embed failed for %s", item_id, exc_info=True)
-        return "failed"
+        return oc.failed("Writing its vector did not finish.")
 
 
 def active_batch_embed_fn(embedder):
@@ -1302,7 +1320,7 @@ def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
         logger.debug("knowledge chunk-embed failed for %s", item_id, exc_info=True)
 
 
-def _dedup(store, item_id: str, embedder) -> tuple[str, dict | None]:
+def _dedup(store, item_id: str, embedder) -> tuple[PhaseOutcome, dict | None]:
     """P12 TIER-2 semantic dedup — runs AFTER `_embed` (the vector must exist; it doesn't at
     create time in the create-fast/enrich-async model). Fetches same-type candidates carrying
     an embedding and asks the pure `dedup.resolve_duplicate` (filename + cosine + date-gate) if
@@ -1331,13 +1349,13 @@ def _dedup(store, item_id: str, embedder) -> tuple[str, dict | None]:
 
     TIER-1 exact dedup (URL/byte-hash, create-time in store.py) is unaffected."""
     if not embedder or not getattr(embedder, "is_available", lambda: True)():
-        return "skipped", None
+        return _no_embedding_model(), None
     try:
         from personalclaw.knowledge import dedup as dedup_mod
 
         item = store.get_item(item_id)
         if not item:
-            return "skipped", None
+            return oc.not_applicable("The item was removed while it was being read."), None
         # get_item strips the raw vector (→ has_embedding); read it back for the resolver.
         from personalclaw.knowledge.embedder import bytes_to_floats
 
@@ -1350,7 +1368,7 @@ def _dedup(store, item_id: str, embedder) -> tuple[str, dict | None]:
         vec = bytes_to_floats(raw or b"")
         if not vec:
             # No vector → there is nothing to compare against. The stage did not run.
-            return "skipped", None
+            return oc.skipped("It compares vectors, and Embed wrote none for this item."), None
         # content_len is the format-recall richness signal: measured LIVE from the item's
         # current content, NOT the word_count column (which can lag the dedup stage in the
         # ingest ordering, and is 0 for a type whose body is pooled) — so the winner pick is
@@ -1386,14 +1404,14 @@ def _dedup(store, item_id: str, embedder) -> tuple[str, dict | None]:
                 verdict.filename_sim,
                 loser_id,
             )
-            return "done", {
+            return oc.done(), {
                 "winner_id": winner_id,
                 "loser_id": loser_id,
                 "cosine": round(verdict.cosine, 3),
                 "filename_sim": round(verdict.filename_sim, 3),
             }
         # The candidate set was walked and nothing duplicated this item — a completed pass.
-        return "done", None
+        return oc.done(), None
     except Exception:
         logger.debug("knowledge dedup failed for %s (non-fatal)", item_id, exc_info=True)
-        return "failed", None
+        return oc.failed("Comparing it with similar items did not finish."), None

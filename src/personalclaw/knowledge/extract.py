@@ -110,14 +110,25 @@ async def extract_file(file_path: str, mime: str | None = None, *, name: str = "
     # at least knows WHAT was attached (format, size, dimensions, duration) rather than a
     # content-less blank — mirrors the graceful-degradation in runner._structural_descriptor.
     # An image skipped for want of an image model was never looked at, so the descriptor says
-    # that instead of claiming it holds no text.
-    from personalclaw.providers.image_input import NO_IMAGE_MODEL
+    # that instead of claiming it holds no text — when it is true that none is set up (a chosen
+    # model that cannot run right now is a different sentence).
+    from personalclaw.knowledge.pipeline.outcomes import SKIPPED
+    from personalclaw.providers.image_input import IMAGE_USE_CASE, NO_IMAGE_MODEL
 
-    unread = UNREAD_NO_IMAGE_MODEL if NO_IMAGE_MODEL in result.unserved.values() else ""
+    needed_reader = any(
+        o.status == SKIPPED and IMAGE_USE_CASE in o.needs for o in result.outcomes.values()
+    )
+    unread = UNREAD_NO_IMAGE_MODEL if needed_reader and NO_IMAGE_MODEL in _reasons(result) else ""
     descriptor = _structural_descriptor(
         file_path, item_type, result, unread, name or os.path.basename(file_path)
     )
     return Extracted(descriptor, False, unread)
+
+
+def _reasons(result) -> set[str]:
+    """Every sentence the run's outcomes give as a cause: a step that waited on another, or
+    that two backends could have run, carries each root reason as its own sentence."""
+    return {c for o in result.outcomes.values() for c in (o.causes or (o.reason,))}
 
 
 def _structural_descriptor(file_path: str, item_type: str, result, unread: str, name: str) -> str:

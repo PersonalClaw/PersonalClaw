@@ -719,7 +719,7 @@ def test_the_reindex_re_embeds_only_the_knowledge_the_model_has_not(recorded, tm
     _bind(A)
     ks = state.knowledge_store
     embedded = ks.create_typed_item(item_type="note", title="Osprey nesting", content="The osprey")
-    assert _embed(ks, embedded, create_embedder_from_config({})) == "done"  # the ingest path
+    assert _embed(ks, embedded, create_embedder_from_config({})).status == "done"  # ingest
     ks.create_typed_item(item_type="note", title="Kestrel hover", content="A kestrel")  # none
     recorded.clear()
 
@@ -739,7 +739,7 @@ def _knowledge_with_passages(state, tmp_path, texts: tuple[str, ...]) -> tuple[A
 
     state.knowledge_store = ks = KnowledgeStore(str(tmp_path / "knowledge.db"))
     item = ks.create_typed_item(item_type="note", title="Osprey nesting", content=" ".join(texts))
-    assert _embed(ks, item, create_embedder_from_config({})) == "done"
+    assert _embed(ks, item, create_embedder_from_config({})).status == "done"
     model = active_fingerprint()
     assert model is not None
     chunks = [

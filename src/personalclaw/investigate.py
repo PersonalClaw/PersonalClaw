@@ -697,6 +697,10 @@ def _resolve_knowledge_item(entity_id: str, state) -> InvestigateContext | None:
     lines.append(f"Indexed for search: {'yes' if item.get('has_embedding') else 'no'}")
     if item.get("processing_error"):
         lines.append(f"Processing error: {item['processing_error']}")
+    from personalclaw.knowledge.pipeline.outcomes import told
+
+    for step in told((item.get("file_metadata") or {}).get("node_phases")):
+        lines.append(f"Step {step}")
     if item.get("summary"):
         lines.append(f"\nSummary: {item['summary']}")
     insights = item.get("insights")

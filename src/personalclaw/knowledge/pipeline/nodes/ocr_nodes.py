@@ -193,6 +193,13 @@ class OcrEngineNode:
 
         return ocr_available()
 
+    def unavailable_outcome(self):
+        """What this backend says when :meth:`available` is False: no engine is installed, and
+        an OCR app from the Store adds one."""
+        from personalclaw.knowledge.pipeline.outcomes import no_ocr_engine
+
+        return no_ocr_engine()
+
     async def run(self, inputs: dict[str, NodeOutput], ctx: NodeContext) -> NodeOutput:
         from personalclaw.knowledge.pipeline.nodes.media_nodes import _images_from
         from personalclaw.ocr.filetype import partition_images

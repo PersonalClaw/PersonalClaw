@@ -683,7 +683,8 @@ async def test_a_raw_sources_item_reaches_fts_and_vector_search_with_zero_llm_ca
     assert row["embedding"], "a raw item must still be vector-searchable"
     phases = (store.get_item(item_id).get("file_metadata") or {}).get("node_phases") or {}
     for stage in ("insights", "entities", "intents"):
-        assert phases.get(stage) == "skipped", phases
+        assert phases[stage]["status"] == "not_applicable", phases
+        assert "no AI" in phases[stage]["reason"], phases
 
 
 @pytest.mark.asyncio
@@ -701,8 +702,10 @@ async def test_a_full_sources_item_still_runs_the_model_stages(store, monkeypatc
         return None  # insights landed
 
     async def _record_stage(name):
+        from personalclaw.knowledge.pipeline.outcomes import done
+
         ran.append(name)
-        return "done"
+        return done()
 
     monkeypatch.setattr(runner_mod, "_run_insights", _record_insights)
     monkeypatch.setattr(

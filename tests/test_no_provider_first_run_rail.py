@@ -291,8 +291,10 @@ async def test_knowledge_ingest_no_provider_is_not_silent_done(tmp_path, reinges
     # The invariant: the item is NOT reported as a clean, fully-enriched success.
     assert status != "done", f"silent-fail-open: no-provider ingest reported done ({item!r})"
     assert item["processing_status"] != "done", f"item persisted as done: {item!r}"
+    # Read the STATUS: each step is an outcome record, and a record is never equal to the bare
+    # word, so comparing the record would pass whatever the stage claimed.
     assert (
-        node_phases.get("insights") != "done"
+        node_phases["insights"]["status"] != "done"
     ), f"the model-backed insights stage falsely claimed done: {node_phases}"
     # And it says WHY, legibly — a degraded state a user can act on, not a blank.
     assert item.get("processing_error"), f"partial item carries no reason: {item!r}"

@@ -36,6 +36,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
+from personalclaw.providers.use_cases import USE_CASE_NAMES
+
 logger = logging.getLogger(__name__)
 
 # A backlog probe is a read-only, exception-safe callable returning the count of
@@ -112,17 +114,6 @@ _last_available: dict[str, bool] = {}
 #: been up. Setting up is not a recovery. Pairing each recovery with the degradation notice
 #: before it is what makes "recovered" mean "it was down, you were told, and it is back".
 _announced_down: dict[str, bool] = {}
-
-#: What the Models page calls each use case a contract here needs (`ModelsPanel`'s
-#: `USE_CASE_META`), so "no Speech-to-text model" and the row the user binds one in agree.
-#: `test_resilience_degraded` fails a built-in contract whose use case has no name here.
-USE_CASE_NAMES: dict[str, str] = {
-    "chat": "Chat",
-    "background": "Background",
-    "reasoning": "Reasoning",
-    "embedding": "Embedding",
-    "stt": "Speech-to-text",
-}
 
 
 def use_case_names(contract: DegradedContract) -> list[str]:

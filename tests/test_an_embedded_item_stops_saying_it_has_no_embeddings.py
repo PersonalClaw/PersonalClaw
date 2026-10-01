@@ -81,7 +81,7 @@ def test_the_reindex_that_embeds_an_item_clears_its_no_embeddings_verdict(store)
     assert item["processing_status"] == "done"
     assert not item["processing_error"]
     assert "unsearchable_reason" not in item["file_metadata"]
-    assert item["file_metadata"]["node_phases"]["embed"] == "done"
+    assert item["file_metadata"]["node_phases"]["embed"] == {"status": "done"}
 
 
 def test_what_else_the_item_had_to_say_stays_and_it_reads_partial(store):

@@ -74,8 +74,8 @@ export function failedEnrichment(
 ): { stages: string[]; reason: string } | null {
   if (it.processing_status === 'queued' || it.processing_status === 'processing') return null
   const raw = it.file_metadata?.node_phases
-  const phases = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-  const stages = MODEL_STAGES.filter(([key]) => phases[key] === 'failed').map(([, label]) => label)
+  const phases = raw && typeof raw === 'object' ? (raw as Record<string, { status?: unknown } | null>) : {}
+  const stages = MODEL_STAGES.filter(([key]) => phases[key]?.status === 'failed').map(([, label]) => label)
   if (!stages.length) return null
   // Sentence case: only the first stage keeps its capital ("Insights and entity extraction").
   const words = stages.map((s, i) => (i === 0 ? s : s.toLowerCase()))

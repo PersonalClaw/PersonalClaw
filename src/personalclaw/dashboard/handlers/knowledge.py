@@ -385,13 +385,13 @@ async def generate_intelligence(request: web.Request) -> web.Response:
     return web.json_response(store.get_item(item_id))
 
 
-#: The entity stage's recorded phase, as SQL over ``items.file_metadata`` — the runner
-#: persists its per-stage phase map there (``node_phases``), and the item page draws the same
-#: map. Guarded by ``json_valid`` because ``json_extract`` RAISES on a malformed document, and
-#: one corrupt row must not fail a whole-library read.
+#: The entity stage's recorded status, as SQL over ``items.file_metadata`` — the runner
+#: persists its per-step outcome map there (``node_phases``, each step ``{status, reason, …}``),
+#: and the item page draws the same map. Guarded by ``json_valid`` because ``json_extract``
+#: RAISES on a malformed document, and one corrupt row must not fail a whole-library read.
 _ENTITIES_PHASE_SQL = (
     "(CASE WHEN json_valid(file_metadata) "
-    "THEN json_extract(file_metadata, '$.node_phases.entities') END)"
+    "THEN json_extract(file_metadata, '$.node_phases.entities.status') END)"
 )
 
 
@@ -1697,15 +1697,18 @@ def _entity_extraction_tally(store) -> dict[str, int]:
     — which then failed the same way, silently. The phase is read off the runner's persisted
     map, the same ground truth the item page draws; an item that is queued or processing is
     ``running`` whatever its previous run recorded, because that record is about to change.
-    ``skipped`` is its own bucket because it is BY DESIGN (a source set to no AI, an item
-    with no text) — offering to "run extraction on them" would promise what cannot happen.
+    ``skipped`` is its own bucket because it is BY DESIGN — the stage does not apply (a source
+    set to no AI, an item with no text: status ``not_applicable``, or ``skipped`` as an item
+    processed before steps recorded outcomes says it) — offering to "run extraction on them"
+    would promise what cannot happen.
     """
     where, params = _listable_where()
     in_flight = "COALESCE(i.processing_status, '') IN ('queued', 'processing')"
 
-    def _phase_is(value: str) -> str:
+    def _phase_is(*values: str) -> str:
+        listed = ", ".join(f"'{v}'" for v in values)
         return (
-            f"COALESCE(SUM(CASE WHEN {in_flight} THEN 0 WHEN {_ENTITIES_PHASE_SQL} = '{value}' "
+            f"COALESCE(SUM(CASE WHEN {in_flight} THEN 0 WHEN {_ENTITIES_PHASE_SQL} IN ({listed}) "
             "THEN 1 ELSE 0 END), 0)"
         )
 
@@ -1713,7 +1716,7 @@ def _entity_extraction_tally(store) -> dict[str, int]:
         "SELECT "
         f"COALESCE(SUM(CASE WHEN {in_flight} THEN 1 ELSE 0 END), 0) AS running, "
         f"{_phase_is('failed')} AS failed, {_phase_is('done')} AS ran, "
-        f"{_phase_is('skipped')} AS skipped, "
+        f"{_phase_is('skipped', 'not_applicable')} AS skipped, "
         f"COUNT(*) AS total FROM items i WHERE {where}",  # noqa: S608 — fixed literals only
         params,
     ).fetchone()
@@ -2408,6 +2411,7 @@ async def get_item_graph(request: web.Request) -> web.Response:
     try:
         from personalclaw.knowledge.pipeline import ensure_nodes_registered
         from personalclaw.knowledge.pipeline.graphs import graph_for
+        from personalclaw.knowledge.pipeline.outcomes import step_name
         from personalclaw.knowledge.pipeline.runner import (
             MODEL_BACKED_TERMINAL_STAGES,
             TERMINAL_STAGES,
@@ -2422,6 +2426,7 @@ async def get_item_graph(request: web.Request) -> web.Response:
     nodes = [
         {
             "node_type": ns.node_type,
+            "label": step_name(ns.node_type),
             "backend": ns.backend,
             "model_backed": ns.uses_use_case is not None,
         }
@@ -2454,6 +2459,7 @@ async def get_item_graph(request: web.Request) -> web.Response:
         nodes.append(
             {
                 "node_type": stage,
+                "label": step_name(stage),
                 "backend": "",
                 "model_backed": stage in MODEL_BACKED_TERMINAL_STAGES,
                 "terminal": True,
@@ -2462,10 +2468,11 @@ async def get_item_graph(request: web.Request) -> web.Response:
         for p in prev_leaves:
             edges.append({"from": p, "to": stage})
         prev_leaves = [stage]
-    # Ground-truth per-node phases persisted at ingest end (done/failed/skipped) — the
-    # UI uses these on reload instead of reconstructing from processing_error, so a
-    # skipped node reads as skipped (not falsely 'done'). Absent until first ingest.
-    node_phases = (item.get("file_metadata") or {}).get("node_phases") or {}
+    # Ground-truth per-step outcomes persisted at ingest end — status, reason and fix — which
+    # the UI draws on reload. Absent until first ingest. Each SKIPPED step that names what it
+    # needs also says whether that is there NOW (`ready`), read live from the same probes the
+    # executor asks, so the page can offer to run the item again once the owner has added it.
+    node_phases = await _with_readiness((item.get("file_metadata") or {}).get("node_phases") or {})
     return web.json_response(
         {
             "item_type": item_type,
@@ -2475,6 +2482,28 @@ async def get_item_graph(request: web.Request) -> web.Response:
             "node_phases": node_phases,
         }
     )
+
+
+async def _with_readiness(node_phases: dict) -> dict:
+    """*node_phases* with ``ready`` on every skipped step that names its needs: True when any
+    one of them is there now. Each distinct need is asked once."""
+    from personalclaw.knowledge.pipeline.outcomes import SKIPPED, capability_ready
+
+    def _needs(outcome) -> list[str]:
+        if not isinstance(outcome, dict) or outcome.get("status") != SKIPPED:
+            return []
+        return [n for n in outcome.get("needs") or [] if isinstance(n, str)]
+
+    asked = {n for outcome in node_phases.values() for n in _needs(outcome)}
+    there = {n: await capability_ready(n) for n in sorted(asked)}
+    return {
+        step: (
+            {**outcome, "ready": any(there[n] for n in _needs(outcome))}
+            if _needs(outcome)
+            else outcome
+        )
+        for step, outcome in node_phases.items()
+    }
 
 
 async def stream_item_ingest(request: web.Request) -> web.StreamResponse:

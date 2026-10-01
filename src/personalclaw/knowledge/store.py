@@ -1056,6 +1056,7 @@ class KnowledgeStore:
         # CREATE rather than racing it.
         self._migrate_sources()
         self._migrate_chunk_fingerprint()
+        self._migrate_phase_outcomes()
         # Prune orphan entities (no mentions/relations) + stale relations.
         self.db.execute("BEGIN")
         try:
@@ -1085,6 +1086,58 @@ class KnowledgeStore:
         for col, decl in FINGERPRINT_COLUMNS:
             if col not in cols:
                 self.db.execute(f"ALTER TABLE chunks ADD COLUMN {col} {decl}")
+
+    #: The catch-all line an ingest wrote on an item whose steps were only skipped, before each
+    #: step recorded its own outcome. Matched to its end: it was always the last clause.
+    _LEGACY_SKIP_LINE = re.compile(r"(?:;\s*|\s+)?Skipped \(optional steps unavailable\):.*$", re.S)
+
+    def _migrate_phase_outcomes(self) -> None:
+        """Rewrite every item's step map from bare status words to outcomes, once.
+
+        An item processed before each step recorded its outcome (status, reason, fix) holds
+        ``node_phases`` as ``{"ocr": "skipped"}`` and, when steps were skipped, a catch-all
+        ``"Skipped (optional steps unavailable): …"`` clause on its status line. Every reader now
+        reads ``node_phases[<step>]["status"]``, so each word becomes an outcome
+        (``pipeline.outcomes.legacy``), and the catch-all clause is removed: the steps carry it
+        now. Idempotent — the query finds nothing once every map holds outcomes and no line
+        carries the clause — and one transaction, so a crash leaves either state, never half.
+        """
+        from personalclaw.knowledge.pipeline.outcomes import legacy
+
+        rows = self.db.execute(
+            "SELECT id, file_metadata, processing_error FROM items WHERE "
+            "(json_valid(file_metadata) AND EXISTS (SELECT 1 FROM "
+            "json_each(file_metadata, '$.node_phases') WHERE type = 'text')) "
+            "OR processing_error LIKE '%Skipped (optional steps unavailable):%'"
+        ).fetchall()
+        if not rows:
+            return
+        self.db.execute("BEGIN")
+        try:
+            for row in rows:
+                try:
+                    meta = json.loads(row["file_metadata"] or "{}")
+                except (TypeError, ValueError):
+                    meta = None
+                phases = meta.get("node_phases") if isinstance(meta, dict) else None
+                if isinstance(phases, dict):
+                    meta["node_phases"] = {
+                        step: legacy(value) if isinstance(value, str) else value
+                        for step, value in phases.items()
+                    }
+                error = self._LEGACY_SKIP_LINE.sub("", row["processing_error"] or "").strip()
+                self.db.execute(
+                    "UPDATE items SET file_metadata = ?, processing_error = ? WHERE id = ?",
+                    (
+                        json.dumps(meta) if isinstance(meta, dict) else row["file_metadata"],
+                        error or None,
+                        row["id"],
+                    ),
+                )
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
 
     def _migrate_tags_to_rows(self):
         """Move tags from the legacy `items.tags` JSON column into `tags`/`item_tags`,
@@ -2866,7 +2919,9 @@ class KnowledgeStore:
             meta.pop("unsearchable_reason", None)
             phases = meta.get("node_phases")
             if isinstance(phases, dict) and "embed" in phases:
-                phases["embed"] = "done"
+                from personalclaw.knowledge.pipeline.outcomes import done
+
+                phases["embed"] = done().to_dict()
             self.update_item(
                 item_id,
                 processing_status=status,

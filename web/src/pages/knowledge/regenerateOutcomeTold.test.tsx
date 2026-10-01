@@ -100,7 +100,10 @@ describe('regenerate says what happened', () => {
 })
 
 describe('the list shows an enrichment that failed', () => {
-  const failedPhases = { passthrough: 'done', insights: 'failed', entities: 'failed', intents: 'skipped', embed: 'skipped' }
+  const failedPhases = {
+    passthrough: { status: 'done' }, insights: { status: 'failed' }, entities: { status: 'failed' },
+    intents: { status: 'not_applicable' }, embed: { status: 'skipped' },
+  }
   const row = (over: Partial<KnowledgeItem>): KnowledgeItem => ({
     id: 'k1', title: 'Q4 pricing decision', content: 'We settled the Q4 tiers.', type: 'note', item_type: 'note',
     tags: [], processing_status: 'unsearchable', file_metadata: { node_phases: failedPhases },
@@ -119,9 +122,9 @@ describe('the list shows an enrichment that failed', () => {
   it('failedEnrichment reads the persisted phases, and stays quiet while a run is in flight', () => {
     expect(failedEnrichment(row({}))?.reason).toBe('Insights and entity extraction failed — the model was unavailable')
     expect(failedEnrichment(row({ processing_status: 'queued' }))).toBeNull()
-    expect(failedEnrichment(row({ file_metadata: { node_phases: { insights: 'done', entities: 'done' } } }))).toBeNull()
+    expect(failedEnrichment(row({ file_metadata: { node_phases: { insights: { status: 'done' }, entities: { status: 'done' } } } }))).toBeNull()
     expect(failedEnrichment(row({ file_metadata: {} }))).toBeNull()
-    expect(failedEnrichment(row({ file_metadata: { node_phases: { insights: 'failed', entities: 'failed', intents: 'failed' } } }))?.reason)
+    expect(failedEnrichment(row({ file_metadata: { node_phases: { insights: { status: 'failed' }, entities: { status: 'failed' }, intents: { status: 'failed' } } } }))?.reason)
       .toBe('Insights, entity extraction and intent matching failed — the model was unavailable')
   })
 })

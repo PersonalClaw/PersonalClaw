@@ -97,7 +97,10 @@ class ProcessingNode(Protocol):
     rather than on a bound model: an engine contributed by a removable ``ocr`` app, say.
     It must be a LIVE probe of the dependency (is the engine resolvable now), never a
     truthiness test on an imported symbol, and the executor uses it to pick a runnable
-    backend among a node type's alternatives before falling back to a graceful skip.
+    backend among a node type's alternatives before falling back to a graceful skip. Such a
+    node MAY also define ``unavailable_outcome() -> PhaseOutcome``: what the item says when the
+    dependency is missing, with the fix that adds it (the engine-backed OCR names the Store's
+    OCR apps). Without one, the skip names the step and offers no fix.
     """
 
     node_type: str

@@ -143,7 +143,9 @@ def _stub_the_video_arm(monkeypatch, tmp_path: Path) -> None:
 
 
 def _phases(item: dict) -> dict:
-    return (item.get("file_metadata") or {}).get("node_phases") or {}
+    """Each step's recorded status, from the item's per-step outcome map."""
+    phases = (item.get("file_metadata") or {}).get("node_phases") or {}
+    return {step: outcome.get("status") for step, outcome in phases.items()}
 
 
 def test_a_video_whose_narration_came_back_with_nothing_says_transcription_failed(

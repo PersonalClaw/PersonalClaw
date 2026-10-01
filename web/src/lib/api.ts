@@ -3991,14 +3991,26 @@ export interface KnowledgeStaleness {
   scope: string
 }
 
+/** One thing the owner can do so a skipped step runs: the words, and the in-app route. */
+export interface PhaseFix { text: string; href?: string }
+/** What became of one ingestion step (`knowledge/pipeline/outcomes.py`). `skipped` = it could
+ *  not run for want of something the owner can add (`fix`, `needs`); `not_applicable` = it does
+ *  not apply to this item; `failed` = it ran and went wrong (`reason` is the error). `ready` is
+ *  added by the item-graph read: a skipped step's need is there now. */
+export interface PhaseOutcome {
+  status: 'done' | 'failed' | 'skipped' | 'not_applicable'
+  reason?: string
+  fix?: PhaseFix[]
+  needs?: string[]
+  ready?: boolean
+}
 export interface KnowledgeIngestGraph {
   item_type: string
-  nodes: { node_type: string; backend?: string; model_backed?: boolean; terminal?: boolean }[]
+  nodes: { node_type: string; label?: string; backend?: string; model_backed?: boolean; terminal?: boolean }[]
   edges: { from: string; to: string; when?: string; loop?: boolean; max_iters?: number }[]
   processing_status?: string
-  // Ground-truth per-node phase persisted at ingest end (done/failed/skipped) — the
-  // detail UI prefers this over reconstructing phases from processing_error.
-  node_phases?: Record<string, string>
+  // Ground-truth per-step outcome persisted at ingest end — what the detail UI draws.
+  node_phases?: Record<string, PhaseOutcome>
 }
 /** One node's output in an item's extracted-content pool (#30 drill-down). */
 export interface ExtractedContent {

@@ -19,12 +19,15 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from personalclaw.knowledge.pipeline import outcomes as oc
 from personalclaw.knowledge.pipeline.graph import PipelineGraph
+from personalclaw.knowledge.pipeline.outcomes import PhaseOutcome
 from personalclaw.knowledge.pipeline.registry import (
     get_node,
     node_available,
     resolve_runnable,
     unserved_reason,
+    why_not_runnable,
 )
 from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput, PoolRow
 
@@ -47,11 +50,12 @@ class ExecutionResult:
     #: calling that "partially ingested" would tell the user something was missing from a
     #: document that was read completely.
     not_taken: list[str] = field(default_factory=list)
-    #: The model-backed nodes among ``skipped`` that no model serves, each with the sentence
-    #: saying why (``providers.image_input.NO_IMAGE_MODEL`` for an image nothing can read). A
-    #: consumer telling a user what became of the item reads this: "nothing read the image" and
-    #: "no image model is set up" call for different words.
-    unserved: dict[str, str] = field(default_factory=dict)
+    #: What became of every node the run reached — status, reason and fix
+    #: (:mod:`~personalclaw.knowledge.pipeline.outcomes`). The lists above decide the item's
+    #: status; this is what a consumer tells a user. A node in ``not_taken`` is
+    #: ``not_applicable`` when its branch was not chosen, and ``skipped`` (with the fix of the
+    #: step it waited on) when the step it needed did not run.
+    outcomes: dict[str, PhaseOutcome] = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -128,7 +132,7 @@ class PipelineExecutor:
         """Drop a node set's recorded outputs/phases so a re-run can re-resolve them."""
         for nt in nodes:
             result.outputs.pop(nt, None)
-            result.unserved.pop(nt, None)
+            result.outcomes.pop(nt, None)
             for lst in (result.ran, result.failed, result.skipped, result.not_taken):
                 while nt in lst:
                     lst.remove(nt)
@@ -160,6 +164,7 @@ class PipelineExecutor:
                 logger.warning("knowledge pipeline stalled; remaining=%s", remaining)
                 for n in remaining:
                     result.skipped.append(n)
+                    result.outcomes[n] = oc.skipped("It never became ready to run.")
                 break
             coros = [self._run_one(n, ctx, result) for n in wave]
             await asyncio.gather(*coros)
@@ -221,19 +226,49 @@ class PipelineExecutor:
                 return True
         return False
 
+    def _untaken_outcome(self, node_type: str, result: ExecutionResult) -> PhaseOutcome:
+        """Why a node none of whose incoming edges is satisfied did not run.
+
+        When a step before it RAN and chose another branch (a classification its edge does not
+        match), this one does not apply to the item. Otherwise every step it needs was skipped,
+        failed or not needed, and it says which and why, carrying that step's fix.
+        """
+        upstream: dict[str, PhaseOutcome] = {}
+        for e in self._graph.predecessors(node_type):
+            src = result.outputs.get(e.from_node)
+            if src is not None and src.success:
+                return oc.branch_not_taken(oc.step_name(e.from_node))
+            upstream.setdefault(
+                e.from_node,
+                result.outcomes.get(e.from_node) or oc.skipped("It did not run."),
+            )
+        return oc.waited_on([(oc.step_name(nt), o) for nt, o in upstream.items()])
+
+    def _skip(self, node_type: str, result: ExecutionResult, outcome: PhaseOutcome) -> None:
+        result.skipped.append(node_type)
+        result.outcomes[node_type] = outcome
+        self._notify(node_type, outcome.status)
+
+    def _fail(self, node_type: str, result: ExecutionResult, out: NodeOutput) -> None:
+        result.outputs[node_type] = out
+        result.failed.append(node_type)
+        result.outcomes[node_type] = oc.failed(out.error or "It did not finish.")
+        self._notify(node_type, "failed")
+
     async def _run_one(self, node_type: str, ctx: NodeContext, result: ExecutionResult) -> None:
         spec = self._graph.nodes[node_type]
         params = self._params_for(node_type) or {}
         if not params.get("enabled", spec.enabled):
-            result.skipped.append(node_type)
-            self._notify(node_type, "skipped")
+            self._skip(node_type, result, oc.skipped("This step is turned off."))
             return
         if not self._edges_satisfied(node_type, result):
-            # The branch was not taken, which is not a degradation — see
-            # ``ExecutionResult.not_taken``. Still reported as "skipped" to the UI: the
-            # live node timeline shows what did and did not run, and it has no third badge.
+            # Not a degradation of THIS step, so it is kept out of ``skipped`` — see
+            # ``ExecutionResult.not_taken``. Its outcome still says why: a branch not chosen is
+            # not applicable, a step that waited on a skipped one carries that one's fix.
+            outcome = self._untaken_outcome(node_type, result)
             result.not_taken.append(node_type)
-            self._notify(node_type, "skipped")
+            result.outcomes[node_type] = outcome
+            self._notify(node_type, outcome.status)
             return
 
         pinned = bool(params.get("backend"))
@@ -242,8 +277,7 @@ class PipelineExecutor:
         node = get_node(node_type, backend)
         if node is None:
             logger.warning("no node registered for (%s, %s)", node_type, backend)
-            result.skipped.append(node_type)
-            self._notify(node_type, "skipped")
+            self._skip(node_type, result, oc.skipped("This step isn't available in this install."))
             return
         # Model-backed node no model serves → graceful skip (item goes partial).
         unserved = await unserved_reason(use_case)
@@ -257,9 +291,13 @@ class PipelineExecutor:
             alt = None if pinned else await resolve_runnable(node_type, backend)
             if alt is None:
                 logger.info("skipping node %s — %s", node_type, unserved)
-                result.skipped.append(node_type)
-                result.unserved[node_type] = unserved
-                self._notify(node_type, "skipped")
+                self._skip(
+                    node_type,
+                    result,
+                    await why_not_runnable(
+                        node_type, backend, use_case=use_case, unserved=unserved, pinned=pinned
+                    ),
+                )
                 return
             node, backend = alt
             # The substitute resolves its OWN use-case (an engine backend has none), so the
@@ -277,8 +315,11 @@ class PipelineExecutor:
             alt = None if pinned else await resolve_runnable(node_type, backend)
             if alt is None:
                 logger.info("skipping node %s — backend %r is unavailable", node_type, backend)
-                result.skipped.append(node_type)
-                self._notify(node_type, "skipped")
+                self._skip(
+                    node_type,
+                    result,
+                    await why_not_runnable(node_type, backend, use_case=use_case, pinned=pinned),
+                )
                 return
             node, backend = alt
             use_case = node.uses_use_case
@@ -302,30 +343,35 @@ class PipelineExecutor:
         except asyncio.TimeoutError:
             # A sentence, because it is what the item's status line reads ("transcription:
             # …"); the bare word "timeout" said neither how long nor that the step was stopped.
-            result.outputs[node_type] = NodeOutput(
-                node_type=node_type,
-                backend=backend,
-                success=False,
-                error=f"It did not finish within {_spoken_duration(timeout_s)}, so it was stopped.",
+            self._fail(
+                node_type,
+                result,
+                NodeOutput(
+                    node_type=node_type,
+                    backend=backend,
+                    success=False,
+                    error=(
+                        f"It did not finish within {_spoken_duration(timeout_s)}, "
+                        "so it was stopped."
+                    ),
+                ),
             )
-            result.failed.append(node_type)
-            self._notify(node_type, "failed")
             return
         except Exception as exc:  # a node bug must not abort the item
             logger.exception("knowledge node %s failed", node_type)
-            result.outputs[node_type] = NodeOutput(
-                node_type=node_type, backend=backend, success=False, error=str(exc)
+            self._fail(
+                node_type,
+                result,
+                NodeOutput(node_type=node_type, backend=backend, success=False, error=str(exc)),
             )
-            result.failed.append(node_type)
-            self._notify(node_type, "failed")
             return
-        result.outputs[node_type] = out
         if out.success:
+            result.outputs[node_type] = out
             result.ran.append(node_type)
+            result.outcomes[node_type] = oc.done()
             self._notify(node_type, "done")
         else:
-            result.failed.append(node_type)
-            self._notify(node_type, "failed")
+            self._fail(node_type, result, out)
 
     # Model-backed media nodes whose work scales with media length. Their timeout
     # grows with the source's duration so a long video/audio can finish; pure-python

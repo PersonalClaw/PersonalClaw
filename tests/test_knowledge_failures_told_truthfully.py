@@ -169,7 +169,8 @@ def test_the_fixture_is_the_validation_state(tmp_path):
         assert item["processing_status"] == UNSEARCHABLE, item
         assert item["file_metadata"]["unsearchable_reason"] == NO_EMBEDDING_PROVIDER, item
     phases = store.get_item(notes[0])["file_metadata"]["node_phases"]
-    assert phases["insights"] == "failed" and phases["entities"] == "failed", phases
+    assert phases["insights"]["status"] == "failed", phases
+    assert phases["entities"]["status"] == "failed", phases
 
     hits = {r["id"] for r in HybridRetriever(store, embedder=None).search(TOKEN, limit=10)}
     assert set(notes) <= hits, f"keyword search must reach both notes: {hits}"
@@ -410,7 +411,9 @@ def test_missing_scope_retries_items_whose_entity_extraction_failed(tmp_path):
     store.update_item(
         item_id,
         insights={"summary": "landed"},
-        file_metadata={"node_phases": {"insights": "done", "entities": "failed"}},
+        file_metadata={
+            "node_phases": {"insights": {"status": "done"}, "entities": {"status": "failed"}}
+        },
     )
     store.db.commit()
 
@@ -450,16 +453,18 @@ def test_stats_say_extraction_was_tried_and_failed(tmp_path):
 
 
 def test_stats_keep_by_design_skips_and_in_flight_items_out_of_failed(tmp_path):
-    """A no-AI source's item SKIPS extraction by design and a queued item is about to replace
-    its record — neither is a failure, and neither is "never tried"."""
+    """A no-AI source's item does not run extraction by design and a queued item is about to
+    replace its record — neither is a failure, and neither is "never tried"."""
     store = KnowledgeStore(str(tmp_path / "k.db"))
     skipped = store.create_typed_item(item_type="note", title="Feed item", content="x")
-    store.update_item(skipped, file_metadata={"node_phases": {"entities": "skipped"}})
+    store.update_item(
+        skipped, file_metadata={"node_phases": {"entities": {"status": "not_applicable"}}}
+    )
     requeued = store.create_typed_item(item_type="note", title="Retrying", content="y")
     store.update_item(
         requeued,
         processing_status="queued",
-        file_metadata={"node_phases": {"entities": "failed"}},
+        file_metadata={"node_phases": {"entities": {"status": "failed"}}},
     )
     store.db.commit()
 

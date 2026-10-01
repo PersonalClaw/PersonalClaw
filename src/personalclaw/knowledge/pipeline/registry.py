@@ -14,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from personalclaw.knowledge.pipeline.outcomes import PhaseOutcome
     from personalclaw.knowledge.pipeline.types import ProcessingNode
 
 logger = logging.getLogger(__name__)
@@ -81,15 +82,15 @@ async def resolve_runnable(node_type: str, preferred: str) -> tuple["ProcessingN
 
 
 async def unserved_reason(use_case: str | None) -> str:
-    """Why no model serves *use_case* right now, or ``""`` when one does (so a model-backed node
-    can run).
+    """Why no model serves *use_case* right now, in the words the item shows, or ``""`` when one
+    does (so a model-backed node can run).
 
     A ``None`` use-case (pure-python node) is always served. Image understanding asks the
     platform's image reader (``providers.image_input.image_reader``): its binding, else a chat
     model that takes images — a fallback the bridge's no-instantiate probe cannot see, because
-    whether a model takes images is its catalog's answer. Every other use case asks that probe.
-    A probe that raises is "unserved", so the executor skips the node and marks the item partial
-    rather than hard-failing.
+    whether a model takes images is its catalog's answer — and says what it says. Every other use
+    case is :func:`unserved_reason_sync`'s. A probe that raises is "unserved", so the executor
+    skips the node and marks the item partial rather than hard-failing.
     """
     if not use_case:
         return ""
@@ -99,10 +100,94 @@ async def unserved_reason(use_case: str | None) -> str:
         if use_case == IMAGE_USE_CASE:
             reader = await image_reader()
             return "" if reader.ref else reader.reason
+    except Exception:
+        logger.debug("image reader check failed", exc_info=True)
+        return _unchecked(use_case)
+    return unserved_reason_sync(use_case)
+
+
+def unserved_reason_sync(use_case: str) -> str:
+    """:func:`unserved_reason` for a use case the bridge's probe answers (every one but image
+    understanding): ``""`` when it resolves, else a sentence naming the use case as the Models
+    page does and saying whether nothing is chosen for it or the chosen model cannot run."""
+    from personalclaw.knowledge.pipeline.outcomes import use_case_name
+
+    name = use_case_name(use_case)
+    try:
         from personalclaw.providers.provider_bridge import can_resolve_use_case
+        from personalclaw.providers.use_cases import active_model_refs
 
         if can_resolve_use_case(use_case):
             return ""
+        if active_model_refs(use_case):
+            return f"The {name} model chosen in Settings → Models can't run right now."
+        return f"No {name} model is set up."
     except Exception:
         logger.debug("use-case resolvability check failed for %s", use_case, exc_info=True)
-    return f"no model serves the {use_case} use case"
+    return _unchecked(use_case)
+
+
+def _unchecked(use_case: str) -> str:
+    from personalclaw.knowledge.pipeline.outcomes import use_case_name
+
+    return f"The {use_case_name(use_case)} model couldn't be checked."
+
+
+async def why_not_runnable(
+    node_type: str,
+    preferred: str,
+    *,
+    use_case: str | None = None,
+    unserved: str = "",
+    pinned: bool = False,
+) -> "PhaseOutcome":
+    """The skip for *node_type* when no backend for it can run: what each one is missing.
+
+    *use_case* and *unserved* describe the preferred backend as the executor resolved it: the
+    use case it asked for and, when that is why it cannot run, the probe's answer; with no
+    *unserved*, the preferred backend is the one whose own dependency is missing. A user-PINNED
+    backend is the only one considered, as it is the only one the executor would run. Every
+    other registered backend adds its own reason and fix, so an ``ocr`` step that a model OR an
+    installed engine could have run names both.
+    """
+    from personalclaw.knowledge.pipeline import outcomes
+
+    others = [] if pinned else [b for b in backends_for(node_type) if b != preferred]
+    missing = []
+    for backend in [preferred, *others]:
+        node = NODE_REGISTRY.get((node_type, backend))
+        if node is None:
+            continue
+        if backend == preferred:
+            needed = use_case
+            reason = unserved or await unserved_reason(needed)
+        else:
+            needed = node.uses_use_case
+            reason = await unserved_reason(needed)
+        if reason:
+            missing.append(outcomes.no_model(needed or "", reason))
+        elif not node_available(node):
+            missing.append(_unavailable(node))
+    if not missing:
+        return outcomes.skipped("This step isn't available in this install.")
+    return outcomes.either(missing)
+
+
+def _unavailable(node: "ProcessingNode") -> "PhaseOutcome":
+    """What *node* says when its own dependency is missing: its ``unavailable_outcome`` when it
+    declares one (the engine-backed OCR names the app that adds an engine), else a sentence
+    naming the step."""
+    from personalclaw.knowledge.pipeline import outcomes
+
+    declared = getattr(node, "unavailable_outcome", None)
+    if callable(declared):
+        try:
+            said = declared()
+        except Exception:
+            logger.debug("unavailable_outcome failed for %s", node.node_type, exc_info=True)
+        else:
+            if isinstance(said, outcomes.PhaseOutcome):
+                return said
+    return outcomes.skipped(
+        f"What {outcomes.step_name(node.node_type)} runs on isn't available in this install."
+    )

@@ -92,6 +92,20 @@ CHAT_SUBCATEGORIES: tuple[str, ...] = (
     "loops",
 )
 
+#: What the Models page calls each use case a server-composed sentence names (`ModelsPanel`'s
+#: `USE_CASE_META`), so "No Speech-to-text model is set up." and the row the owner binds one in
+#: agree. `test_resilience_degraded` fails a built-in degraded-mode contract whose use case has
+#: no name here.
+USE_CASE_NAMES: dict[str, str] = {
+    "chat": "Chat",
+    "background": "Background",
+    "reasoning": "Reasoning",
+    "embedding": "Embedding",
+    "stt": "Speech-to-text",
+    "diarization": "Speaker diarization",
+    "image_modality": "Image · Modality",
+}
+
 # Every selectable use case = capabilities + chat sub-categories.
 USE_CASES: tuple[str, ...] = CAPABILITIES + CHAT_SUBCATEGORIES
 VALID_USE_CASES = frozenset(USE_CASES)

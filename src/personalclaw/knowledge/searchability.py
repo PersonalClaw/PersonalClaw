@@ -71,9 +71,9 @@ logger = logging.getLogger(__name__)
 
 #: The named ``processing_status`` value for an item that persisted but is not retrievable.
 #: A distinct value rather than reusing ``partial``: ``partial`` already means "some
-#: OPTIONAL step was skipped" and is routinely benign (the UI suppresses its
-#: ``"Skipped (optional steps unavailable):"`` prefix), so folding "nothing about this item
-#: can be found" into it would hide the loud case inside the quiet one.
+#: OPTIONAL step was skipped or failed" and is often benign (a skipped step says why on its
+#: own recorded outcome), so folding "nothing about this item can be found" into it would hide
+#: the loud case inside the quiet one.
 UNSEARCHABLE = "unsearchable"
 
 #: A text-extraction node reported SUCCESS and produced no text, so the item's persisted

@@ -902,8 +902,10 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                               )}
                               {/* A genuine partial with no failed model stage (e.g. a graph node errored) is
                                   still actionable — flag it so it's not mistaken for a fully-processed item.
-                                  Benign skips (optional media steps with no model) are left unbadged. */}
-                              {!enrichFail && it.processing_status === 'partial' && !(it.processing_error || '').startsWith('Skipped (optional steps unavailable):') && (
+                                  The status line carries only what went WRONG; a step that was merely
+                                  skipped (an optional media step with no model) says so on the item's own
+                                  page, with its fix, so a partial with no status line is left unbadged. */}
+                              {!enrichFail && it.processing_status === 'partial' && !!it.processing_error && (
                                 <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || 'Enrichment incomplete'} — open to regenerate`}><CircleAlert size={10} /> Incomplete</span>
                               )}
                               {it.is_archived && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low">Archived</span>}
