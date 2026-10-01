@@ -835,6 +835,47 @@ def project_tree(project_id: str) -> str:
     return os.path.expanduser(bound) if bound else ""
 
 
+def step_reads(parent_run: str) -> list[str]:
+    """The folders a workflow run's step reads beside the one it works in, or ``[]``.
+
+    *parent_run* is a spawn's ``workflow:<run_id>`` (``ownership.OWNED_PREFIX``); any other spawn
+    reads nothing more. A step works in its run's own folder (:func:`run_workdir`), often an empty
+    scratch folder or a worktree, while what it is about lives elsewhere: the tree the run's
+    project is bound to (:func:`project_tree`), and the folder a batch was started in (its ``cwd``
+    input, ``mcp_subagents._run_compiled_batch``), which counts only where a spawn may work
+    (``subagent.validate_cwd``). Both are read from the run's record, never from the request. Read
+    only (``file_scope.READS``): a step in an isolated copy cannot change the original through
+    them, and what it may do in its own folder stays its tier's.
+    """
+    from personalclaw.workflows.ownership import OWNED_PREFIX
+
+    if not parent_run.startswith(OWNED_PREFIX):
+        return []
+    run_id = parent_run[len(OWNED_PREFIX) :]
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.subagent import validate_cwd
+    from personalclaw.workflows import store
+
+    try:
+        run = store.get(run_id)
+        allowed_roots = AppConfig.load().agent.subagent_cwd_allowed_roots
+    except Exception:  # noqa: BLE001 - an unreadable record reaches nothing more
+        logger.debug("run %s: record unreadable for its step's reach", run_id, exc_info=True)
+        return []
+    if run is None:
+        return []
+    reads = []
+    tree = project_tree(run.project_id)
+    if tree and os.path.isdir(tree):
+        reads.append(os.path.realpath(tree))
+    started_in = str((run.inputs or {}).get("cwd") or "").strip()
+    if started_in:
+        resolved, refused = validate_cwd(started_in, allowed_roots, run_workdir=run_workdir(run_id))
+        if resolved and not refused:
+            reads.append(resolved)
+    return list(dict.fromkeys(reads))
+
+
 def run_workdir(run_id: str) -> str:
     """The folder a step of run *run_id* works in, from the run's own record, or ``""``.
 

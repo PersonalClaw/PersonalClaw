@@ -557,7 +557,7 @@ can run the trigger again. That re-run is Run now, and a trigger with
 (`cwd`, in `apps/native/invoke-agent-action/app.json`; the schedule form's field of
 the same name) is the folder its agent starts in, so the agent's file tools reach
 the files there, and only as they reach any session's folder
-(`docs/architecture/security.md`, "Every file tool stays in the workspace"). It
+(`docs/architecture/security.md`, "Where the file tools reach"). It
 must be the workspace or a folder in Settings → Agent defaults → Allowed working
 directories (`agent.subagent_cwd_allowed_roots`), the rule a Run prompt action's
 Working Directory already met: the trigger's save refuses any other with why

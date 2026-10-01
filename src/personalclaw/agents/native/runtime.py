@@ -51,6 +51,7 @@ from personalclaw.cancellation import (
     REQUEST_REPEAT,
     CancelScope,
 )
+from personalclaw.file_scope import file_places_note
 from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
 from personalclaw.guardrails.failure import (
     FailureMode,
@@ -1474,6 +1475,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 len(pool),
                 len(pool) - len(selected_defs),
             )
+        if places := file_places_note(self._tool_index):  # where the file tools reach, read now
+            notes.append(places)
         if stub_lines:
             notes.append(
                 "[inactive tool groups] These capabilities exist but their schemas are not "

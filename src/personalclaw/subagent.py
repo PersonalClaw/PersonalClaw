@@ -2161,6 +2161,10 @@ class SubagentManager:
             extra_kwargs["dry_run"] = True
         if info.may_read or info.may_change:
             extra_kwargs["extra_tool_roots"] = [*info.may_read, *info.may_change]
+        from personalclaw.workflows.provisioning import step_reads
+
+        if reads := step_reads(info.parent_run):  # its run's project tree, its batch's folder
+            extra_kwargs["read_tool_roots"] = reads
         if info.extra_env:
             # The leaf's posture + lineage. Passed through the session's `extra_env` seam, which
             # already forces a cold (non-pooled) session — a warm pooled worker would carry the

@@ -1302,7 +1302,7 @@ Add an item to the user's knowledge library. Args: type ('note'|'fleeting'|'jour
 
 ### `knowledge_get`
 
-Fetch one knowledge item by id (title, type, content, tags, summary). Args: id (str).
+Fetch one knowledge item by id (title, type, full content, tags, summary, and the file a knowledge-source note came from). Args: id (str).
 
 **Response type:** `knowledge.detail`
 
@@ -1319,7 +1319,7 @@ Fetch one knowledge item by id (title, type, content, tags, summary). Args: id (
 
 ### `knowledge_search`
 
-Search the user's knowledge library (notes, bookmarks, docs). Args: query (str), optional limit (int, default 8).
+Search the user's knowledge library (notes, bookmarks, docs), the notes in the folders the user added as knowledge sources included: a hit from one names its file, which read_file opens. Args: query (str), optional limit (int, default 8).
 
 **Response type:** `knowledge.search.results`
 

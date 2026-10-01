@@ -62,7 +62,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from personalclaw.knowledge_providers.base import (
@@ -246,6 +246,62 @@ def _signature(path: Path) -> list | None:
     return [float(st.st_mtime), int(st.st_size)]
 
 
+def matchers(spec: dict) -> tuple[str, ...]:
+    """The file-name patterns a folder's *spec* takes in: its ``include``, else
+    :data:`DEFAULT_INCLUDE`."""
+    include = (spec or {}).get("include") or DEFAULT_INCLUDE
+    if isinstance(include, str):
+        include = [include]
+    pats = tuple(str(p) for p in include if str(p).strip())
+    return pats or DEFAULT_INCLUDE
+
+
+def takes(spec: dict, rel: str, *, is_dir: bool) -> bool:
+    """Whether the folder *spec* watches takes in *rel*, a path relative to that folder.
+
+    A folder (*is_dir*) is one :meth:`DirSourceProvider.scan` walks into, and a file one it
+    brings in: no part of the path hidden or a :data:`SKIP_DIRS` name, nothing below the top
+    when the spec is not recursive, and a file's name matching the spec's patterns. The scan
+    and the agent's file tools (``file_scope``) both ask this, so what the library takes from a
+    folder and what the agent may read in it are one rule."""
+    parts = [part for part in PurePosixPath(rel).parts if part not in ("", ".")]
+    folders = parts if is_dir else parts[:-1]
+    if any(part in SKIP_DIRS or part.startswith(".") for part in folders):
+        return False
+    if folders and not bool((spec or {}).get("recursive", True)):
+        return False
+    if is_dir:
+        return True
+    name = parts[-1] if parts else ""
+    return (
+        bool(name)
+        and not name.startswith(".")
+        and any(fnmatch.fnmatch(name, pat) for pat in matchers(spec))
+    )
+
+
+def note_path(store: Any, item: dict) -> str:
+    """The file a library item came from, as the owner wrote its folder (``~/Notes/a.md``), when
+    it came from a watched folder that is still watched; ``""`` for any other item."""
+    source_id = item.get("source_id")
+    source = store.get_source(source_id) if source_id else None
+    if not source or source.get("provider") != "watched-dir" or not source.get("enabled"):
+        return ""
+    folder = str((source.get("spec") or {}).get("path") or "").rstrip("/")
+    guid = str(item.get("guid") or "")
+    return f"{folder}/{guid}" if folder and guid else ""
+
+
+def note_file(store: Any, rel: str) -> str:
+    """The file of the one note a watched folder took from *rel* (its path inside the folder, or
+    its tail down to the file's name, as a chat names a note it read), written as the owner wrote
+    the folder; ``""`` when no note answers to it, or more than one does."""
+    paths = {
+        path for item in store.find_active_by_source_file(rel) if (path := note_path(store, item))
+    }
+    return paths.pop() if len(paths) == 1 else ""
+
+
 class DirSourceProvider(KnowledgeSourceProvider):
     """Poll-capable provider over a watched local directory (§4).
 
@@ -336,13 +392,6 @@ class DirSourceProvider(KnowledgeSourceProvider):
 
     # ── the signature-diff observation ──────────────────────────────────────────────
 
-    def _matchers(self, spec: dict) -> tuple[str, ...]:
-        include = (spec or {}).get("include") or DEFAULT_INCLUDE
-        if isinstance(include, str):
-            include = [include]
-        pats = tuple(str(p) for p in include if str(p).strip())
-        return pats or DEFAULT_INCLUDE
-
     def scan(self, spec: dict) -> tuple[dict[str, list], int]:
         """Signature map ``{relative_path: [mtime, size]}`` plus the count of files that
         could not be read. Sorted-and-capped so the cap bites deterministically rather
@@ -350,24 +399,18 @@ class DirSourceProvider(KnowledgeSourceProvider):
         root = Path(canonical) if (canonical := self._resolved_path(spec)) else None
         if root is None:
             return {}, 0
-        pats = self._matchers(spec)
-        recursive = bool((spec or {}).get("recursive", True))
         cap = min(int((spec or {}).get("max_files") or MAX_FILES_PER_SOURCE), MAX_FILES_PER_SOURCE)
         found: list[tuple[str, Path]] = []
         for dirpath, dirnames, filenames in os.walk(root):
+            here = Path(dirpath).relative_to(root)
             # Prune in place so os.walk never descends into the noise directories at all.
             dirnames[:] = sorted(
-                d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")
+                d for d in dirnames if takes(spec, (here / d).as_posix(), is_dir=True)
             )
-            if not recursive:
-                dirnames[:] = []
             for fname in sorted(filenames):
-                if fname.startswith("."):
-                    continue
-                if not any(fnmatch.fnmatch(fname, pat) for pat in pats):
-                    continue
-                full = Path(dirpath) / fname
-                found.append((full.relative_to(root).as_posix(), full))
+                rel = (here / fname).as_posix()
+                if takes(spec, rel, is_dir=False):
+                    found.append((rel, Path(dirpath) / fname))
         found.sort()
         sigs: dict[str, list] = {}
         errors = 0

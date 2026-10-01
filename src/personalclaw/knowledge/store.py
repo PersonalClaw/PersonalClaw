@@ -1863,6 +1863,21 @@ class KnowledgeStore:
         ).fetchone()
         return self._serialize_item(row) if row else None
 
+    def find_active_by_source_file(self, rel: str) -> list[dict]:
+        """The active items a watched source took from a file at *rel*: its path inside the
+        source's folder, or the tail of that path down to the file's own name. What a chat's
+        mention of a note's file resolves against, which may name the file alone
+        (``dir_source.note_file``)."""
+        rel = (rel or "").strip().strip("/")
+        if not rel:
+            return []
+        rows = self.db.execute(
+            "SELECT * FROM items WHERE status = 'active' AND COALESCE(is_archived, 0) = 0 "
+            "AND source_id IS NOT NULL AND (guid = ? OR substr(guid, -?) = ?)",
+            (rel, len(rel) + 1, "/" + rel),
+        ).fetchall()
+        return [self._serialize_item(row) for row in rows]
+
     def find_active_by_file_hash(self, content_hash: str):
         """Return an existing active item whose stored file content_hash matches, or None.
         Used to dedup byte-identical re-uploads."""

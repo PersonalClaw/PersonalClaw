@@ -103,6 +103,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **`personalclaw.sdk.stt` and `personalclaw.sdk.diarization` replace `ensure_ffmpeg_in_path` with `find_ffmpeg` and `ffmpeg_not_found`: an app is handed the ffmpeg's path, and the gateway's `PATH` is never changed to find it (`faster-whisper`, `diarization-onnx` and `diarization-pyannote` move to them).**
+- **The agent's file tools read the folders you added as knowledge sources, read only and with no approval, and read and change files in Settings › Agent defaults › Allowed working directories as they do in the workspace; `glob` and `grep` take a `path`, and every other folder stays out of reach.**
 - **A model instance's address is its `endpoint`, the one option every provider reads: an address saved as `base_url` is refused with the field to use, and `ProviderEntry.endpoint` replaces `ProviderEntry.endpoints` (an SDK change; `alibaba-models`, `anthropic-models`, `claude-subscription`, `meta-muse-spark`, `openai-models`, `openrouter-models` and `vllm-models` read only `endpoint`).**
 - **`ChannelMessage.attachments`, a list of names, is replaced by `ChannelMessage.files`, the files themselves (`email-channel` passes them).**
 - **`personalclaw.sdk.search.search_with_fallback` returns the result alone, `SearchResult.fallback` (a `SearchFallback`) names the provider that failed when another answered, and when both fail its error says what each said; `web-tools` uses it.**
@@ -157,6 +158,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A note the agent cites in a chat opens from the chat, by its path or its file name alone, and so does a file in a folder the agent may read.**
+- **A workflow step, a batch's review leaf included, reads the folder its batch was started in and its project's folder, read only, instead of finding only its empty working folder.**
+- **The agent no longer reads the knowledge library's own database as a file or from the shell; it is pointed to `knowledge_search` and `knowledge_get` instead.**
 - **Every model in Settings → Models has a Test for the use case it is listed under, hosted or on this machine, and one that can't be tested says why: `untestable_reason()` on the speech, voice, diarization, embedding and image provider classes (an SDK addition no app has to change for).**
 - **An app's log lines reach `gateway.log`, `personalclaw logs` and Settings → Diagnostics → Live logs from the moment its code loads, an app installed after the gateway started and a module logging under its own name included, and those three and the console show the same lines.**
 - **`personalclaw logs` on a macOS service shows the gateway's log lines (launchd's `gateway.err`), not only what the gateway printed.**

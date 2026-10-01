@@ -1143,7 +1143,44 @@ def _resolve_relative_path(raw_path: str) -> str:
             first_inside = candidate
         if os.path.isfile(candidate):
             return candidate
-    return first_inside or raw_path
+    # A note a watched folder took in, named the way a chat names one it read: by its file.
+    note = _note_file(raw_path)
+    return os.path.expanduser(note) if note else (first_inside or raw_path)
+
+
+def _note_file(rel: str) -> str:
+    """The note file *rel* names in the knowledge library (``dir_source.note_file``), or ``""``."""
+    from personalclaw.knowledge.store import knowledge_db_path
+
+    try:
+        if not knowledge_db_path(create=False).is_file():
+            return ""
+        from personalclaw.knowledge import get_knowledge_store
+        from personalclaw.knowledge_providers.dir_source import note_file
+
+        return note_file(get_knowledge_store(), rel)
+    except Exception:  # noqa: BLE001 - an unreadable library names no file
+        logger.debug("file mention %r: knowledge library unreadable", rel, exc_info=True)
+        return ""
+
+
+def _agent_readable_path(raw: str) -> str | None:
+    """The real path *raw* names when the owner's agent may read it outside the dashboard's roots
+    (``file_scope``: her allowed working directories, the folders she added as knowledge sources),
+    so a file her agent names in a chat opens where she reads the chat. For the read surfaces
+    only, and never for a request an app makes."""
+    from personalclaw.apps.permissions import request_app
+
+    if request_app() or not raw.startswith(("/", "~")):
+        return None
+    from personalclaw.config.loader import workspace_root
+    from personalclaw.file_scope import FileScope
+
+    try:
+        return FileScope([str(workspace_root())]).admits(raw)
+    except Exception:  # noqa: BLE001 - a scope that cannot be read admits nothing
+        logger.debug("file mention %r: file scope unreadable", raw, exc_info=True)
+        return None
 
 
 async def api_file_watch(request: web.Request) -> web.StreamResponse:
@@ -1171,7 +1208,7 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
         )
         return web.json_response({"error": _path_rejection(exc)}, status=400)
 
-    path = _validate_dashboard_path(raw_path)
+    path = _validate_dashboard_path(raw_path) or _agent_readable_path(raw_path)
     if not path:
         refused = _app_path_refusal(raw_path, tool="file_watch")
         if refused is not None:
@@ -1308,7 +1345,7 @@ async def api_file_read(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": _path_rejection(exc)}, status=400)
 
-    path = _validate_dashboard_path(raw_path)
+    path = _validate_dashboard_path(raw_path) or _agent_readable_path(raw_path)
     if not path:
         refused = _app_path_refusal(raw_path, tool="file_read")
         if refused is not None:
@@ -1373,7 +1410,7 @@ async def api_file_raw(request: web.Request) -> web.Response:
     # fail" panel bug): text files worked, binaries didn't.
     if request.query.get("resolve") == "1":
         raw_path = _resolve_relative_path(raw_path)
-    path = _h._validate_dashboard_path(raw_path)
+    path = _h._validate_dashboard_path(raw_path) or _agent_readable_path(raw_path)
     if not path:
         refused = _app_path_refusal(raw_path, tool="file_raw")
         if refused is not None:

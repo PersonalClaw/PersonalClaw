@@ -187,12 +187,19 @@ def _r_walk(a: dict, cwd: str | None) -> tuple[Reservation, ...]:
 
 
 def _r_glob(a: dict, cwd: str | None) -> tuple[Reservation, ...]:
+    # A search under another folder (`path`) reads that folder's tree: its pattern is
+    # relative to it, so as a pattern it would be read against the workspace instead.
+    if a.get("path"):
+        return (_tree(READ, str(a["path"]), cwd=cwd),)
     return (_pattern(READ, str(a.get("pattern", ""))),)
 
 
 def _r_grep(a: dict, cwd: str | None) -> tuple[Reservation, ...]:
     # A grep with no `glob` filter walks the whole workspace, so it reserves the workspace
-    # tree — not "nothing in particular". With a filter it is a pattern read.
+    # tree — not "nothing in particular". With a filter it is a pattern read; under another
+    # folder (`path`), that folder's tree.
+    if a.get("path"):
+        return (_tree(READ, str(a["path"]), cwd=cwd),)
     filt = str(a.get("glob", "") or "")
     return (_pattern(READ, filt),) if filt else (_tree(READ, ".", cwd=cwd),)
 

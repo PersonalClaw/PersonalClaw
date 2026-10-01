@@ -150,7 +150,7 @@ export function AgentDefaultsPanel() {
           <NumberRow label="Max turns per subagent" cfg={cfg} field="subagent_max_turns" patch={patch} min={1} max={200} />
           <NumberRow label="Subagent timeout" hint="Counted from when a subagent starts running, not from when it was asked for." cfg={cfg} field="subagent_timeout_secs" patch={patch} min={60} max={7200} suffix="s" />
           <NumberRow label="Min free memory to spawn" cfg={cfg} field="spawn_min_memory_gb" patch={patch} min={0} max={64} step={0.5} suffix="GB" />
-          <StrListField label="Allowed working directories" hint="Folders besides the workspace a subagent may run in and a room member's file tools reach. Empty: the workspace only." cfg={cfg} field="subagent_cwd_allowed_roots" editList={editList} placeholder="Add path…" />
+          <StrListField label="Allowed working directories" hint="Folders besides the workspace where the agent's file tools read files without asking and change them under the same approval as the workspace's files (a room member as its own tier allows), and where a subagent may run. Empty: the workspace only." cfg={cfg} field="subagent_cwd_allowed_roots" editList={editList} placeholder="Add path…" />
         </RowGroup>
       </Section>
 

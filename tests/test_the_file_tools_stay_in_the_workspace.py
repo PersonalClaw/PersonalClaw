@@ -74,7 +74,7 @@ async def test_glob_does_not_climb_out_of_the_workspace(place):
     result = await _call(_tools(place["ws"]), "glob", pattern="../outside/*")
     assert not result.success
     assert "notes.txt" not in (result.output or "")
-    assert "leaves the workspace" in (result.error or "")
+    assert "leaves the folder searched" in (result.error or "")
 
 
 async def test_glob_lists_nothing_a_link_leads_out_to_or_a_secret_file(place):
@@ -180,7 +180,7 @@ async def test_code_map_indexes_no_folder_outside_the_session(place):
     result = await _code_map(place["ws"], symbol="exfiltrate", workspace=str(place["outside"]))
     assert not result.success
     assert "stolen.py" not in (result.output or "")
-    assert "not a folder this session's file tools reach" in (result.error or "")
+    assert "is not a folder code_map indexes" in (result.error or "")
 
 
 async def test_code_map_answers_for_the_sessions_folder(place):

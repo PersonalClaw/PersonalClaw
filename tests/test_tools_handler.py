@@ -928,7 +928,7 @@ async def test_a_path_outside_the_workspace_is_still_refused(workspace, tmp_path
     )
     body = _payload(resp)
     assert body.get("ok") is False, body
-    assert "escapes the workspace root" in (body.get("error") or ""), body
+    assert "outside every folder the file tools reach" in (body.get("error") or ""), body
 
 
 @pytest.mark.asyncio

@@ -42,7 +42,7 @@ def knowledge_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDef
             provider=provider,
             requires_approval=False,
             risk_level=RiskLevel.SAFE,
-            description="Search the user's knowledge library (notes, bookmarks, docs). Args: query (str), optional limit (int, default 8).",  # noqa: E501
+            description="Search the user's knowledge library (notes, bookmarks, docs), the notes in the folders the user added as knowledge sources included: a hit from one names its file, which read_file opens. Args: query (str), optional limit (int, default 8).",  # noqa: E501
             parameters={
                 **s,
                 "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
@@ -78,7 +78,7 @@ def knowledge_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDef
             provider=provider,
             requires_approval=False,
             risk_level=RiskLevel.SAFE,
-            description="Fetch one knowledge item by id (title, type, content, tags, summary). Args: id (str).",  # noqa: E501
+            description="Fetch one knowledge item by id (title, type, full content, tags, summary, and the file a knowledge-source note came from). Args: id (str).",  # noqa: E501
             parameters={**s, "properties": {"id": {"type": "string"}}, "required": ["id"]},
         ),
         ToolDefinition(

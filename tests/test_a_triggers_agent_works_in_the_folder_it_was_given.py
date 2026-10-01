@@ -173,7 +173,7 @@ def test_a_path_outside_the_agents_folder_is_still_refused(home):
     for path in ("~/Private/notes.txt", "../Private/notes.txt", str(home.user / "Private")):
         result = _read(tools, path)
         assert result.success is False, path
-        assert "escapes the workspace root" in result.error
+        assert "outside every folder the file tools reach" in result.error
 
 
 def test_a_credential_file_inside_the_folder_is_still_refused(home):

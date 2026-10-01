@@ -380,24 +380,63 @@ listed on the Tools page with Allow, which asks the same question first. The pro
 both ask before they start anything. PersonalClaw's own server is defined by its code
 (`agent._MANAGED_MCP_SERVERS`), never read from `mcp.json`.
 
-### Every file tool stays in the workspace (`file_roots.admit`)
+### Where the file tools reach (`file_scope`)
 
 The native file tools (`read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`,
-`repo_map`) and `code_map` resolve every path through the check the Files view and
-`/api/file-read` make: symlinks and `..` resolved; inside the session's folder or one of its extra
-roots; the PersonalClaw home reached only through a root inside it (`file_roots.within`); no
+`repo_map`) and `code_map` reach one scope, defined once in `file_scope.FileScope` and read again
+at every call:
+
+- **the workspace**: the session's folder and the extra roots a loop's worker is given. Read and
+  change.
+- **the folders a workflow step reads** beside the one it works in: the tree its run's project is
+  bound to, and the folder its batch was started in when a spawn may work there
+  (`provisioning.step_reads`, from the run's record). Read only, so a step in an isolated worktree
+  or scratch folder cannot change the original through them; what it may change stays its own
+  folder's, and its tier's.
+- **the allowed working directories** (Settings → Agent defaults, `agent.subagent_cwd_allowed_roots`).
+  Read and change; a change meets the same approval, with the same diff, as one in the workspace,
+  and a turn's rewind restores it (the folder is recorded with the turn's checkpoint).
+- **the folders added as knowledge sources** (a Watched Directory in Knowledge → Sources, while it
+  is on). Read only, and only the files that source takes in (`dir_source.takes`, the rule its own
+  scan uses: its file patterns, nothing hidden, nothing below the top when it is not recursive).
+  `knowledge_search` and `knowledge_get` name a note's file, so the agent can open it.
+
+Everywhere else is refused, read or change, with a sentence that says which folders the tools
+reach and where the owner adds one. An entry naming the filesystem root or a system folder is not a
+place, and neither is a source its own provider would refuse to poll. A folder taken out of the
+setting, or a source paused or pointed elsewhere, is out of reach at the next call.
+`file_scope.refusal` answers from a call's arguments, the session's folder and the settings alone,
+so the decision can be made before an approval is asked for. Each turn the native loop tells the
+model which folders it reaches beyond the workspace (the `[file places]` note), and when it has the
+knowledge tools, to search the library first.
+
+Inside every place the check the Files view and `/api/file-read` make still holds
+(`file_roots.Admission`): symlinks and `..` resolved, so a link or a climb out of a place reaches
+nothing; the PersonalClaw home reached only through a place inside it (`file_roots.within`); no
 protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own `.env`, `auth/`,
 `governance/`); and no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
-or `*.secret` file, nor any alias of one. A path that fails is refused with the reason. A path that
-starts with `~/` names the owner's home, as the owner writes it, and meets every one of these checks
-as any absolute path does (`~name` stays a plain name). A `glob` or `grep` pattern that is
-absolute, starts at `~` or climbs with `..` is refused as a whole, and every match is checked one
-by one, so a listing, a search or a map leaves out what the tools
-could not open, including a file a link inside the workspace leads to outside it. `code_map`
-indexes the session's workspace, or a folder inside the places its file tools reach, and its
-index skips the same files (`codegraph.CodeGraphIndex`). A walk makes one `file_roots.Admission`
-and asks it for every path: the same answer as `admit`, with the protected locations resolved
-once.
+or `*.secret` file, nor any alias of one. A path that starts with `~/` names the owner's home, as
+the owner writes it, and meets every one of these checks as any absolute path does (`~name` stays
+a plain name). A `glob` or `grep` pattern is relative to the folder searched (the workspace, or the
+call's `path`); one that is absolute, starts at `~` or climbs with `..` is refused as a whole, and
+every match is checked one by one, so a listing, a search or a map leaves out what the tools could
+not open. `code_map` indexes the workspace, an allowed working directory or a folder inside one,
+never a knowledge source's folder, whose other files the tools do not read; its index skips the
+same files (`codegraph.CodeGraphIndex`).
+
+A file the agent names in a chat opens where the owner reads the chat: the Files view's read
+surfaces (`/api/file-read`, `/api/file-raw`, `/api/file-watch`) also admit what the agent's file
+tools may read (`files._agent_readable_path`, the same scope), for the owner's own requests and
+never an app's, and never for a write. A mention that names a note by its file alone resolves to
+the one watched-folder note with that file (`dir_source.note_file`); a name two notes share
+resolves to neither.
+
+PersonalClaw's own stores inside the workspace (every state-inventory entry inside its `workspace`
+entry: the knowledge library's database and stored documents, the lexicon) are not files to the
+agent. The file tools refuse them and leave them out of every listing, and the tool-call screen
+(`hooks.HookManager.on_tool_call`) refuses a shell command that names one before any approval, with
+the tool to use instead (`file_scope.store_named_in`): a raw read hands the model pages of a
+database past the masking its own tools apply, and a write breaks the store.
 
 ### A tool reads only when it declares so (`task_modes.py`)
 

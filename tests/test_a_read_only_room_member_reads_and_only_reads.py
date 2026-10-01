@@ -248,9 +248,9 @@ def test_the_owners_allowed_folder_is_within_the_members_reach(enabled, tmp_path
     sessions, room_id = _drive(tmp_path, model)
 
     (key,) = sessions.asked_with
-    assert sessions.asked_with[key].get("extra_tool_roots") == [
-        str(tmp_path / "user" / "Notes" / "Writing")
-    ]
+    # The reach is the owner's setting as it stands at each call (`file_scope`), not a copy handed
+    # to the session when it opened, which would outlive the folder's removal from the setting.
+    assert not sessions.asked_with[key].get("extra_tool_roots")
     results = _tool_results(model)
     assert any("Section 6: the live crash demo." in r for r in results), results
     assert _notes(room_id) == []

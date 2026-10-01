@@ -484,6 +484,15 @@ class HookManager:
             offer = _scheduler_handoff(normalized)
             if offer is not None:
                 return ToolHookResult.deny(offer.observation)
+        # PersonalClaw's own stores (the knowledge library's database and documents): read and
+        # changed only through their own tools, so a read or a command that names one is refused
+        # with the tool to use (`file_scope.store_named_in`), before anyone is asked to approve it.
+        if tool_name.startswith(("Reading ", "Running: ")):
+            from personalclaw.file_scope import store_named_in
+
+            reason = store_named_in(normalized, cwd=cwd)
+            if reason:
+                return ToolHookResult.deny(reason)
 
         # What runs as the owner, and what they allowed (always enforced): a call that names one of
         # those paths — an edit, a write, a shell command that is not a pure read — does not run,

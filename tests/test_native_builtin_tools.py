@@ -199,7 +199,7 @@ async def test_glob_signals_truncation(tmp_path):
 async def test_path_confinement(ws):
     p = NativeBuiltinToolProvider(ws)
     esc = await p.invoke("read_file", {"path": "../../../etc/passwd"})
-    assert not esc.success and "escape" in esc.error.lower()
+    assert not esc.success and "outside every folder the file tools reach" in esc.error
 
 
 # NOTE: git / run_tests / diagnostics are NO LONGER tools — the agent runs git,
@@ -266,7 +266,7 @@ async def test_extra_roots_allow_engine_dir_outside_cwd(ws):
     assert w.success and (engine / "findings" / "cycle_1.json").exists()
     # a path in NEITHER cwd nor an extra root is still rejected
     esc = await p.invoke("read_file", {"path": str(ws.parent / "elsewhere.txt")})
-    assert not esc.success and "escape" in esc.error.lower()
+    assert not esc.success and "outside every folder the file tools reach" in esc.error
 
 
 @pytest.mark.asyncio
@@ -275,7 +275,7 @@ async def test_no_extra_roots_keeps_strict_confinement(ws):
     # session's workspace-only confinement is unchanged.
     p = NativeBuiltinToolProvider(ws)
     esc = await p.invoke("read_file", {"path": str(ws.parent / "outside.txt")})
-    assert not esc.success and "escape" in esc.error.lower()
+    assert not esc.success and "outside every folder the file tools reach" in esc.error
 
 
 @pytest.mark.asyncio

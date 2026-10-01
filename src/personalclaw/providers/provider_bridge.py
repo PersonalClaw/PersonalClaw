@@ -623,6 +623,7 @@ def _build_native_runtime(
     model_override: str | None,
     cwd: str | None,
     extra_tool_roots: list | None = None,
+    read_tool_roots: list | None = None,
     unattended: bool = False,
     dry_run: bool = False,
     reasoning_effort: str = "",
@@ -858,6 +859,7 @@ def _build_native_runtime(
             agent=name or "",
             session_key=session_key or "",
             extra_roots=[Path(r) for r in (extra_tool_roots or [])],
+            read_roots=[Path(r) for r in (read_tool_roots or [])],
             categories=PLATFORM_CATEGORIES,
             provider_name=PLATFORM_PROVIDER_NAME,
             display=PLATFORM_DISPLAY_NAME,
@@ -1272,6 +1274,9 @@ def resolve_provider_for_use_case(
     # into the model-axis resolvers (ACP / config-registry), which don't expect it;
     # it's meaningful only to the native runtime builder below.
     _extra_tool_roots = kwargs.pop("extra_tool_roots", None)
+    # Folders the native file tools only read (a workflow step's reach): popped for the same
+    # reason, and meaningful only to the native builder.
+    _read_tool_roots = kwargs.pop("read_tool_roots", None)
     # Unattended run mode (scheduled run-prompt/run-workflow, Goal/Code loop cycle,
     # dry-run replay): strips interactive tools + fails the approval gate fast so a
     # background turn can't wedge waiting for a human (T5). Popped here so it never
@@ -1353,6 +1358,7 @@ def resolve_provider_for_use_case(
             model_override=model_override,
             cwd=cwd,
             extra_tool_roots=_extra_tool_roots,
+            read_tool_roots=_read_tool_roots,
             unattended=_unattended,
             dry_run=_dry_run,
             reasoning_effort=_reasoning_effort,

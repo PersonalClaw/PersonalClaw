@@ -38,6 +38,8 @@ from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_defini
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions
 from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text
+from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal, store_named_in
+from personalclaw.knowledge_providers.dir_source import note_path
 from personalclaw.security import (
     MASK_CONFLICT,
     MaskConflict,
@@ -57,7 +59,6 @@ from personalclaw.tool_providers.base import (
 from personalclaw.tool_providers.projection import project_and_retain, project_output
 
 if TYPE_CHECKING:
-    from personalclaw.file_roots import Admission
     from personalclaw.triggers.secrets import UnresolvedSecret
 
 logger = logging.getLogger(__name__)
@@ -333,28 +334,6 @@ def _enrich_in_background(item_id: str) -> None:
     task.add_done_callback(_bg_ingest_tasks.discard)
 
 
-def _pattern_leaves_workspace(pattern: str) -> bool:
-    """Whether a ``glob``/``grep`` pattern names a place outside the workspace by itself: an
-    absolute or ``~`` path, or a ``..`` segment. Matches are checked one by one as well; this is
-    the refusal that says why, instead of an empty result."""
-    parts = pattern.replace("\\", "/").split("/")
-    return pattern.startswith(("/", "~", "\\")) or Path(pattern).is_absolute() or ".." in parts
-
-
-def _pattern_refusal(arg: str, pattern: str) -> ToolResult:
-    return ToolResult(
-        success=False,
-        error=(
-            f"{arg} {pattern!r} leaves the workspace: patterns are relative to it and cannot "
-            "climb out of it (no absolute path, `~` or `..`)"
-        ),
-        recovery_hints=[
-            f"Write {arg} relative to the workspace, e.g. 'src/**/*.py'. Files outside it are "
-            "not reachable from these tools."
-        ],
-    )
-
-
 def _stored_secret(key: str) -> str:
     """What a command's ``{{secret:KEY}}`` is filled with: a credential the owner stored by name in
     Settings → Secrets, and nothing else, or ``""``.
@@ -523,6 +502,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         agent: str = "",
         session_key: str = "",
         extra_roots: list[Path] | None = None,
+        read_roots: list[Path] | None = None,
         categories: "frozenset[str] | set[str] | None" = None,
         provider_name: str = "builtin",
         display: str = "Workspace Tools",
@@ -539,8 +519,11 @@ class NativeBuiltinToolProvider(ToolProvider):
         # questions.json) live in the project files dir UNDER ~/.personalclaw — outside
         # the workspace. Without this, _resolve would reject every engine-file path as
         # "escapes the workspace root", so the worker couldn't read its brief or write
-        # findings. Empty for normal chat sessions (workspace-only confinement holds).
+        # findings. Empty for normal chat sessions.
         self._extra_roots_inst = [Path(r).resolve() for r in (extra_roots or [])]
+        # Folders this session's work reads and never changes (`file_scope.READS`): a workflow
+        # step's project tree and the folder its batch was started in.
+        self._read_roots = [Path(r).resolve() for r in (read_roots or [])]
         self._sandbox_mode = sandbox_mode
         # Identity for post_to_inbox: the agent role (sender) + its session
         # (reply_target so a needs_reply item routes back to this agent).
@@ -589,63 +572,27 @@ class NativeBuiltinToolProvider(ToolProvider):
         """Where this turn's file tools reach: the session's folder, then its extra roots."""
         return [self._cwd.resolve(), *self._extra_roots]
 
-    def _admission(self) -> "Admission":
-        """The Files view's containment (`file_roots.admit`) over :meth:`_roots`, made once for a
-        call that asks about many paths (a listing, a search, a map)."""
-        from personalclaw.file_roots import Admission
+    def file_scope(self) -> FileScope:
+        """Where this call's file tools reach (:mod:`personalclaw.file_scope`): the session's
+        folders and the folders its work reads, the allowed working directories and the knowledge
+        sources' folders, read now, so a folder taken out of either is out of reach at the next
+        call."""
+        return FileScope(self._roots(), reads=self._read_roots)
 
-        return Admission([str(root) for root in self._roots()])
+    def _resolve(self, rel: str, scope: FileScope | None = None, *, change: bool = False) -> Path:
+        """``rel`` as a real path the tools may read (with *change*, change), or ``OutOfScope``
+        with the reason: :meth:`FileScope.resolve`, the check a caller can also make before any
+        approval is asked for (``file_scope.refusal``)."""
+        return Path((scope or self.file_scope()).resolve(rel, change=change))
 
-    def _resolve(self, rel: str, admission: "Admission | None" = None) -> Path:
-        """Resolve ``rel`` under cwd (or an extra allowed root); raise on escape.
-
-        A relative path resolves under cwd. An absolute path is accepted only if it
-        lands inside cwd OR one of ``extra_roots`` (the project files dir for a
-        brownfield worker). This keeps the default workspace-only confinement for
-        chat sessions while letting a worker reach its engine files.
-
-        Then the check the Files view and ``/api/file-read`` make (`file_roots.admit`): with
-        symlinks and ``..`` resolved, no credential or secret file — a protected home location
-        (``~/.ssh``, ``~/.aws``, the keychain, the home's own ``.env``, ``auth/``,
-        ``governance/``), PersonalClaw's own keys wherever they sit, a ``.env``, ``*.key``,
-        ``*.pem`` or ``*.secret`` — and nothing an alias of one reaches.
-
-        First of all, no control character (``file_roots.CONTROL_CHARS``): the Files view refuses
-        them in every path and name, and a model that wrote its file name with a trailing newline
-        left a file in the user's tree that no listing showed plainly and nothing cleared.
-
-        A path that starts with ``~`` or ``~/`` names the owner's home, as the owner writes it
-        ("summarise ~/Documents/Calendar/family.ics"), and is held to the same rules as any
-        absolute path. It was read as a folder named ``~`` inside the session's folder, so a
-        file the tools could reach read as missing. ``~name`` is left a plain name: another
-        user's home is nothing the owner means."""
-        from personalclaw.file_roots import control_character_in, within
-
-        bad = control_character_in(rel)
-        if bad:
-            raise ValueError(
-                f"path {rel!r} has a control character ({bad}) in it, which no file name may "
-                "hold; write the path without it"
-            )
-        allowed = self._roots()
-        base = allowed[0]
-        if rel == "~" or rel.startswith("~/"):
-            rel = os.path.expanduser(rel)
-        p = (base / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
-        if not any(root == p or root in p.parents for root in allowed):
-            raise ValueError(f"path {rel!r} escapes the workspace root")
-        # A worker whose folder CONTAINS the home (a brownfield loop bound to `~`) reaches into it
-        # only through a root that is itself inside it — never `config.json`, `hooks/` and the rest
-        # of what says what runs as the owner (`file_roots.within`, `owner_only`).
-        if not within(str(p), [str(root) for root in allowed]):
-            raise ValueError(
-                f"path {rel!r} is inside PersonalClaw's own home, which this tool does not reach"
-            )
-        if (admission or self._admission())(str(p)) is None:
-            raise ValueError(
-                f"path {rel!r} is a credential or secret file, which this tool does not reach"
-            )
-        return p
+    def _folder(self, a: dict, scope: FileScope) -> Path:
+        """The folder ``glob``/``grep`` search: the call's ``path``, else the session's folder."""
+        if not a.get("path"):
+            return self._cwd.resolve()
+        folder = self._resolve(str(a["path"]), scope)
+        if not folder.is_dir():
+            raise ValueError(f"not a directory: {a['path']}")
+        return folder
 
     async def list_tools(self) -> list[ToolDefinition]:
         s = {"type": "object"}
@@ -679,7 +626,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Read a UTF-8 text file from the workspace, or the text of a PDF, Word or PowerPoint document. Args: path (str), optional max_bytes (int).",  # noqa: E501
+                description="Read a UTF-8 text file, or the text of a PDF, Word or PowerPoint document, with no approval: in the workspace, the user's allowed working directories, or a folder the user added as a knowledge source (read-only). Args: path (str: relative to the workspace, absolute, or from ~), optional max_bytes (int).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {"path": {"type": "string"}, "max_bytes": {"type": "integer"}},
@@ -691,7 +638,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=True,
                 risk_level=RiskLevel.CAUTION,
-                description="Create or overwrite a text file in the workspace. Args: path (str), content (str).",  # noqa: E501
+                description="Create or overwrite a text file in the workspace or one of the user's allowed working directories (a knowledge-source folder is read-only). Args: path (str), content (str).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
@@ -703,7 +650,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=True,
                 risk_level=RiskLevel.CAUTION,
-                description="Replace old_str with new_str in a file. old_str must match EXACTLY ONCE (include surrounding context to make it unique) — if it matches multiple times the edit is rejected unless replace_all is true. Args: path, old_str, new_str, replace_all (optional, default false).",  # noqa: E501
+                description="Replace old_str with new_str in a file in the workspace or one of the user's allowed working directories. old_str must match EXACTLY ONCE (include surrounding context to make it unique) — if it matches multiple times the edit is rejected unless replace_all is true. Args: path, old_str, new_str, replace_all (optional, default false).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {
@@ -720,7 +667,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="List entries in a workspace directory. Args: path (str, default '.').",
+                description="List a directory's entries, with no approval: in the workspace, an allowed working directory or a knowledge-source folder. Args: path (str, default '.').",  # noqa: E501
                 parameters={**s, "properties": {"path": {"type": "string"}}},
             ),
             ToolDefinition(
@@ -728,10 +675,10 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Find files matching a glob pattern under the workspace. Args: pattern (str, e.g. '**/*.py').",  # noqa: E501
+                description="Find files matching a glob pattern under a folder, with no approval: the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Args: pattern (str, e.g. '**/*.md'), optional path (str).",  # noqa: E501
                 parameters={
                     **s,
-                    "properties": {"pattern": {"type": "string"}},
+                    "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}},
                     "required": ["pattern"],
                 },
             ),
@@ -740,11 +687,12 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Search file contents (substring by default, or a Python regex with regex=true). Skips .git/node_modules/venv/build dirs. Args: query (str), optional glob (str), optional regex (bool), optional max_results (int).",  # noqa: E501
+                description="Search file contents (substring by default, or a Python regex with regex=true), with no approval: under the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Skips .git/node_modules/venv/build dirs. Args: query (str), optional path (str), optional glob (str), optional regex (bool), optional max_results (int).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {
                         "query": {"type": "string"},
+                        "path": {"type": "string"},
                         "glob": {"type": "string"},
                         "regex": {"type": "boolean"},
                         "max_results": {"type": "integer"},
@@ -760,8 +708,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                 description=(
                     "Structural map of the workspace codebase — the directory tree plus the "
                     "top-level definitions (functions, classes, exports) of each source file, "
-                    "so you can orient WITHOUT reading every file. Args: optional path (str, "
-                    "subdir to map, default the whole workspace), optional max_files (int)."
+                    "so you can orient WITHOUT reading every file. Args: optional path (str, the "
+                    "folder to map: default the whole workspace, or a folder in an allowed "
+                    "working directory), optional max_files (int)."
                 ),
                 parameters={
                     **s,
@@ -778,7 +727,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "environment. Use it for git (status/diff/branch/commit — push is blocked), "
                     "running tests (pytest, npm test, go test, cargo test, make test), linters/"
                     "type-checkers (ruff, eslint, tsc, go vet), builds, package managers, and any "
-                    "standard CLI. Prefer real commands over asking for a dedicated tool. Runs in a "  # noqa: E501
+                    "standard CLI. To read, list or search files, use read_file, list_dir, glob "
+                    "and grep instead: they need no approval, and reach the user's allowed "
+                    "working directories and knowledge-source folders too. Runs in a "
                     "login shell at the workspace root; stdout+stderr are merged and the exit code "
                     "is reported. Sandboxed + credential/exfiltration deny-list enforced. To use a "
                     "credential the user stored in Settings → Secrets, write {{secret:NAME}} where "
@@ -859,7 +810,7 @@ class NativeBuiltinToolProvider(ToolProvider):
             return None
         operation, region_arg, _new_arg = spec
         display = str(a["path"])
-        path = self._resolve(display)
+        path = self._resolve(display, change=True)
         required = str(a.get(region_arg) or "") if region_arg else None
         refusal = read_gate.admit_write(
             self._session_key,
@@ -892,7 +843,7 @@ class NativeBuiltinToolProvider(ToolProvider):
             return
         operation, old_arg, new_arg = spec
         try:
-            path = self._resolve(str(a["path"]))
+            path = self._resolve(str(a["path"]), change=True)
             if operation == "overwrite":
                 read_gate.record_overwrite(self._session_key, path, content=str(a.get(new_arg, "")))
             elif operation == "edit" and old_arg:
@@ -918,13 +869,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             self._read_gate_observe_write(tool_name, arguments, result)
             return result
         except ValueError as exc:  # confinement / arg errors → surface to model
-            msg = str(exc)
-            hints: list[str] = []
-            if "escapes the workspace" in msg:
-                hints = [
-                    "Use a path relative to the workspace root; '..' and absolute paths outside it are not allowed."  # noqa: E501
-                ]
-            return ToolResult(success=False, error=msg, recovery_hints=hints)
+            hint = exc.hint if isinstance(exc, OutOfScope) else ""
+            return ToolResult(success=False, error=str(exc), recovery_hints=[hint] if hint else [])
         except KeyError as exc:  # a required argument was omitted
             return ToolResult(
                 success=False,
@@ -1113,7 +1059,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         )
         return res
 
-    def _checkpoint_pre_edit(self, path: Path) -> None:
+    def _checkpoint_pre_edit(self, path: Path, scope: FileScope) -> None:
         """Phase 2 of the turn checkpoint (EXECUTION-ISOLATION §6): back up *path*'s current
         bytes before this turn's first mutation of it.
 
@@ -1121,16 +1067,20 @@ class NativeBuiltinToolProvider(ToolProvider):
         synchronously with the write (no ordering race against an event stream), and it covers
         every caller of the native file tools — chat, loops, subagents — not just the
         dashboard. Never raises; the store degrades rather than failing the agent's tool call.
+        The folder the write was admitted through is recorded, so a rewind restores a file in an
+        allowed working directory as it does one in the workspace.
         """
         try:
             from personalclaw import turn_checkpoints
 
-            turn_checkpoints.capture_pre_edit(self._session_key, path, cwd=self._cwd)
+            root = scope.root_of(str(path))
+            turn_checkpoints.capture_pre_edit(self._session_key, path, cwd=self._cwd, root=root)
         except Exception:  # noqa: BLE001
             logger.debug("checkpoint pre-edit skipped for %s", path, exc_info=True)
 
     async def _t_write_file(self, a: dict) -> ToolResult:
-        path = self._resolve(str(a["path"]))
+        scope = self.file_scope()
+        path = self._resolve(str(a["path"]), scope, change=True)
         if a.get("content") is None:
             # Absent (or null) is not an empty file. This tool replaces the WHOLE file, and a call
             # that carried no text used to write "" (or "None") over it.
@@ -1145,7 +1095,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 ],
             )
         content = str(a["content"])
-        self._checkpoint_pre_edit(path)
+        self._checkpoint_pre_edit(path, scope)
         written = content
         before = ""
 
@@ -1202,10 +1152,11 @@ class NativeBuiltinToolProvider(ToolProvider):
         )
 
     async def _t_edit_file(self, a: dict) -> ToolResult:
-        path = self._resolve(str(a["path"]))
+        scope = self.file_scope()
+        path = self._resolve(str(a["path"]), scope, change=True)
         old, new = str(a["old_str"]), str(a["new_str"])
         replace_all = bool(a.get("replace_all"))
-        self._checkpoint_pre_edit(path)
+        self._checkpoint_pre_edit(path, scope)
 
         def _edit() -> tuple[bool, str]:
             # Returns (ok, message). ok=False carries a stable error string the
@@ -1260,18 +1211,18 @@ class NativeBuiltinToolProvider(ToolProvider):
         return ToolResult(success=False, error=msg, recovery_hints=[hint])
 
     async def _t_list_dir(self, a: dict) -> ToolResult:
-        admission = self._admission()
-        path = self._resolve(str(a.get("path") or "."), admission)
+        scope = self.file_scope()
+        path = self._resolve(str(a.get("path") or "."), scope)
 
         def _ls() -> str | None:
             if not path.is_dir():
                 return None
-            # An entry the tools could not open is not named either: a secret file, and a link
-            # that leads out of the workspace, as the Files view leaves them out of its listing.
+            # An entry the tools could not open is not named either: a secret file, a link that
+            # leads out of every place, and what a knowledge source does not share.
             entries = sorted(
                 p.name + ("/" if p.is_dir() else "")
                 for p in path.iterdir()
-                if admission(str(p)) is not None
+                if scope.admits(str(p)) is not None
             )
             return "\n".join(entries) or "(empty)"
 
@@ -1287,19 +1238,19 @@ class NativeBuiltinToolProvider(ToolProvider):
         return _ok_capped(listing, session_key=self._session_key)
 
     async def _t_glob(self, a: dict) -> ToolResult:
-        base = self._cwd.resolve()
         pattern = str(a["pattern"])
-        if _pattern_leaves_workspace(pattern):
-            return _pattern_refusal("pattern", pattern)
-        admission = self._admission()
+        if refused := pattern_refusal("pattern", pattern):
+            return ToolResult(success=False, error=str(refused), recovery_hints=[refused.hint])
+        scope = self.file_scope()
+        base = self._folder(a, scope)
 
         def _glob() -> str:
-            # A match the tools could not open is not listed: a secret file, or one a link
-            # inside the workspace leads to outside it.
+            # A match the tools could not open is not listed: a secret file, a link out of every
+            # place, or what a knowledge source does not share.
             matches = sorted(
-                str(p.relative_to(base))
+                scope.shown(p)
                 for p in base.glob(pattern)
-                if p.is_file() and admission(str(p)) is not None
+                if p.is_file() and scope.admits(str(p)) is not None
             )
             if len(matches) > 500:
                 # Signal the cap rather than silently showing 500 of N (no-silent-truncation).
@@ -1318,12 +1269,12 @@ class NativeBuiltinToolProvider(ToolProvider):
     async def _t_grep(self, a: dict) -> ToolResult:
         import re as _re
 
-        base = self._cwd.resolve()
         query = str(a["query"])
         glob_pat = str(a.get("glob") or "**/*")
-        if _pattern_leaves_workspace(glob_pat):
-            return _pattern_refusal("glob", glob_pat)
-        admission = self._admission()
+        if refused := pattern_refusal("glob", glob_pat):
+            return ToolResult(success=False, error=str(refused), recovery_hints=[refused.hint])
+        scope = self.file_scope()
+        base = self._folder(a, scope)
         max_results = int(a.get("max_results") or 200)
         use_regex = bool(a.get("regex"))
         # Compile once when in regex mode; a bad pattern is a usable error, not a crash.
@@ -1348,16 +1299,15 @@ class NativeBuiltinToolProvider(ToolProvider):
                 # Skip VCS/vendored/build dirs — searching them is slow + noisy.
                 if any(part in self._SKIP_DIRS for part in p.relative_to(base).parts):
                     continue
-                # Never read a file the tools could not open: a secret file, or one a link
-                # inside the workspace leads to outside it.
-                if admission(str(p)) is None:
+                # Never read a file the tools could not open (``FileScope.admits``).
+                if scope.admits(str(p)) is None:
                     continue
                 try:
                     for i, line in enumerate(
                         p.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
                     ):
                         if matcher.search(line) if matcher else query in line:
-                            hits.append(f"{p.relative_to(base)}:{i}: {line.strip()[:200]}")
+                            hits.append(f"{scope.shown(p)}:{i}: {line.strip()[:200]}")
                             if len(hits) >= max_results:
                                 # Signal the cap: the worker must know more matches may
                                 # exist (no-silent-truncation) so it can narrow `glob`
@@ -1380,8 +1330,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         top-level definitions, so the agent orients without reading everything.
         Dependency-free: Python via the stdlib ``ast``, other languages via a
         couple of cheap top-level regexes (def/class/func/export/type)."""
-        admission = self._admission()
-        base = (self._resolve(str(a["path"]), admission) if a.get("path") else self._cwd).resolve()
+        scope = self.file_scope()
+        base = (self._resolve(str(a["path"]), scope) if a.get("path") else self._cwd).resolve()
         max_files = int(a.get("max_files") or 200)
 
         def _build() -> str:
@@ -1429,7 +1379,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 for fn in sorted(filenames):
                     # Mapped only when the tools could open it: never a secret file, or one a
                     # link inside the workspace leads to outside it.
-                    if Path(fn).suffix in exts and admission(str(root_path / fn)) is not None:
+                    if Path(fn).suffix in exts and scope.admits(str(root_path / fn)) is not None:
                         files.append(root_path / fn)
                         if len(files) >= max_files:
                             truncated = True
@@ -1550,6 +1500,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "This command touches a sensitive credential path. Use a non-credential path or a different approach."  # noqa: E501
                 ],
             )
+        # PersonalClaw's own stores are read through their own tools (`file_scope.store_named_in`).
+        if stored := store_named_in(command, cwd=self._cwd):
+            return ToolResult(success=False, error=security.redact_known_values(stored, handed))
         deny = _denied_bash_reason(command)
         if deny:
             return ToolResult(
@@ -1784,7 +1737,8 @@ class NativeBuiltinToolProvider(ToolProvider):
                 tail = f" — {snippet}" if snippet else ""
                 # P12: surface the per-item citation locator so the agent can cite WHERE in
                 # the source the match sits (section / line range), not just name the item.
-                loc_bits = []
+                # A note from a watched folder names its file, which read_file opens as written.
+                loc_bits = [_kn_redact(where)] if (where := note_path(store, item)) else []
                 if r.get("section"):
                     loc_bits.append(str(r["section"]))
                 if r.get("line_range"):
@@ -1887,7 +1841,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         def _get() -> str:
             from personalclaw.knowledge import get_knowledge_store
 
-            item = get_knowledge_store().get_item(item_id)
+            store = get_knowledge_store()
+            item = store.get_item(item_id)
             if not item:
                 return ""
             tags = ", ".join(item.get("tags", []) or [])
@@ -1934,6 +1889,8 @@ class NativeBuiltinToolProvider(ToolProvider):
                 lines.append(f"tags: {tags}")
             if item.get("url"):
                 lines.append(f"url: {item.get('url')}")
+            if where := note_path(store, item):
+                lines.append(f"path: {where} (the note's file, which read_file opens)")
             # File-backed items: give the agent the file's shape (it can't open the
             # bytes inline) — dimensions/pages/size — so it knows what it's dealing with.
             if item.get("file_path"):

@@ -197,7 +197,7 @@ function RecipeLookup({ kinds, onUse }: { kinds: SourceKind[]; onUse: (r: Source
 function kindBlurb(k: SourceKind): string {
   if (k.form === 'web_page') return 'A changelog, blog index or newsroom — read without JavaScript, with no model involved.'
   if (k.form === 'feed') return 'RSS, Atom, JSON Feed or a CSV export, including Hacker News and GitHub presets.'
-  if (k.form === 'dir') return 'A folder on this machine — what is in it is read in, then new and edited files; deletions are archived.'
+  if (k.form === 'dir') return 'A folder on this machine — what is in it is read in, then new and edited files; deletions are archived. Your agent can read those files without asking, and its file tools never change them.'
   return `Provided by ${k.display_name}.`
 }
 
@@ -384,7 +384,7 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
               <Field label="Folder" hint="Checked on save: it must exist, and it may not be a sensitive location.">
                 <TextInput value={spec.path} onChange={(v) => set('path', v)} placeholder="/Users/you/notes" required mono />
               </Field>
-              <Field label="File patterns" hint={`Comma-separated globs. Up to ${kind.max_files ?? 0} files are tracked per folder.`}>
+              <Field label="File patterns" hint={`Comma-separated globs: the files read in, and the only ones in the folder your agent may read. Up to ${kind.max_files ?? 0} files are tracked per folder.`}>
                 <TextInput value={spec.include} onChange={(v) => set('include', v)} placeholder="*.md, *.txt" mono />
               </Field>
               {/* What adding the folder does to what is ALREADY in it, with the bound stated:

@@ -348,8 +348,18 @@ def current_turn(session_key: str) -> int:
 # ── phase 2: the pre-edit backup ───────────────────────────────────────────────
 
 
-def capture_pre_edit(session_key: str, path: Path | str, *, cwd: Path | str | None = None) -> str:
+def capture_pre_edit(
+    session_key: str,
+    path: Path | str,
+    *,
+    cwd: Path | str | None = None,
+    root: Path | str | None = None,
+) -> str:
     """Back up *path*'s current bytes before this turn's first mutation of it.
+
+    *root* is the folder the write was admitted through when that is not *cwd* (one of the
+    owner's allowed working directories, ``file_scope``), recorded beside *cwd* so a rewind may
+    restore the file there too.
 
     Returns a short status for logging/tests: ``"captured"``, ``"deduped"`` (already backed
     up in this turn), ``"absent"`` (the write creates the file — recorded so a rewind can
@@ -381,13 +391,15 @@ def capture_pre_edit(session_key: str, path: Path | str, *, cwd: Path | str | No
         roots = man.get("roots")
         if not isinstance(roots, list):
             roots = []
-        if cwd:
+        for folder in (cwd, root):
+            if not folder:
+                continue
             try:
-                base = str(Path(cwd).resolve())
+                base = str(Path(folder).resolve())
                 if base not in roots:
                     roots.append(base)
             except OSError:
-                logger.debug("turn_checkpoints: could not resolve cwd %s", cwd, exc_info=True)
+                logger.debug("turn_checkpoints: could not resolve %s", folder, exc_info=True)
         man["roots"] = roots
 
         if any(isinstance(f, dict) and f.get("path") == key for f in files):

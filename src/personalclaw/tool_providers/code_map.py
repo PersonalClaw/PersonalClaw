@@ -152,28 +152,34 @@ async def _run(fn, arguments: dict) -> ToolResult:
 
 
 def resolve_workspace(arguments: dict) -> str:
-    """Which directory to query: this turn's workspace, or a folder inside the places its file
-    tools reach, checked as they check a path (`file_roots.admit`: symlinks and ``..`` resolved,
-    the PersonalClaw home reached only through a root inside it, no credential location).
+    """Which directory to query: this turn's workspace, or a folder the file tools may change files
+    in (`file_scope`: the workspace, one of the owner's allowed working directories, or a folder
+    inside one), checked as they check a path (symlinks and ``..`` resolved, the PersonalClaw home
+    reached only through a place inside it, no credential location).
 
-    Raises ``ValueError`` for a ``workspace`` outside them: this tool reads every source file
-    under the folder it indexes, so an unchecked folder would let it map what ``grep`` and
-    ``read_file`` cannot open."""
+    Raises ``ValueError`` for any other ``workspace``: this tool reads every source file under the
+    folder it indexes, so an unchecked folder would let it map what ``grep`` and ``read_file``
+    cannot open. A knowledge source's folder is not one either: the tools read only the notes it
+    shares there."""
     import os
 
     from personalclaw.agents.native.builtin_tools import current_tool_roots
-    from personalclaw.file_roots import admit
+    from personalclaw.file_scope import FileScope, OutOfScope
 
     roots = current_tool_roots()
     explicit = str(arguments.get("workspace") or "").strip()
     if not explicit:
         return roots[0] if roots else ""
-    raw = explicit if os.path.isabs(explicit) or not roots else os.path.join(roots[0], explicit)
-    canonical = admit(raw, roots) if roots else None
-    if canonical is None or not os.path.isdir(canonical):
+    try:
+        canonical = FileScope(roots).resolve(explicit, change=True)
+    except OutOfScope as refused:
+        canonical, reason = "", str(refused)
+    else:
+        reason = "" if os.path.isdir(canonical) else "it is not a folder"
+    if reason:
         raise ValueError(
-            f"workspace {explicit!r} is not a folder this session's file tools reach: code_map "
-            "indexes the session's workspace or a folder inside it"
+            f"workspace {explicit!r} is not a folder code_map indexes: it indexes the session's "
+            f"workspace, an allowed working directory, or a folder inside one ({reason})"
         )
     return canonical
 

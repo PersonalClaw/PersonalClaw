@@ -731,10 +731,12 @@ class AgentConfig:
     subagent_cwd_allowed_roots: list[str] = field(
         default_factory=list,
         metadata=_meta(
-            "SubAgent CWD Allowed Roots",
-            "Folders besides the workspace that subagent_run's cwd parameter may name, and that "
-            "a room member's file tools reach. Values support ~ expansion. Empty by default: a "
-            "subagent works in the workspace only.",
+            "Allowed working directories",
+            "Folders besides the workspace where the agent's file tools read files with no "
+            "approval and change them under the same approval as the workspace's files (a room "
+            "member as its own tier allows), and where a subagent may be started (subagent_run's "
+            "cwd). Values support ~ expansion. Empty by default: the file tools and subagents "
+            "stay in the workspace.",
         ),
     )
     log_level: str = field(
@@ -3467,7 +3469,8 @@ class PendingConfigChanges:
 #:
 #: Fields whose default is ALREADY the restrictive value (``agent.yolo``, every
 #: ``external_access.*`` flag, ``security.egress.allow_private``, ``dashboard.trusted_proxies``,
-#: ``agent.subagent_cwd_allowed_roots``, whose empty default keeps a subagent in the workspace)
+#: ``agent.subagent_cwd_allowed_roots``, whose empty default keeps the file tools and a subagent
+#: in the workspace)
 #: are deliberately absent: an entry that changes nothing is dead code.
 CONFIG_ON_DISCARDED_READ: dict[str, Any] = {
     # Auto-approves EVERY tool call for a subagent's lifetime. `interactive` asks.
