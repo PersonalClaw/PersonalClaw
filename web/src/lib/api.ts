@@ -4575,12 +4575,13 @@ export interface MemorySettings { history_idle_hours: number; history_max_days: 
  *  must never be produced by a failure. */
 export type TriageDigestState = 'uninstalled' | 'off' | 'never_run' | 'ready' | 'error'
 
-/** One thing the machine did on its own, with the handle that takes it back.
+/** One thing the machine did on its own, with the handle that takes it back. Only an action that
+ *  LANDED is one: a failed attempt is a `TriagePending` row whose `not_done` says so.
  *  `undoable` is false when the provider had nothing to reverse — recorded, not papered over,
  *  so the card offers Undo only where an undo exists. */
 export interface TriageAutoDone {
   ordinal: string; source_id: string; action_type: string; provider: string
-  rule: string; reversal: string; undoable: boolean; ok: boolean; error: string
+  rule: string; reversal: string; undoable: boolean
   permalink: string; title: string; source: string; item_permalink: string; materiality: string
 }
 
@@ -4590,6 +4591,13 @@ export interface TriageAutoDone {
 export interface TriagePending {
   ordinal: string; action_type: string; tier: string; pattern_key: string; clamped: boolean
   reason: string; rule: string; answered: boolean; answer: string
+  /** The server's sentence when the digest tried this on its own and it failed, or a safety rule
+   *  or its limit held it: "Not done: …", with why and what to do next. Empty for a proposal
+   *  nobody tried. The digest's text says the same words. */
+  not_done: string
+  /** The same, for an answered "yes" whose action did not happen. Empty for one that did, and
+   *  for a "no". */
+  answer_not_done: string
   permalink: string; title: string; source: string; item_permalink: string; materiality: string
 }
 
@@ -4602,7 +4610,7 @@ export interface TriageItemRow {
 /** A run that ended in the window. `needs_you`: it failed, was stopped or was handed to you. */
 export interface TriageRanRow extends TriageItemRow { needs_you: boolean }
 
-/** One ledger row in the "what your machine did" section, permalinked to the run journal. */
+/** One row of the digest run's own ledger ("In the run journal"), permalinked to the run journal. */
 export interface TriageLedgerRow {
   kind: string; seq: number; ordinal: string; action_type: string; rule: string
   outcome: string; reason: string; detail: string; verb: string; permalink: string
@@ -4715,10 +4723,13 @@ export interface TriageDigestView {
   ran?: TriageRanRow[]
   /** What else the gate kept that no proposal is about — the body's "Also waiting". */
   waiting?: TriageItemRow[]
-  budget_breached?: boolean
-  budget_reason?: string
+  /** Why nothing (or nothing more) ran on its own, when the stage stopped as a whole: incident
+   *  mode, the approval ceiling, or the spend floor. Empty otherwise. The digest's text says it too. */
+  auto_stopped?: string
   degraded?: boolean
-  machine_did?: TriageLedgerRow[]
+  /** The run's own ledger rows ("In the run journal"): what landed, failed, was stopped or was
+   *  answered. Never rendered as "what your machine did", since failures are in it. */
+  journal?: TriageLedgerRow[]
   /** False = rows that should exist were NOT written. Never "there were none". */
   ledger_complete?: boolean
   ledger_rows?: number
@@ -4737,6 +4748,8 @@ export interface TriageReplyResult {
   results?: Array<{
     ordinal: string; outcome: 'acted' | 'already' | 'unknown'; verb?: string
     executed?: boolean; detail?: string; rule?: string; rule_error?: string
+    /** A "yes" whose action did not happen, said as the card says it ("Not done: …"). */
+    not_done?: string
     /** False = the answer was not durably recorded, so the next tap would act again. */
     recorded?: boolean
   }>

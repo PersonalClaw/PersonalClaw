@@ -12,7 +12,7 @@ Three lanes, three functions, one rule each about what "accumulated" means:
   since answered themselves fall out with no bookkeeping.
 * **run** — the Run Ledger's own rows for recent runs that have ENDED (the substrate's
   materiality), NOT a fresh classification. A run that failed, was cancelled or was handed to you
-  is `error`, one that wrote something is `action`, one that only produced words is `response`. A
+  is `error`, one whose effect LANDED is `action`, one that only produced words is `response`. A
   run still going — the digest's own run among them — is not an outcome and is not collected.
   This plan adds zero run instrumentation, so a materiality this module computed itself would be
   a second dialect for a question the ledger answers.
@@ -177,8 +177,25 @@ def _run_materiality(status: str, effects: int) -> str:
     return MATERIALITY_RESPONSE
 
 
+def _effects_that_landed(rows: list[dict[str, Any]]) -> int:
+    """How many of a run's effects committed and still stand: one per node instance at most.
+
+    The ledger writes an ``attempted`` row before a dispatch and a ``committed`` row when it lands
+    (`workflows.effects.EffectStatus`), so counting the rows counted one archive as "2 effects"
+    and an attempt that failed as an effect the machine had. The run store's own reading of a
+    path's standing effect (`committed_effect`) is the one asked here.
+    """
+    from personalclaw.workflows.effects import EffectRecord, committed_effect
+
+    by_path: dict[str, list[EffectRecord]] = {}
+    for row in rows:
+        record = EffectRecord.from_event(row)
+        by_path.setdefault(record.instance_path, []).append(record)
+    return sum(1 for records in by_path.values() if committed_effect(records) is not None)
+
+
 def collect_runs(*, since: str = "", limit: int = RUN_SCAN_LIMIT) -> list[CollectedItem]:
-    """Recent background runs, weighted by their own ledger's `effect` rows.
+    """Recent background runs, weighted by the effects their own ledger says landed.
 
     `since` is an ISO `created_at` string compared lexicographically — which is exact for the
     ISO-8601 stamps the run store writes, and avoids parsing a timestamp only to compare it.
@@ -211,7 +228,7 @@ def collect_runs(*, since: str = "", limit: int = RUN_SCAN_LIMIT) -> list[Collec
             status = str(getattr(getattr(run, "status", ""), "value", getattr(run, "status", "")))
             effects = 0
             try:
-                effects = len(read_events(store, str(run.id), kinds={EFFECT}))
+                effects = _effects_that_landed(read_events(store, str(run.id), kinds={EFFECT}))
             except Exception:  # noqa: BLE001 - a run with no ledger file yet is not an error
                 effects = 0
             materiality = _run_materiality(status, effects)

@@ -39,6 +39,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from personalclaw.proactive.autoexec import not_done_note, stopped_note
+
 #: The bundled WorkflowDef the pack card installs. One name, shared with the provider.
 TRIAGE_WORKFLOW = "morning-triage"
 #: The action node inside it whose output IS the digest. `TriageDigestActionProvider._NODE_ID`.
@@ -50,11 +52,14 @@ STATE_NEVER_RUN = "never_run"
 STATE_READY = "ready"
 STATE_ERROR = "error"
 
-#: The ledger kinds the "what your machine did" section renders, in the order it renders them.
-#: Ordered so the section reads as a narrative: what ran, what the spend floor stopped, what the
-#: user answered, what the filter dropped, what the parser refused.
-MACHINE_DID_KINDS: tuple[str, ...] = (
+#: The ledger kinds the card's "In the run journal" section renders, in the order it renders them.
+#: Ordered so the section reads as a narrative: what landed, what failed, what the spend floor
+#: stopped, what the user answered, what the filter dropped, what the parser refused. It is the
+#: run's record, not "what your machine did": a failure and a refusal are in it, so nothing may
+#: render it under that heading.
+JOURNAL_KINDS: tuple[str, ...] = (
     "auto_executed",
+    "auto_failed",
     "skipped_budget",
     "triage_reply",
     "skipped_triage",
@@ -68,6 +73,15 @@ REPLY_NO = "no"
 REPLY_ALWAYS_YES = "always yes"
 REPLY_ALWAYS_NO = "always no"
 REPLY_VERBS: tuple[str, ...] = (REPLY_YES, REPLY_NO, REPLY_ALWAYS_YES, REPLY_ALWAYS_NO)
+
+#: What became of an answer, as its ``triage_reply`` row records it. A "yes" whose action did not
+#: happen is ``failed`` (it was tried) or ``refused`` (a guard or the item stopped it first), never
+#: ``declined``: that is the user's "no", and recording her yes as one says she turned it down.
+OUTCOME_ANSWER_EXECUTED = "executed"
+OUTCOME_ANSWER_DECLINED = "declined"
+OUTCOME_ANSWER_FAILED = "failed"
+OUTCOME_ANSWER_REFUSED = "refused"
+ANSWERS_NOT_DONE: tuple[str, ...] = (OUTCOME_ANSWER_FAILED, OUTCOME_ANSWER_REFUSED)
 
 
 def run_permalink(run_id: str) -> str:
@@ -168,22 +182,25 @@ def build_digest_view(
     # nothing produce the same empty list.
     auto_stage_ran = "auto_ledger_rows" in dict(output)
     auto_rows = _rows(output.get("auto_executed"))
-    auto_done = [
-        {
-            "ordinal": str(row.get("item_id", "") or ""),
-            "source_id": str(row.get("source_id", "") or ""),
-            "action_type": str(row.get("action_type", "") or ""),
-            "provider": str(row.get("provider", "") or ""),
-            "rule": str(row.get("rule", "") or ""),
-            "reversal": str(row.get("reversal", "") or ""),
-            "undoable": bool(row.get("undoable")),
-            "ok": bool(row.get("ok", True)),
-            "error": str(row.get("error", "") or ""),
-            "permalink": permalink,
-            **_provenance(items, str(row.get("item_id", "") or "")),
-        }
-        for row in auto_rows
-    ]
+    # Only actions that LANDED are here (`autoexec.AutoAction`); a failed dispatch is a deferral,
+    # and it reaches the card as a pending row that says it was not done.
+    auto_done: list[dict[str, Any]] = []
+    for row in auto_rows:
+        ordinal = str(row.get("item_id", "") or "")
+        known = _provenance(items, ordinal)
+        auto_done.append(
+            {
+                **known,
+                "ordinal": ordinal,
+                "source_id": str(row.get("source_id", "") or "") or known["source_id"],
+                "action_type": str(row.get("action_type", "") or ""),
+                "provider": str(row.get("provider", "") or ""),
+                "rule": str(row.get("rule", "") or ""),
+                "reversal": str(row.get("reversal", "") or ""),
+                "undoable": bool(row.get("undoable")),
+                "permalink": permalink,
+            }
+        )
 
     # The pending set is the deferred set when the stage ran, and the raw proposals when it did
     # not. Joined back to `proposals` for `pattern_key`: the "always" tap writes a rule against
@@ -196,7 +213,8 @@ def build_digest_view(
     for row in source:
         ordinal = str(row.get("item_id", "") or "")
         joined = proposals.get(ordinal, {})
-        reply = answered.get(ordinal)
+        reply = answered.get(ordinal) or {}
+        reason = str(row.get("reason", "") or "")
         pending.append(
             {
                 "ordinal": ordinal,
@@ -204,14 +222,39 @@ def build_digest_view(
                 "tier": str(row.get("tier", "") or joined.get("tier", "") or ""),
                 "pattern_key": str(joined.get("pattern_key", "") or ""),
                 "clamped": bool(joined.get("clamped")),
-                "reason": str(row.get("reason", "") or ""),
+                "reason": reason,
                 "rule": str(row.get("rule", "") or ""),
-                "answered": reply is not None,
-                "answer": str((reply or {}).get("verb", "") or ""),
+                # The digest's own text says the same sentence (`rank.render_digest`): an action it
+                # tried and could not do, or one a guard held, is said as not done, never as done
+                # and never as a proposal nobody tried.
+                "not_done": (
+                    not_done_note(
+                        reason, str(row.get("detail", "") or ""), ordinal=ordinal, on_card=True
+                    )
+                    if auto_stage_ran
+                    else ""
+                ),
+                "answered": bool(reply),
+                "answer": str(reply.get("verb", "") or ""),
+                # A "yes" that did not happen, in the words its reply recorded. Empty for an answer
+                # that happened, a "no" among them.
+                "answer_not_done": (
+                    str(reply.get("detail", "") or "")
+                    if str(reply.get("outcome", "") or "") in ANSWERS_NOT_DONE
+                    else ""
+                ),
                 "permalink": permalink,
                 **_provenance(items, ordinal),
             }
         )
+    stopped = (
+        stopped_note(
+            (str(row.get("reason", "") or "") for row in deferred),
+            budget_reason=str(output.get("budget_reason", "") or ""),
+        )
+        if auto_stage_ran
+        else ""
+    )
 
     ran, waiting = _the_rest(output, items, placed={row["ordinal"] for row in auto_done + pending})
 
@@ -245,10 +288,11 @@ def build_digest_view(
         "pending": pending,
         "ran": ran,
         "waiting": waiting,
-        "budget_breached": bool(output.get("budget_breached")),
-        "budget_reason": str(output.get("budget_reason", "") or ""),
+        # Why nothing (or nothing more) ran on its own when the stage stopped as a whole: incident
+        # mode, the approval ceiling, or the spend floor. The digest's text says the same sentence.
+        "auto_stopped": stopped,
         "degraded": bool(output.get("degraded")),
-        "machine_did": machine_did(events, permalink=permalink),
+        "journal": journal_rows(events, permalink=permalink),
         # False means "rows that should exist were not written", never "there were none".
         "ledger_complete": recorded > 0 or (dropped == 0 and refused == 0),
         "ledger_rows": recorded,
@@ -280,7 +324,7 @@ def _the_rest(
 
 
 def _provenance(items: Mapping[str, Mapping[str, Any]], ordinal: str) -> dict[str, str]:
-    """Title/source/link for one ordinal, or empty strings when the map has no such row.
+    """Title/source/store id/link for one ordinal, or empty strings when the map has no such row.
 
     Empty strings rather than a placeholder title: a card that printed "Item 3" for an item
     whose provenance was not recorded would be inventing the one thing the user needs to
@@ -290,21 +334,24 @@ def _provenance(items: Mapping[str, Mapping[str, Any]], ordinal: str) -> dict[st
     return {
         "title": str(row.get("title", "") or ""),
         "source": str(row.get("source", "") or ""),
+        # The store id the ordinal resolved to, which a reply acts on. Without it a "yes" rebuilt a
+        # manifest of rows it had to drop as unaddressable, and acted on nothing.
+        "source_id": str(row.get("source_id", "") or ""),
         "item_permalink": str(row.get("permalink", "") or ""),
         "materiality": str(row.get("materiality", "") or ""),
     }
 
 
-def machine_did(
+def journal_rows(
     events: Sequence[Mapping[str, Any]], *, permalink: str = ""
 ) -> list[dict[str, Any]]:
-    """§5.1's "what your machine did" section: the run's own ledger rows, with permalinks.
+    """The card's "In the run journal" section: the run's own ledger rows, with permalinks.
 
-    Filtered to :data:`MACHINE_DID_KINDS` and sorted by that tuple's order then by sequence, so
+    Filtered to :data:`JOURNAL_KINDS` and sorted by that tuple's order then by sequence, so
     the section groups by what happened rather than by write order — the ledger interleaves an
     execution and the filter decision that let it through, and a reader wants them apart.
     """
-    order = {kind: i for i, kind in enumerate(MACHINE_DID_KINDS)}
+    order = {kind: i for i, kind in enumerate(JOURNAL_KINDS)}
     rows = [
         {
             "kind": str(event.get("kind", "") or ""),

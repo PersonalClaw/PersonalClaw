@@ -155,17 +155,20 @@ WORKSPACE_TEARDOWN = "workspace_teardown"
 SKIPPED_TRIAGE = "skipped_triage"
 PROPOSAL_REFUSED = "proposal_refused"
 
-#: What the triage digest DID, unattended, and what it refused
-#: to do on spend grounds. `auto_executed` carries the matched rule's name and the provider's
-#: undo handle, which is what makes bound 4 ("every auto-execution is a ledger row with the rule
-#: named, and one-click undo where the provider supports it") a fact rather than a promise —
-#: without the handle on the row there is nothing for an undo click to resolve against.
-#: `skipped_budget` is the NEW-1 floor's refusal. It is a SEPARATE kind rather than an
-#: `auto_executed` row with a different outcome for the reason `skipped_triage` is separate from
-#: `proposal_refused`: a budget breach is the one auto-execution failure a user must be able to
-#: count without parsing prose, because its remedy (raise the ceiling, or wait for the window to
+#: What the triage digest DID unattended, what it tried and could not do, and what it refused to
+#: do on spend grounds. `auto_executed` is an action that LANDED: it carries the matched rule's
+#: name and the provider's undo handle, which is what makes bound 4 ("every auto-execution is a
+#: ledger row with the rule named, and one-click undo where the provider supports it") a fact
+#: rather than a promise — without the handle on the row there is nothing for an undo click to
+#: resolve against. `auto_failed` is a dispatch the provider reported as failed (or that raised),
+#: with the provider's words in `reason`, as a `skipped_budget` row carries its own. It is a
+#: SEPARATE kind, not an `auto_executed` row with a different outcome, because a reader counting
+#: what the machine did counts a kind, and a failure counted there reads as done.
+#: `skipped_budget` is the NEW-1 floor's refusal, separate for the same reason `skipped_triage` is
+#: separate from `proposal_refused`: its remedy (raise the ceiling, or wait for the window to
 #: reset) is different from every other reason a proposal stayed pending.
 AUTO_EXECUTED = "auto_executed"
+AUTO_FAILED = "auto_failed"
 SKIPPED_BUDGET = "skipped_budget"
 
 #: One line-anchored Finding a review stage emitted, in the
@@ -193,6 +196,7 @@ LEDGER_KINDS = frozenset(
         SKIPPED_TRIAGE,
         PROPOSAL_REFUSED,
         AUTO_EXECUTED,
+        AUTO_FAILED,
         SKIPPED_BUDGET,
         TRIAGE_REPLY,
         STEP_COMPLETED,

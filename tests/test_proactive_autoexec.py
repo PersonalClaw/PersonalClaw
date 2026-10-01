@@ -42,6 +42,7 @@ from personalclaw.proactive.autoexec import (
     SKIP_CAP,
     SKIP_DENIED,
     SKIP_DISABLED,
+    SKIP_FAILED,
     SKIP_NEEDS_YOU,
     SKIP_NOT_CAPABLE,
     SKIP_UNKNOWN_ITEM,
@@ -942,7 +943,7 @@ class TestRulesAndAccounting:
         assert result.pending == tuple(d.proposal for d in result.deferred)
 
     async def test_a_failed_dispatch_is_deferred_not_claimed(self) -> None:
-        from personalclaw.ledger.kinds import AUTO_EXECUTED
+        from personalclaw.ledger.kinds import AUTO_FAILED
 
         manifest = _manifest()
         ledger = _Ledger()
@@ -957,10 +958,13 @@ class TestRulesAndAccounting:
             ledger=ledger,
         )
         assert result.executed == ()
-        assert [d.reason for d in result.deferred] == ["execution_failed"]
-        # The row is still written: a failed unattended action is a fact the user must find.
-        assert ledger.rows[0]["kind"] == AUTO_EXECUTED
-        assert ledger.rows[0]["outcome"] == "failed"
+        assert [(d.reason, d.detail) for d in result.deferred] == [
+            (SKIP_FAILED, "provider said no")
+        ]
+        # The row is still written: a failed unattended action is a fact the user must find. Under
+        # its own kind, so nothing counting `auto_executed` counts it as done.
+        assert [r["kind"] for r in ledger.rows] == [AUTO_FAILED]
+        assert ledger.rows[0]["reason"] == "provider said no"
 
     async def test_the_ordinal_is_resolved_to_a_real_source_id_before_dispatch(self) -> None:
         """A dispatch that forwarded `item_id` unchanged would address an inbox row named "1"."""

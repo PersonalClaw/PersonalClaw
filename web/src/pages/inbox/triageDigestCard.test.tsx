@@ -55,7 +55,7 @@ function view(over: Partial<TriageDigestView> = {}): TriageDigestView {
     auto_stage_ran: true,
     auto_done: [],
     pending: [],
-    machine_did: [],
+    journal: [],
     ledger_complete: true,
     ledger_rows: 2,
     ...over,
@@ -70,8 +70,10 @@ const PENDING = {
   clamped: true,
   reason: 'needs_you',
   rule: '',
+  not_done: '',
   answered: false,
   answer: '',
+  answer_not_done: '',
   permalink: '#/workflows/runs/run-abc',
   title: 'Review request on #412',
   source: 'inbox',
@@ -87,8 +89,6 @@ const AUTO_DONE = {
   rule: 'policy:trivial-tier',
   reversal: 'aW5ib3gtb3A6Z2hfMg==',
   undoable: true,
-  ok: true,
-  error: '',
   permalink: '#/workflows/runs/run-abc',
   title: 'Dependabot bumped left-pad',
   source: 'inbox',
@@ -173,14 +173,14 @@ describe('an unmeasured value is not rendered as a zero', () => {
   })
 
   it('reports an incomplete ledger rather than an empty one', async () => {
-    proactiveDigest.mockResolvedValue(view({ ledger_complete: false, machine_did: [] }))
+    proactiveDigest.mockResolvedValue(view({ ledger_complete: false, journal: [] }))
     render(<TriageDigestCard />)
     await waitFor(() => expect(screen.getByText(/not recorded/)).toBeTruthy())
     expect(screen.queryByText(/wrote no ledger rows/)).toBeNull()
   })
 
   it('reports a genuinely empty ledger as empty — the pair', async () => {
-    proactiveDigest.mockResolvedValue(view({ ledger_complete: true, machine_did: [] }))
+    proactiveDigest.mockResolvedValue(view({ ledger_complete: true, journal: [] }))
     render(<TriageDigestCard />)
     await waitFor(() => expect(screen.getByText(/wrote no ledger rows/)).toBeTruthy())
   })
@@ -440,7 +440,7 @@ describe('an absent notification is explained, never claimed as delivered', () =
 describe('the ledger section permalinks into the run journal', () => {
   it('links every row at the run the digest came from', async () => {
     proactiveDigest.mockResolvedValue(view({
-      machine_did: [{
+      journal: [{
         kind: 'skipped_triage', seq: 4, ordinal: '5', action_type: '', rule: 'dependabot',
         outcome: '', reason: 'automated dependency bump', detail: '', verb: '',
         permalink: '#/workflows/runs/run-abc',
@@ -494,7 +494,7 @@ describe('the cards are rendered BY their pages', () => {
 // proposal is this" arrived interleaved with "what can I do to it".
 //
 // The pair here is the point: the name must be built from the same fields the row SHOWS, so the two
-// cannot drift — including the missing-field case, where `verbFor('')` prints 'Acted on' and the
+// cannot drift — including the missing-field case, where `proposedVerb('')` prints 'Act on' and the
 // title falls back to `item <ordinal>`. A name that quietly omitted the verb there would announce
 // the row differently from the row.
 
@@ -502,20 +502,123 @@ describe('a proposal row announces a concise name', () => {
   it('names the row from the ordinal, verb, title and source it displays', async () => {
     proactiveDigest.mockResolvedValue(view({ pending: [PENDING] }))
     render(<TriageDigestCard />)
-    const row = await screen.findByRole('listitem', { name: 'Proposal 1: Drafted a reply to Review request on #412, inbox' })
+    const row = await screen.findByRole('listitem', { name: 'Proposal 1: Draft a reply to Review request on #412, inbox' })
     // The name above could be satisfied by a string that merely looks right, so the text the user
     // SEES is checked inside the very node just found by that name.
     expect(row.textContent).toContain('Review request on #412')
-    expect(row.textContent).toContain('Drafted a reply to')
+    expect(row.textContent).toContain('Draft a reply to')
+    // A proposal is a request, so it is never said as done.
+    expect(row.textContent).not.toContain('Drafted')
   })
 
   it('names the missing-field row the way the row itself renders it', async () => {
     proactiveDigest.mockResolvedValue(view({ pending: [{ ...PENDING, action_type: '', title: '', source: '' }] }))
     render(<TriageDigestCard />)
-    // `verbFor('')` and the `item ${n}` fallback are the paragraph's own output, so an empty proposal
-    // is reachable by name instead of being announced as a bare "Proposal 1:".
-    const row = await screen.findByRole('listitem', { name: 'Proposal 1: Acted on item 1' })
-    expect(row.textContent).toContain('Acted on')
+    // `proposedVerb('')` and the `item ${n}` fallback are the paragraph's own output, so an empty
+    // proposal is reachable by name instead of being announced as a bare "Proposal 1:".
+    const row = await screen.findByRole('listitem', { name: 'Proposal 1: Act on item 1' })
+    expect(row.textContent).toContain('Act on')
     expect(row.textContent).toContain('item 1')
+  })
+})
+
+// ── An action that did not happen is said as not done ──────────────────────────────────────────
+//
+// The digest can act on its own and on a tap. When the attempt failed, or a guard held it, the
+// card said it in the words of success or of a proposal nobody tried: the row read "Archived" with
+// no reason, the section said the stage "found nothing it was allowed to do", and a failed "yes"
+// toasted "Noted.". Each test is a pair with the case it must not be confused with.
+
+describe('an action that did not happen is said as not done', () => {
+  const NOT_DONE = 'Not done: the digest tried it on its own and it failed — the inbox item is gone. '
+    + 'Yes tries it again, or open the item to do it yourself.'
+  const FAILED = {
+    ...PENDING, ordinal: '2', action_type: 'archive', tier: 'trivial', pattern_key: 'archive:sender:news',
+    clamped: false, reason: 'auto_failed', title: 'Weekly newsletter', not_done: NOT_DONE,
+  }
+
+  it('🔴 says on the proposal that it failed, why, and what to do next', async () => {
+    proactiveDigest.mockResolvedValue(view({ pending: [FAILED, PENDING] }))
+    render(<TriageDigestCard />)
+    const row = await screen.findByRole('listitem', { name: /^Proposal 2:/ })
+    expect(row.textContent).toContain('the inbox item is gone')
+    expect(row.textContent).toContain('Yes tries it again')
+    // Said as a request: "Archived" on this row read exactly like the action that landed.
+    expect(row.textContent).toContain('Archive Weekly newsletter')
+    expect(row.textContent).not.toContain('Archived')
+    // The pair: a proposal nobody tried carries no failure.
+    const untried = screen.getByRole('listitem', { name: /^Proposal 1:/ })
+    expect(untried.textContent).not.toContain('Not done')
+  })
+
+  it('🔴 does not say the stage found nothing to do when what it tried did not happen', async () => {
+    proactiveDigest.mockResolvedValue(view({ auto_done: [], pending: [FAILED] }))
+    render(<TriageDigestCard />)
+    await screen.findByText(/Nothing was done on its own/)
+    expect(screen.queryByText(/found nothing it was allowed/)).toBeNull()
+  })
+
+  it('says beside what landed that more did not happen', async () => {
+    proactiveDigest.mockResolvedValue(view({ auto_done: [AUTO_DONE], pending: [FAILED] }))
+    render(<TriageDigestCard />)
+    const done = await screen.findByRole('list', { name: 'What your machine did' })
+    // Only the action that landed is listed as done.
+    expect(done.textContent).toContain('Archived Dependabot bumped left-pad')
+    expect(done.textContent).not.toContain('Weekly newsletter')
+    expect(screen.getByText(/One more action it was about to take did not happen/)).toBeTruthy()
+  })
+
+  it('🔴 says why nothing ran when the stage stopped as a whole', async () => {
+    const stopped = "Nothing ran on its own: incident mode is on, which holds the digest's actions. "
+      + 'What it proposed waits for you.'
+    proactiveDigest.mockResolvedValue(view({ auto_done: [], auto_stopped: stopped, pending: [{ ...PENDING, reason: 'incident_active' }] }))
+    render(<TriageDigestCard />)
+    await screen.findByText(/incident mode is on, which holds the digest's actions/)
+    expect(screen.queryByText(/found nothing it was allowed/)).toBeNull()
+  })
+
+  it('🔴 reports a yes that did not happen as a failure, in its own words', async () => {
+    const sentence = 'Not done: it was tried and it failed — the inbox item is gone. Open the item to do it yourself.'
+    proactiveDigest.mockResolvedValue(view({ pending: [PENDING] }))
+    proactiveReply.mockResolvedValueOnce({
+      ok: true, outcome: 'acted' as const,
+      results: [{ ordinal: '1', outcome: 'acted' as const, executed: false, recorded: true, not_done: sentence }],
+    } as never)
+    render(<TriageDigestCard />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(sentence, 'error'))
+    expect(notify).not.toHaveBeenCalledWith('Noted.', 'success')
+  })
+
+  it('keeps saying an answered yes did not happen — and says nothing for a no', async () => {
+    const sentence = 'Not done: a safety rule held it — the action is on your denylist. Open the item to do it yourself.'
+    proactiveDigest.mockResolvedValue(view({
+      pending: [
+        { ...PENDING, answered: true, answer: 'yes', answer_not_done: sentence },
+        { ...FAILED, not_done: '', answered: true, answer: 'no' },
+      ],
+    }))
+    render(<TriageDigestCard />)
+    const yes = await screen.findByRole('listitem', { name: /^Proposal 1:/ })
+    expect(yes.textContent).toContain(sentence)
+    const no = screen.getByRole('listitem', { name: /^Proposal 2:/ })
+    expect(no.textContent).not.toContain('Not done')
+  })
+
+  it('lists two failure rows that share a sequence number, so neither hides the other', async () => {
+    // A reply's journal rows and the digest's own were each numbered from 1, so a key built from
+    // kind and seq repeated, and React may drop a row whose key repeats.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const row = (ordinal: string, reason: string) => ({
+      kind: 'auto_failed', seq: 1, ordinal, action_type: 'archive', rule: 'policy:trivial-tier',
+      outcome: 'auto_failed', reason, detail: '', verb: '', permalink: '#/workflows/runs/run-abc',
+    })
+    proactiveDigest.mockResolvedValue(view({ journal: [row('2', 'the first item is gone'), row('3', 'the second item is gone')] }))
+    render(<TriageDigestCard />)
+    const list = await screen.findByRole('list', { name: "This run's ledger rows" })
+    expect(list.textContent).toContain('the first item is gone')
+    expect(list.textContent).toContain('the second item is gone')
+    expect(errors.mock.calls.some((call) => String(call[0]).includes('same key'))).toBe(false)
+    errors.mockRestore()
   })
 })

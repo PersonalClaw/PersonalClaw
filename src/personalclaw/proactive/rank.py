@@ -21,6 +21,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from personalclaw.proactive.autoexec import (
+    AutoExecResult,
+    not_done_note,
+    render_auto_lines,
+    stopped_note,
+)
 from personalclaw.proactive.manifest import (
     MATERIALITY_ERROR,
     SOURCE_RUN,
@@ -102,8 +108,7 @@ def render_digest(
     proposals: tuple[Proposal, ...],
     dropped_count: int,
     degraded: bool = False,
-    auto_lines: tuple[str, ...] = (),
-    acted_on: frozenset[str] = frozenset(),
+    auto: AutoExecResult | None = None,
 ) -> Digest:
     """Assemble the digest body from typed fields — no model call, no free-text passthrough.
 
@@ -112,29 +117,44 @@ def render_digest(
     as a ranked list. A window the gate emptied renders the "nothing needs you" line rather
     than an empty body, because a blank digest reads as a broken digest.
 
-    `auto_lines` is §1.6 bound 4's half of the first section: what the machine did WITHOUT
-    being asked, each line naming the rule that authorised it. It joins the run lane under one
-    heading rather than getting its own, because "what your machine did" is one question and
-    two headings would make the user read twice to answer it — and it is rendered FIRST inside
-    that section, since an action already taken outranks a run that merely finished.
+    ``auto`` is the auto-execution stage's outcome, when it ran. What LANDED is §1.6 bound 4's half
+    of the first section: what the machine did WITHOUT being asked, each line naming the rule
+    that authorised it. It joins the run lane under one heading rather than getting its own,
+    because "what your machine did" is one question and two headings would make the user read
+    twice to answer it — and it is rendered FIRST inside that section, since an action already
+    taken outranks a run that merely finished. What did NOT land is never under that heading: a
+    failed or held action carries a "Not done: …" line on its proposal under "Needs you", and a
+    stage that stopped as a whole (incident mode, the approval ceiling, the spend floor) says so
+    once at the top of that section.
 
     **`proposals` must be the PENDING set, not the batch.** The caller auto-executes before
-    rendering (`pipeline.run_triage`), so anything that ran is in `auto_lines`; passing the
+    rendering (`pipeline.run_triage`), so anything that ran is in ``auto.executed``; passing the
     whole batch here would list an item under "needs you" that the machine had already handled
-    seconds earlier, which is the one thing a digest cannot get wrong. ``acted_on`` is the
-    ordinals it handled, for the same reason one section down: an item the machine archived is
-    not "also waiting".
+    seconds earlier, which is the one thing a digest cannot get wrong. Nor is an item it handled
+    "also waiting", for the same reason one section down.
     """
     ranked = rank_items(kept)
     ranked_proposals = rank_proposals(proposals, manifest)
     proposal_ids = {p.item_id for p in ranked_proposals}
+    acted_on = {a.proposal.item_id for a in auto.executed} if auto is not None else set()
+    deferred = auto.deferred if auto is not None else ()
+    not_done = {
+        d.proposal.item_id: not_done_note(d.reason, d.detail, ordinal=d.proposal.item_id)
+        for d in deferred
+    }
+    stopped = (
+        stopped_note((d.reason for d in deferred), budget_reason=auto.budget_reason)
+        if auto is not None
+        else ""
+    )
+    done_lines = render_auto_lines(auto) if auto is not None else ()
 
     sections: list[str] = []
 
     machine = [i for i in ranked if i.source == SOURCE_RUN]
-    if machine or auto_lines:
+    if machine or done_lines:
         lines = ["What your machine did:"]
-        lines.extend(auto_lines)
+        lines.extend(done_lines)
         for item in machine:
             flag = " [needs you]" if item.materiality == MATERIALITY_ERROR else ""
             lines.append(f"{_line(item)}{flag}")
@@ -142,10 +162,14 @@ def render_digest(
 
     if ranked_proposals:
         lines = ["Needs you:"]
+        if stopped:
+            lines.append(f"  {stopped}")
         for p in ranked_proposals:
             about = manifest.by_ordinal(p.item_id)
             subject = about.title if about is not None else f"item {p.item_id}"
             lines.append(f"  {p.item_id}. [{p.tier}] {p.action_type} — {subject}")
+            if not_done.get(p.item_id):
+                lines.append(f"       {not_done[p.item_id]}")
             if p.reasoning:
                 lines.append(f"       {p.reasoning}")
         sections.append("\n".join(lines))

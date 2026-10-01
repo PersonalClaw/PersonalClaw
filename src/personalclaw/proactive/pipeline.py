@@ -33,7 +33,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from personalclaw.proactive.autoexec import AutoExecResult, render_auto_lines
+from personalclaw.proactive.autoexec import AutoExecResult
 from personalclaw.proactive.gate import (
     GateResult,
     GateRule,
@@ -374,12 +374,7 @@ async def run_triage(
         proposals=pending,
         dropped_count=len(gate.dropped),
         degraded=batch.degraded,
-        auto_lines=render_auto_lines(auto) if auto is not None else (),
-        acted_on=(
-            frozenset(a.proposal.item_id for a in auto.executed)
-            if auto is not None
-            else frozenset()
-        ),
+        auto=auto,
     )
     delivered = bool(deliver(digest))
 

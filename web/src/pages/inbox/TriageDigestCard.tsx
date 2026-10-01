@@ -209,6 +209,8 @@ export function TriageDigestCard() {
         if (first?.outcome === 'already') notify(`Already answered — nothing ran again.`, 'info')
         else if (first?.rule_error) notify(`Answered, but the rule wasn't saved: ${first.rule_error}`, 'error')
         else if (first?.recorded === false) notify(`Answered, but it wasn't recorded — the next tap would act again.`, 'error')
+        // A yes whose action did not happen is a failure, in the server's words, never "Noted.".
+        else if (first?.not_done) notify(first.not_done, 'error')
         else notify(first?.executed ? 'Done.' : 'Noted.', 'success')
         refresh()
       })
@@ -236,9 +238,12 @@ export function TriageDigestCard() {
 
   const autoDone = view.auto_done || []
   const pending = view.pending || []
+  // What the digest was about to do on its own and did not: it failed, or a safety rule or its
+  // limit held it. Each says so under Needs you; this section must not read as if all went well.
+  const notDone = pending.filter((row) => row.not_done).length
   const ran = view.ran || []
   const waiting = view.waiting || []
-  const ledger = view.machine_did || []
+  const ledger = view.journal || []
 
   return (
     <Surface tone="container" radius="xl" className="mb-l p-l">
@@ -268,14 +273,6 @@ export function TriageDigestCard() {
           digest rule, which put the digest in the bell or kept it for the notification digest. */}
       <NoticeLine notice={view.notice} />
 
-      {view.budget_breached && (
-        <div className="mt-m">
-          <InlineError icon>
-            The daily budget ran out mid-digest, so the rest stayed pending: {view.budget_reason || 'no reason recorded'}
-          </InlineError>
-        </div>
-      )}
-
       {/* ── What your machine did ── */}
       <SectionHead icon={CheckCheck} title="What your machine did" />
       {!view.auto_stage_ran ? (
@@ -285,21 +282,28 @@ export function TriageDigestCard() {
           Auto-execution is off — the digest acted on nothing without you. What it proposes waits for you below.
         </p>
       ) : autoDone.length === 0 ? (
-        <p data-type="body-s" className="text-on-surface-low">
-          Auto-execution ran and found nothing it was allowed to do on its own.
-        </p>
+        // Three different facts, and only the last is "it had nothing to do": the stage stopped as
+        // a whole (said below), or what it tried did not happen, or nothing was allowed to run.
+        view.auto_stopped ? null : notDone > 0 ? (
+          <p data-type="body-s" className="text-warn">
+            Nothing was done on its own: {notDone === 1 ? 'the one action it was about to take' : `the ${notDone} actions it was about to take`} did not happen. Each is under Needs you, with why.
+          </p>
+        ) : (
+          <p data-type="body-s" className="text-on-surface-low">
+            Auto-execution ran and found nothing it was allowed to do on its own.
+          </p>
+        )
       ) : (
         <ul aria-label="What your machine did" className="flex flex-col gap-s">
           {autoDone.map((row) => (
             <li key={`${row.ordinal}-${row.action_type}`} className="flex items-start gap-m rounded-lg bg-surface-high px-m py-s">
               <div className="min-w-0 flex-1">
                 <p data-type="body-s" className="truncate text-on-surface">
-                  <span style={fvs(600)}>{verbFor(row.action_type)}</span>{' '}
+                  <span style={fvs(600)}>{doneVerb(row.action_type)}</span>{' '}
                   {row.title || `item ${row.ordinal}`}
                 </p>
                 <p data-type="caption" className="mt-0.5 text-on-surface-low">
-                  {row.ok ? 'because of' : 'failed —'} <code className="font-mono">{row.rule}</code>
-                  {row.error ? <> · {row.error}</> : null}
+                  because of <code className="font-mono">{row.rule}</code>
                 </p>
               </div>
               {row.undoable ? (
@@ -313,6 +317,14 @@ export function TriageDigestCard() {
             </li>
           ))}
         </ul>
+      )}
+      {view.auto_stage_ran && autoDone.length > 0 && notDone > 0 && (
+        <p data-type="body-s" className="mt-s text-warn">
+          {notDone === 1 ? 'One more action' : `${notDone} more actions`} it was about to take did not happen. Each is under Needs you, with why.
+        </p>
+      )}
+      {view.auto_stage_ran && view.auto_stopped && (
+        <p data-type="body-s" className="mt-s text-warn">{view.auto_stopped}</p>
       )}
 
       {/* The runs that ended in the window — what the digest's own body lists under this heading.
@@ -380,8 +392,11 @@ export function TriageDigestCard() {
         <p data-type="body-s" className="text-on-surface-low">This run wrote no ledger rows.</p>
       ) : (
         <ul aria-label="This run's ledger rows" className="flex flex-col gap-1">
-          {ledger.map((row) => (
-            <li key={`${row.kind}-${row.seq}`} data-type="caption" className="flex items-baseline gap-s">
+          {/* Keyed by place as well: a row's `seq` is not unique in a run's journal (a reply's rows
+              and the digest's own were each numbered from 1), and React drops a row whose key
+              repeats — which would hide a failure row behind the one it collided with. */}
+          {ledger.map((row, i) => (
+            <li key={`${i}-${row.kind}-${row.seq}`} data-type="caption" className="flex items-baseline gap-s">
               <code className="shrink-0 font-mono text-on-surface-low">{row.kind}</code>
               <span className="min-w-0 flex-1 truncate text-on-surface-low">
                 {row.ordinal ? `#${row.ordinal} ` : ''}{row.action_type ? `${row.action_type} — ` : ''}
@@ -455,11 +470,11 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
   // nothing distinguishing "which proposal is this" from "what can I do to it".
   //
   // The name is assembled from the SAME fields the visible row shows, in the same order, through the
-  // same `verbFor` and the same `item ${n}` fallback — so the announced row and the seen row cannot
-  // disagree. In particular the verb is NOT conditional on `action_type`: `verbFor('')` answers
-  // 'Acted on', which is what the paragraph below prints, and a guard here would have named the row
+  // same `proposedVerb` and the same `item ${n}` fallback — so the announced row and the seen row
+  // cannot disagree. In particular the verb is NOT conditional on `action_type`: `proposedVerb('')`
+  // answers 'Act on', which is what the paragraph below prints, and a guard here would have named the row
   // differently from the row itself in exactly the case where the field is missing.
-  const label = `Proposal ${n}: ${verbFor(row.action_type)} ${row.title || `item ${n}`}${row.source ? `, ${row.source}` : ''}`
+  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title || `item ${n}`}${row.source ? `, ${row.source}` : ''}`
   // An answered proposal keeps its row and says what was answered. Removing it would make a reply
   // look like it did nothing; re-offering the buttons would invite a second, duplicate answer.
   return (
@@ -467,7 +482,7 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
       <div className="min-w-0 flex-1">
         <p data-type="body-s" className="truncate text-on-surface">
           <span className="mr-1 text-on-surface-low">#{n}</span>
-          <span style={fvs(600)}>{verbFor(row.action_type)}</span> {row.title || `item ${n}`}
+          <span style={fvs(600)}>{proposedVerb(row.action_type)}</span> {row.title || `item ${n}`}
         </p>
         <p data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-s">
           <TierBadge tier={row.tier} clamped={row.clamped} />
@@ -478,6 +493,12 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
             <a href={row.item_permalink} className="text-primary-emphasis underline">the item</a>
           )}
         </p>
+        {/* The digest tried this on its own and it did not happen, or the answer's yes did not:
+            the server's sentence, with why and what to do next. A row without it is a proposal
+            nobody has tried. */}
+        {(row.answered ? row.answer_not_done : row.not_done) && (
+          <p data-type="caption" className="mt-xs text-warn">{row.answered ? row.answer_not_done : row.not_done}</p>
+        )}
       </div>
       {row.answered ? (
         <span data-type="caption" className="shrink-0 text-on-surface-low">
@@ -552,7 +573,21 @@ function SectionHead({ icon: Icon, title, count }: { icon: typeof CheckCheck; ti
   )
 }
 
-const ACTION_VERB: Record<string, string> = {
+/** What a proposal asks to do, said as a request. A proposal has not happened, so it is never
+ *  worded in the past tense: "Archived" on a row with Yes/No buttons read as done, and on a row
+ *  whose attempt failed it read exactly like the action that landed. */
+const PROPOSED_VERB: Record<string, string> = {
+  archive: 'Archive',
+  mute_thread: 'Mute',
+  dismiss: 'Dismiss',
+  reply_draft: 'Draft a reply to',
+  create_task: 'File a task for',
+  remind: 'Remind you about',
+}
+
+/** What an action that LANDED did. Only `auto_done` rows, which the server fills with landed
+ *  actions alone. */
+const DONE_VERB: Record<string, string> = {
   archive: 'Archived',
   mark_read: 'Marked read',
   mute_thread: 'Muted',
@@ -563,6 +598,10 @@ const ACTION_VERB: Record<string, string> = {
 
 /** The action word, or the raw type when we have no phrasing for it — never a guess that reads
  *  gentler than the thing it names. */
-function verbFor(actionType: string): string {
-  return ACTION_VERB[actionType] || actionType || 'Acted on'
+function proposedVerb(actionType: string): string {
+  return PROPOSED_VERB[actionType] || actionType || 'Act on'
+}
+
+function doneVerb(actionType: string): string {
+  return DONE_VERB[actionType] || actionType || 'Acted on'
 }

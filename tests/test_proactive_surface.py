@@ -25,7 +25,7 @@ from personalclaw.proactive.manifest import (
 )
 from personalclaw.proactive.pipeline import TriageResult
 from personalclaw.proactive.surface import (
-    MACHINE_DID_KINDS,
+    JOURNAL_KINDS,
     STATE_ERROR,
     STATE_NEVER_RUN,
     STATE_OFF,
@@ -33,7 +33,7 @@ from personalclaw.proactive.surface import (
     STATE_UNINSTALLED,
     answered_ordinals,
     build_digest_view,
-    machine_did,
+    journal_rows,
 )
 
 #: The literal size of the fixture window below, asserted directly by
@@ -152,8 +152,6 @@ def _auto_ran(**overrides: Any) -> dict:
                 "rule": "policy:trivial-tier",
                 "reversal": "aW5ib3gtb3A6Z2hfMg==",
                 "undoable": True,
-                "ok": True,
-                "error": "",
             }
         ],
         auto_deferred=[
@@ -163,6 +161,7 @@ def _auto_ran(**overrides: Any) -> dict:
                 "tier": "medium",
                 "reason": "needs_you",
                 "rule": "",
+                "detail": "",
             }
         ],
         budget_breached=False,
@@ -351,8 +350,6 @@ class TestUndoAndPermalinks:
                     "rule": "policy:trivial-tier",
                     "reversal": "",
                     "undoable": False,
-                    "ok": True,
-                    "error": "",
                 }
             ]
         )
@@ -373,10 +370,10 @@ class TestUndoAndPermalinks:
         assert expected  # the builder produces something for a known run
         assert view["permalink"] == expected
         assert {row["permalink"] for row in view["auto_done"]} == {expected}
-        assert {row["permalink"] for row in view["machine_did"]} == {expected}
+        assert {row["permalink"] for row in view["journal"]} == {expected}
 
 
-class TestWhatYourMachineDid:
+class TestTheRunJournal:
     def _events(self) -> list[dict]:
         return [
             {"kind": "step_completed", "seq": 1},
@@ -386,14 +383,14 @@ class TestWhatYourMachineDid:
         ]
 
     def test_only_the_declared_kinds_reach_the_section(self) -> None:
-        rows = machine_did(self._events())
-        assert {row["kind"] for row in rows} <= set(MACHINE_DID_KINDS)
+        rows = journal_rows(self._events())
+        assert {row["kind"] for row in rows} <= set(JOURNAL_KINDS)
         assert "step_completed" not in {row["kind"] for row in rows}
         # Vacuity: the section is not empty, so the exclusion above is doing work.
         assert len(rows) == 3
 
     def test_the_section_groups_by_kind_not_by_write_order(self) -> None:
-        rows = machine_did(self._events())
+        rows = journal_rows(self._events())
         assert [row["kind"] for row in rows] == [
             "auto_executed",
             "skipped_triage",
@@ -401,7 +398,7 @@ class TestWhatYourMachineDid:
         ]
 
     def test_a_rationale_reaches_the_reason_field(self) -> None:
-        rows = machine_did(self._events())
+        rows = journal_rows(self._events())
         skipped = next(row for row in rows if row["kind"] == "skipped_triage")
         assert skipped["reason"] == "dependabot"
 
@@ -512,7 +509,7 @@ class TestTheReplyLedgerKindIsVisible:
     def test_the_surface_reads_the_same_token_the_writer_writes(self) -> None:
         from personalclaw.ledger.kinds import TRIAGE_REPLY
 
-        assert TRIAGE_REPLY in MACHINE_DID_KINDS
+        assert TRIAGE_REPLY in JOURNAL_KINDS
 
 
 #: A run-lane item and the window that holds it beside the three-item fixture: what the digest's

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -88,7 +88,9 @@ SKIP_SUPPRESSED = "suppressed"
 SKIP_NEEDS_YOU = "needs_you"
 SKIP_CAP = "over_run_cap"
 SKIP_BUDGET = "skipped_budget"
-SKIP_FAILED = "execution_failed"
+#: The dispatch ran and the provider reported a failure (or raised). The same token as the
+#: `auto_failed` ledger kind, as `skipped_budget` is its kind's: one word for one fact.
+SKIP_FAILED = "auto_failed"
 #: The two PLATFORM gates, above the four. This module is a fifth UNATTENDED dispatch seam
 #: (AUTONOMY-GUARDRAILS §1.2), so it carries the kill switch and the action denylist like the
 #: other four — a digest that kept archiving through an incident would be the quiet exception
@@ -113,7 +115,12 @@ AUTO_EXEC_EVENT = "triage_auto_execute"
 
 @dataclass(frozen=True)
 class AutoAction:
-    """One proposal that was dispatched, with what authorised it and how to take it back."""
+    """One proposal that was dispatched AND landed, with what authorised it and how to undo it.
+
+    Only a dispatch the provider reported as a success becomes one. A failed dispatch is a
+    :class:`DeferredProposal` with :data:`SKIP_FAILED` and the provider's reason, so nothing that
+    reads ``executed`` can list or count a failure as an action taken.
+    """
 
     proposal: Proposal
     provider: str
@@ -125,8 +132,6 @@ class AutoAction:
     #: The provider's opaque undo handle. Empty when the provider had nothing to reverse
     #: (the effect already held), which is recorded rather than papered over.
     reversal: str = ""
-    ok: bool = True
-    error: str = ""
 
     @property
     def undoable(self) -> bool:
@@ -167,8 +172,6 @@ class AutoExecResult:
                     "rule": a.rule,
                     "reversal": a.reversal,
                     "undoable": a.undoable,
-                    "ok": a.ok,
-                    "error": a.error,
                 }
                 for a in self.executed
             ],
@@ -179,6 +182,10 @@ class AutoExecResult:
                     "tier": d.proposal.tier,
                     "reason": d.reason,
                     "rule": d.rule,
+                    # What failed or held it, in the provider's or the guard's words. The digest
+                    # card says it from here (`not_done_note`); without it a failure reads as a
+                    # proposal nobody tried.
+                    "detail": d.detail,
                 }
                 for d in self.deferred
             ],
@@ -304,10 +311,11 @@ async def auto_execute(
     """Run the eligible proposals, defer the rest, and record BOTH.
 
     Zero silent drops is the contract (criterion 4): every proposal comes back either in
-    ``executed`` or in ``deferred`` with a reason, and the counts always reconcile with the
-    input. A caller that supplies `ledger` also gets one row per outcome.
+    ``executed`` (it landed) or in ``deferred`` with a reason (a failed dispatch included), and
+    the counts always reconcile with the input. A caller that supplies `ledger` also gets one row
+    per outcome.
     """
-    from personalclaw.ledger.kinds import AUTO_EXECUTED, SKIPPED_BUDGET
+    from personalclaw.ledger.kinds import AUTO_EXECUTED, AUTO_FAILED, SKIPPED_BUDGET
 
     executed: list[AutoAction] = []
     deferred: list[DeferredProposal] = []
@@ -489,42 +497,40 @@ async def auto_execute(
             Exception
         ) as exc:  # noqa: BLE001 - a raising provider is a failed action, not a crash
             logger.warning("auto-execute: %s raised", provider, exc_info=True)
-            outcome = None
             ok, reversal, error = False, "", f"{type(exc).__name__}: {exc}"
         else:
             ok = bool(getattr(outcome, "success", False))
             reversal = str(getattr(outcome, "reversal", "") or "")
             error = str(getattr(outcome, "error", "") or "")
 
-        action = AutoAction(
-            proposal=proposal,
-            provider=provider,
-            source_id=item.source_id,
-            rule=named_rule,
-            rule_pattern=pattern,
-            reversal=reversal,
-            ok=ok,
-            error=error,
-        )
-        if ok:
-            executed.append(action)
-        else:
+        attempt = {
+            "item_ordinal": proposal.item_id,
+            "item_source_id": item.source_id,
+            "action_type": proposal.action_type,
+            "tier": proposal.tier,
+            "provider": provider,
+            "rule": named_rule,
+            "rule_pattern": pattern,
+        }
+        if not ok:
+            # Its own kind, never an `auto_executed` row with a failed outcome: a reader counting
+            # what the machine did counts the kind, and the failure would be counted as done.
             deferred.append(DeferredProposal(proposal=proposal, reason=SKIP_FAILED, detail=error))
+            write(AUTO_FAILED, {**attempt, "outcome": SKIP_FAILED, "reason": error})
+            continue
+        executed.append(
+            AutoAction(
+                proposal=proposal,
+                provider=provider,
+                source_id=item.source_id,
+                rule=named_rule,
+                rule_pattern=pattern,
+                reversal=reversal,
+            )
+        )
         write(
             AUTO_EXECUTED,
-            {
-                "item_ordinal": proposal.item_id,
-                "item_source_id": item.source_id,
-                "action_type": proposal.action_type,
-                "tier": proposal.tier,
-                "provider": provider,
-                "rule": named_rule,
-                "rule_pattern": pattern,
-                "reversal": reversal,
-                "undoable": bool(reversal),
-                "outcome": "executed" if ok else "failed",
-                "error": error,
-            },
+            {**attempt, "reversal": reversal, "undoable": bool(reversal), "outcome": "executed"},
         )
 
     return AutoExecResult(
@@ -539,9 +545,11 @@ async def auto_execute(
 def render_auto_lines(result: AutoExecResult) -> tuple[str, ...]:
     """The digest's "what your machine did" lines for the auto-executed half (§1.6 bound 4).
 
-    One line per action, naming the rule that authorised it and whether an undo exists. The
-    undo itself is a click on the ledger row; what the digest owes the user is the fact that
-    something happened and what took it back.
+    One line per action that LANDED, naming the rule that authorised it and whether an undo
+    exists. The undo itself is a click on the ledger row; what the digest owes the user is the
+    fact that something happened and what took it back. What failed, or what a guard stopped, is
+    not something the machine did: it is said where the proposal waits for you
+    (:func:`not_done_note`, :func:`stopped_note`).
     """
     lines: list[str] = []
     for action in result.executed:
@@ -550,12 +558,107 @@ def render_auto_lines(result: AutoExecResult) -> tuple[str, ...]:
             f"- auto-{action.proposal.action_type} on #{action.proposal.item_id} "
             f"via {action.rule}{undo}"
         )
-    if result.budget_breached:
-        lines.append(
-            f"- stopped early: {result.budget_reason or 'the spend ceiling was reached'}; "
-            f"{sum(1 for d in result.deferred if d.reason == SKIP_BUDGET)} left for you"
-        )
     return tuple(lines)
+
+
+# ── what did not happen, in plain words (the digest's text, its card, and a reply) ──
+
+#: The deferrals of an action the digest was about to take on its own: it was eligible, and then
+#: the dispatch failed, a safety rule held it, or the per-run cap was reached. Each is said on its
+#: proposal as not done, with why and what to do next.
+NOT_DONE_ON_ITS_OWN: frozenset[str] = frozenset({SKIP_FAILED, SKIP_DENYLIST, SKIP_CAP})
+
+#: Why each deferral happened, as the rest of "Not done: …". The guard's own detail follows for
+#: the reasons whose detail is the specific cause (:data:`_DETAIL_IS_THE_CAUSE`); the others carry
+#: a fixed sentence or an internal name, and the phrase here is the whole answer.
+_WHY: dict[str, str] = {
+    SKIP_FAILED: "it was tried and it failed",
+    SKIP_DENYLIST: "a safety rule held it",
+    SKIP_CAP: "this digest reached its limit of actions it may take on its own",
+    SKIP_BUDGET: "the spend ceiling was reached",
+    SKIP_INCIDENT: "incident mode is on, which holds the digest's actions",
+    SKIP_CEILING: "your approval ceiling says a person decides every action",
+    SKIP_NOT_CAPABLE: "the digest is not allowed to take that kind of action",
+    SKIP_WRONG_LANE: "the item is not in your Inbox, so the digest cannot act on it",
+    SKIP_UNKNOWN_ITEM: "the item is not in this digest",
+    SKIP_NO_PROVIDER: "the digest has no way to take that kind of action",
+    SKIP_DENIED: "your rule says never for this",
+    SKIP_SUPPRESSED: "you turned this kind of proposal down recently",
+    SKIP_DISABLED: "auto-execution is off",
+    SKIP_NEEDS_YOU: "it needs your say",
+}
+_DETAIL_IS_THE_CAUSE: frozenset[str] = frozenset({SKIP_FAILED, SKIP_DENYLIST, SKIP_BUDGET})
+
+
+def why_not_done(reason: str, detail: str = "", *, on_its_own: bool = False) -> str:
+    """Why a proposal's action did not happen, in plain words (the rest of "Not done: …").
+
+    ``on_its_own`` says the digest made the attempt unasked, which is the first thing a reader of
+    the failure needs to know: nobody asked for this attempt.
+    """
+    if on_its_own and reason == SKIP_FAILED:
+        why = "the digest tried it on its own and it failed"
+    else:
+        why = _WHY.get(reason, "it did not run")
+    if reason in _DETAIL_IS_THE_CAUSE:
+        cause = detail.strip().rstrip(".")
+        if cause:
+            return f"{why} — {cause}"
+        if reason == SKIP_FAILED:
+            return f"{why}, and no reason was given"
+    return why
+
+
+def not_done_note(
+    reason: str,
+    detail: str = "",
+    *,
+    ordinal: str = "",
+    answered: bool = False,
+    on_card: bool = False,
+) -> str:
+    """The sentence a proposal carries when its action did not happen, or ``""``.
+
+    Unanswered (the digest acting on its own), only :data:`NOT_DONE_ON_ITS_OWN` gets one: every
+    other deferral is a plain proposal waiting for you, or a stage stop said once. ``answered``
+    is a "yes" that did not happen, so every reason gets one, and the next step is the item
+    itself — the answer is recorded, and a second tap would not act again. ``on_card`` names the
+    card's Yes button as the way to try again; the digest's text, which a channel delivers too,
+    names the reply that does it.
+    """
+    if not answered and reason not in NOT_DONE_ON_ITS_OWN:
+        return ""
+    why = why_not_done(reason, detail, on_its_own=not answered)
+    if answered or reason == SKIP_DENYLIST:
+        # The same rule holds a "yes", so offering one would offer a refusal.
+        then = "Open the item to do it yourself."
+    elif reason == SKIP_CAP:
+        then = "Yes does it now." if on_card else f"Reply `{ordinal} yes` to do it now."
+    else:
+        retry = "Yes tries it again" if on_card else f"Reply `{ordinal} yes` to try again"
+        then = f"{retry}, or open the item to do it yourself."
+    return f"Not done: {why}. {then}"
+
+
+def stopped_note(reasons: Iterable[str], *, budget_reason: str = "") -> str:
+    """The one sentence for a stage that stopped as a whole, or ``""``.
+
+    Incident mode, the approval ceiling and a spend breach each defer EVERY remaining proposal,
+    whatever its tier (a breach defers the rest before their eligibility is read), so a failure
+    said per proposal would claim a medium-tier one was about to run. They are said once.
+    """
+    reasons = list(reasons)
+    if SKIP_INCIDENT in reasons or SKIP_CEILING in reasons:
+        why = why_not_done(SKIP_INCIDENT if SKIP_INCIDENT in reasons else SKIP_CEILING)
+        return f"Nothing ran on its own: {why}. What it proposed waits for you."
+    left = reasons.count(SKIP_BUDGET)
+    if not left:
+        return ""
+    cause = (budget_reason or "").strip().rstrip(".") or "the spend ceiling was reached"
+    rest = (
+        "1 proposal it had not run waits" if left == 1 else f"{left} proposals it had not run wait"
+    )
+    return f"Auto-execution stopped early: {cause}. {rest} for you."
 
 
 def dumps(result: AutoExecResult) -> str:
@@ -564,6 +667,7 @@ def dumps(result: AutoExecResult) -> str:
 
 __all__ = [
     "AUTO_CAPABLE_PROVIDERS",
+    "NOT_DONE_ON_ITS_OWN",
     "PROVIDER_FOR_ACTION",
     "SKIP_BUDGET",
     "AUTO_EXEC_EVENT",
@@ -587,5 +691,8 @@ __all__ = [
     "auto_execute",
     "default_budget_check",
     "dumps",
+    "not_done_note",
     "render_auto_lines",
+    "stopped_note",
+    "why_not_done",
 ]

@@ -455,10 +455,44 @@ def _persist_rule(request: web.Request, pattern: str, approve: bool) -> tuple[st
     return rule.key, ""
 
 
+#: Why a "yes" did not reach the action stage at all, beside the stage's own reasons
+#: (`autoexec.SKIP_*`).
+_NO_PATTERN = "no_recorded_pattern"
+_NOTHING_RETURNED = "nothing_returned"
+
+
+def _answer_outcome(approves: bool, reason: str) -> str:
+    """What became of one answer, as its ``triage_reply`` row records it.
+
+    A "no" is declined. A "yes" is executed when its action landed (no ``reason``), failed when
+    it was tried and failed, and refused when a guard or the item stopped it first — never
+    declined, which would say she turned it down.
+    """
+    from personalclaw.proactive.autoexec import SKIP_FAILED
+    from personalclaw.proactive.surface import (
+        OUTCOME_ANSWER_DECLINED,
+        OUTCOME_ANSWER_EXECUTED,
+        OUTCOME_ANSWER_FAILED,
+        OUTCOME_ANSWER_REFUSED,
+    )
+
+    if not approves:
+        return OUTCOME_ANSWER_DECLINED
+    if not reason:
+        return OUTCOME_ANSWER_EXECUTED
+    if reason == SKIP_FAILED:
+        return OUTCOME_ANSWER_FAILED
+    return OUTCOME_ANSWER_REFUSED
+
+
 async def _dispatch_approved(
     view: dict, row: dict, *, session_key: str, run_id: str
-) -> tuple[bool, str]:
-    """Run ONE approved proposal through PA-3's stage. Returns ``(executed, detail)``.
+) -> tuple[str, str]:
+    """Run ONE approved proposal through PA-3's stage. Returns ``(reason, detail)``.
+
+    ``reason`` is empty when the action landed, and otherwise says why it did not (the stage's
+    `autoexec.SKIP_*`, or that it never reached the stage); ``detail`` is then the sentence the
+    card and the response show, in the words the digest uses (`autoexec.not_done_note`).
 
     The user's tap is expressed as an in-memory approve rule for exactly this proposal's pattern
     — never persisted, so a single "yes" does not silently become an "always" — and `cap=1`, so a
@@ -468,7 +502,7 @@ async def _dispatch_approved(
     from datetime import datetime, timezone
 
     from personalclaw.proactive.approval import ApprovalRule, Verdict
-    from personalclaw.proactive.autoexec import auto_execute
+    from personalclaw.proactive.autoexec import auto_execute, not_done_note
     from personalclaw.proactive.manifest import manifest_from_projection
     from personalclaw.proactive.proposals import Proposal
 
@@ -477,7 +511,10 @@ async def _dispatch_approved(
         # No pattern means the run's output never recorded one, so there is nothing to authorise
         # against. Refusing is the only honest answer: synthesising a pattern from the action type
         # would authorise a class of actions the user never saw.
-        return False, "this proposal has no recorded pattern, so it cannot be authorised"
+        return _NO_PATTERN, (
+            "Not done: this proposal has no recorded pattern, so it cannot be authorised. "
+            "Open the item to do it yourself."
+        )
     manifest = manifest_from_projection(
         [
             {
@@ -510,11 +547,14 @@ async def _dispatch_approved(
     )
     if result.executed:
         action = result.executed[0]
-        return bool(action.ok), action.error or f"{proposal.action_type} on {action.source_id}"
+        return "", f"{proposal.action_type} on {action.source_id}"
     if result.deferred:
         deferred = result.deferred[0]
-        return False, deferred.detail or deferred.reason
-    return False, "the action stage returned nothing"
+        return deferred.reason, not_done_note(deferred.reason, deferred.detail, answered=True)
+    return (
+        _NOTHING_RETURNED,
+        "Not done: the action stage returned nothing. Open the item to do it yourself.",
+    )
 
 
 def _run_ledger(run_id: str):
@@ -547,6 +587,7 @@ async def api_proactive_reply(request: web.Request) -> web.Response:
     """
     from personalclaw.dashboard.handlers import _is_restricted_session
     from personalclaw.proactive.approval import HELP_TEXT, ReplyAction, parse_reply
+    from personalclaw.proactive.surface import ANSWERS_NOT_DONE, OUTCOME_ANSWER_EXECUTED
 
     if _is_restricted_session(request.app["state"], request):
         return json_error(
@@ -634,29 +675,34 @@ async def api_proactive_reply(request: web.Request) -> web.Response:
             rule_key, rule_error = await asyncio.to_thread(
                 _persist_rule, request, str(row.get("pattern_key", "") or ""), parsed.approves
             )
-        executed, detail = False, ""
+        reason, detail = "", ""
         if parsed.approves:
-            executed, detail = await _dispatch_approved(
+            reason, detail = await _dispatch_approved(
                 view,
                 row,
                 session_key=request.headers.get("X-Session-Key", "") or "",
                 run_id=run_id,
             )
+        answer = _answer_outcome(parsed.approves, reason)
+        not_done = detail if answer in ANSWERS_NOT_DONE else ""
         verb = _verb(parsed)
         recorded = await asyncio.to_thread(
             _write_reply_row,
             run_id,
             ordinal,
             verb=verb,
-            outcome="executed" if executed else "declined",
-            detail=rule_error or detail,
+            outcome=_answer_outcome(parsed.approves, reason),
+            # The sentence, when the yes did not happen: the card shows it on the answered row.
+            detail=not_done or rule_error or detail,
         )
         results.append(
             {
                 "ordinal": ordinal,
                 "outcome": "acted",
                 "verb": verb,
-                "executed": executed,
+                "executed": answer == OUTCOME_ANSWER_EXECUTED,
+                # A "yes" whose action did not happen, said as the card says it. Empty otherwise.
+                "not_done": not_done,
                 "detail": rule_error or detail,
                 "rule": rule_key,
                 "rule_error": rule_error,
