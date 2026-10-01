@@ -1,7 +1,8 @@
 """A text PersonalClaw cannot mask is withheld: never shown, sent, stored or logged as it came.
 
-🔴 ``model_downloads._mask`` builds the local-model health message, and when the masker raised it
-returned the text as it came. Ten more maskers did the same:
+🔴 The local-model health message (a provider's own words for why it cannot run, which a model's
+Test now answers with) was masked by a helper that, when the masker raised, returned the text as it
+came. Ten more maskers did the same:
 the run ledger's, a crash record's, the doctor's, a run-completion notification's ("sending the
 untouched text"), the trigger history's, a send-message hook's, the after-turn review's two
 proposal paths, a session skill draft's and a refinement's quote. And the log formatter every sink
@@ -32,8 +33,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import make_mocked_request
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -57,16 +56,17 @@ def broken_masker(monkeypatch):
     monkeypatch.setattr(security, "redact_exfiltration_urls", _broken)
 
 
-# ── the local model health message and selftest detail ──────────────────────────────────────
+# ── a model's Test: why its provider cannot run, and why the call failed ─────────────────────
 
 
 @pytest.fixture
 def local_provider():
-    from personalclaw.local_models import registry as reg
     from personalclaw.local_models.provider import LocalModelProvider
+    from personalclaw.stt import registry as stt_registry
+    from personalclaw.stt.provider import SttProvider
 
-    class _Says(LocalModelProvider):
-        """A local provider whose health message carries a login."""
+    class _Says(SttProvider, LocalModelProvider):
+        """A speech engine on this machine whose reason for not running carries a login."""
 
         @property
         def name(self) -> str:
@@ -82,6 +82,9 @@ def local_provider():
         async def availability_detail(self) -> tuple[bool, str]:
             return False, f"could not reach {LOGIN_URL}"
 
+        async def transcribe(self, audio_path, model="", language=""):
+            raise AssertionError("an engine that cannot run is not called")
+
         async def list_models(self):
             return []
 
@@ -91,52 +94,48 @@ def local_provider():
         async def delete_model(self, model_name: str) -> bool:
             return False
 
-    reg.register_provider(_Says(), capabilities=["stt"], name="withheld-fixture")
+    stt_registry.register_provider(_Says())
     yield "withheld-fixture"
-    reg.unregister_provider("withheld-fixture")
+    stt_registry.unregister_provider("withheld-fixture")
 
 
-async def _health(name: str) -> dict:
-    from personalclaw.dashboard.handlers import model_downloads as md
+async def _tested(name: str) -> dict:
+    from personalclaw.providers.model_test import run_model_test
 
-    request = make_mocked_request(
-        "GET",
-        f"/api/models/local/{name}/health",
-        match_info={"provider": name},
-        app=web.Application(),
-    )
-    response = await md.api_local_model_health(request)
-    return json.loads(response.body.decode())
+    return (await run_model_test("stt", name, "small")).to_dict()
 
 
 @pytest.mark.asyncio
-async def test_the_health_message_is_withheld_when_it_cannot_be_masked(
+async def test_why_a_provider_cannot_run_is_withheld_when_it_cannot_be_masked(
     broken_masker, local_provider
 ) -> None:
-    body = await _health(local_provider)
+    body = await _tested(local_provider)
 
     assert SECRET not in json.dumps(body)
-    assert body["message"] == WITHHELD
+    assert body["detail"] == "Withheld fixture can't run right now."
 
 
 @pytest.mark.asyncio
-async def test_the_health_message_is_masked_when_it_can_be(local_provider) -> None:
-    body = await _health(local_provider)
+async def test_why_a_provider_cannot_run_is_masked_when_it_can_be(local_provider) -> None:
+    body = await _tested(local_provider)
 
-    assert SECRET not in body["message"]
-    assert body["message"].startswith("could not reach https://")
+    assert SECRET not in body["detail"]
+    assert body["detail"].startswith("could not reach https://")
 
 
-def test_a_failed_selftest_names_only_its_failures_type_when_that_cannot_be_masked(
+def test_a_failed_test_names_only_its_failures_type_when_that_cannot_be_masked(
     broken_masker,
 ) -> None:
-    """The selftest's detail is ``failure_copy.failure_detail``'s, which says nothing it cannot
+    """A failed Test's detail is ``failure_copy.failure_detail``'s, which says nothing it cannot
     mask, and the failure's type in its place."""
-    from personalclaw.dashboard.handlers import model_downloads as md
+    from personalclaw.providers.model_test import _failed_by
 
-    row = md._error_result(RuntimeError(f"sign-in to {LOGIN_URL} failed"), 7)
+    result = _failed_by(RuntimeError(f"sign-in to {LOGIN_URL} failed"))
 
-    assert (row["detail"], row["reason"]) == ("RuntimeError", "selftest_error:RuntimeError")
+    assert (result.detail, result.reason) == (
+        "It failed with RuntimeError.",
+        "error:RuntimeError",
+    )
 
 
 # ── the rest of the family ─────────────────────────────────────────────────────────────────

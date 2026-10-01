@@ -1030,6 +1030,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         'A model in the chain names no model; name each as "provider:model", or choose one in '
         "Settings → Models."
     ),
+    # ── a model's Test (dashboard/handlers/model_registry.py — POST /api/models/test) ──
+    # 409: no Test can run for that use case or on that provider's models; the message says why,
+    # in the words the model's row shows instead of a Test.
+    "model_untestable": "This model has no Test for that use case.",
+    # 409: a Test of one of the same provider's models is still running.
+    "model_test_running": "A Test of one of this provider's models is already running.",
     # ── opening a terminal in a sandbox tier (dashboard/handlers/terminal.py —
     #    POST /api/terminal/sessions) ──
     # 409: the tier the request names is not installed or is turned off. The terminal is not

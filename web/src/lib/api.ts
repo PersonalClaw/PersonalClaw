@@ -5409,6 +5409,9 @@ export interface AvailableModel {
   matrix?: CapabilityMatrix | null; license?: string; non_commercial?: boolean
   runtime?: string; runtime_contract?: string; context_tokens?: number; output_tokens?: number
   io_mime?: Record<string, unknown>; status?: string; integrity?: string; config_only?: boolean
+  /** The use cases (as the row's `capabilities` name them) whose Test can't run on this model,
+   *  each with the gateway's sentence saying why. Absent: every Test the row offers can run. */
+  untestable?: Record<string, string>
   // What a person calls a LOCAL model whose `name` is a file/binding id (`SmolLM2-135M-Instruct`
   // for `SmolLM2-135M-Instruct-Q8_0`). Empty or absent = `name` already reads as a name.
   display_name?: string
@@ -5497,15 +5500,12 @@ export interface HfTokenSource {
   note?: string
 }
 export interface HfTokenStatus { sources: HfTokenSource[]; cleared?: boolean }
-// A local provider's health (LMMV §6). The endpoint never 500s: an unavailable/raising
-// provider still returns a typed body. `message` is server-masked.
-export interface LocalModelHealth { provider: string; ok: boolean; message: string; latency_ms: number }
-// One capability's real-inference selftest result (LMMV §6). `reason` is a TYPED machine
-// string ('timeout', 'diarization_returned_nothing', 'selftest_error:AttributeError', …) so a
-// broken runtime contract reads as a specific failure, not a bare red.
-export interface SelftestCapability { ok: boolean; duration_ms: number; detail: string; reason?: string }
-export interface LocalModelSelftest {
-  provider: string; capabilities: Record<string, SelftestCapability>; detail?: string
+/** What one model's Test found (`POST /api/models/test`): one small real call on the model, for
+ *  the use case its row is listed under. `detail` is the gateway's sentence — what came back, or
+ *  why nothing did — and `reason` a stable code on failure (`timeout`, `empty_reply`, `unavailable`,
+ *  a provider's typed reason such as `sidecar_crashed:<why>`, `error:<ExceptionClass>`). */
+export interface ModelTestResult {
+  use_case: string; model: string; ok: boolean; detail: string; reason: string; duration_ms: number
 }
 // A local downloadable model (the uniform LocalModel shape from any local provider).
 export interface LocalModel { name: string; id: string; size_mb: number; size: number; description: string; downloaded: boolean; capabilities: string[]; gated: boolean; source: string }
@@ -7874,14 +7874,11 @@ export const api = {
   // repaints from the response instead of a second round-trip.
   clearHfToken: () =>
     fetch('/api/models/hf-token', { method: 'DELETE', headers: { ...SK } }).then(j<HfTokenStatus>),
-  // Per-provider health + real-inference selftest (LMMV §6). Health never 500s. Selftest runs
-  // a real inference per capability (user-click only) and returns typed reasons; a 409 means a
-  // selftest for this provider is already running.
-  localModelHealth: (provider: string) =>
-    get<LocalModelHealth>(`/api/models/local/${encodeURIComponent(provider)}/health`),
-  localModelSelftest: (provider: string, model?: string) =>
-    post<LocalModelSelftest>(
-      `/api/models/local/${encodeURIComponent(provider)}/selftest`, model ? { model } : {}),
+  /** A model's Test, for one use case: one small real call (user-click only). A Test that ran and
+   *  failed resolves with `ok: false` and its sentence; a 409 is a use case or provider with no Test
+   *  (`model_untestable`) or a Test of the same provider already running (`model_test_running`). */
+  modelTest: (useCase: string, model: string) =>
+    post<ModelTestResult>('/api/models/test', { use_case: useCase, model }),
   // What is occupying RAM right now (LMMV §7) — resident models with attribution, each
   // provider's readiness, and the system pressure snapshot. One fetch backs both the
   // Settings section and the dashboard's "On this machine" band.

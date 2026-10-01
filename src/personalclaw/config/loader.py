@@ -1109,10 +1109,11 @@ class LocalModelsConfig:
     selftest_timeout_s: int = field(
         default=90,
         metadata=_meta(
-            "Model selftest timeout",
-            "How long (seconds) a per-capability model selftest may run before it is stopped "
-            "and reported as timed out. A selftest runs a real inference on click, so this "
-            "bounds a model that hangs while loading.",
+            "Model Test timeout",
+            "How long (seconds) a model's Test in Settings → Models may run before it is "
+            "stopped and reported as timed out — any model, hosted or on this machine. A Test "
+            "makes one small real call on click, so this bounds a model that hangs while it "
+            "loads.",
         ),
     )
 
@@ -4363,8 +4364,8 @@ class AppConfig:
                 whoami_ttl_s=min(
                     86400, max(0, _safe_int(local_models_data.get("whoami_ttl_s"), 600))
                 ),
-                # Floored at 5s (a real inference needs a moment) and capped at 10 minutes
-                # (past that a hung selftest should just fail) — the same window the PATCH
+                # Floored at 5s (a real call needs a moment) and capped at 10 minutes
+                # (past that a hung model Test should just fail) — the same window the PATCH
                 # allowlist enforces.
                 selftest_timeout_s=min(
                     600, max(5, _safe_int(local_models_data.get("selftest_timeout_s"), 90))

@@ -159,11 +159,17 @@ def active_image_gen() -> tuple[ImageGenProvider, str] | None:
     if not parsed:
         return None
     provider_name, model_id = parsed
-    _ensure_registered()
-    prov = _providers.get(provider_name)
+    prov = provider_named(provider_name)
     if prov is None:
         return None
     return (prov, model_id)
+
+
+def provider_named(name: str) -> ImageGenProvider | None:
+    """The image-gen provider a ``provider:model`` ref names, with every provider registered
+    first (the OpenAI-family adapters, the stub, and what app scanners contribute), or None."""
+    _ensure_registered()
+    return _providers.get(name)
 
 
 def get_active_provider() -> ImageGenProvider | None:

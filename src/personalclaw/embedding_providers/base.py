@@ -150,6 +150,14 @@ class EmbeddingProvider(ABC):
         """
         return ""
 
+    def untestable_reason(self) -> str:
+        """Why Settings → Models offers no Test for this provider's models, or ``""`` when it does.
+
+        A Test (``providers.model_test``) is one real :meth:`embed` of one word. A provider that
+        cannot afford even that on a click says so here, and its rows show the sentence instead.
+        """
+        return ""
+
     @abstractmethod
     async def embed(self, text: str, model: str = "") -> list[float] | None:
         """Embed a single text. Returns vector or None on failure."""

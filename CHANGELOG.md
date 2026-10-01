@@ -140,6 +140,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Removed
 
+- **`POST /api/models/local/{provider}/selftest`, `GET /api/models/local/{provider}/health` and `POST /api/model-providers/{name}/selftest`: a model's Test is `POST /api/models/test`.**
+
 - **`personalclaw.sdk.channel.generate_token` is off the channel SDK.**
 
 - **The `api_key` and `oauth2` auth modes are gone.**
@@ -150,6 +152,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Every model in Settings → Models has a Test for the use case it is listed under, hosted or on this machine, and one that can't be tested says why: `untestable_reason()` on the speech, voice, diarization, embedding and image provider classes (an SDK addition no app has to change for).**
 - **Every time the gateway stores or serves carries its offset, so a browser or phone in another timezone reads it right: a watched folder polled a moment ago says "next in 5m", not "next in 3h", and the library, chat transcripts and rooms read the times they already hold as the instants they were.**
 - **A Code loop's task worker in the middle of a long model call is no longer failed as stalled, a failed loop keeps its task workers' worktrees and the edits you approved in them, and Resume (or a steer) gives the task worker a turn instead of answering "ran out of cycles" again.**
 - **A planning step whose planner wrote a file that is not valid JSON says where it breaks, to the planner on its retry and to you beside Retry; a pass that ran out of time says so, and a planner turn cut at its time limit ends cleanly with a line in its session saying why.**

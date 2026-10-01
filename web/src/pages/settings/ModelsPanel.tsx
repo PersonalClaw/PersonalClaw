@@ -8,8 +8,7 @@ import {
 } from 'lucide-react'
 import {
   api, isLiveDownload, isNotRun, isSwitchedOff, type AvailableModel, type DownloadJob, type JudgeBenchRecommendation,
-  type ModelConnection, type ProviderHealth, type ProviderModels, type HfTokenSource, type LocalModelHealth,
-  type LocalModelSelftest,
+  type ModelConnection, type ProviderHealth, type ProviderModels, type HfTokenSource, type ModelTestResult,
 } from '../../lib/api'
 import { BundledDownloadProgress, modelBytes } from '../chat/bundledModelDownload'
 import { namesModel, splitModelRef } from '../../lib/modelRef'
@@ -55,19 +54,22 @@ interface UnavailableProvider { name: string; useCase: string; error: string }
 // is pinned here (mirrors backend parent_capability). Its presence changes the
 // empty-picker state from a misleading "add a backend first" to an accurate
 // "already uses your <fallback> chain; pin one here only to override".
-const USE_CASE_META: Record<string, { label: string; group?: string; description: string; chain: boolean; icon: LucideIcon; fallback?: string }> = {
-  chat: { label: 'Chat', description: 'Conversational models for chat and agent interactions. Order matters: the first model is the default; later ones are fallbacks used when an earlier provider is down.', chain: true, icon: MessageSquare },
-  code_tools: { label: 'Code & tools', group: 'Chat routing', description: 'Native agent turns that lean on tool use and code work.', chain: true, icon: Code2, fallback: 'Chat' },
-  reasoning: { label: 'Reasoning', group: 'Chat routing', description: 'One-shot judgment calls — web-page extraction and other guarded single completions.', chain: true, icon: BrainCircuit, fallback: 'Chat' },
-  background: { label: 'Background', group: 'Chat routing', description: 'Housekeeping chores — session titles, tags, suggestions, digests, consolidation. Bind a cheap or local model here so chores stop burning your main chat model.', chain: true, icon: Moon, fallback: 'Chat' },
-  orchestration: { label: 'Orchestration', group: 'Chat routing', description: 'Supervising turns, webhook agent turns, and subagents spawned without an explicit model.', chain: true, icon: Network, fallback: 'Chat' },
-  loops: { label: 'Loops', group: 'Chat routing', description: 'Autonomous goal-loop workers, gates and judges — long-horizon work that benefits from a long-context model.', chain: true, icon: RefreshCcw, fallback: 'Chat' },
-  embedding: { label: 'Embedding', group: 'Capabilities', description: 'Vector embedding models for knowledge and memory.', chain: false, icon: Boxes },
-  stt: { label: 'Speech-to-text', group: 'Capabilities', description: 'Voice transcription models.', chain: false, icon: Mic },
-  tts: { label: 'Text-to-speech', group: 'Capabilities', description: 'Voice synthesis models.', chain: false, icon: Volume2 },
-  diarization: { label: 'Speaker diarization', group: 'Capabilities', description: 'Labels "who spoke when" in audio/video (speaker turns). Served by diarization providers (ONNX, pyannote).', chain: false, icon: Users },
-  image_modality: { label: 'Image · Modality', group: 'Image', description: 'Models that understand images as input (vision / VLM).', chain: true, icon: Eye },
-  image_gen: { label: 'Image · Generation', group: 'Image', description: 'Models that generate images from a prompt.', chain: false, icon: ImagePlus },
+// `test`: what a model's Test does for this use case — the one small real call it makes. A use case
+// with no Test has none; its rows say why instead (`AvailableModel.untestable`).
+const CHAT_TEST = 'sends the model one short message and expects a one-word reply.'
+const USE_CASE_META: Record<string, { label: string; group?: string; description: string; chain: boolean; icon: LucideIcon; fallback?: string; test?: string }> = {
+  chat: { label: 'Chat', description: 'Conversational models for chat and agent interactions. Order matters: the first model is the default; later ones are fallbacks used when an earlier provider is down.', chain: true, icon: MessageSquare, test: CHAT_TEST },
+  code_tools: { label: 'Code & tools', group: 'Chat routing', description: 'Native agent turns that lean on tool use and code work.', chain: true, icon: Code2, fallback: 'Chat', test: CHAT_TEST },
+  reasoning: { label: 'Reasoning', group: 'Chat routing', description: 'One-shot judgment calls — web-page extraction and other guarded single completions.', chain: true, icon: BrainCircuit, fallback: 'Chat', test: CHAT_TEST },
+  background: { label: 'Background', group: 'Chat routing', description: 'Housekeeping chores — session titles, tags, suggestions, digests, consolidation. Bind a cheap or local model here so chores stop burning your main chat model.', chain: true, icon: Moon, fallback: 'Chat', test: CHAT_TEST },
+  orchestration: { label: 'Orchestration', group: 'Chat routing', description: 'Supervising turns, webhook agent turns, and subagents spawned without an explicit model.', chain: true, icon: Network, fallback: 'Chat', test: CHAT_TEST },
+  loops: { label: 'Loops', group: 'Chat routing', description: 'Autonomous goal-loop workers, gates and judges — long-horizon work that benefits from a long-context model.', chain: true, icon: RefreshCcw, fallback: 'Chat', test: CHAT_TEST },
+  embedding: { label: 'Embedding', group: 'Capabilities', description: 'Vector embedding models for knowledge and memory.', chain: false, icon: Boxes, test: 'embeds one word.' },
+  stt: { label: 'Speech-to-text', group: 'Capabilities', description: 'Voice transcription models.', chain: false, icon: Mic, test: 'transcribes a half-second test tone.' },
+  tts: { label: 'Text-to-speech', group: 'Capabilities', description: 'Voice synthesis models.', chain: false, icon: Volume2, test: 'speaks one word.' },
+  diarization: { label: 'Speaker diarization', group: 'Capabilities', description: 'Labels "who spoke when" in audio/video (speaker turns). Served by diarization providers (ONNX, pyannote).', chain: false, icon: Users, test: 'runs the model on a half-second test tone.' },
+  image_modality: { label: 'Image · Modality', group: 'Image', description: 'Models that understand images as input (vision / VLM).', chain: true, icon: Eye, test: 'shows the model a small red square and asks what colour it is.' },
+  image_gen: { label: 'Image · Generation', group: 'Image', description: 'Models that generate images from a prompt.', chain: false, icon: ImagePlus, test: 'makes one image at the smallest size the model lists, or at its default size.' },
   audio_modality: { label: 'Audio · Modality', group: 'Audio', description: 'Models that understand audio as input.', chain: false, icon: Ear },
   audio_gen: { label: 'Audio · Generation', group: 'Audio', description: 'Models that generate audio, music, or sound effects.', chain: false, icon: Music },
   video_modality: { label: 'Video · Modality', group: 'Video', description: 'Models that understand video as input.', chain: false, icon: ScanEye },
@@ -472,8 +474,8 @@ function LocalRuntimeSection() {
           hint="Percent of system RAM in use at which the loaded-models bar above warns. Advisory only — nothing is unloaded for you." />
         <NumberRow label="Sidecar restart limit" cfg={cfg} field="sidecar_restart_max" min={0} max={20} patch={patch}
           hint="How many times in a row a crashed model sidecar is respawned before the runner gives up and reports the failure instead." />
-        <NumberRow label="Model selftest timeout (seconds)" cfg={cfg} field="selftest_timeout_s" min={5} max={600} patch={patch}
-          hint="How long a per-capability selftest may run before it is stopped and reported as timed out. A selftest runs a real inference on click, so this bounds a model that hangs while loading." />
+        <NumberRow label="Model Test timeout (seconds)" cfg={cfg} field="selftest_timeout_s" min={5} max={600} patch={patch}
+          hint="How long a model's Test may run before it is stopped and reported as timed out — any model, hosted or on this machine. A Test makes one small real call on click, so this bounds a model that hangs while it loads." />
         <NumberRow label="HuggingFace token check interval (seconds)" cfg={cfg} field="whoami_ttl_s" min={0} max={86400} step={60} patch={patch}
           hint="How long a HuggingFace token's validity is cached after a successful check, so listing models does not re-call HuggingFace every time. 0 re-checks on every read." />
       </RowGroup>
@@ -576,59 +578,62 @@ function HfTokenSection() {
   )
 }
 
-/** A per-model "Test" affordance (LMMV §6): runs the provider's health check + a real
- *  per-capability inference on click and shows the TYPED result inline. User-click only — a
- *  selftest can page a model into RAM, so it is never fired automatically. Rendered under a
- *  downloaded LOCAL model row; a broken runtime contract surfaces its typed reason here. */
-function ModelTestButton({ provider, model }: { provider: string; model: string }) {
+/** The use case a model row's capabilities name: a chat routing sub-use draws from the chat pool,
+ *  so its rows are chat models, and `untestable` names `chat`. */
+function rowCapability(useCase: string): string {
+  return CHAT_SUBCATEGORIES.has(useCase) ? 'chat' : useCase
+}
+
+/** Why `m`'s Test can't run for `useCase`, in the gateway's words, or `''` when it can. */
+function testRefusal(useCase: string, m: AvailableModel): string {
+  return m.untestable?.[rowCapability(useCase)] ?? ''
+}
+
+function tookFor(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`
+}
+
+/** A model's Test, for the use case its row is listed under: one small real call
+ *  (`POST /api/models/test`) and the gateway's sentence about it — what came back, or why nothing
+ *  did. The same Test for every row, hosted or on this machine: which call it makes is the
+ *  gateway's to decide from the use case, never this page's guess from the row. User-click only —
+ *  it spends the provider's tokens or this machine's compute, and can load a model into memory. */
+function ModelTest({ useCase, model }: { useCase: string; model: AvailableModel }) {
   const [busy, setBusy] = useState(false)
-  const [health, setHealth] = useState<LocalModelHealth | null>(null)
-  const [result, setResult] = useState<LocalModelSelftest | null>(null)
+  const [result, setResult] = useState<ModelTestResult | null>(null)
   const [err, setErr] = useState('')
 
   const run = async () => {
-    setBusy(true); setErr('')
+    setBusy(true); setErr(''); setResult(null)
     try {
-      const [h, s] = await Promise.all([
-        api.localModelHealth(provider).catch(() => null),
-        api.localModelSelftest(provider, model),
-      ])
-      setHealth(h); setResult(s)
+      setResult(await api.modelTest(useCase, `${model.provider}:${model.id}`))
     } catch (e) {
       setErr(String((e as Error)?.message || e))
     } finally { setBusy(false) }
   }
 
-  const caps = result ? Object.entries(result.capabilities) : []
   return (
-    <div className="flex flex-col gap-1 px-3 pb-2">
+    <div className="flex flex-col gap-xs px-m pb-s">
+      {/* Every row has a Test, so its name says whose: "Test" alone, said once per row, would not
+          tell a screen-reader user which model it calls. The name starts with the visible word. */}
       <Button variant="secondary" size="xs" className="w-fit" onClick={run}
-        loading={busy} loadingLabel="testing…"
-        title="Run a real inference to check this model actually works on this machine.">
-        <FlaskConical size={10} /> Test
+        loading={busy} loadingLabel="testing…" title="Makes one small real call to this model"
+        ariaLabel={`Test ${modelLabel(model)}`}>
+        <FlaskConical size={10} aria-hidden /> Test
       </Button>
-      {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
-      {health && !health.ok && (
-        <span data-type="caption" style={{ color: 'var(--color-warning)' }}>Provider: {health.message}</span>
+      {err && <span data-type="caption" role="alert" className="break-words" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+      {/* A failure shows the provider's own sentence, which wraps, and its typed reason after it:
+          the next step a provider names is in the sentence. */}
+      {result && (
+        <span data-type="caption" role="status" className="flex items-start gap-xs"
+          style={{ color: result.ok ? 'var(--color-ok)' : 'var(--color-danger)' }}>
+          {result.ok ? <Check size={10} className="mt-0.5 shrink-0" aria-hidden /> : <X size={10} className="mt-0.5 shrink-0" aria-hidden />}
+          <span className="min-w-0 break-words">
+            <span className="sr-only">{result.ok ? 'Test passed: ' : 'Test failed: '}</span>
+            {result.detail} ({!result.ok && result.reason ? `${result.reason}, ` : ''}{tookFor(result.duration_ms)})
+          </span>
+        </span>
       )}
-      {result && (caps.length === 0 ? (
-        <span data-type="caption" className="text-on-surface-low">{result.detail}</span>
-      ) : (
-        <div className="flex flex-col gap-0.5">
-          {/* A failure shows what went wrong (the provider's sentence, which wraps) and its typed
-              reason after it. The reason used to stand in for the sentence, so the next step a
-              provider named was never shown. */}
-          {caps.map(([cap, r]) => (
-            <span key={cap} data-type="caption" className="flex items-start gap-1"
-              style={{ color: r.ok ? 'var(--color-ok)' : 'var(--color-danger)' }}>
-              {r.ok ? <Check size={10} className="mt-0.5 shrink-0" /> : <X size={10} className="mt-0.5 shrink-0" />}
-              <span className="min-w-0 break-words">
-                {cap}: {r.detail} ({!r.ok && r.reason ? `${r.reason}, ` : ''}{r.duration_ms} ms)
-              </span>
-            </span>
-          ))}
-        </div>
-      ))}
     </div>
   )
 }
@@ -879,8 +884,13 @@ const moveRef = (ref: string, dir: -1 | 1): Rebase<string[]> => (theirs) => {
  *
  *  A column, not a bare button: the Repair, Test and Download affordances are buttons themselves
  *  and cannot nest inside the toggle. */
-function ModelRow({ model: m, on, saving, held, localProviders, listed, providerDown, onToggle, onChanged, onDownloaded }: {
+function ModelRow({ useCase, model: m, on, saving, held, localProviders, listed, providerDown, sayWhyUntestable, onToggle, onChanged, onDownloaded }: {
+  /** The use case the row is listed under: what its Test tests the model for. */
+  useCase: string
   model: AvailableModel; on: boolean
+  /** Say why the row has no Test. False when every row of the card shares the reason, which the
+   *  card then says once. */
+  sayWhyUntestable: boolean
   /** Its provider did not answer when the page read its models (`listingFailure`), or null. */
   providerDown: { label: string; detail: string } | null
   /** The chain is being saved. */
@@ -928,9 +938,10 @@ function ModelRow({ model: m, on, saving, held, localProviders, listed, provider
   const notDownloaded = m.downloaded === false && providerDown === null
   // …and one this machine can fetch gets its Download right here (`InlineModelDownload`).
   const downloadable = providerDown === null && isDownloadable(m, localProviders)
-  // A local model carries a `downloaded` flag; a hosted/remote model does not. Only a
-  // present LOCAL model can run a real-inference selftest here.
-  const isLocal = m.downloaded !== undefined
+  // Every row has a Test, hosted or on this machine, unless it can't work: a model not on this
+  // machine yet has nothing to run (its Download is the step), and a use case or provider with no
+  // Test says why (`untestable`).
+  const untestable = testRefusal(useCase, m)
   // Gated pre-warn (LMMV §5): the server set `token_ready:false` on a gated row when no
   // valid HF token is configured, so we warn BEFORE the user clicks Download. Absent =
   // the cascade couldn't answer → no nag.
@@ -984,7 +995,9 @@ function ModelRow({ model: m, on, saving, held, localProviders, listed, provider
           {repair.failed && <DownloadFailure text={repair.failed} />}
         </div>
       )}
-      {isLocal && m.downloaded === true && <ModelTestButton provider={m.provider} model={m.id} />}
+      {m.downloaded !== false && (untestable
+        ? sayWhyUntestable && <span data-type="caption" className="px-m pb-s text-on-surface-low">No Test: {untestable}</span>
+        : <ModelTest useCase={useCase} model={m} />)}
       {on && downloadable && <InlineModelDownload model={m} listed={listed} onDownloaded={onDownloaded} />}
     </div>
   )
@@ -1042,6 +1055,16 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
     for (const m of matched) (activeModels.includes(`${m.provider}:${m.id}`) ? active : rest).push(m)
     return active.length ? [...active, ...rest] : matched
   }, [matched, activeModels])
+
+  // The rows that can be tested at all (on this machine, or hosted), and the one reason every one
+  // of them gives for having no Test, when they share it: the card says it once rather than on
+  // every row.
+  const { testable, sharedRefusal } = useMemo(() => {
+    const present = capable.filter((m) => m.downloaded !== false)
+    const refusals = new Set(present.map((m) => testRefusal(useCase, m)))
+    const shared = refusals.size === 1 ? [...refusals][0] : ''
+    return { testable: present.some((m) => !testRefusal(useCase, m)), sharedRefusal: present.length > 0 ? shared : '' }
+  }, [capable, useCase])
 
   // 🔴 THE CHAIN IS SAVED WHOLE, over the revision this row read it at. Every edit here used to
   // send this row's copy with one change spliced in — so a panel opened before another tab,
@@ -1110,6 +1133,13 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
         <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
         {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
       </div>
+      {/* What a Test does here, said once for the card: it is a real call, not a ping. A card
+          whose every row shares one reason it can't be tested says that instead, once. */}
+      {sharedRefusal ? (
+        <p data-type="caption" className="text-on-surface-low">No Test: {sharedRefusal}</p>
+      ) : meta.test && testable && (
+        <p data-type="caption" className="text-on-surface-low">Each model’s Test makes one small real call: it {meta.test}</p>
+      )}
       <StaleWriteNotice guard={guard} what={`The models for ${meta.label}`} />
 
       {/* The "one user action": the judge benchmark measured this axis and named the
@@ -1267,7 +1297,8 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
                 // model was missing.
                 const downloaded = () => { onChanged(); if (useCase === 'embedding') startReindex() }
                 return (
-                  <ModelRow key={ref} model={m} on={activeModels.includes(ref)}
+                  <ModelRow key={ref} useCase={useCase} model={m} on={activeModels.includes(ref)}
+                    sayWhyUntestable={!sharedRefusal}
                     providerDown={listingFailure(m.provider, listings[m.provider])}
                     saving={saving} held={conflicted} localProviders={localProviders}
                     listed={downloads.get(downloadKey(m.provider, m.id))}

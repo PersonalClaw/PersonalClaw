@@ -860,10 +860,13 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // this release's notes (a comment-state scanner that is not comment-aware), and the reason no
   // comment added here spells that glob out.
   //
-  // The four that remain are deliberate and different in kind: the reclaim-size read behind the
-  // "Reclaim N" button, the per-provider breaker health that decorates the chain-entry dots, the
+  // The three that remain are deliberate and different in kind: the reclaim-size read behind the
+  // "Reclaim N" button, the per-provider breaker health that decorates the chain-entry dots, and the
   // judge-benchmark tier recommendation whose absence is an honest "no chip" (the Learning page owns
-  // reporting WHY), and a per-provider local-model health read. None of them is the panel.
+  // reporting WHY). None of them is the panel.
+  //
+  // 4 → 3: the per-provider local-model health read left with the local-only Test. A model's Test
+  // is one call now, and a provider that cannot run says why in its answer.
   //
   // 5 → 4: the reindex start's refusal left. It was the RECORDS veto's other blind edge (see
   // `ChatPage` above): recorded into a FIELD of a state object, `{ status: 'error', error }`, which
@@ -874,7 +877,7 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // reclaim" and the button disables itself, so an unreadable candidates list hides a real cleanup
   // rather than inventing one — the conservative direction, and the button is a decoration on a panel
   // whose own model reads have error branches.
-  'pages/settings/ModelsPanel.tsx': 4,
+  'pages/settings/ModelsPanel.tsx': 3,
   // 2 → 1, and the halving is the interesting part: this entry USED to read "Both read a provider's
   // JSON SCHEMA", and only one of the two ever did. The remaining site is the schema read, whose
   // substitute is `{ properties: {} }` — every caller turns that into `props.length === 0` → `return

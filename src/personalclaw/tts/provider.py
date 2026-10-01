@@ -67,6 +67,16 @@ class TtsProvider(ABC):
         """
         ...
 
+    def untestable_reason(self) -> str:
+        """Why Settings → Models offers no Test for this provider's voices, or ``""`` when it does.
+
+        A Test (``providers.model_test``) speaks one word through
+        ``tts.registry.route_synthesis``, conditioned on a generated reference clip when the
+        provider clones. A provider that cannot afford even that on a click says so here, and its
+        rows show the sentence instead of a Test.
+        """
+        return ""
+
     async def can_synthesize(self, voice: str = "") -> bool:
         """Whether this provider can produce audio for *voice* right now.
 
@@ -82,7 +92,7 @@ class TtsProvider(ABC):
 def wrote_audio(path: object) -> bool:
     """Whether the path :meth:`TtsProvider.synthesize` returned is a file with something in it.
 
-    A caller that hands the provider a path of its own (the selftests do, so they can remove it)
+    A caller that hands the provider a path of its own (a model's Test does, so it can remove it)
     cannot read "a path came back" as "audio came back": that file existed, empty, before the
     engine ran, and an engine that produced nothing hands the same path back.
     """

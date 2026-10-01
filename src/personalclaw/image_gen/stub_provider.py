@@ -11,33 +11,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import struct
-import zlib
 from typing import Any
 
 from personalclaw.image_gen.provider import ImageGenModel, ImageGenProvider, ImageResult
-
-
-def _solid_png(rgb: tuple[int, int, int], size: int = 64) -> bytes:
-    """A minimal valid solid-color PNG (no Pillow dependency)."""
-    r, g, b = rgb
-    # one row: filter byte 0 + size*RGB
-    row = b"\x00" + bytes(rgb) * size
-    raw = row * size
-    comp = zlib.compress(raw, 9)
-
-    def _chunk(tag: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + tag
-            + data
-            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-        )
-
-    ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)  # 8-bit RGB
-    return (
-        b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", comp) + _chunk(b"IEND", b"")
-    )
+from personalclaw.media_fixtures import solid_png
 
 
 def _color_for(text: str) -> tuple[int, int, int]:
@@ -84,7 +61,7 @@ class StubImageProvider(ImageGenProvider):
         n: int = 1,
         **opts: Any,
     ) -> list[ImageResult]:
-        png = _solid_png(_color_for(prompt))
+        png = solid_png(_color_for(prompt))
         return [
             ImageResult(
                 b64=base64.b64encode(png).decode(),
@@ -105,5 +82,5 @@ class StubImageProvider(ImageGenProvider):
         **opts: Any,
     ) -> list[ImageResult]:
         # A distinct shade (prompt+"edit") so an edit is visibly different from source.
-        png = _solid_png(_color_for(prompt + "::edit"))
+        png = solid_png(_color_for(prompt + "::edit"))
         return [ImageResult(b64=base64.b64encode(png).decode(), mime="image/png")]

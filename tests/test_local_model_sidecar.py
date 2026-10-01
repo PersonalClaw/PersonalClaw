@@ -1078,3 +1078,25 @@ async def test_the_loaded_and_unload_endpoints(registered_fake):
 
 def test_the_fixture_worker_is_valid_python():
     ast.parse(textwrap.dedent(_WORKER))
+
+
+def test_the_sdk_facade_is_the_lmmv_machinery_unchanged():
+    """``personalclaw.sdk.sidecar`` re-exports the sidecar machinery unchanged, so a provider app
+    can drive a runner without importing core internals."""
+    from personalclaw.sdk.sidecar import (
+        SidecarCrashed,
+        SidecarRunner,
+        SidecarWorkerError,
+        get_runner,
+        register_runner,
+        sidecar_venv_dir,
+        unregister_runner,
+    )
+
+    assert SidecarRunner is sidecar.SidecarRunner
+    assert SidecarCrashed is sidecar.SidecarCrashed
+    assert SidecarWorkerError is sidecar.SidecarWorkerError
+    assert get_runner is sidecar.get_runner
+    assert register_runner is sidecar.register_runner
+    assert sidecar_venv_dir is sidecar.sidecar_venv_dir
+    assert unregister_runner is sidecar.unregister_runner

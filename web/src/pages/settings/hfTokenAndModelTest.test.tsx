@@ -3,19 +3,18 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { useEffect, useState } from 'react'
 import { ModelsPanel } from './ModelsPanel'
 
-// ── HF token cascade surface + per-model selftest ──
+// ── HF token cascade surface + a local model's Test ──
 //
 // Tested at the level a user meets it:
 //  · the token section shows each source's MASKED preview + HuggingFace's whoami verdict — the
 //    raw value never appears (Success Criterion 4);
 //  · a gated model with no valid token carries a "needs token" pre-warn BEFORE Download;
-//  · a downloaded local model's Test button runs a real inference and shows the TYPED result.
+//  · a downloaded local model's Test makes one real call and shows the gateway's sentence.
 
 const hfTokenStatus = vi.fn()
 const modelsAvailable = vi.fn()
 const setHfToken = vi.fn((_token: string) => Promise.resolve({ sources: [] }))
-const localModelHealth = vi.fn()
-const localModelSelftest = vi.fn()
+const modelTest = vi.fn()
 
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>()
@@ -38,8 +37,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
         pressure: { total_mb: 0, used_mb: 0, available_mb: 0, used_pct: 0, warn_pct: 85, warn: false, source: 'unavailable' },
       }),
       personalclawConfig: () => Promise.resolve({ agent: { prompt_cache_enabled: true } }),
-      localModelHealth: (p: string) => localModelHealth(p),
-      localModelSelftest: (p: string, m?: string) => localModelSelftest(p, m),
+      modelTest: (u: string, m: string) => modelTest(u, m),
     },
   }
 })
@@ -59,8 +57,7 @@ beforeEach(() => {
   hfTokenStatus.mockReset()
   modelsAvailable.mockReset().mockResolvedValue([])
   setHfToken.mockClear()
-  localModelHealth.mockReset().mockResolvedValue({ provider: 'diarization-pyannote', ok: true, message: 'ready', latency_ms: 5 })
-  localModelSelftest.mockReset()
+  modelTest.mockReset()
 })
 
 describe('the HuggingFace token section in the Models panel', () => {
@@ -110,7 +107,7 @@ describe('the HuggingFace token section in the Models panel', () => {
   })
 })
 
-describe('a gated model and the per-model Test button', () => {
+describe('a gated model and its Test', () => {
   const gatedModel = {
     id: 'pyannote/speaker-diarization-3.1', name: 'pyannote/speaker-diarization-3.1',
     provider: 'diarization-pyannote', provider_type: 'diarization-pyannote',
@@ -126,11 +123,13 @@ describe('a gated model and the per-model Test button', () => {
     modelsAvailable.mockResolvedValue([{ name: 'diarization-pyannote', models: [gatedModel] }])
   })
 
-  it('pre-warns "needs token" and runs a real selftest that shows the typed result', async () => {
-    localModelSelftest.mockResolvedValue({
-      provider: 'diarization-pyannote',
-      capabilities: { diarization: { ok: true, duration_ms: 12, detail: 'ran the pipeline (0 turn(s))', reason: '' } },
-    })
+  const tested = (ok: boolean, detail: string, reason: string, ms: number) => ({
+    use_case: 'diarization', model: 'diarization-pyannote:pyannote/speaker-diarization-3.1',
+    ok, detail, reason, duration_ms: ms,
+  })
+
+  it('pre-warns "needs token" and runs a real Test that shows what it found', async () => {
+    modelTest.mockResolvedValue(tested(true, 'Ran on a half-second test tone and found 0 speaker turns.', '', 12))
     render(<ModelsPanel />)
 
     // Expand the Speaker-diarization card so its model rows render.
@@ -139,21 +138,18 @@ describe('a gated model and the per-model Test button', () => {
     // The gated pre-warn chip (server-computed token_ready:false).
     expect(await screen.findByText(/needs token/i)).toBeInTheDocument()
 
-    // Click Test → a real inference runs and its TYPED per-capability result renders inline.
-    fireEvent.click(screen.getByRole('button', { name: /^test$/i }))
-    expect(await screen.findByText(/diarization: ran the pipeline/i)).toBeInTheDocument()
-    expect(localModelSelftest).toHaveBeenCalledWith('diarization-pyannote', 'pyannote/speaker-diarization-3.1')
+    // Click Test → one real call runs for this use case, and the gateway's sentence renders inline.
+    fireEvent.click(screen.getByRole('button', { name: /^test pyannote/i }))
+    expect(await screen.findByText(/Ran on a half-second test tone and found 0 speaker turns\. \(12 ms\)/)).toBeInTheDocument()
+    expect(modelTest).toHaveBeenCalledWith('diarization', 'diarization-pyannote:pyannote/speaker-diarization-3.1')
   })
 
-  it('shows a typed failure reason when a selftest capability fails (contract break)', async () => {
-    localModelSelftest.mockResolvedValue({
-      provider: 'diarization-pyannote',
-      capabilities: { diarization: { ok: false, duration_ms: 3, detail: 'boom', reason: 'selftest_error:AttributeError' } },
-    })
+  it('shows a typed failure reason when the Test fails (contract break)', async () => {
+    modelTest.mockResolvedValue(tested(false, 'boom', 'error:AttributeError', 3))
     render(<ModelsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: /speaker diarization/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^test$/i }))
-    expect(await screen.findByText('diarization: boom (selftest_error:AttributeError, 3 ms)')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /^test pyannote/i }))
+    expect(await screen.findByText('boom (error:AttributeError, 3 ms)')).toBeInTheDocument()
   })
 
   it('shows a failure in the provider\u2019s own words, whole, with its typed reason after them', async () => {
@@ -164,14 +160,11 @@ describe('a gated model and the per-model Test button', () => {
       + 'token below, then run Test again. Details: 403 Client Error: Forbidden for url: '
       + 'https://huggingface.example/pyannote/speaker-diarization-3.1/resolve/main/config.yaml'
     expect(sentence.length).toBeGreaterThan(200)
-    localModelSelftest.mockResolvedValue({
-      provider: 'diarization-pyannote',
-      capabilities: { diarization: { ok: false, duration_ms: 3, detail: sentence, reason: 'selftest_error:SttError' } },
-    })
+    modelTest.mockResolvedValue(tested(false, sentence, 'error:SttError', 3))
     render(<ModelsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: /speaker diarization/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^test$/i }))
-    expect(await screen.findByText(`diarization: ${sentence} (selftest_error:SttError, 3 ms)`)).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /^test pyannote/i }))
+    expect(await screen.findByText(`${sentence} (error:SttError, 3 ms)`)).toBeInTheDocument()
   })
 })
 

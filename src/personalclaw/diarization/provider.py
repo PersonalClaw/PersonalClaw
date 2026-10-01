@@ -67,6 +67,15 @@ class DiarizationProvider(ABC):
         """Whether this provider is installed + usable (deps present, token if gated)."""
         ...
 
+    def untestable_reason(self) -> str:
+        """Why Settings → Models offers no Test for this provider's models, or ``""`` when it does.
+
+        A Test (``providers.model_test``) is one real :meth:`diarize` of a half-second tone. A
+        provider that cannot afford even that on a click says so here, and its rows show the
+        sentence instead of a Test.
+        """
+        return ""
+
     @abstractmethod
     async def diarize(
         self,

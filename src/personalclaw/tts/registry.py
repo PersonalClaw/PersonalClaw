@@ -114,9 +114,7 @@ def active_tts() -> tuple[TtsProvider, str] | None:
     if not parsed:
         return None
     provider_name, voice_id = parsed
-    _ensure_registered()
-    key = "piper" if provider_name in _PIPER_NAMES else provider_name
-    prov = _providers.get(key)
+    prov = provider_named(provider_name)
     if prov is None:
         return None
     return (prov, voice_id)
@@ -128,8 +126,9 @@ def get_active_provider() -> TtsProvider | None:
     return resolved[0] if resolved else None
 
 
-def _provider_by_app_name(name: str) -> TtsProvider | None:
-    """A TTS provider by the app/registry name a voice profile records."""
+def provider_named(name: str) -> TtsProvider | None:
+    """The TTS provider a ``provider:voice`` ref or a voice profile names, by its app or registry
+    name (``piper-tts`` and ``piper`` are the one Piper engine), or None."""
     if not name:
         return None
     _ensure_registered()
@@ -145,7 +144,7 @@ def profile_engine(provider_name: str) -> TtsProvider | None:
     create-time check (:func:`clone_refusal`), so the form cannot accept a voice the resolver
     would then hand to a different engine.
     """
-    named = _provider_by_app_name(provider_name)
+    named = provider_named(provider_name)
     if named is not None:
         return named
     bound = active_tts()

@@ -122,6 +122,18 @@ def list_providers() -> list[EmbeddingProvider]:
     return list(_providers.values())
 
 
+def direct_provider(provider_name: str) -> EmbeddingProvider | None:
+    """The embedding provider a ``provider:model`` ref embeds through DIRECTLY: the in-process
+    native one (by any of its names), or an app's own adapter (Bedrock's). None when the ref
+    embeds through a configured model provider's ``embed()`` instead (Ollama, an
+    OpenAI-compatible endpoint), or names nothing that embeds."""
+    if provider_name in _NATIVE_NAMES:
+        ensure_registered()
+        return _providers.get("native")
+    _ensure_scanned()
+    return _providers.get(provider_name)
+
+
 def native_provider() -> EmbeddingProvider | None:
     """The registered in-process native embedding provider (the sentence-transformers
     app), or None when that app isn't installed/enabled. Core handlers that manage
@@ -323,14 +335,12 @@ def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
 def embed_fn_for(provider_name: str, model_id: str) -> Callable[[str], list[float] | None] | None:
     """A sync embed fn for ``provider_name``'s ``model_id``, or None when it cannot be built."""
     if provider_name in _NATIVE_NAMES:
-        ensure_registered()
-        provider = _providers.get("native")
+        provider = direct_provider(provider_name)
         return provider.get_embed_fn(model_id) if provider else None
 
     # A directly-registered EmbeddingProvider (e.g. Bedrock, which has its own
     # embed() implementation via boto3) takes priority over the LLM-registry path.
-    _ensure_scanned()
-    direct = _providers.get(provider_name)
+    direct = direct_provider(provider_name)
     if direct is not None:
 
         def _direct_embed(text: str) -> list[float] | None:
@@ -356,11 +366,7 @@ async def bound_unavailable_reason() -> str:
     spec = _active_embedding_spec()
     if not spec:
         return ""
-    if spec[0] in _NATIVE_NAMES:
-        provider = _providers.get("native")
-    else:
-        _ensure_scanned()
-        provider = _providers.get(spec[0])
+    provider = direct_provider(spec[0])
     reason = getattr(provider, "unavailable_reason", None)
     if reason is None:
         return ""
@@ -527,12 +533,7 @@ def embed_many_fn_for(
     without a running loop (a raw `asyncio.run()` raises inside one — the ingest and chunk-backfill
     paths run there).
     """
-    if provider_name in _NATIVE_NAMES:
-        ensure_registered()
-        direct = _providers.get("native")
-    else:
-        _ensure_scanned()
-        direct = _providers.get(provider_name)
+    direct = direct_provider(provider_name)
     if direct is not None:
         batch = getattr(direct, "embed_batch", None)
         if not callable(batch):

@@ -74,6 +74,15 @@ class ImageGenProvider(ABC):
         """
         return ""
 
+    def untestable_reason(self) -> str:
+        """Why Settings → Models offers no Test for this provider's models, or ``""`` when it does.
+
+        A Test (``providers.model_test``) is one small real :meth:`generate`: one image at the
+        smallest of the model's ``sizes``. A provider whose smallest image is still too slow or
+        costly to make on a click says so here, and its rows show the sentence instead of a Test.
+        """
+        return ""
+
     @abstractmethod
     async def list_models(self) -> list[ImageGenModel]:
         """List the models this provider offers (downloaded + downloadable)."""

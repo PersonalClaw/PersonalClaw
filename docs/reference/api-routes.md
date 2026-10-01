@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **895 registrations** over **725 distinct paths** — 888 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **893 registrations** over **723 distinct paths** — 886 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -28,7 +28,7 @@ The 128 families the surface divides into, largest first.
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 49 | 41 |
 | `/api/workflows` | 45 | 40 |
-| `/api/models` | 37 | 29 |
+| `/api/models` | 36 | 28 |
 | `/api/artifacts` | 25 | 16 |
 | `/api/apps` | 23 | 15 |
 | `/api/inbox` | 23 | 22 |
@@ -46,11 +46,11 @@ The 128 families the surface divides into, largest first.
 | `/api/tasks` | 13 | 9 |
 | `/api/providers` | 12 | 8 |
 | `/api/durability` | 11 | 11 |
-| `/api/model-providers` | 11 | 9 |
 | `/api/notifications` | 11 | 8 |
 | `/api/onboarding` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
 | `/api/lexicon` | 10 | 6 |
+| `/api/model-providers` | 10 | 8 |
 | `/api/rooms` | 10 | 8 |
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 888 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -704,7 +704,6 @@ The 888 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/model-providers/{name}/models/delete` | delete a local model. |
 | `POST` | `/api/model-providers/{name}/pull` | pull (download) a model. |
 | `GET` | `/api/model-providers/{name}/search` | search a provider's |
-| `POST` | `/api/model-providers/{name}/selftest` | dispatch a tiny real inference per |
 | `GET` | `/api/model-providers/{name}/show` | rich model metadata. |
 | `POST` | `/api/model-providers/{name}/test` | test provider connectivity. |
 | `GET` | `/api/models/active` | active models per use-case. |
@@ -725,9 +724,7 @@ The 888 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/models/hf-token` | write the token to SOURCE 1 (the credential store). |
 | `GET` | `/api/models/hf-token/status` | per-source ``{present, valid, username, masked, active}``. |
 | `GET` | `/api/models/loaded` | every resident model + the memory-pressure snapshot. |
-| `GET` | `/api/models/local/{provider}/health` | NEVER 500s (LMMV §6). |
 | `GET` | `/api/models/local/{provider}/search` | search a searchable provider's |
-| `POST` | `/api/models/local/{provider}/selftest` | a real per-capability inference (LMMV §6). |
 | `DELETE` | `/api/models/local/{provider}/{model}` | delete a downloaded local model. |
 | `DELETE` | `/api/models/rates` | remove the rate set for one key. Answers the new view. |
 | `GET` | `/api/models/rates` | the rates you set, and what each bound or recent model costs. |
@@ -741,6 +738,7 @@ The 888 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/models/sidecar/{provider}/install` | start the resumable install. |
 | `GET` | `/api/models/sidecar/{provider}/install/status` | the rich install poll shape. |
 | `GET` | `/api/models/telemetry` | per-model efficiency rows. |
+| `POST` | `/api/models/test` | Test one model for one use case with one small real call. |
 | `POST` | `/api/models/unload` | {provider} — free what a provider holds. Idempotent. |
 | `GET` | `/api/models/use-cases/{use_case}/settings` | _(no summary)_ |
 | `PUT` | `/api/models/use-cases/{use_case}/settings` | _(no summary)_ |

@@ -126,7 +126,6 @@ PARENT_READ_EXCLUDE = {
     "/api/model-providers/{name}/show": "model-provider registry resolves the entry first",
     "/api/models/downloads/{id}/stream": "download registry resolves the job before SSE setup",
     "/api/models/embedding/reindex/{id}/stream": "reindex registry resolves the SSE job",
-    "/api/models/local/{provider}/health": "local-model registry rejects an unknown provider",
     "/api/models/local/{provider}/search": "local-model registry rejects an unknown provider",
     "/api/models/sidecar/{provider}/install/status": (
         "sidecar registry rejects providers without an install definition"
@@ -282,9 +281,9 @@ def _directly_named_handlers() -> set[str]:
 
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
-    assert len(nonterminal) == 86
+    assert len(nonterminal) == 85
     assert len(deep_terminal) == 17
-    assert len(selected) == 103
+    assert len(selected) == 102
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)

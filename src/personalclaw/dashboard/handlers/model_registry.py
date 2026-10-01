@@ -5,6 +5,7 @@ Endpoints:
     GET    /api/models/active              — active models per use-case
     PUT    /api/models/active/{use_case}   — set active model(s) for a use-case
     GET    /api/models/chat                — active chat models (for dropdown use)
+    POST   /api/models/test                — Test one model for one use case (one small real call)
 
 Local-model download / delete / search is served generically by the local-model routes
 (``/api/models/downloads`` + ``/api/models/local/{provider}/…``), driven by the one
@@ -283,6 +284,9 @@ async def api_models_available(request: web.Request) -> web.Response:
     that could not be listed says so in ``error``; ``models: []`` alone means "lists none".
     One that could not be listed while its last check said Connected is measured again, in
     the background, so its connection stops reading Connected on the next load.
+
+    A model whose Test cannot work for one of its use cases carries ``untestable`` — ``{use
+    case: the sentence saying why}`` — and every other row's Test is ``POST /api/models/test``.
     """
     from personalclaw.llm.registry import canonical_provider_type
     from personalclaw.providers.connection import (
@@ -469,6 +473,12 @@ async def api_models_available(request: web.Request) -> web.Response:
     # Image- and video-generation providers, one row each: their models, or why they have none.
     result.extend(await _media_rows("image_gen"))
     result.extend(await _media_rows("video_gen"))
+
+    # Every row offers its Test, for each use case it is listed under, unless that Test cannot
+    # work: then it says why, instead (``providers.model_test``).
+    from personalclaw.providers.model_test import mark_untestable
+
+    mark_untestable(result)
 
     return web.json_response(
         {
@@ -815,6 +825,58 @@ async def api_models_chat(request: web.Request) -> web.Response:
     return web.json_response(all_models)
 
 
+async def api_model_test(request: web.Request) -> web.Response:
+    """POST /api/models/test — Test one model for one use case with one small real call.
+
+    Body ``{use_case, model}``, ``model`` a ``"provider:model"`` ref. Answers ``{use_case, model,
+    ok, detail, reason, duration_ms}``; a Test that failed is a 200 whose ``detail`` says why,
+    because the Test ran and that is its answer (``providers.model_test``). Refused before any
+    call is made: a use case Settings → Models doesn't list, or a ref that names no model (400
+    ``invalid_request``); a use case or provider with no Test (409 ``model_untestable``, its
+    message saying why); and a second Test while one of the same provider's runs (409
+    ``model_test_running``). User-click only: it spends the provider's tokens or this machine's
+    compute, so nothing runs it on a schedule.
+    """
+    from personalclaw.providers.model_test import (
+        ModelTestRunning,
+        ModelUntestable,
+        run_model_test,
+    )
+    from personalclaw.request_validation import json_object_body
+
+    body = await json_object_body(request, empty_ok=False)
+    use_case = body.get("use_case")
+    if not isinstance(use_case, str) or use_case not in VALID_USE_CASES:
+        return json_error(
+            "invalid_request",
+            message=f"Name the use case to test the model for, one of: {', '.join(USE_CASES)}.",
+            status=400,
+        )
+    ref = body.get("model")
+    parsed = split_ref(ref) if isinstance(ref, str) else None
+    if parsed is None or not parsed[0].strip() or not parsed[1].strip():
+        return json_error(
+            "invalid_request",
+            message='Name the model to test as "provider:model", as Settings → Models lists it.',
+            status=400,
+        )
+    provider_name, model = parsed
+    try:
+        result = await run_model_test(use_case, provider_name, model)
+    except ModelUntestable as refusal:
+        return json_error("model_untestable", message=str(refusal), status=409)
+    except ModelTestRunning:
+        return json_error(
+            "model_test_running",
+            message=(
+                f"A Test of one of {provider_name}'s models is already running. Try again when "
+                "it has finished."
+            ),
+            status=409,
+        )
+    return web.json_response({"use_case": use_case, "model": ref, **result.to_dict()})
+
+
 def register_model_registry_routes(app: web.Application) -> None:
     """Register model registry routes.
 
@@ -825,3 +887,4 @@ def register_model_registry_routes(app: web.Application) -> None:
     app.router.add_get("/api/models/active", api_models_active)
     app.router.add_put("/api/models/active/{use_case}", api_models_active_set)
     app.router.add_get("/api/models/chat", api_models_chat)
+    app.router.add_post("/api/models/test", api_model_test)

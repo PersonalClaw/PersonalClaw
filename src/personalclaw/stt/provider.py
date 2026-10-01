@@ -108,6 +108,15 @@ class SttProvider(ABC):
         """
         return ""
 
+    def untestable_reason(self) -> str:
+        """Why Settings → Models offers no Test for this provider's models, or ``""`` when it does.
+
+        A Test (``providers.model_test``) is one real :meth:`transcribe` of a half-second tone. A
+        provider that cannot afford even that on a click says so here, and its rows show the
+        sentence instead of a Test.
+        """
+        return ""
+
     @abstractmethod
     async def transcribe(self, audio_path: str, model: str = "", language: str = "") -> str | None:
         """Transcribe an audio file: its text, empty when there was no speech.

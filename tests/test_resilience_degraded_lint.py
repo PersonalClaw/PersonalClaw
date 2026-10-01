@@ -114,9 +114,6 @@ _CALL_SITE_SURFACES = {
     # BUILT IN like the compressor's above: a raise or an empty answer returns "", and `compact`
     # then folds the same region with its deterministic digest, so the member's turn still runs.
     "rooms/turn.py": "assistant_reasoning",
-    # The Doctor per-provider selftest fires a tiny one-token completion to
-    # ground-truth the chat capability — user-click only, covered by the chat contract.
-    "dashboard/handlers/doctor.py": "chat",
     # INU-6 second-opinion verification (verify_attention_item). Background reasoning
     # one-shot whose no-model floor is BUILT IN: no model / timeout / budget / parse-fail →
     # verdict "skipped", so the attention notification is DELIVERED unverified rather than

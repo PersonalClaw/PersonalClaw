@@ -193,7 +193,10 @@ Model providers are installable apps — nothing is hardwired to a vendor.
 4. Go to **Settings → Models** and bind a model to the **chat** use case
    (bindings live in `~/.personalclaw/active_models.json`, not `config.json`).
    The same panel binds models for background work, embeddings, ingestion,
-   speech, and more — they can all be different providers.
+   speech, and more — they can all be different providers. Each model's **Test**
+   makes one small real call for the use case it is listed under (a one-word
+   reply, one embedded word, the smallest image) and says what came back; a
+   model that can't be tested says why instead.
 
 Prefer the terminal? `personalclaw setup --credential NAME=VALUE` saves a
 secret in the same credential store Settings → Secrets uses, where a workflow's
@@ -416,7 +419,7 @@ defaults flipped, and some routes refuse input they used to accept. Run
   changes need a gateway restart (`personalclaw restart`); only frontend
   rebuilds are live.
 - **Model errors in chat** — check **Settings → Models** has a chat binding and
-  the provider's **Test** passes; `personalclaw doctor` reports the live
+  that model's **Test** passes; `personalclaw doctor` reports the live
   binding and any missing optional dependency with the exact install command.
 - **Short, off-topic answers and no tool calls** — you are talking to the small
   default model, and the notice above the composer says so. Bind a real model under

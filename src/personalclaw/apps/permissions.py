@@ -880,10 +880,6 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/model-providers/{name}/test": OwnerOnly(
         "testing a model provider — the gateway connects to it with what you saved"
     ),
-    "POST /api/model-providers/{name}/selftest": OwnerOnly(
-        "a real inference for each thing a model provider serves — your tokens, or this "
-        "machine's compute"
-    ),
     "GET /api/model-providers/{name}/models": OwnerOnly(
         "the models a model provider offers, asked of the provider itself"
     ),
@@ -908,6 +904,10 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/models/chat": OwnerOnly("the models your chats and agents can run on"),
     "GET /api/models/available": OwnerOnly(
         "every model your providers and this machine offer, and how each fits this machine"
+    ),
+    "POST /api/models/test": OwnerOnly(
+        "a real call to one of your models — your tokens, or this machine's compute, and it can "
+        "load the model into memory"
     ),
     "GET /api/models/use-cases/{use_case}/settings": OwnerOnly(
         "a use's settings — how its model is routed, and how your voice listens and speaks"
@@ -978,14 +978,8 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "which models are in this machine's memory, and how much memory is left"
     ),
     "POST /api/models/unload": OwnerOnly("taking a model out of this machine's memory"),
-    "GET /api/models/local/{provider}/health": OwnerOnly(
-        "whether a model runtime on this machine answers"
-    ),
     "GET /api/models/local/{provider}/search": OwnerOnly(
         "searching a model runtime's catalog of models to download"
-    ),
-    "POST /api/models/local/{provider}/selftest": OwnerOnly(
-        "a real inference on a model on this machine — it can load the model into memory"
     ),
     "DELETE /api/models/local/{provider}/{model}": OwnerOnly(
         "deleting a downloaded model from this machine"

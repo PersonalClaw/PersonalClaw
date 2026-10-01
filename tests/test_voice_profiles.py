@@ -665,7 +665,7 @@ def _resolve(monkeypatch, surface="", profile_id="", settings=None):
     from personalclaw.tts import registry as tr
 
     monkeypatch.setattr(tr, "active_tts", lambda: (_FakeProvider(), "en_US-flat.onnx"))
-    monkeypatch.setattr(tr, "_provider_by_app_name", lambda name: _FakeProvider() if name else None)
+    monkeypatch.setattr(tr, "provider_named", lambda name: _FakeProvider() if name else None)
     monkeypatch.setattr(
         "personalclaw.providers.use_cases.load_use_case_settings",
         lambda use_case: settings

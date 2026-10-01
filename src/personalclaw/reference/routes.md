@@ -551,7 +551,6 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/model-providers/{name}/models/delete` — delete a local model.
 - `POST /api/model-providers/{name}/pull` — pull (download) a model.
 - `GET /api/model-providers/{name}/search` — search a provider's
-- `POST /api/model-providers/{name}/selftest` — dispatch a tiny real inference per
 - `GET /api/model-providers/{name}/show` — rich model metadata.
 - `POST /api/model-providers/{name}/test` — test provider connectivity.
 - `GET /api/models/active` — active models per use-case.
@@ -572,9 +571,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/models/hf-token` — write the token to SOURCE 1 (the credential store).
 - `GET /api/models/hf-token/status` — per-source ``{present, valid, username, masked, active}``.
 - `GET /api/models/loaded` — every resident model + the memory-pressure snapshot.
-- `GET /api/models/local/{provider}/health` — NEVER 500s (LMMV §6).
 - `GET /api/models/local/{provider}/search` — search a searchable provider's
-- `POST /api/models/local/{provider}/selftest` — a real per-capability inference (LMMV §6).
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `DELETE /api/models/rates` — remove the rate set for one key. Answers the new view.
 - `GET /api/models/rates` — the rates you set, and what each bound or recent model costs.
@@ -588,6 +585,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/models/sidecar/{provider}/install` — start the resumable install.
 - `GET /api/models/sidecar/{provider}/install/status` — the rich install poll shape.
 - `GET /api/models/telemetry` — per-model efficiency rows.
+- `POST /api/models/test` — Test one model for one use case with one small real call.
 - `POST /api/models/unload` — {provider} — free what a provider holds. Idempotent.
 - `GET /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `PUT /api/models/use-cases/{use_case}/settings` — _(no summary)_

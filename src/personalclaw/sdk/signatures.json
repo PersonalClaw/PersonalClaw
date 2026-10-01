@@ -4208,7 +4208,12 @@
     "params": [],
     "returns": "bool"
    },
-   "name": {"kind": "property", "returns": "str", "settable": false}
+   "name": {"kind": "property", "returns": "str", "settable": false},
+   "untestable_reason": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
+   }
   }
  },
  "personalclaw.sdk.diarization.LocalModelProvider": {
@@ -4656,6 +4661,11 @@
     "kind": "async method",
     "params": [],
     "returns": "str"
+   },
+   "untestable_reason": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
    }
   }
  },
@@ -4838,6 +4848,11 @@
    "name": {"kind": "property", "returns": "str", "settable": false},
    "unavailable_reason": {
     "kind": "async method",
+    "params": [],
+    "returns": "str"
+   },
+   "untestable_reason": {
+    "kind": "method",
     "params": [],
     "returns": "str"
    }
@@ -8447,6 +8462,11 @@
     "kind": "async method",
     "params": [],
     "returns": "str"
+   },
+   "untestable_reason": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
    }
   }
  },
@@ -9097,6 +9117,11 @@
     "kind": "method",
     "params": [],
     "returns": "bool"
+   },
+   "untestable_reason": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
    }
   }
  },
@@ -9136,6 +9161,11 @@
      {"annotation": "Any", "kind": "var_keyword", "name": "opts"}
     ],
     "returns": "str | None"
+   },
+   "untestable_reason": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
    }
   }
  },

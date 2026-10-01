@@ -116,12 +116,20 @@ def active_stt() -> tuple[SttProvider, str] | None:
     if not parsed:
         return None
     provider_name, model_id = parsed
-    _ensure_registered()
-    key = "faster_whisper" if provider_name in _FASTER_WHISPER_NAMES else provider_name
-    prov = _providers.get(key)
+    prov = provider_named(provider_name)
     if prov is None:
         return None
     return (prov, model_id)
+
+
+def provider_named(name: str) -> SttProvider | None:
+    """The STT provider a ``provider:model`` ref names, by its app or registry name
+    (``faster-whisper`` and ``faster_whisper`` are the one bundled backend), or None."""
+    if not name:
+        return None
+    _ensure_registered()
+    key = "faster_whisper" if name in _FASTER_WHISPER_NAMES else name
+    return _providers.get(key)
 
 
 def get_active_provider() -> SttProvider | None:

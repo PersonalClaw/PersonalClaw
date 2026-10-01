@@ -122,7 +122,7 @@ def sentence_with_detail(sentence: str, error: BaseException | str) -> str:
 
 def failure_detail(text: str) -> str:
     """``text``, a failure's own words, as the detail of a check someone asked for (a model's
-    Test, a provider's selftest): masked, on one line, and whole up to
+    Test, a search provider's Test): masked, on one line, and whole up to
     :data:`~personalclaw.llm.catalog.FAILURE_DETAIL_CHARS`, the bound every relayed failure has,
     with "…" where it was cut. Masked BEFORE it is cut, since a credential cut in half would slip
     past the redactor, and ``""`` when it cannot be masked: an unmasked text is never the answer.
