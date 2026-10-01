@@ -28,7 +28,7 @@ from personalclaw import concurrency, notification_kinds, shutdown_event
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import files as loop_files
-from personalclaw.loop import instrument, kinds, manager, store, supervisor
+from personalclaw.loop import instrument, kinds, manager, spend_cap, store, supervisor
 from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
 from personalclaw.workflows.supervisor_policy import policy_for_kind
 
@@ -301,6 +301,40 @@ class LoopWatchdog:
                 return str(m.get("content", ""))[:500]
         return ""
 
+    def hold_for_spend_cap(self, key: str, refusal: Any) -> bool:
+        """A worker of a running loop (its stage worker, or a task worker, by session *key*) had
+        its turn refused by a spend ceiling: the loop waits for its owner.
+
+        It is not the worker's failure, so it does not count toward failing the loop, and it is
+        not retried: the refused worker's nudge loop is already switched off
+        (``AutoNudgeService.notify_turn_complete``). The loop asks its owner (``needs_input``),
+        with the refusal's own sentence (which ceiling, what was spent, where it is lifted), and
+        raises one Inbox item and its one notification for the wait, however many of its workers
+        the same ceiling refuses. Resume carries on once the ceiling has room. Returns whether
+        this call put the loop on hold."""
+        from personalclaw.loop.manager import worker_loop_id
+
+        loop_id = worker_loop_id(key)
+        loop = store.get(loop_id) if loop_id else None
+        if loop is None or loop.status != LoopStatus.RUNNING.value:
+            return False
+        sentence = refusal.sentence()
+        loop_files.write_question(
+            loop_id,
+            sentence,
+            why=spend_cap.WHY,
+            spend_cap=True,
+            settings=refusal.settings_page,
+        )
+        try:
+            store.update_status(loop_id, LoopStatus.NEEDS_INPUT)
+        except (KeyError, store.TransitionError):
+            return False
+        self._consec_errors.pop(loop_id, None)
+        logger.info("loop %s: a spend ceiling refused a worker's turn: %s", loop_id, sentence)
+        self._publish(loop_id, "spend_cap", {"loop_id": loop_id, "reason": sentence})
+        return True
+
     # ── publishing ──
 
     #: event → (notification wire kind, title).
@@ -321,6 +355,7 @@ class LoopWatchdog:
         "stagnant": ("warning", "Loop stalled — needs direction"),
         "blocked": ("warning", "Loop blocked — needs you"),
         "needs_input": ("info", "Loop needs your input"),
+        "spend_cap": ("warning", spend_cap.TITLE),
         # A code loop advancing an SDLC stage is visible progress worth a heads-up
         # while the user is away (only the code strategy emits stage_advance, so the
         # "stage" wording is always accurate). Ported from the legacy code watchdog.
@@ -342,6 +377,7 @@ class LoopWatchdog:
         "needs_input": "needs_input",
         "blocked": "needs_input",
         "stagnant": "needs_input",
+        "spend_cap": "needs_input",
     }
 
     def _attention_dedup_key(self, loop_id: str, event: str) -> str:

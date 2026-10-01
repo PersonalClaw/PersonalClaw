@@ -14,6 +14,10 @@ mapping of those stays in ``llm_helpers.humanize_provider_error``.
 from __future__ import annotations
 
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from personalclaw.errors import AgentError
 
 
 class FailureMode(str, Enum):
@@ -420,13 +424,17 @@ class BudgetExceededError(GuardError):
         left_out = self._left_out()
         if self.why == NO_ROOM:
             left = max(0.0, self.limit - self.spent - self.held)
-            running = " once the calls running now are paid for" if self.held > 0 else ""
-            verb = "use" if self.dimension == "tokens" else "cost"
             aside = f" ({left_out})" if left_out else ""
+            held = (
+                f" and {self._amount(self.held)} set aside by the calls running now"
+                if self.held > 0
+                else ""
+            )
+            verb = "use" if self.dimension == "tokens" else "cost"
             return (
-                f"the {which} {unit} budget has {self._amount(left)} left of "
-                f"{self._amount(self.limit)}{running}{aside}, and a call to {self.ref} may "
-                f"{verb} {self._amount(self.needed)}"
+                f"the {which} {unit} budget has {self._amount(self.spent)} of "
+                f"{self._amount(self.limit)} spent{aside}{held}, and a call to {self.ref} may "
+                f"{verb} {self._amount(self.needed)}, more than the {self._amount(left)} left"
             )
         if self.dimension == "tokens":
             figure = f"{int(self.spent):,} of {int(self.limit):,} tokens"
@@ -464,37 +472,77 @@ class BudgetExceededError(GuardError):
                 "costs nothing"
             )
         if self.scope == "day":
-            return "it resets tomorrow, or raise it in Settings → Guardrails"
-        return "raise it in Settings → Guardrails"
+            return (
+                f"raise {self._control()} in Settings → Guardrails (0 removes the cap), or wait "
+                "for it to reset at midnight"
+            )
+        if self.dimension == "tokens":
+            return f"raise {self._control()} in Settings → Guardrails (0 removes the cap)"
+        return "raise or remove the dollar limit per run its automation sets"
+
+    def _control(self) -> str:
+        """The Settings → Guardrails control that sets the ceiling which refused the call."""
+        per = "day" if self.scope == "day" else "run"
+        return f"Max {self.dimension} / {per}"
+
+    @property
+    def settings_page(self) -> str:
+        """The Settings page the refusal is lifted on, as its route names it (``guardrails`` for
+        the ceilings, ``usage`` for a model's price), or ``""`` for a limit an automation sets
+        itself. A surface that shows the sentence links it there."""
+        if self.why == UNPRICED:
+            return "usage"
+        if self.scope == "day" or self.dimension == "tokens":
+            return "guardrails"
+        return ""
+
+    def chat_meta(self) -> dict[str, str]:
+        """What a chat's error row carries for the refusal: the Settings page it links, if any."""
+        return {"settings": self.settings_page} if self.settings_page else {}
+
+    def headline(self) -> str:
+        """:meth:`reason` as the opening of a sentence: what a run's page shows as the cause, with
+        :meth:`fix` as its next step."""
+        reason = self.reason()
+        if self.why not in (UNPRICED, UNMEASURED):  # a model's ref opens these, spelled as it is
+            reason = reason[:1].upper() + reason[1:]
+        return reason
 
     def sentence(self) -> str:
         """The refusal as a person reads it: which ceiling stopped the call, what was spent
         against it, and where it is changed."""
-        reason = self.reason()
-        if self.why not in (UNPRICED, UNMEASURED):  # a model's ref opens these, spelled as it is
-            reason = reason[:1].upper() + reason[1:]
-        return f"{reason}: {self.fix()}."
+        return f"{self.headline()}: {self.fix()}."
 
-    def remedy(self) -> str:
-        """What lifts the refusal, as a step's suggested fix reads it."""
-        if self.why == UNPRICED:
-            priced = f" for {self.unpriced_for}" if self.unpriced_for else ""
-            return (
-                f"{self.ref} has no price{priced}, so the {self.scope} dollar budget cannot count "
-                "it; set its price in Settings → Usage → Model prices ($0 if it costs nothing), "
-                f"or {self._lift()}"
-            )
-        if self.why == UNMEASURED:
-            return (
-                f"{self.ref} is billed per {_UNIT_NOUNS.get(self.unit, self.unit)} and "
-                f"{self._unmeasured()} is not known, so the {self.scope} dollar budget cannot "
-                f"weigh it; {self.fix()}"
-            )
-        state = "has no room for this call" if self.why == NO_ROOM else "is spent"
-        return (
-            f"the {self.scope} {self.dimension} budget {state}; raise it in Settings → "
-            "Guardrails, or wait for the daily budget to reset"
+    def envelope(self) -> "AgentError":
+        """The refusal as the WHAT/WHY/FIX envelope a dispatch seam reports a failed action in
+        (``ERR_SPEND_CAP_REFUSED``): the same two halves :meth:`sentence` joins."""
+        from personalclaw.errors import AgentError
+
+        return AgentError(
+            code="ERR_SPEND_CAP_REFUSED",
+            what="a spend cap refused the model call before it was made",
+            why=self.reason(),
+            fix=self.fix(),
         )
+
+
+def budget_refusal(exc: object) -> BudgetExceededError | None:
+    """The spend ceiling's refusal *exc* is, or was raised from, else ``None``.
+
+    THE one test for "a spend ceiling stopped this": every surface a turn or a run can end on
+    (a chat, a loop's worker or planner, a workflow step, a subagent) asks it, and shows the
+    refusal's own :meth:`~BudgetExceededError.sentence`, so none of them reads it as a failure it
+    does not recognize. A wrapper raised ``from`` the refusal is that refusal; five hops is the
+    bound every cause walk here keeps.
+    """
+    seen = exc if isinstance(exc, BaseException) else None
+    for _ in range(5):
+        if seen is None:
+            return None
+        if isinstance(seen, BudgetExceededError):
+            return seen
+        seen = seen.__cause__
+    return None
 
 
 class SecretLeakBlocked(GuardError):

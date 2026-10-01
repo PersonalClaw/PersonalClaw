@@ -177,7 +177,8 @@ def test_a_fallback_chain_lands_on_its_free_model_past_a_spent_dollar_cap(tmp_pa
     assert machine == ["here"]
     assert served[-1].substituted_for.sentence() == (
         "ran on here:tiny instead of relay:gpt-4o-mini: the daily dollar budget is spent ($10.50 "
-        "of $4.00). It resets tomorrow, or raise it in Settings → Guardrails"
+        "of $4.00). Raise Max dollars / day in Settings → Guardrails (0 removes the cap), or wait "
+        "for it to reset at midnight"
     )
 
 

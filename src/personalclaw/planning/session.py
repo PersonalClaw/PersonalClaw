@@ -118,6 +118,12 @@ class PlanSession:
     # so the walkthrough surfaces the failure + an explicit Retry instead of silently
     # re-spawning a fresh investigation on every poll/remount. Cleared on a real retry.
     design_error: str = ""
+    #: Set while the walkthrough is PAUSED rather than failed: ``{"by": "spend_cap", "settings":
+    #: <the Settings page the ceiling is changed on>}`` when a spend ceiling refused the planner
+    #: (``loop.spend_cap``). The pass's reason stays where a failure's would (the step's ``error``,
+    #: or ``design_error``); this says that nothing the planner did is wrong, and that no pass runs
+    #: again until its owner resumes it. Empty otherwise.
+    paused: dict[str, str] = field(default_factory=dict)
     #: When this session last actually PROGRESSED — a step transitioned, an artifact
     #: landed, a comment was attached. Every mutator below stamps it.
     #:
@@ -155,6 +161,7 @@ class PlanSession:
             "updated_at": self.updated_at,
             "steps": [s.to_dict() for s in self.steps],
             "design_error": self.design_error,
+            "paused": dict(self.paused),
         }
 
     @classmethod
@@ -173,7 +180,15 @@ class PlanSession:
             updated_at=float(data.get("updated_at", 0.0) or 0.0),
             steps=[PlanStep.from_dict(s) for s in (data.get("steps") or []) if isinstance(s, dict)],
             design_error=str(data.get("design_error", "") or ""),
+            paused=_paused(data.get("paused")),
         )
+
+
+def _paused(raw: Any) -> dict[str, str]:
+    """A stored ``paused`` as the session holds it: string keys and values, or empty."""
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if isinstance(v, str)}
 
 
 # ── pure state-machine helpers (no persistence) ──

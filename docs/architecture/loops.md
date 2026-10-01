@@ -181,6 +181,19 @@ deadline restarts at the release), and a turn the hold stopped is not counted as
 The gateway watches the switch (`guardrails/incident.watch`) and sends the `refresh` hint naming
 `incident` and `loops` when it moves, the CLI's flips included, so open pages re-read at once.
 
+A spend ceiling (Settings → Guardrails → Daily budget) that refuses a loop's call **pauses** the loop
+rather than failing it. The refused session's nudge loop is switched off at once
+(`AutoNudgeService.notify_turn_complete(refused=True)`), so the same refused call is not sent again.
+A running loop waits as `needs_input`, its question being the refusal's own sentence (which ceiling,
+what was spent of it, what the call needed, and where it is lifted) with `spend_cap: true`
+(`watchdog.LoopWatchdog.hold_for_spend_cap`); a refusal does not count toward failing the loop. A
+loop still planning keeps its status: its walkthrough is paused (`PlanSession.paused`), the pass is
+not retried, and nothing runs it again (not a poll, not a restart) until its owner presses Resume
+(`plan_walkthrough.clear_design_error`). Either way the pause raises ONE Inbox item and its ONE
+notification (`loop/spend_cap.py`), and the loop's page shows it in place of "Drafting…" or a
+question, with a link to the Settings page and Resume. Chat, a workflow step and a subagent say the
+same sentence (`guardrails.failure.budget_refusal`).
+
 A workflow run, and so a general loop, is held the same way (`workflows/incident_hold.py`). On its
 first step with the switch on, the run's controller withdraws the work in flight as a pause does: a
 stage's subagent is stopped ("Stopped: incident mode is on") and the stage goes back in the queue at

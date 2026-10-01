@@ -80,6 +80,7 @@ from personalclaw.dashboard.state import (
     tool_input_to_str,
 )
 from personalclaw.dashboard.ungated_calls import report_ungated_call
+from personalclaw.guardrails.failure import budget_refusal
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
     WARN_THRESHOLD,
@@ -2271,7 +2272,7 @@ async def run_chat(
     so it opens no new checkpoint turn and is handed the same context the first attempt was.
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
-    session._last_turn_errored = False
+    session._last_turn_errored, session._last_turn_refusal = False, None
     # No stop has been asked of this turn yet (`_ChatSession._stop_asked`).
     session._stop_asked = False
     # This turn has not ended, so no outcome describes it yet. A reader of session detail must
@@ -5521,7 +5522,8 @@ async def run_chat(
             _flush_segment(state, session, assistant_text, broadcast=False)
         _err_text, _ = redact_exfiltration_urls(humanize_provider_error(exc))
         _err_text, _ = redact_credentials(_err_text)
-        session.append("error", _err_text, "msg msg-err")
+        session._last_turn_refusal = _cap = budget_refusal(exc)  # a known ending, not a crash
+        session.append("error", _err_text, "msg msg-err", meta=_cap.chat_meta() if _cap else None)
         # Definitive turn-outcome flag (the last message isn't a reliable signal:
         # the finally block below appends more — queued re-dispatch etc.). Read
         # by the autonudge re-arm and the gateway goal-loop done-callback.
@@ -5570,7 +5572,9 @@ async def run_chat(
             _autonudge = _autonudge_get()
             if _autonudge is not None and not getattr(session, "_suppress_autonudge_rearm", False):
                 _autonudge.notify_turn_complete(
-                    session.key, errored=getattr(session, "_last_turn_errored", False)
+                    session.key,
+                    errored=session._last_turn_errored,
+                    refused=session._last_turn_refusal is not None,
                 )
         except Exception:
             logger.debug("autonudge.notify_turn_complete failed", exc_info=True)

@@ -194,6 +194,11 @@ ERROR_CODES: dict[str, str] = {
         "cannot use. `fix` names the field and where it is set; a retry would send the same "
         "configuration."
     ),
+    "ERR_SPEND_CAP_REFUSED": (
+        "A spend ceiling refused a model call before it was made. `why` names the ceiling and "
+        "what was spent of it against what the call needed; `fix` says where it is raised or "
+        "removed, or when it resets. A retry before then meets the same ceiling."
+    ),
 }
 
 

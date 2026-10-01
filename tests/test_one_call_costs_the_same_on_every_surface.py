@@ -378,8 +378,8 @@ async def test_a_chat_turn_the_dollar_cap_stops_keeps_the_calls_it_made_in_usage
     # not as "an error PersonalClaw doesn't recognize".
     (said,) = [m["content"] for m in chat.messages if m.get("role") == "error"]
     assert said == (
-        "The daily dollar budget is spent ($0.42 of $0.30): it resets tomorrow, or raise it in "
-        "Settings → Guardrails."
+        "The daily dollar budget is spent ($0.42 of $0.30): raise Max dollars / day in Settings "
+        "→ Guardrails (0 removes the cap), or wait for it to reset at midnight."
     )
     (row,) = _usage(home)
     assert row["cost_usd"] == pytest.approx(0.42) == meter.day_totals().dollars

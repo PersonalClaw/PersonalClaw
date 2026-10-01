@@ -48,7 +48,9 @@ _CLASS_FIX: dict[FailureClass, str] = {
     FailureClass.NETWORK: "check that the provider is running and reachable, then Retry",
     FailureClass.TRANSIENT: "Retry in a moment",
     FailureClass.TIMEOUT: "raise the step's timeout, or split it into smaller steps",
-    FailureClass.BUDGET: f"raise the budget in Settings → Guardrails, {_THEN_FORK}",
+    FailureClass.BUDGET: (
+        "raise or remove the cap in Settings → Guardrails, or wait for it to reset, then Retry"
+    ),
     FailureClass.PROTOCOL: "tighten the schema in the prompt, or use produce-then-extract",
     FailureClass.INTERNAL: "check the gateway log",
 }
@@ -119,7 +121,14 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
             recoverable=True,
         )
     if isinstance(exc, BudgetExceededError):
-        return Failure(failure_class=FailureClass.BUDGET, remediation=exc.remedy())
+        # The refusal's own two halves, the words a chat or a loop shows for it: which ceiling
+        # stopped the call and what was spent against it, then where it is lifted. The run page
+        # offers Retry once the ceiling has room again.
+        return Failure(
+            failure_class=FailureClass.BUDGET,
+            cause_plain=exc.headline(),
+            remediation=f"{exc.fix()}, then Retry",
+        )
     if isinstance(exc, PromptExceedsWindow):
         return Failure(
             failure_class=FailureClass.USER,

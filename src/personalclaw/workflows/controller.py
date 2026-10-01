@@ -2202,6 +2202,15 @@ class RunController:
         """
         self._resume_loop()
 
+    def _spend_refused(self) -> bool:
+        """Whether a step of this run failed because a spend ceiling refused its model call."""
+        return any(
+            inst.state == InstanceState.FAILED
+            and inst.failure is not None
+            and inst.failure.failure_class == FailureClass.BUDGET
+            for inst in self.instances.values()
+        )
+
     async def _finish(self, status: RunStatus, *, error: str = "") -> None:
         """Write the run's terminal status. The single terminal writer (WF2-R10)."""
         self.run.status = status
@@ -2254,7 +2263,9 @@ class RunController:
             # A run says it ended when the ending is one to hear: a loop's the way a loops-table
             # loop does, any other run's when it failed or escalated. After the resolve above, so
             # the row it raises is not closed with the run's other rows.
-            attention.announce_run_end(self.services.attention_state, self.run, status)
+            attention.announce_run_end(
+                self.services.attention_state, self.run, status, refused=self._spend_refused()
+            )
             if status == RunStatus.COMPLETE:
                 run_finish.revise_project_overview(self)
             run_finish.capture_run_end(self)

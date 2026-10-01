@@ -11,6 +11,7 @@ import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
+import { SpendCapPause } from '../../ui/SpendCapPause'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { InlineLoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
@@ -507,6 +508,9 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // current cycle elapsed: since the last finding landed (or since start for cycle 1)
   const lastTs = cycleTs.at(-1) ?? c.started_at ?? now
   const curCycleElapsed = active ? Math.max(0, now - lastTs) : 0
+  // What the loop asks while it waits (`loop/files.pending_question`): its text, why, and whether
+  // a spend cap paused it.
+  const question = c.pending_question ?? null
 
   async function act(a: 'start' | 'pause' | 'resume' | 'stop') {
     // 🪤 This used to be `.catch(() => null)`, so every failure was invisible: on a deleted loop
@@ -831,10 +835,15 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           )}
           {/* An Attended loop's workers ask before they act, and their asks are answered here. */}
           <LoopApprovals loopId={id} />
-          {c.status === 'needs_input' && c.pending_question && (
+          {/* A spend cap refused the loop's next call: paused, with nothing to answer. */}
+          {c.status === 'needs_input' && question?.spend_cap && (
+            <SpendCapPause reason={question.question} detail={question.why} settings={question.settings}
+              onResume={() => act('resume')} />
+          )}
+          {c.status === 'needs_input' && question && !question.spend_cap && (
             <div data-type="body-s" className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
               <div className="flex items-center gap-1.5 text-info mb-1" style={fvs(500)}><HelpCircle size={14} /> The agent needs your input</div>
-              <div className="text-on-surface">{c.pending_question}</div>
+              <div className="text-on-surface">{question.question}</div>
               {/* Offer the answer inline — the question IS the call to action, so
                   open the nudge composer right here instead of just naming it. */}
               {!nudgeOpen && (

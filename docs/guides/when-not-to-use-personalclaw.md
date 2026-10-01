@@ -238,7 +238,9 @@ have controls under **Settings → Guardrails**: `guardrails.budgets.max_tokens_
 `max_tokens_per_day` and `max_dollars_per_day` (`src/personalclaw/config/safety.py`,
 `BudgetConfig`). A spent token ceiling pauses unattended runs into needs-input rather than
 overspending quietly, and a dollar ceiling refuses each call that costs money once there is no
-room for it, while calls to a model that costs nothing keep running. The day counter is
+room for it, while calls to a model that costs nothing keep running. A loop a ceiling refuses is
+paused, not failed: it says which ceiling and what was spent, raises one Inbox item, and tries
+nothing again until you resume it. The day counter is
 persisted to `~/.personalclaw/spend.json` so it survives a restart, and its day is this
 machine's local day, the day Settings → Usage counts too. That is a genuine control.
 Five things about it are worth knowing *before* you point a goal loop at something and go to

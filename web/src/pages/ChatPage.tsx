@@ -63,6 +63,7 @@ import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
+import { TextLink } from '../ui/TextLink'
 import { PartialNotice } from '../ui/PartialNotice'
 import { NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
 import { BundledFloorNotice } from './chat/BundledFloorNotice'
@@ -84,7 +85,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
@@ -1428,11 +1429,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           endTextRun()  // land buffered text before the error segment
           setStatusText(''); setLatestActivity(null)
           const text = turnErrorText(d.content)
+          // The Settings page the failure is lifted on, when the gateway names one (a spend cap).
+          const meta = d.meta as { settings?: unknown } | undefined
+          const settings = typeof meta?.settings === 'string' ? meta.settings : undefined
           // Idempotent: a snapshot read in flight when the turn failed can already show this
           // (persisted) error by the time the held frame replays on top of it.
           patchLastAssistant((segs) => {
             const last = segs[segs.length - 1]
-            return last?.kind === 'error' && last.text === text ? segs : [...segs, { kind: 'error', text }]
+            return last?.kind === 'error' && last.text === text ? segs : [...segs, { kind: 'error', text, ...(settings ? { settings } : {}) }]
           })
         } else if (d.role === 'notice') {
           // What happened to the conversation, in the gateway's words (a turn moved to another
@@ -4597,7 +4601,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
     if (seg.kind === 'thinking') return <ThinkingBlock key={i} text={(seg as ThinkingSegment).text} defaultOpen={streaming} />
     if (seg.kind === 'error') {
-      const text = (seg as { text: string }).text
+      const { text, settings } = seg as ErrorSegment
       // WT-04: a fresh instance with no model resolves the turn to a WHAT/WHY/FIX
       // envelope that reads as a stack dump. Reframe THAT case as a calm setup
       // nudge; every other turn error keeps the plain danger strip.
@@ -4607,7 +4611,12 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       const endsTheTurn = seg === lastShown
       return isNoModelSetupError(text)
         ? <NoModelSetupState key={i} detail={text} onSetup={onSetupModel} />
-        : <InlineError key={i} icon multiline className="my-1" onRetry={endsTheTurn ? onRetry : undefined}>{text}</InlineError>
+        : (
+          <InlineError key={i} icon multiline className="my-1" onRetry={endsTheTurn ? onRetry : undefined}>
+            {text}
+            {settings && <>{' '}<TextLink href={`#/settings/${settings}`} icon={ArrowRight} iconPosition="trailing" ink="emphasis">Open Settings</TextLink></>}
+          </InlineError>
+        )
     }
     if (seg.kind === 'approval') {
       const ap = seg as ApprovalSegment

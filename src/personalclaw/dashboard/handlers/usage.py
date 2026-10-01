@@ -184,7 +184,11 @@ async def api_usage_budget(request: web.Request) -> web.Response:
     ``unpriced_calls`` is how many of today's metered calls had no price: nothing priced their
     model, so their dollars are not in ``spent_dollars`` and the dollar cap could not count them.
     The page says so beside the total, rather than letting them read as free.
+
+    ``resets_at`` is when the day the caps count ends (epoch seconds, this host's next local
+    midnight), which a run a cap stopped says in the reader's own time.
     """
+    from personalclaw import spend_day
     from personalclaw.guardrails.budgets import (
         BudgetConfigUnreadable,
         budget_from_config,
@@ -209,6 +213,7 @@ async def api_usage_budget(request: web.Request) -> web.Response:
             "max_dollars_per_day": max_dollars,
             "max_tokens_per_day": max_tokens,
             "cap_unreadable": unreadable,
+            "resets_at": round(spend_day.next_day_starts(), 3),
         }
     )
 

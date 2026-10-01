@@ -1,4 +1,4 @@
-import { Coins } from 'lucide-react'
+import { ArrowRight, Coins } from 'lucide-react'
 import { api, type UsageAgg, type UsageBudget, type UsageFold, type UsageWindow } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
@@ -9,6 +9,7 @@ import { PanelHeader, Section } from './settingsUI'
 import { InlineLoadError, ListSkeleton } from '../../ui/ListScaffold'
 import { BigStat, KVList } from './bento'
 import { ModelPricesSection } from './ModelPricesSection'
+import { TextLink } from '../../ui/TextLink'
 
 /** Account-level cost/token usage.
  *
@@ -315,6 +316,11 @@ export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
             </>
           )}
         </span>
+        {/* The cap is shown here and set in Guardrails: say where, so a refusal's "raise it" has a
+            way there from the page that shows what was spent. */}
+        <TextLink href="#/settings/guardrails" icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis" className="self-start">
+          Change the cap in Settings → Guardrails
+        </TextLink>
       </div>
     </Section>
   )

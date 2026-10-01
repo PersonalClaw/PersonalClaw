@@ -3352,6 +3352,7 @@ class GatewayOrchestrator:
                                 _sess.key,
                                 errored=getattr(_sess, "_last_turn_errored", False)
                                 and not incident_active(),
+                                refused=getattr(_sess, "_last_turn_refusal", None) is not None,
                             )
                     except Exception:
                         logger.debug("re-arm after cycle failed for %s", _sess.key, exc_info=True)
@@ -3379,9 +3380,16 @@ class GatewayOrchestrator:
                         self.dashboard_state._sessions.get(_key) if self.dashboard_state else None
                     )
                     errored = bool(sess and getattr(sess, "_last_turn_errored", False))
+                    refusal = getattr(sess, "_last_turn_refusal", None) if sess else None
                     cid = _key.split("loop-", 1)[-1]
-                    if self.loop_watchdog is not None:
-                        self.loop_watchdog.record_turn_outcome(cid, ok=not errored)
+                    if self.loop_watchdog is None:
+                        return
+                    # A spend ceiling's refusal is no fault of the worker's: the loop waits for
+                    # its owner, rather than counting toward failing it.
+                    if refusal is not None:
+                        self.loop_watchdog.hold_for_spend_cap(_key, refusal)
+                        return
+                    self.loop_watchdog.record_turn_outcome(cid, ok=not errored)
 
                 task.add_done_callback(_report_turn)
             self._session_tasks[session.key] = task

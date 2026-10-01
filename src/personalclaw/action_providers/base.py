@@ -148,8 +148,14 @@ def provider_failure(provider_name: str, exc: BaseException) -> AgentError:
     misbehaving (often app-contributed) one *raises*. The three dispatch seams
     (hooks, cron, event-triggers) funnel that raise through here so every provider
     — including ones that never heard of the envelope — surfaces the same coded,
-    actionable failure instead of a bare ``str(exc)``.
+    actionable failure instead of a bare ``str(exc)``. A spend ceiling's refusal is no fault of
+    the provider's, and is said as itself: which ceiling, and where it is lifted.
     """
+    from personalclaw.guardrails.failure import budget_refusal
+
+    refusal = budget_refusal(exc)
+    if refusal is not None:
+        return refusal.envelope()
     return AgentError(
         code="ERR_ACTION_PROVIDER_FAILED",
         what=f"action provider {provider_name!r} failed: {type(exc).__name__}: {exc}",

@@ -107,8 +107,9 @@ def test_five_calls_fanned_out_together_spend_no_more_than_the_cap(tmp_path):
     assert len(refused) == 4
     assert {(r.scope, r.dimension) for r in refused} == {("day", "dollars")}
     assert refused[0].sentence() == (
-        "The daily dollar budget has $1.90 left of $4.00, and a call to relay:gpt-4o-mini may "
-        "cost $2.10: it resets tomorrow, or raise it in Settings → Guardrails."
+        "The daily dollar budget has $2.10 of $4.00 spent, and a call to relay:gpt-4o-mini may "
+        "cost $2.10, more than the $1.90 left: raise Max dollars / day in Settings → Guardrails "
+        "(0 removes the cap), or wait for it to reset at midnight."
     )
 
 

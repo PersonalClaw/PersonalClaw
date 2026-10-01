@@ -30,7 +30,7 @@ import { api, type Loop } from '../../lib/api'
 // `runLifecycle.test.ts` proves every other member is backed by real Python.
 export const RUN_LIFECYCLE = [
   'new_finding', 'cycle_verdict', 'judge_error', 'complete', 'stagnant',
-  'needs_input', 'failed', 'ratchet_regression', 'plan_step', 'phase_advance', 'rolled_back',
+  'needs_input', 'spend_cap', 'failed', 'ratchet_regression', 'plan_step', 'phase_advance', 'rolled_back',
   'queued', 'autopilot', 'deleted', 'judge_blind', 'ship_blocked',
   'stage_advance', 'stage_stalled', 'gate_check', 'task_started', 'task_done', 'blocked',
   // LOOPS-EVOLUTION R4/R14 middleware events. These MUST be listed here: EventSource

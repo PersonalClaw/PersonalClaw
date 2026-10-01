@@ -31,6 +31,7 @@ import shutil
 import time
 from dataclasses import dataclass
 
+from personalclaw.guardrails.failure import BudgetExceededError
 from personalclaw.guardrails.incident import incident_active
 from personalclaw.loop import posture as loop_posture
 
@@ -51,6 +52,7 @@ SCRATCH_DIR = "scratch"
 WROTE = "wrote"  # the file appeared; ``text`` is what it holds
 TIMED_OUT = "timed_out"  # the pass ran out of time before the file appeared
 STOPPED = "stopped"  # the planner's loop stopped (its cycles spent, an error) without writing it
+REFUSED = "refused"  # a spend ceiling refused the planner's turn; ``refusal`` is its refusal
 FAILED = "failed"  # the pass itself could not run
 
 
@@ -58,11 +60,13 @@ FAILED = "failed"  # the pass itself could not run
 class PlannerPass:
     """What one planner pass came back with: the file's text, and how the pass ended — so the
     caller tells the planner and its owner what really happened (a file it cannot read is not a
-    file never written, and neither is a pass that ran out of time)."""
+    file never written, and neither is a pass that ran out of time, or one a spend ceiling
+    refused, whose ``refusal`` says which ceiling and where it is lifted)."""
 
     text: str = ""
     ended: str = FAILED
     limit_secs: float = 0.0
+    refusal: BudgetExceededError | None = None
 
 
 def read_sentinel(files_dir: str, sentinel: str) -> str:
@@ -243,6 +247,8 @@ async def run_planner_pass(
             first_idle_secs=PLANNER_FIRST_IDLE,
             stop_sentinel_path=stop_path,
         )
+        # A refusal is this pass's only when one of its own turns met it (the first fires later).
+        session._last_turn_refusal = None
         limit = timeout_secs if timeout_secs is not None else PLANNER_TIMEOUT_SECS
         deadline = time.time() + limit
         # Once the planner loop is gone OR deactivated (it exhausted PLANNER_MAX_CYCLES
@@ -289,6 +295,12 @@ async def run_planner_pass(
                 return PlannerPass(raw, WROTE, limit)
             loop = svc.get_by_session(skey)
             if loop is None or not getattr(loop, "active", True):
+                # A spend ceiling refused the planner's turn, and its nudge loop is switched off
+                # rather than sending the same refused call again: the pass ends on the refusal.
+                refusal = session._last_turn_refusal
+                if refusal is not None:
+                    logger.info("run_planner_pass: %s was refused: %s", skey, refusal)
+                    return PlannerPass(ended=REFUSED, limit_secs=limit, refusal=refusal)
                 dead_polls += 1
                 if dead_polls >= _GRACE_POLLS:
                     logger.info(

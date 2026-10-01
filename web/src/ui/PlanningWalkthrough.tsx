@@ -12,6 +12,7 @@ import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../lib/staleWri
 import { useStaleWriteGuard } from '../lib/useStaleWriteGuard'
 import { planningTarget, type CommentTarget } from './content/commentTarget'
 import { StaleWriteNotice } from './StaleWriteNotice'
+import { SpendCapPause } from './SpendCapPause'
 import type { PlanSession, PlanStep } from '../lib/api'
 
 /** A step's prose body as the page shows it — the markdown an edit replaces — with the revision the
@@ -392,7 +393,9 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
   // whose pass failed (it carries the server's reason) has no planner working on it either.
   const awaitingReview = current?.status === 'awaiting_review'
   const stepFailed = current?.status === 'pending' && !!current?.error
-  const paused = stalled || stepFailed
+  // A spend ceiling refused the planner: paused, not failed, and nothing runs again until Resume.
+  const capPaused = session?.paused?.by === 'spend_cap'
+  const paused = stalled || stepFailed || capPaused
   const headerLabel = awaitingReview ? 'Awaiting your review' : paused ? 'Planning paused' : 'Planning…'
 
   return (
@@ -434,7 +437,10 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
                 // ran + produced nothing) — surface it immediately with the reason +
                 // an explicit Retry, instead of the indefinite "preparing…" spinner
                 // that used to mask a stuck planner silently re-spawning.
-                session?.design_error ? (
+                capPaused ? (
+                  <SpendCapPause reason={session?.design_error ?? ''} settings={session?.paused?.settings}
+                    onResume={retry} busy={busy} resumeLabel="Resume planning" />
+                ) : session?.design_error ? (
                   <div data-type="body-s" className="flex flex-col items-start gap-1.5">
                     <p className="inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
                       <AlertTriangle size={14} /> Planning didn't produce a plan
@@ -594,6 +600,14 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
                       )}
                     </div>}
                   </>
+                ) : capPaused && current.status === 'pending' ? (
+                  <div className="flex flex-col items-start gap-xs">
+                    <SpendCapPause reason={current.error ?? ''} settings={session?.paused?.settings}
+                      onResume={retry} busy={busy} resumeLabel="Resume planning" />
+                    {err && (
+                      <p role="alert" data-type="body-s" style={{ color: 'var(--color-danger)' }}>{err}</p>
+                    )}
+                  </div>
                 ) : stepFailed ? (
                   // The step's last pass ended with nothing usable and the server said why (the
                   // planner ran out of time, or wrote a file that is not valid JSON): say it now,

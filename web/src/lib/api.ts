@@ -6076,7 +6076,7 @@ export interface GoalLoop {
   marginal_scores?: number[]
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
-  findings?: LoopFinding[]; verdicts?: LoopVerdict[]; pending_question?: string | null; nudges?: LoopNudge[]
+  findings?: LoopFinding[]; verdicts?: LoopVerdict[]; pending_question?: LoopQuestion | null; nudges?: LoopNudge[]
   feedback_producer?: FeedbackProducer
   linked_task_ids?: string[]
   // The containing Project this loop scopes under (Projects native entity).
@@ -6206,7 +6206,7 @@ export interface CodeProject {
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   project_id?: string; tasks_project_id?: string; task_list_ids?: Record<string, string>; session_key?: string
-  findings?: CodeFinding[]; pending_question?: { question: string; why?: string; merge?: LoopMergeWaiting } | null
+  findings?: CodeFinding[]; pending_question?: LoopQuestion | null
   /** What this loop's scheduler merged into the workspace's branch, oldest first. */
   merges?: LoopMerge[]
   // Durable steer history (oldest first); applied_cycle stamps which cycle it took effect.
@@ -6387,7 +6387,7 @@ export interface Loop {
   // A finding is goal-shaped OR code-shaped (union, not intersection — they have
   // conflicting `evidence` types: goal string vs code unknown), keyed by loop.kind.
   findings?: (LoopFinding | CodeFinding)[]; verdicts?: LoopVerdict[]; marginal_scores?: number[]
-  nudges?: LoopNudge[]; pending_question?: { question: string; why?: string } | string | null
+  nudges?: LoopNudge[]; pending_question?: LoopQuestion | string | null
   /** While incident mode holds a `running` loop, the sentence that says so (`loop.held_reason`);
    *  `''` otherwise. The status stays `running` — `effectiveLoopStatus` reads this to say "Held". */
   held?: string
@@ -6477,6 +6477,12 @@ export interface PlanStep {
    *  draft as read, so an edit of a draft a redraft replaced is refused, not saved over it. */
   revision?: string
 }
+/** What a loop waiting on its owner asks (`loop/files.write_question`): the question, why it is
+ *  asked, and — when a spend ceiling refused its next call — `spend_cap` with the Settings page
+ *  (`settings`, a route id) the ceiling is changed on. Then `question` is the refusal's sentence
+ *  and there is nothing to answer: the owner lifts the cap or waits for it to reset, and resumes. */
+export interface LoopQuestion { question: string; why?: string; merge?: LoopMergeWaiting; spend_cap?: boolean; settings?: string }
+
 export interface PlanSession {
   project_id: string; created_at: number; steps: PlanStep[]
   /** Epoch SECONDS of the session's last real progress (a step transition, an artifact,
@@ -6487,6 +6493,10 @@ export interface PlanSession {
   // Set when a design pass ran but produced no usable steps — the walkthrough shows
   // a failed state + explicit Retry instead of silently re-spawning a fresh pass.
   design_error?: string
+  /** Set while the walkthrough is paused rather than failed: `by: 'spend_cap'` when a spend
+   *  ceiling refused the planner, with the Settings page (`settings`, a route id) the ceiling is
+   *  changed on. The reason is the step's `error` (or `design_error`); no pass runs until Resume. */
+  paused?: { by?: string; settings?: string }
 }
 /** A CHAT's binding to that same walkthrough. `awaiting_step_id` is the server's
  *  own derivation of "the review gate is open" — the client never recomputes it from
@@ -6809,6 +6819,8 @@ export interface UsageBudget {
   max_dollars_per_day: number | null
   max_tokens_per_day: number | null
   cap_unreadable: boolean
+  /** When the day the caps count ends: the host's next local midnight, as epoch seconds. */
+  resets_at: number
 }
 
 /** A model's rate: USD per 1,000,000 tokens of each bucket of its calls. A cache rate that is

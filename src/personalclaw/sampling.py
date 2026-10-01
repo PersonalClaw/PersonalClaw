@@ -103,6 +103,7 @@ async def _sample_one(prompt: str, idx: int, temperature: float, use_case: str) 
     call was observed at all (an unguarded resolution path): unknown, never guessed.
     """
     from personalclaw.guardrails.calls import DONE, capture_model_calls
+    from personalclaw.guardrails.failure import budget_refusal
     from personalclaw.llm_helpers import one_shot_completion
 
     candidate: dict[str, Any] = {"idx": idx, "temperature": temperature, "text": "", "error": ""}
@@ -118,7 +119,10 @@ async def _sample_one(prompt: str, idx: int, temperature: float, use_case: str) 
                 exc,
             )
             text = None
-            candidate["error"] = f"{type(exc).__name__}: {exc}"
+            # A spend cap's refusal is said as every surface says it (which cap, what was spent),
+            # not as the exception's type and its log line.
+            refusal = budget_refusal(exc)
+            candidate["error"] = refusal.headline() if refusal else f"{type(exc).__name__}: {exc}"
             candidate["failure"] = _candidate_failure(exc, use_case)
     answered = [c for c in calls.calls if c.state == DONE]
     if answered:

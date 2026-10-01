@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from personalclaw.dashboard.running_turn import Rebinding
     from personalclaw.dashboard.side_state import SideState
     from personalclaw.engagement_signals import EngagementStore
+    from personalclaw.guardrails.failure import BudgetExceededError
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +263,7 @@ class _ChatSession:
         "_app",
         "created_by_app",
         "_last_turn_errored",
+        "_last_turn_refusal",
         "_last_turn_outcome",
         "context_usage",
         "_followups_task",
@@ -474,6 +476,9 @@ class _ChatSession:
         # is decided on (`DashboardState.session_creating_app`).
         self.created_by_app: str = ""
         self._last_turn_errored: bool = False  # set by run_chat on a crashed turn
+        # The spend cap's refusal the latest turn ended on (`failure.budget_refusal`), or None: what
+        # retries an errored turn by itself reads it, and does not re-run a refused call.
+        self._last_turn_refusal: "BudgetExceededError | None" = None
         # How the latest turn that left this session idle ended ("complete" | "stopped" | "error"
         # | "interrupted", `chat_runner.terminal_outcome_for_turn`), or "" while none has since
         # this process started it. Served as session detail's `last_turn_outcome`, and cleared

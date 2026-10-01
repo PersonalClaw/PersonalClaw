@@ -11,6 +11,7 @@ import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
+import { SpendCapPause } from '../../ui/SpendCapPause'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { IconButton } from '../../ui/IconButton'
 import { LoadError } from '../../ui/ListScaffold'
@@ -1960,8 +1961,14 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             The build’s finished work is waiting for you to merge it into {project.pending_question.merge.into}. Review it under Tasks.
           </p>
         )}
+        {/* A spend cap refused the loop's next call: paused, nothing to answer here — the
+            header's Resume carries on once the cap has room. */}
+        {project.status === 'needs_input' && project.pending_question?.spend_cap && (
+          <SpendCapPause className="mt-m" reason={project.pending_question.question}
+            detail={project.pending_question.why} settings={project.pending_question.settings} />
+        )}
         {/* attended question for THIS task — answer in the steer box below */}
-        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && (
+        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && (
           <div data-type="body-s" className="mt-3 rounded-lg p-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> Needs your input
@@ -3348,6 +3355,17 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
   const findings = project.findings ?? []
   const missingCommands = missingCommandNotices(project.command_runnability)
 
+  // Resume a loop a spend cap paused, from the notice that says so (the header's Resume does the same).
+  const [resuming, setResuming] = useState(false)
+  async function resume() {
+    if (resuming) return
+    setResuming(true)
+    try { await api.uLoopAction(project.id, 'resume'); onNudged() }
+    catch (e) {
+      window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'error', text: `Couldn't resume this project: ${(e as Error).message || 'unknown error'}` } }))
+    } finally { setResuming(false) }
+  }
+
   async function steer(explicit?: string) {
     const t = (explicit ?? text).trim()
     if (!t || sending || sendingRef.current) return
@@ -3389,8 +3407,15 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
         {project.status === 'needs_input' && project.pending_question?.merge && (
           <MergeReview loopId={project.id} waiting={project.pending_question.merge} onMerged={onNudged} />
         )}
+        {/* A spend cap refused the loop's next call: paused rather than asking, with the cap's
+            own sentence, where it is changed, and Resume. */}
+        {project.status === 'needs_input' && project.pending_question?.spend_cap && (
+          <SpendCapPause className="mb-s" reason={project.pending_question.question}
+            detail={project.pending_question.why} settings={project.pending_question.settings}
+            onResume={() => void resume()} busy={resuming} />
+        )}
         {/* Attended question — the call to action; answer in the steer box below. */}
-        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && (
+        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && (
           <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>

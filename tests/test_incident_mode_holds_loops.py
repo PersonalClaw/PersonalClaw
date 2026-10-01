@@ -348,7 +348,9 @@ class _FakeNudgeService:
     async def remove(self, loop_id: str) -> None:
         return None
 
-    def notify_turn_complete(self, name: str, *, errored: bool = False) -> None:
+    def notify_turn_complete(
+        self, name: str, *, errored: bool = False, refused: bool = False
+    ) -> None:
         self.completed.append((name, errored))
 
 

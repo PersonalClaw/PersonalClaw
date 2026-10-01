@@ -1327,13 +1327,13 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     from personalclaw.acp.errors import AcpTimeoutError
     from personalclaw.errors import ERROR_CODES, AgentError
     from personalclaw.guardrails.failure import (
-        BudgetExceededError,
         CircuitOpenError,
         FirstTokenTimeout,
         LocalModelBusy,
         ModelCallTimeout,
         NoModelAnswered,
         PromptExceedsWindow,
+        budget_refusal,
         request_exceeds_window_sentence,
     )
     from personalclaw.llm.registry import ProviderResolutionError
@@ -1350,8 +1350,11 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
             "The agent did not finish within the turn's time limit, so the turn was stopped. "
             "Try again; if it keeps happening, check the gateway log."
         )
-    if isinstance(exc, (ToolSchemaRejected, BudgetExceededError)):
+    refusal = budget_refusal(exc)
+    if refusal is not None:
         # A spend ceiling's refusal says which ceiling, what was spent, and how it is lifted.
+        return refusal.sentence()
+    if isinstance(exc, ToolSchemaRejected):
         return exc.sentence()
     if isinstance(
         exc,

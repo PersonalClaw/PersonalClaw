@@ -185,6 +185,8 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
       const pq = entity.pending_question
       const q = (typeof pq === 'string' ? pq : pq?.question || '').trim()
       const why = (typeof pq === 'string' ? '' : pq?.why || '').trim()
+      // A spend cap's pause asks nothing: its text is the cap's own sentence.
+      if (typeof pq !== 'string' && pq?.spend_cap) return { tone: 'warn' as const, label: 'Paused by a spend cap', text: q, sub: why }
       return { tone: 'info' as const, label: 'Needs your input', text: q || 'Waiting on your answer.', sub: why }
     }
     if (status === 'blocked' || status === 'failed' || status === 'stagnant') {

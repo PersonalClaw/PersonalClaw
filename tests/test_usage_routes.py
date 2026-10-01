@@ -415,7 +415,9 @@ async def test_the_daily_budget_is_the_meters_spend_beside_the_cap(_home):
     try:
         r = await c.get("/api/usage/budget")
         assert r.status == 200
-        assert await r.json() == {
+        body = await r.json()
+        resets_at = body.pop("resets_at")
+        assert body == {
             "spent_dollars": 0.25,
             "spent_tokens": 1200,
             "unpriced_calls": 0,
@@ -423,6 +425,12 @@ async def test_the_daily_budget_is_the_meters_spend_beside_the_cap(_home):
             "max_tokens_per_day": 0,
             "cap_unreadable": False,
         }
+        # The caps start afresh at this host's next local midnight.
+        from datetime import datetime
+
+        reset = datetime.fromtimestamp(resets_at)
+        assert (reset.hour, reset.minute, reset.second) == (0, 0, 0)
+        assert 0 < resets_at - datetime.now().timestamp() <= 86_400 + 3_600
     finally:
         await c.close()
 

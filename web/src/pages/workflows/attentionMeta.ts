@@ -24,7 +24,7 @@
  *  (a supervisor policy); until it exists, the honest thing to show is the diagnosis.
  */
 
-import type { WorkflowRunDetailData } from '../../lib/api'
+import type { UsageBudget, WorkflowRunDetailData } from '../../lib/api'
 
 /** One try at one node, as `resilience.Attempt.to_dict` writes it. Camel-cased at this
  *  boundary so no page has to know the wire's snake_case. */
@@ -189,18 +189,53 @@ export function readEscalations(raw: unknown): EscalationRead[] {
 export function retryWindow(
   run: Pick<WorkflowRunDetailData, 'status' | 'escalations' | 'nodes'> | null | undefined,
 ): { retryAt: number } | null {
+  const failures = escalatedFailures(run)
+  if (!failures || !failures.every((f) => f?.retryable === true)) return null
+  return { retryAt: Math.max(0, ...failures.map((f) => f?.retry_at ?? 0)) }
+}
+
+type RunFailures = Pick<WorkflowRunDetailData, 'status' | 'escalations' | 'nodes'>
+
+/** The failure of each step that stopped a failed run, read off its node; `null` for a run that
+ *  did not fail on an escalation. */
+function escalatedFailures(run: RunFailures | null | undefined) {
   if (!run || run.status !== 'failed') return null
   const escalations = readEscalations(run.escalations)
   if (escalations.length === 0) return null
-  const failures = escalations.map((e) =>
+  return escalations.map((e) =>
     (run.nodes ?? []).find(
       (n) =>
         n.state === 'failed' &&
         (e.instancePath ? n.instance_path === e.instancePath : n.node_id === e.nodeId),
     )?.failure,
   )
-  if (!failures.every((f) => f?.retryable === true)) return null
-  return { retryAt: Math.max(0, ...failures.map((f) => f?.retry_at ?? 0)) }
+}
+
+/** A run a spend cap stopped: every step that stopped it failed because a spend ceiling refused
+ *  its model call (class `budget`, which only that refusal is). Nothing in the workflow needs
+ *  changing, and the engine never retries it: once the cap has room the same steps can run.
+ *  Returns the step's own way out (`fix`), the words the gateway says every cap refusal in, or
+ *  `null` for any other run. */
+export function spendCapStop(run: RunFailures | null | undefined): { fix: string } | null {
+  const failures = escalatedFailures(run)
+  if (!failures || !failures.every((f) => f?.class === 'budget')) return null
+  return { fix: failures.find((f) => f?.remediation)?.remediation ?? '' }
+}
+
+/** When the day's spend caps reset (`UsageBudget.resets_at`, epoch seconds) on the reader's own
+ *  clock, as "12:00 AM"; empty while it is not known. */
+export function capResetTime(resetsAt: number): string {
+  if (!(resetsAt > 0)) return ''
+  return new Date(resetsAt * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+/** Whether the daily caps have room for a new run: each one set has less spent than it allows —
+ *  it was raised past what was spent, removed (0), or reset at midnight. An unreadable cap has no
+ *  room anyone can vouch for. */
+export function capsHaveRoom(budget: UsageBudget | null | undefined): boolean {
+  if (!budget || budget.cap_unreadable) return false
+  const fits = (cap: number | null, spent: number) => (cap ?? 0) <= 0 || spent < (cap ?? 0)
+  return fits(budget.max_dollars_per_day, budget.spent_dollars) && fits(budget.max_tokens_per_day, budget.spent_tokens)
 }
 
 /** The one-line form for a glance surface (the chat card). Never empty: a run that is

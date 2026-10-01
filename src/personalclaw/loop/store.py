@@ -431,6 +431,8 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
     files.write_status(loop_id, new_status)
     if current in ATTENTION_STATUSES and new_status not in ATTENTION_STATUSES:
         _resolve_attention_rows(loop_id)
+    if current == LoopStatus.PLANNING and new_status != LoopStatus.PLANNING:
+        _resolve_planning_pause(loop_id)
     _announce()
     out = get(loop_id)
     if out is None:
@@ -549,6 +551,18 @@ def _resolve_attention_rows(loop_id: str) -> int:
     except Exception:
         logger.debug("loop %s: could not resolve its attention rows", loop_id, exc_info=True)
         return 0
+
+
+def _resolve_planning_pause(loop_id: str) -> None:
+    """Close the Inbox item a paused planner raised (``loop.spend_cap``), because the loop has
+    stopped planning: it was stopped, or its plan is done. Best-effort, as above."""
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+        from personalclaw.loop import spend_cap
+
+        spend_cap.resolve_planning_item(get_dashboard_state(), loop_id)
+    except Exception:
+        logger.debug("loop %s: could not close its planning pause", loop_id, exc_info=True)
 
 
 # Spec fields a pre-launch loop may edit (the rest are engine-managed).

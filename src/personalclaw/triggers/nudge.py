@@ -485,7 +485,9 @@ class AutoNudgeService:
 
     # ── Reactive arming (the backpressure contract, verbatim in meaning) ──
 
-    def notify_turn_complete(self, session_name: str, *, errored: bool = False) -> None:
+    def notify_turn_complete(
+        self, session_name: str, *, errored: bool = False, refused: bool = False
+    ) -> None:
         """Called after a turn ends — (re)arm the quiet period for this session.
 
         Re-arms on EVERY turn (success or error) so a loop survives a failed
@@ -493,9 +495,25 @@ class AutoNudgeService:
         consecutive errored turns: past the cap the loop is deactivated (kept,
         not removed, so it can be resumed) instead of spinning forever.
         ``errored`` resets to 0 on any clean turn.
+
+        A turn a spend ceiling ``refused`` is not retried at all: the next cycle would send the
+        same refused call to the same ceiling, so the loop is switched off at once (kept, like the
+        error cap's) and waits for its owner, who changes the ceiling or waits for it to reset,
+        then resumes it.
         """
         loop = self._find_by_session(session_name)
         if not loop or not loop.active:
+            return
+        if refused:
+            logger.info(
+                "AutoNudge: loop %s was refused by a spend ceiling — switching it off", loop.id
+            )
+            trigger = self._get_row(loop.id)
+            if trigger is not None:
+                trigger.enabled = False
+                self._store.upsert(trigger)
+            loop.active = False
+            self._emit("refused", loop)
             return
         state = idle_poll.load_state(loop.id, base_dir=self._base_dir)
         if errored:

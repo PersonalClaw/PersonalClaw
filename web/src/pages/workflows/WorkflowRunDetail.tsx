@@ -6,7 +6,7 @@ import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { SidePanel } from '../../ui/SidePanel'
-import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
+import { api, type UsageBudget, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
 import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
@@ -23,7 +23,7 @@ import { reentrySummary, revalidateNotice, revalidateSummary } from './revalidat
 import { confirmationPreview, rewindNode } from './reentry'
 import { WorkflowAsk } from './WorkflowAsk'
 import { RunToolApprovals } from './RunToolApprovals'
-import { readEscalations, retryWindow, stoppedAtBudget } from './attentionMeta'
+import { capsHaveRoom, readEscalations, retryWindow, spendCapStop, stoppedAtBudget } from './attentionMeta'
 import { EscalationPanel } from './EscalationPanel'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 import { SteeringPanel } from './SteeringPanel'
@@ -58,6 +58,8 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   const [conts, setConts] = useState<WorkflowContinuation[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  // The day's spend caps, read for a run a spend cap stopped (`spendCapStop`).
+  const [capBudget, setCapBudget] = useState<UsageBudget | null>(null)
   // The node whose inspector drawer is open. Null = closed. Holds the node_id — the
   // drawer fetches on open, so nothing is loaded until a row's Inspect is actually clicked.
   const [inspectNodeId, setInspectNodeId] = useState<string | null>(deepLinkNodeId)
@@ -249,6 +251,9 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // run that failed in microseconds without a call. The fresh read shows when it can run instead,
   // so a read that FAILS stops the Retry and says so: treating it as "no window" started the very
   // run the read exists to hold back.
+  //
+  // A run a spend cap stopped reads the caps the same way: a Retry while they are still full would
+  // start a run the same cap refuses before its first call.
   const retry = useCallback(async () => {
     setBusy(true)
     let child = ''
@@ -256,6 +261,11 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
       const fresh = await api.workflowRun(runId)
       setRun(fresh)
       if ((retryWindow(fresh)?.retryAt ?? 0) > Date.now() / 1000) return
+      if (spendCapStop(fresh)) {
+        const caps = await api.usageBudget()
+        setCapBudget(caps)
+        if (!capsHaveRoom(caps)) return
+      }
       child = (await api.forkWorkflowRun(runId, { note: 'retry after a transient failure' })).child_run_id
       await api.startDraftWorkflowRun(child)
     } catch (e) {
@@ -335,6 +345,31 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // Whether Retry is offered, and from when (`retryWindow`: every escalated step's own
   // `failure.retryable`, and `retry_at` while a provider's breaker refuses calls).
   const retryable = useMemo(() => retryWindow(run), [run])
+
+  // A run a spend cap stopped is retried once the cap has room: raised or removed in Settings →
+  // Guardrails (read again when the page is shown again), or reset at the end of the day (read
+  // again then).
+  const capStop = useMemo(() => spendCapStop(run), [run])
+  const readCaps = useCallback(() => {
+    api.usageBudget().then(setCapBudget, () => setCapBudget(null))
+  }, [])
+  useEffect(() => {
+    if (!capStop) return
+    readCaps()
+    const onShow = () => { if (document.visibilityState === 'visible') readCaps() }
+    window.addEventListener('focus', onShow)
+    document.addEventListener('visibilitychange', onShow)
+    return () => {
+      window.removeEventListener('focus', onShow)
+      document.removeEventListener('visibilitychange', onShow)
+    }
+  }, [capStop, readCaps])
+  const capResetsAt = capBudget?.resets_at ?? 0
+  useEffect(() => {
+    if (!capStop || capResetsAt <= 0) return
+    const timer = window.setTimeout(readCaps, Math.max(0, capResetsAt * 1000 - Date.now()) + 1000)
+    return () => window.clearTimeout(timer)
+  }, [capStop, capResetsAt, readCaps])
 
   // The countdown to `retryAt`, ticking once a second from the moment it is known and stopping
   // when it lapses.
@@ -574,10 +609,15 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 reads={escalations}
                 runStatus={run.status}
                 runError={run.error ?? ''}
-                retry={retryable ? { onRetry: retry, busy, waitSecs: retryWaitSecs } : undefined}
+                retry={retryable || capStop ? { onRetry: retry, busy, waitSecs: retryWaitSecs } : undefined}
                 editHref={run.workflow ? `#/workflows/defs/${encodeURIComponent(run.workflow)}/edit` : undefined}
                 nameOf={nameOf}
                 atBudget={atBudget}
+                spendCap={capStop ? {
+                  fix: capStop.fix,
+                  room: capBudget ? capsHaveRoom(capBudget) : null,
+                  resetsAt: capResetsAt,
+                } : undefined}
               />
             )}
 

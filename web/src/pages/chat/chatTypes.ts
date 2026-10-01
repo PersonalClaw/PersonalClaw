@@ -110,8 +110,10 @@ export const noticeSegment = (text: string): ActivitySegment => ({ kind: 'activi
 /** A turn-level error (the model/provider rejected the turn, e.g. a Bedrock
  *  ValidationException). Surfaced as a distinct red callout so a failed turn is
  *  never silently blank. Arrives live via the `chat_message` WS frame (role
- *  `error`) and is rehydrated from history on reload. */
-export interface ErrorSegment { kind: 'error'; text: string }
+ *  `error`) and is rehydrated from history on reload. `settings` is the Settings page (a route
+ *  id) the failure is lifted on, when the gateway names one (a spend cap's refusal names where
+ *  the cap is changed), and the notice links it. */
+export interface ErrorSegment { kind: 'error'; text: string; settings?: string }
 
 /** Live model reasoning streamed over the `chat_thinking` WS frame. Rendered
  *  as a collapsible muted block ONLY while `show_thinking_inline` is on; the frames
@@ -698,7 +700,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: approvalRiskOf(m.meta?.risk), blastRadius: blastRadiusOf(m.meta?.blast_radius), grantAgent: m.meta?.grant_agent, resolved })
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
-      lastAssistant().segments.push({ kind: 'error', text: turnErrorText(m.content) })
+      const settings = (m.meta as { settings?: unknown } | undefined)?.settings
+      lastAssistant().segments.push({ kind: 'error', text: turnErrorText(m.content), ...(typeof settings === 'string' && settings ? { settings } : {}) })
     } else if (m.role === 'notice') {
       lastAssistant().segments.push(noticeSegment(m.content))
     } else if (m.role === 'streaming') {

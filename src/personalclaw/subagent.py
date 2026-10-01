@@ -26,6 +26,7 @@ from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
+from personalclaw.guardrails.failure import budget_refusal
 from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY, fire_tool_hooks, safe_read_file
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
@@ -1897,12 +1898,13 @@ class SubagentManager:
                 self._write_tombstone(info, "cancelled")
             logger.info("Subagent %s cancelled", info.id)
         except Exception as exc:
+            cap = budget_refusal(exc)  # a spend cap's refusal is said as itself, and not traced
             if not info.reaped:
-                info.error = str(exc)
+                info.error = cap.sentence() if cap is not None else str(exc)
                 info.done = True
                 Stats().inc_subagent_failed()
                 self._write_tombstone(info, "error")
-            logger.exception("Subagent %s failed", info.id)
+            (logger.warning if cap else logger.exception)("Subagent %s failed: %s", info.id, exc)
         finally:
             self._waived_by.pop(info.id, None)
             self._run_started.pop(info.id, None)

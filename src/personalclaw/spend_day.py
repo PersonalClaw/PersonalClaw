@@ -25,6 +25,13 @@ def today() -> str:
     return datetime.now().strftime(DAY_FORMAT)
 
 
+def next_day_starts() -> float:
+    """When the day the daily cap counts ends, as epoch seconds: this machine's next local
+    midnight, the moment the cap starts afresh."""
+    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return (midnight + timedelta(days=1)).astimezone().timestamp()
+
+
 def day_of(ts: Any) -> str:
     """The local day an ISO timestamp falls on, or ``""`` when it names no instant.
 

@@ -1393,7 +1393,7 @@ def _kick_plan_advance(request: web.Request, cid: str) -> web.Response:
         try:
             for _ in range(2):  # design + first artifact, or advance, until gated/done
                 outcome = await pw.advance_plan(state, svc, cid)
-                if outcome in ("gated", "finalized", "failed"):
+                if outcome in ("gated", "finalized", "paused", "failed"):
                     break
         except Exception:
             pw.mark_design_error(cid)

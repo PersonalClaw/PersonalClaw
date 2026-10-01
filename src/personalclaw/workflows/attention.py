@@ -235,18 +235,20 @@ def expire_run_items(state: Any, run_id: str, *, ended: str) -> int:
     return expire_attention_items(state, {"workflow": run_id}, ended=ended)
 
 
-def announce_run_end(state: Any, run: Any, status: Any) -> str:
+def announce_run_end(state: Any, run: Any, status: Any, *, refused: bool = False) -> str:
     """Tell the user a run has ended, when the ending is one they need to hear.
 
     A run started AS A LOOP announces its end as a loops-table loop always has
     (:func:`_announce_loop_end`). Any other workflow run tells the user when it ended needing them
     — it failed, or it escalated and stopped before it finished (:func:`_announce_workflow_end`) —
-    and says nothing when it completed, was cancelled or was declined. Returns the item id or "".
+    and says nothing when it completed, was cancelled or was declined. ``refused`` says a spend
+    ceiling refused the model call a failed step needed: then the ending needs its owner (lift the
+    cap or wait for it to reset), so a loop's raises an Inbox item too. Returns the item id or "".
     """
     if state is None:
         return ""
     if getattr(run, "loop_kind", ""):
-        return _announce_loop_end(state, run, status)
+        return _announce_loop_end(state, run, status, refused=refused)
     return _announce_workflow_end(state, run, status)
 
 
@@ -309,7 +311,7 @@ def _announce_workflow_end(state: Any, run: Any, status: Any) -> str:
     return ""
 
 
-def _announce_loop_end(state: Any, run: Any, status: Any) -> str:
+def _announce_loop_end(state: Any, run: Any, status: Any, *, refused: bool = False) -> str:
     """Tell the user a run started AS A LOOP has ended, as a loops-table loop always has.
 
     🔴 A General loop is a workflow run (PP-16), and the workflow engine told nobody when one
@@ -320,7 +322,10 @@ def _announce_loop_end(state: Any, run: Any, status: Any) -> str:
     watchdog announces the same moments (`loop/watchdog.py:_NOTIFY_EVENTS`), so this is parity:
 
     * ``complete`` → one "Loop complete" notification;
-    * ``failed`` → one "Loop failed" notification, carrying the engine's reason;
+    * ``failed`` → one "Loop failed" notification, carrying the engine's reason; when a spend
+      ceiling refused the call a step needed (``refused``), a durable inbox row plus its one
+      notification instead, titled as a loops-table loop's spend-cap pause is, since lifting the
+      cap is its owner's to do;
     * ``escalated`` → a durable inbox row plus its one notification: the loop stopped before its
       done condition, and a human decides what happens next on the run page (Retry, Fork). Its
       title says what happened — "Loop stopped at its budget", or "Loop stopped before it
@@ -340,6 +345,21 @@ def _announce_loop_end(state: Any, run: Any, status: Any) -> str:
     try:
         if status == RunStatus.COMPLETE:
             state.notify(notification_kinds.LOOP_COMPLETE, "Loop complete", title, meta=meta)
+        elif status == RunStatus.FAILED and refused:
+            from personalclaw.inbox import ItemKind, emit_attention_item
+            from personalclaw.loop import spend_cap
+
+            reason = str(getattr(run, "error_message", "") or "").strip()
+            return emit_attention_item(
+                state,
+                source=SOURCE,
+                kind=KIND,
+                item_kind=ItemKind.NEEDS_INPUT.value,
+                title=spend_cap.TITLE,
+                body=f"{title} — {reason}" if reason else title,
+                refs={"loop": run.id, "loop_kind": run.loop_kind, "workflow": run.id},
+                dedup_key=f"loop-run:{run.id}:spend_cap",
+            )
         elif status == RunStatus.FAILED:
             reason = str(getattr(run, "error_message", "") or "").strip()
             body = f"{title} — {reason}" if reason else title
