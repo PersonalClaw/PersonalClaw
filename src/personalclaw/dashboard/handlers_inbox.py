@@ -683,6 +683,11 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
     An optional JSON body ``{"instructions": "<what the reply should say>"}`` carries the owner's
     words for this one draft. It must be text of at most ``DRAFT_INSTRUCTIONS_MAX_CHARS``; anything
     else is refused before the model runs. No body drafts with nothing said.
+
+    Answers ``{"item": <the row>, "drafting": <what the draft stood on>}``: the notes it read,
+    the word limit she gave and the draft's count, and the model's question when it would not
+    draft without her word. A file her words name that cannot be read is
+    ``422 draft_source_unread``, saying which and why, and nothing is written.
     """
     logger.info("Draft request received for %s", request.match_info.get("id", "?"))
     state: "DashboardState" = request.app["state"]
@@ -714,8 +719,17 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
             f"{DRAFT_INSTRUCTIONS_MAX_CHARS} characters.",
             status=400,
         )
-    item = await svc.draft_reply(item_id, instructions=instructions)
-    if not item:
+    outcome = await svc.draft_reply(item_id, instructions=instructions)
+    if outcome is not None and outcome.unread:
+        # A file she named could not be read, so the model never ran: a draft written around it
+        # would have guessed, or promised it for later on her behalf.
+        return json_error(
+            "draft_source_unread",
+            message=outcome.unread_sentence(),
+            status=422,
+            error_extra={"detail": {"unread": [u.report() for u in outcome.unread]}},
+        )
+    if not outcome:
         logger.warning("Draft failed for %s", item_id)
         try:
             sel().log_tool_invocation(
@@ -735,11 +749,15 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
             outcome="success",
             request_id=item_id,
             source="dashboard",
+            # Which of her notes were handed to the model for this reply.
+            resources=", ".join(n.found for n in outcome.grounding.notes),
         )
     except Exception:
         logger.warning("SEL audit failed for inbox draft success", exc_info=True)
-    state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
-    return web.json_response(_redact_item(item.to_dict()))
+    shown = _redact_item(outcome.item.to_dict())
+    if outcome.wrote:
+        state.broadcast_ws("inbox_item_updated", shown)
+    return web.json_response({"item": shown, "drafting": outcome.report()})
 
 
 async def api_inbox_restart(request: web.Request) -> web.Response:

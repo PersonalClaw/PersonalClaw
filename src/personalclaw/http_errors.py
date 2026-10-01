@@ -775,6 +775,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "What the reply should say is longer than the drafting limit. Shorten it and "
         "generate the draft again."
     ),
+    # A file the owner's instruction names could not be read (`reply_grounding.ground`), so the
+    # model never ran: a draft written around it would guess, or promise it on her behalf. The
+    # site's message names each file and why; `error.detail.unread` lists them.
+    "draft_source_unread": (
+        "A file named in what the reply should say could not be read, so no draft was written."
+    ),
     # ── an Inbox message's attachment (handlers_inbox.api_inbox_attachment) ──
     # Two codes because the row's panel says two different things: the row or attachment named
     # does not exist, or the attachment is listed and was never kept (too large, past the count,

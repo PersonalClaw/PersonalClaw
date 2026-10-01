@@ -4171,6 +4171,19 @@ export type InboxItemKind =
   | 'message' | 'mention' | 'email' | 'agent_request'
   | 'proposal' | 'needs_input' | 'digest' | 'system' | 'user_note'
 export interface InboxThreadMsg { sender_name?: string; text?: string; ts?: string }
+/** A note a drafted reply was given: as she named it, where it was found (`library`: the
+ *  knowledge library; `workspace`: the folders chat's file tools read), and whether only its
+ *  start fit. */
+export interface InboxDraftNote { name: string; found: string; where: 'library' | 'workspace'; truncated: boolean }
+/** What one Generate draft stood on (`POST /api/inbox/{id}/draft`). `read`: the files her words
+ *  named; `related`: naming none, the library's best matches for her words; `summary`: the row's
+ *  `context_summary` saying so, '' when nothing was written. `question`: the model would not draft
+ *  without her word, and nothing was written. `skipped`: it judged no reply is needed. */
+export interface InboxDrafting {
+  read: InboxDraftNote[]; related: InboxDraftNote[]; summary: string
+  word_limit: number | null; words: number; question: string; skipped: boolean
+}
+export interface InboxDraftResult { item: InboxItem; drafting: InboxDrafting }
 export interface InboxItem {
   id: string; channel: string; channel_name: string; thread_ts?: string | null
   message: string; sender_id: string; sender_name: string
@@ -9339,8 +9352,10 @@ export const api = {
       edited ? { proposal: edited } : {},
     ),
   // `instructions`: what she says the reply should contain, for this draft only ('' says nothing).
+  // Answers the row as it now stands and what the draft stood on. A file her words name that
+  // cannot be read is a 422 `draft_source_unread` whose message says which and why.
   draftInboxReply: (id: string, instructions = '') =>
-    post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/draft`, { instructions }),
+    post<InboxDraftResult>(`/api/inbox/${encodeURIComponent(id)}/draft`, { instructions }),
   // Generate a catch-up digest of a channel's recent messages — lands as a new
   // inbox item (source="digest"), which arrives live over the WS.
   // POST, not GET: it creates that item and spends a model call, so a prefetch or a

@@ -84,7 +84,7 @@ async def test_draft_reply_fences_input_and_stores(monkeypatch):
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", fake_one_shot)
     out = await svc.draft_reply(item.id)
     assert out is not None
-    assert out.draft == "Sure — I'll review it this afternoon."
+    assert out.item.draft == "Sure — I'll review it this afternoon."
     # the external message went into the prompt FENCED
     assert "<untrusted_content" in seen["prompt"]
     assert "Can you review my PR today?" in seen["prompt"]
@@ -105,7 +105,7 @@ async def test_draft_reply_follows_what_the_owner_says_it_should_contain(monkeyp
     said = "Accept, and include my abstract: a short tour of reading feeds well."
     out = await svc.draft_reply(item.id, instructions=said)
 
-    assert out is not None and out.draft.startswith("Thank you!")
+    assert out is not None and out.item.draft.startswith("Thank you!")
     prompt = seen["prompt"]
     assert said in prompt
     assert prompt.index(said) > prompt.rindex("</untrusted_content>")
@@ -139,7 +139,7 @@ async def test_draft_reply_skip_sentinel_leaves_empty_draft(monkeypatch):
 
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", fake_one_shot)
     out = await svc.draft_reply(item.id)
-    assert out is not None and out.draft == ""
+    assert out is not None and out.item.draft == "" and out.skipped
 
 
 @pytest.mark.asyncio

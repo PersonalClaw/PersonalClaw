@@ -25,8 +25,13 @@ const accepted = (over: Partial<InboxItem> = {}): InboxItem => ({
   can_reply: true, draft: '', ...over,
 } as InboxItem)
 
+const drafted = (draft: string) => ({
+  item: accepted({ draft }),
+  drafting: { read: [], related: [], summary: '', word_limit: null, words: 0, question: '', skipped: false },
+})
+
 beforeEach(async () => {
-  h.draftInboxReply.mockReset().mockResolvedValue(accepted({ draft: 'Thank you! Here is my abstract.' }))
+  h.draftInboxReply.mockReset().mockResolvedValue(drafted('Thank you! Here is my abstract.'))
   ;({ InboxDetail } = await import('./InboxDetail'))
 })
 

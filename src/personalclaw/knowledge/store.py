@@ -1699,6 +1699,26 @@ class KnowledgeStore:
         ).fetchone()
         return self._serialize_item(row) if row else None
 
+    def source_items_at(self, provider: str, path: str) -> list[dict]:
+        """The live items the *provider*'s sources took in whose guid is *path*, or ends with
+        ``/`` and *path*, compared without regard to case.
+
+        A watched folder's guid is the file's path inside the folder, so ``outline.md`` finds
+        ``Talks/outline.md`` and ``Talks/outline.md`` finds itself: what a person means when
+        she names one of her notes by its file name. Archived items (the file is gone) are left
+        out; the caller decides what more than one match means."""
+        rel = path.strip().strip("/")
+        if not (provider and rel):
+            return []
+        rows = self.db.execute(
+            "SELECT items.* FROM items JOIN sources ON sources.id = items.source_id "
+            "WHERE sources.provider = ? AND COALESCE(items.is_archived, 0) = 0 "
+            "AND (items.guid = ? COLLATE NOCASE OR items.guid LIKE ? ESCAPE '\\') "
+            "ORDER BY items.guid",
+            (provider, rel, "%/" + _like_escape(rel)),
+        ).fetchall()
+        return self._serialize_items(rows)
+
     def mark_source_seen(self, source_id: str, guid: str) -> bool:
         """Record that *source_id* has now seen *guid*, writing NO item (§3.3).
 

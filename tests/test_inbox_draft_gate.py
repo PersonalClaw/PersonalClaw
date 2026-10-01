@@ -17,14 +17,16 @@ import pytest
 from aiohttp import web
 
 from personalclaw.dashboard.handlers_inbox import api_inbox_draft
-from personalclaw.inbox_service import DRAFT_INSTRUCTIONS_MAX_CHARS
+from personalclaw.inbox_service import DRAFT_INSTRUCTIONS_MAX_CHARS, DraftOutcome
+from personalclaw.reply_grounding import Grounding
 from personalclaw.request_validation import RequestValidationError
 
 
 def _req(item, body: object = None) -> tuple[MagicMock, AsyncMock]:
     """A request whose inbox service holds exactly ``item`` (or nothing), carrying ``body``
     as its JSON body (no body at all when ``None``)."""
-    draft_spy = AsyncMock(return_value=item)
+    outcome = DraftOutcome(item, Grounding()) if item is not None else None
+    draft_spy = AsyncMock(return_value=outcome)
     svc = MagicMock()
     svc.draft_reply = draft_spy
     # _get_inbox prefers the running service's (state, inbox) pair.
@@ -52,6 +54,8 @@ def _item(can_reply: bool):
     return SimpleNamespace(
         id="it-1",
         can_reply=can_reply,
+        draft="",
+        context_summary="",
         to_dict=lambda: {"id": "it-1", "can_reply": can_reply},
     )
 

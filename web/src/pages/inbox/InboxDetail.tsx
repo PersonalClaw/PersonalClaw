@@ -8,12 +8,13 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { InlineLoadError } from '../../ui/ListScaffold'
 import { TextArea, Segmented, Field, FieldError, useSyncedDraft } from '../../ui/forms'
-import { api, ApiError, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
+import { api, ApiError, type InboxItem, type InboxClassification, type InboxDrafting, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, CLASSIFICATIONS, isChannelItem, refTarget, refLabel, verifyNote } from './inboxMeta'
 import { InboxMessageBody } from './ForeignContent'
 import { InboxAttachments } from './InboxAttachments'
 import { WorkflowGateActions } from './WorkflowGateActions'
+import { DraftNotices, WordCount } from './DraftNotices'
 import { DeniedCallRerun } from './DeniedCallRerun'
 import { InboxSection as Section } from './InboxSection'
 import { TriggerParkActions } from './TriggerParkActions'
@@ -36,10 +37,13 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   const [said, setSaid] = useSyncedDraft('', item.id)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  // What the last Generate draft in this view stood on, and why it wrote nothing when it didn't.
+  const [drafting, setDrafting] = useState<InboxDrafting | null>(null)
+  const [draftErr, setDraftErr] = useState('')
   const cm = classMeta(item.classification)
   const cf = confMeta(item.confidence)
 
-  useEffect(() => { setErr('') }, [item.id])
+  useEffect(() => { setErr(''); setDraftErr(''); setDrafting(null) }, [item.id])
 
   async function patch(body: Record<string, unknown>, tag: string) {
     setBusy(tag); setErr('')
@@ -55,9 +59,16 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
     catch (e) { setErr(e instanceof Error ? e.message : 'Update failed') } finally { setBusy(null) }
   }
   async function generate() {
-    setBusy('draft'); setErr('')
-    try { const u = await api.draftInboxReply(item.id, said.trim()); setDraft(u.draft ?? ''); onChanged() }
-    catch (e) { setErr(e instanceof Error ? e.message : 'Draft failed') } finally { setBusy(null) }
+    setBusy('draft'); setErr(''); setDraftErr('')
+    try {
+      const r = await api.draftInboxReply(item.id, said.trim())
+      setDrafting(r.drafting)
+      // A question for her, or a message it judged needs no reply, writes nothing: what she has
+      // in the box stays as it is.
+      if (!r.drafting.question) setDraft(r.item.draft ?? '')
+      onChanged()
+    }
+    catch (e) { setDrafting(null); setDraftErr(e instanceof Error ? e.message : 'Draft failed') } finally { setBusy(null) }
   }
   async function send() {
     if (!draft.trim()) { setErr('Write a reply first'); return }
@@ -91,6 +102,7 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   // thumbs pair, a draft box or Mute thread would all be controls over something that does
   // not exist — and the thumbs would attribute a judgment no prompt ever made.
   const channelBacked = isChannelItem(item)
+  const composerOpen = channelBacked && canReply && !settled
   const km = kindMeta(item.item_kind)
   const target = refTarget(item)
   // A workflow gate is answerable in place (below), which changes what the deep link is for. A
@@ -174,7 +186,8 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
         </Section>
       )}
 
-      {item.context_summary && (
+      {/* Where the reply composer is open, what its draft stood on is said in it, by the draft. */}
+      {item.context_summary && !composerOpen && (
         <Section label="Context the agent used">
           <p data-type="body-s" className="text-on-surface-var leading-relaxed italic">{item.context_summary}</p>
         </Section>
@@ -287,21 +300,31 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
                   producer={item.feedback_producers?.draft}
                   snapshot={{ draft_preview: (item.draft ?? '').slice(0, 200) }} />
               ) : undefined}>
-              {repliedAt > 0 && <p data-type="caption" className="mb-1.5 text-on-surface-low">You replied {relPast(repliedAt)}. A reply sent now goes out as another one.</p>}
-              {/* What the draft should contain, in her words. Generate draft and Regenerate hand it
-                  to the model as her instruction; the bound matches `DRAFT_INSTRUCTIONS_MAX_CHARS`. */}
-              <div className="mb-s">
-                <Field label="What should the reply say?">
-                  <TextArea value={said} onChange={setSaid} rows={2} size="sm" maxLength={2000}
-                    placeholder="Optional — e.g. accept, and ask when the slides are due" />
-                </Field>
-              </div>
-              <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
-              <div className="mt-2 flex flex-wrap items-center gap-s">
-                <Button size="sm" variant="secondary" onClick={generate} loading={busy === 'draft'}><Sparkles size={14} /> {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
-                {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} loading={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
-                <Button size="sm" onClick={send} loading={busy === 'send'} disabled={busy === 'send' || !draft.trim()}
-                  disabledReason={!draft.trim() ? 'Write a reply first' : undefined}><Send size={14} /> Send reply</Button>
+              <div className="flex flex-col gap-s">
+                {repliedAt > 0 && <p data-type="caption" className="text-on-surface-low">You replied {relPast(repliedAt)}. A reply sent now goes out as another one.</p>}
+                {/* What the draft should contain, in her words, and the button that drafts from
+                    them: one action, so they sit together, the button directly under the field.
+                    The bound matches `DRAFT_INSTRUCTIONS_MAX_CHARS`. */}
+                <div className="flex flex-col gap-xs" data-testid="draft-ask">
+                  <Field label="What should the reply say?">
+                    <TextArea value={said} onChange={setSaid} rows={2} size="sm" maxLength={2000}
+                      placeholder="Optional — e.g. accept, and give my abstract from Talks/outline.md" />
+                  </Field>
+                  <div>
+                    <Button size="sm" variant="secondary" onClick={generate} loading={busy === 'draft'}><Sparkles size={14} /> {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
+                  </div>
+                </div>
+                <DraftNotices error={draftErr} drafting={drafting}
+                  summary={drafting ? drafting.summary : (item.draft ? item.context_summary ?? '' : '')} />
+                <div className="flex flex-col gap-xs">
+                  <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
+                  {draft.trim() && <WordCount text={draft} limit={drafting?.word_limit ?? null} />}
+                </div>
+                <div className="flex flex-wrap items-center gap-s">
+                  {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} loading={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
+                  <Button size="sm" onClick={send} loading={busy === 'send'} disabled={busy === 'send' || !draft.trim()}
+                    disabledReason={!draft.trim() ? 'Write a reply first' : undefined}><Send size={14} /> Send reply</Button>
+                </div>
               </div>
             </Section>
           ) : item.draft ? (

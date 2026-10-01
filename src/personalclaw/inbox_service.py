@@ -4,7 +4,8 @@ Holds the inbox entity (``state`` + ``store``) and provides the AI affordances t
 dashboard calls on demand:
 
 * :meth:`classify` — triage a stored item into needs_reply / fyi / noise.
-* :meth:`draft_reply` — draft a reply to a stored item in the user's voice.
+* :meth:`draft_reply` — draft a reply to a stored item in the user's voice, standing on the
+  notes the owner's own words name (:mod:`personalclaw.reply_grounding`).
 * :meth:`generate_digest` — summarize a channel's recent messages into a catch-up item.
 
 All three run one-shot LLM jobs over the item's stored content through the bound
@@ -43,6 +44,7 @@ import hashlib
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from personalclaw import attachments, shutdown_event
@@ -65,6 +67,7 @@ from personalclaw.security import fence_untrusted
 
 if TYPE_CHECKING:
     from personalclaw.inbox_providers.base import IncomingMessage, MessageSourceProvider
+    from personalclaw.reply_grounding import Grounding, Unread
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,81 @@ _MAX_DIGEST_MESSAGES = 60
 #: The most the owner may say about what one drafted reply should contain. Room for a paragraph and
 #: a pasted abstract; the draft route refuses more, and the reply panel's field stops at it.
 DRAFT_INSTRUCTIONS_MAX_CHARS = 2000
+
+#: How a model answers that it will not draft without the owner's word: ``ASK:`` and its question.
+DRAFT_ASK = "ASK:"
+
+#: The longest question shown to her from a model that would not draft without her word.
+_MAX_DRAFT_QUESTION_CHARS = 300
+
+
+def _drafting_rules(user: str) -> str:
+    """What every draft is written under, after whatever template is bound for drafting.
+
+    A draft is sent as her, so the model may decide nothing for her: no promise, date or
+    acceptance she did not give. Where the reply needs one, it asks her (:data:`DRAFT_ASK`)
+    instead of writing around it. Measured before this: a draft with nothing to go on answered a
+    request for an abstract with "I'll get you the final abstract by end of week"."""
+    return (
+        "Rules for this draft, whatever is above:\n"
+        f"- Commit {user} to nothing they have not said here: no promise, date, deadline, "
+        'acceptance or follow-up of your own ("I\'ll send it by Friday" is a promise). Thanks, '
+        "an acknowledgement, or a question back to the sender commit to nothing.\n"
+        f"- Where the reply needs something only {user} can give (content they have not given "
+        f"you, a decision, a date), do not write around it: answer with {DRAFT_ASK} and one short "
+        f"question to {user} saying what you need from them."
+    )
+
+
+@dataclass
+class DraftOutcome:
+    """What one Generate draft did: the item as it now stands, what the draft stood on, and the
+    model's question for her when it would not write without her word.
+
+    Nothing was written when a file she named could not be read (:attr:`unread`, and the model
+    never ran) or when the model asked (:attr:`question`)."""
+
+    item: InboxItem
+    grounding: "Grounding"
+    question: str = ""
+    skipped: bool = False
+
+    @property
+    def unread(self) -> "list[Unread]":
+        return self.grounding.unread
+
+    def unread_sentence(self) -> str:
+        return self.grounding.unread_sentence()
+
+    @property
+    def wrote(self) -> bool:
+        return not self.unread and not self.question
+
+    def report(self) -> dict:
+        """What the reply panel is told about this draft."""
+        from personalclaw.reply_grounding import word_count
+
+        return {
+            "read": [n.report() for n in self.grounding.named],
+            "related": [n.report() for n in self.grounding.related],
+            "summary": self.item.context_summary if self.wrote else "",
+            "word_limit": self.grounding.word_limit,
+            "words": word_count(self.item.draft) if self.wrote else 0,
+            "question": self.question,
+            "skipped": self.skipped,
+        }
+
+
+def _draft_answer(raw: str) -> tuple[str, str]:
+    """A model's answer to a draft prompt as ``(kind, text)``: ``("ask", question)``,
+    ``("skip", "")`` for the SKIP sentinel, or ``("draft", reply)``."""
+    text = (raw or "").strip()
+    if text.upper().startswith(DRAFT_ASK):
+        question = " ".join(text[len(DRAFT_ASK) :].split())[:_MAX_DRAFT_QUESTION_CHARS]
+        return ("ask", question) if question else ("skip", "")
+    if text.upper() == "SKIP":
+        return ("skip", "")
+    return ("draft", text)
 
 
 def polled_item_id(source_name: str, message: "IncomingMessage") -> str:
@@ -618,17 +696,27 @@ class InboxService:
         cls, conf = _parse_classification(raw)
         return self.inbox.update(item_id, classification=cls, confidence=conf)
 
-    async def draft_reply(self, item_id: str, *, instructions: str = "") -> InboxItem | None:
-        """Draft a reply to a stored item in the user's voice; persist + return the item.
+    async def draft_reply(self, item_id: str, *, instructions: str = "") -> DraftOutcome | None:
+        """Draft a reply to a stored item in the user's voice; persist it and say what it did.
 
         ``instructions`` is what the owner said this reply should contain. It is the owner's own
         instruction, so it goes to the model as one, after the prompt and outside the fence that
         marks the sender's text as data. It rides after the rendered prompt rather than in the
-        template, so it is followed whatever template the owner has bound for drafting.
+        template, so it is followed whatever template the owner has bound for drafting, and so do
+        the rules every draft is written under (:func:`_drafting_rules`).
 
-        Returns None if the item is unknown or the model call fails. A model that
-        judges no reply is warranted returns the SKIP sentinel → we store an empty
-        draft and leave the item pending (the human decides)."""
+        The draft is one model call with no tools, so what it may draw on is read first
+        (:func:`personalclaw.reply_grounding.ground`): the files her instruction names or, naming
+        none, the knowledge library's best matches for her words. Only her words choose; the
+        message itself reads nothing. A file she names that cannot be read stops the draft before
+        the model runs (:attr:`DraftOutcome.unread`), since a draft written around it would guess
+        or promise on her behalf. A word limit she gives is asked for, and an over-long draft is
+        asked for once more within it.
+
+        Returns None if the item is unknown or the model call fails. A model that judges no
+        reply is warranted returns the SKIP sentinel → we store an empty draft and leave the
+        item pending (the human decides). One that needs her word first asks (``ASK:``), and
+        nothing is written."""
         from personalclaw.guardrails.rungs import ensure_core_action_types
 
         ensure_core_action_types()
@@ -637,6 +725,12 @@ class InboxService:
             return None
         from personalclaw.llm_helpers import one_shot_completion
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
+        from personalclaw.reply_grounding import ground, word_count
+
+        said = instructions.strip()
+        grounding = await asyncio.to_thread(ground, said)
+        if grounding.unread:
+            return DraftOutcome(item, grounding)
 
         style = (
             f"Match this voice/style when replying:\n{self._style_rules}"
@@ -656,26 +750,67 @@ class InboxService:
             )
             or ""
         )
-        said = instructions.strip()
+        user = self._user_name
+        parts = [prompt, _drafting_rules(user)]
+        notes = grounding.prompt_block(user)
+        if notes:
+            parts.append(notes)
         if said:
-            prompt = (
-                f"{prompt}\n\n{self._user_name} said what this reply should say. Follow it: it is "
-                "their own instruction, not part of the quoted message, and it means a reply is "
-                f"wanted, so do not answer SKIP.\n\n{said}"
+            parts.append(
+                f"{user} said what this reply should say. Follow it: it is their own instruction, "
+                "not part of the quoted message, and it means a reply is wanted, so do not answer "
+                f"SKIP.\n\n{said}"
             )
+        limit = grounding.word_limit
+        if limit:
+            parts.append(f"Keep the whole reply within {limit} words: {user}'s limit.")
+        prompt = "\n\n".join(parts)
         try:
             with caller_scope("inbox_triage"):
-                raw = (await one_shot_completion(prompt, use_case="background") or "").strip()
+                kind, text = _draft_answer(
+                    await one_shot_completion(prompt, use_case="background") or ""
+                )
         except Exception:
             logger.warning("inbox draft failed for %s", item_id, exc_info=True)
             return None
-        draft = "" if raw.upper() == "SKIP" else raw
+        if kind == "ask":
+            return DraftOutcome(item, grounding, question=text)
+        if text and limit and word_count(text) > limit:
+            text = await self._within_limit(prompt, text, limit, item_id)
         # A produced draft implies the item wanted a reply — reflect that so the UI
         # sorts it sensibly, but never downgrade an escalate.
-        updates: dict = {"draft": draft, "context_summary": "AI-drafted reply"}
-        if draft and item.classification == Classification.NOISE:
+        updates: dict = {"draft": text, "context_summary": grounding.summary() if text else ""}
+        if text and item.classification == Classification.NOISE:
             updates["classification"] = Classification.NEEDS_REPLY.value
-        return self.inbox.update(item_id, **updates)
+        stored = self.inbox.update(item_id, **updates)
+        if stored is None:
+            return None
+        return DraftOutcome(stored, grounding, skipped=kind == "skip")
+
+    async def _within_limit(self, prompt: str, draft: str, limit: int, item_id: str) -> str:
+        """*draft*, asked for once more within the owner's word *limit*. The shorter answer is
+        kept when the second is not a draft, or is still over: a draft is never cut mid-sentence,
+        and the panel shows its count against the limit."""
+        from personalclaw.llm_helpers import one_shot_completion
+        from personalclaw.reply_grounding import word_count
+
+        quoted = fence_untrusted(draft, source="reply-draft")
+        again = (
+            f"{prompt}\n\nYour reply, quoted below, has {word_count(draft)} words, over "
+            f"{self._user_name}'s limit of {limit}. Write it again within {limit} words, keeping "
+            f"everything they asked for, and answer with only the new reply.\n\n{quoted}"
+        )
+        try:
+            with caller_scope("inbox_triage"):
+                kind, text = _draft_answer(
+                    await one_shot_completion(again, use_case="background") or ""
+                )
+        except Exception:
+            logger.warning("inbox draft: the shorter draft failed for %s", item_id, exc_info=True)
+            return draft
+        if kind != "draft" or not text or word_count(text) >= word_count(draft):
+            return draft
+        return text
 
     async def generate_digest(self, channel_id: str, hours: float = 4.0) -> InboxItem | None:
         """Summarize a channel's recent messages into a new digest inbox item.

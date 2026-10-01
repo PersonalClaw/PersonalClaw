@@ -26,6 +26,21 @@ against core protocols). Paths are relative to
   at most `DRAFT_INSTRUCTIONS_MAX_CHARS`; longer is refused with `instructions_too_long`
   before the model runs) hands it to the model after the `inbox_draft` prompt, outside the
   fence around the sender's text, so it is followed whatever prompt is bound for drafting.
+  A draft is one model call with no tools, so what it stands on is read first
+  (`reply_grounding.ground`), and only her words choose it: each file they name by its file
+  name (a note the knowledge library's watched folders took in, at that path or ending with
+  it, else a file the agent's file tools read in the workspace), or, naming none, the
+  library's best matches for her words. Each note goes to the model fenced as data, after the
+  sender's text. A file the message names is never read. A named file that cannot be read
+  (nothing by that name, more than one note matching it, no text) stops the draft before the
+  model runs: `422 draft_source_unread` names each file and why, and nothing is written, since
+  a draft written around it would guess or promise it on her behalf. Every draft is written
+  under the same rules, whatever prompt is bound: commit her to nothing she did not say, and
+  where the reply needs her word, answer `ASK:` with one question, which the panel shows while
+  writing nothing. A word limit in her words ("120 words max") is asked for over the whole
+  reply, an over-long draft is asked for once more within it (never cut), and the panel counts
+  the draft against it. The route answers `{"item", "drafting"}`; the row's `context_summary`
+  says what the draft stood on, and the SEL row names the notes the model was given.
 - **Agents read it** with `inbox_list` (`agents/native/inbox_tool_defs.py`): the open items
   (`OPEN_STATUSES`), newest first, with what each is, who raised it, when, and its text, the
   sender and text fenced as untrusted data. It declares itself a read, so a read-only automation
