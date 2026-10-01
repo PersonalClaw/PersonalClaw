@@ -103,9 +103,8 @@ def test_a_chat_turn_that_hit_a_defect_keeps_its_traceback(tmp_path, caplog):
 class _Session:
     key = "chat-4"
     _titled = False
-    blocks_reads = False
-    is_restricted = True  # no tag proposal, so no config read
-    tags: list[str] = []
+    memory_mode = "persistent"
+    tags = ["work"]  # already tagged: no tag proposal, so no config read
     messages = [
         {"role": "user", "content": "Draft my standup for today"},
         {"role": "assistant", "content": "To draft your standup, I need the repositories."},
@@ -118,7 +117,7 @@ def _auto_title_failing_with(monkeypatch, caplog, error: BaseException) -> loggi
 
     monkeypatch.setattr(chat_title, "_stream_chat_chore", _fails)
     with caplog.at_level(logging.DEBUG, logger="personalclaw.dashboard.chat_title"):
-        asyncio.run(chat_title._maybe_auto_title(object(), _Session()))
+        asyncio.run(chat_title._maybe_auto_title(MagicMock(conversation_log=None), _Session()))
     failures = [
         r for r in _records(caplog, "personalclaw.dashboard.chat_title") if "failed" in r.msg
     ]

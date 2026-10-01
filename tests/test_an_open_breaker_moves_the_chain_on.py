@@ -163,6 +163,7 @@ def _chat(key: str = "dashboard:chat-6") -> SimpleNamespace:
         _titled=False,
         blocks_reads=False,
         is_restricted=False,
+        memory_mode="persistent",
         tags=["kept"],
         _dirty=False,
         messages=[

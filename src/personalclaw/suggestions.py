@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from personalclaw import memory_writes
 from personalclaw.context import ContextBuilder
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
@@ -129,32 +130,35 @@ def _build_context(state: "DashboardState") -> str:
     except Exception:
         logger.debug("Failed to read memory for suggestions", exc_info=True)
 
-    # Recent session titles and last messages
+    # The five newest chats' titles and last messages. An Incognito or Temporary chat is left out:
+    # no background model reads one, and the suggestions made from these are shown on every page.
     try:
         if state.conversation_log:
-            sessions = state.conversation_log.list_sessions()
-            if sessions:
-                session_parts: list[str] = []
-                for s in sessions[:5]:
-                    title = s.get("title", "")
-                    key = s.get("key", "")
-                    if not key:
-                        continue
-                    line = f"- **{title or key}**"
-                    try:
-                        recent = state.conversation_log.recent(key, max_messages=6)
-                        user_msgs = [
-                            m["content"][:150]
-                            for m in recent
-                            if m.get("role") == "user" and m.get("content")
-                        ][-3:]
-                        if user_msgs:
-                            line += "\n" + "\n".join(f"  - User: {msg}" for msg in user_msgs)
-                    except Exception:
-                        pass
-                    session_parts.append(line)
-                if session_parts:
-                    parts.append("## Recent Sessions\n" + "\n".join(session_parts))
+            session_parts: list[str] = []
+            for s in state.conversation_log.list_sessions():
+                if len(session_parts) >= 5:
+                    break
+                title = s.get("title", "")
+                key = s.get("key", "")
+                if not key or memory_writes.blocks_background_models(
+                    key, memory_mode=s.get("memory_mode")
+                ):
+                    continue
+                line = f"- **{title or key}**"
+                try:
+                    recent = state.conversation_log.recent(key, max_messages=6)
+                    user_msgs = [
+                        m["content"][:150]
+                        for m in recent
+                        if m.get("role") == "user" and m.get("content")
+                    ][-3:]
+                    if user_msgs:
+                        line += "\n" + "\n".join(f"  - User: {msg}" for msg in user_msgs)
+                except Exception:
+                    pass
+                session_parts.append(line)
+            if session_parts:
+                parts.append("## Recent Sessions\n" + "\n".join(session_parts))
     except Exception:
         logger.debug("Failed to read sessions for suggestions", exc_info=True)
 

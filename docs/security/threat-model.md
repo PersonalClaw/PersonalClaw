@@ -507,7 +507,8 @@ Data leaving the running system:
 - **Memory privacy** (`session_restrictions.py`, `memory_writes.py`):
   temporary/incognito sessions gate memory reads/writes; the memory, knowledge
   and vocabulary stores refuse every write made for one, by any path, and embed
-  nothing of it.
+  nothing of it; no background model (titles, tags, follow-ups, a condensed
+  history, suggestions) is given anything of one.
 
 ## OWASP Agentic Security (ASI) Top-10 mapping
 

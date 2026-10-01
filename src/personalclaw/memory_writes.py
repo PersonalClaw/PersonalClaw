@@ -20,6 +20,11 @@ That promise is kept at the stores, not by each caller remembering to ask:
   markdown memory files are not written (:func:`refuse_write`), and the embedding functions return
   no vector without calling the model (:func:`writes_refused`).
 
+Nothing of such a session is handed to a background model either: its title, tags and suggested
+follow-ups, a condensed copy of its history, the suggestions built from recent chats. Each of those
+chores asks :func:`blocks_background_models`, the same answer, before it reads the session to a
+model.
+
 Work that derives from no session (the owner's own edit in Memory Studio, an import, the
 maintenance passes) runs outside any scope and is not affected.
 """
@@ -108,6 +113,28 @@ def blocks_memory_writes(session_key: str, *, memory_mode: str | None = None) ->
 
     recorded = read_memory_mode(session_path(key))
     return recorded is not None and recorded != PERSISTENT
+
+
+def blocks_background_models(
+    session_key: str, *aliases: str, memory_mode: str | None = None
+) -> bool:
+    """Whether nothing of the session ``session_key`` may be handed to a background model.
+
+    A background model is one the session's own turn did not ask for: the model that titles a
+    chat, proposes its tags, follow-ups or folder, condenses its history, or builds suggestions
+    from recent chats. An Incognito or Temporary chat's turns go to the model it runs on, and none
+    of those chores reads it to a model: each does without (a title its mode names, the history
+    cut to fit, no follow-ups) or leaves the chat out.
+
+    The answer :func:`blocks_memory_writes` gives, for the key and for each of ``aliases`` (other
+    spellings of the same session's key), so it reads the same records and fails closed the same
+    way. Work that derives from such a session (:func:`writes_refused`) hands nothing on either,
+    whichever session it names.
+    """
+    if writes_refused():
+        return True
+    keys = [key for key in (session_key, *aliases) if key and key.strip()] or [""]
+    return any(blocks_memory_writes(key, memory_mode=memory_mode) for key in keys)
 
 
 @contextmanager

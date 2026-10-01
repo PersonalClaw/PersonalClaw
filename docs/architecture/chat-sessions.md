@@ -69,6 +69,17 @@ chat, channel thread, loop worker, webhook, subagent).
     a session-scoped row's `scope_ref`, with its history events, links and
     vectors. A record that names no session (a persona note or a lesson an
     earlier version wrote) cannot be traced and is left for the owner to review.
+  - Nothing of a restricted session is handed to a background model, a model
+    its own turn did not ask for. `blocks_background_models(key, *aliases,
+    memory_mode=)` is the same answer, and work inside a restricted scope hands
+    nothing on whichever session it names. The chat is titled by its mode
+    ("Incognito chat", "Temporary chat") on its first turn and when a title is
+    asked for again (`dashboard/chat_title.py`), and gets no model tags or
+    follow-ups (`dashboard/chat_followups.py`); a reopened chat whose history
+    does not fit is cut to fit rather than condensed
+    (`context.compress_thread_history`); the suggestions built from recent chats
+    leave it out (`suggestions.py`). The batch re-tag, organize proposals and
+    background compression already leave restricted chats out of what they list.
 - **`chat_traces.py` / `dashboard/chat_forget.py` — what a chat keeps on disk,
   and forgetting it.** A chat leaves its transcript, its working folder
   (`sessions/<key>/`), its turn checkpoints and the files attached to it
@@ -278,7 +289,8 @@ Around the engine:
   rows carry `origin="channel"` (computed at list-time from the session map,
   never persisted); the frontend `ChatPage.tsx` switches tabs on that literal.
 - **`dashboard/chat_title.py`** — auto-title plus optional auto-tagging in ONE
-  background LLM call (config `dashboard.auto_tag_sessions`);
+  background LLM call (config `dashboard.auto_tag_sessions`); an Incognito or
+  Temporary chat is titled by its mode instead, with no model call;
   `chat_retag.py` is the batch re-tag job (cancellable, board-triggered).
 - **`dashboard/chat_folders.py` / `chat_tags.py`** — organization; persisted
   in `folders.json` / `tags.json`.

@@ -80,14 +80,14 @@ class TestSaveSessionToHistory:
 
 class TestPersistTitle:
     def test_temporary_slot_auto_title_skipped(self):
-        """Auto-title skips restricted sessions."""
+        """Auto-title asks no model for a restricted session (it is titled by its mode)."""
         from personalclaw.dashboard.state import _ChatSession
 
         session = _ChatSession(key="tmp-2", memory_mode="temporary")
         session._titled = False
         session.messages = [{"role": "user", "content": "hi"}]
 
-        # _maybe_auto_title returns early for restricted sessions
+        # _maybe_auto_title gives a restricted session its mode's title, with no model
         assert session.is_restricted is True
 
 

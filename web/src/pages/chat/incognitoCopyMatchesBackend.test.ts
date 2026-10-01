@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { MEMORY_MODE_NOTICE } from './memoryModeCopy'
 
 // ── Incognito's copy may not promise more than the backend delivers (issue 367) ───────────────────
 //
@@ -58,5 +59,20 @@ describe('incognito copy matches the backend contract', () => {
     const history = readFileSync(join(gateway, 'history.py'), 'utf8')
     // Every consolidation pass runs as deriving from its session and is skipped for one.
     expect(history).toMatch(/with memory_writes\.derived_from\(key, memory_mode=self\._log\.recorded_memory_mode\(key\)\):\s*\n\s*if memory_writes\.writes_refused\(\):/)
+  })
+
+  it('says no background model reads the chat, and each such chore asks the one answer first', () => {
+    for (const [mode, text] of Object.entries(MEMORY_MODE_NOTICE)) {
+      expect(text, mode).toMatch(/no background model reads it for a title, follow-ups or suggestions/)
+    }
+    const gateway = join(__dirname, '..', '..', '..', '..', 'src', 'personalclaw')
+    const read = (...p: string[]) => readFileSync(join(gateway, ...p), 'utf8')
+    // A title, on the first turn and when one is asked for again, is the mode's, made without a model.
+    const title = read('dashboard', 'chat_title.py')
+    expect(title.match(/if keeps_to_its_own_model\(state, session\):\s*\n(?:\s*#[^\n]*\n)*\s*(?:_apply_title\(state, session, _title_without_a_model|title = _title_without_a_model)/g)?.length).toBe(2)
+    expect(read('dashboard', 'chat_followups.py')).toMatch(/if keeps_to_its_own_model\(state, session\):\s*\n\s*return/)
+    // A condensed history and the suggestions built from recent chats ask the same answer.
+    expect(read('context.py')).toMatch(/if memory_writes\.blocks_background_models\(session_key\):\s*\n\s*return None/)
+    expect(read('suggestions.py')).toMatch(/memory_writes\.blocks_background_models\(\s*key, memory_mode=s\.get\("memory_mode"\)/)
   })
 })

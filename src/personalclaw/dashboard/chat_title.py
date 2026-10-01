@@ -6,7 +6,7 @@ from functools import partial
 
 from aiohttp import web
 
-from personalclaw import owed_chores
+from personalclaw import memory_writes, owed_chores
 from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
@@ -33,6 +33,29 @@ _TITLE_MAX_ATTEMPTS = 5
 # NEW (not-yet-existing) tags created per session.
 _AUTO_TAG_MAX_TOTAL = 4
 _AUTO_TAG_MAX_NEW = 2
+
+#: What a chat that keeps nothing is called, since no model is given it to title. Its mode, not
+#: its words: the title shows wherever the chat is named (its header and tab, a notice about it),
+#: and a line of what was said would put the chat's words in each of those places.
+_TITLE_BY_MODE = {"incognito": "Incognito chat", "temporary": "Temporary chat"}
+
+
+def keeps_to_its_own_model(state: DashboardState, session: _ChatSession) -> bool:
+    """Whether nothing of *session* may be read to a background model: no model titles it, tags it
+    or proposes its follow-ups. The one answer (``memory_writes.blocks_background_models``), asked
+    under both spellings of the chat's key with the mode the chat holds."""
+    return memory_writes.blocks_background_models(
+        persisted_history_key(state.conversation_log, session.key),
+        session.key,
+        memory_mode=session.memory_mode,
+    )
+
+
+def _title_without_a_model(session: _ChatSession) -> str:
+    """The title of a chat that :func:`keeps_to_its_own_model`. A chat another record marks while
+    its own mode reads ``persistent`` is called Incognito, the mode that keeps nothing and reads
+    memory."""
+    return _TITLE_BY_MODE.get(session.memory_mode, _TITLE_BY_MODE["incognito"])
 
 
 def _build_title_prompt(messages: list[dict[str, str]]) -> str | None:
@@ -196,7 +219,7 @@ def _apply_auto_tags(state: DashboardState, session: _ChatSession, names: list[s
     if not names:
         return []
     # Re-check the guards at apply time (state may have changed mid-LLM-call).
-    if session.is_restricted or session.tags:
+    if session.tags or keeps_to_its_own_model(state, session):
         return []
     assigned: list[str] = []
     created = 0
@@ -269,10 +292,11 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
     When auto-tagging is enabled the SAME LLM call also proposes tags for the
     session (the tag instructions are appended to the title prompt — no second
     roundtrip). Tags are only applied when the user hasn't tagged the session
-    themselves and the session isn't restricted (incognito/temporary).
+    themselves.
 
-    A title no model could be asked for is owed (``owed_chores``) and asked for again once a
-    model answers, rather than waiting on a next turn that may never come.
+    An Incognito or Temporary chat is given no model: it is titled by its mode on its first turn,
+    and gets no tags. A title no model could be asked for is owed (``owed_chores``) and asked for
+    again once a model answers, rather than waiting on a next turn that may never come.
     """
     try:
         await _title_once(state, session)
@@ -312,7 +336,8 @@ async def _title_once(state: DashboardState, session: _ChatSession) -> None:
     """Title *session* once, if it still wants one; a model that could not answer raises."""
     if session._titled:
         return
-    if session.blocks_reads:
+    if keeps_to_its_own_model(state, session):
+        _apply_title(state, session, _title_without_a_model(session))
         return
     user_count = sum(1 for m in session.messages if m.get("role") == "user")
     if user_count < 1 or user_count > _TITLE_MAX_ATTEMPTS:
@@ -324,8 +349,8 @@ async def _title_once(state: DashboardState, session: _ChatSession) -> None:
         return
     logger.info("Auto-title: attempting for session %s (turn %d)", session.key, user_count)
     # Piggyback tag proposal on the title call only when it can actually apply:
-    # flag on, user hasn't tagged, session isn't restricted.
-    want_tags = not session.is_restricted and not session.tags and _auto_tag_enabled()
+    # flag on, user hasn't tagged.
+    want_tags = not session.tags and _auto_tag_enabled()
     prompt = _build_title_prompt(session.messages)
     if not prompt:
         logger.debug("Title generation skipped — no usable messages")
@@ -348,6 +373,12 @@ async def api_chat_session_generate_title(request: web.Request) -> web.Response:
     session = state._sessions.get(name)
     if not session:
         return web.json_response({"error": "not found"}, status=404)
+
+    if keeps_to_its_own_model(state, session):
+        # Asked again, it is the same title: no model is given the chat for one.
+        title = _title_without_a_model(session)
+        _apply_title(state, session, title)
+        return web.json_response({"ok": True, "title": title})
 
     logger.info("Manual title generation requested for session %s", name)
     try:

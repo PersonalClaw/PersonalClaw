@@ -20,6 +20,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from personalclaw.dashboard.chat_title import keeps_to_its_own_model
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
 from personalclaw.llm_helpers import let_fail_over, say_background_substitution
@@ -237,14 +238,14 @@ async def _generate_followups(state: "DashboardState", session: "_ChatSession") 
 async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> None:
     """Fire-and-forget: emit follow-up chips for a just-completed interactive turn.
 
-    Gated OFF when: config disabled, session restricted (temporary/incognito —
-    mirrors auto-title), a loop's hidden worker or planner session, a message is
-    queued (the next turn is imminent), or the turn errored. Broadcasts
+    Gated OFF when: config disabled, the chat keeps to its own model (Incognito or
+    Temporary — the answer auto-title asks), a loop's hidden worker or planner session, a
+    message is queued (the next turn is imminent), or the turn errored. Broadcasts
     ``chat_followups`` on success; silent on any failure or when no model is bound.
     """
     if not _followups_enabled():
         return
-    if getattr(session, "is_restricted", False):
+    if keeps_to_its_own_model(state, session):
         return
     # Nobody reads a chip in a loop's hidden session, so the call there only spent — once per
     # cycle, and once more for each turn a Pause or incident mode stopped, which is how a held loop

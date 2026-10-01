@@ -193,10 +193,10 @@ class TestMaybeAutoTitleTagging:
         state._sessions["s1"] = session
         stream = _mock_title_stream(state, "Secret\nTAGS: Work")
         await _maybe_auto_title(state, session)
-        # incognito still gets a title, but is_restricted → the tag ask is
-        # omitted from the prompt and no tags are ever applied
-        assert session.title == "Secret"
-        assert "TAGS:" not in stream.last_prompt
+        # incognito is titled by its mode: no model is asked for its title or its tags
+        assert session.title == "Incognito chat"
+        state.sessions.get_or_create.assert_not_called()
+        assert not hasattr(stream, "last_prompt")
         assert session.tags == []
 
     @pytest.mark.asyncio

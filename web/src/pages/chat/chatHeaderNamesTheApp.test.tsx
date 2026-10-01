@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 
 // ── The chat header names the app that started the chat, where you look ──────────────────────────
 //
@@ -156,6 +156,17 @@ describe('the title row holds only what names the chat', () => {
     // Nothing about the chat is left in the title's row: the way back, the title, regenerate.
     const inRow = within(row(banner)).getAllByRole('button').map((b) => b.getAttribute('aria-label') || b.getAttribute('title'))
     expect(inRow).toEqual(['Back to chat history', 'Rename chat', 'Regenerate title'])
+  })
+
+  it('offers no "Regenerate title" on a chat no model titles', async () => {
+    // An Incognito or Temporary chat is titled by its mode, and no model is given it for another.
+    for (const mode of ['incognito', 'temporary']) {
+      open({ memory_mode: mode })
+      const banner = await header()
+      const inRow = within(row(banner)).getAllByRole('button').map((b) => b.getAttribute('aria-label') || b.getAttribute('title'))
+      expect(inRow, mode).toEqual(['Back to chat history', 'Rename chat'])
+      cleanup()
+    }
   })
 
   it('makes "Copy chat link" a control of the cluster', async () => {

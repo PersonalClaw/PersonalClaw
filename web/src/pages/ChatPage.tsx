@@ -3679,8 +3679,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 <Pencil size={13} className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
               </button>
               {/* Regenerate title — a small magic-stars affordance hugging the title's
-                  top-right edge, not a space-hungry header control. */}
-              {sessionRef.current && (
+                  top-right edge, not a space-hungry header control. A chat that is not
+                  persistent is given to no model for its title, so it has none to ask for. */}
+              {sessionRef.current && memoryMode === 'persistent' && (
                 <IconButton icon={Sparkles} label="Regenerate title" onClick={regenTitle}
                   loading={regenningTitle} disabled={regenningTitle} size={20} iconSize={12}
                   className="shrink-0 -ml-0.5 self-start text-on-surface-low hover:text-primary" />

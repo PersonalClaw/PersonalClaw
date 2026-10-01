@@ -576,14 +576,17 @@ def test_no_follow_up_chips_are_generated_for_a_loops_hidden_session(app: str) -
     the moment the held turn ended, with incident mode on."""
     from personalclaw.dashboard import chat_followups
 
-    session = MagicMock(is_restricted=False, _app=app, _queue=[], _last_turn_errored=False)
+    session = MagicMock(
+        key="chat-1", memory_mode="persistent", _app=app, _queue=[], _last_turn_errored=False
+    )
+    state = MagicMock(conversation_log=None)
     with (
         patch.object(chat_followups, "_followups_enabled", return_value=True),
         patch.object(chat_followups, "_generate_followups", new=AsyncMock(return_value=[])) as gen,
     ):
-        asyncio.run(chat_followups._maybe_followups(MagicMock(), session))
+        asyncio.run(chat_followups._maybe_followups(state, session))
         gen.assert_not_awaited()
         # A person's chat still gets them.
         session._app = "chat"
-        asyncio.run(chat_followups._maybe_followups(MagicMock(), session))
+        asyncio.run(chat_followups._maybe_followups(state, session))
         gen.assert_awaited_once()

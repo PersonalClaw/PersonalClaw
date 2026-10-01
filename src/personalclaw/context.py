@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
+from personalclaw import memory_writes
 from personalclaw.agent import _shipped_prompt
 from personalclaw.agents.defaults import is_default_agent
 from personalclaw.config import loader as config_loader
@@ -906,7 +907,8 @@ async def compress_thread_history(
     ``ContextCompact`` lifecycle event and for the compression's usage row (``source:
     background``, the lite agent), which is written through the seam every turn's row takes.
 
-    Returns the compressed summary string, or None on failure (callers
+    Returns the compressed summary string, or None on failure or for an Incognito or
+    Temporary session, which no background model reads (callers
     fall back to raw truncation).  This is the ONLY async function in
     this module — callers await it and pass the result into the sync
     ``build_session_context`` / ``build_message`` methods.
@@ -960,6 +962,10 @@ async def compress_thread_history(
 
     if len(transcript) <= _COMPRESSED_HISTORY_CAP:
         return transcript.translate(_MULTIBYTE_TABLE)
+    # An Incognito or Temporary chat is not read to the Background model to be condensed: the
+    # caller cuts its history to fit instead, as it does when no condensed history comes back.
+    if memory_writes.blocks_background_models(session_key):
+        return None
 
     head_lines = lines[:_HEAD_TAIL_MESSAGES]
     tail_lines = lines[-_HEAD_TAIL_MESSAGES:] if len(lines) > _HEAD_TAIL_MESSAGES else []
