@@ -9,9 +9,12 @@ for a key that is not set it records nothing to undo (``conftest.unset_env`` is 
 
 ``conftest._a_test_leaves_the_environment_as_it_found_it`` takes a :func:`snapshot` before each
 test and hands it to :func:`give_back` after, and fails the test when anything had to be given
-back. Only the product's namespace is watched: a variable outside it can be set once, on purpose,
-by an import (the CLI's ``_ssl_compat`` sets ``SSL_CERT_FILE`` when it is first imported), and
-taking that back after the first test would take it from every later one in the worker.
+back. Only the product's namespace is watched, and ``PATH``: a variable outside it can be set
+once, on purpose, by an import (the CLI's ``_ssl_compat`` sets ``SSL_CERT_FILE`` when it is first
+imported), and taking that back after the first test would take it from every later one in the
+worker. ``PATH`` and ``TMPDIR`` are never set on purpose: they are every child's, and the code that
+once put a folder in front of ``PATH`` to find ffmpeg did so in the test process too, for every
+later test in the worker.
 
 What it cannot see: a write made after the test's teardown by something the test left running (a
 thread, a task) lands in the next test's window and is charged to that test.
@@ -25,10 +28,17 @@ import os
 #: test in the worker tests: the port children address, an inbound token, a home, a project dir.
 PRODUCT_PREFIX = "PERSONALCLAW_"
 
+#: Watched beside the product's own: no code PersonalClaw runs may change them.
+WATCHED = frozenset({"PATH", "TMPDIR"})
+
 
 def snapshot() -> dict[str, str]:
-    """The product's variables as a test found them."""
-    return {key: value for key, value in os.environ.items() if key.startswith(PRODUCT_PREFIX)}
+    """The product's variables, ``PATH`` and ``TMPDIR``, as a test found them."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.startswith(PRODUCT_PREFIX) or key in WATCHED
+    }
 
 
 def give_back(before: dict[str, str]) -> list[str]:

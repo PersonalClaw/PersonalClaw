@@ -81,6 +81,7 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
         title="Speech-to-text" hint="Transcribe microphone input into the composer." useCase="stt"
         enableLabel="Enable speech-to-text" boundModel={(active['stt'] ?? [])[0] ?? ''}
         doc={sttSettings} onStored={stored('stt')} reread={reread} go={go}
+        extras={() => <FfmpegRow />}
       />
       {/* No "Streaming transcription" toggle. It was offered here, hinted "Transcribe
           incrementally as you speak (when supported)", and stored under `streaming` in
@@ -453,6 +454,26 @@ function UseCaseVoiceSection({
 
 // Metrics + chrome only — the type size rides `data-type="body-s"` on the consumer.
 const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary cursor-pointer'
+
+/** What ffmpeg is for, in the row's own words — said whether or not one is found. */
+const FFMPEG_USE = 'Cuts a long recording into parts, and takes the sound out of a video, before it is transcribed. A short recording is transcribed without it.'
+
+/** The ffmpeg transcription runs (`GET /api/stt/ffmpeg`): its path, or the gateway's sentence saying
+ *  where it looked and what to do, shown as it is. Read on its own, so a failed read says so in this
+ *  row and never blanks the speech settings around it. */
+function FfmpegRow() {
+  const { data, error, refresh } = useQuery('settings:voice-ffmpeg', async () => api.sttFfmpeg())
+  const hint = error
+    ? <InlineLoadError what="ffmpeg's location" error={error} onRetry={refresh} />
+    : data && !data.path
+      ? data.message
+      : <>{FFMPEG_USE}{data?.path && <> Runs <span className="font-mono">{data.path}</span>.</>}</>
+  return (
+    <Row label="ffmpeg" hint={hint}>
+      {data && !error && <AvailChip available={!!data.path} okLabel="found" missLabel="not found" />}
+    </Row>
+  )
+}
 
 function AvailChip({ available, okLabel, missLabel }: { available: boolean; okLabel: string; missLabel: string }) {
   return (

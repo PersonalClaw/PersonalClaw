@@ -150,10 +150,7 @@ async def test_the_microphone_says_why_a_transcription_could_not_run(home, monke
         raise SttError(REASON)
 
     monkeypatch.setattr("personalclaw.transcribe.transcribe_audio_detailed", _refused)
-    with (
-        _bind(_Bound(available=True)),
-        patch("personalclaw.transcribe._ffmpeg_present", return_value=True),
-    ):
+    with _bind(_Bound(available=True)):
         status, body = await _post(home)
 
     assert (status, body) == (502, {"error": REASON}), "no code: the composer names it a failure"
@@ -172,10 +169,7 @@ async def test_the_microphone_says_a_transcription_came_back_with_nothing(home):
     speech in it. Driven through the real transcribe path with the bound provider."""
     from personalclaw.transcribe import NO_TRANSCRIPT_NO_REASON
 
-    with (
-        _bind(_GivesBackNothing(available=True)),
-        patch("personalclaw.transcribe._ffmpeg_present", return_value=True),
-    ):
+    with _bind(_GivesBackNothing(available=True)):
         status, body = await _post(home)
 
     assert (status, body) == (502, {"error": NO_TRANSCRIPT_NO_REASON})

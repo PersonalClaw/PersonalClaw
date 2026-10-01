@@ -480,9 +480,10 @@ def provision_acp_adapter(
             "a newer Node, or set the app's adapter path",
         )
         return None
-    npm = shutil.which(
-        "npm", path=os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")])
-    )
+    from personalclaw.env import startup_path
+
+    node_first = os.pathsep.join([str(Path(node).parent), startup_path() or ""])
+    npm = shutil.which("npm", path=node_first)
     if not npm:
         _install_failed(npm_pkg, f"npm was not found beside {node}")
         return None
@@ -502,7 +503,7 @@ def provision_acp_adapter(
             installer="npm",
             extra={
                 **installer_cache_env(),
-                "PATH": os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")]),
+                "PATH": node_first,
             },
         )
         logger.info("acp adapter %s: provisioning under %s into %s", npm_pkg, node, prefix)

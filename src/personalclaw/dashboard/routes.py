@@ -404,7 +404,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     # use_case_settings/stt.json.
     app.router.add_post("/api/stt/transcribe", handlers.api_stt_transcribe)
 
-    # STT provider management (list/delete/activate models)
+    # STT-only reads: which ffmpeg transcription runs (the Speech settings show it)
     from personalclaw.stt.handlers import register_stt_routes
 
     register_stt_routes(app)

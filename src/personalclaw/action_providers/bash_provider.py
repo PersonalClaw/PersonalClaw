@@ -19,6 +19,7 @@ from personalclaw.action_providers.base import (
     ActionResult,
 )
 from personalclaw.cancellation import kill_timed_out
+from personalclaw.env import PROGRAM_RESOLUTION_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -53,44 +54,17 @@ _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #: `$variables` are the trigger's documented user-facing surface (`$now`, `$job_id`,
 #: `$last_result`, plus every key a kind's payload carries), so an allowlist would have to
 #: enumerate them all and would silently drop a new kind's variables. The dangerous set,
-#: by contrast, is small, well-known and stable.
-PROTECTED_ENV_NAMES: frozenset[str] = frozenset(
-    {
-        # resolution + loader
-        "PATH",
-        "LD_PRELOAD",
-        "LD_LIBRARY_PATH",
-        "LD_AUDIT",
-        "DYLD_INSERT_LIBRARIES",
-        "DYLD_LIBRARY_PATH",
-        "DYLD_FRAMEWORK_PATH",
-        # interpreter entry points
-        "BASH_ENV",
-        "ENV",
-        "SHELL",
-        "IFS",
-        "PYTHONPATH",
-        "PYTHONSTARTUP",
-        "PYTHONHOME",
-        # Which bytecode a Python child runs: a prefix a payload chose would load its caches.
-        "PYTHONPYCACHEPREFIX",
-        "PERL5LIB",
-        "NODE_OPTIONS",
-        "NODE_PATH",
-        "RUBYOPT",
-        "RUBYLIB",
-        "GIT_SSH",
-        "GIT_SSH_COMMAND",
-        "GIT_EXTERNAL_DIFF",
-        # roots the harness reads back
-        "HOME",
-        "TMPDIR",
-        "PERSONALCLAW_HOME",
-        "PERSONALCLAW_WORKSPACE",
-        "PERSONALCLAW_HOOK_EVENT",
-        "PERSONALCLAW_HOOK_CONTEXT",
-    }
-)
+#: by contrast, is small, well-known and stable. Its first part is
+#: `env.PROGRAM_RESOLUTION_NAMES`, the names no stored secret is mirrored under either.
+PROTECTED_ENV_NAMES: frozenset[str] = PROGRAM_RESOLUTION_NAMES | {
+    # roots the harness reads back
+    "HOME",
+    "TMPDIR",
+    "PERSONALCLAW_HOME",
+    "PERSONALCLAW_WORKSPACE",
+    "PERSONALCLAW_HOOK_EVENT",
+    "PERSONALCLAW_HOOK_CONTEXT",
+}
 
 
 def _payload_env(ctx: ActionContext) -> dict[str, str]:

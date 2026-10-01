@@ -45,12 +45,13 @@ import hashlib
 import json
 import logging
 import math
-import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from personalclaw.ffmpeg_binary import find_ffmpeg, find_ffprobe
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +116,12 @@ def classify_kind(relpath: str) -> str:
 # `_probe_cache` is `None` until the first probe, NOT a `(0.0, False)` pair. A monotonic reading
 # can legitimately be a small float, so `0.0` is a valid "checked at t=0" time, not an "unset"
 # marker — the docker probe makes exactly this choice, and the user's rule restates it.
-FFMPEG_BIN = "ffmpeg"
-#: The duration probe. A separate binary from ``ffmpeg`` and deliberately NOT folded into
-#: :func:`ffmpeg_available`: only the contact sheet needs a duration, so requiring ffprobe for
-#: the shared probe would degrade the GIF for a tool it never calls.
-FFPROBE_BIN = "ffprobe"
+#
+# ffmpeg and ffprobe are found where every ffmpeg PersonalClaw runs is
+# (`ffmpeg_binary.find_ffmpeg` / `find_ffprobe`), and run by that absolute path. ffprobe is the
+# duration probe, a separate binary and deliberately NOT folded into :func:`ffmpeg_available`: only
+# the contact sheet needs a duration, so requiring ffprobe for the shared probe would degrade the
+# GIF for a tool it never calls.
 _PROBE_TTL_SECS = 30.0
 _probe_cache: tuple[float, bool] | None = None
 _FFMPEG_PROBE_TIMEOUT = 5
@@ -127,17 +129,18 @@ _FFPROBE_TIMEOUT = 15
 
 
 def _ffmpeg_ping() -> bool:
-    """True when the ffmpeg binary is on PATH AND answers ``-version``. Never raises.
+    """True when there is an ffmpeg AND it answers ``-version``. Never raises.
 
-    ``shutil.which`` alone proves the name resolves; running ``-version`` proves the binary is
-    executable on this host (a stale symlink or a wrong-arch build resolves but cannot run). The
+    Finding the file alone proves it is there; running ``-version`` proves the binary is
+    executable on this host (a stale symlink or a wrong-arch build is there but cannot run). The
     argv is a fixed literal, so this is a host-fact read, not an agent-influenced spawn.
     """
-    if not shutil.which(FFMPEG_BIN):
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
         return False
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, host-fact version probe
-            [FFMPEG_BIN, "-version"],
+            [ffmpeg, "-version"],
             capture_output=True,
             text=True,
             timeout=_FFMPEG_PROBE_TIMEOUT,
@@ -225,9 +228,12 @@ def _run_ffmpeg(argv: list[str]) -> tuple[bool, str]:
     paths inside the bundle dir. A failure returns ``(False, <stderr>)`` rather than raising, so
     the derivation degrades to a recorded reason instead of taking the node down.
     """
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        return False, "no ffmpeg was found"
     try:
         proc = subprocess.run(  # noqa: S603 - fixed filter argv, no shell, host media tool
-            [FFMPEG_BIN, "-y", "-hide_banner", "-loglevel", "error", *argv],
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", *argv],
             capture_output=True,
             text=True,
             timeout=_FFMPEG_RUN_TIMEOUT,
@@ -249,12 +255,13 @@ def probe_duration_secs(path: Path | str) -> float:
     absent ``ffprobe``, an unreadable file, or a container that reports ``N/A`` all return
     ``0.0`` so the caller degrades typed instead of guessing a grid.
     """
-    if not shutil.which(FFPROBE_BIN):
+    ffprobe = find_ffprobe()
+    if ffprobe is None:
         return 0.0
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, host-fact duration read
             [
-                FFPROBE_BIN,
+                ffprobe,
                 "-v",
                 "error",
                 "-show_entries",

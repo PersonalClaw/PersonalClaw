@@ -104,7 +104,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     ): "tells the agent what ~ means in a path the owner writes",
     ("acp/cli_resolve.py", "_node_manager_bin_globs"): "finds an agent CLI the owner installed",
     ("env.py", "augmented_path"): "finds MCP server binaries the owner installed",
-    ("transcribe.py", "<module>"): "finds ffmpeg where the owner installed it",
+    ("ffmpeg_binary.py", "_folders"): "finds ffmpeg where the owner installed it",
     ("service/macos.py", "<module>"): _SERVICE,
     ("service/macos.py", "render_plist"): _SERVICE,
     ("service/linux.py", "render_unit"): _SERVICE,

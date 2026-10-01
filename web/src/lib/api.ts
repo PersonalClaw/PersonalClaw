@@ -8894,6 +8894,10 @@ export const api = {
       .then((d): Revisioned<Record<string, unknown>> => ({ value: d.settings, revision: d.revision })),
   saveUseCaseSettings: (useCase: string, settings: Record<string, unknown>, base: string) =>
     put<{ ok: boolean; settings: Record<string, unknown>; revision: string }>(`/api/models/use-cases/${encodeURIComponent(useCase)}/settings`, settings, basedOn(base)),
+  /** The ffmpeg that cuts a long recording into parts and takes the sound out of a video before it
+   *  is transcribed: its absolute path, or `null` with the gateway's sentence saying where it looked
+   *  and what to do (`message`, shown as it is). */
+  sttFfmpeg: () => get<{ path: string | null; message: string }>('/api/stt/ffmpeg'),
 
   // terminal (PTY)
   createTerminal: (cwd?: string, sandbox?: string) => post<{ session_id: string; shell?: string; cwd?: string; sandbox?: string }>('/api/terminal/sessions', { ...(cwd ? { cwd } : {}), ...(sandbox ? { sandbox } : {}) }),

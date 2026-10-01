@@ -1555,6 +1555,13 @@ def main() -> None:
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
 
+    # The environment this command was launched with: its children's PATH and TMPDIR, whatever
+    # changes `os.environ` later (`env.gateway_env`), and what a restart starts the new image with
+    # (`env.launch_env`). Recorded before anything below can change it.
+    from personalclaw.env import record_startup_environment
+
+    record_startup_environment()
+
     # Load .env from the working directory and from
     # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
     # users to manually copy .env into ~/.personalclaw.
@@ -1564,14 +1571,16 @@ def main() -> None:
     # values, the webhook token), and those are read through their settings reference and never
     # exported — `AppConfig.load_credentials` holds the same line. python-dotenv's `load_dotenv`
     # sets every line, so it handed all of them to every child the gateway spawns: each MCP
-    # server started with every other server's tokens.
+    # server started with every other server's tokens. Nor a name that decides which programs
+    # run (`PATH`, `NODE_OPTIONS`…): a `.env` line is read as a credential, never as the
+    # environment programs are found and loaded in (`mirrored_into_the_environment`).
     from dotenv import dotenv_values as _dotenv_values
 
-    from personalclaw.config.credentials import is_owned_key
+    from personalclaw.config.credentials import mirrored_into_the_environment
 
     def _load_named_credentials(path: Path) -> None:
         for key, value in _dotenv_values(path).items():
-            if value is not None and not is_owned_key(key):
+            if value is not None and mirrored_into_the_environment(key):
                 os.environ.setdefault(key, value)
 
     _cwd_env = Path.cwd() / ".env"

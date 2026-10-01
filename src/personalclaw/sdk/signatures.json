@@ -4301,10 +4301,15 @@
   },
   "kind": "dataclass"
  },
- "personalclaw.sdk.diarization.ensure_ffmpeg_in_path": {
+ "personalclaw.sdk.diarization.ffmpeg_not_found": {
   "kind": "function",
   "params": [],
-  "returns": "None"
+  "returns": "str"
+ },
+ "personalclaw.sdk.diarization.find_ffmpeg": {
+  "kind": "function",
+  "params": [],
+  "returns": "str | None"
  },
  "personalclaw.sdk.documents.Block": {
   "bases": ["object"],
@@ -8524,7 +8529,8 @@
   },
   "kind": "dataclass"
  },
- "personalclaw.sdk.stt.ensure_ffmpeg_in_path": {"kind": "alias", "of": "personalclaw.sdk.diarization.ensure_ffmpeg_in_path"},
+ "personalclaw.sdk.stt.ffmpeg_not_found": {"kind": "alias", "of": "personalclaw.sdk.diarization.ffmpeg_not_found"},
+ "personalclaw.sdk.stt.find_ffmpeg": {"kind": "alias", "of": "personalclaw.sdk.diarization.find_ffmpeg"},
  "personalclaw.sdk.sync.ConnectionResult": {
   "bases": ["object"],
   "init": {

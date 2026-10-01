@@ -31,7 +31,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -612,6 +611,7 @@ def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) 
     would let each level re-spend the same budget, and `depth_lint`'s static refusal of a nested
     batch would never trip.
     """
+    from personalclaw.env import gateway_env
     from personalclaw.mcp_shared import LEAF_READ_ONLY_KEY, leaf_env
     from personalclaw.workflows.batch_compile import lineage_env
 
@@ -623,7 +623,7 @@ def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) 
     )
     if stage_capability(cfg) != "mutating":
         lineage[LEAF_READ_ONLY_KEY] = "1"
-    return leaf_env(dict(os.environ), lineage)
+    return leaf_env(gateway_env(), lineage)
 
 
 def stage_request_key(

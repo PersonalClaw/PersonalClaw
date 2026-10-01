@@ -2,9 +2,10 @@
 
 Stable re-export of the ``SttProvider`` ABC + ``SttModel`` — an STT app implements
 these and its factory returns a provider that core's stt registry resolves the ``stt``
-use-case to. ``ensure_ffmpeg_in_path`` is the one cross-cutting helper a local STT
-backend needs (audio decoding), exposed here so the app doesn't reach into core
-internals.
+use-case to. ``find_ffmpeg`` is the one cross-cutting helper a local STT backend that
+runs ffmpeg needs: the absolute path of the ffmpeg PersonalClaw runs, found where core finds
+its own, to hand to what runs it (never by changing the process's ``PATH``, which is every
+child's). ``ffmpeg_not_found`` is the sentence for when there is none.
 
 ``SttError`` is how a provider says why it could not transcribe (raised from
 ``transcribe``; its message is shown as written), and ``SttProvider.unavailable_reason()``
@@ -12,6 +13,7 @@ why it is not available — so a failure is never read as a recording with no sp
 "unavailable" names its cause.
 """
 
+from personalclaw.ffmpeg_binary import ffmpeg_not_found, find_ffmpeg  # noqa: F401
 from personalclaw.stt.provider import (  # noqa: F401
     SttError,
     SttModel,
@@ -20,7 +22,6 @@ from personalclaw.stt.provider import (  # noqa: F401
     TranscriptSegment,
     TranscriptWord,
 )
-from personalclaw.transcribe import ensure_ffmpeg_in_path  # noqa: F401
 
 __all__ = [
     "SttProvider",
@@ -29,5 +30,6 @@ __all__ = [
     "TranscriptResult",
     "TranscriptSegment",
     "TranscriptWord",
-    "ensure_ffmpeg_in_path",
+    "find_ffmpeg",
+    "ffmpeg_not_found",
 ]

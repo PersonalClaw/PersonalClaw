@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -105,7 +104,9 @@ def installer_env() -> dict[str, str]:
     """This process's environment with :func:`installer_cache_env` over it, for an install or
     build of PersonalClaw itself (a self-update, the startup dependency repair, a frontend
     rebuild)."""
-    return {**os.environ, **installer_cache_env()}
+    from personalclaw.env import gateway_env
+
+    return {**gateway_env(), **installer_cache_env()}
 
 
 class NoInstallerError(RuntimeError):

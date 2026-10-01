@@ -36,7 +36,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import sys
 import time
 from dataclasses import dataclass
@@ -245,8 +244,9 @@ class AvailabilityBoard:
 
     async def _probe(self, names: list[str]) -> None:
         from personalclaw.config.loader import config_dir
+        from personalclaw.env import gateway_env
 
-        env = {**os.environ, "PERSONALCLAW_HOME": str(config_dir())}
+        env = {**gateway_env(), "PERSONALCLAW_HOME": str(config_dir())}
         reported: set[_Key] = set()
         try:
             proc = await asyncio.create_subprocess_exec(

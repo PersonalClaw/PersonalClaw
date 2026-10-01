@@ -12,6 +12,9 @@ import pytest
 from personalclaw.stt.provider import SttError
 from personalclaw.transcribe import is_available, transcribe_audio
 
+#: The ffmpeg a segmenting call is handed (the segmenter itself is faked; nothing runs it).
+FFMPEG = "/usr/bin/ffmpeg"
+
 # ---------------------------------------------------------------------------
 # is_available
 # ---------------------------------------------------------------------------
@@ -60,7 +63,6 @@ class TestIsAvailable:
                 return_value={"enabled": True},
             ),
             patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
-            patch("personalclaw.transcribe._ffmpeg_present", return_value=True),
         ):
             # readiness now delegates to the active provider — local or remote.
             assert await is_available() is True
@@ -188,7 +190,7 @@ class TestTranscribeAudio:
             ),
             patch("personalclaw.security.is_sensitive_path", return_value=False),
             patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
-            patch("personalclaw.transcribe._ffmpeg_present", return_value=True),
+            patch("personalclaw.transcribe.find_ffmpeg", return_value="/usr/bin/ffmpeg"),
         ):
             result = await transcribe_audio(str(f))
         assert result == "hi"
@@ -205,7 +207,7 @@ class TestTranscribeAudio:
         prov.transcribe = AsyncMock(side_effect=["part one", "part two"])
 
         # Fake the ffmpeg segmenter: create two segment files in the work dir.
-        async def _fake_transcribe_segmented(provider, model_id, language, audio_path):
+        async def _fake_transcribe_segmented(provider, model_id, language, audio_path, *, ffmpeg):
             # Exercise the real stitching contract without invoking ffmpeg.
             a = await provider.transcribe("seg0", model=model_id, language=language)
             b = await provider.transcribe("seg1", model=model_id, language=language)
@@ -218,7 +220,7 @@ class TestTranscribeAudio:
             ),
             patch("personalclaw.security.is_sensitive_path", return_value=False),
             patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
-            patch("personalclaw.transcribe._ffmpeg_present", return_value=True),
+            patch("personalclaw.transcribe.find_ffmpeg", return_value="/usr/bin/ffmpeg"),
             patch(
                 "personalclaw.transcribe._transcribe_segmented",
                 side_effect=_fake_transcribe_segmented,
@@ -242,7 +244,7 @@ class TestTranscribeAudio:
             ),
             patch("personalclaw.security.is_sensitive_path", return_value=False),
             patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
-            patch("personalclaw.transcribe._ffmpeg_present", return_value=False),
+            patch("personalclaw.transcribe.find_ffmpeg", return_value=None),
         ):
             result = await transcribe_audio(str(f))
         assert result == "whole thing"
@@ -395,12 +397,11 @@ class TestTranscriptContract:
             return proc
 
         with (
-            patch("shutil.which", return_value="/usr/bin/ffmpeg"),
             patch("os.listdir", _fake_listdir),
             patch("asyncio.create_subprocess_exec", _fake_exec),
         ):
             r = await T._transcribe_segmented_detailed(
-                prov, "turbo", "", str(tmp_path / "big.wav"), None
+                prov, "turbo", "", str(tmp_path / "big.wav"), None, ffmpeg=FFMPEG
             )
 
         assert r is not None
@@ -442,7 +443,6 @@ def _segmenting(parts: int):
 
     names = [f"seg_{i:05d}.wav" for i in range(parts)]
     return (
-        patch("shutil.which", return_value="/usr/bin/ffmpeg"),
         patch("os.listdir", lambda p: list(names)),
         patch("asyncio.create_subprocess_exec", _fake_exec),
     )
@@ -463,12 +463,14 @@ class TestAPartWithNoTranscript:
         prov.transcribe_detailed = AsyncMock(
             side_effect=[TranscriptResult(text="first part"), None, TranscriptResult(text="third")]
         )
-        which, listdir, exec_ = _segmenting(3)
-        with which, listdir, exec_, pytest.raises(SttError) as raised:
+        listdir, exec_ = _segmenting(3)
+        with listdir, exec_, pytest.raises(SttError) as raised:
             if detailed:
-                await T._transcribe_segmented_detailed(prov, "turbo", "", str(tmp_path / "a"), None)
+                await T._transcribe_segmented_detailed(
+                    prov, "turbo", "", str(tmp_path / "a"), None, ffmpeg=FFMPEG
+                )
             else:
-                await T._transcribe_segmented(prov, "turbo", "", str(tmp_path / "a"))
+                await T._transcribe_segmented(prov, "turbo", "", str(tmp_path / "a"), ffmpeg=FFMPEG)
         message = str(raised.value)
         assert "part 2 (from 10:00)" in message and "in 3 parts" in message
         assert T.NO_TRANSCRIPT_NO_REASON in message
@@ -481,9 +483,9 @@ class TestAPartWithNoTranscript:
         prov.transcribe = AsyncMock(
             side_effect=["first", RuntimeError("decoder ran out of memory")]
         )
-        which, listdir, exec_ = _segmenting(2)
-        with which, listdir, exec_, pytest.raises(SttError) as raised:
-            await T._transcribe_segmented(prov, "turbo", "", str(tmp_path / "a"))
+        listdir, exec_ = _segmenting(2)
+        with listdir, exec_, pytest.raises(SttError) as raised:
+            await T._transcribe_segmented(prov, "turbo", "", str(tmp_path / "a"), ffmpeg=FFMPEG)
         assert "part 2 (from 10:00)" in str(raised.value)
         assert "Details: decoder ran out of memory" in str(raised.value)
 
@@ -497,10 +499,10 @@ class TestAPartWithNoTranscript:
         prov.transcribe_detailed = AsyncMock(
             side_effect=[TranscriptResult(text="", duration=600.0), TranscriptResult(text="")]
         )
-        which, listdir, exec_ = _segmenting(2)
-        with which, listdir, exec_:
+        listdir, exec_ = _segmenting(2)
+        with listdir, exec_:
             result = await T._transcribe_segmented_detailed(
-                prov, "turbo", "", str(tmp_path / "a"), None
+                prov, "turbo", "", str(tmp_path / "a"), None, ffmpeg=FFMPEG
             )
         assert result is not None and result.text == "" and result.segments == []
 
@@ -614,17 +616,18 @@ class TestSttErrorReachesTheCaller:
             return proc
 
         with (
-            patch("shutil.which", return_value="/usr/bin/ffmpeg"),
             patch("os.listdir", lambda p: ["seg_00000.wav", "seg_00001.wav"]),
             patch("asyncio.create_subprocess_exec", _fake_exec),
             pytest.raises(SttError, match="Sign in, then try again"),
         ):
             if detailed:
                 await T._transcribe_segmented_detailed(
-                    prov, "turbo", "", str(tmp_path / "big.wav"), None
+                    prov, "turbo", "", str(tmp_path / "big.wav"), None, ffmpeg=FFMPEG
                 )
             else:
-                await T._transcribe_segmented(prov, "turbo", "", str(tmp_path / "big.wav"))
+                await T._transcribe_segmented(
+                    prov, "turbo", "", str(tmp_path / "big.wav"), ffmpeg=FFMPEG
+                )
 
     def test_apps_reach_the_error_through_the_sdk(self):
         """The tests above raise it as an app does; this is that it is core's own class."""

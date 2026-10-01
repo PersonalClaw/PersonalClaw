@@ -2,9 +2,10 @@
 
 Transcription resolves through the typed STT registry: the active model is the
 ``stt`` selection in ``active_models.json`` (Settings → Models) and behavior
-(enabled, language) lives in ``use_case_settings/stt.json``. faster-whisper (the
-in-process CTranslate2 Whisper) is the sole bundled backend; it depends on
-``ffmpeg`` for ``.webm`` decoding.
+(enabled, language) lives in ``use_case_settings/stt.json``. A recording above the segment
+threshold is cut into parts with ffmpeg (found by :func:`personalclaw.ffmpeg_binary.find_ffmpeg`,
+and handed to it by its absolute path); without ffmpeg it is sent whole, and a failure of that one
+call says so (:data:`SENT_WHOLE`).
 
 **One answer per call.** :func:`transcribe_audio` and :func:`transcribe_audio_detailed` return
 the transcript, whose text is empty when the recording holds no speech, or raise
@@ -18,6 +19,7 @@ transcribed said "Transcription done".
 import logging
 import os
 
+from personalclaw.ffmpeg_binary import ffmpeg_not_found, find_ffmpeg
 from personalclaw.stt.provider import SttError
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,12 @@ NO_TRANSCRIPT_NO_REASON = (
     "The speech-to-text model gave back no transcript and its provider doesn't say why. Check "
     "the gateway log, or choose another model under Speech-to-text in Settings → Models."
 )
+#: After the reason a long recording sent whole could not be transcribed: it went in one piece
+#: only because there was no ffmpeg to cut it (:func:`ffmpeg_not_found` follows).
+SENT_WHOLE = (
+    "A recording this long is cut into parts with ffmpeg before it is transcribed, and this one "
+    "was sent whole."
+)
 
 # Above this size a single audio file is segmented (via ffmpeg) into fixed-length
 # chunks that are transcribed sequentially and stitched — so a 1 GB audio doesn't
@@ -51,22 +59,6 @@ _STT_SEGMENT_THRESHOLD = 25 * 1024 * 1024
 # Each segment's wall-clock length in seconds (ffmpeg -segment_time). 600s ≈ a
 # comfortable Whisper chunk; small enough that any provider handles one segment.
 _STT_SEGMENT_SECONDS = 600
-
-_FFMPEG_CANDIDATE_DIRS = [
-    os.path.expanduser("~/ffmpeg"),
-    os.path.expanduser("~/.local/bin"),
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-]
-
-
-def ensure_ffmpeg_in_path() -> None:
-    """Add known ffmpeg directories to PATH if they contain an ffmpeg binary."""
-    path_parts = os.environ.get("PATH", "").split(os.pathsep)
-    for d in reversed(_FFMPEG_CANDIDATE_DIRS):
-        if d not in path_parts and os.path.isfile(os.path.join(d, "ffmpeg")):
-            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
-            path_parts.insert(0, d)
 
 
 def _bound_provider():
@@ -89,12 +81,7 @@ async def is_available() -> bool:
     is the same one transcription will use, regardless of provider.
     """
     provider = _bound_provider()
-    if provider is None or not await provider.is_available():
-        return False
-    ensure_ffmpeg_in_path()
-    if not _ffmpeg_present():
-        logger.warning("ffmpeg not found; .webm transcription will be unavailable")
-    return True
+    return provider is not None and await provider.is_available()
 
 
 async def unavailable_reason() -> str:
@@ -136,12 +123,6 @@ async def unavailable_sentence() -> str:
     )
 
 
-def _ffmpeg_present() -> bool:
-    import shutil
-
-    return shutil.which("ffmpeg") is not None
-
-
 def _resolve(audio_path: str):
     """``(provider, model_id, language)`` for transcribing *audio_path*, or :class:`SttError`
     saying why nothing can: speech-to-text is off, the file is somewhere PersonalClaw never
@@ -160,19 +141,34 @@ def _resolve(audio_path: str):
     if resolved is None:
         raise SttError(NO_STT_MODEL)
     provider, model_id = resolved
-    ensure_ffmpeg_in_path()
     return provider, model_id, str(settings.get("language_code", "") or "")
 
 
-def _segmented(audio_path: str) -> bool:
-    """Whether *audio_path* is transcribed in parts: above the segment threshold, with ffmpeg
-    to cut it. A large recording must not depend on the provider taking the whole file in one
-    call; anything a naive or remote provider handles in one shot stays one call."""
+def _long(audio_path: str) -> bool:
+    """Whether *audio_path* is above the segment threshold, and so transcribed in parts when there
+    is ffmpeg to cut it. A large recording must not depend on the provider taking the whole file in
+    one call; anything a naive or remote provider handles in one shot stays one call."""
     try:
-        big = os.path.getsize(audio_path) > _stt_segment_threshold()
+        return os.path.getsize(audio_path) > _stt_segment_threshold()
     except OSError:
-        big = False
-    return big and _ffmpeg_present()
+        return False
+
+
+async def _sent_whole(call, *, long: bool):
+    """The one call that transcribes a whole recording, or :class:`SttError` saying why it gave
+    nothing. A *long* recording is sent whole only because there was no ffmpeg to cut it, so the
+    sentence ends by saying so and where ffmpeg was looked for."""
+    try:
+        result = await call()
+    except SttError as exc:
+        if not long:
+            raise
+        raise SttError(f"{exc} {SENT_WHOLE} {ffmpeg_not_found()}") from exc
+    if result is None:
+        if long:
+            raise SttError(f"{NO_TRANSCRIPT_NO_REASON} {SENT_WHOLE} {ffmpeg_not_found()}")
+        raise SttError(NO_TRANSCRIPT_NO_REASON)
+    return result
 
 
 async def transcribe_audio(audio_path: str) -> str:
@@ -184,12 +180,14 @@ async def transcribe_audio(audio_path: str) -> str:
     docstring). A caller shows it; it never reads a failure as a recording with no speech.
     """
     provider, model_id, language = _resolve(audio_path)
-    if _segmented(audio_path):
-        text = await _transcribe_segmented(provider, model_id, language, audio_path)
+    long = _long(audio_path)
+    ffmpeg = find_ffmpeg() if long else None
+    if ffmpeg:
+        text = await _transcribe_segmented(provider, model_id, language, audio_path, ffmpeg=ffmpeg)
     else:
-        text = await provider.transcribe(audio_path, model=model_id, language=language)
-        if text is None:
-            raise SttError(NO_TRANSCRIPT_NO_REASON)
+        text = await _sent_whole(
+            lambda: provider.transcribe(audio_path, model=model_id, language=language), long=long
+        )
     if text:
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -208,16 +206,19 @@ async def transcribe_audio_detailed(audio_path: str, *, bias_terms: list[str] | 
     chunk's segment/word times by the chunk's start so the merged timeline is continuous.
     ``bias_terms`` is the Lexicon pre-decode hint (L2)."""
     provider, model_id, language = _resolve(audio_path)
-    if _segmented(audio_path):
+    long = _long(audio_path)
+    ffmpeg = find_ffmpeg() if long else None
+    if ffmpeg:
         result = await _transcribe_segmented_detailed(
-            provider, model_id, language, audio_path, bias_terms
+            provider, model_id, language, audio_path, bias_terms, ffmpeg=ffmpeg
         )
     else:
-        result = await provider.transcribe_detailed(
-            audio_path, model=model_id, language=language, bias_terms=bias_terms
+        result = await _sent_whole(
+            lambda: provider.transcribe_detailed(
+                audio_path, model=model_id, language=language, bias_terms=bias_terms
+            ),
+            long=long,
         )
-        if result is None:
-            raise SttError(NO_TRANSCRIPT_NO_REASON)
 
     # Redact the flat text (the same guard transcribe_audio applies). Segment text mirrors
     # the flat text span-for-span; redacting the flat surface is what feeds FTS/embeddings.
@@ -300,9 +301,15 @@ async def _segment(ffmpeg: str, audio_path: str, work: str) -> list[str]:
 
 
 async def _transcribe_segmented_detailed(
-    provider, model_id: str, language: str, audio_path: str, bias_terms: list[str] | None
+    provider,
+    model_id: str,
+    language: str,
+    audio_path: str,
+    bias_terms: list[str] | None,
+    *,
+    ffmpeg: str,
 ):
-    """Detailed variant of :func:`_transcribe_segmented`. Transcribes each ffmpeg chunk
+    """Detailed variant of :func:`_transcribe_segmented`. Transcribes each chunk *ffmpeg* cuts
     with ``transcribe_detailed`` and merges, OFFSETTING every segment/word time by the
     chunk's start offset (chunk N starts at N * _STT_SEGMENT_SECONDS) so the merged
     timeline is continuous. Falls back to a single detailed call on any ffmpeg failure.
@@ -319,10 +326,6 @@ async def _transcribe_segmented_detailed(
         if result is None:
             raise SttError(NO_TRANSCRIPT_NO_REASON)
         return result
-
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        return await _whole()
 
     work = tempfile.mkdtemp(prefix="stt_seg_")
     try:
@@ -382,8 +385,10 @@ def _stt_segment_threshold() -> int:
     return _STT_SEGMENT_THRESHOLD
 
 
-async def _transcribe_segmented(provider, model_id: str, language: str, audio_path: str) -> str:
-    """Split a large audio file into fixed-length segments (ffmpeg), transcribe each
+async def _transcribe_segmented(
+    provider, model_id: str, language: str, audio_path: str, *, ffmpeg: str
+) -> str:
+    """Split a large audio file into fixed-length segments (with *ffmpeg*), transcribe each
     sequentially, and stitch the transcripts. Keeps peak memory + per-call size
     bounded regardless of the provider. Falls back to a single call on any ffmpeg
     failure so a segmentation problem never silently drops the transcription. A part with no
@@ -396,10 +401,6 @@ async def _transcribe_segmented(provider, model_id: str, language: str, audio_pa
         if text is None:
             raise SttError(NO_TRANSCRIPT_NO_REASON)
         return text
-
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        return await _whole()
 
     work = tempfile.mkdtemp(prefix="stt_seg_")
     try:

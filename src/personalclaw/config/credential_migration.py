@@ -55,6 +55,7 @@ from personalclaw.config.credentials import (
     _keychain_save,
     credential_backend,
     keychain_absence,
+    mirrored_into_the_environment,
     requested_credential_backend,
 )
 
@@ -319,10 +320,12 @@ def rollback_credentials_to_keychain(*, confirm: bool = False) -> MigrationResul
     failed = [k for k in keys if not _keychain_delete(k)]
     # Mirror the values back into the running process: `save_credential` put them in
     # `os.environ` on the way in, and a stale keychain-era value there would outlive the
-    # rollback for the lifetime of the gateway.
+    # rollback for the lifetime of the gateway. Only the ones `save_credential` mirrors: an
+    # owned key, or a name that decides which programs run, never reaches the environment.
     restored = _parse_env_bytes(raw)
     for key, value in restored.items():
-        os.environ[key] = value
+        if mirrored_into_the_environment(key):
+            os.environ[key] = value
 
     # The snapshot goes last, and only on a clean pass. Deleting it after a partial
     # keychain-clear would strand a plaintext-free rollback with keychain copies still live.

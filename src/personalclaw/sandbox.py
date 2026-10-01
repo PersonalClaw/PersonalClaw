@@ -31,6 +31,8 @@ import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
+from personalclaw.env import gateway_env
+
 logger = logging.getLogger(__name__)
 
 # Sensitive directories to hide from the agent subprocess tree.
@@ -358,7 +360,7 @@ def declared_env(
     it, as the inherited base is passed. A child built by :func:`build_child_env` takes these as
     part of its *extra*, so the credential floor holds for them a second time there.
     """
-    src = dict(os.environ) if source is None else dict(source)
+    src = gateway_env() if source is None else dict(source)
     out: dict[str, str] = {}
     for raw in names or ():
         name = str(raw).strip()
@@ -404,7 +406,7 @@ def build_child_env(
     way past the credential floor, which refuses that name from *extra* and from a declaration,
     so no other child reaches the agent.
     """
-    src = dict(os.environ) if source is None else dict(source)
+    src = gateway_env() if source is None else dict(source)
     declared = _declared_env_passthrough(site)
     names = CHILD_ENV_BASE_NAMES | declared | _installer_names(installer, src)
     env: dict[str, str] = {}
@@ -465,7 +467,7 @@ def exact_env_argv(env: "dict[str, str]") -> "list[str] | None":
 
 def credentials_left_out(*, installer: str = "") -> list[str]:
     """The inherited variables :func:`build_child_env` passes without the login in their value."""
-    src = dict(os.environ)
+    src = gateway_env()
     declared = _declared_env_passthrough("install")
     names = (CHILD_ENV_BASE_NAMES | _installer_names(installer, src)) - declared
     return sorted(

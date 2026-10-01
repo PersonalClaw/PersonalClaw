@@ -757,6 +757,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/spawn/{agent_id}` — cancel a running subagent or remove a finished one.
 - `GET /api/spawn/{agent_id}` — poll subagent status.
 - `GET /api/status` — _(no summary)_
+- `GET /api/stt/ffmpeg` — the ffmpeg transcription runs, or why there is none.
 - `POST /api/stt/transcribe` — transcribe uploaded audio via the active STT model.
 - `GET /api/suggestions` — return pre-computed contextual suggestions.
 - `GET /api/surfaces/overlays` — the user/agent (L2) overlays, plus named refusals.

@@ -22,7 +22,7 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
 from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
-from personalclaw.env import augmented_path
+from personalclaw.env import augmented_path, gateway_env, startup_path
 from personalclaw.hooks import safe_read_file
 from personalclaw.security import redact_for_display
 
@@ -171,7 +171,9 @@ def stdio_spawn_env(server_env: Mapping[str, str], *, server: str) -> dict[str, 
     """The environment stdio server *server* is spawned in — by the probe AND by the agent's
     connection.
 
-    A server of your own gets the gateway's environment, like any program you start. An app's
+    A server of your own gets the gateway's environment, like any program you start, with the
+    ``PATH`` the gateway started with (``env.gateway_env``): whatever has changed the gateway's own
+    ``PATH`` since never decides which program a server's command is. An app's
     server (``apps.mcp_bridge.server_app``) gets the child allowlist instead
     (``sandbox.build_child_env``): it is the app's code, and the gateway's environment holds every
     secret saved in PersonalClaw. What it needs from the credential store it declares in its
@@ -193,7 +195,7 @@ def stdio_spawn_env(server_env: Mapping[str, str], *, server: str) -> dict[str, 
 
         env = build_child_env(site="app-mcp-server", extra=node_cli_env())
     else:
-        env = {**os.environ, **node_cli_env()}
+        env = {**gateway_env(), **node_cli_env()}
     env["PATH"] = augmented_path(env.get("PATH", ""))
     if "PATH" in server_env:
         env["PATH"] = server_env["PATH"] + os.pathsep + env["PATH"]
@@ -571,7 +573,7 @@ def _fix_stale_managed_command(name: str, spec: dict) -> None:
     resolved: str | None = None
     # Prefer a personalclaw binary on the user's augmented PATH.
     if not resolved:
-        resolved = shutil.which("personalclaw", path=augmented_path(os.environ.get("PATH", "")))
+        resolved = shutil.which("personalclaw", path=augmented_path(startup_path() or ""))
     if not resolved:
         return
     _resolved_managed_bin = resolved

@@ -29,7 +29,7 @@ from collections import deque
 from pathlib import Path
 
 from personalclaw.acp.errors import AcpError, AcpProcessDied
-from personalclaw.env import augmented_path
+from personalclaw.env import augmented_path, startup_path
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +363,7 @@ class AcpProcess:
         from personalclaw.sandbox import build_child_env
 
         computed = {**node_cli_env(), **(self._extra_env or {})}
-        computed["PATH"] = augmented_path(computed.get("PATH") or os.environ.get("PATH", ""))
+        computed["PATH"] = augmented_path(computed.get("PATH") or startup_path() or "")
         for name, value in (
             ("PERSONALCLAW_SESSION_KEY", self._session_key),
             ("PERSONALCLAW_CHANNEL_ID", self._channel_id),

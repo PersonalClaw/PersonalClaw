@@ -103,6 +103,21 @@ def is_owned_key(key: str) -> bool:
     return key.startswith(OWNED_KEY_PREFIX)
 
 
+def mirrored_into_the_environment(key: str) -> bool:
+    """Whether a stored credential named ``key`` is mirrored into the process environment, for
+    the trusted children that read it there: every NAMED credential, except one whose name decides
+    which programs a child runs (``env.PROGRAM_RESOLUTION_NAMES``: ``PATH``, the loader's and the
+    interpreters' start-up variables).
+
+    Such a secret is stored, listed and resolved through its ``{{secret:…}}`` reference like any
+    other. Mirrored, it would replace the ``PATH`` (or the libraries, or the code an interpreter
+    loads first) of every program the process starts after it, whatever the secret was saved for.
+    """
+    from personalclaw.env import PROGRAM_RESOLUTION_NAMES
+
+    return not is_owned_key(key) and key not in PROGRAM_RESOLUTION_NAMES
+
+
 #: Whether this process keeps the OS keychain out entirely (:func:`keychain_off`).
 _keychain_off = False
 
@@ -589,7 +604,8 @@ def save_credential(key: str, value: str) -> None:
     then mirrored into the process environment so the running gateway and the trusted
     children that inherit ``os.environ`` see it immediately (sandboxed children are
     filtered by name in ``sandbox.py``, independent of the backend). An OWNED key
-    (:func:`is_owned_key`) is not: it is read only through its settings reference.
+    (:func:`is_owned_key`) is not: it is read only through its settings reference. Nor is a
+    name that decides which programs run (:func:`mirrored_into_the_environment`).
     """
     save_credentials({key: value})
 
@@ -607,7 +623,7 @@ def save_credentials(values: Mapping[str, str]) -> None:
     if pending:
         _dotenv_save_credentials(pending)
     for key, value in values.items():
-        if not is_owned_key(key):
+        if mirrored_into_the_environment(key):
             os.environ[key] = value
 
 
@@ -691,11 +707,13 @@ def delete_credential(key: str) -> bool:
     without raising — the caller distinguishes "removed" from "there was nothing there" for its
     own 404, but neither is an error here.
     """
-    existed = key in credential_names() or key in os.environ
+    mirrored = mirrored_into_the_environment(key)
+    existed = key in credential_names() or (mirrored and key in os.environ)
     if _usable_keyring() is not None:
         _keychain_delete(key)
     _dotenv_remove_credentials([key])
-    os.environ.pop(key, None)
+    if mirrored:
+        os.environ.pop(key, None)
     return existed
 
 

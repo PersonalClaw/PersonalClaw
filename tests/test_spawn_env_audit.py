@@ -311,12 +311,16 @@ def _called_name(call: ast.Call) -> str:
 
 
 def _reads_environ(node: ast.AST) -> bool:
-    """Whether *node* reads ``os.environ`` anywhere (a copy, a splat, the mapping itself)."""
+    """Whether *node* reads ``os.environ`` anywhere (a copy, a splat, the mapping itself), or
+    ``env.gateway_env()``, which is that copy with ``PATH`` as the process started with it."""
     return any(
-        isinstance(sub, ast.Attribute)
-        and sub.attr == "environ"
-        and isinstance(sub.value, ast.Name)
-        and sub.value.id == "os"
+        (
+            isinstance(sub, ast.Attribute)
+            and sub.attr == "environ"
+            and isinstance(sub.value, ast.Name)
+            and sub.value.id == "os"
+        )
+        or (isinstance(sub, ast.Call) and _called_name(sub) == "gateway_env")
         for sub in ast.walk(node)
     )
 
@@ -474,6 +478,7 @@ def f(kw):
     subprocess.run(["x"], env=os.environ)
     subprocess.run(["x"], env={**os.environ, "A": "1"})
     subprocess.run(["x"], env=dict(os.environ))
+    subprocess.run(["x"], env={**gateway_env(), "A": "1"})
     subprocess.run(["x"], env=installer_env())
     subprocess.run(["x"], env=build_child_env(site="s"))
     subprocess.run(["x"], env=git_env(site="s"))
@@ -487,6 +492,7 @@ def f(kw):
     calls = [n for n in ast.walk(func) if isinstance(n, ast.Call) and _called_name(n) == "run"]
     got = [env_source(c, func, {"build_child_env", "git_env"}) for c in calls]
     assert got == [
+        "inherited",
         "inherited",
         "inherited",
         "inherited",

@@ -18,9 +18,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 import subprocess
 
+from personalclaw.ffmpeg_binary import ffmpeg_not_found, find_ffmpeg, find_ffprobe
 from personalclaw.knowledge.pipeline.nodes._llm import complete_text
 from personalclaw.knowledge.pipeline.registry import register_node
 from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput
@@ -30,8 +30,13 @@ logger = logging.getLogger(__name__)
 _FRAME_CAP = 8  # max frames sampled from a video (bounds cost)
 
 
-def _ffmpeg() -> str | None:
-    return shutil.which("ffmpeg")
+def _cannot_read(node_type: str, backend: str, ctx: NodeContext) -> NodeOutput:
+    """The failed step for a video with no file to read, or with no ffmpeg to read it: that one
+    in the words the owner reads where the step shows (``ffmpeg_not_found``)."""
+    error = ffmpeg_not_found() if ctx.file_path else "no file"
+    return NodeOutput(
+        node_type=node_type, backend=backend, success=False, error=error, pooled=False
+    )
 
 
 async def _lexicon_bias_terms(ctx: NodeContext) -> list[str] | None:
@@ -483,15 +488,9 @@ class AvSplitNode:
     uses_use_case = None
 
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
-        ff = _ffmpeg()
+        ff = find_ffmpeg()
         if not ctx.file_path or not ff:
-            return NodeOutput(
-                node_type=self.node_type,
-                backend=self.backend,
-                success=False,
-                error="no ffmpeg/file",
-                pooled=False,
-            )
+            return _cannot_read(self.node_type, self.backend, ctx)
         work = ctx.work_dir or os.path.dirname(ctx.file_path)
         audio_out = os.path.join(work, f"{ctx.item_id}.audio.wav")
         cmd = [ff, "-y", "-i", ctx.file_path, "-vn", "-ac", "1", "-ar", "16000", audio_out]
@@ -520,15 +519,9 @@ class FrameExtractNode:
     uses_use_case = None
 
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
-        ff = _ffmpeg()
+        ff = find_ffmpeg()
         if not ctx.file_path or not ff:
-            return NodeOutput(
-                node_type=self.node_type,
-                backend=self.backend,
-                success=False,
-                error="no ffmpeg/file",
-                pooled=False,
-            )
+            return _cannot_read(self.node_type, self.backend, ctx)
         work = ctx.work_dir or os.path.dirname(ctx.file_path)
         params = ctx.params or {}
         dense_regions = params.get("dense_regions") or []
@@ -695,11 +688,8 @@ class VideoClassifyNode:
         """Timestamp ranges to resample densely. Region-aware: uses the media duration
         (ffprobe) to target the content-heavy span. Without a probe, targets the whole
         clip (still bounded by max_iters)."""
-        import shutil
-        import subprocess
-
         dur = 0.0
-        ffprobe = shutil.which("ffprobe")
+        ffprobe = find_ffprobe()
         if ffprobe and ctx.file_path:
             try:
                 out = subprocess.run(

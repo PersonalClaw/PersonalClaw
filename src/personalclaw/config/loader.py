@@ -5113,11 +5113,12 @@ class AppConfig:
         # ~/.personalclaw/.env is a bind-mounted empty file. setdefault() preserves
         # any value the caller already set explicitly. An OWNED key (a provider's or an
         # app setting's secret) is read only through its settings reference, so it is
-        # never exported — see `config.credentials.OWNED_KEY_PREFIX`.
-        from personalclaw.config.credentials import is_owned_key
+        # never exported — see `config.credentials.OWNED_KEY_PREFIX` — and neither is a name
+        # that decides which programs run (`mirrored_into_the_environment`).
+        from personalclaw.config.credentials import mirrored_into_the_environment
 
         for k, v in creds.items():
-            if v and not is_owned_key(k):
+            if v and mirrored_into_the_environment(k):
                 os.environ.setdefault(k, v)
 
         return creds

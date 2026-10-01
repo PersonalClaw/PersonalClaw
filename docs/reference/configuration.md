@@ -279,6 +279,14 @@ including the Speak button on a reply) and **Speak replies aloud** (each reply r
 as it finishes, in the tab the message was sent from). Both are the Text-to-speech use case's
 own settings (`enabled` and `auto_speak`), set in Settings → Speech & Transcription.
 
+ffmpeg is not a key either. PersonalClaw runs it to cut a recording longer than the segment
+threshold into parts before it is transcribed, to take the sound and frames out of a video, and
+to join a spoken reply's sentences; a short recording is transcribed without it. It is looked for
+on the `PATH` the gateway started with, then in `~/.local/bin`, `/opt/homebrew/bin` and
+`/usr/local/bin`, and nowhere else, and it is run by that path: the gateway's own `PATH`, which
+every program it starts inherits, is never changed to find it. Settings → Speech &
+Transcription shows the one it found, or where it looked when there is none.
+
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
 | `voice.push_to_talk_chord` | string | `CommandOrControl+Shift+Space` | Settings → Speech & Transcription | The global shortcut the **desktop app** binds for push-to-talk: press to start capturing the microphone, press again to stop and transcribe into the composer at your cursor. An Electron accelerator string; needs at least one modifier, since a bare key would be taken from every other app on the machine. The desktop shell binds it and refuses an unusable or already-taken chord with a reason. Ignored in a browser tab (no global shortcuts). See [the desktop guide](../guides/desktop.md). |

@@ -298,7 +298,10 @@ class TestStitchWavs:
 
     @staticmethod
     def _ffmpeg(tmp_path, monkeypatch, body: str | None) -> None:
-        """PATH holds only a stand-in ``ffmpeg`` running *body*, or no ``ffmpeg`` at all."""
+        """PATH holds only a stand-in ``ffmpeg`` running *body*, or no ``ffmpeg`` at all, and
+        none of the folders a package manager installs it to is looked in."""
+        from personalclaw import ffmpeg_binary
+
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         if body is not None:
@@ -306,6 +309,7 @@ class TestStitchWavs:
             tool.write_text("#!/bin/sh\n" + body, encoding="utf-8")
             tool.chmod(0o755)
         monkeypatch.setenv("PATH", str(bin_dir))
+        monkeypatch.setattr(ffmpeg_binary, "FALLBACK_DIRS", ())
 
     @pytest.mark.asyncio
     async def test_no_ffmpeg_leaves_no_temp_file(self, tmp_path, monkeypatch, temp_folder):

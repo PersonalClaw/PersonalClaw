@@ -214,7 +214,7 @@ def test_the_whole_command_reads_the_running_gateway(running_gateway, providers,
         patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
         patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="v22.12.0")),
         patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
-        patch("personalclaw.cli_doctor.ensure_ffmpeg_in_path"),
+        patch("personalclaw.ffmpeg_binary.find_ffmpeg", return_value="/usr/local/bin/ffmpeg"),
     ):
         try:
             _doctor()

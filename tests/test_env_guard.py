@@ -52,6 +52,17 @@ def test_a_variable_outside_the_product_is_left_alone(probes) -> None:
     assert os.environ[_OUTSIDE] == "set by an import"
 
 
+def test_a_changed_path_is_named_and_put_back(monkeypatch) -> None:
+    """``PATH`` is watched too: no code PersonalClaw runs may change it, since every child it
+    starts resolves its programs on it. Registered first, so it is given back however this ends."""
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
+    before = env_guard.snapshot()
+
+    os.environ["PATH"] = "/somewhere/else" + os.pathsep + before["PATH"]
+    assert env_guard.give_back(before) == ["PATH"]
+    assert os.environ["PATH"] == before["PATH"]
+
+
 def test_the_failure_names_the_test_the_variables_and_the_fix() -> None:
     message = env_guard.leak_message(
         "tests/test_x.py::test_y", ["PERSONALCLAW_PORT", "PERSONALCLAW_PROJECT_DIR"]

@@ -359,10 +359,11 @@ class PipelineExecutor:
         dur = 0.0
         path = ctx.file_path or ""
         if path:
-            import shutil
             import subprocess
 
-            ffprobe = shutil.which("ffprobe")
+            from personalclaw.ffmpeg_binary import find_ffprobe
+
+            ffprobe = find_ffprobe()
             if ffprobe:
                 try:
                     out = subprocess.run(

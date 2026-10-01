@@ -1110,7 +1110,7 @@ class TestDoctorStt:
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
-            patch("personalclaw.cli_doctor.ensure_ffmpeg_in_path"),
+            patch("personalclaw.ffmpeg_binary.find_ffmpeg", return_value="/usr/local/bin/ffmpeg"),
             patch(
                 "personalclaw.providers.use_cases.load_use_case_settings",
                 return_value={"enabled": True},
@@ -1138,7 +1138,7 @@ class TestDoctorStt:
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
-            patch("personalclaw.cli_doctor.ensure_ffmpeg_in_path"),
+            patch("personalclaw.ffmpeg_binary.find_ffmpeg", return_value="/usr/local/bin/ffmpeg"),
             patch(
                 "personalclaw.providers.use_cases.load_use_case_settings",
                 return_value={"enabled": True},
@@ -1167,7 +1167,7 @@ class TestDoctorStt:
             patch("subprocess.run", return_value=mock_run),
             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
             patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
-            patch("personalclaw.cli_doctor.ensure_ffmpeg_in_path"),
+            patch("personalclaw.ffmpeg_binary.find_ffmpeg", return_value="/usr/local/bin/ffmpeg"),
             patch(
                 "personalclaw.providers.use_cases.load_use_case_settings",
                 return_value={"enabled": False},

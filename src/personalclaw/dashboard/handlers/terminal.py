@@ -448,8 +448,10 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             cwd = default_terminal_cwd(cfg)
             if _req_cwd and os.path.isdir(_req_cwd):
                 cwd = _req_cwd
+            from personalclaw.env import gateway_env
+
             env = {
-                **os.environ,
+                **gateway_env(),
                 "TERM": "xterm-256color",
                 "PERSONALCLAW_TERMINAL": "1",
                 # This PTY is an automation target: the cockpit/chat inject commands

@@ -153,11 +153,10 @@
       ]
     },
     "src/personalclaw/sdk/diarization.py": {
-      "inert": 3,
+      "inert": 2,
       "surfaces": [
         "sdk_export:DiarizationModel",
-        "sdk_export:DiarizationProvider",
-        "sdk_export:ensure_ffmpeg_in_path"
+        "sdk_export:DiarizationProvider"
       ]
     },
     "src/personalclaw/sdk/embedding.py": {
@@ -266,11 +265,10 @@
       ]
     },
     "src/personalclaw/sdk/stt.py": {
-      "inert": 3,
+      "inert": 2,
       "surfaces": [
         "sdk_export:SttModel",
-        "sdk_export:SttProvider",
-        "sdk_export:ensure_ffmpeg_in_path"
+        "sdk_export:SttProvider"
       ]
     },
     "src/personalclaw/sdk/tool.py": {
@@ -337,9 +335,9 @@
       "config_reader": 6,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 140,
+      "sdk_export": 138,
       "trigger_kind": 0
     },
-    "inert": 154
+    "inert": 152
   }
 }

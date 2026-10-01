@@ -249,6 +249,23 @@ the floor: a declaration cannot pass `AWS_SECRET*`, `AWS_SESSION*`,
 debug log at each spawn, so a script that needs one more variable is diagnosable
 rather than mysteriously broken.
 
+Every child, built or keeping the gateway's environment, resolves its programs on the
+**`PATH` the gateway started with**, and keeps its scratch files in the `TMPDIR` it started with
+(`env.gateway_env`, from what the CLI's entry point records before anything else runs), plus what
+its spawner adds on purpose (the MCP and agent CLI
+install folders `env.augmented_path` names, a server's own `PATH`). Nothing PersonalClaw runs
+changes the process's own `PATH`, which every child inherits: a program it needs, such as ffmpeg,
+is found by its absolute path and handed to what runs it (`ffmpeg_binary`), and
+`tests/test_process_environment_writes_census.py` classifies every write to the process
+environment, none of which names `PATH` or `TMPDIR`. A stored secret named after a variable that decides
+which programs run (`PATH`, the loader's `LD_*`/`DYLD_*`, `PYTHONPATH`, `NODE_OPTIONS`…:
+`env.PROGRAM_RESOLUTION_NAMES`) is stored and resolved through its reference like any other, but
+never mirrored into the process environment. A restart (the dashboard's, an applied update's)
+starts the new image in place of the old with the environment the gateway was launched with
+(`env.launch_env`) plus the sign-in mode it pins, never `os.environ` as it then stands, so nothing
+a running gateway changed in its own environment carries over and every restart starts from the
+same launch.
+
 **The SSH agent, and PersonalClaw's own git.** The one way past that floor is the SSH agent's
 socket, for a child that signs in over ssh with the owner's keys: `build_child_env(ssh_agent=True)`
 adds `SSH_AUTH_SOCK` and nothing else. A git command that talks to a remote (`clone`, `fetch`,

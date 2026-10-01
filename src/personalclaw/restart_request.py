@@ -49,11 +49,19 @@ def request_restart(*, auth_mode: str = "") -> RestartRequest:
     gateway's resolved auth mode, pinned into the new one's environment (#46): the launcher's
     environment may not have survived (the shell that exported ``=none`` exits and the process is
     reparented), and a restart must never change whether sign-in is required.
+
+    Every other variable is the environment this gateway was launched with (``env.launch_env``),
+    never ``os.environ`` as it now stands: the new image is started in place of this one, so what
+    a running gateway changed in its own environment would otherwise become the next one's launch
+    environment, and every child it builds would inherit it. Started from the launch, each
+    restart starts from the same environment, and the new gateway sets up the rest itself as it
+    starts (its `.env`'s credentials, the libraries' settings, the port it binds).
     """
     global _pending
     from personalclaw import shutdown_event
+    from personalclaw.env import launch_env
 
-    env = dict(os.environ)
+    env = launch_env()
     if auth_mode:
         env["PERSONALCLAW_AUTH_MODE"] = str(auth_mode)
     exe = sys.executable

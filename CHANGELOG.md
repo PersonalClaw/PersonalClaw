@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **A chat channel app can say whether it carries groups, and how someone it pairs sends their code: `ChannelCapabilities.groups` and `ChannelTransportProvider.sender_pairing_hint()` (SDK additions, used by `*-channel`).**
+- **Settings → Speech & Transcription shows which ffmpeg PersonalClaw runs, or where it looked when there is none; a long recording sent whole and a video whose sound could not be read say so too.**
 - **An agent can read what is waiting in your Inbox (`inbox_list`), so a Morning briefing that asks about your Inbox can answer.**
 - **An automation made in chat can send its result to the chat channel you name, and run when a workflow run you name finishes; the Triggers page makes one as "Run finishes"**
 - **Once a chat model is ready, onboarding's model lane still offers the Ollama on this machine or your network: "Also add a local model" adds it as one more provider and leaves the chat model as it is, and the recap lists every model provider set up.**
@@ -101,6 +102,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **`personalclaw.sdk.stt` and `personalclaw.sdk.diarization` replace `ensure_ffmpeg_in_path` with `find_ffmpeg` and `ffmpeg_not_found`: an app is handed the ffmpeg's path, and the gateway's `PATH` is never changed to find it (`faster-whisper`, `diarization-onnx` and `diarization-pyannote` move to them).**
 - **A model instance's address is its `endpoint`, the one option every provider reads: an address saved as `base_url` is refused with the field to use, and `ProviderEntry.endpoint` replaces `ProviderEntry.endpoints` (an SDK change; `alibaba-models`, `anthropic-models`, `claude-subscription`, `meta-muse-spark`, `openai-models`, `openrouter-models` and `vllm-models` read only `endpoint`).**
 - **`ChannelMessage.attachments`, a list of names, is replaced by `ChannelMessage.files`, the files themselves (`email-channel` passes them).**
 - **`personalclaw.sdk.search.search_with_fallback` returns the result alone, `SearchResult.fallback` (a `SearchFallback`) names the provider that failed when another answered, and when both fail its error says what each said; `web-tools` uses it.**
@@ -898,6 +900,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **A sender's pairing code lets someone in only while the channel's rule for strangers asks for one: a code Email found in a mail paired its sender under "only you let them in", Pair someone is offered only under the rule that takes codes, and changing the rule ends a code still outstanding.**
+- **A transcription no longer puts the folder holding ffmpeg in front of the gateway's `PATH`; every tool server, hook and script starts with the `PATH` and `TMPDIR` the gateway was launched with, and a Restart starts from that launch environment, so a stdio server's command never resolves to a program from a folder you never put on your `PATH`.**
+- **A secret named after a variable that decides which programs run (`PATH`, `NODE_OPTIONS`, `LD_PRELOAD` and the like) is stored and resolved like any other, but never put into the gateway's environment.**
 - **The agent's shell refuses a command that lists a credential folder under your home, such as `ls ~/.aws` or `find ~/.ssh`, or a glob that reaches one, with the sentence a read of a file inside it gets.**
 - **A prompt sent through an OpenAI-compatible instance on this machine gets the outbound secret scan the setting asks for, since a proxy there can pass it on to a cloud service.**
 - **The gateway's internal credential opens only the operations PersonalClaw's own processes call, each one method on one route; it used to open every route under a listed path, every trigger route among them.**

@@ -200,12 +200,14 @@ def start_transient_gateway() -> tuple[int, str, subprocess.Popen]:
         "--no-open",
         "--json-ready",
     ]
+    from personalclaw.env import gateway_env
+
     proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env={**os.environ},
+        env=gateway_env(),
     )
     deadline = time.monotonic() + _BOOT_TIMEOUT_SECS
     assert proc.stdout is not None

@@ -51,6 +51,7 @@ from unittest.mock import patch
 import pytest
 
 import personalclaw.cli_doctor as cd
+from personalclaw import ffmpeg_binary
 
 # ── The install hint is per-platform ─────────────────────────────────────────
 
@@ -66,13 +67,13 @@ import personalclaw.cli_doctor as cd
 def test_the_ffmpeg_hint_names_a_manager_that_exists_on_that_platform(
     platform: str, expected: str
 ) -> None:
-    assert expected in cd._ffmpeg_install_hint(platform)
+    assert expected in ffmpeg_binary.install_hint(platform)
 
 
 def test_brew_is_offered_on_darwin_ONLY() -> None:
     """The control for the test above: `brew` appearing everywhere would satisfy it too."""
     for plat in ("linux", "linux2", "win32", "cygwin", "freebsd13"):
-        assert "brew" not in cd._ffmpeg_install_hint(plat), plat
+        assert "brew" not in ffmpeg_binary.install_hint(plat), plat
 
 
 # ── The fault is licensed by a bound model ───────────────────────────────────
@@ -94,8 +95,6 @@ def _stt_block(
     """
 
     def _which(binary: str) -> str | None:
-        if binary == "ffmpeg" and not have_ffmpeg:
-            return None
         return f"/usr/local/bin/{binary}"
 
     def _run(cmd, *a, **kw):  # noqa: ANN001 - subprocess.run's signature
@@ -112,6 +111,11 @@ def _stt_block(
     assert cd.agents_dir() == tmp_path / "agents"
     with (
         patch.object(cd.shutil, "which", side_effect=_which),
+        patch.object(
+            ffmpeg_binary,
+            "find_ffmpeg",
+            return_value="/usr/local/bin/ffmpeg" if have_ffmpeg else None,
+        ),
         patch("subprocess.run", side_effect=_run),
         patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
         patch.object(cd, "is_local_bind", return_value=True),

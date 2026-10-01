@@ -60,7 +60,9 @@ def service_path(home: str) -> str:
         "/usr/bin",
         "/bin",
     ]
-    env_path = [p for p in os.environ.get("PATH", "").split(":") if p]
+    from personalclaw.env import startup_path
+
+    env_path = [p for p in (startup_path() or "").split(":") if p]
     seen: set[str] = set()
     out: list[str] = []
     for entry in required + env_path:

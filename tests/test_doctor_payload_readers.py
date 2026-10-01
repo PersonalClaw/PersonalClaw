@@ -327,7 +327,7 @@ def test_personalclaw_doctor_prints_the_deficit_and_its_blocker(tmp_path, monkey
         patch("subprocess.run", return_value=mock_run),
         patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
         patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
-        patch("personalclaw.cli_doctor.ensure_ffmpeg_in_path"),
+        patch("personalclaw.ffmpeg_binary.find_ffmpeg", return_value="/usr/local/bin/ffmpeg"),
     ):
         # `_doctor` only raises when it collected issues; a clean run returns.
         code: object = 0

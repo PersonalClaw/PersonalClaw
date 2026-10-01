@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **893 registrations** over **723 distinct paths** — 886 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **894 registrations** over **724 distinct paths** — 887 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -96,6 +96,7 @@ The 128 families the surface divides into, largest first.
 | `/api/guardrails` | 2 | 1 |
 | `/api/heartbeat` | 2 | 2 |
 | `/api/session` | 2 | 2 |
+| `/api/stt` | 2 | 2 |
 | `/api/system` | 2 | 2 |
 | `/api/upload` | 2 | 2 |
 | `/api/ws` | 2 | 2 |
@@ -147,7 +148,6 @@ The 128 families the surface divides into, largest first.
 | `/api/session-tool-policy` | 1 | 1 |
 | `/api/slash-commands` | 1 | 1 |
 | `/api/status` | 1 | 1 |
-| `/api/stt` | 1 | 1 |
 | `/api/suggestions` | 1 | 1 |
 | `/api/surfaces` | 1 | 1 |
 | `/api/token` | 1 | 1 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 887 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -910,6 +910,7 @@ The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/spawn/{agent_id}` | cancel a running subagent or remove a finished one. |
 | `GET` | `/api/spawn/{agent_id}` | poll subagent status. |
 | `GET` | `/api/status` | _(no summary)_ |
+| `GET` | `/api/stt/ffmpeg` | the ffmpeg transcription runs, or why there is none. |
 | `POST` | `/api/stt/transcribe` | transcribe uploaded audio via the active STT model. |
 | `GET` | `/api/suggestions` | return pre-computed contextual suggestions. |
 | `GET` | `/api/surfaces/overlays` | the user/agent (L2) overlays, plus named refusals. |

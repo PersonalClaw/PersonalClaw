@@ -860,6 +860,18 @@ def _library_env_restored(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _startup_environment_unrecorded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every ``personalclaw`` command records the ``PATH`` and ``TMPDIR`` it started with, and
+    every child it builds an environment for gets those (``env.gateway_env``). A test that drives
+    ``cli.main()`` would leave its record to every test after it in the worker, whose children
+    would then run on that test's ``PATH`` and ``TMPDIR`` instead of their own. Unrecorded here,
+    so each test's children see what the test set, and teardown puts back what was there."""
+    from personalclaw import env
+
+    monkeypatch.setattr(env, "_startup", env._NOT_RECORDED)
+
+
+@pytest.fixture(autouse=True)
 def _no_acp_provision(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never auto-provision (npm-install) ACP adapters during tests — provisioning
     is a real network + filesystem side effect (writes to the managed prefix under

@@ -201,7 +201,7 @@ def split_sentences(text: str) -> list[str]:
 
 
 async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None:
-    """Concatenate WAV files into a single file using ffmpeg.
+    """Concatenate WAV files into a single file using ffmpeg (``ffmpeg_binary.find_ffmpeg``).
 
     With no *output* the stitch writes a temporary file of its own and hands it to the caller to
     remove. A stitch that does not hand it back removes it here, because a caller given ``None``
@@ -214,6 +214,12 @@ async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None
             shutil.copy2(paths[0], output)
             return output
         return paths[0]
+    from personalclaw.ffmpeg_binary import find_ffmpeg
+
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        logger.warning("ffmpeg stitch skipped: ffmpeg is not installed")
+        return None
     own_output = output is None
     if output is None:
         fd, output = tempfile.mkstemp(suffix=".wav")
@@ -223,7 +229,7 @@ async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None
     stitched: str | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
+            ffmpeg,
             "-y",
             "-i",
             f"concat:{concat}",

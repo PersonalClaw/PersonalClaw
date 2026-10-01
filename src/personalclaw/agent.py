@@ -1280,7 +1280,9 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
             except ForeignSecretReference as exc:
                 logger.warning("Dropping MCP server %r: %s", name, exc)
                 continue
-            search_path = (env_path + os.pathsep if env_path else "") + os.environ.get("PATH", "")
+            from personalclaw.env import startup_path
+
+            search_path = (env_path + os.pathsep if env_path else "") + (startup_path() or "")
             resolved = shutil.which(cmd, path=search_path)
         if resolved:
             spec["command"] = resolved
