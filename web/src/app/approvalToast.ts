@@ -1,4 +1,4 @@
-import { blastRadiusLine, deriveBlastRadius, type ApprovalRisk } from '../pages/chat/approvalMeta'
+import { blastRadiusLine, type BlastRadius } from '../pages/chat/approvalMeta'
 import { approvalDestination } from './approvalDestination'
 
 /** The COMPACT form of the approval brief.
@@ -24,15 +24,11 @@ export function approvalToastMessage(input: {
   who: string
   tool: string
   session: string
-  risk?: ApprovalRisk
-  /** The backend's read verdict, off the same `approval` frame the card reads (#2821).
-   *  Present so the toast and the card cannot describe one call differently — they share
-   *  the vocabulary, so they must share the inputs too. */
-  readOnly?: boolean
+  /** What the call can touch, off the same `approval` frame the card reads: the radius the
+   *  backend composed, so the toast and the card cannot describe one call differently. */
+  blastRadius?: BlastRadius
 }): string {
-  const line = blastRadiusLine(
-    deriveBlastRadius({ tool: input.tool, risk: input.risk, readOnly: input.readOnly }),
-  )
+  const line = blastRadiusLine(input.blastRadius)
   const touches = line ? ` (${line})` : ''
   // WHERE TO ANSWER comes from `approvalDestination`, not from the raw session key. The key is
   // openable prose only for a chat; a workflow stage's `workflow:<run>:<node>` named a 404 and

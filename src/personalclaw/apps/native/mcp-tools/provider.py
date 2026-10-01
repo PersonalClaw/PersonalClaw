@@ -65,6 +65,8 @@ class McpToolProvider(ToolProvider):
                         parameters=tool.input_schema,
                         requires_approval=risk is not RiskLevel.SAFE,
                         risk_level=risk,
+                        # The server's labels as it sent them, for the approval to show.
+                        annotations=dict(tool.annotations or {}),
                     )
                 )
         return tools

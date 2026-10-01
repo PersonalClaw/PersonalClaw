@@ -138,6 +138,11 @@ class ToolDefinition:
     # but an automation's own agent, whose grant is `read`, may make it: telling the owner what
     # it found is what an automation is for.
     tells_owner: tuple[str, ...] = ()
+    # The tool's MCP annotations (``readOnlyHint``, ``destructiveHint``, ``openWorldHint``, …) as
+    # its server sent them. A claim, shown on an approval as the server's word: what a call is
+    # taken to do is ``risk_level``, which believes a read-only label only from a server the owner
+    # trusts (:func:`risk_from_annotations`).
+    annotations: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # `==`, not `is`: a constructor may pass the level's string value.

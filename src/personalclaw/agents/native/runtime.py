@@ -1842,6 +1842,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     builds=tool_name in self._tool_builds,
                     proposes=tool_name in self._tool_proposes,
                     tells_owner=self._tells_owner(tool_name, args),
+                    annotations=self._annotations_of(tool_name),
                 )
                 decision = await self._approval.wait(request_id, fut)
                 if self._cancelled:

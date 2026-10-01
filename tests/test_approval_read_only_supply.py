@@ -22,7 +22,6 @@ since a facet present on one surface and absent on the other was the drift #2821
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -194,11 +193,11 @@ async def test_the_verdict_is_derived_before_redaction_rewrites_the_command() ->
 
     Honest about its own strength: **no input is known today for which redaction flips the
     verdict.** Every read-only command tried whose text redaction rewrites still screens
-    read-only, because ``[REDACTED: credential]`` introduces none of the characters
-    ``_UNSAFE_SHELL_RE`` rejects and the ``--help``/``--version`` suffix checks survive
-    substitution. So this asserts the observable half — the two strings genuinely differ,
-    and the verdict tracks the raw one — rather than claiming a demonstrated miscue. Its
-    value is that it reds if a future redaction rule (or a new screener prefix) makes the
+    read-only, because ``[REDACTED: credential]`` introduces no shell syntax the screen
+    refuses and no option the program's read-only forms lack. So this asserts the observable
+    half — the two strings genuinely differ, and the verdict tracks the raw one — rather than
+    claiming a demonstrated miscue. Its
+    value is that it reds if a future redaction rule (or a new read-only form) makes the
     two disagree, at which point screening the display copy would be a live defect.
     """
     state = _state()
@@ -217,70 +216,51 @@ async def test_the_verdict_is_derived_before_redaction_rewrites_the_command() ->
 
 
 class TestBothPermissionSurfacesAgree:
-    """The chat card and the companion queue derive from the same inputs.
+    """Every surface describes a call from the radius the backend composed for it.
 
-    Source-level assertions, because the two surfaces are separate React trees and the
-    drift #2821 named is precisely "one of them forgot". A rail that only checked the
-    chat path would have passed on the exact state the issue was filed about.
+    Source-level assertions, because the surfaces are separate React trees and the drift #2821
+    named is precisely "one of them forgot". A surface that derived its own facets from a tool's
+    name would describe a shell call by "bash" rather than by what its command does.
     """
 
-    def test_every_derive_call_site_passes_the_read_verdict(self) -> None:
-        """``deriveBlastRadius`` has three call sites; all three must supply the input.
+    #: The surfaces that read an approval's radius off the wire.
+    READERS = [
+        "app/useApprovalToasts.ts",
+        "pages/ChatPage.tsx",
+        "pages/chat/chatTypes.ts",
+        "pages/companion/CompanionPage.tsx",
+        "pages/loops/LoopApprovals.tsx",
+    ]
 
-        Enumerated from the source rather than trusted: the census is the assertion, so a
-        FOURTH call site added later without the input reds here instead of shipping a
-        surface that quietly describes a read-only call as unscreened.
-        """
-        sites = sorted(
+    def test_every_reader_decodes_the_radius_through_the_one_decoder(self) -> None:
+        """Enumerated from the source rather than trusted: a new reader added without the
+        decoder reds here instead of shipping a surface that casts the wire."""
+        readers = sorted(
             p.relative_to(WEB).as_posix()
             for p in WEB.rglob("*.ts*")
-            if not p.name.endswith(".test.ts") and not p.name.endswith(".test.tsx")
-            for _ in range(1)
-            if "deriveBlastRadius(" in p.read_text(encoding="utf-8")
+            if not p.name.endswith((".test.ts", ".test.tsx"))
+            and "blast_radius" in p.read_text(encoding="utf-8")
         )
-        assert sites == [
-            "app/approvalToast.ts",
-            "pages/chat/ApprovalCard.tsx",
-            "pages/chat/approvalMeta.ts",
-            "pages/companion/CompanionPage.tsx",
-        ], sites
-        for rel in sites:
-            if rel == "pages/chat/approvalMeta.ts":
-                continue  # the definition itself, not a call site
+        # api.ts declares the field and approvalMeta.ts documents it; the rest READ it.
+        assert [r for r in readers if r not in ("lib/api.ts", "pages/chat/approvalMeta.ts")] == (
+            self.READERS
+        ), readers
+        for rel in self.READERS:
             text = (WEB / rel).read_text(encoding="utf-8")
-            calls = re.findall(r"deriveBlastRadius\(\{[^}]*\}", text)
-            assert calls, f"{rel}: no deriveBlastRadius call found — this rail measures nothing"
-            for call in calls:
-                assert re.search(
-                    r"\breadOnly\b", call
-                ), f"{rel} derives a blast radius without the verdict: {call}"
+            assert "blastRadiusOf(" in text, f"{rel} reads blast_radius without the one decoder"
 
-    def test_every_wire_parse_decodes_through_the_one_decoder(self) -> None:
-        """``is_read_only`` must never be read by casting or by truthiness.
-
-        ``""`` (a transcript row's spelling of no) is falsy but not ``=== false``, so a raw
-        pass-through reads as "no verdict" and drops the negative one. ``readOnlyOf`` owns the
-        wire's spellings; every reader goes through it.
-        """
-        readers = {
-            p.relative_to(WEB).as_posix()
-            for p in WEB.rglob("*.ts*")
-            if not p.name.endswith(".test.ts")
-            and not p.name.endswith(".test.tsx")
-            and "is_read_only" in p.read_text(encoding="utf-8")
-        }
-        # api.ts and approvalMeta.ts declare/document the field; the rest READ it.
-        for rel in readers - {"lib/api.ts", "pages/chat/approvalMeta.ts"}:
-            text = (WEB / rel).read_text(encoding="utf-8")
-            assert "readOnlyOf(" in text, (
-                f"{rel} reads is_read_only without the one decoder; "
-                "an empty string is falsy but not === false"
-            )
+    def test_no_surface_derives_a_radius_of_its_own(self) -> None:
+        for p in WEB.rglob("*.ts*"):
+            if p.name.endswith((".test.ts", ".test.tsx")):
+                continue
+            text = p.read_text(encoding="utf-8")
+            assert "deriveBlastRadius" not in text, p
+            assert "readOnlyOf" not in text, p
 
     def test_the_source_census_is_not_vacuous(self) -> None:
         """Both scans above are greps over a tree; prove the tree was actually read."""
         assert (WEB / "pages" / "chat" / "approvalMeta.ts").exists()
         assert len(list(WEB.rglob("*.ts*"))) > 100
-        assert "readOnlyOf" in (WEB / "pages" / "chat" / "approvalMeta.ts").read_text(
-            encoding="utf-8"
-        )
+        assert "export function blastRadiusOf" in (
+            WEB / "pages" / "chat" / "approvalMeta.ts"
+        ).read_text(encoding="utf-8")

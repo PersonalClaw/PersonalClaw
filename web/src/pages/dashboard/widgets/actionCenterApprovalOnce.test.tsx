@@ -17,7 +17,7 @@ const APPROVAL = {
   id: 'chat-a:1', request_id: '1', source: '', tool: 'bash',
   tool_input: '{"command": "rm -rf /tmp/scratch"}', tool_purpose: '',
   session: 'chat-a', session_title: 'Clean the scratch dir', agent: 'researcher',
-  risk: 'destructive', is_read_only: false, grant_agent: '', ts: 1,
+  risk: 'destructive', grant_agent: '', ts: 1,
 }
 const row = (id: string, message: string, refs: Record<string, string>, kind = 'agent_request') => ({
   id, channel: 'system', channel_name: 'system', message, sender_id: 'system', sender_name: 'system',

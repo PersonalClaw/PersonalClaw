@@ -196,9 +196,10 @@ reads that entry:
 | The Inbox, and that row's notification (the bell, Notifications) | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}`; its notification carries the same refs |
 
 The entry carries enough to act on: which chat (`session`, `session_title`), which agent
-(`agent`), and what it wants to do (`tool`, redacted `tool_input`/`tool_purpose`, `risk`, and
+(`agent`), and what it wants to do (`tool`, redacted `tool_input`/`tool_purpose`, `risk`,
 `is_read_only`: whether the call is established as a read, true or false, from
-`task_modes.reads_only`). `_hold_approval` is the one registration and writes all of the above
+`task_modes.reads_only`, and `blast_radius`: what the call can touch, from the same reading
+(`approval_brief.call_blast_radius`), which every surface shows as it is). `_hold_approval` is the one registration and writes all of the above
 together; there is no path by which a surface learns of an approval another does not list. A chat
 approval used to broadcast its own frame and register nowhere else, so it reached only its own
 chat.

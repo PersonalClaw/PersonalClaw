@@ -700,6 +700,31 @@ async def test_a_mutating_shell_call_must_name_the_tier(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_shell_command_the_screen_cannot_check_must_name_the_tier(monkeypatch):
+    """A command the screen cannot vouch for can do anything the shell can: it takes the
+    destructive confirmation, and the refusal says why in words that are true of it."""
+    import json
+
+    prov = _RecordingProvider("bash", provider_tag="personalclaw-filesystem")
+    _install_platform(monkeypatch, prov)
+    _disable(monkeypatch)
+
+    call = {"tool": "bash", "arguments": {"command": "python report.py"}}
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest(call))
+    assert resp.status == 403
+    error = json.loads(resp.body.decode())["error"]
+    assert error["code"] == "risk_confirmation_required"
+    assert error["risk"] == "unchecked"
+    assert "could not check" in error["message"]
+    assert "DESTRUCTIVE" not in error["message"]
+    assert prov.invoked == []
+
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest({**call, "confirm_risk": "destructive"}))
+    assert resp.status == 200
+    assert prov.invoked == [("bash", {"command": "python report.py"})]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("risk", ["safe", "caution"])
 async def test_the_gate_stops_at_destructive(monkeypatch, risk):
     """Vacuity floor AND a scope boundary, deliberately pinned.

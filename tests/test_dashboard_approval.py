@@ -376,6 +376,7 @@ class TestResolveApprovalSessionFallback:
             agent="PersonalClaw",
             risk="",
             is_read_only=None,
+            blast_radius=None,
             grant_agent="",
         )
         return fut, chat_approval_id(session.key, request_id)

@@ -20,12 +20,13 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from personalclaw import approval_answer
 from personalclaw.approval_answer import AnswerRefused, Principal
+from personalclaw.approval_brief import RISK_LABELS, derive_blast_radius
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
-from personalclaw.task_modes import reads_only, resolve_effective_risk, tool_input_to_str
+from personalclaw.task_modes import read_call, tool_input_to_str
 from personalclaw.textfmt import clip_words
 
 if TYPE_CHECKING:
@@ -164,7 +165,8 @@ def _approval_row_body(entry: dict[str, Any]) -> str:
     carries — so the row can be judged from the Inbox rather than only opened.
     """
     tool = str(entry.get("tool") or "a tool")
-    risk = str(entry.get("risk") or "")
+    # The risk in the words every other surface uses for it (`approval_brief.RISK_LABELS`).
+    risk = RISK_LABELS.get(str(entry.get("risk") or ""), "").lower()
     lines = [
         f"{_who_asked(entry)} is waiting for your decision on {tool}"
         + (f" (risk: {risk})." if risk else ".")
@@ -241,6 +243,7 @@ class DashboardApprovalState:
         asked_on_channel: bool = False,
         risk_level: str = "",
         tool_kind: str = "",
+        annotations: dict[str, Any] | None = None,
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
 
@@ -250,6 +253,8 @@ class DashboardApprovalState:
         screened command, never from the tool's name. ``tool_kind`` is the kind the call
         arrived with (``AgentEvent.tool_kind``), which a chat's card reads the same call by: an
         ACP agent's shell call is known as one by its kind, so its command is screened here too.
+        ``annotations`` is what the tool's server labels it (``AgentEvent.annotations``), which the
+        pending row's blast radius shows as the server's word.
 
         ``asked_on_channel`` says the caller is already asking the owner on a chat channel (the
         gateway's race for a background origin), so no channel is asked a second time from here.
@@ -290,6 +295,11 @@ class DashboardApprovalState:
         #   (`chat_runner`/`chat_utils`), so the approval prompt and the tool pill cannot describe
         #   one call differently.
         display_input = tool_input_to_str(tool_input)
+        # ONE reading of the RAW call gives the verdict, the risk and what it can touch, so no
+        # surface can describe it differently. Read off the RAW `tool_input`, NOT
+        # `display_input`: the entry's copy has had URLs and credentials rewritten, and screening
+        # a string the shell will never see is how a verdict stops describing the actual call.
+        reading = read_call(risk_level, tool, tool_kind, tool_input)
 
         entry = self._approval_entry(
             approval_id,
@@ -304,20 +314,14 @@ class DashboardApprovalState:
             # Whether the call is established as a read, from the same owner and the same
             # inputs as the chat card's, so the two surfaces that ask a human for permission
             # cannot describe one call differently.
-            #
-            # Read off the RAW `tool_input`, NOT `display_input`: the entry's copy has had URLs
-            # and credentials rewritten, and screening a string the shell will never see is how
-            # a verdict stops describing the actual call. The raw object is also the more
-            # precise input — `reads_only` takes an `object` precisely so it can read a native
-            # dict's `command` key instead of re-parsing a serialized copy.
-            is_read_only=reads_only(tool, tool_kind, tool_input, risk_level),
-            # Only from a declaration: a call that carries none (an ACP agent's own tool, an MCP
-            # server's question) has no risk anybody established, and "" says exactly that.
-            risk=(
-                resolve_effective_risk(risk_level, tool, tool_kind, tool_input)
-                if risk_level
-                else ""
+            is_read_only=reading.risk == "safe",
+            blast_radius=derive_blast_radius(
+                tool, risk=reading.risk, effects=reading.effects, annotations=annotations
             ),
+            # From a declaration or a command read: a call that carries neither (an ACP agent's
+            # own tool, an MCP server's question) has no risk anybody established, and "" says
+            # exactly that.
+            risk=reading.risk if risk_level or reading.effects is not None else "",
         )
         if asked_on_channel:
             self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
@@ -369,6 +373,7 @@ class DashboardApprovalState:
         agent: str,
         risk: str,
         is_read_only: bool,
+        blast_radius: dict[str, bool] | None,
         grant_agent: str,
     ) -> None:
         """Publish the approval a chat's runner is about to wait on, under
@@ -380,8 +385,8 @@ class DashboardApprovalState:
 
         ``tool_input`` is the caller's already-sanitized display string (the same one the
         transcript row persists), and ``is_read_only`` whether the call is established as a
-        read, read off the RAW input — the rule `request_approval` states, kept by the one
-        caller that holds the raw object.
+        read and ``blast_radius`` what it can touch, both read off the RAW input — the rule
+        `request_approval` states, kept by the one caller that holds the raw object.
         """
         entry = self._approval_entry(
             chat_approval_id(session.key, request_id),
@@ -394,6 +399,7 @@ class DashboardApprovalState:
             tool_purpose=tool_purpose,
             session=session.key,
             is_read_only=is_read_only,
+            blast_radius=blast_radius,
             agent=agent,
             risk=risk,
             grant_agent=grant_agent,
@@ -414,6 +420,7 @@ class DashboardApprovalState:
         tool_purpose: str,
         session: str,
         is_read_only: bool,
+        blast_radius: dict[str, bool] | None,
         asked_by: str,
         agent: str = "",
         risk: str = "",
@@ -429,7 +436,9 @@ class DashboardApprovalState:
         Every LLM-sourced string is redacted here, once, for both origins. ``agent`` and
         ``grant_agent`` are known only to a chat and stay empty for a background origin: empty
         is "not known", never "none". ``risk`` is the call's effective risk, from what its tool
-        declares, when it declares one. ``trigger`` is known only to a trigger's run, and its name
+        declares, when it declares one. ``blast_radius`` is what the call can touch
+        (``approval_brief.call_blast_radius``), or ``None`` when nothing was established.
+        ``trigger`` is known only to a trigger's run, and its name
         is read once, here, so the ask and its note name it the same way. ``asked_by`` is the
         principal that raised it, which may never answer it (``approval_answer``, rule 2).
         """
@@ -452,6 +461,7 @@ class DashboardApprovalState:
             "agent": agent,
             "risk": risk,
             "is_read_only": is_read_only,
+            "blast_radius": blast_radius,
             "grant_agent": grant_agent,
             "trigger": trigger,
             "trigger_name": redact_field(trigger_name(trigger)) if trigger else "",

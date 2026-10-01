@@ -4,7 +4,7 @@ import { useChatSocket } from '../lib/useChatSocket'
 import { playCue } from '../design/soundCues'
 import { approvalToastMessage } from './approvalToast'
 import { approvalDestination, loopApprovalSession } from './approvalDestination'
-import { approvalRiskOf, readOnlyOf } from '../pages/chat/approvalMeta'
+import { blastRadiusOf } from '../pages/chat/approvalMeta'
 
 /** Shell-level watcher: surfaces a toast when a tool-approval is requested for a
  *  chat session the user is NOT currently viewing — most importantly a SUBAGENT's
@@ -46,10 +46,9 @@ export function useApprovalToasts(activeSession: string) {
       : source ? 'A background task'
         : loopApprovalSession(session) ? 'A loop' : 'Another chat session'
     // The compact form of the same brief the card renders — one shared facet
-    // vocabulary, two presentations, no second approval renderer. `risk` rides the same
-    // `approval` frame the card reads it from (chat_runner broadcasts the EFFECTIVE risk);
-    // it is cast, not validated, exactly as ChatPage does, and an unknown value simply
-    // establishes nothing.
+    // vocabulary, two presentations, no second approval renderer. The radius rides the same
+    // `approval` frame the card reads it from, decoded the same way: a shape this build cannot
+    // read simply establishes nothing.
     // WHERE TO ANSWER. The sentence used to end in the raw session key, which is openable only
     // for a chat — a workflow stage's `workflow:<run>:<node>` is not in `/api/chat/sessions` and
     // has no route, so the one notification the user got led to a 404 (#258). `approvalDestination`
@@ -60,9 +59,7 @@ export function useApprovalToasts(activeSession: string) {
       detail: {
         level: 'info',
         message: approvalToastMessage({
-          who, tool, session, risk: approvalRiskOf(d.risk),
-          // Decoded, not cast: `readOnlyOf` owns the wire's spellings.
-          readOnly: readOnlyOf(d.is_read_only),
+          who, tool, session, blastRadius: blastRadiusOf(d.blast_radius),
         }),
         href: dest.href,
         hrefLabel: dest.linkLabel,

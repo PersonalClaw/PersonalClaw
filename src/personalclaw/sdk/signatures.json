@@ -1330,7 +1330,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "builds"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "audit_ids"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "tells_owner"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "tells_owner"},
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"}
    ],
    "returns": "None"
   },
@@ -8943,7 +8944,8 @@
     {"annotation": "int | None", "default": "None", "kind": "positional_or_keyword", "name": "max_output"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "builds"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"},
-    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "tells_owner"}
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "tells_owner"},
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"}
    ],
    "returns": "None"
   },

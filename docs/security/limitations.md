@@ -746,6 +746,28 @@ credentials in the OS keychain** on (Settings → Security → Credential storag
 them in the keychain rather than in `.env`. Treat an agent's shell as able to read what your own
 account can when it sets out to.
 
+## 14. A shell command read as a read is read from its text
+
+Trust reads, Ask and Plan mode run a shell command without asking only when PersonalClaw reads it as
+a read (`command_effects`): every program in it is one it knows, run in a form that only reads, with
+every option and subcommand it uses known to read. Anything else is not a read: an unknown program,
+option or subcommand, a redirect into a file, an expansion (`$…`, a backtick), a subshell or a group.
+Sending stderr to `/dev/null`, joining it to stdout (`2>&1`) and a leading `cd <folder> &&` change
+nothing and are allowed. The approval prompt shows what the reading established: "Reads only",
+"Writes files", "Uses the network", "Runs a command" for a part it could not vouch for, and the
+risk **Not checked** for such a command rather than Safe or Destructive.
+
+What the reading does not see:
+
+- **A program reads its own configuration.** `git status` and `git log` honour the repository's
+  `.git/config`, which can name a program git runs (an fsmonitor, a diff driver): reading a
+  repository that someone else prepared runs what it configures, as any git you run there would.
+- **The shell is yours.** The command runs in a login shell, so a function or an alias your
+  profile defines under a program's name runs instead of the program.
+
+**What this means for you:** Trust reads is for reading your own files and repositories. Turn it
+off for a chat that works in a folder or a repository you did not create.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -759,6 +781,8 @@ code, which today only a backend that names a sandbox tier has, for #7; a sessio
 agent's shell cannot read, for #10; masking an agent CLI's requests in the capture proxy its
 model calls can already be pointed at (`inbound/capture_proxy.py`), for #11; running the git of a
 repository an agent can write under that agent's own sandbox, for #12; hiding the credential store
-from the agent's shell at every sandbox level, for #13). This page will shrink as those land.
+from the agent's shell at every sandbox level, for #13; running a command Trust reads approves
+inside a read-only sandbox with the program's own configuration ignored, for #14). This page will
+shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

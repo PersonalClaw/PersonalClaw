@@ -405,10 +405,11 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     for any approval.
 
     It also includes the risk tier (#506). A call whose EFFECTIVE risk resolves as
-    ``destructive`` is refused with ``403 risk_confirmation_required`` unless the body
-    names the tier in ``confirm_risk``. ``safe`` and ``caution`` are unchanged, and the
-    per-invocation downgrade keeps a read-only ``bash`` in the free tier — see the gate
-    itself for why the scope stops exactly there.
+    ``destructive``, or a shell command the screen could not check (``unchecked``), is refused
+    with ``403 risk_confirmation_required`` unless the body says ``"confirm_risk":
+    "destructive"``. ``safe`` and ``caution`` are unchanged, and the per-invocation reading keeps
+    a read-only ``bash`` in the free tier — see the gate itself for why the scope stops exactly
+    there.
     """
     from personalclaw.agents.native.builtin_tools import PLATFORM_TOOL_NAMES
     from personalclaw.tool_providers.registry import resolve, tool_surface
@@ -542,7 +543,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     # scripts + the inspector "Try it") is as auditable as the chat gate ("what
     # destructive tool ran"). Resolve the declared risk from the provider's tool
     # def, then downgrade per-invocation (a read-only bash call is safe).
-    from personalclaw.task_modes import resolve_effective_risk
+    from personalclaw.task_modes import MAY_DESTROY, UNCHECKED, resolve_effective_risk
 
     _declared = getattr(_tool_def, "risk_level", "")
     _risk = resolve_effective_risk(_declared, tool_name, "", arguments)
@@ -576,7 +577,11 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     # loopback + internal-secret, so every caller here is the owner or something the owner
     # installed. It removes the silent default, and it makes the inspector's ceremony a
     # wire requirement rather than a local boolean the UI could be bypassed by omitting.
-    if _risk == "destructive" and str(body.get("confirm_risk") or "") != "destructive":
+    #
+    # A shell command the screen could not check (`UNCHECKED`) can do anything the shell can, so
+    # it takes the same confirmation, named the same way: the caller states it accepts a call
+    # that may be destructive.
+    if _risk in MAY_DESTROY and str(body.get("confirm_risk") or "") != "destructive":
         try:
             _sel().log_tool_invocation(
                 session_key=caller,
@@ -593,8 +598,13 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         return json_error(
             "risk_confirmation_required",
             message=(
-                f"{tool_name!r} resolves as a DESTRUCTIVE call. Re-send with "
-                '"confirm_risk": "destructive" to run it.'
+                (
+                    f"{tool_name!r} runs a command PersonalClaw could not check, so it may do "
+                    "anything the shell can."
+                    if _risk == UNCHECKED
+                    else f"{tool_name!r} resolves as a DESTRUCTIVE call."
+                )
+                + ' Re-send with "confirm_risk": "destructive" to run it.'
             ),
             status=403,
             # The tier travels in the envelope so a client can escalate to the right

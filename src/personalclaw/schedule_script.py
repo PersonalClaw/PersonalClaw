@@ -215,10 +215,10 @@ class ScriptContext:
             if not r["ok"]:
                 raise Report("tool refused: " + r["error"]["code"])
 
-        A call whose EFFECTIVE risk resolves as destructive is refused with 403
-        risk_confirmation_required unless it names the tier (#506) — which reaches that
-        guard as r["error"]["code"] == "risk_confirmation_required". Pass
-        confirm_risk="destructive" to run one deliberately:
+        A call whose EFFECTIVE risk resolves as destructive, or a shell command PersonalClaw
+        could not check, is refused with 403 risk_confirmation_required unless it names the
+        tier (#506) — which reaches that guard as r["error"]["code"] ==
+        "risk_confirmation_required". Pass confirm_risk="destructive" to run one deliberately:
 
             ctx.call_tool("bash", {"command": "rm -rf /tmp/cache"},
                           confirm_risk="destructive")

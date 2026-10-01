@@ -476,9 +476,21 @@ from nothing else except a shell command's own text:
   anything read-only, so `readOnlyHint` counts only for a server listed in
   `security.mcp_read_only_servers` — per server, set on the Tools page, which asks first, and
   refused to an app. Its `destructiveHint` counts from anyone, because it only adds a question.
-- **A shell call's command decides** (`is_read_only_bash`, an allowlist): for a declared call only
-  the platform's `bash` — a name the registry reserves — is a shell; for an ACP CLI's call, one it
-  reports as `execute`, a shell tool's name, or a `Running: ` title.
+  Every approval shows a server's labels as its word (`ToolDefinition.annotations`): an untrusted
+  read-only label reads "Server says it only reads" and still asks, a destructive label "Writes
+  files", an open-world label "Uses the network". A tool's name is read word by word
+  (`list_commits` is not a `commit`), and a server's read-only label outweighs a write word in it.
+- **A shell call's command decides** (`command_effects`, a per-program allowlist of read-only
+  forms): for a declared call only the platform's `bash` — a name the registry reserves — is a
+  shell; for an ACP CLI's call, one it reports as `execute`, a shell tool's name, or a `Running: `
+  title. A command is a read only when every program in it runs in a form known to only read; an
+  unknown program, option, subcommand or piece of shell syntax is not one. Its risk is the
+  command's, whatever the shell declares (`task_modes.read_call`): `safe` for a read, `destructive`
+  for an established delete, `caution` for an established write or network call, and `unchecked`
+  ("Not checked") for anything the screen cannot vouch for, which the Tools page's confirmation and
+  the card's withheld standing grants treat as they treat `destructive`. The same reading gives
+  the facets every approval surface shows (`approval_brief.call_blast_radius`), carried with the
+  approval as `blast_radius`.
 - **Two more declarations ride beside the level**: `builds` (a Build-mode deliverable's producer,
   which Build mode runs as long as it is not destructive) and `proposes` (its only effect is a
   proposal the owner reviews: not a read — Ask mode and Trust reads treat it as the change it is —

@@ -86,7 +86,7 @@ import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
-import { readOnlyOf } from './chat/approvalMeta'
+import { approvalRiskOf, blastRadiusOf } from './chat/approvalMeta'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
@@ -1521,7 +1521,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // other surface uses, unique across chats (a chat's id is unique only inside it).
           const id = String(d.request_id ?? '')
           if (segs.some((sg) => sg.kind === 'approval' && sg.id === id)) return segs
-          segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: (d.risk ? String(d.risk) : undefined) as ApprovalSegment['risk'], readOnly: readOnlyOf(d.is_read_only), grantAgent: d.grant_agent ? String(d.grant_agent) : '' })
+          segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: approvalRiskOf(d.risk), blastRadius: blastRadiusOf(d.blast_radius), grantAgent: d.grant_agent ? String(d.grant_agent) : '' })
           return segs
         })
         break

@@ -31,7 +31,8 @@ _RESOLVE_CASES = [
     ("destructive", "bash", "", {"command": "ls -la"}, "safe"),
     # ...but a writing/side-effecting command keeps the declaration
     ("destructive", "bash", "", {"command": "rm -rf x"}, "destructive"),
-    ("destructive", "bash", "", {"command": "printf x > f"}, "destructive"),
+    # A write the command establishes is a change, not a delete, whatever the shell declares.
+    ("destructive", "bash", "", {"command": "printf x > f"}, "caution"),
     # a shell call with no readable command falls back to the declaration
     ("destructive", "bash", "", {}, "destructive"),
     # 2. anything else: its declaration

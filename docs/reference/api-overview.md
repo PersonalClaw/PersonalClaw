@@ -158,9 +158,10 @@ These are not derivable from a route's name or its docstring's first line, and e
 has cost someone a debugging session.
 
 - **`POST /api/tools/invoke` gates on *effective* risk.** A call whose resolved risk is
-  `destructive` is refused with `403 risk_confirmation_required` unless the body names
-  the tier in `confirm_risk`. Read-only invocations downgrade to `safe`, so a plain
-  `bash "ls"` needs nothing. The nine filesystem/shell tools are confined to the
+  `destructive`, or a shell command the screen could not check (`unchecked`), is refused
+  with `403 risk_confirmation_required` unless the body says `"confirm_risk":
+  "destructive"`. A command screened read-only resolves `safe`, so a plain `bash "ls"`
+  needs nothing. The nine filesystem/shell tools are confined to the
   configured workspace root; an unresolved root refuses with `503 workspace_unresolved`
   rather than running them in the gateway's own directory. The tool is resolved by its
   name over the same providers an agent turn has, to the one provider serving that name,

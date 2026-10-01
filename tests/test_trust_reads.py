@@ -66,11 +66,12 @@ class TestIsReadOnlyBash:
         assert is_read_only_bash("git branch -a") is True
         assert is_read_only_bash("git blame file.py") is True
 
-    def test_help_and_version(self):
-        assert is_read_only_bash("make build --help") is True
+    def test_a_version_form_is_a_read_and_a_help_flag_vouches_for_nothing(self):
         assert is_read_only_bash("python --version") is True
         assert is_read_only_bash("java -version") is True
-        assert is_read_only_bash("some-tool --help") is True
+        # A trailing `--help` says nothing about what an unknown program does with it.
+        assert is_read_only_bash("make build --help") is False
+        assert is_read_only_bash("some-tool --help") is False
 
     def test_compound_read_commands(self):
         assert is_read_only_bash("git status && git log --oneline -3") is True
@@ -79,7 +80,9 @@ class TestIsReadOnlyBash:
     def test_redirections_rejected(self):
         assert is_read_only_bash("echo payload > /etc/file") is False
         assert is_read_only_bash("cat /etc/passwd > /tmp/exfil.txt") is False
-        assert is_read_only_bash("find . -name '*.py' 2>/dev/null") is False
+
+    def test_discarding_stderr_is_neutral(self):
+        assert is_read_only_bash("find . -name '*.py' 2>/dev/null") is True
 
     def test_command_substitution_rejected(self):
         assert is_read_only_bash("echo $(rm -rf /)") is False

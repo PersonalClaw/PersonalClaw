@@ -229,5 +229,9 @@ class AgentEvent:
     #: With ``builds`` and ``proposes``, what the tool behind a TOOL_CALL / PERMISSION_REQUEST
     #: declares: whether THIS call does nothing but tell the owner something
     #: (``ToolDefinition.tells_owner``, ``tool_providers.base.only_tells_the_owner``), which an
-    #: automation's own agent may do though its grant is ``read``. Last, so no field moves.
+    #: automation's own agent may do though its grant is ``read``.
     tells_owner: bool = False
+    #: With ``builds`` and ``proposes``, what the tool's server labels it in its MCP annotations
+    #: (``ToolDefinition.annotations``), which the approval prompt shows as the server's word.
+    #: Empty from a backend that says none. Last, so no field moves.
+    annotations: dict[str, Any] = field(default_factory=dict)

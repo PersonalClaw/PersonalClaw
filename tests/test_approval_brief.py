@@ -9,9 +9,9 @@ What these tests hold down, in priority order:
    keyword-only params, no ``**kwargs``, no knowledge of the brief — still gets
    called and still decides. Pre-existing ``tool_meta`` keys survive. Each of these
    rails carries a vacuity assertion proving it reds under the change it forbids.
-3. **One vocabulary, two languages.** The facet words and hint lists are parsed out
-   of ``web/src/pages/chat/approvalMeta.ts`` and compared to this
-   module's, so the phone brief and the dashboard chips cannot drift.
+3. **One vocabulary, two languages.** The facet words and their render order are parsed
+   out of ``web/src/pages/chat/approvalMeta.ts`` and compared to this module's, so the phone
+   brief and the dashboard chips cannot drift. The radius itself is composed only here.
 4. **The honesty contract** — every boolean a positive claim, ``None`` when nothing
    was established, ``readOnly`` never over an established write.
 """
@@ -27,10 +27,7 @@ import pytest
 from personalclaw.approval_brief import (
     APPROVAL_BRIEF_META_KEY,
     BLAST_RADIUS_FACET_ORDER,
-    DESTRUCTIVE_HINTS,
     FACET_COPY,
-    NETWORK_HINTS,
-    SHELL_HINTS,
     WRITE_HINTS,
     attach_approval_brief,
     blast_radius_line,
@@ -152,13 +149,15 @@ class TestCallSiteCarriesTheBrief:
         brief = delivered.tool_meta[APPROVAL_BRIEF_META_KEY]
         assert event.risk_level == "destructive"  # the declaration is untouched
         assert brief["risk"] == "safe"  # …and the brief carries the resolution
+        # The command's facets, not the tool name's: a read-only command only reads.
         assert brief["blastRadius"] == {
             "writes": False,
             "network": False,
-            "shell": True,
+            "shell": False,
+            "saysReadOnly": False,
             "readOnly": True,
         }
-        assert brief["blastRadiusLine"] == "runs a command, reads only"
+        assert brief["blastRadiusLine"] == "reads only"
 
     @pytest.mark.asyncio
     async def test_a_mutating_command_does_not_claim_read_only(self) -> None:
@@ -208,6 +207,7 @@ class TestCallSiteCarriesTheBrief:
         gateway.dashboard_state.request_approval.assert_awaited_once()
         kwargs = gateway.dashboard_state.request_approval.call_args.kwargs
         assert APPROVAL_BRIEF_META_KEY not in kwargs
+        # The tool's server labels travel with it, so the registry's radius can show them.
         assert set(kwargs) == {
             "tool_input",
             "tool_purpose",
@@ -215,6 +215,7 @@ class TestCallSiteCarriesTheBrief:
             "trigger",
             "risk_level",
             "tool_kind",
+            "annotations",
         }
 
 
@@ -364,36 +365,26 @@ def _ts_facet_copy() -> dict[str, dict[str, str]]:
 class TestOneVocabularyAcrossLanguages:
     """The channel brief and the dashboard chips must say the same words.
 
-    OU-7 put the facet words beside the derivation precisely so three surfaces could
-    not invent three vocabularies. The channel brief is composed in Python, so the
-    agreement is enforced here instead of by a compiler.
+    The words live beside the decoder in the TypeScript so the dashboard's surfaces cannot
+    invent their own. The channel brief is composed in Python, so the agreement is enforced
+    here instead of by a compiler.
     """
 
     def test_the_parser_is_not_vacuous(self) -> None:
         """VACUITY PROOF for every comparison below.
 
-        A regex that matched nothing would make each set-equality trivially compare
-        two empties and pass. Pin the sizes first.
+        A regex that matched nothing would make each equality trivially compare two empties
+        and pass. Pin the sizes first.
         """
-        assert len(_ts_string_array("SHELL_HINTS")) >= 5
-        assert len(_ts_string_array("NETWORK_HINTS")) >= 5
-        assert len(_ts_string_array("WRITE_HINTS")) >= 15
-        assert len(_ts_facet_copy()) == 4
-        assert _ts_string_array("SHELL_HINTS") != _ts_string_array("NETWORK_HINTS")
+        assert len(_ts_facet_copy()) == 5
+        assert len(_ts_string_array("BLAST_RADIUS_FACET_ORDER")) == 5
 
-    @pytest.mark.parametrize(
-        "ts_name,py_value",
-        [
-            ("SHELL_HINTS", SHELL_HINTS),
-            ("NETWORK_HINTS", NETWORK_HINTS),
-            ("DESTRUCTIVE_HINTS", DESTRUCTIVE_HINTS),
-            ("WRITE_HINTS", WRITE_HINTS),
-        ],
-    )
-    def test_hint_lists_agree_with_the_frontend(self, ts_name: str, py_value) -> None:
-        assert set(_ts_string_array(ts_name)) == set(
-            py_value
-        ), f"{ts_name} drifted between approvalMeta.ts and approval_brief.py"
+    def test_the_frontend_derives_no_radius_of_its_own(self) -> None:
+        """The radius is composed here, from the call's reading; the TypeScript only renders
+        it. A second derivation from tool names is how the card and the channel disagreed."""
+        source = _ts_text()
+        for derivation in ("SHELL_HINTS", "WRITE_HINTS", "deriveBlastRadius"):
+            assert derivation not in source
 
     def test_facet_words_are_the_frontends_verbatim(self) -> None:
         assert _ts_facet_copy() == FACET_COPY
@@ -428,15 +419,56 @@ class TestHonestyContract:
         """A name can describe a change, never establish a read: a tool labelled read-only
         whose name says it writes is shown as the write it may be."""
         radius = derive_blast_radius("file_write", risk="safe")
-        assert radius == {"writes": True, "network": False, "shell": False, "readOnly": False}
+        assert radius == {
+            "writes": True,
+            "network": False,
+            "shell": False,
+            "saysReadOnly": False,
+            "readOnly": False,
+        }
 
     def test_a_change_never_claims_read_only(self) -> None:
         radius = derive_blast_radius("file_write", risk="caution")
-        assert radius == {"writes": True, "network": False, "shell": False, "readOnly": False}
+        assert radius == {
+            "writes": True,
+            "network": False,
+            "shell": False,
+            "saysReadOnly": False,
+            "readOnly": False,
+        }
 
-    def test_a_negative_read_verdict_rules_the_read_claim_out(self) -> None:
-        radius = derive_blast_radius("bash", risk="safe", read_only=False)
-        assert radius is not None and radius["readOnly"] is False
+    def test_a_commands_effects_decide_its_facets_not_the_tool_name(self) -> None:
+        """`bash` names a shell; what is established is what its command does."""
+        from personalclaw.command_effects import command_effects
+
+        read = derive_blast_radius("bash", risk="safe", effects=command_effects("ls -la"))
+        assert read == {
+            "writes": False,
+            "network": False,
+            "shell": False,
+            "saysReadOnly": False,
+            "readOnly": True,
+        }
+        write = derive_blast_radius(
+            "bash", risk="caution", effects=command_effects("echo x > notes.txt")
+        )
+        assert write == {
+            "writes": True,
+            "network": False,
+            "shell": False,
+            "saysReadOnly": False,
+            "readOnly": False,
+        }
+        unread = derive_blast_radius(
+            "bash", risk="unchecked", effects=command_effects("python script.py")
+        )
+        assert unread == {
+            "writes": False,
+            "network": False,
+            "shell": True,
+            "saysReadOnly": False,
+            "readOnly": False,
+        }
 
     def test_an_unknown_risk_level_is_no_evidence(self) -> None:
         assert derive_blast_radius("do_thing", risk="apocalyptic") is None
@@ -449,6 +481,7 @@ class TestHonestyContract:
             "writes": False,
             "network": False,
             "shell": False,
+            "saysReadOnly": False,
             "readOnly": True,
         }
 
@@ -463,7 +496,13 @@ class TestHonestyContract:
 
     def test_established_facets_shows_only_positives(self) -> None:
         facets = established_facets(
-            {"writes": True, "network": False, "shell": True, "readOnly": False}
+            {
+                "writes": True,
+                "network": False,
+                "shell": True,
+                "saysReadOnly": False,
+                "readOnly": False,
+            }
         )
         assert [f["key"] for f in facets] == ["writes", "shell"]
 
@@ -475,7 +514,13 @@ class TestHonestyContract:
 
     def test_the_line_follows_the_declared_render_order(self) -> None:
         line = blast_radius_line(
-            {"writes": True, "network": True, "shell": True, "readOnly": False}
+            {
+                "writes": True,
+                "network": True,
+                "shell": True,
+                "saysReadOnly": False,
+                "readOnly": False,
+            }
         )
         assert line == "writes files, runs a command, uses the network"
 
@@ -504,6 +549,7 @@ class TestHonestyContract:
             "writes": True,
             "network": False,
             "shell": False,
+            "saysReadOnly": False,
             "readOnly": False,
         }
         assert derive_blast_radius("task_list_create", risk="caution")["readOnly"] is False
@@ -522,7 +568,13 @@ class TestHonestyContract:
         referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} | {
             node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
         }
-        for owned_elsewhere in ("is_read_only_bash", "extract_bash_command", "classify_invocation"):
+        for owned_elsewhere in (
+            "is_read_only_bash",
+            "extract_bash_command",
+            "classify_invocation",
+            "command_effects",
+        ):
             assert owned_elsewhere not in referenced
         # Vacuity: the walk really does see this module's identifiers.
         assert "resolve_effective_risk" in referenced
+        assert "read_call" in referenced

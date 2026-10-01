@@ -1,18 +1,31 @@
 import { describe, it, expect } from 'vitest'
 import { approvalToastMessage } from './approvalToast'
+import type { BlastRadius } from '../pages/chat/approvalMeta'
 
 // The COMPACT form of the approval brief. The out-of-context nudge must carry the
 // same first fact the card leads with (what the call can touch) without becoming a second
 // approval renderer: no verbs, no scope, no decision.
 
+const radius = (over: Partial<BlastRadius>): BlastRadius => ({
+  writes: false, network: false, shell: false, saysReadOnly: false, readOnly: false, ...over,
+})
+
 describe('approvalToastMessage', () => {
   it('names who is asking, the tool, what it can touch, and where to answer', () => {
-    const msg = approvalToastMessage({ who: 'A subagent', tool: 'bash', session: 'main', risk: 'destructive' })
+    const msg = approvalToastMessage({ who: 'A subagent', tool: 'bash', session: 'main', blastRadius: radius({ shell: true }) })
     expect(msg).toBe('A subagent needs approval to run bash (runs a command) — open main to respond.')
   })
 
+  it('says what the backend established the call does, not what its name suggests', () => {
+    // The same `bash`: a command that writes a file, and one that only reads.
+    expect(approvalToastMessage({ who: 'A subagent', tool: 'bash', session: 'main', blastRadius: radius({ writes: true }) }))
+      .toContain('(writes files)')
+    expect(approvalToastMessage({ who: 'A subagent', tool: 'bash', session: 'main', blastRadius: radius({ readOnly: true }) }))
+      .toContain('(reads only)')
+  })
+
   it('uses the SAME facet words as the card, so the two cannot drift', () => {
-    expect(approvalToastMessage({ who: 'Another chat session', tool: 'web_fetch', session: 's1', risk: 'caution' }))
+    expect(approvalToastMessage({ who: 'Another chat session', tool: 'web_fetch', session: 's1', blastRadius: radius({ network: true }) }))
       .toContain('(uses the network)')
   })
 
@@ -24,25 +37,21 @@ describe('approvalToastMessage', () => {
     expect(msg).not.toMatch(/\(/)
   })
 
-  it('works without a risk (the field is absent on some paths) and claims nothing extra', () => {
-    // A name establishes no read — `task_list_create` carries "list" — so without the risk the
-    // toast says nothing about one, whatever the tool is called. Guessing is what OU-7 refused
-    // to do.
+  it('works without a radius (a row written before one was composed) and claims nothing', () => {
+    // A name establishes nothing — `task_list_create` carries "list" — so without the radius the
+    // toast says nothing about what the call touches, whatever the tool is called.
     for (const tool of ['read_file', 'grep', 'task_list_create']) {
-      expect(approvalToastMessage({ who: 'A subagent', tool, session: 's1' })).not.toContain('reads only')
+      expect(approvalToastMessage({ who: 'A subagent', tool, session: 's1' })).not.toMatch(/\(/)
     }
-    expect(approvalToastMessage({ who: 'A subagent', tool: 'grep', session: 's1' })).not.toMatch(/\(/)
-    // The declaration is what says it: the same tool with its risk.
-    expect(approvalToastMessage({ who: 'A subagent', tool: 'read_file', session: 's1', risk: 'safe' }))
-      .toContain('reads only')
   })
 
   it('never advocates and never gives an instruction beyond where to answer', () => {
-    for (const risk of ['safe', 'caution', 'destructive'] as const) {
-      const msg = approvalToastMessage({ who: 'A subagent', tool: 'bash', session: 'main', risk })
-      expect(msg.length, risk).toBeGreaterThan(40)  // vacuity guard
+    for (const blastRadius of [radius({ readOnly: true }), radius({ writes: true }), radius({ shell: true })]) {
+      const shown = JSON.stringify(blastRadius)
+      const msg = approvalToastMessage({ who: 'A subagent', tool: 'bash', session: 'main', blastRadius })
+      expect(msg.length, shown).toBeGreaterThan(40)  // vacuity guard
       for (const advocacy of [/safe to/i, /recommend/i, /harmless/i, /go ahead/i, /allow it/i, /just approve/i]) {
-        expect(msg, `${risk} ${advocacy}`).not.toMatch(advocacy)
+        expect(msg, `${shown} ${advocacy}`).not.toMatch(advocacy)
       }
     }
   })

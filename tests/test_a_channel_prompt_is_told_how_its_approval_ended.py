@@ -153,6 +153,7 @@ async def test_a_chat_s_stopped_turn_is_told_it_was_cancelled(tmp_path):
         agent="PersonalClaw",
         risk="caution",
         is_read_only=False,
+        blast_radius=None,
         grant_agent="",
     )
     await _until(lambda: channel.prompts, "the channel asked")

@@ -199,6 +199,7 @@ async def _hold(state, session, request_id: str = "req-1") -> str:
         agent="researcher",
         risk="destructive",
         is_read_only=False,
+        blast_radius=None,
         grant_agent="",
     )
     return chat_approval_id(session.key, request_id)

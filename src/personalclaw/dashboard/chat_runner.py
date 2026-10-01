@@ -19,6 +19,7 @@ from personalclaw.acp.types import (
     STOP_REASON_END_TURN,
     is_cancelled_stop,
 )
+from personalclaw.approval_brief import call_blast_radius
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
@@ -4668,7 +4669,7 @@ async def run_chat(
                         ),
                     )
                     # Mark the permission as resolved so the card says how it ended
-                    perm_meta: dict[str, str] = {
+                    perm_meta: dict[str, Any] = {
                         "request_id": str(event.request_id),
                         "tool_call_id": event.tool_call_id or "",
                         "resolved": refused_as,
@@ -4782,6 +4783,8 @@ async def run_chat(
                 # Persisted spelling is "1"/"" — the string a session transcript's `cls` column
                 # carries and rehydrating history reads. The live wire below carries a boolean.
                 perm_meta["is_read_only"] = "1" if read_only else ""
+                # What the call can touch (the card's chips), from the reading that gives its risk.
+                perm_meta["blast_radius"] = blast_radius = call_blast_radius(event)
                 # Effective risk of this call (computed above) — a user-facing
                 # INDICATOR on the card so the human can weigh the decision. On this
                 # surface it does not gate execution (an explicit trust/YOLO still
@@ -4857,6 +4860,7 @@ async def run_chat(
                         # #2821: the third input Contract C2 names, read off the RAW input
                         # above.
                         is_read_only=read_only,
+                        blast_radius=blast_radius,
                         # The live card needs the grant target too, not just the rehydrated
                         # one — a prompt answered without a reload is the COMMON case, and
                         # it is the one that was promising blind (#541).

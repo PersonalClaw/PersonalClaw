@@ -21,99 +21,28 @@ layers import it without a cycle.
 "Is this call a read?" has two inputs and no others: the tool's DECLARATION
 (``ToolDefinition.risk_level``; ``safe`` is the read-only declaration and a tool
 that declares nothing is not one) and, for a shell call, the command it will run,
-screened by an allowlist. No decision here reads a tool's name for what it does.
+read by :mod:`personalclaw.command_effects` (a per-program allowlist of read-only forms).
+No decision here reads a tool's name for what it does.
 """
 
 from __future__ import annotations
 
 import json
-import re
+from dataclasses import dataclass
 
-# ── Read-only bash command classification ──
-# A conservative allowlist: a command is read-only only if every segment starts
-# with a known read-only prefix and any pipe targets are read-only filters, with
-# no redirections or command substitutions. Deny-by-default.
+from personalclaw.command_effects import CommandEffects, command_effects
 
-_READ_ONLY_BASH_PREFIXES: tuple[str, ...] = (
-    "ls",
-    "cat",
-    "head",
-    "tail",
-    "find",
-    "grep",
-    "egrep",
-    "fgrep",
-    "wc",
-    "which",
-    "file",
-    "stat",
-    "du",
-    "df",
-    "tree",
-    "diff",
-    "pwd",
-    "echo",
-    "date",
-    "whoami",
-    "hostname",
-    "uname",
-    "readlink",
-    "realpath",
-    "basename",
-    "dirname",
-    "git status",
-    "git log",
-    "git diff",
-    "git show",
-    "git branch",
-    "git tag",
-    "git remote",
-    "git rev-parse",
-    "git describe",
-    "git ls-files",
-    "git ls-tree",
-    "git cat-file",
-    "git blame",
-    "python --version",
-    "python3 --version",
-    "node --version",
-    "java -version",
-    "javac -version",
-)
-
-_READ_ONLY_PIPE_RE = re.compile(
-    r"^\s*(grep|egrep|fgrep|head|tail|wc|sort|uniq|cut|less|more|cat)\b"
-)
-
-# Reject redirections and command substitutions — conservative, may reject
-# harmless patterns like 2>/dev/null but false positives are preferable.
-_UNSAFE_SHELL_RE = re.compile(r">|`|\$\(|<\(|(?<!&)&(?!&)")
+# ── Read-only shell command classification ──
 
 
 def is_read_only_bash(cmd: str) -> bool:
-    """Check if a bash command is read-only. Deny-by-default."""
-    if not cmd.strip():
-        return False
-    if _UNSAFE_SHELL_RE.search(cmd):
-        return False
-    parts = re.split(r"\s*(?:&&|\|\||;|\n)\s*", cmd.strip())
-    for part in parts:
-        if not part.strip():
-            continue
-        pipe_parts = [p.strip() for p in part.split("|") if p.strip()]
-        if not pipe_parts:
-            return False
-        first = pipe_parts[0].strip().lower()
-        if not (
-            first.endswith("--help")
-            or first.endswith("--version")
-            or any(first == p or first.startswith(p + " ") for p in _READ_ONLY_BASH_PREFIXES)
-        ):
-            return False
-        for target in pipe_parts[1:]:
-            if not _READ_ONLY_PIPE_RE.match(target):
-                return False
-    return True
+    """Whether every program in *cmd* runs in a form known to only read. Deny by default.
+
+    The reading is :func:`personalclaw.command_effects.command_effects`: a per-program allowlist of
+    read-only forms, where an unknown program, option, subcommand or piece of shell syntax means
+    "not read-only".
+    """
+    return command_effects(cmd).reads_only
 
 
 def declared_level(declared: object) -> str:
@@ -336,9 +265,10 @@ REPORTED_READ_KINDS: frozenset[str] = frozenset({"read", "fetch", "search", "thi
 # from the command's ABSENCE, which is how a read-only ``pwd; ls`` was audited as
 # destructive (`G10`/`O10`). Absence now has its own value, and each consumer decides
 # what to do with it explicitly: the gate DENIES it (fails closed — an unreadable
-# command must not run under a read-only posture) while the label floors it at CAUTION
-# (fails honest — never ``safe``, so it still raises a card, and never ``destructive``,
-# which would assert something nobody measured).
+# command must not run under a read-only posture) while the risk names it for what it is,
+# its declaration, else CAUTION (fails honest — never ``safe``, so it still raises a card, and
+# never ``destructive``, which would assert something nobody measured). A command that did
+# arrive but that the screen cannot vouch for is :data:`UNCHECKED`, for the same reason.
 READ_ONLY = "read_only"
 MUTATING = "mutating"
 UNCLASSIFIED = "unclassified"
@@ -381,6 +311,62 @@ def classify_invocation(declared: object, title: str, tool_kind: str, tool_input
 
 _RISK_ORDER = {"safe": 0, "caution": 1, "destructive": 2}
 
+#: The effective risk of a shell command the screen could not vouch for: part of it is a
+#: program, an option or a piece of syntax the screen does not read. It is no declaration (no
+#: tool declares it) and it is shown as what it is: "Not checked". Every gate that asks more of a
+#: destructive call asks the same of it — it can do anything the shell can.
+UNCHECKED = "unchecked"
+
+#: The effective risks a gate treats as "may be destructive": a named confirmation on the Tools
+#: page, the card's standing grants withheld until the user unlocks them.
+MAY_DESTROY: frozenset[str] = frozenset({"destructive", UNCHECKED})
+
+
+@dataclass(frozen=True)
+class CallReading:
+    """One reading of one tool call: its effective risk and, for a shell call, what its command
+    establishes it does. The risk an approval shows and the facets beside it both come from here,
+    so they cannot disagree."""
+
+    risk: str
+    #: The shell command's effects, or ``None`` when the call runs no command the host received.
+    effects: CommandEffects | None
+
+
+def read_call(declared: object, title: str, tool_kind: str, tool_input: object) -> CallReading:
+    """Read one tool call → its effective risk and its command's effects.
+
+    ``declared`` is the tool's ``ToolDefinition.risk_level`` (a ``RiskLevel``, its string value,
+    or ``None``/'' when the call carries no declaration — an ACP CLI's own tool).
+
+    A shell call (:func:`is_shell_invocation`) is decided by its command, whatever the shell tool
+    declares: the declaration says what the tool can reach (the platform's ``bash`` declares
+    DESTRUCTIVE, because a shell can do anything), and the command says what THIS call does.
+
+    * ``safe`` — every program runs in a read-only form;
+    * ``destructive`` — it establishes a delete (``rm``, ``find -delete``, ``git branch -D``);
+    * :data:`UNCHECKED` — part of it is something the screen could not vouch for;
+    * ``caution`` — it establishes a write or a network call, and nothing it could not vouch for.
+
+    A shell call whose command never reached the host, and any other call, is its declaration,
+    else CAUTION: never ``safe`` (nobody read a command) and never ``destructive`` minted from a
+    command's absence. So ``safe`` is reached only by a read-only command or a tool that declares
+    it only reads; an undeclared tool always raises a card under Trust reads.
+    """
+    cmd = shell_command(title, tool_kind, tool_input, declared)
+    if not cmd:
+        return CallReading(declared_level(declared) or "caution", None)
+    effects = command_effects(cmd)
+    if effects.reads_only:
+        risk = "safe"
+    elif effects.deletes:
+        risk = "destructive"
+    elif effects.unread:
+        risk = UNCHECKED
+    else:
+        risk = "caution"
+    return CallReading(risk, effects)
+
 
 def resolve_effective_risk(
     declared: object,
@@ -388,27 +374,13 @@ def resolve_effective_risk(
     tool_kind: str,
     tool_input: object,
 ) -> str:
-    """Resolve the effective risk of one tool call → 'safe'|'caution'|'destructive'.
+    """The effective risk of one tool call → 'safe'|'caution'|'destructive'|'unchecked'
+    (:func:`read_call`).
 
-    ``declared`` is the tool's ``ToolDefinition.risk_level`` (a ``RiskLevel``, its string
-    value, or ``None``/'' when the call carries no declaration — an ACP CLI's own tool).
     Returns a bare string (the ``RiskLevel`` value) so callers without the enum import
     (chat_runner event path, JSON APIs) use it directly.
-
-    1. A shell call with a readable command: ``safe`` when the command is read-only, else
-       the declaration (or ``destructive`` for an undeclared shell).
-    2. A shell call whose command never reached the host: the declaration, else CAUTION —
-       never ``safe`` (nobody read the command) and never ``destructive`` (nobody measured
-       it either).
-    3. Anything else: its declaration, else CAUTION. So ``safe`` is reached only by a
-       read-only command or a tool that declares it only reads; an undeclared tool always
-       raises a card under Trust reads.
     """
-    declared_str = declared_level(declared)
-    verdict = classify_invocation(declared, title, tool_kind, tool_input)
-    if shell_command(title, tool_kind, tool_input, declared):
-        return "safe" if verdict == READ_ONLY else (declared_str or "destructive")
-    return declared_str or "caution"
+    return read_call(declared, title, tool_kind, tool_input).risk
 
 
 def read_grant_admits(

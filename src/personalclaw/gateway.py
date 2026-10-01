@@ -674,6 +674,7 @@ class GatewayOrchestrator:
                                 asked_on_channel=True,
                                 risk_level=event.risk_level,
                                 tool_kind=event.tool_kind,
+                                annotations=getattr(event, "annotations", None),
                             )
                         )
 
@@ -744,6 +745,7 @@ class GatewayOrchestrator:
                     trigger=asked_by,
                     risk_level=event.risk_level,
                     tool_kind=event.tool_kind,
+                    annotations=getattr(event, "annotations", None),
                 )
                 return self._asked_decision(request_id, answered)
             # Nowhere to ask (no dashboard, no channel). Approving was always the answer here, and

@@ -5,7 +5,7 @@
 
 // `approvalMeta` imports ApprovalSegment from here as `import type`, which is erased at
 // compile time, so this value import creates no runtime cycle.
-import { readOnlyOf } from './approvalMeta'
+import { approvalRiskOf, blastRadiusOf, type BlastRadius } from './approvalMeta'
 import { turnErrorText } from './turnError'
 import type { ImageDelivery } from './imageAttachments'
 
@@ -51,10 +51,13 @@ export interface ApprovalSegment {
   tool: string
   input?: string
   purpose?: string
-  risk?: 'safe' | 'caution' | 'destructive'  // effective per-invocation risk indicator
-  // Whether the call is established as a read (`task_modes.reads_only`), decoded from the
-  // wire by `readOnlyOf`. Absent only on a row that carries no verdict. #2821.
-  readOnly?: boolean
+  // The effective per-invocation risk (`task_modes.read_call`): a declared level, or
+  // `unchecked` for a shell command the screen could not vouch for.
+  risk?: 'safe' | 'caution' | 'destructive' | 'unchecked'
+  // What the call can touch, as the backend composed it from the same reading as `risk`
+  // (`approval_brief.call_blast_radius`), decoded by `blastRadiusOf`. Absent on a row that
+  // carries none.
+  blastRadius?: BlastRadius
   // The agent a "This agent" grant would be SAVED ON, resolved by the backend
   // (`agents.defaults.persistable_grant_target`) at the moment the prompt was raised.
   // Empty or absent means the grant cannot persist — a reserved system agent, a name with no
@@ -443,7 +446,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; learned?: LearnedRecord[] } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; learned?: LearnedRecord[] } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -631,9 +634,9 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // reloaded transcript re-armed live Allow/Deny buttons for a call that had already
       // run. approvalOutcome() owns interpreting the value, in one place, for both paths.
       const resolved = m.meta?.resolved || undefined
-      // `is_read_only` has been in this meta since #443 and was read by nothing until
-      // #2821. Decoded, never cast: on this path it is the legacy `"1"`/`""` string.
-      lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], readOnly: readOnlyOf(m.meta?.is_read_only), grantAgent: m.meta?.grant_agent, resolved })
+      // The risk and the radius are decoded, never cast: a row another build wrote can carry
+      // a level or a shape this one cannot read, and that must be no claim at all.
+      lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: approvalRiskOf(m.meta?.risk), blastRadius: blastRadiusOf(m.meta?.blast_radius), grantAgent: m.meta?.grant_agent, resolved })
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
       lastAssistant().segments.push({ kind: 'error', text: turnErrorText(m.content) })

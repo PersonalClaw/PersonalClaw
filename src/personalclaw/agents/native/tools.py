@@ -125,6 +125,9 @@ class InProcessMcpToolProvider(ToolProvider):
             # reads when the `mcp-core` server lists it. These modules are PersonalClaw's own, so
             # the declaration is trusted; a dict that declares nothing is CAUTION.
             risk = risk_from_annotations(tool.get("annotations"), trusted=True)
+            annotations = (
+                tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
+            )
             meta = tool.get("_meta") if isinstance(tool.get("_meta"), dict) else {}
             defs.append(
                 ToolDefinition(
@@ -143,6 +146,7 @@ class InProcessMcpToolProvider(ToolProvider):
                     builds=meta.get(BUILDS_META_KEY) is True,
                     proposes=meta.get(PROPOSES_META_KEY) is True,
                     tells_owner=_owner_notice_args(meta.get(TELLS_OWNER_META_KEY)),
+                    annotations=dict(annotations),
                 )
             )
         self._tools = defs

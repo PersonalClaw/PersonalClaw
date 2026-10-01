@@ -111,6 +111,14 @@ class CatalogRefresh:
         new = names - had
         return (active & names) | {_groups.CORE_GROUP} | (new if default is None else new & default)
 
+    def _annotations_of(self, tool_name: str) -> dict[str, Any]:
+        """The labels *tool_name*'s definition in this catalog carries (an MCP server's
+        ``readOnlyHint`` and the rest), as a copy; none for a tool the catalog does not hold."""
+        for d in self._tool_defs:
+            if getattr(d, "name", "") == tool_name:
+                return dict(getattr(d, "annotations", None) or {})
+        return {}
+
     def _no_longer_offered(self, tool_name: str, meta: dict) -> str | None:
         """The refusal for a call to a tool that left this turn's catalog after it was built, or
         None while the tool is still on offer.

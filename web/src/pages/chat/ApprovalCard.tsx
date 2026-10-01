@@ -1,21 +1,24 @@
 import { useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
-import { Check, Ban, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react'
+import { Check, Ban, ShieldCheck, ShieldAlert, ShieldQuestion, AlertTriangle } from 'lucide-react'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
 import { Segmented } from '../../ui/Segmented'
 import { Checkbox } from '../../ui/forms'
 import { approvalOutcome } from './approvalOutcome'
-import { deriveBlastRadius, establishedFacets } from './approvalMeta'
+import { establishedFacets, mayDestroy, type BlastRadius } from './approvalMeta'
 import type { ApprovalSegment } from './chatTypes'
 
 // Risk indicator (tool risk taxonomy): a purely INFORMATIONAL chip so the human
 // can weigh the decision — it does not gate (an explicit trust/YOLO still
-// auto-approves everything). safe = read-only/no side effects; caution = bounded
-// write / unclassified external; destructive = arbitrary exec or host side-effects.
+// auto-approves everything). safe = established as a read; caution = a change, or an
+// unclassified external tool; destructive = established to delete, or a tool that declares
+// so; unchecked = a shell command the screen could not vouch for, so it can do anything the
+// shell can — it is said to be exactly that, never "Safe" and never "Destructive".
 const RISK_META = {
   safe: { label: 'Safe', icon: ShieldCheck, color: 'var(--color-ok)' },
   caution: { label: 'Caution', icon: AlertTriangle, color: 'var(--color-warn)' },
   destructive: { label: 'Destructive', icon: ShieldAlert, color: 'var(--color-danger)' },
+  unchecked: { label: 'Not checked', icon: ShieldQuestion, color: 'var(--color-warn)' },
 } as const
 
 function RiskChip({ risk }: { risk: NonNullable<ApprovalSegment['risk']> }) {
@@ -37,16 +40,15 @@ function RiskChip({ risk }: { risk: NonNullable<ApprovalSegment['risk']> }) {
 
 /** Zone 3 of the brief — WHAT THIS CAN TOUCH.
  *
- *  Renders the ESTABLISHED facets only (`approvalMeta.establishedFacets`), and renders
- *  nothing at all when the inputs established nothing. Four "no" chips from an all-false
- *  radius would be a confident all-clear derived from zero evidence — the one failure mode
- *  the derivation returns `undefined` to avoid, so the renderer must not undo it by
- *  enumerating the facets with on/off states. The list is NAMED, and its name says these
- *  are the facts established rather than a full audit, because the absence of a chip is
- *  not a guarantee about the tool.
+ *  Renders the ESTABLISHED facets of the radius the backend composed for this call
+ *  (`approvalMeta.establishedFacets`), and renders nothing at all when it established
+ *  nothing. Four "no" chips from an all-false radius would be a confident all-clear derived
+ *  from zero evidence, so the renderer must not enumerate the facets with on/off states. The
+ *  list is NAMED, and its name says these are the facts established rather than a full
+ *  audit, because the absence of a chip is not a guarantee about the tool.
  */
-function BlastRadiusChips({ tool, risk, readOnly }: { tool: string; risk?: ApprovalSegment['risk']; readOnly?: boolean }) {
-  const facets = establishedFacets(deriveBlastRadius({ tool, risk: risk ?? undefined, readOnly }))
+function BlastRadiusChips({ radius }: { radius?: BlastRadius }) {
+  const facets = establishedFacets(radius)
   if (facets.length === 0) return null
   return (
     <ul aria-label="What this can touch, as far as we can establish"
@@ -165,10 +167,11 @@ function wordsFor(scope: (typeof REMEMBER_SCOPES)[number], words: ScopeWords) {
  *  than one that remembers too much. And the vocabulary stays a CLOSED set of three — this
  *  filters what is offered, it does not invent a fourth option.
  *
- *  `destructive` only, matching the route's own gate. An absent tier keeps every scope: legacy
- *  transcript rows and risk-less external tools must not be harder to answer than `bash`. */
+ *  `destructive` and `unchecked` (a shell command the screen could not vouch for), matching the
+ *  route's own gate. An absent tier keeps every scope: legacy transcript rows and risk-less
+ *  external tools must not be harder to answer than `bash`. */
 function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean) {
-  if (risk === 'destructive' && !widened) return [REMEMBER_SCOPES[0]]
+  if (mayDestroy(risk) && !widened) return [REMEMBER_SCOPES[0]]
   return REMEMBER_SCOPES
 }
 
@@ -235,7 +238,7 @@ export function ApprovalCard({ seg, onAct, scopeWords = 'chat' }: {
       args={seg.input}
       purpose={seg.purpose}
       badge={seg.risk ? <RiskChip risk={seg.risk} /> : undefined}
-      meta={<BlastRadiusChips tool={seg.tool} risk={seg.risk} readOnly={seg.readOnly} />}
+      meta={<BlastRadiusChips radius={seg.blastRadius} />}
       scope={
         <div className="mt-2 flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -251,7 +254,7 @@ export function ApprovalCard({ seg, onAct, scopeWords = 'chat' }: {
               cannot read is a scope they cannot consent to. Announced politely (not
               assertively) because the user caused the change by choosing it. */}
           <p aria-live="polite" data-type="caption" className="text-on-surface-low">{promise}</p>
-          {seg.risk === 'destructive' && (
+          {mayDestroy(seg.risk) && (
             // The extra rung, and it states the CONSEQUENCE rather than the risk — the chip
             // above already names the tier, and "destructive" is not what the user is
             // deciding here. What they are deciding is whether future destructive calls stop
@@ -259,7 +262,7 @@ export function ApprovalCard({ seg, onAct, scopeWords = 'chat' }: {
             // recommends nothing.
             <label className="mt-0.5 flex items-start gap-1.5 text-on-surface-low" data-type="caption">
               <Checkbox checked={widened} onChange={setWidened}
-                ariaLabel="Offer standing grants for this destructive call" />
+                ariaLabel={`Offer standing grants for this ${seg.risk === 'unchecked' ? 'unchecked' : 'destructive'} call`} />
               <span>Remember beyond this one call — later destructive calls would then run without asking.</span>
             </label>
           )}

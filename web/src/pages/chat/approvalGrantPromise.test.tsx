@@ -87,13 +87,19 @@ describe('#541 — the "This agent" promise names the agent the grant will be sa
 })
 
 describe('#506 — risk gates how far the answer may reach', () => {
-  it('withholds the standing-grant scopes on a destructive call', () => {
-    render(<ApprovalCard seg={seg({ risk: 'destructive', grantAgent: 'researcher' })} onAct={() => {}} />)
-    // Allow-once is always available — the floor never costs more, which is what keeps this
-    // a gate rather than a prompt people learn to click through.
-    expect(scopeTab('Just this once')).toBeTruthy()
-    expect(maybeScopeTab('This chat')).toBeNull()
-    expect(maybeScopeTab('This agent')).toBeNull()
+  it('withholds the standing-grant scopes on a destructive call, and on one nobody checked', () => {
+    // A shell command the screen could not vouch for can do anything the shell can, so it is
+    // gated as a destructive call is — while being called what it is.
+    for (const risk of ['destructive', 'unchecked'] as const) {
+      const { unmount } = render(<ApprovalCard seg={seg({ risk, grantAgent: 'researcher' })} onAct={() => {}} />)
+      // Allow-once is always available — the floor never costs more, which is what keeps this
+      // a gate rather than a prompt people learn to click through.
+      expect(scopeTab('Just this once')).toBeTruthy()
+      expect(maybeScopeTab('This chat'), risk).toBeNull()
+      expect(maybeScopeTab('This agent'), risk).toBeNull()
+      expect(screen.getByRole('checkbox', { name: /standing grant/i })).toBeTruthy()
+      unmount()
+    }
   })
 
   it('offers them after an explicit unlock, and the unlock states the consequence', () => {

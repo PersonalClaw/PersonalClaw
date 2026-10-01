@@ -88,7 +88,7 @@ afterEach(() => { vi.unstubAllGlobals() })
 const APPROVAL = {
   id: 'chat-a:1', request_id: '1', session: 'chat-a', source: '', tool: 'bash',
   tool_input: '{"command": "rm -rf /tmp/scratch"}', tool_purpose: '', risk: 'destructive',
-  is_read_only: false, grant_agent: '', agent: 'researcher', session_title: '', ts: 0,
+  grant_agent: '', agent: 'researcher', session_title: '', ts: 0,
 }
 
 async function openWithPendingApproval() {

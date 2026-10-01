@@ -137,6 +137,7 @@ async def _ask(state, chat, request_id: str = "r-1") -> asyncio.Future:
         agent="PersonalClaw",
         risk="caution",
         is_read_only=False,
+        blast_radius=None,
         grant_agent="",
     )
     return future

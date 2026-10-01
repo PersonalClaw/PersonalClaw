@@ -20,29 +20,30 @@ used to show the tool's name and nothing else, and people approved a call they c
 see.
 
 ── This module DECIDES nothing ──────────────────────────────────────────────────
-It is descriptive, exactly like its frontend twin. The approval gate, trust-reads
-and the task-mode gate live in :mod:`personalclaw.task_modes` +
-:mod:`personalclaw.gateway` and are unchanged. The one classification here —
-whether a call only reads — is CONSUMED from ``task_modes``, never re-derived: it
-is the call's effective risk, which is ``safe`` only when the tool DECLARES it only
-reads or the command it runs is a read-only one. In particular this module never
-inspects a command string: deciding whether a command is read-only is security
-logic and it already has an owner (:func:`~personalclaw.task_modes.is_read_only_bash`,
-reached only via :func:`~personalclaw.task_modes.resolve_effective_risk`).
+It is descriptive. The approval gate, trust-reads and the task-mode gate live in
+:mod:`personalclaw.task_modes` + :mod:`personalclaw.gateway` and are unchanged. The
+classification here is CONSUMED from ``task_modes``, never re-derived: one reading of the
+call (:func:`~personalclaw.task_modes.read_call`) gives both its effective risk and, for a
+shell call, what its command establishes it does (``command_effects``). The risk and the
+facets beside it therefore come from ONE analysis and cannot disagree. This module never
+inspects a command string itself: reading a command is security logic and it already has an
+owner.
 
-── One vocabulary, two languages ────────────────────────────────────────────────
-``web/src/pages/chat/approvalMeta.ts`` is the same derivation for the
-dashboard's chips and the out-of-context toast. Three surfaces must not invent three
-words for one claim, so the facet labels and the hint lists below are the
-TypeScript's verbatim, and ``tests/test_approval_brief.py`` parses that file and
-asserts every label and hint list still agrees. A drift becomes a red test, not a
-third vocabulary.
+── One derivation, every surface ────────────────────────────────────────────────
+The dashboard's card, the out-of-context toast, the phone queue and every channel show the
+blast radius composed HERE: :func:`call_blast_radius` runs where an approval is registered,
+on the call's raw arguments, and the result travels with the approval (``blast_radius``) to
+every surface. ``web/src/pages/chat/approvalMeta.ts`` holds the same facet WORDS and render
+order for the dashboard to print, and ``tests/test_approval_brief.py`` parses that file and
+asserts they still agree. A drift becomes a red test, not a second vocabulary.
 
-The hint lists DESCRIBE a change; they never establish a read. ``writes``, ``shell``
-and ``network`` name what kind of thing a call that is not a read can touch, from
+For a shell call the facets are the command's: "writes files" for a redirect into a file or a
+program run in a form that writes or deletes, "uses the network", "reads only" when every
+program reads, and "runs a command" for any part the screen could not vouch for. For any
+other call the hint lists DESCRIBE a change; they never establish a read. ``writes``,
+``shell`` and ``network`` name what kind of thing a call that is not a read can touch, from
 words in the tool's name, and a name is only ever evidence of what a tool might do.
-``readOnly`` comes from the declaration alone, and a call it holds for claims no
-``writes``.
+``readOnly`` comes from the declaration alone, and a call it holds for claims no ``writes``.
 
 ── Honesty contract (identical to the frontend's) ───────────────────────────────
 Every boolean is a POSITIVE claim: ``False`` means "not established", never
@@ -57,11 +58,13 @@ command — so this module can only ever UNDER-claim safety.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 
+from personalclaw.command_effects import CommandEffects
 from personalclaw.security import redact_field
-from personalclaw.task_modes import resolve_effective_risk, tool_input_to_str
+from personalclaw.task_modes import read_call, resolve_effective_risk, tool_input_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +81,13 @@ RISK_LABELS: dict[str, str] = {
     "safe": "Safe",
     "caution": "Caution",
     "destructive": "Destructive",
+    "unchecked": "Not checked",
 }
 
 # ── Tool-name description ────────────────────────────────────────────────────────
-# What kind of change a call that is not a read can make, from words in its name. The
-# TypeScript mirrors each list verbatim; `tests/test_approval_brief.py` pins them.
+# What kind of change a call that is not a read can make, from the WORDS of its name: a name is
+# split on `_`, `-`, `/` and camelCase, and a hint matches a whole word, never a fragment of
+# one, so `list_commits` (lists commits) is not a `commit` and `curling_scores` is not a `url`.
 
 #: Runs a command / spawns a process. ``terminal``/``shell``/``zsh`` cover the display
 #: names ACP agents send as the title. Deliberately NOT ``run``: the ``project_run_*``
@@ -100,10 +105,12 @@ SHELL_HINTS: tuple[str, ...] = (
 #: Leaves the machine. ``web_fetch``/``web_search`` are the app-provided web tools; the
 #: rest cover MCP tools named by convention.
 NETWORK_HINTS: tuple[str, ...] = (
-    "web_",
+    "web",
     "http",
+    "https",
     "fetch",
     "browse",
+    "browser",
     "download",
     "upload",
     "crawl",
@@ -112,7 +119,7 @@ NETWORK_HINTS: tuple[str, ...] = (
 )
 
 #: Removes something. A delete is a write to the world, so these describe ``writes`` too.
-DESTRUCTIVE_HINTS: tuple[str, ...] = ("delete", "remove", "destroy", "drop_", "purge", "forget")
+DESTRUCTIVE_HINTS: tuple[str, ...] = ("delete", "remove", "destroy", "drop", "purge", "forget")
 
 #: Creates or changes something.
 WRITE_HINTS: tuple[str, ...] = (
@@ -124,14 +131,14 @@ WRITE_HINTS: tuple[str, ...] = (
     "move",
     "rename",
     "append",
-    "set_",
-    "put_",
+    "set",
+    "put",
     "install",
     "deploy",
     "subagent",
     "schedule",
     "notify",
-    "post_",
+    "post",
     "send",
     "commit",
     "push",
@@ -141,16 +148,16 @@ WRITE_HINTS: tuple[str, ...] = (
 
 #: Does a risk level positively establish that the call is a read?
 #:
-#: Consumed, not invented: :func:`~personalclaw.task_modes.resolve_effective_risk`
-#: reaches ``'safe'`` only through a read-only shell command or a tool that DECLARES it
-#: only reads — so EFFECTIVE-safe is already derived FROM read-only-ness.
-#: ``'caution'``/``'destructive'`` say a call has side effects but not WHICH facet, so
-#: they establish nothing here. A level this build has never heard of is no evidence, not
-#: a read.
+#: Consumed, not invented: :func:`~personalclaw.task_modes.read_call` reaches ``'safe'``
+#: only through a read-only shell command or a tool that DECLARES it only reads — so
+#: EFFECTIVE-safe is already derived FROM read-only-ness. The other levels say a call is not
+#: established as a read but not WHICH facet, so they establish nothing here. A level this
+#: build has never heard of is no evidence, not a read.
 RISK_ESTABLISHES_READ_ONLY: dict[str, bool] = {
     "safe": True,
     "caution": False,
     "destructive": False,
+    "unchecked": False,
 }
 
 #: The words for each facet — ``approvalMeta.ts``' ``FACET_COPY`` verbatim, so the chat
@@ -168,31 +175,44 @@ FACET_COPY: dict[str, dict[str, str]] = {
         "label": "Uses the network",
         "detail": "Can reach the network from this machine.",
     },
+    "saysReadOnly": {
+        "label": "Server says it only reads",
+        "detail": (
+            "The server that offers this tool labels it read-only. PersonalClaw takes that label"
+            " only from a server you trust on the Tools page."
+        ),
+    },
     "readOnly": {
         "label": "Reads only",
         "detail": "Established as a read: no change was established.",
     },
 }
 
-#: Render order — broadest consequence first, the read claim last. Kept as data so the
+#: Render order — broadest consequence first, the read claims last. Kept as data so the
 #: order is deliberate and reviewable, and pinned against the TypeScript's
 #: ``BLAST_RADIUS_FACET_ORDER`` by test.
-BLAST_RADIUS_FACET_ORDER: tuple[str, ...] = ("writes", "shell", "network", "readOnly")
+BLAST_RADIUS_FACET_ORDER: tuple[str, ...] = (
+    "writes",
+    "shell",
+    "network",
+    "saysReadOnly",
+    "readOnly",
+)
+
+#: One word of a name: an acronym before a capitalised word (`HTTP` in `HTTPRequest`), a word in
+#: either case, or a run of digits.
+_NAME_WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 
 
-def _normalize_tool_name(tool: str) -> str:
-    """Lowercase + strip any ``<prefix>/`` so the verb match sees the bare name.
-
-    Mirrors ``approvalMeta.ts``' ``normalizeToolName``, so an ``mcp/<server>/<tool>``
-    name is described by its tool. Lowercasing also lets ACP display titles ("Terminal")
-    match.
-    """
-    lowered = (tool or "").lower().strip()
-    return lowered.rsplit("/", 1)[-1] if "/" in lowered else lowered
+def _name_words(tool: str) -> frozenset[str]:
+    """The words of a tool's own name, lowercased: an ``mcp/<server>/<tool>`` name is read by its
+    tool, and an ACP display title ("Terminal") the same way."""
+    bare = (tool or "").strip().rsplit("/", 1)[-1]
+    return frozenset(word.lower() for word in _NAME_WORD.findall(bare))
 
 
-def _has_any(name: str, hints: tuple[str, ...]) -> bool:
-    return any(h in name for h in hints)
+def _has_any(words: frozenset[str], hints: tuple[str, ...]) -> bool:
+    return not words.isdisjoint(hints)
 
 
 def _risk_establishes_read_only(risk: str | None) -> bool:
@@ -205,41 +225,87 @@ def derive_blast_radius(
     tool: str,
     *,
     risk: str | None = None,
-    read_only: bool | None = None,
+    effects: CommandEffects | None = None,
+    annotations: Mapping[str, Any] | None = None,
 ) -> dict[str, bool] | None:
-    """Derive C2's four facets for one pending call, or ``None`` if none was established.
+    """Derive the facets of one pending call, or ``None`` if none was established.
 
-    ``tool`` is the tool identity as it already travels the approval path (``event.title``
-    — the same value ``chat_runner`` broadcasts as the ``approval`` event's ``tool``).
-    ``risk`` is the EFFECTIVE per-invocation risk. ``read_only`` is the approval's
-    ``is_read_only`` (``task_modes.reads_only``): ``True``/``False`` establish/rule out the read
-    claim, ``None`` (a row that carries none) says nothing either way. It is declared for parity
-    with the frontend's ``deriveBlastRadius`` (C2's third input) and NO caller here supplies it —
-    :func:`compose_approval_brief` explains why passing it would be redundant.
+    ``effects`` is what the call's shell command establishes it does (``read_call``'s): when it
+    is given, the facets are the command's and the tool's name says nothing. Otherwise ``tool``
+    is the tool identity as it already travels the approval path (``event.title``), ``risk`` the
+    EFFECTIVE per-invocation risk, and ``annotations`` what the tool's server labels it
+    (``ToolDefinition.annotations``):
 
-    Total and pure — no I/O, no clock, no throws. Field-for-field identical to
-    ``approvalMeta.ts``' ``deriveBlastRadius``.
+    * a read-only label is the server's word. It is a read (``readOnly``) only when the risk says
+      so, which it does only for a server the owner trusts; otherwise the facet is the claim
+      itself (``saysReadOnly``). Either way it outweighs a guess from the name about writes;
+    * a destructive label is a write, and an open-world label is the network;
+    * otherwise the name's words describe what a change may touch.
+
+    Total and pure — no I/O, no clock, no throws.
     """
-    name = _normalize_tool_name(tool)
+    if effects is not None:
+        return {
+            "writes": effects.writes,
+            "shell": effects.unread,
+            "network": effects.network,
+            "saysReadOnly": False,
+            "readOnly": effects.reads_only,
+        }
 
-    shell = _has_any(name, SHELL_HINTS)
-    network = _has_any(name, NETWORK_HINTS)
+    words = _name_words(tool)
+    hints = annotations if isinstance(annotations, Mapping) else {}
+    says_read = hints.get("readOnlyHint") is True
 
-    # What kind of change the call can make, from words in its name — a description, never a
-    # read: no word establishes that a call changes nothing.
-    writes = _has_any(name, DESTRUCTIVE_HINTS) or _has_any(name, WRITE_HINTS)
-    # `reads` needs positive evidence: the call's read verdict or an EFFECTIVE-safe risk (the
-    # tool declares it only reads, or its command screened read-only). An explicit `False`
-    # rules it out whatever the risk says, and so does an established write — a tool labelled
-    # read-only whose name says it writes is shown as the write it may be.
-    reads = not writes and (
-        read_only is True or (read_only is not False and _risk_establishes_read_only(risk))
+    shell = _has_any(words, SHELL_HINTS)
+    network = _has_any(words, NETWORK_HINTS) or hints.get("openWorldHint") is True
+
+    # What kind of change the call can make — a description, never a read: no word establishes
+    # that a call changes nothing.
+    writes = not says_read and (
+        hints.get("destructiveHint") is True
+        or _has_any(words, DESTRUCTIVE_HINTS)
+        or _has_any(words, WRITE_HINTS)
     )
+    # `reads` needs positive evidence: an EFFECTIVE-safe risk (the tool declares it only reads).
+    # An established write rules it out — a tool labelled read-only by nothing but its risk whose
+    # name says it writes is shown as the write it may be.
+    reads = not writes and _risk_establishes_read_only(risk)
+    says = says_read and not reads
 
     # Nothing established → say nothing. See the honesty contract in the header.
-    if not writes and not network and not shell and not reads:
+    if not (writes or network or shell or says or reads):
         return None
-    return {"writes": writes, "network": network, "shell": shell, "readOnly": reads}
+    return {
+        "writes": writes,
+        "shell": shell,
+        "network": network,
+        "saysReadOnly": says,
+        "readOnly": reads,
+    }
+
+
+def call_blast_radius(event: Any) -> dict[str, bool] | None:
+    """What one permission event's call can touch, from the same reading that gives its risk.
+
+    Run where an approval is registered, on the event's RAW arguments (a screen must read what
+    will run, never a masked copy), and carried with the approval to every surface that shows it.
+    Reads what the event carries: the tool's declared risk, its name and kind, the arguments, and
+    the labels its server gave it.
+    """
+    tool = str(getattr(event, "title", "") or "")
+    reading = read_call(
+        getattr(event, "risk_level", ""),
+        tool,
+        str(getattr(event, "tool_kind", "") or ""),
+        getattr(event, "tool_input", ""),
+    )
+    return derive_blast_radius(
+        tool,
+        risk=reading.risk,
+        effects=reading.effects,
+        annotations=getattr(event, "annotations", None),
+    )
 
 
 def established_facets(radius: dict[str, bool] | None) -> list[dict[str, str]]:
@@ -269,28 +335,29 @@ def blast_radius_line(radius: dict[str, bool] | None) -> str:
     return ", ".join(f["label"].lower() for f in facets)
 
 
-#: The one facet that is NOT a consequence: ``readOnly`` claims what a call does not do, so
-#: it must never be framed as something the call "can" do. Named as the EXCEPTION rather than
-#: listing the consequences, so a facet added later is framed as a consequence automatically
-#: instead of silently reading as a reassurance.
-_READ_CLAIM_FACET = "readOnly"
+#: The facets that are NOT consequences: each claims what a call does not do (or what its server
+#: says it does not), so it must never be framed as something the call "can" do. Named as the
+#: EXCEPTIONS rather than listing the consequences, so a facet added later is framed as a
+#: consequence automatically instead of silently reading as a reassurance.
+_READ_CLAIM_FACETS = frozenset({"saysReadOnly", "readOnly"})
 
 
 def summary_line(radius: dict[str, bool] | None, risk: str) -> str:
     """The one line a channel prints under the call: what it can touch, and its risk.
 
-    ``"Can: writes files, runs a command · Risk: Caution"``; ``"Reads only · Risk: Safe"`` when
-    the only established facet is the read claim; ``"Risk: Caution"`` when no facet was
-    established; ``""`` when neither is known. The facet half follows the honesty contract
-    (:func:`established_facets`): an absent blast radius adds no words, never "nothing
-    established". The risk half is the dashboard card's chip, which shows whatever facets say.
+    ``"Can: writes files, runs a command · Risk: Caution"``; ``"Reads only · Risk: Safe"`` and
+    ``"Server says it only reads · Risk: Caution"`` for the read claims, each its own phrase;
+    ``"Risk: Caution"`` when no facet was established; ``""`` when neither is known. The facet
+    half follows the honesty contract (:func:`established_facets`): an absent blast radius adds
+    no words, never "nothing established". The risk half is the dashboard card's chip, which
+    shows whatever facets say.
     """
     parts: list[str] = []
     facets = established_facets(radius)
-    if facets:
-        words = ", ".join(f["label"].lower() for f in facets)
-        consequence = any(f["key"] != _READ_CLAIM_FACET for f in facets)
-        parts.append(f"Can: {words}" if consequence else f"{words[:1].upper()}{words[1:]}")
+    consequences = [f["label"].lower() for f in facets if f["key"] not in _READ_CLAIM_FACETS]
+    if consequences:
+        parts.append(f"Can: {', '.join(consequences)}")
+    parts.extend(f["label"] for f in facets if f["key"] in _READ_CLAIM_FACETS)
     label = RISK_LABELS.get(str(risk or "").lower())
     if label:
         parts.append(f"Risk: {label}")
@@ -298,11 +365,15 @@ def summary_line(radius: dict[str, bool] | None, risk: str) -> str:
 
 
 def _brief(
-    tool: str, *, shown_tool: str, shown_input: str, shown_purpose: str, risk: str
+    *,
+    radius: dict[str, bool] | None,
+    shown_tool: str,
+    shown_input: str,
+    shown_purpose: str,
+    risk: str,
 ) -> dict[str, Any]:
-    """The brief's one shape. ``tool`` is the identity the blast radius is derived from; the
-    ``shown_*`` strings are what a channel prints, already masked by the caller."""
-    radius = derive_blast_radius(tool, risk=risk)
+    """The brief's one shape. ``radius`` is what the call can touch; the ``shown_*`` strings are
+    what a channel prints, already masked by the caller."""
     brief: dict[str, Any] = {
         "tool": shown_tool,
         "input": shown_input,
@@ -319,11 +390,11 @@ def _brief(
 def compose_approval_brief(event: Any) -> dict[str, Any] | None:
     """Compose the brief for one approval event, or ``None`` when it has no identity.
 
-    Reads only fields the event already carries, and takes its single classification
-    from ``task_modes`` rather than re-deriving it: ``risk`` is
-    :func:`~personalclaw.task_modes.resolve_effective_risk`, so the channel sees the same
-    EFFECTIVE risk the dashboard shows (the event itself carries only the tool's DECLARED
-    ``risk_level``, which over-states a read-only ``bash``).
+    Reads only fields the event already carries, and takes its classification from
+    ``task_modes`` rather than re-deriving it: one :func:`~personalclaw.task_modes.read_call`
+    gives the EFFECTIVE risk and the command's effects, so the channel sees the risk the
+    dashboard shows, and facets that cannot disagree with it (the event itself carries only the
+    tool's DECLARED ``risk_level``, which over-states a read-only ``bash``).
 
     The event is the RAW one (the gateway's, or a channel's own turn's), so the tool, its
     arguments and its purpose are masked here, once, exactly as the dashboard's pending
@@ -331,13 +402,8 @@ def compose_approval_brief(event: Any) -> dict[str, Any] | None:
     :func:`~personalclaw.security.redact_field`). A native-loop call's arguments arrive as a
     dict, and are JSON-encoded before the mask reads them, which is what the card shows too.
 
-    **Why the read verdict is not passed separately.** OU-8 measured the
-    ``read_only`` pass-through as redundant, and it is: ``resolve_effective_risk``
-    already routes a readable command through ``is_read_only_bash`` and only ever reports
-    ``'safe'`` on positive read evidence — a tool that declares nothing floors at
-    ``'caution'``, never ``'safe'``, so nothing arrives on the phone claiming "reads only"
-    without a declaration or a screened command behind it.
-
+    Nothing arrives on the phone claiming "reads only" without a declaration or a screened
+    command behind it: ``read_call`` reports ``'safe'`` only on positive read evidence.
     """
     tool = str(getattr(event, "title", "") or "")
     if not tool:
@@ -346,15 +412,18 @@ def compose_approval_brief(event: Any) -> dict[str, Any] | None:
 
     tool_kind = str(getattr(event, "tool_kind", "") or "")
     tool_input = getattr(event, "tool_input", "")
-    risk = str(
-        resolve_effective_risk(getattr(event, "risk_level", ""), tool, tool_kind, tool_input)
-    )
+    reading = read_call(getattr(event, "risk_level", ""), tool, tool_kind, tool_input)
     return _brief(
-        tool,
+        radius=derive_blast_radius(
+            tool,
+            risk=reading.risk,
+            effects=reading.effects,
+            annotations=getattr(event, "annotations", None),
+        ),
         shown_tool=redact_field(tool),
         shown_input=redact_field(tool_input_to_str(tool_input)),
         shown_purpose=redact_field(str(getattr(event, "tool_purpose", "") or "")),
-        risk=risk,
+        risk=reading.risk,
     )
 
 
@@ -362,16 +431,18 @@ def entry_approval_brief(entry: Mapping[str, Any]) -> dict[str, Any] | None:
     """The brief for a pending approval the dashboard registered (its ``_approval_entry``).
 
     The entry's strings are the ones the dashboard's card shows, already masked, so they are
-    carried as they are: masking them again would print something the card does not. Its
-    ``risk`` is the chat's effective risk; a background approval's entry has none, and gets it
-    the way :func:`compose_approval_brief` does."""
+    carried as they are: masking them again would print something the card does not. So is its
+    ``blast_radius``, composed when the approval was registered from the call's raw arguments.
+    Its ``risk`` is the chat's effective risk; a background approval's entry has none, and gets
+    it the way :func:`compose_approval_brief` does."""
     tool = str(entry.get("tool") or "")
     if not tool:
         return None
     shown_input = str(entry.get("tool_input") or "")
     risk = str(entry.get("risk") or "") or str(resolve_effective_risk("", tool, "", shown_input))
+    radius = entry.get("blast_radius")
     return _brief(
-        tool,
+        radius=radius if isinstance(radius, dict) else None,
         shown_tool=tool,
         shown_input=shown_input,
         shown_purpose=str(entry.get("tool_purpose") or ""),

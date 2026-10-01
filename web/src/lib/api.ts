@@ -5228,11 +5228,16 @@ export interface PendingApproval {
   session_title: string
   /** Which agent is asking — a chat names it; "" for a background origin. */
   agent: string
-  /** The effective risk the chat card shows; "" when the origin did not resolve one. */
+  /** The effective risk the chat card shows; "" when the origin did not resolve one. Decode it
+   *  with `approvalRiskOf`. */
   risk: string
   // Whether this call is established as a read (`task_modes.reads_only`), #2821: its tool
-  // declares it only reads, or its command screened read-only. Decode it with `readOnlyOf`.
+  // declares it only reads, or its command screened read-only. The surfaces describe a call
+  // from `blast_radius`, whose `readOnly` is the same claim.
   is_read_only?: boolean
+  /** What the call can touch, composed by the backend from the same reading as `risk`
+   *  (`approval_brief.call_blast_radius`). Decode it with `blastRadiusOf`. */
+  blast_radius?: unknown
   grant_agent: string
   /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
   trigger?: string

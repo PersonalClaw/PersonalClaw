@@ -1,216 +1,84 @@
-/** Blast-radius DERIVATION for an approval prompt (Contract C2,
- *  the plan (internal, not in this repo)).
+/** What a pending tool call can touch, as every approval surface shows it (Contract C2).
  *
- *  This module DESCRIBES what a pending tool call can touch so the human weighing
- *  an approval can see it at a glance. It DECIDES nothing. Nothing gates on its
- *  result, and nothing may: the approval gate, trust-reads and the task-mode gate
- *  all live in `src/personalclaw/task_modes.py` + `src/personalclaw/gateway.py` and
- *  are unchanged by this file. Read-only consumption of classifications the backend
- *  already computed — per C2, "no security-logic change".
+ *  The blast radius is composed by the BACKEND, once, where the approval is registered
+ *  (`approval_brief.call_blast_radius`): from the same reading of the call that gives its risk,
+ *  over the call's raw arguments. For a shell call that reading is the command's own — a
+ *  redirect into a file "writes files", a program the screen could not vouch for "runs a
+ *  command" — which no client could rebuild from a tool's name, and the risk and the facets
+ *  cannot disagree because they come from one analysis. Every approval carries it as
+ *  `blast_radius`: the chat `approval` frame, `GET /api/approvals`, and the persisted
+ *  `perm_meta` a reloaded transcript rehydrates.
  *
- *  CONSUMERS: `pages/chat/ApprovalCard` renders these facets as chips and
- *  `app/approvalToast` renders the same vocabulary as one line (both landed with
- *  OU-8); `OU-9` carries the same fields over `ChannelDelivery.request_approval`.
- *  The facet WORDS live here too, beside the derivation, so the surfaces cannot
- *  drift into three vocabularies for one claim.
+ *  This module DECODES that radius and holds the WORDS every dashboard surface renders it in
+ *  (the card's chips, the out-of-context toast's line, the phone queue's row). The channel
+ *  brief is composed in Python with the same words: `tests/test_approval_brief.py` parses
+ *  `FACET_COPY` and `BLAST_RADIUS_FACET_ORDER` out of this file and asserts they agree.
  *
  *  ── Honesty contract ─────────────────────────────────────────────────────────
- *  Every returned boolean is a POSITIVE claim; `false` means "not established",
- *  never "verified absent". Two consequences the callers depend on:
- *
- *  1. `undefined` is returned whenever NO facet could be established. An all-false
- *     object would render as four negatives ("no writes, no network, no shell, not
- *     read-only") — a confident claim from zero evidence. Absence is C2's own
- *     unknown channel (`blastRadius?`), so the renderer simply shows no chips.
- *  2. `readOnly` is only ever claimed on positive evidence — a read-only EFFECTIVE risk
- *     or the backend's read verdict — and never alongside a write. Under-claiming
- *     safety is the correct direction to err.
- *
- *  ── What the name is, and is not, evidence of ─────────────────────────────────
- *  `readOnly` comes from the backend's classification alone: `risk` is `safe` only when
- *  the tool DECLARES it only reads or the command it runs is a read-only one. A tool's
- *  NAME never establishes a read — `task_list_create` carries "list", and a name is only
- *  ever a guess about what a tool might do. The name hints below DESCRIBE a call that is
- *  not a read (`writes`, `shell`, `network`); they claim nothing about a read.
- *
- *  ── Why `risk` is optional ───────────────────────────────────────────────────
- *  The chat's `approval` WS event carries the EFFECTIVE risk (`chat_runner.py`), and so
- *  does `GET /api/approvals` (`PendingApproval.risk`) for a call whose tool declares one.
- *  A call that declares nothing — an ACP agent's own tool — carries `""`, so `risk` must
- *  be absent-able, and its absence must not imply a read: with no risk the name hints can
- *  still establish writes/network/shell and can still leave everything unknown
- *  (→ `undefined`).
- *
- *  ── Where `readOnly` comes from (#2821) ───────────────────────────────────────
- *  C2 names the backend's read classification as a third input: an approval's
- *  `is_read_only`, from `task_modes.reads_only()` — ONE backend owner, so the two
- *  surfaces that ask a human for permission cannot answer differently. It says whether
- *  THIS call is established as a read (its tool declares it only reads, or its command
- *  screened read-only), and it is a yes or a no: a call not established as a read is the
- *  change it may be. It arrives on all three paths: the chat `approval` WS event,
- *  `GET /api/approvals`, and the persisted `perm_meta` a reloaded transcript rehydrates.
- *
- *  Two wire spellings exist and `readOnlyOf` is the ONE decoder for both. The live paths
- *  carry a real JSON boolean. The history path carries `"1"`/`""` strings, the value a
- *  session transcript's `cls` column holds. Note `""` is falsy but not `=== false`, so
- *  passing it through raw would read as "no verdict" and lose the negative one — the bug
- *  shape this decoder exists to prevent. A transcript row written before the verdict was
- *  recorded for every call carries none, which decodes as `undefined` (no verdict).
- *
- *  It is not re-implemented client-side: this module never inspects a command string,
- *  because deciding whether a command is read-only IS security logic and it already has
- *  an owner.
+ *  Every boolean is a POSITIVE claim; `false` means "not established", never "verified
+ *  absent". A radius with nothing established is shown as nothing: an all-false object
+ *  rendered as four negatives ("no writes, no network, no shell, not read-only") would be a
+ *  confident claim from zero evidence. A row that carries no radius (one written before the
+ *  backend composed it) decodes as `undefined`, and its surfaces simply show no facets.
  */
 
 import type { ApprovalSegment } from './chatTypes'
 
-/** The approval risk vocabulary. Identical to `ToolItem.risk_level`
- *  (`web/src/lib/api.ts:1008`) and to the backend `RiskLevel` values — one
- *  vocabulary, aliased here rather than re-declared so it cannot drift. */
+/** The approval risk vocabulary: the backend's EFFECTIVE risks (`task_modes.read_call`). The
+ *  three declared levels, plus `unchecked` for a shell command the screen could not vouch
+ *  for — no tool declares that one, so it is not a `ToolItem.risk_level`. */
 export type ApprovalRisk = NonNullable<ApprovalSegment['risk']>
 
-/** Contract C2's shape, verbatim. Four independent facets, not a severity scale:
- *  a read-only `bash` invocation is both `shell` and `readOnly`. */
-export interface BlastRadius {
-  writes: boolean
-  network: boolean
-  shell: boolean
-  readOnly: boolean
-}
-
-export interface BlastRadiusInput {
-  /** Tool name as it arrives on the wire (`approval.tool` / `PendingApproval.tool`). */
-  tool: string
-  /** The EFFECTIVE per-invocation risk the backend already resolved. ABSENT on the
-   *  approvals-queue/companion path — see the module header. */
-  risk?: ApprovalRisk
-  /** The backend's read verdict for this call (an approval's `is_read_only`,
-   *  `task_modes.reads_only`) — see the module header. Absent on a row that carries none.
-   *  Decode a raw wire value with `readOnlyOf`, never by casting. */
-  readOnly?: boolean
-}
-
-/** The ONE decoder for the wire's read verdict.
- *
- *  `true`/`"1"` → established as a read · `false`/`""` → not established as one ·
- *  anything else (`undefined`, an unknown string) → no verdict.
- *
- *  Every parse site funnels through here so the two wire spellings cannot produce two
- *  different answers. The `""` case is the one worth naming: it is falsy but not
- *  `=== false`, so a raw pass-through would read as "no verdict" and quietly drop a
- *  negative one.
- *
- *  Unknown values collapse to `undefined` rather than `false`: an absent verdict must never
- *  become a claim in either direction, which is the honesty contract the whole module is
- *  built on. */
-export function readOnlyOf(raw: unknown): boolean | undefined {
-  if (raw === true || raw === '1') return true
-  if (raw === false || raw === '') return false
-  return undefined
-}
-
-/** Does a risk level positively establish that the call is a read?
- *
- *  Consumed, not invented: `resolve_effective_risk` (`task_modes.py`) reaches 'safe'
- *  only through a read-only shell command or a tool that DECLARES it only reads, so
- *  EFFECTIVE-safe is already derived FROM read-only-ness. 'caution' and 'destructive'
- *  say a call has side effects but not WHICH facet, so they establish nothing here.
- *
- *  Typed as a total `Record` on purpose: adding a member to the risk union makes
- *  this object a type error, so a new level cannot arrive silently unmapped. There
- *  is deliberately no `default:` branch anywhere in this module. */
-export const RISK_ESTABLISHES_READ_ONLY: Record<ApprovalRisk, boolean> = {
+/** Every effective risk this build knows. A total `Record`, so a new member of the union is a
+ *  type error here until it is listed. */
+const RISK_LEVELS: Record<ApprovalRisk, true> = {
   safe: true,
-  caution: false,
-  destructive: false,
-}
-
-/** Runtime membership test. `ChatPage.tsx:911` casts the raw wire string into the
- *  union WITHOUT validating it, so a session written by another build can carry a
- *  level this build has never heard of. Treat that as no evidence — the same
- *  defence `RiskChip` already makes with its `if (!m) return null`. */
-function riskEstablishesReadOnly(risk: ApprovalRisk | undefined): boolean {
-  if (risk === undefined) return false
-  return Object.prototype.hasOwnProperty.call(RISK_ESTABLISHES_READ_ONLY, risk)
-    ? RISK_ESTABLISHES_READ_ONLY[risk]
-    : false
+  caution: true,
+  destructive: true,
+  unchecked: true,
 }
 
 /** The ONE decoder for a risk string off the wire (`PendingApproval.risk`, an `approval`
  *  frame's `risk`): a level this build knows, or `undefined` — `""` (the call declared
  *  nothing) and a level another build wrote are both no evidence. */
 export function approvalRiskOf(raw: unknown): ApprovalRisk | undefined {
-  return typeof raw === 'string' && Object.prototype.hasOwnProperty.call(RISK_ESTABLISHES_READ_ONLY, raw)
+  return typeof raw === 'string' && Object.prototype.hasOwnProperty.call(RISK_LEVELS, raw)
     ? (raw as ApprovalRisk)
     : undefined
 }
 
-// ── Tool-name description ────────────────────────────────────────────────────
-// What kind of change a call that is not a read can make, from words in its name —
-// the lists `src/personalclaw/approval_brief.py` carries, verbatim (a test pins them).
-// Only POSITIVE matches set a facet; an unmatched name leaves it unknown.
-
-/** Runs a command / spawns a process. `terminal`/`shell` cover the ACP display names
- *  ACP agents send as the title. Deliberately NOT `run`: the `project_run_*` tools
- *  drive a workflow run, not a shell. */
-const SHELL_HINTS = ['bash', 'shell', 'terminal', 'zsh', 'exec', 'spawn', 'command'] as const
-
-/** Leaves the machine. `web_fetch`/`web_search` are the app-provided web tools;
- *  the rest cover MCP tools named by convention. */
-const NETWORK_HINTS = ['web_', 'http', 'fetch', 'browse', 'download', 'upload', 'crawl', 'scrape', 'url'] as const
-
-/** Removes something. A delete is a write to the world, so these describe `writes` too. */
-const DESTRUCTIVE_HINTS = ['delete', 'remove', 'destroy', 'drop_', 'purge', 'forget'] as const
-
-/** Creates or changes something. */
-const WRITE_HINTS = [
-  'write', 'edit', 'create', 'save', 'update', 'move', 'rename', 'append', 'remember',
-  'set_', 'put_', 'install', 'deploy', 'subagent', 'schedule', 'notify', 'post_',
-  'send', 'commit', 'push', 'generate',
-] as const
-
-/** Normalize a wire tool name for fragment matching: an `mcp/<server>/<tool>` name is
- *  described by its tool, and lowercasing lets ACP display titles ("Terminal") match. */
-function normalizeToolName(tool: string): string {
-  const lowered = (tool || '').toLowerCase().trim()
-  return lowered.includes('/') ? lowered.slice(lowered.lastIndexOf('/') + 1) : lowered
+/** The risks a surface treats as "may be destructive" — `task_modes.MAY_DESTROY`: the card
+ *  withholds its standing grants for them until the user unlocks them. A shell command the
+ *  screen could not check can do anything the shell can. */
+export function mayDestroy(risk: ApprovalRisk | undefined): boolean {
+  return risk === 'destructive' || risk === 'unchecked'
 }
 
-function hasAny(name: string, hints: readonly string[]): boolean {
-  return hints.some((h) => name.includes(h))
+/** What a call can touch: independent facets, not a severity scale. `saysReadOnly` is a tool
+ *  server's own read-only label, shown as its word; `readOnly` is a read PersonalClaw established. */
+export interface BlastRadius {
+  writes: boolean
+  network: boolean
+  shell: boolean
+  saysReadOnly: boolean
+  readOnly: boolean
 }
 
-/** Derive the blast-radius facets of one pending approval, or `undefined` when the
- *  inputs establish nothing.
- *
- *  Purely descriptive and total — no throws, no I/O, no clock, no randomness. Safe
- *  to call on every render. */
-export function deriveBlastRadius(input: BlastRadiusInput): BlastRadius | undefined {
-  const name = normalizeToolName(input.tool)
-
-  const shell = hasAny(name, SHELL_HINTS)
-  const network = hasAny(name, NETWORK_HINTS)
-
-  // What kind of change the call can make, from words in its name — a description, never a
-  // read: no word establishes that a call changes nothing.
-  const writes = hasAny(name, DESTRUCTIVE_HINTS) || hasAny(name, WRITE_HINTS)
-  // `readOnly` needs positive evidence: the backend's read verdict or an EFFECTIVE-safe
-  // risk (the tool declares it only reads, or its command screened read-only). An explicit
-  // `false` verdict rules the claim out, and so does an established write — a tool labelled
-  // read-only whose name says it writes is shown as the write it may be.
-  const readOnly = !writes && (input.readOnly === true
-    || (input.readOnly !== false && riskEstablishesReadOnly(input.risk)))
-
-  // Nothing established → say nothing. See the honesty contract in the header.
-  if (!writes && !network && !shell && !readOnly) return undefined
-  return { writes, network, shell, readOnly }
+/** The ONE decoder for a radius off the wire. Anything that is not the four booleans is no
+ *  radius at all, never a partial one: a field this build cannot read must not become a
+ *  claim in either direction. */
+export function blastRadiusOf(raw: unknown): BlastRadius | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  const keys = BLAST_RADIUS_FACET_ORDER
+  if (!keys.every((k) => typeof r[k] === 'boolean')) return undefined
+  return {
+    writes: r.writes as boolean, network: r.network as boolean, shell: r.shell as boolean,
+    saysReadOnly: r.saysReadOnly as boolean, readOnly: r.readOnly as boolean,
+  }
 }
 
 // ── The ONE facet vocabulary every surface renders ───────────────────────────
-// Three surfaces show a blast radius — the chat card's chips, the out-of-context
-// approval toast's one-liner, and the channel brief. They must not each
-// invent their own words for `writes`, so the words live here, beside the
-// derivation, and each surface only chooses a PRESENTATION.
 
 /** One established facet, ready to render. */
 export interface BlastRadiusFacet {
@@ -221,31 +89,27 @@ export interface BlastRadiusFacet {
   detail: string
 }
 
-/** Total over `BlastRadius` — adding a facet to the interface makes this object a
- *  type error, so a new facet cannot arrive unlabelled (the same discipline
- *  `RISK_ESTABLISHES_READ_ONLY` applies to the risk union). */
+/** Total over `BlastRadius` — adding a facet to the interface makes this object a type
+ *  error, so a new facet cannot arrive unlabelled. */
 const FACET_COPY: Record<keyof BlastRadius, { label: string; detail: string }> = {
   writes: { label: 'Writes files', detail: 'Can create or change files on this machine.' },
   shell: { label: 'Runs a command', detail: 'Can execute a command on this machine.' },
   network: { label: 'Uses the network', detail: 'Can reach the network from this machine.' },
+  saysReadOnly: { label: 'Server says it only reads', detail: 'The server that offers this tool labels it read-only. PersonalClaw takes that label only from a server you trust on the Tools page.' },
   readOnly: { label: 'Reads only', detail: 'Established as a read: no change was established.' },
 }
 
-/** Render order — broadest consequence first, the read claim last. Kept as data (not
- *  `Object.keys`) so the order is deliberate and reviewable; a test asserts it covers
- *  every key of `FACET_COPY`, so a fifth facet cannot be silently dropped from every
- *  surface at once. */
+/** Render order — broadest consequence first, the read claims last. Kept as data (not
+ *  `Object.keys`) so the order is deliberate and reviewable. */
 export const BLAST_RADIUS_FACET_ORDER: readonly (keyof BlastRadius)[] = [
-  'writes', 'shell', 'network', 'readOnly',
+  'writes', 'shell', 'network', 'saysReadOnly', 'readOnly',
 ]
 
 /** The facets a caller may legitimately SHOW, in render order.
  *
- *  Only established (`true`) facets are returned, and `undefined` yields `[]`. That is
- *  the honesty contract made renderable: a `false` facet means "not established", so
- *  painting it as a negative chip ("no network") would turn absence of evidence into a
- *  confident all-clear. A surface therefore shows the positives or shows nothing — it
- *  must never enumerate all four with on/off states. */
+ *  Only established (`true`) facets are returned, and `undefined` yields `[]`. A surface
+ *  shows the positives or shows nothing — it must never enumerate all four with on/off
+ *  states. */
 export function establishedFacets(radius: BlastRadius | undefined): BlastRadiusFacet[] {
   if (!radius) return []
   return BLAST_RADIUS_FACET_ORDER.filter((k) => radius[k]).map((k) => ({ key: k, ...FACET_COPY[k] }))

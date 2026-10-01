@@ -4,7 +4,7 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { loopApprovalOf } from '../../app/approvalDestination'
 import { ApprovalCard } from '../chat/ApprovalCard'
-import { approvalRiskOf, readOnlyOf } from '../chat/approvalMeta'
+import { approvalRiskOf, blastRadiusOf } from '../chat/approvalMeta'
 import type { ApprovalSegment } from '../chat/chatTypes'
 
 type Action = 'approved' | 'rejected' | 'trust' | 'trust_agent'
@@ -24,7 +24,7 @@ function segmentOf(a: PendingApproval): ApprovalSegment {
     input: inputText(a.tool_input),
     purpose: a.tool_purpose || '',
     risk: approvalRiskOf(a.risk),
-    readOnly: readOnlyOf(a.is_read_only),
+    blastRadius: blastRadiusOf(a.blast_radius),
     grantAgent: a.grant_agent || '',
   }
 }

@@ -147,12 +147,60 @@ async def test_a_channel_is_handed_the_call_the_dashboard_card_shows(tmp_path):
     assert "curl -H" in brief["input"] and "https://api.example.test/v1/models" in brief["input"]
     assert brief["purpose"] == entry["tool_purpose"]
     assert brief["purpose"].startswith("check which models the key")
-    # A background approval's entry names no risk; the brief resolves it as the gateway's does.
-    assert brief["summary"] == "Can: runs a command · Risk: Destructive"
+    # The command decides the risk the entry carries, and the channel says what the card shows:
+    # it reaches the network, and the screen cannot vouch for it.
+    assert entry["risk"] == "unchecked"
+    assert entry["blast_radius"] == {
+        "writes": False,
+        "network": True,
+        "shell": True,
+        "saysReadOnly": False,
+        "readOnly": False,
+    }
+    assert brief["summary"] == "Can: runs a command, uses the network · Risk: Not checked"
     for text in (brief["tool"], brief["input"], brief["purpose"], brief["summary"]):
         assert SECRET not in text, "a key reached the channel"
 
     state.resolve_approval("ap-1", False, by=YOU)
+    await asyncio.wait_for(waiter, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_background_shell_write_is_shown_as_the_write_it_is(tmp_path):
+    """A shell call that declares nothing still has its command read: the entry carries the
+    command's risk and radius, so the card and the channel both say it writes a file."""
+    channel = _connect()
+    state = _state(tmp_path)
+    write = {"command": "cd ~ && printf 'hello\\n' > Documents/note.txt"}
+
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-2", "cron:nightly", "execute_bash", tool_input=write)
+    )
+    await _until(lambda: channel.events, "the channel was asked")
+    entry = state._pending_approvals["ap-2"]
+    assert entry["risk"] == "caution"
+    assert entry["is_read_only"] is False
+    assert entry["blast_radius"]["writes"] is True
+    assert _brief_of(channel.events[0])["summary"] == "Can: writes files · Risk: Caution"
+
+    state.resolve_approval("ap-2", False, by=YOU)
+    await asyncio.wait_for(waiter, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_background_call_that_declares_nothing_and_runs_no_command_names_no_risk(
+    tmp_path,
+):
+    """Nothing declared and no command read: no risk anybody established, so the entry says
+    none rather than one minted from the tool's name."""
+    _connect()
+    state = _state(tmp_path)
+    waiter = asyncio.ensure_future(
+        state.request_approval("ap-3", "cron:nightly", "frobnicate_xyzzy", tool_input={"x": 1})
+    )
+    await _until(lambda: "ap-3" in state._pending_approvals, "the approval was registered")
+    assert state._pending_approvals["ap-3"]["risk"] == ""
+    state.resolve_approval("ap-3", False, by=YOU)
     await asyncio.wait_for(waiter, timeout=5)
 
 
@@ -266,7 +314,7 @@ def test_an_event_with_no_tool_has_no_brief():
     ("tool", "risk", "line"),
     [
         ("write_file", "caution", "Can: writes files · Risk: Caution"),
-        ("bash", "safe", "Can: runs a command, reads only · Risk: Safe"),
+        ("bash", "safe", "Can: runs a command · Reads only · Risk: Safe"),
         ("memory_search", "safe", "Reads only · Risk: Safe"),
         ("frobnicate_xyzzy", "caution", "Risk: Caution"),
         ("frobnicate_xyzzy", "", ""),
@@ -283,7 +331,13 @@ def test_a_false_facet_never_becomes_an_all_clear():
     """Only ESTABLISHED facets are named; a ``False`` is never rendered as a negative."""
     from personalclaw.approval_brief import summary_line
 
-    radius = {"writes": False, "network": True, "shell": False, "readOnly": False}
+    radius = {
+        "writes": False,
+        "network": True,
+        "shell": False,
+        "saysReadOnly": False,
+        "readOnly": False,
+    }
     line = summary_line(radius, "caution")
     assert line == "Can: uses the network · Risk: Caution"
     for absent in ("writes files", "runs a command", "reads only", "no network", "no shell"):

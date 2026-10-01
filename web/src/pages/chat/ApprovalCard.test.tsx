@@ -23,7 +23,7 @@ describe('ApprovalCard — the four zones', () => {
   it('renders what, why, what-it-can-touch and how-far-it-reaches', () => {
     const { container } = render(
       <ApprovalCard
-        seg={seg({ tool: 'bash', input: 'rm -rf /tmp/scratch', purpose: 'Clearing the scratch dir before the rebuild', risk: 'destructive' })}
+        seg={seg({ tool: 'bash', input: 'rm -rf /tmp/scratch', purpose: 'Clearing the scratch dir before the rebuild', risk: 'destructive', blastRadius: { writes: true, network: false, shell: false, saysReadOnly: false, readOnly: false } })}
         onAct={() => {}}
       />,
     )
@@ -31,13 +31,12 @@ describe('ApprovalCard — the four zones', () => {
     expect(container.textContent).toContain('bash(rm -rf /tmp/scratch)')
     // 2 WHY — the purpose line the runner supplied.
     expect(container.textContent).toContain('Clearing the scratch dir before the rebuild')
-    // 3 TOUCH — a NAMED list of established facets. `bash` + destructive establishes the
-    // shell facet; it establishes no read, which is why "Reads only" must be absent.
+    // 3 TOUCH — a NAMED list of the facets the backend established for this call: its
+    // command deletes, so it writes files, and it establishes no read.
     const list = touchList()
     expect(list).not.toBeNull()
     const chips = [...list!.querySelectorAll('li')].map((li) => li.textContent?.trim())
-    expect(chips).toContain('Runs a command')
-    expect(chips).not.toContain('Reads only')
+    expect(chips).toEqual(['Writes files'])
     // 4 REACH — the scope picker plus the promise it makes, in visible text.
     expect(screen.getByRole('radiogroup', { name: 'Remember this choice' })).toBeTruthy()
     expect(container.textContent).toContain('Nothing is remembered. The next tool call asks again.')
@@ -50,13 +49,24 @@ describe('ApprovalCard — the four zones', () => {
   })
 
   it('shows the risk chip when the wire carried a risk, and no chip when it did not', () => {
-    for (const risk of ['safe', 'caution', 'destructive'] as const) {
+    const words = { safe: 'Safe', caution: 'Caution', destructive: 'Destructive', unchecked: 'Not checked' } as const
+    for (const risk of ['safe', 'caution', 'destructive', 'unchecked'] as const) {
       const { container, unmount } = render(<ApprovalCard seg={seg({ risk })} onAct={() => {}} />)
-      expect(container.textContent, risk).toMatch(/Safe|Caution|Destructive/)
+      expect(container.textContent, risk).toContain(words[risk])
       unmount()
     }
     const { container } = render(<ApprovalCard seg={seg({ risk: undefined })} onAct={() => {}} />)
-    expect(container.textContent).not.toMatch(/Safe|Caution|Destructive/)
+    expect(container.textContent).not.toMatch(/Safe|Caution|Destructive|Not checked/)
+  })
+
+  it('says a command the screen could not check is not checked, never safe or destructive', () => {
+    const { container } = render(
+      <ApprovalCard seg={seg({ tool: 'bash', input: 'rg TODO notes', risk: 'unchecked', blastRadius: { writes: false, network: false, shell: true, saysReadOnly: false, readOnly: false } })} onAct={() => {}} />,
+    )
+    expect(container.textContent).toContain('Not checked')
+    expect(container.textContent).not.toMatch(/Safe|Destructive/)
+    const chips = [...touchList()!.querySelectorAll('li')].map((li) => li.textContent?.trim())
+    expect(chips).toEqual(['Runs a command'])
   })
 
   it('survives a risk level this build has never heard of, claiming nothing extra', () => {
@@ -72,30 +82,39 @@ describe('ApprovalCard — the four zones', () => {
 
 describe('ApprovalCard — the blast-radius zone never over-claims', () => {
   it('renders NO facet zone at all when the inputs establish nothing', () => {
-    // THE CENTRAL RAIL. `deriveBlastRadius` returns `undefined` here on purpose: an
-    // all-false radius rendered as four negative chips would be a confident all-clear
-    // derived from zero evidence. The renderer must not undo that by enumerating the
-    // facets with on/off states.
-    const { container } = render(<ApprovalCard seg={seg({ tool: 'ponder' })} onAct={() => {}} />)
-    expect(container.textContent).toContain('Permission needed')  // the card DID render
-    expect(touchList()).toBeNull()
-    for (const negative of ['No writes', 'No network', 'No shell', 'Not read', 'no writes', 'none']) {
-      expect(container.textContent, negative).not.toContain(negative)
+    // THE CENTRAL RAIL. A call with no radius, and a radius that established nothing, both
+    // render no facet zone: an all-false radius shown as four negative chips would be a
+    // confident all-clear derived from zero evidence.
+    for (const blastRadius of [undefined, { writes: false, network: false, shell: false, saysReadOnly: false, readOnly: false }]) {
+      const { container, unmount } = render(<ApprovalCard seg={seg({ tool: 'ponder', blastRadius })} onAct={() => {}} />)
+      expect(container.textContent).toContain('Permission needed')  // the card DID render
+      expect(touchList()).toBeNull()
+      for (const negative of ['No writes', 'No network', 'No shell', 'Not read', 'no writes', 'none']) {
+        expect(container.textContent, negative).not.toContain(negative)
+      }
+      unmount()
     }
   })
 
   it('shows only the ESTABLISHED facets, never the full four with on/off states', () => {
-    render(<ApprovalCard seg={seg({ tool: 'web_fetch', risk: 'caution' })} onAct={() => {}} />)
+    render(<ApprovalCard seg={seg({ tool: 'web_fetch', risk: 'caution', blastRadius: { writes: false, network: true, shell: false, saysReadOnly: false, readOnly: false } })} onAct={() => {}} />)
     const chips = [...touchList()!.querySelectorAll('li')].map((li) => li.textContent?.trim())
     expect(chips).toEqual(['Uses the network'])
   })
 
-  it('claims a read only on positive evidence, and both facets for a read-only shell call', () => {
-    // EFFECTIVE-safe is already derived FROM read-only-ness in task_modes.py, so a safe
-    // bash call is the one case that legitimately claims shell AND read-only.
-    render(<ApprovalCard seg={seg({ tool: 'bash', risk: 'safe' })} onAct={() => {}} />)
-    const chips = [...touchList()!.querySelectorAll('li')].map((li) => li.textContent?.trim())
-    expect(chips).toEqual(['Runs a command', 'Reads only'])
+  it("shows a tool server's read-only label as the server's word", () => {
+    render(<ApprovalCard seg={seg({ tool: 'mcp/github/list_commits', risk: 'caution', blastRadius: { writes: false, network: false, shell: false, saysReadOnly: true, readOnly: false } })} onAct={() => {}} />)
+    expect([...touchList()!.querySelectorAll('li')].map((li) => li.textContent?.trim())).toEqual(['Server says it only reads'])
+  })
+
+  it('shows the facets the backend composed, not ones guessed from the tool name', () => {
+    // `bash` names a shell, but a read-only command only reads, and a redirect into a file
+    // writes one: the card shows what the command does.
+    const { unmount } = render(<ApprovalCard seg={seg({ tool: 'bash', risk: 'safe', blastRadius: { writes: false, network: false, shell: false, saysReadOnly: false, readOnly: true } })} onAct={() => {}} />)
+    expect([...touchList()!.querySelectorAll('li')].map((li) => li.textContent?.trim())).toEqual(['Reads only'])
+    unmount()
+    render(<ApprovalCard seg={seg({ tool: 'bash', risk: 'caution', blastRadius: { writes: true, network: false, shell: false, saysReadOnly: false, readOnly: false } })} onAct={() => {}} />)
+    expect([...touchList()!.querySelectorAll('li')].map((li) => li.textContent?.trim())).toEqual(['Writes files'])
   })
 })
 
@@ -184,7 +203,7 @@ describe('ApprovalCard — the brief describes, it never advocates', () => {
   }
 
   it('contains no advocacy copy in any zone, at any risk level, under any scope, in a chat’s words or a loop’s', () => {
-    for (const [risk, words] of (['safe', 'caution', 'destructive'] as const).flatMap((r) => [[r, 'chat'], [r, 'loop']] as const)) {
+    for (const [risk, words] of (['safe', 'caution', 'destructive', 'unchecked'] as const).flatMap((r) => [[r, 'chat'], [r, 'loop']] as const)) {
       const { container, unmount } = render(
         <ApprovalCard seg={seg({ tool: 'bash', input: 'ls -la', purpose: 'Listing the repo root', risk, grantAgent: 'researcher' })} onAct={() => {}} scopeWords={words} />,
       )
@@ -194,8 +213,8 @@ describe('ApprovalCard — the brief describes, it never advocates', () => {
       // this whole cluster is about. Every scope in the vocabulary is still scanned at every
       // tier; the unlock's own label is scanned with them.
       const unlock = screen.queryByRole('checkbox', { name: /standing grant/i })
-      if (risk === 'destructive') {
-        expect(unlock, 'a destructive call must offer the unlock').toBeTruthy()
+      if (risk === 'destructive' || risk === 'unchecked') {
+        expect(unlock, 'a call that may destroy must offer the unlock').toBeTruthy()
         fireEvent.click(unlock!)
       } else {
         expect(unlock, 'the cheaper tiers must not grow a rung').toBeNull()
