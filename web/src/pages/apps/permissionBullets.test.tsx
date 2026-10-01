@@ -16,7 +16,7 @@ describe('the permission bullets say what an app agent and a settings grant real
   it('an `agent` grant says its agents act without asking', () => {
     render(<PermissionList perms={{ agent: true }} />)
     expect(text(document.body)).toContain(
-      'Run background agents that use any tool without asking you — they can change files and run commands',
+      'Run background agents that use any tool without asking you — they can change files, run commands and send messages',
     )
   })
 

@@ -217,11 +217,13 @@ class RunPromptActionProvider(ActionProvider):
             f"{rendered}\n\n{ctx.fire_facts}" if ctx.fire_facts else rendered
         )
         from personalclaw import write_scope
+        from personalclaw.automation_posture import agent_run_policy
 
-        # The files it may change, as allowed (`write_scope`), checked again here: a scope no save
-        # would take, written some other way, changes nothing.
-        writes = write_scope.entries(action_config)
-        scope_refused = write_scope.problem(writes)
+        # What its agent may do, as its Allow said it (`automation_posture.agent_run_policy`): the
+        # run is built from the same mapping the Allow's sentence is. The files it may change are
+        # checked again here: a scope no save would take, written some other way, changes nothing.
+        policy = agent_run_policy(self.name, action_config)
+        scope_refused = write_scope.problem(list(policy.writes))
         if scope_refused:
             return ActionResult(success=False, error=f"run-prompt: {scope_refused}")
         # What the run is called: its trigger's name, else the prompt it runs — never the framing
@@ -255,15 +257,12 @@ class RunPromptActionProvider(ActionProvider):
 
         dry_run = bool(action_config.get("dry_run", False))
 
-        # §4.1 creation-time write grant. This fire is auto-fired (``approval_mode="auto"``), so the
-        # spawn defaults to the read-only RESEARCH class unless the automation was created with an
-        # explicit ``capability: "mutating"`` grant — "auto-fired runs default read-only; write is a
-        # creation-time grant reviewed when the automation is created." An untrusted project folder
-        # forces research regardless of this grant; that gate is applied below.
-        capability_class = str(action_config.get("capability") or "").strip().lower() or None
-        # A project-bound run (a project ``<cwd>/loop.md`` or project scripts) touches a
-        # project folder. An untrusted/Preview folder runs read-only (REVIEW_ONLY) — a write grant
-        # cannot silently execute project scripts in a folder the user never trusted.
+        # §4.1 creation-time write grant, read from the policy: this fire is auto-fired, so it is
+        # read-only unless the automation was created with ``capability: "mutating"``. A
+        # project-bound run (a project ``<cwd>/loop.md`` or project scripts) touches a project
+        # folder, and an untrusted/Preview one runs read-only (REVIEW_ONLY) — a write grant cannot
+        # silently execute project scripts in a folder the user never trusted.
+        capability_class: str | None = policy.capability_class
         if cwd:
             from personalclaw.guardrails.project_trust import gate_project_capability
 
@@ -281,7 +280,7 @@ class RunPromptActionProvider(ActionProvider):
                 max_turns=max_turns,
                 model=model,
                 cwd=cwd,
-                approval_mode="auto",
+                approval_mode=policy.approval_mode,
                 capability_class=capability_class,
                 silent=False,
                 dry_run=dry_run,
@@ -291,7 +290,7 @@ class RunPromptActionProvider(ActionProvider):
                 trigger_id=ctx.trigger_id,
                 title=title,
                 may_read=ctx.fire_files,
-                may_change=write_scope.scope(writes),
+                may_change=policy.may_change,
             )
         except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
             logger.warning("run-prompt: spawn failed", exc_info=True)

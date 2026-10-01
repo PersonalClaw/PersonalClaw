@@ -20,6 +20,9 @@ manifest declares, which install consent lists.
 
 The spec table below is the one list of per-automation posture keys; the rail
 (``tests/test_security_posture_rail.py``) drives the consent refusal for each entry.
+
+What a trigger's agent-starting step lets its agent do when it runs is :func:`agent_run_policy`:
+its run is built from it and its Allow is said from it (:class:`AgentRunPolicy`).
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from personalclaw.config.edit_spec import SecurityControl, loosens_toward, unconsented_loosening
@@ -48,8 +52,8 @@ POSTURE_SPECS: dict[str, dict[str, Any]] = {
     "capability": {
         "security": SecurityControl(
             loosens_toward("research", "", "mutating"),
-            "This automation's agent gets write access: it may change files and run commands, "
-            "not only read.",
+            "This automation's agent gets write access: it may change files, run commands and "
+            "send messages, not only read.",
         ),
     },
 }
@@ -58,19 +62,91 @@ POSTURE_SPECS: dict[str, dict[str, Any]] = {
 #: The actions that start an agent, whose Allow says what that agent may do.
 AGENT_STARTING_PROVIDERS: frozenset[str] = frozenset({"invoke-agent", "run-prompt"})
 
+#: Where a message an automation's agent sends its owner goes (``notify``): the app, or a chat
+#: channel the owner connected. It is the one thing a read-only run may send.
+_TO_THE_OWNER = "in PersonalClaw or on a chat channel you've connected"
 
-def what_its_agent_may_do(provider: str, config: Mapping[str, Any]) -> str:
-    """What the agent an automation's action starts may do when it runs, as its Allow says it.
 
-    Read the way the run reads it: ``run-prompt`` always runs its agent with nobody to ask, so it
-    is read-only unless it names the files it changes (``write_scope``) or carries the
-    ``capability: "mutating"`` grant; ``invoke-agent`` runs the same way when its step (or the
-    global setting) lets the agent approve its own calls, and otherwise its agent asks. ``""`` for
-    an action that starts no agent."""
-    if provider not in AGENT_STARTING_PROVIDERS:
-        return ""
+@dataclass(frozen=True)
+class AgentRunPolicy:
+    """What the agent an automation's action starts may do when it runs.
+
+    The one mapping from a step's posture to its run: the action builds the run from it
+    (``run-prompt``, ``invoke-agent``: ``approval_mode``, ``capability_class``, ``may_change``),
+    the run's tool policy is built from those (``subagent_tier.tier_for``), and the Allow is
+    :meth:`sentence`, so what the owner is told and what the run may do cannot drift apart
+    (``tests/test_an_automations_allow_is_what_its_run_may_do.py`` holds them equal for every
+    posture).
+
+    * ``approval_mode`` is ``"auto"`` when nobody is asked about its calls, ``""`` (or any other
+      value) when each change asks the owner first.
+    * ``capability_class`` is the resolved class: ``research`` reads, ``mutating`` may change.
+    * ``writes`` are the files its job changes, as the owner wrote them (``write_scope``): a
+      reading run may change those and nothing else.
+
+    An automation's own agent may always tell its owner what it found (``notify``, to the owner
+    only: ``tool_providers.base.only_tells_the_owner``), and that message leaves the machine when
+    it goes to a chat channel, so every sentence names it.
+    """
+
+    approval_mode: str
+    capability_class: str
+    writes: tuple[str, ...] = ()
+
+    @property
+    def asks(self) -> bool:
+        return self.approval_mode != "auto"
+
+    @property
+    def reads_only(self) -> bool:
+        from personalclaw.subagent import CAPABILITY_RESEARCH
+
+        return self.capability_class == CAPABILITY_RESEARCH
+
+    @property
+    def may_change(self) -> tuple[str, ...]:
+        """The real paths of :attr:`writes` (``write_scope.scope``): what a reading run may change,
+        and where its file tools reach to change it."""
+        from personalclaw import write_scope
+
+        return write_scope.scope(self.writes)
+
+    def sentence(self) -> str:
+        """What the Allow says this agent may do, every effect that reaches past a read named."""
+        from personalclaw import write_scope
+
+        if not self.reads_only:
+            if self.asks:
+                return (
+                    "Its agent asks you before it changes a file, runs a command or sends a "
+                    "message."
+                )
+            return "Its agent may change files, run commands and send messages without asking you."
+        changes = write_scope.sentence(self.writes) if self.writes else ""
+        if self.asks:
+            acts = f"changes {changes} or messages you" if changes else "messages you"
+            does = f"Its agent reads what it needs, and asks you before it {acts} {_TO_THE_OWNER}"
+        elif changes:
+            does = (
+                f"Its agent reads what it needs, may change only {changes}, and may message you "
+                f"{_TO_THE_OWNER}"
+            )
+        else:
+            does = f"Its agent only reads, and may message you {_TO_THE_OWNER}"
+        cannot = "anything else" if changes else "files"
+        return f"{does}: it cannot change {cannot}, run commands or message anyone else."
+
+
+def agent_run_policy(provider: str, config: Mapping[str, Any]) -> AgentRunPolicy:
+    """What the agent an action of *provider* (one of :data:`AGENT_STARTING_PROVIDERS`) starts
+    may do when it runs, from its step *config*.
+
+    ``run-prompt`` always runs its agent with nobody to ask; ``invoke-agent`` does when its step
+    (or the global setting) lets the agent approve its own calls (``approval_mode_of``), and its
+    agent asks otherwise. The class is ``subagent.resolve_capability_class``'s: read-only for a run
+    nobody is asked in, unless the step carries ``capability: "mutating"``."""
     from personalclaw import write_scope
-    from personalclaw.subagent import CAPABILITY_MUTATING, resolve_capability_class
+    from personalclaw.subagent import resolve_capability_class
 
     approval = "auto"
     if provider == "invoke-agent":
@@ -80,17 +156,11 @@ def what_its_agent_may_do(provider: str, config: Mapping[str, Any]) -> str:
     capability = resolve_capability_class(
         capability_class=_posture_value(config, "capability"), approval_mode=approval
     )
-    if capability == CAPABILITY_MUTATING:
-        if approval == "auto":
-            return "Its agent may change files and run commands, not only read."
-        return "Its agent asks you before it changes a file or runs a command."
-    writes = write_scope.entries(dict(config))
-    if writes:
-        return (
-            f"Its agent reads what it needs and may change only {write_scope.sentence(writes)}: "
-            "it cannot change anything else or run commands."
-        )
-    return "Its agent only reads: it cannot change files or run commands."
+    return AgentRunPolicy(
+        approval_mode=approval,
+        capability_class=capability,
+        writes=tuple(write_scope.entries(dict(config))),
+    )
 
 
 def _posture_value(config: Mapping[str, Any], key: str) -> str:

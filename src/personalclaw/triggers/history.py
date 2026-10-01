@@ -83,6 +83,12 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # (`REFUSED`), and it is not deferred work that still starts. Above all it is not `FAILED`:
     # the owner's own Deny must never read as the automation breaking, or count toward autopause.
     "declined": Outcome.SKIPPED_GATE.value,
+    # A launched run whose agent its own limits refused calls (`triggers.settle.settle_agent_run`):
+    # what its Allow said it may not do, or an approval nobody was there to give. `REFUSED`, a
+    # policy refusal with its reason on the row: not a success, since it has not done all it was
+    # asked, and not `FAILED`, since its limits held as allowed, so it never counts toward
+    # autopause.
+    "refused": Outcome.REFUSED.value,
     # `on_overlap: queue` held the start behind a run already in flight. DEFERRED's
     # "parked / resource-busy" half, and `LEDGER` weight follows for the same reason
     # `launched` gets it: no run directory or journal exists for it yet.

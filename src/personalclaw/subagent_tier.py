@@ -14,7 +14,15 @@ answered with an apology, and ended "completed". :class:`CallTally` counts each 
 was decided (refused when it was asked, or refused or run at its result), and
 :func:`refused_every_call` is the error such a subagent ends with, naming the tools and why.
 :func:`couldnt_do_it` is how a reader of that ending (a workflow step's settlement) tells it apart
-from any other failure.
+from any other failure. A subagent whose own limits refused SOME of its calls (its tier, or an
+approval nobody was there to give) ran, but may not have done all it was asked:
+:meth:`SubagentTier.limited` names those calls, and its trigger's history records the run as
+``refused`` rather than as a success (``triggers.settle``).
+
+**Where it comes from.** :func:`tier_for` builds a subagent's tier from what its spawn was handed:
+its capability class (§4.1), the files it may change and, for an automation's own agent, the
+message it may send its owner. An automation's step is turned into those by
+``automation_posture.agent_run_policy``, which its Allow is said from too.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ from personalclaw.llm.events import TOOL_META_AUTO_DENIED, TOOL_META_NOT_RUN, TO
 
 if TYPE_CHECKING:
     from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.subagent import SubagentInfo
 
 #: How a subagent ends that did nothing it was asked: every tool call it made was refused. It is
 #: its ERROR, so every reader of how it ended (its workflow step, its completion note, the
@@ -80,9 +89,14 @@ class CallTally:
 
     refused: dict[str, tuple[str, str]] = field(default_factory=dict)
     ran: int = 0
+    #: The refused calls the run's own limits refused: its tier, or an approval nobody was there to
+    #: give. Not a call the model sent malformed, nor one the owner's answer declined.
+    limited: list[str] = field(default_factory=list)
 
-    def refuse(self, call_id: str, tool: str, why: str) -> None:
+    def refuse(self, call_id: str, tool: str, why: str, *, limit: bool = False) -> None:
         self.refused[call_id] = (tool, why)
+        if limit and call_id not in self.limited:
+            self.limited.append(call_id)
 
     def result(self, call_id: str, tool: str, meta: dict[str, Any], *, grant_said: str) -> None:
         """Count a call at its result: refused when its runtime stamped a refusal on it, ran
@@ -92,18 +106,19 @@ class CallTally:
             return
         not_run = str(meta.get(TOOL_META_NOT_RUN) or "")
         refused_by = str(meta.get(TOOL_META_REFUSED_BY) or "")
+        limit = False
         if not_run and not_run != "stopped":
             why = _NOT_RUN_WHY.get(not_run, "it could not be run")
         elif meta.get(TOOL_META_AUTO_DENIED):
-            why = "nobody could approve it"
+            why, limit = "nobody could approve it", True
         elif refused_by == "tool_grants":
-            why = grant_said or "this run's tools do not include it"
+            why, limit = grant_said or "this run's tools do not include it", True
         elif refused_by and refused_by != "dry_run":
             why = _REFUSED_BY_WHY.get(refused_by, "it was refused")
         else:
             self.ran += 1
             return
-        self.refuse(call_id, tool, why)
+        self.refuse(call_id, tool, why, limit=limit)
 
     def verdict(self) -> str:
         """:func:`refused_every_call` when the agent made calls and none of them ran, else ""."""
@@ -130,9 +145,15 @@ class SubagentTier:
     """
 
     def __init__(
-        self, profile: SafetyProfile, *, owner_notices: bool, may_change: tuple[str, ...]
+        self,
+        profile: SafetyProfile,
+        *,
+        owner_notices: bool,
+        may_change: tuple[str, ...],
+        capability_class: str = "",
     ) -> None:
         self.profile = profile
+        self.capability_class = capability_class
         self._owner_notices = owner_notices
         self._may_change = may_change
         # The last refusal of each tool, so the agent's ending can say why its calls were refused.
@@ -183,9 +204,10 @@ class SubagentTier:
                 )
             )
 
-    def refused(self, call_id: str, tool: str, why: str) -> None:
-        """A call that asked, refused before it ran."""
-        self._tally.refuse(call_id, tool, why)
+    def refused(self, call_id: str, tool: str, why: str, *, limit: bool = False) -> None:
+        """A call that asked, refused before it ran; *limit* when the run's own limits refused it
+        (its tier, or nobody to approve it)."""
+        self._tally.refuse(call_id, tool, why, limit=limit)
 
     def declined(self, call_id: str, tool: str, outcome: str) -> None:
         """A call that asked, refused by the answer to its ask (*outcome*, as the ask ended)."""
@@ -199,3 +221,31 @@ class SubagentTier:
     def verdict(self) -> str:
         """:func:`refused_every_call` when the agent made calls and none of them ran, else ""."""
         return self._tally.verdict()
+
+    def limited(self) -> list[str]:
+        """The tools of the calls the run's own limits refused, in the order they were made."""
+        return [self._tally.refused[call_id][0] for call_id in self._tally.limited]
+
+
+def tier_for(info: SubagentInfo) -> SubagentTier:
+    """The tier *info*'s run is held to, from what its spawn was handed. A ceiling that will not
+    resolve raises here, before the run starts, which fails the spawn CLOSED."""
+    from personalclaw.guardrails.policy import TOOL_READ, tool_grant_posture
+    from personalclaw.subagent import CAPABILITY_RESEARCH, resolve_capability_class
+
+    capability = resolve_capability_class(
+        capability_class=info.capability_class, approval_mode=info.approval_mode
+    )
+    # The class expressed as a TOOL-GRANT tier (§3 ``tool_grants``), intersected with the operator
+    # ceiling. `research` → `read`, `mutating` → `read_write`; a ceiling's `tools` scope may narrow
+    # either to `read` or to a `custom` allowlist, which is the only thing standing between a
+    # composed ceiling value and a control nobody reads.
+    profile = tool_grant_posture(
+        f"spawn_{capability}", TOOL_READ if capability == CAPABILITY_RESEARCH else TOOL_READ_WRITE
+    )
+    return SubagentTier(
+        profile,
+        owner_notices=bool(info.trigger_id),
+        may_change=info.may_change,
+        capability_class=capability,
+    )

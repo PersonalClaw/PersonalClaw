@@ -186,7 +186,10 @@ async def test_read_file_reads_a_documents_text_only_when_its_bytes_are_that_doc
 
 def test_the_allow_says_an_automation_that_names_no_files_only_reads():
     said = grants.consent(_trigger({"message": KITCHEN}), ["run-prompt"])
-    assert said.endswith("Its agent only reads: it cannot change files or run commands.")
+    assert said.endswith(
+        "Its agent only reads, and may message you in PersonalClaw or on a chat channel you've "
+        "connected: it cannot change files, run commands or message anyone else."
+    )
 
 
 def test_the_allow_names_the_files_the_job_changes():
@@ -196,14 +199,18 @@ def test_the_allow_names_the_files_the_job_changes():
     )
     assert said == (
         "Allowing “Kitchen PDF Summarizer” lets it use the “Run Prompt” action, as it is now, "
-        "when it runs. Its agent reads what it needs and may change only "
-        "~/Notes/Garden/Home/kitchen-reno.md: it cannot change anything else or run commands."
+        "when it runs. Its agent reads what it needs, may change only "
+        "~/Notes/Garden/Home/kitchen-reno.md, and may message you in PersonalClaw or on a chat "
+        "channel you've connected: it cannot change anything else, run commands or message "
+        "anyone else."
     )
 
 
 def test_the_allow_says_so_when_its_agent_may_change_anything():
     said = grants.consent(_trigger({"message": KITCHEN, "capability": "mutating"}), ["run-prompt"])
-    assert said.endswith("Its agent may change files and run commands, not only read.")
+    assert said.endswith(
+        "Its agent may change files, run commands and send messages without asking you."
+    )
 
 
 def test_an_invoke_agent_that_asks_before_it_acts_is_said_to_ask(monkeypatch):
@@ -213,7 +220,9 @@ def test_an_invoke_agent_that_asks_before_it_acts_is_said_to_ask(monkeypatch):
     said = grants.consent(
         _trigger({"task_template": KITCHEN}, provider="invoke-agent"), ["invoke-agent"]
     )
-    assert said.endswith("Its agent asks you before it changes a file or runs a command.")
+    assert said.endswith(
+        "Its agent asks you before it changes a file, runs a command or sends a message."
+    )
 
 
 def test_an_edit_to_the_files_takes_the_grant_away():
@@ -244,7 +253,7 @@ def test_the_chat_names_the_files_its_automation_changes_and_says_what_its_agent
     config = made.data["trigger"]["workflow"]["config"]
     assert config["writes"] == ["~/Notes/Garden/Home/kitchen-reno.md"]
     assert (
-        "when it runs: Its agent reads what it needs and may change only "
+        "when it runs: Its agent reads what it needs, may change only "
         "~/Notes/Garden/Home/kitchen-reno.md"
     ) in made.text
 

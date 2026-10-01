@@ -255,8 +255,8 @@ def consent(
 
     An action that starts an agent ends the sentence with what that agent may do when it runs
     (:func:`what_its_agent_may_do`): only read, change only the files its job names, or change
-    files and run commands. An automation allowed without being told it could only read was an
-    automation allowed to do a job it could not do.
+    files and run commands, and every message it may send. An automation allowed without being
+    told it could only read was an automation allowed to do a job it could not do.
     """
     from personalclaw.triggers.legacy_import import IMPORTED_BY
 
@@ -286,16 +286,19 @@ def consent(
 
 def what_its_agent_may_do(trigger: Any) -> str:
     """What the agent `trigger`'s action starts may do when it runs, in the Allow's words
-    (``automation_posture.what_its_agent_may_do``), or ``""`` when its action starts no agent."""
-    from personalclaw.automation_posture import what_its_agent_may_do as said_of
+    (``automation_posture.AgentRunPolicy.sentence``), or ``""`` when its action starts no agent."""
+    from personalclaw.automation_posture import AGENT_STARTING_PROVIDERS, agent_run_policy
 
     workflow = getattr(trigger, "workflow", None)
     action: dict[str, Any] = workflow if isinstance(workflow, dict) else {}
     nested = action.get("inline")
     if isinstance(nested, dict):
         action = nested
+    provider = str(action.get("provider") or "")
+    if provider not in AGENT_STARTING_PROVIDERS:
+        return ""
     config = action.get("config")
-    return said_of(str(action.get("provider") or ""), config if isinstance(config, dict) else {})
+    return agent_run_policy(provider, config if isinstance(config, dict) else {}).sentence()
 
 
 def _only_on_the_page(trigger: Any) -> str:

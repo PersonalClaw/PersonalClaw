@@ -525,6 +525,23 @@ def declared_tool_grant_denial(
     return tool_grant_denial(profile, tool_name, write_class=not within_read, detail=detail)
 
 
+def _server_not_believed(tool_name: str) -> str:
+    """The external MCP server *tool_name* (``mcp/<server>/<tool>``) is a tool of, when the owner
+    has not trusted that server's read-only labels (``security.mcp_read_only_servers``); ``""``
+    otherwise. Such a server's tools all count as changes whatever they say they do, so a read
+    grant refusing one is refusing it for that, not for what the tool does."""
+    from personalclaw.tool_providers.registry import MCP_NAMESPACE
+
+    if not tool_name.startswith(MCP_NAMESPACE):
+        return ""
+    server = tool_name[len(MCP_NAMESPACE) :].partition("/")[0]
+    if not server:
+        return ""
+    from personalclaw.mcp_client import read_only_labels_trusted
+
+    return "" if read_only_labels_trusted(server) else server
+
+
 #: Why a ``read`` tier refuses a tool, in the words the tier is shown by ("Read-only tools"). Never
 #: the grant algebra's own vocabulary ("write-class", a profile's internal name): an agent repeats
 #: the reason it was given to the owner, and those words told her nothing she could act on.
@@ -532,6 +549,15 @@ READ_ONLY_REASON = "its tools are read-only, and {tool} is not one of them"
 
 #: The same for a shell command: a ``read`` tier is shown the shell, and the command decides.
 READ_ONLY_COMMAND_REASON = "its tools are read-only, and this command does more than read"
+
+#: Why, beside :data:`READ_ONLY_REASON`, for a tool of an external MCP server whose read-only labels
+#: the owner has not trusted: what it says of itself is believed by no gate, so none of its tools is
+#: a read here, and the sentence says where that is decided and what reads her files instead.
+UNTRUSTED_SERVER_REASON = (
+    "a tool of the MCP server {server} counts as one only once the owner trusts that server's "
+    "read-only labels on the Tools page, and the files in the folders the owner shared are read "
+    "with read_file, list_dir, glob and grep"
+)
 
 
 def _reads_at_most(profile: SafetyProfile) -> bool:
@@ -619,6 +645,8 @@ def granted_call_refusal(
         said = READ_ONLY_COMMAND_REASON
     else:
         said = READ_ONLY_REASON.format(tool=tool_name or "this tool")
+        if server := _server_not_believed(tool_name):
+            said += f": {UNTRUSTED_SERVER_REASON.format(server=server)}"
     if may_change:
         said += f" — this run may change only {write_scope.sentence(may_change)}"
     return said

@@ -752,7 +752,7 @@ export function permissionRows(perms: AppSummary['permissions']): string[] {
   // An app's agent runs approve their own tool calls and hold the write grant
   // (`handlers/apps.api_app_agent_run`), so the bullet says so rather than letting "background
   // agents" read as agents that will ask you.
-  if (perms.agent) rows.push('Run background agents that use any tool without asking you — they can change files and run commands')
+  if (perms.agent) rows.push('Run background agents that use any tool without asking you — they can change files, run commands and send messages')
   const messaging = perms.appMessaging ?? []
   if (messaging.length) {
     rows.push(`App messaging: ${messaging.map(describeMessagingTarget).join(', ')}`)

@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **`SubagentInfo.refused` lists the calls an agent's own limits refused (an SDK addition no app has to change for).**
 - **A loop can run on an agent CLI you have set up: the loop composer's Runs on picks PersonalClaw or one of the agents a ready CLI offers, Plan Review and the page of a loop that hasn't started change it, a CLI that isn't ready is shown with why, and a loop on a CLI that isn't set up or isn't ready is refused with that reason instead of failing on its first turn. Settings → Agent defaults' Default agent now says it is a chat's default, which loops don't use.**
 - **A room member can be an agent CLI's agent: Add a member lists the agents each ready CLI offers (a CLI that isn't ready is listed with why), and the member's turns run on that CLI as that agent rather than asking it for a mode named after the binding.**
 - **A chat channel app can say whether it carries groups, and how someone it pairs sends their code: `ChannelCapabilities.groups` and `ChannelTransportProvider.sender_pairing_hint()` (SDK additions, used by `*-channel`).**
@@ -104,6 +105,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **An automation's Allow names every message its agent may send: a reading agent may message you in PersonalClaw or on a chat channel you connected and no one else, and an agent with write access, like an app's background agent at install, may also send messages.**
 - **`personalclaw.sdk.stt` and `personalclaw.sdk.diarization` replace `ensure_ffmpeg_in_path` with `find_ffmpeg` and `ffmpeg_not_found`: an app is handed the ffmpeg's path, and the gateway's `PATH` is never changed to find it (`faster-whisper`, `diarization-onnx` and `diarization-pyannote` move to them).**
 - **The agent's file tools read the folders you added as knowledge sources, read only and with no approval, and read and change files in Settings › Agent defaults › Allowed working directories as they do in the workspace; `glob` and `grep` take a `path`, and every other folder stays out of reach.**
 - **An Attended Code loop merges a finished task's work into your branch only when you approve it, after showing you its commits and diff; every commit a loop or a workflow run makes carries your own git name and email, a Code loop in a repository where git has none does not start (and a running one stops) until you set them, work committed under another name is never merged, and the loop's page lists what it merged.**
@@ -162,6 +164,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An automation allowed to change a file can change it: its edit of the very file its Allow named was refused, and only that file can be changed.**
+- **An automation run whose own limits refused calls it made is recorded as refused, naming the calls, instead of as a success.**
+- **A reading automation refused a tool of an MCP server whose read-only labels you have not trusted is told so, and where you trust them, and that its file tools read the folders you shared.**
 - **Every approval card shows what it would run and where it came from: the workflow run page, Mission Control, Home's To triage and the Inbox show the tool, its risk, what it can touch, the whole command or path behind Show all, and the loop, workflow step, trigger or chat that asked; a channel's prompt names that source too, where a loop's call read "[chat]".**
 - **The agent's `grep` leaves out binary files, as `grep -I` does, rather than returning lines of a database's or an image's bytes.**
 - **An MCP server that lists a tool with no description, or a tool whose name a model provider does not accept, no longer fails every chat turn: the tool is offered with a description written from its name and inputs (shown on the Tools page too) and under a name every provider accepts, and one that still cannot be offered is left out and logged.**

@@ -3198,7 +3198,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "request_key"},
     {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "approved_at"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_read"},
-    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_change"}
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_change"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "refused"}
    ],
    "returns": "None"
   },

@@ -112,10 +112,13 @@ class InvokeAgentActionProvider(ActionProvider):
         if ctx.fire_facts:
             task = f"{task}\n\n{ctx.fire_facts}"
         from personalclaw import write_scope
+        from personalclaw.automation_posture import agent_run_policy
 
-        # The files it may change, as allowed (`write_scope`), checked again at the fire.
-        writes = write_scope.entries(action_config)
-        scope_refused = write_scope.problem(writes)
+        # What its agent may do, as its Allow said it (`automation_posture.agent_run_policy`): the
+        # run is built from the same mapping the Allow's sentence is. The files it may change are
+        # checked again at the fire.
+        policy = agent_run_policy(self.name, action_config)
+        scope_refused = write_scope.problem(list(policy.writes))
         if scope_refused:
             return ActionResult(success=False, error=f"invoke-agent: {scope_refused}")
 
@@ -135,14 +138,7 @@ class InvokeAgentActionProvider(ActionProvider):
             max_turns = int(action_config.get("max_turns", 0) or 0)
         except (ValueError, TypeError):
             max_turns = 0
-        approval_mode = approval_mode_of(action_config) or None
-
         parent_key = str((ctx.payload or {}).get("session_key", "") or "")
-        # §4.1 creation-time write grant. An auto-fired fire (``approval_mode="auto"``) defaults the
-        # spawn to the read-only RESEARCH class unless the hook declares an explicit
-        # ``capability: "mutating"`` grant — write on an unattended agent is created deliberately,
-        # never acquired by default.
-        capability_class = str(action_config.get("capability") or "").strip().lower() or None
         from personalclaw.triggers.store import run_title
 
         title = run_title(ctx.trigger_id, task)
@@ -158,8 +154,10 @@ class InvokeAgentActionProvider(ActionProvider):
                 cwd=cwd,
                 max_turns=max_turns,
                 model=model,
-                approval_mode=approval_mode,
-                capability_class=capability_class,
+                # §4.1 creation-time write grant, read from the policy: an agent that approves its
+                # own calls is read-only unless the step carries ``capability: "mutating"``.
+                approval_mode=policy.approval_mode or None,
+                capability_class=policy.capability_class,
                 silent=False,
                 # The trigger whose fire this is (`ActionContext.trigger_id`): an approval the
                 # agent asks for names it and can be run again from the Inbox, and the agent says
@@ -168,7 +166,7 @@ class InvokeAgentActionProvider(ActionProvider):
                 # What the run is called: its trigger's name, else its task's first line.
                 title=title,
                 may_read=ctx.fire_files,
-                may_change=write_scope.scope(writes),
+                may_change=policy.may_change,
             )
         except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
             logger.warning("invoke-agent: spawn failed", exc_info=True)

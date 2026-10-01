@@ -55,7 +55,7 @@ from personalclaw.subagent_persistence import (
     write_result_chunk,
     write_tombstone,
 )
-from personalclaw.subagent_tier import SubagentTier
+from personalclaw.subagent_tier import tier_for
 from personalclaw.task_modes import declared_level
 from personalclaw.textfmt import extract_options
 from personalclaw.validation import _AGENT_NAME_RE
@@ -497,6 +497,9 @@ class SubagentInfo:
     # Last, for the reason `trigger_id` is.
     may_read: tuple[str, ...] = ()
     may_change: tuple[str, ...] = ()
+    # The tools of the calls its own limits refused (`SubagentTier.limited`): its trigger's history
+    # then records it as refused, not as a success (`triggers.settle`). Last, as `trigger_id` is.
+    refused: list[str] = field(default_factory=list)
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -2238,31 +2241,14 @@ class SubagentManager:
 
         _rp = _agent_dir(info.id) / "result.txt"
         info.result_path = str(_rp)
-        # §4.1 read-only research class: resolve ONCE per run. An auto-fired spawn defaults to the
-        # research (read-only) class, so its write/execute tools are denied at the approval loop
-        # below. Resolved here (not per event) because the class is fixed for the run's lifetime.
-        from personalclaw.guardrails.policy import TOOL_READ, TOOL_READ_WRITE, tool_grant_posture
-
-        _capability_class = resolve_capability_class(
-            capability_class=info.capability_class, approval_mode=info.approval_mode
-        )
-        _research_readonly = _capability_class == CAPABILITY_RESEARCH
-        # The class expressed as a TOOL-GRANT tier (§3 ``tool_grants``), intersected with the
-        # operator ceiling. `research` → `read`, `mutating` → `read_write`; a ceiling's `tools`
-        # scope may narrow either to `read` or to a `custom` allowlist, which is the only thing
-        # standing between a composed ceiling value and a control nobody reads. A ceiling that
-        # will not resolve raises HERE, before the stream opens, which fails the spawn CLOSED.
-        _tool_profile = tool_grant_posture(
-            f"spawn_{_capability_class}",
-            TOOL_READ if _research_readonly else TOOL_READ_WRITE,
-        )
-
-        # A call is within the grant by what its tool DECLARES, asked as a research leaf's and a
-        # room critic's are, and an automation's own agent may also tell the owner what it found
-        # (`SubagentTier`, which also tallies how the agent's calls came out).
-        tier = SubagentTier(
-            _tool_profile, owner_notices=bool(info.trigger_id), may_change=info.may_change
-        )
+        # §4.1 read-only research class: resolve ONCE per run, before the stream opens (`tier_for`).
+        # An auto-fired spawn defaults to the research (read-only) class, so its write/execute
+        # tools are denied at the approval loop below. A call is within the grant by what its tool
+        # DECLARES, asked as a research leaf's and a room critic's are, and an automation's own
+        # agent may also tell the owner what it found (`SubagentTier`, which also tallies how the
+        # agent's calls came out).
+        tier = tier_for(info)
+        _capability_class, _tool_profile = tier.capability_class, tier.profile
 
         # 🔴 The grants are enforced in the approval loop below, which sees only the calls that
         # ASK. A native runtime answers an ask itself while a standing grant stands (its policy
@@ -2328,7 +2314,7 @@ class SubagentManager:
                     tells_owner=event.tells_owner,
                 )
                 if _grant_deny:
-                    tier.refused(call_id, event.title or "", _grant_deny)
+                    tier.refused(call_id, event.title or "", _grant_deny, limit=True)
                     await self._reject_and_log(
                         client,
                         event.request_id,
@@ -2427,7 +2413,7 @@ class SubagentManager:
                         )
                 else:
                     # No callback, no auto policy — deny by default
-                    tier.refused(call_id, event.title or "", "nobody could approve it")
+                    tier.refused(call_id, event.title or "", "nobody could approve it", limit=True)
                     await self._reject_and_log(
                         client,
                         event.request_id,
@@ -2562,7 +2548,7 @@ class SubagentManager:
         # Every call refused: it did nothing it was asked, so it ends not done, with why, and its
         # reply stays its result. Set with `done`, so nothing reads it finished without the reason.
         couldnt = tier.verdict()
-        info.error = info.error or couldnt
+        info.error, info.refused = info.error or couldnt, tier.limited()
         info.done = True
         self._sessions.record_success(session_key)
         # Fold this child's cost into the run-scoped budget and stop the fan-out

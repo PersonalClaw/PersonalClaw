@@ -10,12 +10,16 @@ The row now names the agent (`ActionResult.work_id`), and when the agent ends
 
 * `success`, and what the agent said;
 * `failure`, and why — a time limit, a crash, a start nobody answered in time;
+* `refused`, when the run's own limits refused calls it made (`SubagentInfo.refused`): what its
+  Allow said it may not do, or an approval nobody was there to give. It has not done all it was
+  asked, so it is not a success, and its limits held, so it is not a failure: the row names the
+  calls, then what the agent said;
 * `declined`, when the owner answered its start with Deny. Their own decision is not a failure: the
   row says they declined it, and no note calls it one (`SubagentInfo.declined`).
 
-A failure is also stamped on the trigger (`last_failure_at`, `last_error_summary`), and a success
-moves `last_success_at`, as the fire's own recorders stamp a run that ended when its action did, so
-the Triggers list's last run says what the history says.
+A failure or a refusal is also stamped on the trigger (`last_failure_at`, `last_error_summary`),
+and a success moves `last_success_at`, as the fire's own recorders stamp a run that ended when its
+action did, so the Triggers list's last run says what the history says, and why.
 
 A lifecycle hook (`lifecycle:<id>`) keeps no run rows — only its last status — so there is no row
 to settle for one.
@@ -32,6 +36,25 @@ logger = logging.getLogger(__name__)
 
 #: What a declined run's row says. The owner is who reads it, and it was their Deny.
 DECLINED_LINE = "You declined it, so it did not run."
+
+
+def refused_line(refused: list[str]) -> str:
+    """What the row of a run its limits refused says first: the calls, each tool once."""
+    tools = list(dict.fromkeys(name for name in refused if name))
+    count = len(refused)
+    calls = "1 call" if count == 1 else f"{count} calls"
+    return (
+        f"Its limits refused {calls} ({', '.join(tools)}), so it may not have done all it was "
+        "asked."
+    )
+
+
+def what_it_said(info: Any) -> str:
+    """What the agent *info* describes said when it ended, as its run's row and its trigger's note
+    say it: a run its limits refused leads with the calls they refused (:func:`refused_line`)."""
+    result = str(getattr(info, "result", "") or "")
+    refused = list(getattr(info, "refused", None) or [])
+    return f"{refused_line(refused)} {result}".strip() if refused else result
 
 
 def settle_agent_run(info: Any, *, base_dir: Path | None = None) -> bool:
@@ -56,13 +79,19 @@ def settle_agent_run(info: Any, *, base_dir: Path | None = None) -> bool:
         home = base_dir if base_dir is not None else config_dir()
         declined = getattr(info, "declined", False) is True
         error = "" if declined else str(getattr(info, "error", "") or "")
-        status = "declined" if declined else ("failure" if error else "success")
-        said = DECLINED_LINE if declined else (error or str(getattr(info, "result", "") or ""))
+        refused = list(getattr(info, "refused", None) or [])
+        status = (
+            "declined"
+            if declined
+            else ("failure" if error else ("refused" if refused else "success"))
+        )
+        said = DECLINED_LINE if declined else (error or what_it_said(info))
         taken = ScheduleRunStore(home).settle_sync(
             trigger_id, agent_work_id(agent_id), status=status, summary=said, error=error
         )
         if taken and not declined:
-            _stamp(trigger_id, failed=bool(error), error=error, home=home)
+            why = refused_line(refused) if status == "refused" else error
+            _stamp(trigger_id, failed=status != "success", error=why, home=home)
         return taken
     except Exception:  # noqa: BLE001 - see the docstring: the row is bookkeeping about the run
         logger.warning("could not settle the run of trigger %s", trigger_id, exc_info=True)

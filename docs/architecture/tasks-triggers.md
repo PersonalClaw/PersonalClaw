@@ -329,8 +329,16 @@ every other change and every command stays refused (`write_scope.admits`,
 (its workspace excepted), a credential location or the home folder itself is refused when
 the automation is saved and again when it fires (`write_scope.problem`). `writes` is part
 of what the action runs, so an edit to it asks the owner again, and the Allow says what its
-agent may do in words: only read, change only the files named, or change files and run
-commands (`automation_posture.what_its_agent_may_do`).
+agent may do in words: only read, change only the files named, or change files, run
+commands and send messages, and, for a reading run, that it may message the owner in
+PersonalClaw or on a chat channel they connected (`notify`, to the owner only), the one
+thing such a run may send. One mapping turns a step's posture into its run
+(`automation_posture.agent_run_policy`): the action builds its agent's run from it, the
+run's tool policy is built from what that run is handed (`subagent_tier.tier_for`), and
+the Allow is the policy's own sentence, so the two cannot drift apart (a rail drives both for
+every posture). A run whose own limits refused calls it made (its grants, or an approval
+nobody was there to give) is recorded as `refused`, naming the calls, rather than as a
+success (`triggers.settle`).
 
 **What another machine's owner allowed is theirs.** A workflow step's
 `approval_mode: auto` and `capability: mutating` are the owner's yes, given where

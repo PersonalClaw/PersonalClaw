@@ -1771,7 +1771,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         card. Threading it makes the value belong to the dispatch that produced it.
         """
         meta: dict = {}
-        result = await self._guard_and_invoke(prep.call, prep.tool_name, prep.args, meta=meta)
+        result = await self._guard_and_invoke(prep.tool_name, prep.args, meta=meta)
         return result, meta
 
     async def _run_tool(
@@ -1822,7 +1822,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         if prefetched is None:
             meta: dict = {}
-            result_str = await self._guard_and_invoke(call, tool_name, args, meta=meta)
+            result_str = await self._guard_and_invoke(tool_name, args, meta=meta)
         else:
             result_str, meta = prefetched
         # If the tool needs approval, _guard_and_invoke returns a sentinel and we
@@ -1947,7 +1947,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # nobody pressed anything, we gave up.
         self._cancel.request(reason=CANCEL_INTERNAL)
 
-    async def _guard_and_invoke(self, call: AgentEvent, tool_name: str, args: dict, *, meta: dict):
+    async def _guard_and_invoke(self, tool_name: str, args: dict, *, meta: dict):
         """Deny-list + PreToolUse hook; return a result string, or the
         ``_NEEDS_APPROVAL`` sentinel when the caller must run the gated path.
 
@@ -1979,7 +1979,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # Task-mode gate (ask/plan/build) — runs HERE, before approval, so a
         # Trust/YOLO auto-approve can't slip a mutation past a read-only posture.
         # Recoverable denial: tells the model why + that the user can switch modes,
-        # so it stops retrying and surfaces the SWITCH_TO_AGENT affordance instead.
+        # so it stops retrying and surfaces the SWITCH_TO_AGENT affordance instead. It and the
+        # grants judge `args`, never the raw `tool_input` a streaming provider sends as JSON text.
         from personalclaw.task_modes import task_mode_denies
 
         tm_deny = task_mode_denies(
@@ -1987,7 +1988,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             self._declared(tool_name),
             tool_name,
             "",
-            call.tool_input,
+            args,
             builds=tool_name in self._tool_builds,
         )
         if tm_deny:
@@ -2004,9 +2005,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     tool_name,
                     self._declared(tool_name),
                     "",
-                    call.tool_input,
+                    args,
                     proposes=tool_name in self._tool_proposes,
-                    tells_owner=self._tells_owner(tool_name, call.tool_input),
+                    tells_owner=self._tells_owner(tool_name, args),
                 )
             except Exception:  # noqa: BLE001 - a grant that cannot be read admits nothing
                 logger.warning("native: tool grants could not be read; refusing", exc_info=True)

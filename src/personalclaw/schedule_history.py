@@ -99,6 +99,8 @@ class ScheduleRun:
     # "skipped_noop": the action ran and had nothing to do (`status_for_result`).
     # "declined": the work a launched run started asked its owner to start and they declined it
     #   (`ScheduleRunStore.settle_sync`). Their own decision, not a failure.
+    # "refused": the agent a launched run started had calls refused by its own limits
+    #   (`triggers.settle`): not a success, and not a failure either.
     status: str = "success"
     summary: str = ""
     trace: str = ""

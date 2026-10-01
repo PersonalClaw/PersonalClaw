@@ -4069,10 +4069,12 @@ class GatewayOrchestrator:
                 trigger_id = getattr(member, "trigger_id", "")
                 if not isinstance(trigger_id, str) or getattr(member, "silent", False):
                     return False
+                from personalclaw.triggers.settle import what_it_said
+
                 return self._report_to_its_trigger(
                     trigger_id,
                     error=str(getattr(member, "error", "") or ""),
-                    summary=str(getattr(member, "result", "") or ""),
+                    summary=what_it_said(member),
                 )
 
             told = all([_reported(m) for m in batch])
