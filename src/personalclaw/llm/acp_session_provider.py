@@ -164,6 +164,10 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
     async def reject_tool(self, request_id: str | int) -> None:
         await self._session.reject_tool(request_id)
 
+    def refusal_answer(self, request_id: str | int) -> dict[str, str] | None:
+        """The agent's option a Deny of *request_id* was answered with (see AcpSession)."""
+        return self._session.refusal_answer(request_id)
+
     # ── mid-turn steering ───────────────────────────────────────────────────────
     # The pooled provider gets the seam for the same reason it gets every other session
     # method: it wraps the SAME AcpSession the N=1 client does, so leaving it out would make
@@ -211,11 +215,15 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
     # ── live per-session reconfig (post-open specialization) ────────────────────
     # The default dialect's set_* requests are SESSION-SCOPED (carry sessionId), so
     # applying them on a shared connection affects ONLY this session — safe for
-    # co-tenants. Fire-and-forget (adapters usually send no response), mirroring the
-    # client. The connection owns the dialect + the send path.
+    # co-tenants. Fire-and-forget: the reply is never awaited, and is read when it settles so
+    # a connection closing before it arrives is not an exception nobody retrieved. The
+    # connection owns the dialect + the send path.
     async def _send_dialect_request(self, req) -> None:
         if req is not None:
-            await self._conn.send_request(req.method, req.params)
+            from personalclaw.acp.session import read_when_settled
+
+            _rid, fut = await self._conn.send_request(req.method, req.params)
+            fut.add_done_callback(read_when_settled)
 
     async def set_agent(self, agent: str) -> None:
         if not agent or agent == self._agent_name:

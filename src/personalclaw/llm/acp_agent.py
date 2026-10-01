@@ -297,12 +297,15 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
                 session_snapshot=snapshot,
             )
         except Exception as exc:  # noqa: BLE001 - probe summarizes any failure
-            # Read the child's stderr tail BEFORE shutting down: ``teardown()`` clears
-            # the deque, so capturing it after the shutdown below always yields "".
+            # How the process ended and what it said last, read BEFORE shutting down: the
+            # shutdown's kill would read as the exit, and ``teardown()`` clears the stderr
+            # deque. A process on its way out is given a moment to finish (and to flush its
+            # last lines); one that answered a refusal and lives on reads as running.
             try:
+                exit_code = await provider.client.wait_exit(1.0)
                 stderr_tail = provider.client.stderr_tail()
             except Exception:  # noqa: BLE001 - diagnostics must never mask the failure
-                stderr_tail = ""
+                exit_code, stderr_tail = None, ""
             try:
                 await provider.shutdown()
             except Exception:
@@ -356,12 +359,17 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
             # to stdout, so ``exc`` names no cause either way: an ``AcpProcessDied``
             # broken pipe if the child is already gone when ``initialize`` writes to
             # its stdin, or a bare ``ACP stdout EOF`` if the read that follows is what
-            # first observes the death. The transport already keeps a redacted stderr
-            # tail for exactly this moment and nothing had ever read it; quote it here
-            # so the failure explains itself regardless of which shape ``exc`` took.
-            detail = f"handshake failed: {exc}"
-            if stderr_tail:
-                detail = f"{detail} — agent stderr: {stderr_tail}"
+            # first observes the death. So the failure is said with how the process ended
+            # and its last output, and with what to check.
+            detail = _test_failure_detail(
+                exc,
+                program=Path(command[0]).name,
+                engine=_engine_label(options),
+                exit_code=exit_code,
+                stderr_tail=stderr_tail,
+            )
+            runtime = str(options.get("runtime_id") or "") or Path(command[0]).name
+            logger.warning("Test of ACP runtime %s failed: %s", runtime, detail)
             return ReadinessStatus(ready=False, state="error", detail=detail)
 
     @classmethod
@@ -668,6 +676,10 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
     async def reject_tool(self, request_id: str | int) -> None:
         await self._client.reject_tool(request_id)
 
+    def refusal_answer(self, request_id: str | int) -> dict[str, str] | None:
+        """The agent's option a Deny of *request_id* was answered with (see AcpSession)."""
+        return self._client.refusal_answer(request_id)
+
     async def start_fresh_turn_session(self) -> None:
         """Start a fresh agent session on the live process (see AcpClient)."""
         await self._client.start_fresh_turn_session()
@@ -863,6 +875,38 @@ ACP_AGENT_CAPABILITY = ProviderCapability(
         "the ACP initialize handshake."
     ),
 )
+
+
+def _engine_label(options: dict) -> str:
+    """The program an adapter hands the turn to, as its bundle declares it
+    (``requires_executable``), or "" for a CLI that is its own engine."""
+    requires = options.get("requires_executable")
+    return str(requires.get("label") or "").strip() if isinstance(requires, dict) else ""
+
+
+def _test_failure_detail(
+    exc: BaseException, *, program: str, engine: str, exit_code: int | None, stderr_tail: str
+) -> str:
+    """A failed Test, said whole: what failed (an agent's refusal in its own words,
+    :class:`~personalclaw.acp.errors.AcpRequestError`), how its program ended and what it said
+    last, and what to check. The program an adapter drives is named when its bundle declares it:
+    a refusal that comes from there is most often that program and the adapter being out of step.
+    """
+    from personalclaw.acp.errors import exit_words, last_output_words
+
+    parts = [f"handshake failed: {exc}"]
+    if exit_code:
+        parts.append(exit_words(program, exit_code, stderr_tail))
+    elif stderr_tail:
+        parts.append(last_output_words(stderr_tail))
+    if engine and engine != program:
+        parts.append(
+            f"Check that {engine} runs on its own and is a version {program} supports, "
+            "then Test again."
+        )
+    else:
+        parts.append(f"Check that {program} runs on its own and is up to date, then Test again.")
+    return ". ".join(p.rstrip(". ") for p in parts[:-1]) + ". " + parts[-1]
 
 
 # ── Factory ──────────────────────────────────────────────────────────────

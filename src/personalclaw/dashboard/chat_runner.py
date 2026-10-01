@@ -24,6 +24,7 @@ from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
+from personalclaw.dashboard import turn_endings
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
@@ -115,6 +116,7 @@ from personalclaw.llm.events import (
     TOOL_META_APPROVAL_WAIVED,
     TOOL_META_AUTO_DENIED,
     is_length_stop,
+    is_refusal_stop,
     unasked_outcome,
     unasked_reason,
 )
@@ -226,6 +228,8 @@ UNANSWERED_BLANK = "blank"
 #: again — so the turn ends in the error that says so (`no_answer_notice`), which the chat offers
 #: Retry on, as on any notice a turn ends on.
 UNANSWERED_AFTER_STEPS = "after_steps"
+#: A turn the agent refused to continue (``stopReason: refusal``), writing nothing (never resent).
+UNANSWERED_REFUSED = "refused"
 
 
 def unanswered_turn(
@@ -244,7 +248,8 @@ def unanswered_turn(
     not a missing answer when the turn was a user cancel, a compaction / clear / agent-switch
     turn (each emits its own status line), a slash command, or a goal loop worker turn (loops own
     a dedicated deliverable-forcing re-prompt loop, so the chat's handling stands aside).
-    Otherwise it is :data:`UNANSWERED_BLANK` when the turn ran no tool either, and
+    Otherwise it is :data:`UNANSWERED_REFUSED` when the agent said it refused to continue,
+    :data:`UNANSWERED_BLANK` when the turn ran no tool either, and
     :data:`UNANSWERED_AFTER_STEPS` when it did. The second used to count as finished ("the agent
     did real work, just no closing prose"), so a turn of fifteen commands and no answer ended as
     "Response complete." with nothing on screen, in the transcript or in the log.
@@ -259,6 +264,8 @@ def unanswered_turn(
         or is_loop
     ):
         return ""
+    if is_refusal_stop(stop_reason):
+        return UNANSWERED_REFUSED
     return UNANSWERED_AFTER_STEPS if tool_call_count > 0 else UNANSWERED_BLANK
 
 
@@ -275,16 +282,13 @@ def no_answer_notice(steps: int, *, asked_by_person: bool) -> str:
     return f"The agent{ran} did not write an answer. {retry}"
 
 
-def _say_the_turn_has_no_answer(
-    state: DashboardState, session: _ChatSession, *, steps: int, asked_by_person: bool
-) -> None:
-    """End the turn in the error that says it wrote nothing.
+def _say_the_turn_has_no_answer(state: DashboardState, session: _ChatSession, note: str) -> None:
+    """End the turn in the error that says why it has no answer (*note*).
 
     An errored turn, so ``chat_done`` says the turn ended in an error rather than "Response
     complete.", the chat offers Retry on the notice, and a linked channel hears this sentence
     (`say_how_an_unanswered_turn_ended`).
     """
-    note = no_answer_notice(steps, asked_by_person=asked_by_person)
     session.append("error", note, "msg msg-err")
     state.broadcast_ws(
         "chat_message",
@@ -355,7 +359,12 @@ def terminal_outcome_for_turn(
 
 
 def say_how_an_unanswered_turn_ended(
-    state: DashboardState, session: _ChatSession, session_key: str, outcome: str
+    state: DashboardState,
+    session: _ChatSession,
+    session_key: str,
+    outcome: str,
+    *,
+    after_deny: str = "",
 ) -> None:
     """Say why a turn ended without its answer, where the conversation is.
 
@@ -369,7 +378,8 @@ def say_how_an_unanswered_turn_ended(
     off by it. A conversation with no linked channel sends nothing.
 
     A turn the gateway ended to restart or shut down says so in the chat too, in those words, so a
-    question it cut off is never left there unanswered with nothing saying why.
+    question it cut off is never left there unanswered with nothing saying why. One its agent
+    stopped after her Deny says that instead of the cut-short notice (*after_deny*).
     """
     if outcome == TURN_ERROR:
         # Every path that ends a turn in error adds the error row it is known by first.
@@ -385,7 +395,7 @@ def say_how_an_unanswered_turn_ended(
     elif outcome == TURN_STOPPED and session._stop_asked:
         note = TURN_STOPPED_FROM_DASHBOARD_NOTICE
     elif outcome == TURN_STOPPED:
-        note = TURN_CUT_SHORT_NOTICE
+        note = after_deny or TURN_CUT_SHORT_NOTICE
         session.append("error", note, "msg msg-err")
     else:
         return
@@ -2802,6 +2812,8 @@ async def run_chat(
     # complete event; shown as the turn's error row after the stream ends.
     _runtime_stop_note = ""
     _turn_cancelled = False
+    # Who serves the turn, and what it says if its agent ends it after her Deny (`turn_endings`).
+    _turn_agent = _deny_note = ""
     # How a conversation an app started approves (`app_conversation_posture`); None for yours.
     # Read again by the approval gate below, which must not let YOLO into an app's conversation.
     _app_auto: bool | None = None
@@ -3660,6 +3672,7 @@ async def run_chat(
         _prov_id = str(getattr(client, "provider_id", "") or "")
         if _prov_id.startswith("acp:"):
             _acp_cli = _prov_id[4:]
+        _turn_agent = turn_endings.serving_agent_name(client)
         async for event in event_stream:
             # Heartbeat every 5s during long operations
             if time.time() - last_heartbeat > 5:
@@ -4637,11 +4650,13 @@ async def run_chat(
                 refused_as = getattr(session, "_batch_rejected", "")
                 if refused_as:
                     await _refuse_call(event, refused_as)
+                    _answer = turn_endings.refusal_answered(client, event.request_id)
                     _title, _ = redact_exfiltration_urls(event.title)
                     _title, _ = redact_credentials(_title)
                     _purpose = redact_credentials(
                         redact_exfiltration_urls((event.tool_purpose or "")[:200])[0]
                     )[0]
+                    # Merged into the call's card by its id: the answer sent goes on the audit row.
                     session.append(
                         "tool",
                         f"{_title} ({_UNRUN_STEP_WORDS[refused_as]})",
@@ -4680,6 +4695,7 @@ async def run_chat(
                                 if refused_as in ("expired", "cancelled")
                                 else approval_grants.YOU
                             ),
+                            **({"answered": _answer["answered"]} if _answer else {}),
                         },
                     )
                     logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
@@ -4979,11 +4995,18 @@ async def run_chat(
                         else ("expired" if timed_out else "rejected")
                     )
                     await _refuse_call(event, ended_as)
+                    # The agent's own option the refusal answered with, on the step and the audit.
+                    _answer = turn_endings.refusal_answered(client, event.request_id)
                     session.append(
                         "tool",
                         f"{event.title} ({_UNRUN_STEP_WORDS[ended_as]})",
                         "msg msg-tool",
+                        meta={"detail": _answer["detail"]} if _answer else None,
                     )
+                    if ended_as == "rejected":
+                        _deny_note = turn_endings.stopped_after_deny_notice(
+                            _turn_agent, _redact_text(event.title)
+                        )
                     sel().log_tool_invocation(
                         session_key=session_key,
                         agent=_agent_label(session),
@@ -5005,6 +5028,7 @@ async def run_chat(
                                 if ended_as in ("expired", "cancelled")
                                 else approval_grants.YOU
                             ),
+                            **({"answered": _answer["answered"]} if _answer else {}),
                         },
                     )
                     # Refuse the requests already waiting behind this one the same way, and continue
@@ -5160,6 +5184,7 @@ async def run_chat(
                     and _stop_reason != STOP_REASON_END_TURN
                     and not is_cancelled_stop(_stop_reason)
                     and not is_length_stop(_stop_reason)
+                    and not is_refusal_stop(_stop_reason)
                 ):
                     logger.warning(
                         "Unexpected stop_reason %r for session %s",
@@ -5283,7 +5308,12 @@ async def run_chat(
             # as the turn's reply behind the notice, and a Retry would anchor on it.
             session.discard_stream()
             assistant_text = ""
-        if _unanswered == UNANSWERED_BLANK:
+        # Ended after her Deny, or refused by its agent: said why, never resent (`turn_endings`).
+        if _unanswered and (_deny_note or _unanswered == UNANSWERED_REFUSED):
+            session._empty_response_retries = 0
+            _why = _deny_note or turn_endings.refused_turn_notice(_turn_agent)
+            _say_the_turn_has_no_answer(state, session, _why)
+        elif _unanswered == UNANSWERED_BLANK:
             if _prompt_depth == 0 and session._empty_response_retries == 0:
                 # First empty → silently re-queue the same prompt. The finally
                 # block drains the queue (FIFO re-dispatch), same as the error
@@ -5299,15 +5329,17 @@ async def run_chat(
                 # Second consecutive empty → surface the card and reset the streak.
                 session._empty_response_retries = 0
                 _say_the_turn_has_no_answer(
-                    state, session, steps=0, asked_by_person=_asked_by_person
+                    state, session, no_answer_notice(0, asked_by_person=_asked_by_person)
                 )
                 return
         else:
             # Any other turn clears the consecutive-blank streak.
             session._empty_response_retries = 0
-        if _unanswered == UNANSWERED_AFTER_STEPS:
+        if _unanswered == UNANSWERED_AFTER_STEPS and not _deny_note:
             _say_the_turn_has_no_answer(
-                state, session, steps=_turn_tool_call_count, asked_by_person=_asked_by_person
+                state,
+                session,
+                no_answer_notice(_turn_tool_call_count, asked_by_person=_asked_by_person),
             )
             logger.warning(
                 "Turn for session %s ended with no answer after %d tool call(s)",
@@ -5500,7 +5532,9 @@ async def run_chat(
         needs_session_reset = True
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)
-        if _prompt_depth == 0:
+        if session._stop_asked:  # her Stop ended the process: the turn stopped, nothing to retry
+            logger.info("ACP process ended by the stop asked of session %s", session.key)
+        elif _prompt_depth == 0:
             session._acp_pipe_death_retries += 1
             if session._acp_pipe_death_retries <= 3:
                 _send_again()
@@ -5600,7 +5634,8 @@ async def run_chat(
         _turn_outcome = terminal_outcome_for_turn(
             stop_reason=_stop_reason,
             cancelled=_turn_cancelled,
-            stop_requested=session._stopping,
+            # Asked at all: an acknowledged stop is idle again before the turn's last frame is read.
+            stop_requested=session._stop_asked,
             errored=session._last_turn_errored,
             # The gateway is stopping (`DashboardState.end_running_turns`) and the owner did not
             # stop this turn herself.
@@ -5664,7 +5699,9 @@ async def run_chat(
             except Exception:
                 logger.debug("Stream cleanup failed", exc_info=True)
         # Below the channel's progress lines, which the stream just finalized.
-        say_how_an_unanswered_turn_ended(state, session, session_key, _turn_outcome)
+        say_how_an_unanswered_turn_ended(
+            state, session, session_key, _turn_outcome, after_deny=_deny_note
+        )
         if _acquired:
             # The turn is over: the runtime is no longer pulling, so a steer sent
             # from here on must queue rather than buffer. The buffer is emptied

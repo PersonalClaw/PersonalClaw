@@ -261,6 +261,46 @@ channel hears the same line, and the chat offers Retry on the notice, as on any
 notice a turn ends on. A turn that wrote nothing and ran nothing is resent
 once, silently. A loop's worker is left to its own re-prompt.
 
+**How a turn ended is said by its cause.** The chat runner names one ending per
+turn, and an agent CLI's endings map onto the same ones
+(`acp/session.py`, `AcpSession._dispatch_frames`):
+
+| What ended it | Outcome | What the chat says |
+|---|---|---|
+| The agent finished (`end_turn`) with an answer | `complete` | the answer |
+| It finished, or stopped itself (`cancelled`), with no answer after you denied one of its calls | `error` / `stopped` | "Codex stopped after you denied Run command." — never resent, which would ask you again |
+| It refused to continue (`refusal`) and wrote nothing | `error` | "Codex refused to continue and wrote no answer." — never resent |
+| It stopped itself (`cancelled`), and nobody denied or stopped anything | `stopped` | "The reply stopped before it finished. …" |
+| You pressed Stop | `stopped` | the stop card; never a timeout or an error |
+| Its process ended, or its connection closed, before it answered | the resent turn's | "⟳ Connection lost — retrying…", and the message is resent (up to three times) |
+| It did not answer within the turn's time limit | `error` | "The agent did not finish within the turn's time limit, so the turn was stopped. …" — its late answer is dropped, never shown in the next turn |
+
+Silence is not one of these endings: while its prompt is unanswered and its
+connection is alive, an agent that is thinking after its last step is still
+working. A turn that ends before its answer — its time limit, a Stop it never
+acknowledged — tells the agent to stop, and the session settles that answer
+and drops what came with it before it takes another turn; an agent that never
+answers is restarted.
+
+A **Deny** answers the agent with its own refusal that declines the call and lets
+it continue — an agent can offer another refusal that ends its turn, under the same
+`reject_once` kind — and the refused step's row names the option that was sent.
+A **Stop** sends `session/cancel`, answers a pending approval `cancelled`, and
+waits for the agent's answer (`agent.soft_stop_budget_secs`). An agent that
+answers keeps its process for the chat's next turn; one that does not is killed,
+and nothing starts in its place until a turn needs one. Between turns an agent
+CLI's process stays up for the chat's next turn until it has been idle for
+`session.timeout_secs`.
+
+An agent's JSON-RPC error is said in its own words — its message and data,
+masked like any child's output (`acp/errors.py`, `AcpRequestError`) — and a
+process that exits is said with its exit code and its last output. A runtime's
+Test that fails says all three and what to check: "handshake failed:
+session/new was refused: … claude-agent-acp exited with code 64 (a usage error:
+…); its last output: …. Check that claude runs on its own and is a version
+claude-agent-acp supports, then Test again." The gateway log carries the same
+sentence.
+
 ## Forking
 
 `dashboard/chat_fork.py` — `POST /api/chat/sessions/{session}/fork` copies a

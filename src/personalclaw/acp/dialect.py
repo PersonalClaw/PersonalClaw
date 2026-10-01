@@ -10,13 +10,14 @@ exactly those points to an :class:`ACPDialect` strategy supplied by the caller
 The :class:`DefaultDialect` here encodes the protocol shape PersonalClaw's
 ``AcpClient`` originally hard-coded (date-string ``protocolVersion``, agent
 activated via ``session/set_mode`` with ``modeId=<agent>``, model via
-``session/set_model``, permission options keyed ``id``/``label``). Bundles ship
+``session/set_model``). Bundles ship
 their own subclasses (e.g. an int-``protocolVersion`` / ``set_config_option``
 dialect for Claude Code and Codex).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 # Protocol method names + outcome constants live in acp.types (kept here as a
@@ -68,6 +69,67 @@ class DiscoveryResult:
     models: list[str]
     permission_modes: list[str]
     supported_efforts: list[dict] = field(default_factory=list)
+
+
+# ── which refusal a Deny sends ───────────────────────────────────────────────
+#: Words in an option's id or name saying that choosing it ENDS the agent's turn rather than
+#: declining one call: ``cancel``, "No, and stop". Matched as word prefixes ("cancelled").
+_TURN_ENDING_WORDS = ("cancel", "abort", "interrupt", "stop", "halt", "terminat")
+#: Words saying the agent goes on without the call: "No, continue without running it".
+_CONTINUING_WORDS = ("continu", "proceed", "skip")
+#: Words that make an option the agent gave no spec ``kind`` a refusal.
+_REFUSAL_WORDS = ("reject", "deny", "denied", "declin", "refus")
+#: Words that keep an option with no spec ``kind`` from ever being read as a refusal.
+_ALLOWING_WORDS = ("allow", "approv", "accept", "yes", "grant")
+
+
+def _words(text: str) -> list[str]:
+    """Lower-case words of an option id or name: ``rejectOnce`` and ``reject_once`` alike."""
+    return re.findall(r"[a-z]+", re.sub(r"([a-z])([A-Z])", r"\1 \2", text or "").lower())
+
+
+def _says(words: list[str], stems: tuple[str, ...]) -> bool:
+    return any(word.startswith(stem) for word in words for stem in stems)
+
+
+def is_refusal_option(option: dict[str, str]) -> bool:
+    """Whether a Deny may answer with *option*.
+
+    The spec ``kind`` decides when the agent gave one: a ``reject_*`` kind (or a kind that says
+    deny/decline) is a refusal, and every other kind is not — an ``allow_*`` option is never
+    sent for a Deny, and a ``cancel`` kind says what the ``cancelled`` outcome already says.
+    An option with no kind is a refusal when its id or name says so and nothing in it allows.
+    """
+    kind = (option.get("kind") or "").lower()
+    if kind:
+        return kind.startswith("reject") or _says(_words(kind), _REFUSAL_WORDS)
+    words = _words(f"{option.get('id') or ''} {option.get('label') or ''}")
+    return _says(words, _REFUSAL_WORDS) and not _says(words, _ALLOWING_WORDS)
+
+
+def refusal_rank(option: dict[str, str]) -> tuple[bool, bool, bool]:
+    """Sort key over the refusals an agent offered: the smallest is the one a Deny sends.
+
+    The protocol gives a refusal two semantics, both in its ``kind``: that it IS one, and
+    whether the agent should remember it (``reject_always``). It has none for whether the
+    agent's turn goes on, which is the difference a person pressing Deny cares about, so that
+    is read off the option's own id and name, in this order:
+
+    1. A refusal that does not end the turn before one that does (``cancel``, ``abort``,
+       ``interrupt``, ``stop``, ``halt``, ``terminate``). An option that also says it
+       continues ("continue", "proceed", "skip") does not end the turn.
+    2. Once before always: a Deny is about this call, and an "always" option asks the agent
+       to remember a rule nobody decided.
+    3. A refusal that says it continues before one that says nothing either way.
+
+    An option this cannot read sorts as a plain decline that lets the agent continue, ahead
+    of every option that says it ends the turn. Ties keep the agent's own order.
+    """
+    words = _words(f"{option.get('id') or ''} {option.get('label') or ''}")
+    continues = _says(words, _CONTINUING_WORDS)
+    ends_turn = not continues and _says(words, _TURN_ENDING_WORDS)
+    remembered = "always" in (option.get("kind") or option.get("id") or "").lower()
+    return (ends_turn, remembered, not continues)
 
 
 class ACPDialect:
@@ -220,13 +282,24 @@ class ACPDialect:
         """Normalise inbound ``session/request_permission`` options to the
         neutral ``[{"id", "label", "kind"}]`` shape the host gate consumes.
 
+        The public ACP spec keys an option ``optionId`` + ``name``; the shape this host
+        first spoke keys it ``id`` + ``label``. Both are read, for every dialect: an option
+        dropped for its key spelling leaves a Deny nothing to answer with but
+        ``cancelled``, which ends the agent's turn, and leaves an approval guessing at a
+        literal ``allow_once``.
+
         ``kind`` is the ACP ``PermissionOptionKind`` (``allow_once`` /
         ``allow_always`` / ``reject_once`` / ``reject_always``) when the agent
         supplies it; the host uses it to select the right ``optionId`` to echo
-        back on approval (the ``id`` is agent-defined and is NOT assumed to be a
-        well-known constant — see :meth:`AcpClient.approve_tool`)."""
+        back (the ``id`` is agent-defined and is NOT assumed to be a well-known
+        constant — claude-code-acp's is not the literal ``allow_once``, which is what
+        made fs_write approvals silently fail; see :meth:`AcpClient.approve_tool`)."""
         opts = [
-            {"id": o.get("id", ""), "label": o.get("label", ""), "kind": o.get("kind", "")}
+            {
+                "id": o.get("optionId") or o.get("id", ""),
+                "label": o.get("name") or o.get("label", ""),
+                "kind": o.get("kind", ""),
+            }
             for o in raw_options
         ]
         return [o for o in opts if o["id"]]
@@ -278,39 +351,23 @@ class ACPDialect:
 
     def select_reject_option_id(self, offered: list[dict[str, str]]) -> str:
         """Pick the ``optionId`` to echo back when DENYING, from the options the agent
-        actually offered. Mirror of :meth:`select_allow_option_id`, and the reason `G19`
-        existed: approval resolved the agent's own id while denial threw the offered
-        options away and sent ``cancelled``.
+        actually offered. Mirror of :meth:`select_allow_option_id`.
 
-        ``cancelled`` is not "no" — in ACP it means *the prompt turn was cancelled before
-        the user responded*. Sending it for a POLICY denial tells the agent its turn is
-        over, which is why an ``apply_patch`` refused by task mode ended codex's turn with
-        ``*Conversation interrupted*`` and produced no ``tool_result`` (`C6`, `C7`, `C17`),
-        while the same payload on an ``exec_command`` happened to be survivable (`C11`).
-        The host was misdescribing a denial in both cases; only the agent's tolerance
-        differed.
-
-        **Prefers ``reject_once`` over ``reject_always``.** A task-mode or policy denial is
-        about THIS call; echoing an "always" option would ask the agent to remember a
-        permanent rule the host never decided. ``cancel``-kinded options are deliberately
-        NOT treated as reject options — selecting one says the same thing as the
-        ``cancelled`` fallback, so it is left to that fallback rather than dressed up as a
-        choice. Returns ``""`` when the agent offered no reject option at all, which is the
-        only case where ``cancelled`` remains correct.
+        A Deny means *decline this call and carry on*: the agent should answer without it,
+        and say what it could not check. ``cancelled`` is not that — in ACP it means *the
+        prompt turn was cancelled before the user responded*, so it ends the agent's turn
+        — and neither is a reject option that ends the turn. Agents offer both kinds under
+        the same spec kind: an agent can list a ``reject_once`` "No, continue without
+        running it" beside a ``reject_once`` "No, and tell me what to do differently" that
+        stops its turn, in either order. The spec kind is the only semantics the protocol
+        provides, so it decides what a refusal IS; which refusal is chosen is read off the
+        option's own id and name by :func:`refusal_rank`. Returns ``""`` when the agent
+        offered no refusal at all, which is the only case where ``cancelled`` is sent.
         """
-
-        def _is_reject(opt: dict[str, str]) -> bool:
-            k = (opt.get("kind") or "").lower()
-            i = (opt.get("id") or "").lower()
-            return k.startswith("reject") or i.startswith("reject") or "deny" in f"{k} {i}"
-
-        reject_any = [o for o in offered if _is_reject(o)]
-        once = [o for o in reject_any if "once" in (o.get("kind") or o.get("id") or "").lower()]
-        always = [o for o in reject_any if "always" in (o.get("kind") or o.get("id") or "").lower()]
-        for bucket in (once, always, reject_any):
-            if bucket:
-                return str(bucket[0].get("id") or "")
-        return ""
+        refusals = [o for o in offered if is_refusal_option(o)]
+        if not refusals:
+            return ""
+        return str(min(refusals, key=refusal_rank).get("id") or "")
 
     def approve_outcome(self, option_id: str) -> dict:
         """The ``outcome`` payload for an approved tool (selected option)."""
@@ -358,10 +415,9 @@ METHOD_SET_CONFIG_OPTION = "session/set_config_option"
 class ZedAdapterDialect(ACPDialect):
     """Shared shape for the Zed-maintained ACP adapters (``claude-code-acp``,
     ``codex-acp``): integer ``protocolVersion`` (1), model set via
-    ``session/set_config_option`` rather than ``session/set_model``, NO
+    ``session/set_config_option`` rather than ``session/set_model``, and NO
     ``session/set_mode`` agent-activation step (the adapter binds the agent at
-    spawn), and permission options keyed ``optionId``/``name`` per the public
-    ACP spec.
+    spawn).
     """
 
     name = "zed"
@@ -489,24 +545,6 @@ class ZedAdapterDialect(ACPDialect):
             permission_modes=permission_modes,
             supported_efforts=supported_efforts,
         )
-
-    def parse_permission_options(self, raw_options: list[dict]) -> list[dict[str, str]]:
-        # Public ACP spec: options carry ``optionId`` + ``name`` + ``kind`` (vs
-        # the default dialect's ``id``/``label``). Accept either so a spec tweak can't silently
-        # drop. ``kind`` is the agent-independent allow/reject classifier the
-        # host uses to pick which ``optionId`` to echo back (claude-code-acp's
-        # ``optionId`` is NOT the literal ``allow_once`` — it must be read off
-        # the offered option, not assumed; this is what made fs_write approvals
-        # silently fail).
-        opts = [
-            {
-                "id": o.get("optionId") or o.get("id", ""),
-                "label": o.get("name") or o.get("label", ""),
-                "kind": o.get("kind", ""),
-            }
-            for o in raw_options
-        ]
-        return [o for o in opts if o["id"]]
 
 
 class ClaudeCodeDialect(ZedAdapterDialect):

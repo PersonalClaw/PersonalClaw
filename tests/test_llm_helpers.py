@@ -785,6 +785,15 @@ class TestHumanizeProviderErrorWithNoMessage:
             out = humanize_provider_error(exc)
             assert "timed out" in out, exc
 
+    def test_an_agent_cli_past_its_time_limit_is_said_to_have_timed_out(self):
+        """An agent CLI's own timeout is a timeout, not "an error PersonalClaw doesn't
+        recognize" with its class's words as the detail."""
+        from personalclaw.acp.errors import AcpTimeoutError
+
+        out = humanize_provider_error(AcpTimeoutError())
+        assert out.startswith("The agent did not finish within the turn's time limit, so the")
+        assert "doesn't recognize" not in out
+
     def test_connect_timeout_and_refusal_say_it_could_not_be_reached(self):
         import httpx
 

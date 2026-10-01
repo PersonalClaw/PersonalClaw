@@ -94,23 +94,16 @@ def _pending_future():
 
 
 @pytest.mark.asyncio
-async def test_stale_turn_completes_after_silence():
-    # After streaming a frame, prolonged silence ends the turn (no hang).
-    import personalclaw.acp.session as sess_mod
-
+async def test_silence_after_a_frame_is_not_the_end_of_the_turn():
+    """A model can think for minutes after its last step. While the prompt is pending and the
+    process is alive the turn goes on; only its deadline ends it, and says so."""
     s, q, _sent, _c = _mk()
     q.put_nowait(JsonRpcMessage(method="session/update", params={"sessionId": "A", "update": {}}))
-    # shrink the stale timeout so the test is fast
-    orig = sess_mod._STALE_TURN_TIMEOUT
-    sess_mod._STALE_TURN_TIMEOUT = 0.2
-    try:
-        got = []
-        async for m in s._drain_turn(10, _pending_future(), timeout=5):
-            got.append(m)
-        # streamed the one update, then completed on staleness (never saw a terminal response)
-        assert len(got) == 1
-    finally:
-        sess_mod._STALE_TURN_TIMEOUT = orig
+    started = asyncio.get_event_loop().time()
+    got = [m async for m in s._drain_turn(10, _pending_future(), timeout=1.5)]
+    assert len(got) == 1
+    assert asyncio.get_event_loop().time() - started >= 1.4, "silence ended the turn"
+    assert s._drain_end == "deadline"
 
 
 @pytest.mark.asyncio
@@ -513,8 +506,32 @@ async def test_connection_new_session_without_sid_raises():
     router.start()
     conn = AcpConnection(proc, router)
     out.push({"id": 1, "result": {}})  # no sessionId
-    with pytest.raises(RuntimeError):
+    from personalclaw.acp.errors import AcpError
+
+    with pytest.raises(AcpError, match="session/new answered without a session id"):
         await conn.new_session({"cwd": "/tmp"}, timeout=3)
+    await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_connection_new_session_refused_raises_the_agents_words():
+    """A refusal is said in the agent's words (its message and data), not as a missing id."""
+    from personalclaw.acp.errors import AcpRequestError
+    from personalclaw.acp.reader import FrameRouter
+    from personalclaw.acp.session import AcpConnection
+
+    proc = _FakeProc()
+    out = _ScriptedStdout()
+    router = FrameRouter(out.readline)
+    router.start()
+    conn = AcpConnection(proc, router)
+    error = {"code": -32603, "message": "Internal error", "data": "engine exited with code 64"}
+    out.push({"id": 1, "error": error})
+    with pytest.raises(AcpRequestError) as refused:
+        await conn.new_session({"cwd": "/tmp"}, timeout=3)
+    assert str(refused.value) == (
+        "session/new was refused: Internal error — engine exited with code 64 (code -32603)"
+    )
     await conn.close()
 
 

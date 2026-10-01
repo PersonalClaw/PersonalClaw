@@ -164,6 +164,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow step, a batch's review leaf included, reads the folder its batch was started in and its project's folder, read only, instead of finding only its empty working folder.**
 - **The agent no longer reads the knowledge library's own database as a file or from the shell; it is pointed to `knowledge_search` and `knowledge_get` instead.**
 - **A chat channel's Owner names you as the channel knows you, with its id for you under it ("Telegram id …" when it knows no name), and says "Paired." once.**
+- **Deny on an agent CLI's request declines that call and lets the agent go on, and the step names the answer sent; an agent that still ends its turn after a Deny is said to have stopped after it.**
+- **Stop on an agent CLI's turn ends it as stopped, never as a timeout or an unrecognized error, keeps the agent's process for the next turn, and starts no replacement after a hard stop.**
+- **An agent CLI's Test that fails says why: the agent's refusal in its own words, how its program ended (its exit code and last output), and what to check.**
+- **An agent CLI's turn waits for its answer however long it thinks after its last step, instead of ending after 90 seconds of silence, and an answer that arrives after its turn ended is never shown in the next one.**
 - **Every model in Settings → Models has a Test for the use case it is listed under, hosted or on this machine, and one that can't be tested says why: `untestable_reason()` on the speech, voice, diarization, embedding and image provider classes (an SDK addition no app has to change for).**
 - **An app's log lines reach `gateway.log`, `personalclaw logs` and Settings → Diagnostics → Live logs from the moment its code loads, an app installed after the gateway started and a module logging under its own name included, and those three and the console show the same lines.**
 - **`personalclaw logs` on a macOS service shows the gateway's log lines (launchd's `gateway.err`), not only what the gateway printed.**

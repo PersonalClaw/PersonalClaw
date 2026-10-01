@@ -4,6 +4,8 @@ translates AcpEvents → neutral events via the shared adapter, identical to the
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from personalclaw.acp.types import (
@@ -207,8 +209,9 @@ async def test_set_model_is_session_scoped():
             return True
 
         async def send_request(self, method, params):
+            # What AcpConnection.send_request returns: the request id and its reply future.
             sent.append((method, params))
-            return 1, None
+            return 1, asyncio.get_running_loop().create_future()
 
     sess = _FakeSession("SID9")
     p = AcpSessionProvider(_Conn(), sess, runtime_id="acp:demo-cli")

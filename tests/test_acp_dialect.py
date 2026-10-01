@@ -9,6 +9,10 @@ test_acp_set_mode_all_agents.py, which still pass against DefaultDialect.
 
 from __future__ import annotations
 
+import itertools
+
+import pytest
+
 from personalclaw.acp.dialect import (
     ClaudeCodeDialect,
     CodexDialect,
@@ -105,6 +109,74 @@ def test_a_cancel_option_is_not_treated_as_a_reject_option():
     fallback, so it is left to that fallback rather than dressed up as a deliberate choice."""
     d = DefaultDialect()
     assert d.select_reject_option_id([{"id": "c", "kind": "cancel"}]) == ""
+
+
+def test_a_deny_declines_and_lets_the_agent_continue_whatever_the_order():
+    """An agent can offer two ``reject_once`` options: one declines the call and the agent
+    goes on, the other ends its turn. A Deny is the first, in every order the agent lists them,
+    with the approval among them too."""
+    d = CodexDialect()
+    offered = d.parse_permission_options(
+        [
+            {
+                "optionId": "cancel",
+                "name": "No, and tell me what to do differently",
+                "kind": "reject_once",
+            },
+            {"optionId": "accept", "name": "Yes, run it", "kind": "allow_once"},
+            {
+                "optionId": "decline",
+                "name": "No, continue without running it",
+                "kind": "reject_once",
+            },
+        ]
+    )
+    for order in itertools.permutations(offered):
+        assert d.select_reject_option_id(list(order)) == "decline", order
+
+
+def test_a_refusal_that_says_nothing_either_way_goes_before_one_that_ends_the_turn():
+    """Unknown options fail toward "decline, continue": only a refusal that SAYS it ends the
+    turn (cancel, abort, interrupt, stop, halt, terminate) is held back."""
+    d = DefaultDialect()
+    for ending in ("abort", "stopTurn", "interrupt_turn", "cancelled", "Halt here", "terminate"):
+        offered = [
+            {"id": "first", "label": ending, "kind": "reject_once"},
+            {"id": "second", "label": "Not this one", "kind": "reject_once"},
+        ]
+        assert d.select_reject_option_id(offered) == "second", ending
+
+
+def test_a_refusal_that_ends_the_turn_is_still_a_refusal_when_it_is_the_only_one():
+    """It still says "no" about this call — more truthfully than ``cancelled``, which says the
+    turn was abandoned before anyone answered."""
+    d = DefaultDialect()
+    offered = [
+        {"id": "yes", "label": "Yes", "kind": "allow_once"},
+        {"id": "cancel", "label": "No, and stop", "kind": "reject_once"},
+    ]
+    assert d.select_reject_option_id(offered) == "cancel"
+
+
+def test_going_on_comes_before_remembering_and_remembering_before_ending_the_turn():
+    d = DefaultDialect()
+    stop_now = {"id": "a", "label": "No, stop", "kind": "reject_once"}
+    remember = {"id": "b", "label": "Never for this tool", "kind": "reject_always"}
+    assert d.select_reject_option_id([stop_now, remember]) == "b"
+    plain = {"id": "c", "label": "No", "kind": "reject_once"}
+    assert d.select_reject_option_id([remember, plain]) == "c"
+    goes_on = {"id": "d", "label": "Stop this command and continue", "kind": "reject_once"}
+    assert d.select_reject_option_id([plain, goes_on]) == "d"
+
+
+def test_a_deny_never_sends_an_option_that_allows():
+    """Fail closed: an ``allow_*`` kind is never a refusal, whatever its name says, and an
+    option with no kind is one only when its id or name refuses and nothing in it allows."""
+    d = DefaultDialect()
+    assert d.select_reject_option_id([{"id": "deny-nothing", "kind": "allow_once"}]) == ""
+    assert d.select_reject_option_id([{"id": "approve-not-reject"}]) == ""
+    assert d.select_reject_option_id([{"id": "o1", "label": "Decline"}]) == "o1"
+    assert d.select_reject_option_id([{"id": "rejectOnce"}]) == "rejectOnce"
 
 
 def test_select_allow_option_id_echoes_agent_defined_id():
@@ -247,8 +319,10 @@ def test_zed_dialect_normalize_discovery_no_effort_still_has_base_agent():
     assert r.models == ["gpt-5"]
 
 
-def test_zed_dialect_permission_optionId_name():
-    d = ZedAdapterDialect()
+@pytest.mark.parametrize("d", [DefaultDialect(), ZedAdapterDialect()], ids=lambda d: d.name)
+def test_permission_options_are_read_in_either_key_spelling(d):
+    """Every dialect reads both spellings. An option dropped for its key spelling left a Deny
+    nothing to answer with but ``cancelled``, which ends the agent's turn."""
     # Public ACP spec keys.
     parsed = d.parse_permission_options(
         [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]
@@ -259,6 +333,15 @@ def test_zed_dialect_permission_optionId_name():
     assert parsed2 == [{"id": "x", "label": "Y", "kind": ""}]
     # Options with no id are dropped.
     assert d.parse_permission_options([{"name": "no id"}]) == []
+    spec_shaped = d.parse_permission_options(
+        [
+            {"optionId": "ok", "name": "Allow", "kind": "allow_once"},
+            {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+        ]
+    )
+    assert d.reject_outcome(d.select_reject_option_id(spec_shaped)) == {
+        "outcome": {"outcome": "selected", "optionId": "no"}
+    }
 
 
 def test_claude_and_codex_are_zed_with_distinct_child_names():

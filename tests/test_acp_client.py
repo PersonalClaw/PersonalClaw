@@ -255,6 +255,7 @@ def _client_with_session(events):
     sess.stream_command = _stream
     sess.approve_tool = AsyncMock()
     sess.reject_tool = AsyncMock()
+    sess.settle_owed_answer = AsyncMock(return_value=True)  # no earlier turn owes an answer
     sess.cancel = AsyncMock()
     sess.wait_turn_done = AsyncMock(return_value="end_turn")
     sess.has_active_turn = MagicMock(return_value=True)

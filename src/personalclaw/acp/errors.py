@@ -30,6 +30,80 @@ class AcpMethodNotFound(AcpError):  # noqa: N818
         super().__init__(f"Method not found: {method}")
 
 
+class AcpRequestError(AcpError):  # noqa: N818
+    """The agent answered a request with a JSON-RPC error.
+
+    Its ``message`` and ``data`` are the agent's own words for why — an adapter puts there the
+    reason the program it drives failed — so both are kept (:func:`rpc_error_words`). Read only
+    ``result``, a refused ``session/new`` used to say "returned no sessionId (result=None)".
+    """
+
+    def __init__(self, method: str, error: object):
+        self.method = method
+        self.error = error
+        self.code = error.get("code") if isinstance(error, dict) else None
+        super().__init__(f"{method} was refused: {rpc_error_words(error)}")
+
+
+#: What a program's exit code conventionally says (sysexits and the shell), for the sentence
+#: that names it. Codes without a convention are said as the number alone.
+_EXIT_MEANINGS = {
+    64: "a usage error: it was handed an argument or option it does not accept",
+    126: "it could not be run",
+    127: "a program it runs was not found",
+}
+
+#: The most of a program's last output an error carries — its end, where the reason is.
+_LAST_WORDS_CAP = 600
+
+
+def rpc_error_words(error: object) -> str:
+    """A JSON-RPC error in its own words: ``message — data (code N)``, masked like any child's
+    output, since an agent can repeat what a program it ran printed."""
+    from personalclaw.security import mask_child_output
+
+    if not isinstance(error, dict):
+        return mask_child_output(str(error or "") or "no message", limit=_LAST_WORDS_CAP)
+    message = str(error.get("message") or "").strip()
+    data = error.get("data")
+    if isinstance(data, dict):
+        said = "; ".join(f"{k}: {v}" for k, v in data.items() if v not in (None, "", [], {}))
+    elif isinstance(data, list):
+        said = "; ".join(str(item) for item in data if item not in (None, ""))
+    else:
+        said = str(data or "").strip()
+    if said and said != message:
+        text = f"{message} — {said}" if message else said
+    else:
+        text = message
+    code = error.get("code")
+    text = f"{text or 'no message'}{f' (code {code})' if code is not None else ''}"
+    return mask_child_output(text, limit=_LAST_WORDS_CAP)
+
+
+def last_output_words(last_output: str) -> str:
+    """``its last output: …`` for a program's (already masked) stderr tail, keeping its end; ""
+    when it printed nothing."""
+    tail = last_output.strip()
+    if len(tail) > _LAST_WORDS_CAP:
+        tail = "…" + tail[-_LAST_WORDS_CAP:]
+    return f"its last output: {tail}" if tail else ""
+
+
+def exit_words(program: str, code: int, last_output: str = "") -> str:
+    """How an agent's program ended: ``<program> exited with code N (what N means); its last
+    output: …``, or ``was ended by signal N``. *last_output* is already masked
+    (``AcpProcess.stderr_tail``)."""
+    meaning = _EXIT_MEANINGS.get(code)
+    who = program or "the agent"
+    if code < 0:  # the process did not exit: a signal ended it (asyncio's negative code)
+        said = f"{who} was ended by signal {-code}"
+    else:
+        said = f"{who} exited with code {code}{f' ({meaning})' if meaning else ''}"
+    tail = last_output_words(last_output)
+    return f"{said}; {tail}" if tail else said
+
+
 class AcpCommandFailedAfterOutput(AcpError):  # noqa: N818
     """A slash command was rejected as unknown AFTER the turn had already streamed.
 

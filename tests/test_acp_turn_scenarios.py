@@ -42,11 +42,15 @@ class _ScriptedStdout:
     no-terminal scenarios), never on a synthetic EOF/close. This keeps the FrameRouter
     reader alive across the turn, exactly as in production."""
 
-    def __init__(self, frames: list[dict]):
+    def __init__(self, frames: list[dict], *, closes: bool = True):
         self._lines = [(json.dumps(f) + "\n").encode() for f in frames]
         self._i = 0
+        # False models a process that stays alive and silent after its frames (no EOF).
+        self._closes = closes
 
     async def readline(self) -> bytes:
+        if self._i >= len(self._lines) and not self._closes:
+            await asyncio.Event().wait()
         if self._i >= len(self._lines):
             # Stream stays open briefly after the scripted frames (a real pipe doesn't EOF
             # the instant a turn's frames are written), THEN closes. The short idle lets a
@@ -61,7 +65,7 @@ class _ScriptedStdout:
 
 
 def _client_with_frames(
-    frames: list[dict], *, req_id: int = 1, session_key: str = "s"
+    frames: list[dict], *, req_id: int = 1, session_key: str = "s", closes: bool = True
 ) -> AcpClient:
     """A ready AcpClient wired to a scripted stdout that emits *frames*, driven through
     the REAL turn path (FrameRouter → AcpSession) — the P9#7 wrapper architecture.
@@ -77,7 +81,7 @@ def _client_with_frames(
 
     client = AcpClient(session_key=session_key)
 
-    scripted = _ScriptedStdout(frames)
+    scripted = _ScriptedStdout(frames, closes=closes)
 
     class _FakeTransport:
         """Minimal transport: a readline() over the scripted frames + a no-op stdin."""
@@ -391,21 +395,49 @@ async def test_scenario_failed_tool_surfaces_result():
     assert events[-1].kind == EVENT_COMPLETE  # turn still completes normally
 
 
-# ── stale-synthetic complete (agent streamed text but never sent `result`) ─────
+# ── silence is not an answer (agent streamed text but never sent `result`) ─────────
 @pytest.mark.asyncio
-async def test_scenario_stale_text_without_terminal_synthesizes_complete(monkeypatch):
-    # The stdout closes (EOF) after text but with NO terminal `result` frame. Because
-    # text was streamed (_stale_eligible), the turn is finalized with a synthetic
-    # EVENT_COMPLETE(end_turn) rather than surfacing a timeout — distinct from the
-    # security-marker synthesize (that path keys off the interrupted marker text).
-    # Shrink the stale-silence window (real value 90s) so the oracle stays fast — the
-    # CONTRACT under test is "synthesize on stale EOF", not the wall-clock duration.
-    monkeypatch.setattr("personalclaw.acp.client._STALE_TURN_TIMEOUT", 0.1)
-    c = _client_with_frames([_text("here is a partial reply")])
-    events = await _collect(c)
-    assert any(e.kind == EVENT_TEXT_CHUNK for e in events)
-    assert events[-1].kind == EVENT_COMPLETE
-    assert events[-1].stop_reason == "end_turn"
+async def test_scenario_silence_after_text_is_not_a_finished_answer():
+    # The process stays alive and goes silent after text, with NO terminal `result` frame. The
+    # agent may still be working, so the turn waits for it, and only the turn's own deadline ends
+    # it — as a timeout, never as an answer that was finished.
+    from personalclaw.acp.errors import AcpTimeoutError
+
+    c = _client_with_frames([_text("here is a partial reply")], closes=False)
+    seen: list = []
+    try:
+        with pytest.raises(AcpTimeoutError):
+            async for ev in c.stream_events("go", timeout=1.5):
+                seen.append(ev)
+    finally:
+        await c._connection._router.close()
+    assert [e.text for e in seen if e.kind == EVENT_TEXT_CHUNK] == ["here is a partial reply"]
+    assert not [e for e in seen if e.kind == EVENT_COMPLETE]
+
+
+@pytest.mark.asyncio
+async def test_scenario_a_connection_that_closes_mid_answer_is_not_a_finished_answer():
+    # The stdout closes after text with NO terminal `result`: the agent's process went away
+    # before it said the turn was over. That is neither a finished answer nor a timeout.
+    from personalclaw.acp.errors import AcpProcessDied
+
+    c = _client_with_frames([_text("here is a partial rep")])
+    seen: list = []
+    with pytest.raises(AcpProcessDied):
+        async for ev in c.stream_events("go"):
+            seen.append(ev)
+    assert [e.text for e in seen if e.kind == EVENT_TEXT_CHUNK] == ["here is a partial rep"]
+    assert not [e for e in seen if e.kind == EVENT_COMPLETE]
+
+
+@pytest.mark.asyncio
+async def test_scenario_a_connection_that_closes_before_any_frame_is_not_a_timeout():
+    # The same close with nothing streamed used to read "ACP prompt timed out".
+    from personalclaw.acp.errors import AcpProcessDied
+
+    c = _client_with_frames([])
+    with pytest.raises(AcpProcessDied):
+        await _collect(c)
 
 
 # ── stop_reason passthrough (not hardcoded to end_turn) ────────────────────────

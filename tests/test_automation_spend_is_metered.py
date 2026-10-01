@@ -90,10 +90,6 @@ REACQUIRES: dict[tuple[str, str], str] = {
     ("session.py", "SessionManager.get_or_create"): (
         "rebuilds a stale runtime with the request its caller has just made, axis included"
     ),
-    ("session.py", "SessionManager._eager_respawn"): (
-        "rebuilds a hard-stopped runtime with the request that built it "
-        "(`_Session.acquired_with`), axis included"
-    ),
 }
 
 #: What hands a caller a model to call directly, with no runtime acquired.

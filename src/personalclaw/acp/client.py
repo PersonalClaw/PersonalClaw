@@ -79,10 +79,6 @@ DEFAULT_MODEL = "auto"
 _INIT_TIMEOUT = 240.0  # 4 min — MCP servers can be slow to initialize
 _DRAIN_DURATION = 10.0  # drain MCP server init notifications (~3s observed)
 _DEFAULT_PROMPT_TIMEOUT = 7200.0  # 2 hours — allow very long tool execution
-# After streaming content, if no new data arrives for this many seconds, the
-# session treats the turn as done (handles agents finishing silently). Kept as a
-# module constant so the oracle can monkeypatch it to keep the stale-EOF test fast.
-_STALE_TURN_TIMEOUT = 90.0
 
 
 # Process-tree helpers live in the shared transport; re-exported here because the
@@ -301,6 +297,16 @@ class AcpClient:
         return self._retained_stderr_tail or self._transport.stderr_tail()
 
     @property
+    def program_name(self) -> str:
+        """The launched program's file name (the transport's), as errors name it."""
+        return self._transport.program_name
+
+    async def wait_exit(self, grace: float) -> int | None:
+        """The agent process's exit code, giving a dying one *grace* seconds to finish, or
+        ``None`` while it runs (:meth:`AcpProcess.wait_exit`)."""
+        return await self._transport.wait_exit(grace)
+
+    @property
     def _start_time(self) -> int | None:
         return self._transport._start_time
 
@@ -384,14 +390,16 @@ class AcpClient:
                 return  # cancelled / process gone — the send is best-effort by design
             err = getattr(resp, "error", None)
             if err:
+                from personalclaw.acp.errors import rpc_error_words
+
                 logger.warning(
-                    "ACP adapter REJECTED %s (%s=%r) rid=%s: %r — the setting did NOT "
+                    "ACP adapter REJECTED %s (%s=%r) rid=%s: %s — the setting did NOT "
                     "apply and the session keeps the adapter's own value",
                     method,
                     params.get("configId") or "value",
                     params.get("value"),
                     rid,
-                    err,
+                    rpc_error_words(err),
                 )
 
         fut.add_done_callback(_on_done)
@@ -818,7 +826,7 @@ class AcpClient:
         """Send a prompt and yield AcpEvent objects. Delegates to the session's turn
         loop (its per-session lock keeps one prompt in flight); telemetry is stamped on
         the terminal complete event exactly as before."""
-        await self.ensure_ready()
+        await self._ready_for_a_turn()
         assert self._session is not None
         # Re-arm the mid-turn steer seam on THIS turn's session. One call site
         # rather than one per rebind path: ``ensure_ready`` above may have opened a brand-new
@@ -830,6 +838,16 @@ class AcpClient:
             self.last_prompt_stats = self._session.last_prompt_stats
             self._last_stop_reason = self._session._last_stop_reason
             yield event
+
+    async def _ready_for_a_turn(self) -> None:
+        """:meth:`ensure_ready`, plus the answer an earlier turn still owes settled first
+        (:meth:`AcpSession.settle_owed_answer`). An agent that never answers the turn it was told
+        to stop is restarted, so nothing it says late can land in the next turn."""
+        await self.ensure_ready()
+        if self._session is not None and not await self._session.settle_owed_answer():
+            logger.warning("ACP agent never finished the turn it was told to stop — restarting it")
+            await self._teardown()
+            await self.ensure_ready()
 
     # ── mid-turn steering ───────────────────────────────────────────────────────
     def steer_capable(self) -> bool:
@@ -871,7 +889,7 @@ class AcpClient:
         gets no request at all, and the caller sees :class:`AcpCommandsUnsupported`
         BEFORE any wire write — so it can substitute a plain prompt knowing the turn is
         still untouched (`G4`)."""
-        await self.ensure_ready()
+        await self._ready_for_a_turn()
         if not self._can_execute_commands:
             raise AcpCommandsUnsupported(command)
         assert self._session is not None
@@ -938,6 +956,11 @@ class AcpClient:
         if self._session is None:
             raise AcpError("Cannot reject tool before session is initialized")
         await self._session.reject_tool(request_id)
+
+    def refusal_answer(self, request_id: str | int) -> dict[str, str] | None:
+        """The agent's option a Deny of *request_id* was answered with, or ``None`` when it
+        was answered ``cancelled`` (see :meth:`AcpSession.refusal_answer`)."""
+        return self._session.refusal_answer(request_id) if self._session is not None else None
 
     # ── control (delegate to the session) ───────────────────────────────────────
     async def cancel_session(self) -> None:

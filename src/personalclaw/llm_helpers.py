@@ -1123,6 +1123,7 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     * A connection that failed or timed out, known by its type or its cause's
       (:func:`_transport_failure_sentence`): a provider SDK's "Request timed out." has words the
       matcher knows nothing in, and read by them it was a failure PersonalClaw doesn't recognize.
+      An agent CLI's own timeout (``AcpTimeoutError``) is said as one too.
 
     A status code in the map matches only as a number of its own: ``401`` inside an account id
     or an ARN is not an HTTP 401, and read as one it named the API key for a permission error.
@@ -1149,6 +1150,7 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
 def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None:
     """:func:`humanize_provider_error`'s sentence for a failure it recognizes, or ``None`` for
     one that carries a message it recognizes nothing in."""
+    from personalclaw.acp.errors import AcpTimeoutError
     from personalclaw.errors import ERROR_CODES, AgentError
     from personalclaw.guardrails.failure import (
         FirstTokenTimeout,
@@ -1163,6 +1165,14 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     envelope = getattr(exc, "agent_error", None)
     if isinstance(envelope, AgentError) and envelope.code in ERROR_CODES:
         return envelope.sentence()
+    if isinstance(exc, AcpTimeoutError):
+        # An agent CLI did not answer within its turn's time limit — the one ending of its turn
+        # that is a timeout (a stop, a refusal and a lost connection each say so themselves).
+        # The agent is told to stop, and its late answer is dropped, never shown in another turn.
+        return (
+            "The agent did not finish within the turn's time limit, so the turn was stopped. "
+            "Try again; if it keeps happening, check the gateway log."
+        )
     if isinstance(exc, ToolSchemaRejected):
         return exc.sentence()
     if isinstance(exc, (NoModelAnswered, FirstTokenTimeout, ModelCallTimeout)):

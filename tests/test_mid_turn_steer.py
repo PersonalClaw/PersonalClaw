@@ -903,6 +903,9 @@ async def test_the_client_rearms_the_seam_on_the_session_that_runs_the_turn(monk
         def undelivered_steers(self):
             return []
 
+        async def settle_owed_answer(self):
+            return True  # no earlier turn owes an answer
+
         async def stream_events(self, message, timeout=0.0):
             yield AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")
 

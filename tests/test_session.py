@@ -661,7 +661,7 @@ class TestSessionExpireCallback:
 
 
 class TestStopTurn:
-    """Tests for stop_turn(), _eager_respawn(), and cancel_current backcompat."""
+    """Tests for stop_turn() and cancel_current backcompat."""
 
     @pytest.mark.asyncio
     async def test_stop_turn_idle_no_session(self, cfg):
@@ -781,34 +781,11 @@ class TestStopTurn:
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_eager_respawn_called(self, cfg):
-        """Hard path schedules _eager_respawn via asyncio.create_task."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        provider, _, _ = await mgr.get_or_create("key1")
-        mgr.release("key1")
-
-        provider.cancel = AsyncMock(return_value="timeout")
-        stopped = mgr._sessions["key1"]
-        acquired_with = {
-            **stopped.acquired_with,
-            "approval_policy": stopped.approval_policy,
-            "approval_source": stopped.approval_source,
-        }
-
-        with patch.object(mgr, "_eager_respawn", new_callable=AsyncMock) as mock_respawn:
-            await mgr.stop_turn("key1")
-            # Allow the created task to run
-            await asyncio.sleep(0)
-            mock_respawn.assert_awaited_once_with("key1", acquired_with)
-
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_a_hard_stopped_session_respawns_as_the_runtime_it_was(self, cfg):
-        """🔴 Red before the fix: the respawn asked for the key alone, so a hard-stopped loop
-        worker came back as the default agent, in no directory, on the chat binding — and the
-        next turn REUSES what the respawn built, whatever that turn asks for. Its model axis is
-        what puts the spend guard on its calls, so the respawned worker spent unmetered."""
+    async def test_a_hard_stop_starts_no_runner_until_a_turn_needs_one(self, cfg):
+        """🔴 Red before the fix: the hard path scheduled a respawn, so a stopped chat had a new
+        agent process running for it at once — measured: a CLI process that stayed attached to
+        the gateway for a chat nobody went back to — and the next turn reused whatever that
+        respawn built from the STOPPED turn's request."""
         built: list[dict] = []
         inner = _mock_provider_factory()
 
@@ -817,75 +794,44 @@ class TestStopTurn:
             return inner(session_key, **kwargs)
 
         mgr = SessionManager(cfg, provider_factory=factory)
-        provider, _, _ = await mgr.get_or_create(
-            "dashboard:loop-abc",
-            agent="personalclaw-coder",
-            cwd="/tmp/example-project",
-            model_axis="loops",
-            unattended=True,
-        )
-        mgr.release("dashboard:loop-abc")
-        provider.cancel = AsyncMock(return_value="timeout")
-
-        assert await mgr.stop_turn("dashboard:loop-abc") == "hard"
-        # The respawn is fire-and-forget: wait for the task the hard path scheduled.
-        await asyncio.wait(set(mgr._background_tasks), timeout=5)
-
-        assert len(built) == 2, built
-        first, again = built
-        for field_name in ("key", "agent", "cwd", "model_axis", "unattended"):
-            assert again.get(field_name) == first.get(field_name), field_name
-        assert (again["agent"], again["model_axis"]) == ("personalclaw-coder", "loops")
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_a_respawn_keeps_the_approval_the_session_holds_now(self, cfg):
-        """The respawn replays how the runtime was built, but NOT the approval it was built with:
-        a grant withdrawn after that stays withdrawn through a hard stop."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        provider, _, _ = await mgr.get_or_create("dashboard:chat-1", approval_policy="auto")
+        provider, _, _ = await mgr.get_or_create("dashboard:chat-1", agent="researcher")
         mgr.release("dashboard:chat-1")
-        assert mgr._sessions["dashboard:chat-1"].approval_policy == "auto", "the premise"
-        mgr.set_approval_policy("dashboard:chat-1", "")  # the person turns the grant off
         provider.cancel = AsyncMock(return_value="timeout")
 
         assert await mgr.stop_turn("dashboard:chat-1") == "hard"
-        await asyncio.wait(set(mgr._background_tasks), timeout=5)
+        await asyncio.sleep(0.05)  # a fire-and-forget respawn would have started by now
+        assert len(built) == 1, built
+        assert not mgr.has_session("dashboard:chat-1")
+        provider.shutdown.assert_awaited()
 
-        assert mgr._sessions["dashboard:chat-1"].approval_policy == ""
+        # The next turn starts the runner it asks for.
+        await mgr.get_or_create("dashboard:chat-1", agent="writer", cwd="/tmp/example-project")
+        mgr.release("dashboard:chat-1")
+        assert len(built) == 2
+        assert (built[1]["agent"], built[1]["cwd"]) == ("writer", "/tmp/example-project")
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_eager_respawn_failure_logged(self, cfg, caplog):
-        """_eager_respawn swallows exceptions and logs at debug."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+    async def test_a_soft_stop_keeps_the_runner_for_the_next_turn(self, cfg):
+        """The agent acknowledged the cancel: the same runner serves the chat's next turn."""
+        built: list[str] = []
+        inner = _mock_provider_factory()
 
-        with patch.object(
-            mgr, "get_or_create", new_callable=AsyncMock, side_effect=RuntimeError("boom")
-        ):
-            with caplog.at_level(logging.DEBUG, logger="personalclaw.session"):
-                await mgr._eager_respawn("key1", {})
+        def factory(session_key=None, **kwargs):
+            built.append(session_key)
+            return inner(session_key, **kwargs)
 
-        assert "Eager respawn failed" in caplog.text
-        await mgr.close_all()
+        mgr = SessionManager(cfg, provider_factory=factory)
+        provider, _, _ = await mgr.get_or_create("dashboard:chat-1")
+        mgr.release("dashboard:chat-1")
+        provider.cancel = AsyncMock(return_value="acked")
 
-    @pytest.mark.asyncio
-    async def test_eager_respawn_releases_semaphore(self, cfg):
-        """_eager_respawn must release the semaphore acquired by get_or_create,
-        else the next user message deadlocks waiting on it."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        # Prime the session so get_or_create takes the fast path.
-        provider, _, _ = await mgr.get_or_create("key1")
-        mgr.release("key1")
-        sess = mgr._sessions["key1"]
-        # Sanity: semaphore is full (1 permit available) before respawn.
-        assert sess.semaphore.locked() is False
-
-        await mgr._eager_respawn("key1", {})
-
-        # After respawn the semaphore MUST be released, otherwise the next
-        # caller of get_or_create would hang on sess.semaphore.acquire().
-        assert sess.semaphore.locked() is False
+        assert await mgr.stop_turn("dashboard:chat-1") == "soft"
+        again, is_new, _ = await mgr.get_or_create("dashboard:chat-1")
+        mgr.release("dashboard:chat-1")
+        assert again is provider and is_new is False
+        assert built == ["dashboard:chat-1"]
+        provider.shutdown.assert_not_awaited()
         await mgr.close_all()
 
     @pytest.mark.asyncio

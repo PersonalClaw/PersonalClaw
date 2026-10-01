@@ -316,6 +316,25 @@ class AcpProcess:
             raise AcpError("ACP process not running")
         return await self._process.stdout.readline()
 
+    @property
+    def program_name(self) -> str:
+        """The launched program's file name, as errors and log lines name it."""
+        return Path(self._command[0]).name if self._command else "acp-agent"
+
+    async def wait_exit(self, grace: float) -> int | None:
+        """The process's exit code once it has exited, giving one on its way out up to *grace*
+        seconds to finish — or ``None`` while it still runs (a refusal it answered and lived on).
+        Read before a teardown, whose kill would otherwise be reported as the exit."""
+        proc = self._process
+        if proc is None:
+            return None
+        if proc.returncode is None:
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=grace)
+            except (asyncio.TimeoutError, TimeoutError):
+                return None
+        return proc.returncode
+
     def stderr_tail(self) -> str:
         """Redacted tail of recent stderr lines (for death diagnostics)."""
         if not self._stderr_lines:
@@ -421,7 +440,7 @@ class AcpProcess:
             self._stderr_task = asyncio.ensure_future(self._drain_stderr(self._process.stderr))
 
     async def _drain_stderr(self, stderr: asyncio.StreamReader) -> None:
-        binary_name = Path(self._command[0]).name if self._command else "acp-agent"
+        binary_name = self.program_name
         while True:
             line = await stderr.readline()
             if not line:

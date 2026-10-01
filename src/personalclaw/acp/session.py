@@ -6,7 +6,7 @@ an ``AcpSession`` owns a single ``sessionId`` and consumes ONLY that session's
 queue — the :class:`FrameRouter` fans the shared stdout out to per-session queues,
 so N sessions each await their own queue and run concurrently on one process.
 
-This module is the session-scoped turn loop + its staleness/liveness/cancel logic,
+This module is the session-scoped turn loop + its liveness/cancel logic,
 pulled out of the monolithic client so it can be built and tested standalone against
 a fake router queue — no real process, no stdout. The connection shell that owns the
 process + router + spawns these sessions composes it next (step 2b). Gated by
@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
 from personalclaw.acp import translate
@@ -46,7 +46,7 @@ from personalclaw.acp.types import (
     METHOD_REQUEST_PERMISSION,
     METHOD_SESSION_UPDATE,
     OPTION_ALLOW_ONCE,
-    STOP_REASON_END_TURN,
+    STOP_REASON_CANCELLED,
     AcpEvent,
     AcpPromptStats,
     JsonRpcMessage,
@@ -83,10 +83,21 @@ def classify_frame(msg: JsonRpcMessage, req_id: int) -> str:
     return "skip"
 
 
-# Mirror the client's turn tuning (kept local so this module is self-contained).
-_STALE_TURN_TIMEOUT = 90.0  # after text streamed, silence this long ⇒ treat turn complete
+# Turn tuning. A turn ends on the agent's answer to its prompt, its connection closing, its
+# cancel, or its own deadline — never on silence: a model may think for minutes after its last
+# step, and while the prompt is pending and the connection is alive the turn is not over.
 _QUEUE_POLL = 1.0  # how long to await the queue before re-checking liveness/deadline
 _DEFAULT_PROMPT_TIMEOUT = 7200.0  # 2 hours — allow very long tool execution (matches client)
+# How long a cancelled turn waits for the agent's answer to ``session/cancel`` (the prompt's
+# ``stopReason: cancelled``). A Stop escalates sooner, on its own budget
+# (``agent.soft_stop_budget_secs``); this bounds a cancel nobody escalates, such as an abort.
+_CANCEL_ACK_GRACE = 30.0
+
+# Why a turn's drain ended without the agent's answer to the prompt (`_drain_turn`).
+_ENDED_CLOSED = "closed"  # the connection closed under the turn
+_ENDED_DIED = "died"  # the process exited
+_ENDED_DEADLINE = "deadline"  # the prompt's own timeout
+_ENDED_UNACKED = "unacked"  # cancelled, and the agent never answered the cancel
 
 # Cap mid-turn steer deliveries per turn so a message flood cannot keep one turn alive
 # forever. Same value and same reason as the native loop's ``_MAX_STEERS_PER_TURN``
@@ -94,6 +105,20 @@ _DEFAULT_PROMPT_TIMEOUT = 7200.0  # 2 hours — allow very long tool execution (
 # layer than ``agents`` and must not import upward. Test parity: the two are asserted
 # equal in tests/test_mid_turn_steer.py, so a change to one is a red, not a drift.
 _MAX_STEERS_PER_TURN = 4
+
+
+#: Yielded by :meth:`AcpSession._turn_events` (never past :meth:`AcpSession._dispatch_frames`)
+#: when the agent declared its turn over without answering the prompt, so no answer is owed.
+_RELEASED = AcpEvent(kind="released")
+
+
+def read_when_settled(fut: "asyncio.Future[JsonRpcMessage]") -> None:
+    """Read a request's reply future once it settles. A sender that stopped waiting for it (a
+    turn that was cancelled, a configuration frame sent without awaiting its answer) leaves it
+    pending, and the connection closing later fails it; read here, that failure is not reported
+    as an exception nobody retrieved."""
+    if not fut.cancelled():
+        fut.exception()
 
 
 class AcpSession:
@@ -116,6 +141,7 @@ class AcpSession:
         is_process_alive,  # () -> bool
         dialect=None,  # ACPDialect : permission-option parsing / approve outcome shape
         session_files_dir: "Path | None" = None,  # opt-in JSONL tool-result tailing
+        describe_exit: "Callable[[], Awaitable[str]] | None" = None,  # how the process ended
     ) -> None:
         self.session_id = session_id
         self._queue = queue
@@ -123,6 +149,7 @@ class AcpSession:
         self._send_response = send_response
         self._cancel_session = cancel_session
         self._is_process_alive = is_process_alive
+        self._describe_exit = describe_exit
         from personalclaw.acp.dialect import DefaultDialect
 
         self._dialect = dialect or DefaultDialect()
@@ -138,7 +165,21 @@ class AcpSession:
         # cache above.
         self._tool_call_seen: dict[str, translate.SeenToolCall] = {}
         self._offered_options: dict[str, list[dict[str, str]]] = {}
+        # This turn's permission requests still waiting for an answer (id as text → the id as
+        # the agent sent it, which the answer must echo), the ones answered (a request is
+        # answered once), and the option each refusal was answered with (`refusal_answer`).
+        self._unanswered: dict[str, object] = {}
+        self._answered: set[str] = set()
+        self._refusals: dict[str, dict[str, str]] = {}
+        # Why the last drain ended without the agent's answer (one of the `_ENDED_*` values).
+        self._drain_end: str = ""
+        # A turn that ended before the agent answered its prompt leaves that answer owed: the
+        # reply future, settled before the next turn (`settle_owed_answer`). And the cancels
+        # sent for such a turn, held so they are not collected mid-send.
+        self._owed_answer: "asyncio.Future[JsonRpcMessage] | None" = None
+        self._owed_cancels: set[asyncio.Task] = set()
         self.last_prompt_stats = AcpPromptStats()
+        # The stopReason the AGENT answered the last prompt with; "" when it never answered.
         self._last_stop_reason: str = ""
         self._turn_done: asyncio.Event = asyncio.Event()
         # Optional per-session JSONL tool-result tail (vendor opt-in; no-op when unset).
@@ -237,14 +278,16 @@ class AcpSession:
                 return
             err = getattr(resp, "error", None)
             if err:
+                from personalclaw.acp.errors import rpc_error_words
+
                 if text:
                     self._steer_rejected.append(text)
                 logger.warning(
-                    "session %s: agent REJECTED the mid-turn steer (rid=%s): %r — the steer "
+                    "session %s: agent REJECTED the mid-turn steer (rid=%s): %s — the steer "
                     "did NOT reach the running answer; it is owed back to the user",
                     self.session_id,
                     rid,
-                    err,
+                    rpc_error_words(err),
                 )
 
         fut.add_done_callback(_on_done)
@@ -304,7 +347,12 @@ class AcpSession:
         return delivered
 
     async def cancel(self) -> None:
-        """Cancel the in-flight turn for THIS session only (co-tenants keep streaming)."""
+        """Cancel the in-flight turn for THIS session only (co-tenants keep streaming).
+
+        Sends ``session/cancel`` and answers every permission request still waiting with the
+        ``cancelled`` outcome, as the protocol asks of a client cancelling a turn. The turn
+        itself ends when the agent answers the prompt (``stopReason: cancelled``), which
+        :meth:`_drain_turn` waits for, so a cancel the agent acknowledges reads as one."""
         self._cancelled = True
         try:
             await self._cancel_session()
@@ -312,12 +360,94 @@ class AcpSession:
             logger.debug(
                 "session %s: cancel_session failed (non-fatal)", self.session_id, exc_info=True
             )
+        for rid, raw_id in list(self._unanswered.items()):
+            self._mark_answered(rid)
+            try:
+                await self._send_response(raw_id, self._dialect.reject_outcome(""))
+            except Exception:
+                logger.debug(
+                    "session %s: answering request %s on cancel failed",
+                    self.session_id,
+                    rid,
+                    exc_info=True,
+                )
+
+    def _owe_answer(self, fut: "asyncio.Future[JsonRpcMessage]") -> None:
+        """This turn ended while its prompt is still unanswered: her Stop went unanswered, its
+        deadline passed, or whoever read it stopped reading. The agent can still answer, and what
+        it streams on the way would be read by the next turn as that turn's own — a late answer
+        spliced into another conversation turn. So the agent is told to stop (``session/cancel``,
+        unless it already was) and the next turn first settles the answer
+        (:meth:`settle_owed_answer`). Never sets ``_cancelled`` itself: how THIS turn ended is
+        still being decided by the caller."""
+        self._owed_answer = fut
+        if self._closed or self._cancelled or not self._is_process_alive():
+            return
+        task = asyncio.ensure_future(self.cancel())
+        self._owed_cancels.add(task)
+        task.add_done_callback(self._owed_cancels.discard)
+
+    async def settle_owed_answer(self, grace: float = _CANCEL_ACK_GRACE) -> bool:
+        """Wait for the answer a turn that ended early still owes, and discard what came with it.
+
+        Everything on this session's queue before that answer belongs to the turn it answers
+        (stdout is in order, and no new prompt has been sent), so it is dropped, and a permission
+        request among it is answered ``cancelled``. Returns ``False`` when the agent has still not
+        answered after *grace* seconds: it is busy with a turn nobody is reading, and this session
+        cannot take another until it is restarted."""
+        owed = self._owed_answer
+        if owed is None:
+            return True
+        if not owed.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(owed), timeout=grace)
+            except (asyncio.TimeoutError, TimeoutError):
+                logger.warning(
+                    "session %s: the agent never answered the turn it was told to stop",
+                    self.session_id,
+                )
+                return False
+            except Exception:  # noqa: BLE001 - the connection failed under it: nothing is owed
+                pass
+        self._owed_answer = None
+        dropped = 0
+        while not self._queue.empty():
+            msg = self._queue.get_nowait()
+            if msg.method == "_router/closed":
+                self._queue.put_nowait(msg)  # the connection is gone: the next turn must see it
+                break
+            dropped += 1
+            if msg.method == METHOD_REQUEST_PERMISSION and msg.id is not None:
+                try:
+                    await self._send_response(msg.id, self._dialect.reject_outcome(""))
+                except Exception:  # noqa: BLE001 - a dead agent asks nothing more
+                    logger.debug("session %s: answering a stale request failed", self.session_id)
+        if dropped:
+            logger.info(
+                "session %s: dropped %d frame(s) the agent sent for the turn before",
+                self.session_id,
+                dropped,
+            )
+        return True
+
+    def _mark_answered(self, rid: str) -> bool:
+        """Record that request *rid* has its answer. False when it already had one: a request
+        is answered once, and a second answer to the same id is a protocol error."""
+        if rid in self._answered:
+            return False
+        self._answered.add(rid)
+        self._unanswered.pop(rid, None)
+        return True
 
     async def approve_tool(self, request_id: str | int, option_id: str | None = None) -> None:
         """Approve a pending tool permission for THIS session. Resolves the option id
         from what the agent offered (agent-defined ids need not equal ``allow_once``);
-        falls back to ``allow_once`` only when nothing was captured."""
+        falls back to ``allow_once`` only when nothing was captured. A request the turn's
+        cancel already answered is not approved after the fact."""
         rid = str(request_id)
+        if not self._mark_answered(rid):
+            logger.info("session %s: request %s was already answered", self.session_id, rid)
+            return
         resolved = option_id
         if resolved is None:
             offered = self._offered_options.get(rid, [])
@@ -326,20 +456,34 @@ class AcpSession:
         await self._send_response(request_id, self._dialect.approve_outcome(resolved))
 
     async def reject_tool(self, request_id: str | int) -> None:
-        """Deny a pending tool permission for THIS session, echoing the agent's own reject
-        option when it offered one (`G19`). READ the offered options before popping them —
-        the pre-fix order discarded them first and then had nothing to resolve, which is how
-        every denial came to be sent as ``cancelled``."""
+        """Deny a pending tool permission for THIS session.
+
+        Answers with the refusal the dialect picks from what the agent offered — the one that
+        declines the call and lets the agent continue (:meth:`ACPDialect.select_reject_option_id`)
+        — and remembers it for :meth:`refusal_answer`. READ the offered options before popping
+        them: an order that discarded them first had nothing to resolve, and sent every denial
+        as ``cancelled``. In a cancelled turn the answer IS ``cancelled``, which is what the
+        protocol asks for there; a request already answered gets no second answer."""
         rid = str(request_id)
-        resolved = self._dialect.select_reject_option_id(self._offered_options.get(rid, []))
-        self._offered_options.pop(rid, None)
+        if not self._mark_answered(rid):
+            logger.debug("session %s: request %s was already answered", self.session_id, rid)
+            return
+        offered = self._offered_options.pop(rid, [])
+        resolved = "" if self._cancelled else self._dialect.select_reject_option_id(offered)
+        if resolved:
+            self._refusals[rid] = next(o for o in offered if o.get("id") == resolved)
         await self._send_response(request_id, self._dialect.reject_outcome(resolved))
+
+    def refusal_answer(self, request_id: str | int) -> dict[str, str] | None:
+        """The offered option a refusal of *request_id* was answered with (``{id, label,
+        kind}``), or ``None`` when it was answered ``cancelled`` or not refused at all."""
+        return self._refusals.get(str(request_id))
 
     async def _drain_turn(
         self, req_id: int, response_future: "asyncio.Future[JsonRpcMessage]", timeout: float
     ) -> AsyncIterator[JsonRpcMessage]:
-        """Yield this session's turn frames until the turn's terminal response lands,
-        the process dies, or a stale-silence timeout.
+        """Yield this session's turn frames until the turn's terminal response lands, the
+        connection closes, the process dies, or the turn's deadline passes.
 
         The FrameRouter demuxes stdout into TWO channels: the turn's own response
         (``id == req_id``, no method) resolves ``response_future`` (registered via
@@ -348,19 +492,35 @@ class AcpSession:
         "drain the queue while awaiting the response future" — we select across both.
         Because stdout is in-order, every notification for this turn is enqueued BEFORE
         the response is routed; when the future resolves we flush the buffered queue
-        frames first, then yield the terminal response last."""
+        frames first, then yield the terminal response last.
+
+        A cancel does not end the drain: the agent answers ``session/cancel`` by answering
+        the prompt (``stopReason: cancelled``), and that answer is how the turn is known to
+        have stopped. It is awaited for :data:`_CANCEL_ACK_GRACE` at most.
+
+        A drain that ends without the response sets :attr:`_drain_end` to why, which
+        :meth:`_dispatch_frames` maps to the turn's ending. Either way the response future
+        is read when it settles, so a connection closing under it later is never reported as
+        an exception nobody retrieved."""
         deadline = time.monotonic() + timeout
-        last_data = time.monotonic()
-        streamed = False
+        cancel_deadline: float | None = None
+        self._drain_end = ""
         get_task: "asyncio.Task[JsonRpcMessage] | None" = None
         try:
-            while time.monotonic() < deadline and not self._closed and not self._cancelled:
+            while not self._closed:
+                now = time.monotonic()
+                if self._cancelled and cancel_deadline is None:
+                    cancel_deadline = now + _CANCEL_ACK_GRACE
+                limit = deadline if cancel_deadline is None else min(deadline, cancel_deadline)
+                if now >= limit:
+                    unacked = cancel_deadline is not None and now >= cancel_deadline
+                    self._drain_end = _ENDED_UNACKED if unacked else _ENDED_DEADLINE
+                    return
                 if get_task is None:
                     get_task = asyncio.ensure_future(self._queue.get())
-                remaining = deadline - time.monotonic()
                 await asyncio.wait(
                     {get_task, response_future},
-                    timeout=min(remaining, _QUEUE_POLL),
+                    timeout=min(limit - now, _QUEUE_POLL),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 # 1. Yield a ready NOTIFICATION first — preserves ordering (updates
@@ -373,6 +533,7 @@ class AcpSession:
                         # stdout (EOF) is a NORMAL end-of-turn, not a mid-turn death: the
                         # response future is already resolved. Yield that terminal frame so
                         # the turn completes on `result` rather than being lost to the close.
+                        self._drain_end = _ENDED_CLOSED
                         if response_future.done():
                             try:
                                 yield response_future.result()
@@ -387,8 +548,6 @@ class AcpSession:
                                 "session %s: connection closed mid-turn", self.session_id
                             )
                         return
-                    last_data = time.monotonic()
-                    streamed = True
                     yield msg
                     continue
                 # 2. Terminal response landed (and no notification is ready): flush any
@@ -399,31 +558,30 @@ class AcpSession:
                     while not self._queue.empty():
                         buffered = self._queue.get_nowait()
                         if buffered.method == "_router/closed":
+                            self._drain_end = _ENDED_CLOSED
                             return
                         yield buffered
                     try:
                         yield response_future.result()
                     except Exception:
+                        self._drain_end = _ENDED_CLOSED
                         logger.warning(
                             "session %s: turn ended on connection error",
                             self.session_id,
                             exc_info=True,
                         )
                     return
-                # 3. Idle tick — no frame, no response. Check liveness + staleness.
+                # 3. Idle tick — no frame, no response. A quiet agent is still working; only
+                #    its process dying ends the turn here.
                 if not self._is_process_alive():
                     logger.warning("session %s: process died mid-turn", self.session_id)
+                    self._drain_end = _ENDED_DIED
                     return
-                if streamed and (time.monotonic() - last_data) > _STALE_TURN_TIMEOUT:
-                    logger.warning(
-                        "session %s: stale turn (silent %.0fs after streaming) — completing",
-                        self.session_id,
-                        time.monotonic() - last_data,
-                    )
-                    return
+            self._drain_end = _ENDED_CLOSED  # the session was closed under the turn
         finally:
             if get_task is not None and not get_task.done():
                 get_task.cancel()
+            response_future.add_done_callback(read_when_settled)
 
     # ── turn API (the surface acp_agent drives, mirrors AcpClient) ──────────────
 
@@ -433,7 +591,11 @@ class AcpSession:
         """Send a prompt on THIS session and yield AcpEvents. Holds the per-session
         turn lock (one prompt in flight per session — never process-wide, so co-tenant
         sessions stream concurrently)."""
+        from personalclaw.acp.errors import AcpProcessDied
+
         async with self._turn_lock:
+            if not await self.settle_owed_answer():
+                raise AcpProcessDied("the agent is still busy with a turn it was told to stop")
             self._cancelled = False
             self._turn_done.clear()
             req_id, fut = await self._send_request(
@@ -453,7 +615,11 @@ class AcpSession:
         provider seams that own the ``agentCapabilities`` snapshot (``AcpClient`` and
         ``AcpSessionProvider``). Callers reaching a session directly are asking for the
         frame they asked for."""
+        from personalclaw.acp.errors import AcpProcessDied
+
         async with self._turn_lock:
+            if not await self.settle_owed_answer():
+                raise AcpProcessDied("the agent is still busy with a turn it was told to stop")
             self._cancelled = False
             self._turn_done.clear()
             name, args = _parse_slash_command(command)
@@ -477,18 +643,21 @@ class AcpSession:
     ) -> AsyncIterator[AcpEvent]:
         """Turn ladder: classify each drained frame and translate it into AcpEvents via
         the shared ``translate.*`` decoders. This is THE turn loop — the N=1 AcpClient
-        wrapper delegates here too. Two synthetic-EVENT_COMPLETE paths (tool-interrupted
-        marker + stale-turn) and cross-turn ``context_pct`` carry — over the demuxed session
+        wrapper delegates here too. One synthetic EVENT_COMPLETE path (the tool-interrupted
+        marker) and cross-turn ``context_pct`` carry — over the demuxed session
         queue, with NO process-wide lock and no JSONL/SEL/telemetry side-channels (the
         concurrent-capable backend streams tool results via protocol ``tool_call_update``
         frames, already handled by ``translate.extract_tool_update_events``)."""
-        from personalclaw.acp.errors import AcpError, AcpMethodNotFound, AcpTimeoutError
+        from personalclaw.acp.errors import AcpProcessDied, AcpTimeoutError
 
         prev_pct = self.last_prompt_stats.context_pct
         self.last_prompt_stats = AcpPromptStats(context_pct=prev_pct)
         self._tool_call_inputs.clear()
         self._tool_call_seen.clear()
         self._offered_options.clear()
+        self._unanswered.clear()
+        self._answered.clear()
+        self._refusals.clear()
         # Per-turn steer state. Clearing ``_steer_pending`` at the START is deliberate: a
         # steer that could not be delivered belongs to the turn it was aimed at, and letting
         # it survive into the next one is the cross-turn leak S6.1 closed. The dispatcher
@@ -497,17 +666,77 @@ class AcpSession:
         self._steer_pending.clear()
         self._steer_inflight.clear()
         self._steer_rejected.clear()
-        stale_eligible = False
         got_complete = False
-        saw_agent_switch = False
+        # The agent declared the turn over without answering its prompt (the interrupted marker).
+        released = False
+        try:
+            async for event in self._turn_events(
+                req_id, response_future, timeout, extract_agent_from_result, method
+            ):
+                if event is _RELEASED:
+                    released = True
+                    continue
+                got_complete = got_complete or event.kind == EVENT_COMPLETE
+                yield event
+        finally:
+            if not response_future.done() and not released:
+                self._owe_answer(response_future)
+        if got_complete:
+            return
+        # Drain ended without the agent's answer to the prompt. How the turn ended, by why:
+        #
+        #   why the drain ended                    the turn
+        #   ─────────────────────────────────────  ────────────────────────────────────────────
+        #   any, after a cancel                    stopped: EVENT_COMPLETE(cancelled)
+        #   the connection closed / process died   AcpProcessDied — not a timeout, and not an
+        #                                          answer, whatever text had streamed
+        #   the prompt's own deadline              AcpTimeoutError — the only timeout
+        #
+        # Silence is in no row: while the prompt is pending and the connection is alive, the
+        # agent is still working. `_last_stop_reason` stays "" in every row: it is what the AGENT
+        # answered, and here it answered nothing — which is how a cancel that went unacknowledged
+        # reads as one to `wait_turn_done`, and is escalated by the caller that asked for it. An
+        # answer still owed is settled before the session takes another turn (`_owe_answer`).
+        self._last_stop_reason = ""
+        self._turn_done.set()
+        if self._cancelled:
+            logger.info(
+                "session %s: stopped turn ended without the agent's answer (%s)",
+                self.session_id,
+                self._drain_end or "no answer",
+            )
+            yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_CANCELLED)
+            return
+        if self._drain_end in (_ENDED_CLOSED, _ENDED_DIED):
+            ended = await self._describe_exit() if self._describe_exit is not None else ""
+            raise AcpProcessDied(
+                "the agent's process ended before it finished the turn"
+                + (f": {ended}" if ended else "")
+            )
+        logger.warning(
+            "session %s: the agent did not answer within the turn's %.0fs deadline",
+            self.session_id,
+            timeout,
+        )
+        raise AcpTimeoutError()
 
+    async def _turn_events(
+        self,
+        req_id: int,
+        response_future: "asyncio.Future[JsonRpcMessage]",
+        timeout: float,
+        extract_agent_from_result: bool,
+        method: str,
+    ) -> AsyncIterator[AcpEvent]:
+        """The turn's frames as events, until its terminal frame (:meth:`_dispatch_frames`)."""
+        from personalclaw.acp.errors import AcpMethodNotFound, AcpRequestError
+
+        saw_agent_switch = False
         async for msg in self._drain_turn(req_id, response_future, timeout):
             action = classify_frame(msg, req_id)
             self.last_prompt_stats.event_count += 1
-            stale_eligible = False  # any frame resets; only non-thinking text re-enables
 
             if action == "complete":
-                got_complete = True
                 result = msg.result or {}
                 reason = result.get("stopReason", "") or "" if isinstance(result, dict) else ""
                 if extract_agent_from_result and isinstance(result, dict):
@@ -527,6 +756,13 @@ class AcpSession:
                 yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=reason)
                 return
             if action == "error":
+                if self._cancelled:
+                    # The agent answered the cancel with an error rather than with
+                    # `stopReason: cancelled`. It answered, and the turn is stopped either way.
+                    self._last_stop_reason = STOP_REASON_CANCELLED
+                    self._turn_done.set()
+                    yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_CANCELLED)
+                    return
                 _err = msg.error if isinstance(msg.error, dict) else {}
                 if _err.get("code") == JSONRPC_METHOD_NOT_FOUND:
                     # The ONE error that means "this agent cannot do that at all", so the
@@ -534,15 +770,27 @@ class AcpSession:
                     # Typed here rather than string-matched upstairs so the substitution
                     # can never widen to errors that mean a real attempt failed.
                     raise AcpMethodNotFound(method, msg.error)
-                raise AcpError(f"Prompt error: {msg.error}")
+                raise AcpRequestError(method or METHOD_PROMPT, msg.error)
             if action == "permission":
-                yield translate.build_permission_event(
+                permission = translate.build_permission_event(
                     msg,
                     self._dialect,
                     self._tool_call_inputs,
                     self._tool_call_seen,
                     self._offered_options,
                 )
+                rid = str(permission.request_id)
+                if permission.request_id != "" and rid not in self._answered:
+                    self._unanswered[rid] = permission.request_id
+                if self._cancelled:
+                    # Asked after the turn was stopped: nobody is asked any more, and the
+                    # protocol's answer for a cancelled turn's request is `cancelled`.
+                    if self._mark_answered(rid):
+                        await self._send_response(
+                            permission.request_id, self._dialect.reject_outcome("")
+                        )
+                    continue
+                yield permission
             elif action == "update":
                 chunk, is_thinking = translate.extract_text_chunk(msg)
                 if chunk:
@@ -551,12 +799,12 @@ class AcpSession:
                     kind = EVENT_THINKING_CHUNK if is_thinking else EVENT_TEXT_CHUNK
                     if not is_thinking:
                         self.last_prompt_stats.text_chunks += 1
-                        stale_eligible = True
                     yield AcpEvent(kind=kind, text=chunk)
                     if not is_thinking and translate.is_tool_interrupted_marker(chunk):
                         # The backend security filter cancelled the turn's tools and will
-                        # never send `result` — synthesize a complete so the caller exits.
-                        got_complete = True
+                        # never send `result` — synthesize a complete so the caller exits. The
+                        # agent said the turn is over, so no answer is owed for it.
+                        yield _RELEASED
                         for tr in self._read_new_tool_results():
                             yield tr
                         self._turn_done.set()
@@ -602,25 +850,6 @@ class AcpSession:
                 saw_agent_switch = True
                 params = msg.params or {}
                 yield AcpEvent(kind=EVENT_AGENT_SWITCHED, text=params.get("agentName", ""))
-
-        # Drain ended without a terminal `complete` frame.
-        if not got_complete:
-            self._last_stop_reason = ""
-            self._turn_done.set()
-            if stale_eligible:
-                # Text streamed but no `result` — a stale turn; synthesize a complete
-                # so callers finalize normally instead of surfacing a timeout.
-                logger.info(
-                    "session %s: stale-synthetic complete (streamed text, no result)",
-                    self.session_id,
-                )
-                yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_END_TURN)
-                return
-            logger.warning(
-                "session %s: turn ended with no result and no streamed text — timeout",
-                self.session_id,
-            )
-            raise AcpTimeoutError()
 
     async def wait_turn_done(self, timeout: float) -> str:
         """Block until the current turn completes; return its stop reason."""
@@ -748,9 +977,35 @@ class AcpConnection:
         await self._write({"jsonrpc": "2.0", "id": req_id, "result": result})
 
     async def request(self, method: str, params: dict, *, timeout: float = 60.0):
-        """Write a JSON-RPC request and await its id-correlated response via the router."""
+        """Write a JSON-RPC request and await its id-correlated response via the router.
+
+        An error answer raises, in the agent's own words (:class:`AcpRequestError`: its
+        message and data) — or as :class:`AcpMethodNotFound`, the one error a caller may answer
+        by taking another path. A caller that read only ``result`` reported a refused
+        ``session/new`` as "returned no sessionId" and dropped why."""
+        from personalclaw.acp.errors import AcpMethodNotFound, AcpRequestError
+
         rid, fut = await self.send_request(method, params)
-        return await asyncio.wait_for(fut, timeout=timeout)
+        resp = await asyncio.wait_for(fut, timeout=timeout)
+        if resp.error:
+            code = resp.error.get("code") if isinstance(resp.error, dict) else None
+            if code == JSONRPC_METHOD_NOT_FOUND:
+                raise AcpMethodNotFound(method, resp.error)
+            raise AcpRequestError(method, resp.error)
+        return resp
+
+    async def describe_exit(self, grace: float = 1.0) -> str:
+        """How the agent's process ended — its exit code and its last stderr lines, masked —
+        for an error about it, giving a process whose output just closed *grace* seconds to
+        finish exiting; "" while it runs or when nothing is known."""
+        from personalclaw.acp.errors import exit_words
+
+        transport = self._transport
+        wait_exit = getattr(transport, "wait_exit", None)
+        code = await wait_exit(grace) if wait_exit is not None else None
+        if not isinstance(code, int):
+            return ""
+        return exit_words(transport.program_name, code, transport.stderr_tail())
 
     async def initialize(self, params: dict, *, timeout: float = 240.0) -> dict:
         """Do the one-per-process ``initialize`` handshake; capture agentCapabilities."""
@@ -786,6 +1041,7 @@ class AcpConnection:
             is_process_alive=self.is_process_alive,
             dialect=self._dialect,
             session_files_dir=session_files_dir,
+            describe_exit=self.describe_exit,
         )
         self._sessions[sid] = sess
         return sess
@@ -800,7 +1056,13 @@ class AcpConnection:
         result = resp.result if resp.result else {}
         sid = result.get("sessionId") if isinstance(result, dict) else None
         if not sid:
-            raise RuntimeError(f"session/new returned no sessionId (result={resp.result!r})")
+            from personalclaw.acp.errors import AcpError
+            from personalclaw.security import mask_child_output
+
+            raise AcpError(
+                "session/new answered without a session id: "
+                + mask_child_output(repr(resp.result), limit=300)
+            )
         if isinstance(result, dict):
             self._last_session_new_snapshot = dict(result)
         return self._bind_session(sid, session_files_dir=session_files_dir)
