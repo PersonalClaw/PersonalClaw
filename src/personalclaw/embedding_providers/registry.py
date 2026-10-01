@@ -36,27 +36,80 @@ _providers: dict[str, EmbeddingProvider] = {}
 _NATIVE_NAMES = ("sentence_transformers", "sentence-transformers", "native")
 
 
+#: The adapters app scanners built (:func:`_ensure_scanned`), by name: the ones a scan may replace
+#: or drop. A provider registered by name (the in-process native one) is never among them.
+_scanned: dict[str, EmbeddingProvider] = {}
+#: The scanners' :func:`~personalclaw.providers.media_scanners.generation` the last scan read.
+_scanned_generation = -1
+_scan_lock = threading.RLock()
+
+
 def register_provider(provider: EmbeddingProvider) -> None:
     _providers[provider.name] = provider
 
 
 def unregister_provider(name: str) -> None:
     _providers.pop(name, None)
+    _scanned.pop(name, None)
 
 
 def _ensure_scanned() -> None:
-    """Build app-contributed embedding adapters (e.g. Bedrock) for config entries
-    of types core doesn't know — the app registered a scanner on import. Idempotent
-    (dedupes by ``provider.name``)."""
-    try:
-        from personalclaw.providers.media_scanners import scan
+    """Reconcile the app-built embedding adapters with what the apps' scanners build now: one per
+    config entry of a type core doesn't know (e.g. Bedrock), whose app registered a scanner on
+    import.
 
-        for prov in scan("embedding"):
+    An adapter stays while its app builds one of the same class under its name, because what holds
+    an embed function compares its sources by identity (:func:`same_basis`) and the adapter keeps
+    why its last embedding failed. One of another class replaces it: the app was updated, so the
+    code it runs now is the update's. One no scanner builds any more is dropped: its instance was
+    removed, or its app taken out. An edit of an instance's settings rebuilds them all
+    (:func:`refresh_providers`). A provider registered by name keeps its name."""
+    global _scanned_generation
+    with _scan_lock:
+        try:
+            from personalclaw.providers import media_scanners
+
+            generation = media_scanners.generation()
+            fresh = media_scanners.scan("embedding")
+        except Exception:  # noqa: BLE001 — what was built stays; the next call scans again
+            logger.debug("embedding scanner pass failed", exc_info=True)
+            return
+        built: set[str] = set()
+        for prov in fresh:
             nm = getattr(prov, "name", "")
-            if nm and nm not in _providers:
+            if not nm:
+                continue
+            built.add(nm)
+            held = _providers.get(nm)
+            ours = held is not None and _scanned.get(nm) is held
+            if held is None or (ours and type(held) is not type(prov)):
                 _providers[nm] = prov
-    except Exception:  # noqa: BLE001
-        logger.debug("embedding scanner pass failed", exc_info=True)
+                _scanned[nm] = prov
+        for nm in [n for n in _scanned if n not in built]:
+            if _providers.get(nm) is _scanned[nm]:
+                del _providers[nm]
+            del _scanned[nm]
+        _scanned_generation = generation
+
+
+def refresh_providers() -> None:
+    """Drop the app-built adapters, so the next resolution builds them from the settings saved
+    now: what adding, editing or removing an instance in Settings → Providers calls."""
+    global _scanned_generation
+    with _scan_lock:
+        for nm, prov in list(_scanned.items()):
+            if _providers.get(nm) is prov:
+                del _providers[nm]
+        _scanned.clear()
+        _scanned_generation = -1
+
+
+def _scanners_changed() -> bool:
+    """Whether an app's scanner was registered or taken back since the last scan (an update does
+    both), so the adapters held may be the previous version's."""
+    from personalclaw.providers import media_scanners
+
+    return media_scanners.generation() != _scanned_generation
 
 
 def get_provider(name: str) -> EmbeddingProvider | None:
@@ -333,12 +386,15 @@ def _embedding_sources(provider_name: str) -> tuple[object | None, ...]:
 
     The in-process native provider, an app's directly registered adapter, or the configured
     instance's registry entry together with its type's registration. An edit in Settings →
-    Providers re-registers the entry (a new endpoint, key or Default Model), and an app that
-    loads after boot registers the type, so either reads as a different source; ``None`` where
-    there is none yet.
+    Providers re-registers the entry (a new endpoint, key or Default Model) and rebuilds the
+    app-built adapters, an app that loads after boot registers the type, and an app update's
+    scanner builds its adapter from the update's code, so each reads as a different source;
+    ``None`` where there is none yet.
     """
     if provider_name in _NATIVE_NAMES:
         return (_providers.get("native"),)
+    if _scanners_changed():
+        _ensure_scanned()
     direct = _providers.get(provider_name)
     if direct is not None:
         return (direct,)

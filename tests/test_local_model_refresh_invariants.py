@@ -135,6 +135,31 @@ def test_video_gen_refresh_keeps_a_manifest_bundle(monkeypatch):
     assert len(before) - len(after) == 1
 
 
+def test_embedding_refresh_keeps_a_provider_registered_by_name(monkeypatch):
+    """embedding tracks the adapters app scanners built in ``_scanned``; only those go. A provider
+    registered by name (the in-process native one) stays."""
+    from personalclaw.embedding_providers import registry as er
+
+    monkeypatch.setattr(er, "_providers", {}, raising=False)
+    monkeypatch.setattr(er, "_scanned", {}, raising=False)
+
+    bundled = _Bundled("native")
+    scanned = _Transient("scanned-provider")
+    er.register_provider(bundled)  # type: ignore[arg-type]
+    er.register_provider(scanned)  # type: ignore[arg-type]
+    er._scanned[scanned.name] = scanned  # type: ignore[assignment]
+
+    before = _snapshot(er)
+    assert len(before) == 2, before
+
+    er.refresh_providers()
+
+    after = _snapshot(er)
+    assert after.get("native") is bundled
+    assert after.get("scanned-provider") is None
+    assert len(before) - len(after) == 1
+
+
 def _modules_defining_refresh_providers() -> set[str]:
     """Every module in the shipped package that defines a module-level ``refresh_providers``.
 
@@ -183,6 +208,7 @@ def test_every_use_case_registry_that_refreshes_declares_a_transient_population(
         "personalclaw.tts.registry": "_remote_names",
         "personalclaw.video_gen.registry": "_scanner_names",
         "personalclaw.image_gen.registry": "_auto_registered",
+        "personalclaw.embedding_providers.registry": "_scanned",
     }
 
     discovered = _modules_defining_refresh_providers()

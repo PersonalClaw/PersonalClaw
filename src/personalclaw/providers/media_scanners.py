@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 # capability → list of scanner callables. A scanner: (entries) -> [provider, …]
 _scanners: dict[str, list[Callable[[list[dict[str, Any]]], list[Any]]]] = {}
 
+#: How many times the registered scanners changed: an app's import registered one, or the app's
+#: unload took one back (an update does both). A registry that keeps the adapters it was handed
+#: reads it to know its adapters may now be another version's code (:func:`generation`).
+_generation = 0
+
 
 def register_scanner(capability: str, scanner: Callable[[list[dict[str, Any]]], list[Any]]) -> None:
     """Register a config scanner for a media ``capability``.
@@ -38,15 +43,24 @@ def register_scanner(capability: str, scanner: Callable[[list[dict[str, Any]]], 
     function object is a no-op. A scanner an app registered is taken back when the app is
     unloaded, so its next version's import registers its own instead of a second one.
     """
+    global _generation
     lst = _scanners.setdefault(capability, [])
     if scanner not in lst:
         lst.append(scanner)
+        _generation += 1
 
         def _forget() -> None:
+            global _generation
             if scanner in lst:
                 lst.remove(scanner)
+                _generation += 1
 
         app_code.keep(_forget)
+
+
+def generation() -> int:
+    """A number that changes whenever a scanner is registered or taken back."""
+    return _generation
 
 
 def scan(capability: str) -> list[Any]:

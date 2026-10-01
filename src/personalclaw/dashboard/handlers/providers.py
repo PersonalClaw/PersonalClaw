@@ -872,13 +872,14 @@ def _endpoint_refusal(options: dict[str, Any]) -> str | None:
 
 
 def _refresh_media_registries() -> None:
-    """Drop the typed STT/TTS/image-gen registries so a config change re-reads.
+    """Drop the typed STT/TTS/image-gen/video/embedding registries so a config change re-reads.
 
-    Remote STT/TTS/image adapters are built from config.json providers at first
-    resolution; clearing the registries makes a newly added/removed/edited
-    OpenAI-family endpoint selectable as the active voice/image model without a
-    gateway restart.
+    Remote STT/TTS/image adapters, and the embedding adapters apps build (Bedrock's), are built
+    from config.json providers at first resolution; clearing the registries makes a newly
+    added/removed/edited endpoint selectable as the active voice/image model, and an edited
+    instance's region or profile reach its embeddings, without a gateway restart.
     """
+    from personalclaw.embedding_providers.registry import refresh_providers as _emb_refresh
     from personalclaw.image_gen.registry import refresh_providers as _img_refresh
     from personalclaw.stt.registry import refresh_providers as _stt_refresh
     from personalclaw.tts.registry import refresh_providers as _tts_refresh
@@ -888,6 +889,7 @@ def _refresh_media_registries() -> None:
     _tts_refresh()
     _img_refresh()
     _vid_refresh()
+    _emb_refresh()
     # Re-surface config-based downloadable providers (ollama) as local-model providers
     # so a newly added/edited endpoint gets its download card without a restart.
     try:
