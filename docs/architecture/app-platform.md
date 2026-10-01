@@ -110,13 +110,20 @@ backend**.
   update that adds or widens one asks for again:
   - `launches: [{program, why, inherits, inheritsWhile}]` (`manifest.LaunchedProgram`) — each
     program on this machine it starts by name, outside PersonalClaw: an agent app's own CLI, a
-    tool. `inherits` is what of the owner's it runs with, from a closed list: `sign-in` (the
-    account the program is signed in to), `settings` (its own configuration folder) and
+    tool. `inherits` is what it runs with, from a closed list. Three are the owner's: `sign-in`
+    (the account the program is signed in to), `settings` (its own configuration folder) and
     `auto-approve-rules` (rules there that let it act without asking — consent says that what
-    they allow, it does without asking here first). `inheritsWhile: {setting, value}` names a
-    boolean setting of the app's provider when that decides it (Claude Code inherits all three
-    only while *Isolated Claude settings* is off); consent words it with the setting's label and
-    where it starts.
+    they allow, it does without asking here first). The fourth, `folder-settings`, is the
+    program's settings in the folder it works in, such as a repository's own: they can add rules
+    of that kind and commands for it to run, and consent names them apart, because they come
+    from whoever wrote the folder. `inheritsWhile: {setting, value}` names a boolean setting of
+    the app's provider when that decides it (Claude Code runs with all four only while *Isolated
+    Claude settings* is off); consent words it with the setting's label and where it starts.
+  - An agent app passes its CLI per-session options with `register_acp_cli_entry(session_meta=…)`:
+    a JSON object core adds as the `_meta` of every `session/new` and `session/load` it sends
+    from the app's entry (the runtime, a resumed session, the readiness probe and a pooled
+    connection). Claude Code uses it to keep an isolated session to its own config: the folder's
+    settings are not loaded either.
   - `dependencies.npmPackages` — the npm packages core may install for the app into
     `<home>/acp-adapters` as it is installed or switched on (an agent app's ACP adapter), and
     that a runtime may otherwise fetch with `npx`. Consent says npm runs their install scripts.

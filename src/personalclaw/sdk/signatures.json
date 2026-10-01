@@ -35,7 +35,8 @@
    {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "login_command"},
    {"annotation": "dict[str, str] | None", "default": "None", "kind": "keyword_only", "name": "requires_executable"},
    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "self_sandboxing"},
-   {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "env_passthrough"}
+   {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "env_passthrough"},
+   {"annotation": "dict[str, object] | None", "default": "None", "kind": "keyword_only", "name": "session_meta"}
   ],
   "returns": "ProviderEntry | None"
  },

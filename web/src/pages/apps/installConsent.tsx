@@ -355,32 +355,57 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
   )
 }
 
-/** What of yours a launched program runs with, in the consent's words (`manifest.LAUNCH_INHERITS`). */
+/** What a launched program runs with, in the consent's words (`manifest.LAUNCH_INHERITS`). */
 const INHERIT_WORDS: Record<AppLaunchedProgram['inherits'][number], string> = {
   'sign-in': 'sign-in',
   settings: 'settings',
   'auto-approve-rules': 'auto-approve rules',
+  'folder-settings': 'the settings of the folder it works in',
 }
+
+/** The one word that is not the owner's own: a folder's settings come from whoever wrote it. */
+const FOLDER: AppLaunchedProgram['inherits'][number] = 'folder-settings'
 
 const onOff = (v: boolean) => (v ? 'on' : 'off')
 
-/** "It runs with your own claude sign-in, settings and auto-approve rules" — and, when an app
- *  setting decides it, while which setting is on or off, and where that setting starts — so the row
- *  says exactly what of yours the program runs with. Nothing when it runs with nothing of yours. */
+const andList = (words: string[]) =>
+  words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
+
+/** "It runs with your own claude sign-in, settings and auto-approve rules", then the folder's own
+ *  settings named apart, since they are not yours — and, when an app setting decides it, while
+ *  which setting is on or off, and where that setting starts — so the row says exactly what the
+ *  program runs with. Nothing when it runs with nothing of either. */
 function InheritsSentence({ launch: l }: { launch: AppLaunchedProgram }) {
   if (!l.inherits.length) return null
-  const words = l.inherits.map((w) => INHERIT_WORDS[w])
-  const list = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
-  const rules = l.inherits.includes('auto-approve-rules')
+  const own = andList(l.inherits.filter((w) => w !== FOLDER).map((w) => INHERIT_WORDS[w]))
+  const folder = l.inherits.includes(FOLDER)
+  const rules = l.inherits.includes('auto-approve-rules') || folder
     ? ' What those rules allow, it does without asking you here first.'
     : ''
+  const what = (
+    <>
+      {own ? <>your own {cmd(l.program)} {own}</> : null}
+      {own && folder ? ', and with ' : null}
+      {folder ? <>the {cmd(l.program)} settings of the folder it works in, which can add rules of their own and
+        commands for it to run</> : null}.{rules}
+    </>
+  )
   const w = l.inheritsWhile
-  const yours = <>your own {cmd(l.program)} {list}.{rules}</>
-  if (!w) return <> It runs with {yours}</>
+  if (!w) return <> It runs with {what}</>
   const start = w.default === null ? ''
     : w.default === w.value ? ` ${w.label} starts out ${onOff(w.value)}.`
       : ` ${w.label} is ${onOff(w.default)} until you turn it ${onOff(!w.default)}.`
-  return <> While {w.label} is {onOff(w.value)}, it runs with {yours}{start}</>
+  return <> While {w.label} is {onOff(w.value)}, it runs with {what}{start}</>
+}
+
+/** The update list's short form of the same: "with your own sign-in, settings and the settings of
+ *  the folder it works in". */
+function inheritsLabel(l: AppLaunchedProgram): string {
+  if (!l.inherits.length) return ''
+  const own = l.inherits.filter((w) => w !== FOLDER).map((w) => INHERIT_WORDS[w]).join(', ')
+  const folder = l.inherits.includes(FOLDER) ? INHERIT_WORDS[FOLDER] : ''
+  const when = l.inheritsWhile ? ` while ${l.inheritsWhile.label} is ${onOff(l.inheritsWhile.value)}` : ''
+  return `, with ${own ? `your own ${own}` : ''}${own && folder ? ' and ' : ''}${folder}${when}`
 }
 
 /** One program the app starts outside PersonalClaw: what it is for, and what of yours it runs with. */
@@ -473,9 +498,7 @@ function disclosureFacts(d: AppDisclosure): { key: string; label: string }[] {
     ...d.requires.map((r) => ({ key: `requires:${JSON.stringify([r.name, r.why, r.how])}`, label: `Needs ${r.name}` })),
     ...d.launches.map((l) => ({
       key: `launch:${JSON.stringify([l.program, l.inherits, l.inheritsWhile?.setting ?? '', l.inheritsWhile?.value ?? null])}`,
-      label: `Starts ${l.program}${l.inherits.length
-        ? `, with your own ${l.inherits.map((w) => INHERIT_WORDS[w]).join(', ')}${l.inheritsWhile ? ` while ${l.inheritsWhile.label} is ${onOff(l.inheritsWhile.value)}` : ''}`
-        : ''}`,
+      label: `Starts ${l.program}${inheritsLabel(l)}`,
     })),
     ...d.npmPackages.map((p) => ({ key: `npm:${p}`, label: `npm package ${p}` })),
     ...d.writes.map((w) => ({ key: `writes:${w.path}`, label: `Writes ${w.path}` })),

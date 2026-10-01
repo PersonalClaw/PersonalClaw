@@ -709,7 +709,7 @@ class SessionManager:
 
         try:
             from personalclaw.acp.connection_pool import get_acp_pool
-            from personalclaw.llm.acp_agent import options_env
+            from personalclaw.llm.acp_agent import options_env, options_session_meta
             from personalclaw.llm.acp_session_provider import concurrent_sessions_enabled
             from personalclaw.llm.registry import get_default_registry
 
@@ -739,6 +739,7 @@ class SessionManager:
                 session_files_dir=_Path(str(sfd)) if sfd else None,
                 sandbox_mode=str(options.get("sandbox_mode") or "auto"),
                 extra_env=options_env(options) or None,
+                session_meta=options_session_meta(options) or None,
                 session_key=key,
                 channel_id=channel_id,
                 model=model or "",

@@ -1120,9 +1120,9 @@ export interface AppPythonDependency { spec: string; coreOwned: boolean }
  *  app sends its work to), what the app uses it for, and what the owner does to have it — the
  *  manifest's `requires`. */
 export interface AppPrerequisite { name: string; why: string; how: string }
-/** What of yours a program an app starts runs with — the manifest's closed vocabulary
- *  (`manifest.LAUNCH_INHERITS`). */
-export type AppLaunchInherit = 'sign-in' | 'settings' | 'auto-approve-rules'
+/** What a program an app starts runs with — the manifest's closed vocabulary
+ *  (`manifest.LAUNCH_INHERITS`): three of yours, and the settings of the folder it works in. */
+export type AppLaunchInherit = 'sign-in' | 'settings' | 'auto-approve-rules' | 'folder-settings'
 /** One program on this machine an app starts (an agent's own CLI, a tool), what the app uses it for,
  *  and what of yours it runs with — the manifest's `launches`. `inheritsWhile` is the app setting
  *  that decides that, with the label and starting value its Configure page shows (`default` is

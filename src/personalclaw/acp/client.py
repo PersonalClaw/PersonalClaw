@@ -123,6 +123,7 @@ class AcpClient:
         mode: str | None = None,
         reasoning_effort: str | None = None,
         unattended: bool = False,
+        session_meta: dict | None = None,
     ):
         from personalclaw.acp.dialect import DefaultDialect
         from personalclaw.config.loader import workspace_root
@@ -170,6 +171,9 @@ class AcpClient:
         self._session_files_dir: Path | None = (
             Path(session_files_dir) if session_files_dir else None
         )
+        # What the entry's app declared for every session/new + session/load (the connection
+        # adds it), so a reconnect after a crash opens its session the same way.
+        self._session_meta: dict = dict(session_meta or {})
         # The ACP subprocess + its stdio/PID-tree/liveness live in the shared
         # AcpProcess transport. The connection owns the router over its stdout; the
         # session owns the turn loop. We hold both (N=1) + keep the transport handle
@@ -600,7 +604,11 @@ class AcpClient:
         router = FrameRouter(self._transport.readline)
         router.start()
         self._connection = AcpConnection(
-            None, router, dialect=self._dialect, transport=self._transport
+            None,
+            router,
+            dialect=self._dialect,
+            transport=self._transport,
+            session_meta=self._session_meta,
         )
 
     async def _initialize_session(self) -> None:

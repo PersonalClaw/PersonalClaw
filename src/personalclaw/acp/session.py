@@ -899,7 +899,7 @@ class AcpConnection:
     ``request(method, params)`` writes a JSON-RPC request and awaits its response via the
     router's pending-future mechanism (id-correlated)."""
 
-    def __init__(self, proc, router, *, dialect=None, transport=None) -> None:
+    def __init__(self, proc, router, *, dialect=None, transport=None, session_meta=None) -> None:
         # Either a shared AcpProcess transport (live path) OR a raw asyncio subprocess
         # (unit tests inject a fake with .stdin/.stdout/.returncode). The transport is
         # preferred; the raw proc is a test-compat shim writing straight to stdin.
@@ -907,6 +907,11 @@ class AcpConnection:
         self._proc = proc  # None on the transport path
         self._router = router  # a started FrameRouter over the line source
         self._dialect = dialect
+        # The ``_meta`` the entry's app declared for its CLI's sessions
+        # (``register_acp_cli_entry(session_meta=...)``). Added here, where every
+        # ``session/new`` and ``session/load`` on this process is written, so no caller can
+        # open a session without it.
+        self._session_meta: dict = dict(session_meta or {})
         self._next_id = 0
         self._sessions: dict[str, AcpSession] = {}
         self._agent_capabilities: dict = {}
@@ -926,6 +931,7 @@ class AcpConnection:
         extra_env: dict | None = None,
         session_key: str | None = None,
         channel_id: str | None = None,
+        session_meta: dict | None = None,
     ) -> "AcpConnection":
         """Spawn a backend process (shared AcpProcess transport) + start a FrameRouter
         over its stdout, and return a live AcpConnection ready for ``initialize`` +
@@ -944,7 +950,7 @@ class AcpConnection:
         await transport.spawn()
         router = FrameRouter(transport.readline)
         router.start()
-        return cls(None, router, dialect=dialect, transport=transport)
+        return cls(None, router, dialect=dialect, transport=transport, session_meta=session_meta)
 
     def _req_id(self) -> int:
         self._next_id += 1
@@ -1015,6 +1021,13 @@ class AcpConnection:
         )
         return self._agent_capabilities
 
+    def _with_session_meta(self, params: dict) -> dict:
+        """*params* with the declared ``_meta`` added beside any the caller set (a resume's
+        session-file hint); the caller's own key wins a clash, so core's hint is never lost."""
+        if not self._session_meta:
+            return params
+        return {**params, "_meta": {**self._session_meta, **(params.get("_meta") or {})}}
+
     def _bind_session(self, sid: str, session_files_dir=None) -> AcpSession:
         """Register *sid* with the router and construct an AcpSession bound to its queue,
         with the send/response/cancel closures scoped to this connection + sid. Shared by
@@ -1052,7 +1065,7 @@ class AcpConnection:
         """Issue ``session/new`` on this process, register the sessionId with the router,
         return an AcpSession bound to its queue. Multiple calls = concurrent sessions.
         Retains the raw response as :attr:`last_session_new_snapshot` (discovery snapshot)."""
-        resp = await self.request("session/new", params, timeout=timeout)
+        resp = await self.request("session/new", self._with_session_meta(params), timeout=timeout)
         result = resp.result if resp.result else {}
         sid = result.get("sessionId") if isinstance(result, dict) else None
         if not sid:
@@ -1073,7 +1086,7 @@ class AcpConnection:
         """Issue ``session/load`` to resume an existing session. Returns a bound
         AcpSession when the agent confirms the resume (``modes`` present in the reply),
         or ``None`` when the load didn't take (caller falls back to ``session/new``)."""
-        resp = await self.request("session/load", params, timeout=timeout)
+        resp = await self.request("session/load", self._with_session_meta(params), timeout=timeout)
         result = resp.result if resp.result else {}
         if not isinstance(result, dict) or "modes" not in result:
             return None

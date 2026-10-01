@@ -1075,11 +1075,14 @@ class Prerequisite:
         )
 
 
-#: What of the owner's own a program an app starts may run with, each a phrase install consent
-#: composes: ``sign-in`` (the account the program is signed in to), ``settings`` (the program's
+#: What a program an app starts may run with, each a phrase install consent composes. Of the
+#: owner's own: ``sign-in`` (the account the program is signed in to), ``settings`` (the program's
 #: own configuration folder), ``auto-approve-rules`` (rules in that configuration that let it act
-#: without asking — what they allow, it does without asking PersonalClaw first).
-LAUNCH_INHERITS = ("sign-in", "settings", "auto-approve-rules")
+#: without asking — what they allow, it does without asking PersonalClaw first). And
+#: ``folder-settings``: the program's settings in the folder it works in, such as a repository's
+#: own, which can add rules of that kind and name commands it runs. They come from whoever wrote
+#: the folder, not from the owner, so consent names them apart.
+LAUNCH_INHERITS = ("sign-in", "settings", "auto-approve-rules", "folder-settings")
 
 #: A program as an app starts it by name: no path, no argument, nothing a shell would read.
 _PROGRAM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -1110,9 +1113,10 @@ class LaunchedProgram:
     that core starts for the app's runtime, or a tool its code runs.
 
     ``program`` is its name as it is found on this machine, ``why`` what the app uses it for, and
-    ``inherits`` what of the owner's own it runs with (:data:`LAUNCH_INHERITS`). When an app
-    setting decides that, ``inheritsWhile`` names it and the value under which it holds. Install
-    consent shows all of it, and core registers no agent CLI the app does not declare here.
+    ``inherits`` what of the owner's own, and of the folder it works in, it runs with
+    (:data:`LAUNCH_INHERITS`). When an app setting decides that, ``inheritsWhile`` names it and
+    the value under which it holds. Install consent shows all of it, and core registers no agent
+    CLI the app does not declare here.
     """
 
     program: str = ""

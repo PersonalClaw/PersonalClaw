@@ -27,6 +27,7 @@ the readiness-probe philosophy (present → enable, absent → skip).
 
 from __future__ import annotations
 
+import json
 import logging
 
 from personalclaw import app_code
@@ -49,6 +50,7 @@ def register_acp_cli_entry(
     requires_executable: dict[str, str] | None = None,
     self_sandboxing: bool = False,
     env_passthrough: list[str] | None = None,
+    session_meta: dict[str, object] | None = None,
 ) -> ProviderEntry | None:
     """Register (idempotently) an ``acp_agent`` entry named ``acp:<cli>``.
 
@@ -79,6 +81,16 @@ def register_acp_cli_entry(
         (`sandbox.app_env_name_refusal`), because the CLI reads its keys from its own config or
         credential files. Which variables a CLI reads is vendor knowledge, so the list lives
         ONLY in the bundle.
+    session_meta:
+        Optional ``_meta`` object the CLI, or its ACP adapter, reads on ``session/new`` and
+        ``session/load`` — its per-session options, such as which of the CLI's own
+        configuration sources a session loads. Core sends it as declared on every session it
+        opens from this entry (the runtime factory, a resumed session, the readiness probe and
+        a pooled connection), so no path opens a session with the adapter's defaults instead.
+        Which keys an adapter reads is vendor knowledge, so the object lives ONLY in the
+        bundle. It must be a JSON object; anything else raises :class:`ValueError` and
+        registers nothing, because a declaration that cannot be sent must not quietly become
+        none.
     session_files_dir:
         Optional on-disk session-files directory for agents that persist tool
         results to JSONL.
@@ -163,9 +175,12 @@ def register_acp_cli_entry(
         )
         return None
     _held_to_the_review(command, requires_executable)
+    meta = _session_meta(cli, session_meta)
 
     name = f"acp:{cli}"
     options: dict[str, object] = {"command": list(command), "dialect": dialect}
+    if meta:
+        options["session_meta"] = meta
     if env:
         options["env"] = dict(env)
     passthrough = _passthrough_names(cli, env_passthrough)
@@ -259,6 +274,23 @@ def _held_to_the_review(command: list[str], requires_executable: dict[str, str] 
     else:
         return
     raise NotDeclared(f"Not started: {reason}, {UNNAMED}.")
+
+
+def _session_meta(cli: str, declared: object) -> dict[str, object]:
+    """*declared* as the entry keeps it: a JSON object, copied, so a later change to the app's
+    own dict cannot change what its sessions are sent. Anything else is refused."""
+    if declared is None:
+        return {}
+    try:
+        if not isinstance(declared, dict):
+            raise TypeError(f"a {type(declared).__name__}")
+        copied = json.loads(json.dumps(declared, allow_nan=False))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"acp:{cli}: session_meta must be a JSON object to send on session/new and "
+            f"session/load ({exc})"
+        ) from None
+    return copied
 
 
 def _passthrough_names(cli: str, names: list[str] | None) -> list[str]:

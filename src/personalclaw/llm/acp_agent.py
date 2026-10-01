@@ -95,6 +95,15 @@ def options_env(options: dict) -> dict[str, str]:
     return env
 
 
+def options_session_meta(options: dict) -> dict:
+    """The ``_meta`` an ``acp:<cli>`` entry's app declared for its CLI's sessions
+    (``register_acp_cli_entry(session_meta=...)``), or ``{}``. Read through here by every path
+    that opens a session from an entry, like :func:`options_env`: the readiness probe, the
+    runtime factory and a concurrent session's shared connection."""
+    meta = options.get("session_meta")
+    return dict(meta) if isinstance(meta, dict) else {}
+
+
 class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentProvider):
     """Generic ACP-over-stdio agent runtime.
 
@@ -274,6 +283,9 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
             # self-sandboxing CLI the host cannot nest around — the probe then
             # reported a runtime as dead that the factory would have started fine.
             sandbox_mode=options_sandbox_mode(options),
+            # The probe's bare session is a session too: opened without the app's
+            # declaration, it would load what the app's sessions are kept from.
+            session_meta=options_session_meta(options),
         )
         # A cold start can be slow on desktop: claude-code-acp runs via an
         # ``npx`` fetch on first use, and a version-manager-shimmed CLI has its
@@ -461,6 +473,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         reasoning_effort: str = "",
         unattended: bool = False,
         runtime_id: str = "",
+        session_meta: dict | None = None,
     ) -> None:
         if not command:
             raise ValueError("AcpAgentProvider requires a non-empty command list")
@@ -528,6 +541,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
             mode=self._mode,
             reasoning_effort=self._reasoning_effort,
             unattended=self._unattended,
+            session_meta=session_meta,
         )
 
     # ── Lifecycle ────────────────────────────────────────────────────
@@ -934,6 +948,8 @@ def _factory(
     * ``sandbox_mode`` — optional OS-level sandbox mode.
     * ``session_files_dir`` — optional on-disk session-files directory
       for agents (e.g. claude) that persist tool results to JSONL.
+    * ``session_meta`` — optional ``_meta`` every session/new + session/load carries
+      (:func:`options_session_meta`).
     * ``channel_id`` — optional channel id passed via env.
 
     The credential, if declared on the entry, is currently not consumed —
@@ -1067,6 +1083,7 @@ def _factory(
         mode=mode,
         reasoning_effort=reasoning_effort,
         unattended=unattended,
+        session_meta=options_session_meta(options),
         # The CONFIGURED runtime id, so ``provider_id`` names the runtime the user
         # picked (``acp:claude-code``) instead of inferring it from the launch
         # command's basename (``acp:claude-agent-acp``, or ``acp:npx`` under the npx

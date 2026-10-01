@@ -605,6 +605,13 @@ and header names. That is what you are shown, so that is what a yes is to.
 - **Another tool's own servers are its business.** PersonalClaw never hands Claude Code a server
   that waits (`/api/mcp/apply`'s `ccGlobal`), but a server you configure in Claude Code or Codex
   runs there under that tool's rules, whatever PersonalClaw's list says.
+- **So is what the folder it works in names.** An agent CLI also reads the settings of the folder
+  it is pointed at, such as a repository's own: Claude Code's `.claude/settings.json`,
+  `.claude/settings.local.json` and `.mcp.json`, Codex's `.codex/` in a project you trust, Gemini
+  CLI's `.gemini/settings.json`, kiro-cli's `.kiro/`. The rules, hooks and servers there apply under
+  the CLI's rules, and Claude Code shows no trust prompt for them when PersonalClaw starts it.
+  Install consent says which programs an app starts with a folder's settings. Claude Code with
+  *Isolated Claude settings* on loads none of them.
 - **On Linux, a missing `mcp.json` can be created by the agent's shell.** The read-only bind needs
   a file to bind, so a home with no `mcp.json` yet leaves the path writable to the agent's shell,
   as it does for `config.json`. A definition written there waits for your Allow like any other.

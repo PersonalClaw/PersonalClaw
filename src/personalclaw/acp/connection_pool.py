@@ -88,6 +88,7 @@ class AcpConnectionPool:
         model: str = "",
         agent_name: str = "",
         mcp_servers: list | None = None,
+        session_meta: dict | None = None,
     ) -> "ModelProvider | None":
         """Open a NEW session on a shared, per-runtime :class:`AcpConnection`, returning
         an :class:`AcpSessionProvider`. The connection is spawned + ``initialize``-d once
@@ -110,6 +111,7 @@ class AcpConnectionPool:
                 extra_env=extra_env,
                 session_key=session_key,
                 channel_id=channel_id,
+                session_meta=session_meta,
             )
             if conn is None:
                 return None
@@ -138,6 +140,7 @@ class AcpConnectionPool:
         extra_env,
         session_key,
         channel_id,
+        session_meta=None,
     ):
         """Get-or-spawn the per-runtime shared AcpConnection (guarded by the slot lock so
         two racing sessions don't spawn two processes). Spawns + ``initialize`` once."""
@@ -159,6 +162,7 @@ class AcpConnectionPool:
                     extra_env=extra_env,
                     session_key=session_key,
                     channel_id=channel_id,
+                    session_meta=session_meta,
                 )
                 await conn.initialize(
                     {

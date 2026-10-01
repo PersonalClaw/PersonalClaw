@@ -44,6 +44,11 @@ const KIRO: AppLaunchedProgram = {
   inherits: ['sign-in', 'settings', 'auto-approve-rules'],
   inheritsWhile: null,
 }
+/** Claude Code with Isolated Claude settings off: yours, and the settings of the folder it works in. */
+const CLAUDE_AS_IT_IS: AppLaunchedProgram = {
+  ...CLAUDE,
+  inherits: ['sign-in', 'settings', 'auto-approve-rules', 'folder-settings'],
+}
 const ADAPTER = '@agentclientprotocol/claude-agent-acp'
 
 function review(grants: Partial<AppDisclosure>, over: Partial<AppInstallResult> = {}): AppInstallResult {
@@ -84,6 +89,24 @@ describe('install consent', () => {
       + 'auto-approve rules. What those rules allow, it does without asking you here first.')
   })
 
+  it("says when the settings of the folder it works in come along too, apart from yours", async () => {
+    const text = await dialogFor(review({ launches: [CLAUDE_AS_IT_IS] }))
+    expect(text).toContain(
+      'While Isolated Claude settings is off, it runs with your own claude sign-in, settings and auto-approve rules, '
+      + 'and with the claude settings of the folder it works in, which can add rules of their own and commands for it to run. '
+      + 'What those rules allow, it does without asking you here first. '
+      + 'Isolated Claude settings is on until you turn it off.')
+  })
+
+  it("says just that when the folder's settings are all it reads", async () => {
+    const text = await dialogFor(review({ launches: [{ ...KIRO, inherits: ['folder-settings'] }] }))
+    expect(text).toContain(
+      'kiro-cli does the work of each chat, over ACP. It runs with the kiro-cli settings of the folder it works in, '
+      + 'which can add rules of their own and commands for it to run. '
+      + 'What those rules allow, it does without asking you here first.')
+    expect(text).not.toContain('your own kiro-cli')
+  })
+
   it('names the npm package it installs, where it goes, and that npm runs its scripts', async () => {
     const text = await dialogFor(review({ npmPackages: [ADAPTER] }))
     expect(text).toContain(
@@ -111,6 +134,16 @@ describe('install consent', () => {
     expect(changes).toContain(
       '+ Adds: Starts claude, with your own sign-in, settings, auto-approve rules while Isolated Claude settings is off')
     expect(changes).toContain(`+ Adds: npm package ${ADAPTER}`)
+  })
+
+  it("an update that starts reading the folder's settings says so", async () => {
+    await dialogFor(review({ launches: [CLAUDE_AS_IT_IS] }, { previous: { ...NOTHING, launches: [CLAUDE] } }), true)
+    const changes = screen.getByTestId('update-changes').textContent ?? ''
+    expect(changes).toContain(
+      '+ Adds: Starts claude, with your own sign-in, settings, auto-approve rules and the settings of the folder it '
+      + 'works in while Isolated Claude settings is off')
+    expect(changes).toContain(
+      '− Drops: Starts claude, with your own sign-in, settings, auto-approve rules while Isolated Claude settings is off')
   })
 
   it('an update that widens what a program runs with says so', async () => {
