@@ -924,7 +924,9 @@ def test_list_models_also_discovers_with_the_subscription_token(
     register_branded_app(spec)
     seen: list[str] = []
 
-    async def _fake_list(endpoint: str, api_key: str, *, default_base: str = "") -> list:
+    async def _fake_list(
+        endpoint: str, api_key: str, *, default_base: str = "", capabilities_of: object = None
+    ) -> list:
         seen.append(api_key)
         return []
 

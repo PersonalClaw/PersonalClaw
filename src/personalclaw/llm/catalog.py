@@ -43,7 +43,7 @@ import hashlib
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,7 +56,9 @@ class ModelInfo:
 
     ``capabilities`` uses the same string tags the Settings → Models discovery
     already speaks (``chat``, ``image_modality``, ``embedding``, ``stt``, ``tts``,
-    ``image_gen``, …) so the FE and ``_infer_capabilities`` consumers are unchanged.
+    ``image_gen``, …): the jobs the model can be bound for, which is what every picker filters
+    on. ``[]`` lists a model its provider serves that no job here can use (a reranker, a
+    moderation classifier), so the provider's card can show it and no picker offers it.
     ``tools`` stacks on ``chat`` when the provider says the model calls tools; it is no use
     case of its own, and its absence means only that the provider did not say.
     ``extra`` carries provider-specific display fields the ollama UI shows
@@ -74,14 +76,18 @@ class ModelInfo:
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the wire shape the model endpoints return.
 
-        Only present (non-None / non-empty) optional fields are emitted, and
-        ``extra`` is flattened onto the top level (that is where the ollama UI
-        reads ``parameter_size`` / ``owned_by`` / … today), so this is a drop-in
-        for the dicts the handlers built by hand.
+        ``capabilities`` is always emitted; the other optional fields only when present
+        (non-None / non-empty), and ``extra`` is flattened onto the top level (that is where
+        the ollama UI reads ``parameter_size`` / ``owned_by`` / … today), so this is a
+        drop-in for the dicts the handlers built by hand.
         """
-        d: dict[str, Any] = {"id": self.id, "name": self.name}
-        if self.capabilities:
-            d["capabilities"] = list(self.capabilities)
+        # ``capabilities`` always: a model listed for no job says so with ``[]``, and a picker
+        # reading the field never meets a row without one.
+        d: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "capabilities": list(self.capabilities),
+        }
         if self.description:
             d["description"] = self.description
         if self.size is not None:
@@ -156,6 +162,29 @@ class PullProgress:
 # handler; it belongs on the shared catalog seam so every ModelCatalog
 # implementation (every model app) tags models identically.
 
+# Families no job here binds, whatever else their id says: they score or classify text
+# (rerankers, moderation and safety classifiers), complete a prompt with no conversation (the
+# completion-only models), or take only a protocol other than a chat completion (realtime-only
+# and Responses-only models). Matched FIRST, so a reranker built on an embedding family
+# (``bge-reranker``, ``mxbai-rerank``, ``gte-rerank``) is not taken for an embedding model, and a
+# realtime model for the chat or speech model its name also resembles.
+_NOT_BOUND_MARKERS = (
+    "rerank",
+    "moderation",
+    "llama-guard",
+    "prompt-guard",
+    "shieldgemma",
+    "guardian",
+    "babbage-",
+    "davinci-",
+    "gpt-3.5-turbo-instruct",
+    "realtime",
+    "codex",
+    "deep-research",
+    "computer-use",
+)
+# The Responses-only reasoning tiers (``o1-pro``, ``o3-pro``, ``gpt-5-pro``, ``gpt-5.2-pro``).
+_RESPONSES_ONLY_TIER = re.compile(r"(?:^|/)(?:o\d+|gpt-5(?:\.\d+)?)-pro(?:$|[-:])")
 # Substring markers used to auto-tag a model's capabilities from its id. Includes the
 # common ollama-library embedding families whose names don't contain "embed" (minilm,
 # nomic, mxbai, snowflake-arctic-embed, paraphrase-*), so a pulled embedding model is
@@ -238,8 +267,19 @@ _VIDEO_GEN_MARKERS = (
 )
 # Video *understanding* — reads/analyzes video.
 _VIDEO_MODALITY_MARKERS = ("video-understanding", "video-vl", "videollava", "video-llava")
-_STT_MARKERS = ("whisper", "stt-", "transcribe")
-_TTS_MARKERS = ("tts-", "-tts", "piper", "elevenlabs", "polly", "kokoro")
+_STT_MARKERS = ("whisper", "stt-", "transcribe", "-asr", "paraformer", "sensevoice")
+_TTS_MARKERS = (
+    "tts-",
+    "-tts",
+    "piper",
+    "elevenlabs",
+    "polly",
+    "kokoro",
+    "orpheus",
+    "cosyvoice",
+    "sambert",
+    "cartesia",
+)
 
 # Model-family → the provider TYPES that can serve that family. Reference data used
 # ONLY as a fallback signal (e.g. "is a persisted session model compatible with the
@@ -311,16 +351,24 @@ def _app_declared_types(markers: tuple[str, ...]) -> frozenset[str]:
 def infer_capabilities(model_id: str, families: list[str] | None = None) -> list[str]:
     """Heuristically derive capabilities from a model id + optional family hints.
 
-    Returns at least one of: chat, embedding, stt, tts, image_modality,
-    image_gen, audio_modality, audio_gen, video_modality, video_gen.
-    Embedding / stt / tts / generation tags are mutually exclusive with chat
+    Returns the tags of one of: chat, embedding, stt, tts, image_modality,
+    image_gen, audio_modality, audio_gen, video_modality, video_gen — or ``[]`` for a family
+    no job here binds (:data:`_NOT_BOUND_MARKERS`: rerankers, moderation and safety
+    classifiers, completion-only, realtime-only and Responses-only models), which no picker
+    then offers. Embedding / stt / tts / generation tags are mutually exclusive with chat
     (a model produces media OR converses). Modality (understanding) tags stack
     with chat, since a chat model can also read images / audio / video.
+
+    This is the reading of last resort, for a vendor whose model list says nothing about what a
+    model does. A catalog whose vendor does say (a ``type``, a capability record, the methods a
+    model supports) reads that instead.
     """
     mid = (model_id or "").lower()
     fam = " ".join(families or []).lower()
     blob = f"{mid} {fam}"
 
+    if any(m in blob for m in _NOT_BOUND_MARKERS) or _RESPONSES_ONLY_TIER.search(mid):
+        return []
     if any(m in blob for m in _EMBEDDING_MARKERS):
         return ["embedding"]
     if any(m in blob for m in _STT_MARKERS):
@@ -503,8 +551,44 @@ def openai_compatible_models_url(
     return f"{base}/models"
 
 
+def _capabilities_by_id(record: dict[str, Any]) -> list[str]:
+    """What a model record says with nothing but the OpenAI models object: its ``id``, and its
+    ``root`` — the model an alias serves, which that object has always carried and a self-hosted
+    server (vLLM) fills in, so an alias of a reranker is read as the reranker it serves."""
+    model_id = str(record.get("id") or "")
+    root = record.get("root")
+    families = [root] if isinstance(root, str) and root and root != model_id else None
+    return infer_capabilities(model_id, families)
+
+
+def _record_capabilities(
+    record: dict[str, Any], capabilities_of: Callable[[dict[str, Any]], list[str]] | None
+) -> list[str]:
+    """``record``'s tags by the vendor's own reading of its records, else by its id and root.
+
+    A reading that raises lists that one model for no job, and says so: one record of a shape
+    the reading did not expect must not cost the rest of the list, and a model nothing has
+    described is not offered for chat by default.
+    """
+    if capabilities_of is None:
+        return _capabilities_by_id(record)
+    try:
+        return [str(c) for c in capabilities_of(record)]
+    except Exception:  # noqa: BLE001 — one record the vendor reading cannot read
+        logger.warning(
+            "Model discovery could not read what %r does; it is offered for nothing",
+            record.get("id"),
+            exc_info=True,
+        )
+        return []
+
+
 async def openai_compatible_discover_models(
-    endpoint: str | None, api_key: str | None, *, default_base: str = "https://api.openai.com/v1"
+    endpoint: str | None,
+    api_key: str | None,
+    *,
+    default_base: str = "https://api.openai.com/v1",
+    capabilities_of: Callable[[dict[str, Any]], list[str]] | None = None,
 ) -> list[ModelInfo]:
     """List models from an OpenAI-compatible ``GET {base}/models`` endpoint, STRICTLY.
 
@@ -512,6 +596,13 @@ async def openai_compatible_discover_models(
     empty list, which is a real and honest answer. Raises :class:`ModelDiscoveryError`
     when no list was obtained at all, so a caller can tell the two apart; use
     :func:`openai_compatible_list_models` for the fail-soft view.
+
+    The list is the OpenAI envelope's ``data``, or the answer itself when a vendor answers
+    with the bare list. ``capabilities_of`` is how this vendor's records say
+    what a model does — a ``type`` field, a capability record: it is handed each record as the
+    vendor wrote it and returns its :class:`ModelInfo` capability tags (``[]`` for none). Without
+    one, a record is read by its id and ``root`` (:func:`infer_capabilities`), the only fields
+    every OpenAI-compatible server carries.
 
     The ``GET {base}/models`` discovery call routes through the ``net.fetch`` egress
     chokepoint (host classification, redirect-hop re-check, byte cap, timeout, SEL
@@ -590,7 +681,10 @@ async def openai_compatible_discover_models(
             url=url,
             status=r.status,
         ) from exc
-    rows = data.get("data") if isinstance(data, dict) else None
+    if isinstance(data, list):
+        rows: Any = data  # the bare list some vendors answer with
+    else:
+        rows = data.get("data") if isinstance(data, dict) else None
     if not isinstance(rows, list):
         raise ModelDiscoveryError(
             f"{url} answered HTTP 200 but not with an OpenAI-shaped model list "
@@ -602,13 +696,13 @@ async def openai_compatible_discover_models(
     out: list[ModelInfo] = []
     for m in rows:
         model_id = m.get("id", "") if isinstance(m, dict) else ""
-        if not model_id:
+        if not model_id or not isinstance(model_id, str):
             continue
         out.append(
             ModelInfo(
                 id=model_id,
                 name=model_id,
-                capabilities=infer_capabilities(model_id),
+                capabilities=_record_capabilities(m, capabilities_of),
                 extra={"owned_by": m.get("owned_by", "")} if m.get("owned_by") else {},
             )
         )
@@ -624,19 +718,26 @@ async def openai_compatible_discover_models(
 
 
 async def openai_compatible_list_models(
-    endpoint: str | None, api_key: str | None, *, default_base: str = "https://api.openai.com/v1"
+    endpoint: str | None,
+    api_key: str | None,
+    *,
+    default_base: str = "https://api.openai.com/v1",
+    capabilities_of: Callable[[dict[str, Any]], list[str]] | None = None,
 ) -> list[ModelInfo]:
     """The fail-soft view of :func:`openai_compatible_discover_models`: ``[]`` on any
     failure (unreachable / non-200 / unparseable / missing config), never raises.
 
     ``default_base`` lets a branded app point at its own default host while reusing this
-    client. The failure is LOGGED at WARNING rather than dropped: a provider that
+    client, and ``capabilities_of`` reads its vendor's records (see the strict function).
+    The failure is LOGGED at WARNING rather than dropped: a provider that
     contributes nothing to the model pool was previously indistinguishable from one that
     was never asked, at every log level (#955). A caller that needs to tell "no models"
     from "no answer" apart must call the strict function.
     """
     try:
-        return await openai_compatible_discover_models(endpoint, api_key, default_base=default_base)
+        return await openai_compatible_discover_models(
+            endpoint, api_key, default_base=default_base, capabilities_of=capabilities_of
+        )
     except ModelDiscoveryError as exc:
         record_swallowed_discovery_failure(exc)
         seen = (exc.url, _key_digest(api_key))

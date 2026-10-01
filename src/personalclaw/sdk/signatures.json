@@ -7216,7 +7216,8 @@
   "params": [
    {"annotation": "str | None", "kind": "positional_or_keyword", "name": "endpoint"},
    {"annotation": "str | None", "kind": "positional_or_keyword", "name": "api_key"},
-   {"annotation": "str", "default": "'https://api.openai.com/v1'", "kind": "keyword_only", "name": "default_base"}
+   {"annotation": "str", "default": "'https://api.openai.com/v1'", "kind": "keyword_only", "name": "default_base"},
+   {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"}
   ],
   "returns": "list[ModelInfo]"
  },
@@ -7254,7 +7255,8 @@
  "personalclaw.sdk.model.register_branded_app": {
   "kind": "function",
   "params": [
-   {"annotation": "BrandedProviderSpec", "kind": "positional_or_keyword", "name": "spec"}
+   {"annotation": "BrandedProviderSpec", "kind": "positional_or_keyword", "name": "spec"},
+   {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"}
   ],
   "returns": "tuple[Callable, Callable, Callable]"
  },
@@ -7802,7 +7804,8 @@
     {"annotation": "BrandedProviderSpec", "kind": "positional_or_keyword", "name": "spec"},
     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "endpoint"},
     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "api_key"},
-    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "default_model"}
+    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "default_model"},
+    {"annotation": "Callable[[dict[str, Any]], list[str]] | None", "default": "None", "kind": "keyword_only", "name": "capabilities_of"}
    ],
    "returns": "None"
   },

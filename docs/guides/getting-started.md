@@ -204,7 +204,11 @@ Model providers are installable apps — nothing is hardwired to a vendor.
    speech, and more — they can all be different providers. Each model's **Test**
    makes one small real call for the use case it is listed under (a one-word
    reply, one embedded word, the smallest image) and says what came back; a
-   model that can't be tested says why instead.
+   model that can't be tested says why instead. Each row offers the
+   models that can do its job, by what the provider says each model does (its
+   own model record where the vendor publishes one, else the model's id):
+   an embedding model, a reranker or a moderation model is never offered for
+   chat, and binding one there through the API is refused.
 
 Prefer the terminal? `personalclaw setup --credential NAME=VALUE` saves a
 secret in the same credential store Settings → Secrets uses, where a workflow's

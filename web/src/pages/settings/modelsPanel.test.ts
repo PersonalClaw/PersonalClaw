@@ -30,6 +30,16 @@ describe('capableModels', () => {
     expect(phantom!.capabilities).toContain('image_modality')
   })
 
+  it('surfaces an active binding its provider lists for another job as the listed row', () => {
+    // Bound before the gateway refused such a binding: the row is the provider's own, so the
+    // chain can say what the model is for, and no "not downloaded" chip calls a pulled model absent.
+    const all = [M('Ollama', 'gemma4:12b', ['chat']), M('Ollama', 'nomic-embed-text:latest', ['embedding'], true)]
+    const out = capableModels('chat', all, ['Ollama:nomic-embed-text:latest'])
+    const bound = out.find((m) => m.id === 'nomic-embed-text:latest')
+    expect(bound?.capabilities).toEqual(['embedding'])
+    expect(bound?.downloaded).toBe(true)
+  })
+
   it('does not duplicate an active binding that IS in the catalog', () => {
     const all = [M('Bedrock', 'gemma-3', ['image_modality'])]
     const out = capableModels('image_modality', all, ['Bedrock:gemma-3'])

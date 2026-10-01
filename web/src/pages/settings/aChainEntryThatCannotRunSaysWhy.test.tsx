@@ -108,6 +108,21 @@ describe('chainEntryStatus', () => {
       .toBe('not downloaded')
   })
 
+  it('a model its provider lists for other jobs cannot do this one, and says what it is for', () => {
+    // Bound before the gateway refused such a binding: an embedding model and a safety classifier
+    // its provider lists for nothing, each in a chat chain.
+    const embedder = { ...local('nomic-embed-text:latest', 'ollama'), capabilities: ['embedding'] }
+    expect(chainEntryStatus('ollama:nomic-embed-text:latest', listings.ollama, undefined, embedder, 'background')).toEqual({
+      tone: 'danger', label: 'cannot do this',
+      detail: 'ollama lists nomic-embed-text:latest for Embedding, not for Chat, so it cannot run here. Remove it here.',
+    })
+    const guard = { ...local('llama-guard3:8b', 'ollama'), capabilities: [] }
+    expect(chainEntryStatus('ollama:llama-guard3:8b', listings.ollama, undefined, guard, 'chat')?.detail)
+      .toBe('ollama lists llama-guard3:8b for nothing PersonalClaw can use it for, so it cannot run here. Remove it here.')
+    // A model that does the row's job is judged by everything else, as before.
+    expect(chainEntryStatus('ollama:gemma4:12b', listings.ollama, undefined, local('gemma4:12b', 'ollama'), 'reasoning')).toBeNull()
+  })
+
   it('a healthy entry says nothing', () => {
     expect(chainEntryStatus('ollama:gemma4:12b', listings.ollama, health({ name: 'ollama' }), local('gemma4:12b', 'ollama'))).toBeNull()
   })

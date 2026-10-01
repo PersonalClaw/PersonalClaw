@@ -9,9 +9,10 @@ Two ways the endpoint answered ``ok: true`` while the caller's binding had NOT t
    guard was skipped entirely, so a ref naming a provider that does not exist was
    stored unchallenged — a dead binding, accepted as valid.
 
-The endpoint's deliberate NON-check is also pinned here: the model ID is not validated
-against the discovered catalog, because a real provider that is slow to enumerate its
-models must not have valid refs rejected.
+The endpoint's deliberate NON-check is also pinned here: a model ID the discovered catalog
+does not list is not refused, because a real provider that is slow to enumerate its models
+must not have valid refs rejected. (The catalog is read only to refuse a model it lists for
+another job — tests/test_a_model_is_offered_for_what_it_does.py.)
 """
 
 from __future__ import annotations
@@ -139,10 +140,17 @@ async def test_unknown_provider_rejected_on_a_fresh_config(store):
 
 
 @pytest.mark.asyncio
-async def test_model_id_is_not_validated_against_the_catalog(store):
+async def test_model_id_is_not_validated_against_the_catalog(store, monkeypatch):
     """A real provider that is installed but slow to enumerate models must not have
-    its valid refs rejected, so only the provider PREFIX is checked. This test exists
-    to make that a decision rather than an oversight."""
+    its valid refs rejected, so a model its catalog does not list is bound as asked. This
+    test exists to make that a decision rather than an oversight."""
+    from personalclaw.llm.catalog import ModelCatalog, ModelInfo
+
+    class _Listed(ModelCatalog):
+        async def list_models(self):
+            return [ModelInfo(id="llama3.2:3b", name="llama3.2:3b", capabilities=["chat"])]
+
+    monkeypatch.setattr(mr, "_catalog_for_config_provider", lambda p: _Listed())
     _config(store, providers=[{"name": "Ollama", "type": "ollama"}])
     status, body = await _put({"models": ["Ollama:a-model-not-yet-enumerated"]})
     assert status == 200

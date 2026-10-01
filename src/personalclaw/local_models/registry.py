@@ -38,20 +38,37 @@ def to_local_model(m: Any, *, capabilities: list[str] | None = None) -> LocalMod
     ``capabilities`` (the use-cases it serves) onto the model unless the model names its
     own. Domain-only fields (dimension, language, …) stay on the domain object for
     inference; management never needs them.
+
+    Only a provider that serves ONE use case folds it: each of its models can only be that. A
+    model of a provider serving several (an Ollama instance: chat and embedding) that names none
+    is one its provider says no job here can use, a reranker say, and folding both jobs onto it
+    offered it to every chat picker.
     """
+    declared = _folded_use_case(capabilities)
     if isinstance(m, LocalModel):
-        if capabilities and not m.capabilities:
-            m.capabilities = list(capabilities)
+        if declared and not m.capabilities:
+            m.capabilities = list(declared)
         return m
     return LocalModel(
         name=getattr(m, "name", ""),
         size_mb=float(getattr(m, "size_mb", 0) or 0),
         description=getattr(m, "description", ""),
         downloaded=bool(getattr(m, "downloaded", False)),
-        capabilities=list(getattr(m, "capabilities", None) or capabilities or []),
+        capabilities=list(getattr(m, "capabilities", None) or declared),
         gated=bool(getattr(m, "gated", False)),
         source=getattr(m, "source", ""),
     )
+
+
+def _folded_use_case(capabilities: list[str] | None) -> list[str]:
+    """What a provider's models serve when they name nothing: its declared capabilities when they
+    come to one use case (a chat sub-category is chat), else none — a provider declaring several
+    cannot say which of them such a model serves."""
+    from personalclaw.providers.use_cases import VALID_USE_CASES, parent_capability
+
+    declared = list(capabilities or [])
+    uses = {parent_capability(c) for c in declared if c in VALID_USE_CASES}
+    return declared if len(uses) == 1 else []
 
 
 def register_provider(

@@ -581,10 +581,11 @@ async def api_provider_model_show(request: web.Request) -> web.Response:
         logger.warning("model detail failed for provider %r", name, exc_info=True)
         return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
-    # to_dict flattens the manager's extra fields (family / parameter_size /
-    # context_length / …) onto the top level; keep the historical ``model`` key
-    # and drop empty values.
-    out = info.to_dict()
+    # The manager's detail fields (family / parameter_size / context_length / …) over the row's
+    # own: the detail view's ``capabilities`` is the manager's own list (Ollama's completion,
+    # tools, vision, …), carried in ``extra``, not the jobs the row is offered for. Keep the
+    # historical ``model`` key and drop empty values.
+    out = {**info.to_dict(), **info.extra}
     out["model"] = model
     out.pop("id", None)
     out.pop("name", None)

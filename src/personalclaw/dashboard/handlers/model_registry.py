@@ -28,6 +28,7 @@ from personalclaw.providers.use_cases import (
     VALID_USE_CASES,
     load_active_models,
     names_model,
+    parent_capability,
     save_active_models,
     split_ref,
 )
@@ -75,6 +76,99 @@ def _names_no_model(entry: object) -> str:
         f"“{entry}” names the provider {provider} and no model. Name one as "
         f"“{provider}:<model id>”, or choose one of its models in Settings → Models."
     )
+
+
+#: The longest a binding waits on its provider's model list before it is stored unchecked.
+_BIND_CHECK_TIMEOUT_SECS = 8.0
+
+#: Each job a model is listed for, in the words a sentence about it uses.
+_JOB_WORDS = {
+    "chat": "chat",
+    "image_modality": "reading images",
+    "audio_modality": "understanding audio",
+    "video_modality": "understanding video",
+    "embedding": "embedding",
+    "stt": "speech-to-text",
+    "tts": "text-to-speech",
+    "diarization": "telling speakers apart",
+    "image_gen": "making images",
+    "audio_gen": "making audio",
+    "video_gen": "making video",
+}
+
+
+async def _listed_jobs(refs: list[str]) -> dict[tuple[str, str], list[str]]:
+    """What each ``provider:model`` ref's own provider lists the model for, where it says so.
+
+    A ref is in the answer, keyed ``(provider, model)``, only when its provider is a configured
+    instance whose catalog lists the model. One whose provider could not be asked (no catalog,
+    its last connection check failed, the listing failed or outran
+    :data:`_BIND_CHECK_TIMEOUT_SECS`), or that does not list the model, says nothing and is left
+    out: a server slow to list what it serves, or a model pulled a moment ago, is no reason to
+    refuse it. Each provider is listed once, all of them at the same time.
+    """
+    from personalclaw.llm.registry import canonical_provider_type
+    from personalclaw.providers.connection import (
+        FAILED,
+        get_connection_board,
+        settings_fingerprint,
+    )
+
+    wanted: dict[str, set[str]] = {}
+    for ref in refs:
+        parsed = split_ref(str(ref))
+        if parsed:
+            wanted.setdefault(parsed[0], set()).add(parsed[1])
+    if not wanted:
+        return {}
+    board = get_connection_board()
+    catalogs: dict[str, Any] = {}
+    for p in _get_providers_from_config():
+        name = str(p.get("name", ""))
+        if name not in wanted or name in catalogs:
+            continue
+        fingerprint = settings_fingerprint(
+            canonical_provider_type(p.get("type", "")), p.get("options")
+        )
+        last = board.peek(name, fingerprint)
+        if last is not None and last.state == FAILED:
+            continue  # its listing would fail too, and re-send a key its vendor refused
+        catalog = _catalog_for_config_provider(p)
+        if catalog is not None:
+            catalogs[name] = catalog
+
+    async def _rows(catalog: Any) -> list[Any]:
+        return list(await asyncio.wait_for(catalog.list_models(), _BIND_CHECK_TIMEOUT_SECS))
+
+    names = list(catalogs)
+    listings = await asyncio.gather(*(_rows(catalogs[n]) for n in names), return_exceptions=True)
+    out: dict[tuple[str, str], list[str]] = {}
+    for name, rows in zip(names, listings):
+        if isinstance(rows, BaseException):
+            logger.debug("models of %s could not be listed to check a binding", name, exc_info=rows)
+            continue
+        for row in rows:
+            if row.id in wanted[name]:
+                jobs = out.setdefault((name, row.id), [])
+                jobs.extend(c for c in row.capabilities or [] if c not in jobs)
+    return out
+
+
+def _cannot_serve(use_case: str, provider: str, model: str, jobs: list[str]) -> str:
+    """Why the model its provider lists for ``jobs`` cannot be bound to ``use_case``, or ``""``."""
+    need = parent_capability(use_case)
+    if need in jobs:
+        return ""
+    wanted = _JOB_WORDS.get(need, need)
+    named = [_JOB_WORDS[j] for j in jobs if j in _JOB_WORDS]
+    choose = "Choose one of the models Settings → Models offers for it."
+    if not named:
+        return (
+            f"{provider} lists “{model}” for nothing PersonalClaw can use it for, so it can't be "
+            f"used for {wanted}. {choose}"
+        )
+    listed = named[0] if len(named) == 1 else f"{', '.join(named[:-1])} and {named[-1]}"
+    return f"{provider} lists “{model}” for {listed}, not for {wanted}. {choose}"
 
 
 # NOTE: model-provider discovery (ollama /api/tags, OpenAI /v1/models, the
@@ -534,8 +628,12 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     refused with ``409 stale_write`` (`personalclaw/stale_write.py`).
 
     Every entry names a model (``use_cases.names_model``): one that names none (``""``,
-    ``"Bedrock:"``) is refused with ``400 model_ref_names_no_model``. Binding Embedding to a
-    model starts the re-index of what that model has not embedded, in the background.
+    ``"Bedrock:"``) is refused with ``400 model_ref_names_no_model``. A model the request adds
+    whose own provider lists it for other jobs — an embedding model bound to Chat, a reranker to
+    anything — is refused with ``400 model_cannot_serve_use_case``; one its provider does not
+    describe (it could not be asked, or does not list it) is bound as asked
+    (:func:`_listed_jobs`). Binding Embedding to a model starts the re-index of what that model
+    has not embedded, in the background.
     """
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
@@ -643,6 +741,26 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("active-model provider validation skipped", exc_info=True)
 
+    # A model this request ADDS is checked against what its own provider lists it for. One the
+    # chain already holds is not: a binding stored before this check existed can still be moved
+    # and removed.
+    held = set(load_active_models().get(use_case, []))
+    added = [str(m) for m in models if str(m) not in held]
+    listed = await _listed_jobs(added)
+    for ref in added:
+        provider, model = split_ref(ref) or ("", ref)
+        jobs = listed.get((provider, model))
+        refusal = _cannot_serve(use_case, provider, model, jobs) if jobs is not None else ""
+        if refusal:
+            _sel_log(
+                "models.active_set",
+                "error",
+                f"{use_case}:{ref}",
+                request,
+                error=f"its provider lists it for {', '.join(jobs or []) or 'no job'}",
+            )
+            return json_error("model_cannot_serve_use_case", message=refusal, status=400)
+
     active = load_active_models()
     # 🔴 A CHAIN IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The Models panel builds the
     # chain it sends from the one it read — a toggle appends to it, a reorder swaps two of its
@@ -691,8 +809,9 @@ async def api_models_active_set(request: web.Request) -> web.Response:
 async def api_models_chat(request: web.Request) -> web.Response:
     """GET /api/models/chat — chat models for dropdowns (the one model list).
 
-    Returns active chat models from Settings → Models when configured, else
-    falls back to discovering all chat-capable models from every provider.
+    Returns active chat models from Settings → Models when configured — less any its own provider
+    lists for something other than chat — else falls back to discovering all chat-capable models
+    from every provider.
 
     Each entry carries BOTH ``model_name`` and ``model_id`` (the same bare id)
     plus ``name``/``provider``/``description`` — a superset shape so every
@@ -704,6 +823,12 @@ async def api_models_chat(request: web.Request) -> web.Response:
 
     # An entry that names no model is none to offer: a picker binding it would write it back.
     chat_active = [ref for ref in chat_active if names_model(ref)]
+    # Nor is one its own provider lists for something other than chat, bound before the PUT
+    # checked: a turn on it fails. One its provider does not describe is offered as bound.
+    jobs_of = await _listed_jobs(chat_active)
+    chat_active = [
+        ref for ref in chat_active if "chat" in jobs_of.get(split_ref(ref) or ("", ref), ["chat"])
+    ]
     if chat_active:
         result = []
         for model_ref in chat_active:

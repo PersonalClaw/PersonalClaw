@@ -1319,8 +1319,11 @@ class OllamaCatalog(ModelManager):
     async def list_models(self) -> list[ModelInfo]:
         """List locally-installed models via ``GET /api/tags``. Raises when it cannot.
 
-        A chat model's ``image_modality`` and ``tools`` tags follow what Ollama itself reports
-        for it (:meth:`_served_capabilities`), not only what its name suggests.
+        Each model is offered for what Ollama itself reports it serves
+        (:meth:`_served_capabilities`, :func:`_with_served`), not only for what its name
+        suggests, and a chat model's ``tools`` tag says the same. A model no job here can use
+        (a reranker, a safety classifier) is still listed, so its card can show it, with no
+        capability: no picker offers it.
         """
         data = await self._tags()
         names = [str(m.get("name", "")) for m in data.get("models", []) if m.get("name")]
@@ -1584,21 +1587,33 @@ class OllamaCatalog(ModelManager):
 
 
 def _with_served(inferred: list[str], served: list[str] | None) -> list[str]:
-    """``inferred`` tags with what Ollama reports the model serves stacked on a chat model.
+    """What a model can be bound for: what Ollama reports it serves, over what its id suggests.
 
-    ``vision`` sets ``image_modality``, and ``tools`` sets ``tools``: the model calls the tools
-    a chat turn offers it. Only a CHAT model's tags move: a media model's single tag is left
-    alone. With no report (``None``, or an empty list from an older Ollama) the id's inference
-    stands.
+    Ollama's ``capabilities`` record says what the server will do with the model: ``completion``
+    (it answers a chat), ``embedding`` (it embeds), and what a chat reads besides text
+    (``vision`` sets ``image_modality``, ``audio`` sets ``audio_modality``). ``tools`` sets
+    ``tools`` on a chat model: it calls the tools a chat turn offers it. A model that serves
+    neither completion nor embedding (an image model) is offered for nothing here.
+
+    The id still vetoes: a family no job binds (``infer_capabilities`` answers ``[]`` for a
+    reranker or a safety classifier) is offered for nothing, though Ollama reports ``completion``
+    for a guard model and ``embedding`` for a reranker it loads as an embedder. With no report
+    (``None``, or an empty list from an older Ollama) the id's inference stands.
     """
-    if not served or "chat" not in inferred:
+    if not served or not inferred:
         return inferred
-    tags = [t for t in inferred if t not in ("image_modality", "tools")]
-    if "vision" in served:
-        tags.append("image_modality")
-    if "tools" in served:
-        tags.append("tools")
-    return tags
+    if "completion" in served:
+        tags = ["chat"]
+        if "vision" in served:
+            tags.append("image_modality")
+        if "audio" in served:
+            tags.append("audio_modality")
+        if "tools" in served:
+            tags.append("tools")
+        return tags
+    if "embedding" in served:
+        return ["embedding"]
+    return []
 
 
 def _humanize_bytes(n: int) -> str:

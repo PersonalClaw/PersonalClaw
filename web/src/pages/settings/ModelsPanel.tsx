@@ -88,19 +88,27 @@ const USE_CASE_ORDER = [
 // these as capabilities — their pickable pool is the CHAT-capable catalog.
 const CHAT_SUBCATEGORIES = new Set(['code_tools', 'reasoning', 'background', 'orchestration', 'loops'])
 
+/** The capability a use case's models must declare: a chat SUB-CATEGORY draws from the chat
+ *  pool — models never declare "code_tools". */
+function capabilityOf(useCase: string): string {
+  return CHAT_SUBCATEGORIES.has(useCase) ? 'chat' : useCase
+}
+
 /** The models a use-case can pick from: every catalog model declaring the capability
- *  (a chat SUB-CATEGORY draws from the chat pool — models never declare "code_tools"),
- *  deduped by `provider:id`, PLUS a synthetic "unavailable" row for any ACTIVE binding
- *  whose model is absent from the catalog (e.g. an ollama model deleted or never pulled).
- *  Without the synthetic row the use-case reads "N active" but the bound model is invisible
- *  AND unremovable in the picker — a phantom binding the user can't clear. Synthetic rows
- *  carry `downloaded:false` so the not-downloaded chip renders; toggling one off unbinds it.
+ *  (`capabilityOf`), deduped by `provider:id`, PLUS a row for any ACTIVE binding the
+ *  capable list lacks. One its provider still lists for other jobs (bound before the gateway
+ *  refused such a binding) is that listed row, so the chain says what it is
+ *  (`chainEntryStatus`); one absent from the catalog (e.g. an ollama model deleted or never
+ *  pulled) is a synthetic "unavailable" row carrying `downloaded:false`, so the not-downloaded
+ *  chip renders. Without either row the use-case reads "N active" but the bound model is
+ *  invisible AND unremovable in the picker — a phantom binding the user can't clear; toggling
+ *  one off unbinds it.
  *
  *  A row or binding that names no model (`namesModel`) is none to pick: toggling it would bind
  *  `"provider:"`, which chose no model and which the gateway refuses.
  *  Pure + exported for unit testing. */
 export function capableModels(useCase: string, allModels: AvailableModel[], activeModels: string[]): AvailableModel[] {
-  const capability = CHAT_SUBCATEGORIES.has(useCase) ? 'chat' : useCase
+  const capability = capabilityOf(useCase)
   const seen = new Set<string>()
   const out: AvailableModel[] = []
   for (const m of allModels) {
@@ -114,7 +122,8 @@ export function capableModels(useCase: string, allModels: AvailableModel[], acti
     if (seen.has(ref) || !namesModel(ref)) continue
     seen.add(ref)
     const { provider, model: id } = splitModelRef(ref)
-    out.push({ id, name: id, provider, capabilities: [useCase], downloaded: false } as AvailableModel)
+    const listed = allModels.find((m) => m.provider === provider && m.id === id)
+    out.push(listed ?? ({ id, name: id, provider, capabilities: [capability], downloaded: false } as AvailableModel))
   }
   return out
 }
@@ -175,6 +184,8 @@ export function listingFailure(
  *
  *  1. the instance's measured connection failed, or its models could not be listed → it is not
  *     answering (or its key was refused), in the words its test or its listing used;
+ *  1a. its provider lists the model for other jobs than this row's (``useCase``) → it cannot do
+ *     this work at all (a binding stored before the gateway refused one);
  *  2. its breaker has tripped (`open`, or `half_open`: reached only from open, and left only by a
  *     call that succeeds) → its calls are failing;
  *  3. a LOCAL provider that answered does not list the model → the model is gone from it (the
@@ -185,11 +196,23 @@ export function listingFailure(
  *  Pure + exported for unit testing. */
 export function chainEntryStatus(
   ref: string, listing: ProviderListing | undefined, health: ProviderHealth | undefined,
-  model: AvailableModel | undefined,
+  model: AvailableModel | undefined, useCase?: string,
 ): { tone: 'danger' | 'warn'; label: string; detail: string } | null {
   const { provider, model: id } = splitModelRef(ref)
   const down = listingFailure(provider, listing)
   if (down) return down
+  // A model its provider lists for other jobs than this one, bound before the gateway refused
+  // such a binding: it cannot do this row's work, whatever else is true of it.
+  const capability = useCase ? capabilityOf(useCase) : ''
+  if (capability && model && !model.capabilities.includes(capability)) {
+    const jobs = model.capabilities.map((c) => USE_CASE_META[c]?.label).filter(Boolean)
+    const need = USE_CASE_META[capability]?.label ?? capability
+    const listed = jobs.length ? `for ${jobs.join(', ')}, not for ${need}` : 'for nothing PersonalClaw can use it for'
+    return {
+      tone: 'danger', label: 'cannot do this',
+      detail: `${provider} lists ${id} ${listed}, so it cannot run here. Remove it here.`,
+    }
+  }
   if (health && (health.breaker_state === 'open' || health.breaker_state === 'half_open')) {
     const n = health.consecutive_failures
     const calls = `${provider}: its last ${n} call${n === 1 ? '' : 's'} failed`
@@ -1179,7 +1202,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
             // The model's name where the catalog has one (`SmolLM2-135M-Instruct`), not its file id.
             const known = capable.find((m) => m.provider === provider && m.id === id)
             const named = known ? modelLabel(known) : id
-            const status = chainEntryStatus(ref, listings[provider], health.find((h) => h.name === provider), known)
+            const status = chainEntryStatus(ref, listings[provider], health.find((h) => h.name === provider), known, useCase)
             return (
               <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
                 <span data-type="caption" className="w-16 shrink-0 text-on-surface-low uppercase tracking-wide">

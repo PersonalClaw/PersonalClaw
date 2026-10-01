@@ -1036,6 +1036,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         'A model in the chain names no model; name each as "provider:model", or choose one in '
         "Settings → Models."
     ),
+    # 400: a model the chain adds is one its own provider lists for other jobs (an embedding
+    # model bound to Chat, a reranker to anything); the message names what it is listed for.
+    "model_cannot_serve_use_case": (
+        "A model in the chain is one its provider lists for other jobs than this one; choose one "
+        "of the models Settings → Models offers for it."
+    ),
     # ── a model's Test (dashboard/handlers/model_registry.py — POST /api/models/test) ──
     # 409: no Test can run for that use case or on that provider's models; the message says why,
     # in the words the model's row shows instead of a Test.

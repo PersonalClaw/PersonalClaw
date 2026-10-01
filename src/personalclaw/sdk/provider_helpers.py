@@ -89,7 +89,10 @@ class BrandedCatalog(ModelCatalog):
 
     A provider with NOTHING to fall back on (the bring-your-own-endpoint apps declare no
     curated models) reports a discovery failure as a failure instead of as an empty
-    catalog — see :meth:`list_models` and #955."""
+    catalog — see :meth:`list_models` and #955.
+
+    ``capabilities_of`` reads what the vendor's own model records say each model does (see
+    :func:`openai_compatible_discover_models`); without one, a model is read by its id."""
 
     def __init__(
         self,
@@ -98,8 +101,10 @@ class BrandedCatalog(ModelCatalog):
         endpoint: str = "",
         api_key: str = "",
         default_model: str = "",
+        capabilities_of: Callable[[dict[str, Any]], list[str]] | None = None,
     ) -> None:
         self._spec = spec
+        self._capabilities_of = capabilities_of
         self._endpoint = endpoint or spec.default_base_url
         # Only the EXPLICIT key is stored; the env / subscription hops are resolved per call
         # by `_resolved_key` (a catalog instance outlives a `claude login`, so freezing the
@@ -179,6 +184,7 @@ class BrandedCatalog(ModelCatalog):
                 self._endpoint,
                 api_key,
                 default_base=self._spec.default_base_url,
+                capabilities_of=self._capabilities_of,
             )
         except ModelDiscoveryError as exc:
             fallback = self._fallback()
@@ -215,7 +221,10 @@ class BrandedCatalog(ModelCatalog):
         # which of blocked / unreachable / 401 / 404 / non-JSON actually happened.
         try:
             live = await openai_compatible_discover_models(
-                self._endpoint, api_key, default_base=self._spec.default_base_url
+                self._endpoint,
+                api_key,
+                default_base=self._spec.default_base_url,
+                capabilities_of=self._capabilities_of,
             )
         except ModelDiscoveryError as exc:
             return ConnectionResult(
@@ -291,7 +300,11 @@ class BrandedCatalog(ModelCatalog):
 #: same import-time side effect that registers the type + catalog) so core can read an installed
 #: app's DECLARATIONS — today its prices — without the app having to push them anywhere. Last-wins
 #: on re-registration, mirroring ``register_catalog``.
-def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable, Callable]:
+def register_branded_app(
+    spec: BrandedProviderSpec,
+    *,
+    capabilities_of: Callable[[dict[str, Any]], list[str]] | None = None,
+) -> tuple[Callable, Callable, Callable]:
     """Wire a branded/generic protocol provider app into the default registry and
     return its ``(_factory, create_provider, create_catalog)`` trio.
 
@@ -300,6 +313,12 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
     (type registration is guarded; catalog registration is last-wins). The returned
     callables are what the app module exposes so the manifest's
     ``implementation: "provider:create_provider"`` resolves.
+
+    ``capabilities_of`` is how this vendor's model list says what each model does: it is handed
+    each model record as the vendor wrote it and returns the jobs the model can be bound for
+    (``["chat", "image_modality"]``, ``["embedding"]``, ``[]`` for none). An app whose vendor
+    describes its models passes one, so a picker offers each model for what the vendor says; one
+    whose vendor lists bare ids leaves it out, and its models are read by their ids.
     """
 
     def _factory(
@@ -377,6 +396,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
             endpoint=str(opts.get(ENDPOINT_OPTION) or ""),
             api_key=str(opts.get("api_key") or ""),
             default_model=str(model or opts.get("default_model") or opts.get("model") or ""),
+            capabilities_of=capabilities_of,
         )
 
     # ── Registration (import-time side effect, like every model app) ──
