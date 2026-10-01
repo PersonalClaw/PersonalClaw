@@ -417,15 +417,15 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
         "bringing your setup over from other agent tools — their instructions, skills and "
         "MCP servers"
     ),
-    # The wizard's one-click bind (`seed_local_model.bind_local_model`) adds a model provider at
-    # the endpoint the request names and binds your chat model to it, and your embedding model
-    # when the server offers one: the owner-only `POST /api/model-providers` and
-    # `PUT /api/models/active/{use_case}` in one request. Its endpoint check admits loopback,
-    # where an app's own backend listens (`backend_runtime.py`), and the model it binds answers
-    # every turn you send.
+    # The wizard's one-click setup adds a model provider at the endpoint the request names
+    # (`seed_local_model.add_local_model`), and when asked binds your chat model to it, and your
+    # embedding model when the server offers one (`bind_local_model`): the owner-only
+    # `POST /api/model-providers` and `PUT /api/models/active/{use_case}` in one request. Its
+    # endpoint check admits loopback, where an app's own backend listens (`backend_runtime.py`),
+    # and the model it binds answers every turn you send.
     "/api/onboarding/local-model/bind": (
-        "moving your chats onto a model server on this machine or your network — it adds a "
-        "model provider there, and your chats run on its model"
+        "adding a model server on this machine or your network as a model provider, and moving "
+        "your chats onto its model"
     ),
     # ── Speaking as your agent ──
     # The schedules' delivery door. `session: "origin"` with a `caller_session` of `cron:<id>`

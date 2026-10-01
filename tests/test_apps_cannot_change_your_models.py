@@ -137,7 +137,7 @@ MODEL_ROUTES: list[tuple[str, str, Any]] = [
     ("POST", "/api/models/embedding/reindex", None),
     ("GET", "/api/models/embedding/reindex/{id}/stream", None),
     # the onboarding wizard's one-click bind: a provider and your chat binding in one request
-    ("POST", BIND, {"endpoint": "http://127.0.0.1:11434"}),
+    ("POST", BIND, {"endpoint": "http://127.0.0.1:11434", "bind_chat": True}),
 ]
 
 _PATH_PARAMS = {
@@ -501,16 +501,18 @@ class TestAnAppCannotMoveYourChats:
             assert _denials(sel_rows, path), path
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("bind_chat", [True, False])
     async def test_the_onboarding_bind_does_not_move_them_onto_the_apps_server(
-        self, home, models, ollama, sel_rows
+        self, home, models, ollama, sel_rows, bind_chat
     ) -> None:
-        """The app's backend answers as an Ollama on loopback. Bound, your chats would be its."""
+        """The app's backend answers as an Ollama on loopback. Bound, your chats would be its;
+        added, it would be one of your providers."""
         async with _gateway(_real_routes()) as gw:
             await gw.install(_bundle(home))
             token = await gw.app_token()
             await _your_models(gw)
             status, text = await gw.call(
-                "POST", BIND, {"endpoint": ollama.endpoint}, app_token=token
+                "POST", BIND, {"endpoint": ollama.endpoint, "bind_chat": bind_chat}, app_token=token
             )
         assert _chat_binding() == [f"{YOURS}:{YOUR_MODEL}"], "your chats run on your model"
         assert _stored_providers() == [YOURS], "no provider was added at the app's server"
@@ -552,7 +554,7 @@ class TestYouStillSetUpYourModels:
     async def test_you_still_bind_the_ollama_on_your_machine(self, home, models, ollama) -> None:
         async with _gateway(_real_routes()) as gw:
             await gw.install(_bundle(home))
-            answer = await gw.ok("POST", BIND, {"endpoint": ollama.endpoint})
+            answer = await gw.ok("POST", BIND, {"endpoint": ollama.endpoint, "bind_chat": True})
         assert answer["ok"] is True and answer["model"] == THEIR_MODEL
         assert _chat_binding() == [f"{answer['provider']}:{THEIR_MODEL}"]
         assert answer["provider"] in _stored_providers()

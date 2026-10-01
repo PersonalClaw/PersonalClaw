@@ -57,6 +57,8 @@ class ModelInfo:
     ``capabilities`` uses the same string tags the Settings → Models discovery
     already speaks (``chat``, ``image_modality``, ``embedding``, ``stt``, ``tts``,
     ``image_gen``, …) so the FE and ``_infer_capabilities`` consumers are unchanged.
+    ``tools`` stacks on ``chat`` when the provider says the model calls tools; it is no use
+    case of its own, and its absence means only that the provider did not say.
     ``extra`` carries provider-specific display fields the ollama UI shows
     (``owned_by``, ``parameter_size``, ``quantization``, ``family``, ``modified_at``).
     """

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Cpu, Search, Mic, MessagesSquare, Download, Check, Loader2 } from 'lucide-react'
+import { Cpu, Search, Mic, MessagesSquare, Download, Check, Loader2, Plus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { LoadError, LoadingStatus } from '../../ui/ListScaffold'
@@ -364,6 +364,9 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   // through 'verify': the bind writes a `providers[]` entry AND a chat ref, and "the write
   // returned ok" is not "chat resolves" — the same distinction the catalog path draws.
   const handleLocalBound = useCallback(() => {
+    // The detection read before this bind says the endpoint is not set up yet; the lane offers it
+    // again once chat is ready (to ADD), so that copy must not be the one painted.
+    invalidateKeys('onboarding:local-model')
     setModelApp('ollama-models')
     setPhase('verify')
     onProgress({ essentials: { model: 'ollama-models' } })
@@ -556,8 +559,10 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
                 `InstalledProviderTypes` below, using the parent's own answer for whether
                 that route truly exists rather than assuming it. */}
             {isModel && phase === 'pick' && (
-              <LocalModelOnRamp onBound={handleLocalBound}
-                hasManualRoute={missingProviderTypes.some((t) => t.app === 'ollama-models')} />
+              <LocalModelOnRamp role={{
+                kind: 'chat', onBound: handleLocalBound,
+                hasManualRoute: missingProviderTypes.some((t) => t.app === 'ollama-models'),
+              }} />
             )}
 
             {/* #3529 — a provider type can be registered with NO route into it: its app is
@@ -627,6 +632,13 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
                 )}
               </motion.div>
             )}
+
+            {/* Once chat is ready, a local model is still one click away — as ONE MORE provider.
+                It used to vanish with the 'pick' phase, so a user who chose a cloud provider
+                first had no way to add the Ollama on her own machine during setup, and a
+                reload did not bring it back. It rebinds nothing: chat keeps the model just
+                verified. */}
+            {isModel && modelReady && <LocalModelOnRamp role={{ kind: 'also', chatModel }} />}
           </section>
         )
       })}
@@ -954,13 +966,29 @@ function VerifyChatModel({ onVerified, onFailedChange, onReconfigure, onPickAnot
   )
 }
 
-/** The local + LAN Ollama zero-key on-ramp, above the model catalog while the
- *  lane is still picking. Localhost detection runs automatically on mount — a loopback
- *  probe, never a network scan — and the LAN sweep fires NO request until the user
- *  presses "Scan my local network". A discovered endpoint is shown only after the
- *  backend's live `/api/tags` probe, and binding it writes NO API key (it rides the
- *  same credential-free path as `--seed-local-model`). When nothing is reachable the
- *  block offers no bind card, so the catalog below stays exactly as it was.
+/** What the local-model on-ramp is for.
+ *
+ *  - `chat` — the lane is still picking: "Use this model" makes the endpoint's model the chat
+ *    model. `hasManualRoute` is whether a registered-but-uncatalogued provider type is actually
+ *    rendering below — computed once, by `EssentialsStep`, from the same
+ *    `/api/model-provider-types` read `InstalledProviderTypes` renders from.
+ *  - `also` — chat is ready: "Add this model" adds the endpoint as one more provider and rebinds
+ *    nothing, so `chatModel` (the verified chat model, `''` when resolution names none) stays
+ *    what chat uses. */
+type OnRampRole =
+  | { kind: 'chat'; onBound: () => void; hasManualRoute: boolean }
+  | { kind: 'also'; chatModel: string }
+
+/** The local + LAN Ollama zero-key on-ramp. Localhost detection runs automatically on mount — a
+ *  loopback probe, never a network scan — and the LAN sweep fires NO request until the user
+ *  presses "Scan my local network". A discovered endpoint is shown only after the backend's live
+ *  `/api/tags` probe, and setting it up writes NO API key (it rides the same credential-free path
+ *  as `--seed-local-model`). When nothing is reachable the block offers no card, so the catalog
+ *  below stays exactly as it was.
+ *
+ *  It sits above the model catalog while the lane is picking (`chat`), and below the ready chat
+ *  model once there is one (`also`). An endpoint already set up as a provider says so, from the
+ *  server's answer rather than this session's memory, so a reload never offers it again.
  *
  *  #3529 (owner, on a real fresh install): "there's an ollama on my host local network
  *  which should be accessible by finch vm. At least allow me to configure it manually" —
@@ -968,26 +996,22 @@ function VerifyChatModel({ onVerified, onFailedChange, onReconfigure, onPickAnot
  *  loopback is the container's own, never the host's, and its LAN sweep scans the
  *  container's subnet, not the host's — so for every containerised install, discovery
  *  finding nothing is the default outcome, not an edge case. Both empty states below say so
- *  and point at `InstalledProviderTypes`, using `hasManualRoute` (the parent's OWN answer,
- *  never re-derived here) so this can never point at a route that doesn't actually exist. */
-function LocalModelOnRamp({ onBound, hasManualRoute }: {
-  /** A chat ref was written. Carries no label: the verification reads the model back. */
-  onBound: () => void
-  /** Whether a registered-but-uncatalogued provider type is actually rendering below —
-   *  computed once, by `EssentialsStep`, from the same `/api/model-provider-types` read
-   *  `InstalledProviderTypes` renders from. */
-  hasManualRoute: boolean
-}) {
+ *  and point at a route that exists: `InstalledProviderTypes` while picking (only when
+ *  `hasManualRoute` says it renders), and Settings → Providers once chat is ready. */
+function LocalModelOnRamp({ role }: { role: OnRampRole }) {
   const { data: detection } = useQuery('onboarding:local-model', () => api.detectLocalModel())
   const [scanState, setScanState] = useState<'idle' | 'scanning' | 'done'>('idle')
   const [discovered, setDiscovered] = useState<LocalModelEndpoint[]>([])
   const [scanError, setScanError] = useState('')
   const [binding, setBinding] = useState('')   // endpoint currently binding
   const [bindError, setBindError] = useState('')
+  /** What this session added, by endpoint: the instance name, and the model it serves. */
+  const [added, setAdded] = useState<Record<string, { provider: string; model: string }>>({})
+  const also = role.kind === 'also'
 
   const localhost: LocalModelEndpoint | null =
     detection?.detected && detection.endpoint && detection.model
-      ? { endpoint: detection.endpoint, model: detection.model }
+      ? { endpoint: detection.endpoint, model: detection.model, provider: detection.provider }
       : null
 
   const scan = async () => {
@@ -1003,52 +1027,74 @@ function LocalModelOnRamp({ onBound, hasManualRoute }: {
   const bind = async (ep: LocalModelEndpoint) => {
     setBinding(ep.endpoint); setBindError('')
     try {
-      const r = await api.bindLocalModel(ep.endpoint)
-      // The bind wrote the chat ref; which model that is comes back from the verification's
-      // read of `active_models.json`, never from this response — see `VerifyChatModel`.
-      if (r.ok) { onBound(); return }
-      setBinding(''); setBindError('That local model could not be bound.')
+      const r = await api.bindLocalModel(ep.endpoint, !also)
+      if (!r.ok) {
+        setBinding(''); setBindError('That local model could not be set up.'); return
+      }
+      if (role.kind === 'chat') {
+        // The bind wrote the chat ref; which model that is comes back from the verification's
+        // read of `active_models.json`, never from this response — see `VerifyChatModel`.
+        role.onBound(); return
+      }
+      setBinding('')
+      setAdded((m) => ({ ...m, [ep.endpoint]: { provider: r.provider, model: r.model || ep.model } }))
+      // The server now says this endpoint is set up (every mounted reader re-reads it), and
+      // Settings → Providers lists it.
+      invalidateKeys('onboarding:local-model')
+      invalidateKeys('settings:remote-model-providers')
     } catch (e) {
-      setBinding(''); setBindError(thrownMessage(e) || 'That local model could not be bound.')
+      setBinding(''); setBindError(thrownMessage(e) || 'That local model could not be set up.')
     }
   }
 
   // The localhost endpoint can also turn up in a scan; show it once, at the top.
   const lan = discovered.filter((e) => e.endpoint !== localhost?.endpoint)
+  const setUpAs = (ep: LocalModelEndpoint) => added[ep.endpoint]?.provider || ep.provider || ''
 
   // #3529 — discovery's outcome must never be silent, whichever of its two checks ran.
   // Before this, a missed LOOPBACK probe said nothing at all (the block looked simply
   // unfinished until "Scan my local network" was clicked, with no hint the automatic
   // check had already run and missed), and a missed LAN SCAN said only that nothing was
   // found, naming no next step — a spinner that ends in an unchanged card is the same dead
-  // end #3529 already named, wearing a different hat. `pointer` is appended only when
-  // `hasManualRoute` says the fallback below is real.
-  const pointer = hasManualRoute ? ' Enter its address directly below.' : ''
+  // end #3529 already named, wearing a different hat. `pointer` names only a route that exists.
+  const pointer = role.kind === 'also'
+    ? ' You can add one by its address in Settings → Providers.'
+    : role.hasManualRoute ? ' Enter its address directly below.' : ''
   let notFound: string | null = null
   if (scanState === 'done' && !scanError && lan.length === 0 && !localhost) {
     notFound = `No local model found on your network.${pointer}`
   } else if (scanState === 'idle' && detection !== undefined && !localhost) {
     notFound = `Nothing found on this machine yet.${pointer}`
   }
+  const keeps = role.kind === 'also' && role.chatModel ? role.chatModel : 'the model it uses now'
+  const justAdded = Object.entries(added)
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-outline-variant bg-surface p-3">
       <div className="flex items-baseline gap-2">
         <Cpu size={14} className="shrink-0 translate-y-0.5 text-primary" aria-hidden="true" />
-        <span className="text-on-surface" data-type="body-s">Run a local model — no API key</span>
+        <span className="text-on-surface" data-type="body-s">
+          {also ? 'Also add a local model — no API key' : 'Run a local model — no API key'}
+        </span>
       </div>
       <p className="text-on-surface-low" data-type="caption">
-        If you run Ollama on this machine or your network, PersonalClaw can use it with no
-        key and nothing leaving your machine.
+        {also
+          ? `Add the Ollama on this machine or your network as one more provider. Chat keeps using ${keeps}.`
+          : 'If you run Ollama on this machine or your network, PersonalClaw can use it with no key and nothing leaving your machine.'}
       </p>
       {notFound && <p className="text-on-surface-low" data-type="caption">{notFound}</p>}
       {bindError && <div className="text-danger" data-type="body-s" role="alert">{bindError}</div>}
+      {justAdded.map(([endpoint, a]) => (
+        <p key={endpoint} role="status" className="text-on-surface" data-type="body-s">
+          Added {a.provider}. To chat with {a.model}, add it to Chat in Settings → Models.
+        </p>
+      ))}
       {localhost && (
-        <LocalModelCard ep={localhost} where="on this machine"
+        <LocalModelCard ep={localhost} where="on this machine" also={also} setUpAs={setUpAs(localhost)}
           busy={binding === localhost.endpoint} onUse={() => bind(localhost)} />
       )}
       {lan.map((e) => (
-        <LocalModelCard key={e.endpoint} ep={e} where="on your network"
+        <LocalModelCard key={e.endpoint} ep={e} where="on your network" also={also} setUpAs={setUpAs(e)}
           busy={binding === e.endpoint} onUse={() => bind(e)} />
       ))}
       <div className="flex items-center gap-2">
@@ -1063,21 +1109,34 @@ function LocalModelOnRamp({ onBound, hasManualRoute }: {
   )
 }
 
-/** One reachable local endpoint, with a single "Use it" action. The bind is
- *  credential-free, and the card says so — the whole point is that no key is asked for. */
-function LocalModelCard({ ep, where, busy, onUse }: {
-  ep: LocalModelEndpoint; where: string; busy: boolean; onUse: () => void
+/** One reachable local endpoint, with a single action. The setup is credential-free, and the card
+ *  says so — the whole point is that no key is asked for. While picking, the action makes it the
+ *  chat model ("Use this model"); once chat is ready it adds it ("Add this model"), and an endpoint
+ *  already set up as a provider (`setUpAs`) offers nothing and says which instance it is. */
+function LocalModelCard({ ep, where, also, setUpAs, busy, onUse }: {
+  ep: LocalModelEndpoint; where: string; also: boolean; setUpAs: string; busy: boolean; onUse: () => void
 }) {
+  const settled = also && !!setUpAs
   return (
     <div className="flex items-center gap-2 rounded-lg bg-surface-high p-3">
       <Cpu size={15} aria-hidden="true" className="shrink-0 text-primary" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-on-surface" data-type="body-s">{ep.model}</div>
-        <div className="truncate text-on-surface-low" data-type="caption">Ollama {where} · {ep.endpoint} · no API key</div>
+        <div className="truncate text-on-surface-low" data-type="caption">
+          Ollama {where} · {ep.endpoint} · {settled ? `added as ${setUpAs}` : 'no API key'}
+        </div>
       </div>
-      <Button variant="primary" size="sm" loading={busy} onClick={onUse}>
-        <Check size={14} aria-hidden="true" /> Use this model
-      </Button>
+      {settled ? (
+        <span data-type="caption" className="inline-flex shrink-0 items-center gap-xs" style={{ color: 'var(--color-success)' }}>
+          <Check size={13} aria-hidden="true" /> Added
+        </span>
+      ) : (
+        <Button variant={also ? 'secondary' : 'primary'} size="sm" loading={busy} onClick={onUse}>
+          {also
+            ? <><Plus size={14} aria-hidden="true" /> Add this model</>
+            : <><Check size={14} aria-hidden="true" /> Use this model</>}
+        </Button>
+      )}
     </div>
   )
 }

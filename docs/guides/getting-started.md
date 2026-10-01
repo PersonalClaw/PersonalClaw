@@ -138,11 +138,19 @@ provider setup.
 
 **Already running [Ollama](https://ollama.com)?** The first-run **essentials**
 step detects a local Ollama automatically and offers a one-click bind with **no
-API key** — skip straight to [§4](#4-first-chat). If your Ollama runs on another
-machine on your network, press **"Scan my local network"** on the same step: it
-sweeps only your own private (RFC-1918) subnet for an Ollama, is time-bounded, and
-never runs until you press it. Nothing scans your network on first boot, and no
-credential is stored either way. Otherwise, configure a provider below.
+API key** — skip straight to [§4](#4-first-chat). The model it proposes is one the
+server says calls tools, since every chat turn offers the agent its tools. If your
+Ollama runs on another machine on your network, press **"Scan my local network"**
+on the same step: it sweeps only your own private (RFC-1918) subnet for an Ollama,
+is time-bounded, and never runs until you press it. Nothing scans your network on
+first boot, and no credential is stored either way. Otherwise, configure a provider
+below.
+
+**Want a cloud provider and a local one?** Set the cloud provider up first. Once
+its chat model reads Ready, the same lane offers **"Also add a local model"**, with
+the Ollama it found and the same scan. **Add this model** adds it as one more
+provider and changes no binding, so chat keeps the model you picked. To chat with
+the local model too, or to fall back to it, add it to Chat in Settings → Models.
 
 **No account and no Ollama?** In step 3, **Essential apps**, the model lane opens with
 *No account? Start with a small offline model* and a **Download SmolLM2-135M-Instruct

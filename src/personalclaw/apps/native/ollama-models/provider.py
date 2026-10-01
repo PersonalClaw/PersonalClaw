@@ -1319,8 +1319,8 @@ class OllamaCatalog(ModelManager):
     async def list_models(self) -> list[ModelInfo]:
         """List locally-installed models via ``GET /api/tags``. Raises when it cannot.
 
-        A chat model's ``image_modality`` tag follows what Ollama itself reports for it
-        (:meth:`_served_capabilities`), not only what its name suggests.
+        A chat model's ``image_modality`` and ``tools`` tags follow what Ollama itself reports
+        for it (:meth:`_served_capabilities`), not only what its name suggests.
         """
         data = await self._tags()
         names = [str(m.get("name", "")) for m in data.get("models", []) if m.get("name")]
@@ -1338,9 +1338,7 @@ class OllamaCatalog(ModelManager):
                 ModelInfo(
                     id=name,
                     name=name,
-                    capabilities=_with_served_vision(
-                        infer_capabilities(name, families), served.get(name)
-                    ),
+                    capabilities=_with_served(infer_capabilities(name, families), served.get(name)),
                     size=size or None,
                     extra={
                         k: v
@@ -1363,6 +1361,7 @@ class OllamaCatalog(ModelManager):
         The vendor's record of what a model serves: ``vision`` is on ``gemma4:12b`` and
         ``qwen2.5vl:7b``, whose names carry no marker the id classifier knows, so without this
         the platform recorded both as text-only and a chat on them was never shown an image.
+        ``tools`` is on ``gemma4:12b`` and not on ``qwen2.5vl:7b``, which no name says either.
         Asked concurrently, and fail-soft per model: a model whose show call fails is left out
         of the map and keeps the tags its id implies.
         """
@@ -1584,17 +1583,21 @@ class OllamaCatalog(ModelManager):
         return ModelInfo(id=model, name=model, capabilities=[], extra=extra)
 
 
-def _with_served_vision(inferred: list[str], served: list[str] | None) -> list[str]:
-    """``inferred`` tags with ``image_modality`` set by what Ollama reports the model serves.
+def _with_served(inferred: list[str], served: list[str] | None) -> list[str]:
+    """``inferred`` tags with what Ollama reports the model serves stacked on a chat model.
 
-    Only a CHAT model's image tag moves: a media model's single tag is left alone. With no
-    report (``None``, or an empty list from an older Ollama) the id's inference stands.
+    ``vision`` sets ``image_modality``, and ``tools`` sets ``tools``: the model calls the tools
+    a chat turn offers it. Only a CHAT model's tags move: a media model's single tag is left
+    alone. With no report (``None``, or an empty list from an older Ollama) the id's inference
+    stands.
     """
     if not served or "chat" not in inferred:
         return inferred
-    tags = [t for t in inferred if t != "image_modality"]
+    tags = [t for t in inferred if t not in ("image_modality", "tools")]
     if "vision" in served:
         tags.append("image_modality")
+    if "tools" in served:
+        tags.append("tools")
     return tags
 
 

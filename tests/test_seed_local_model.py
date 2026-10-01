@@ -313,6 +313,67 @@ def test_installs_the_provider_app_from_a_local_source(
     assert (seeded_home / "apps" / slm.PROVIDER_APP / "installed.json").is_file()
 
 
+# ── adding it beside a provider already chosen ──────────────────────────────
+
+
+def _chose_a_cloud_provider_first(home: Path) -> dict[str, list[str]]:
+    """The home a first run leaves once a cloud provider is set up and its chat model chosen."""
+    cfg_path = home / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["providers"] = [{"name": "bedrock", "type": "bedrock", "options": {"region": "us-west-2"}}]
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    chosen = {"chat": ["bedrock:global.anthropic.claude-sonnet-5-5"]}
+    (home / "active_models.json").write_text(json.dumps(chosen), encoding="utf-8")
+    return chosen
+
+
+def test_adding_it_appends_a_second_instance_and_rebinds_nothing(
+    seeded_home: Path, ollama_stub: str
+) -> None:
+    """🔴 Red before: the only way in was the bind, which made it the chat model and the
+    embedding model — replacing the cloud provider the user had just chosen."""
+    _install_stub_provider_app(seeded_home)
+    chosen = _chose_a_cloud_provider_first(seeded_home)
+
+    result = slm.add_local_model(endpoint=ollama_stub)
+
+    assert result.status == slm.ADDED, result.detail
+    assert result.ok
+    assert result.wrote == ["config.json"]
+    cfg = json.loads((seeded_home / "config.json").read_text(encoding="utf-8"))
+    assert [p["name"] for p in cfg["providers"]] == ["bedrock", slm.PROVIDER_ENTRY_NAME]
+    added = cfg["providers"][1]
+    assert added["options"]["endpoint"] == ollama_stub
+    # Its own defaults are what the endpoint offers, so binding it later starts from them.
+    assert added["model"] == "demo-chat:8b"
+    assert added["options"]["embedding_model"] == "nomic-text:v1"
+    assert "credential" not in added
+    active = json.loads((seeded_home / "active_models.json").read_text(encoding="utf-8"))
+    assert active == chosen
+    assert slm.instance_at(ollama_stub) == slm.PROVIDER_ENTRY_NAME
+
+    again = slm.add_local_model(endpoint=ollama_stub)
+    assert again.status == slm.ALREADY_BOUND and again.ok and again.wrote == []
+
+
+def test_an_endpoint_the_name_already_points_elsewhere_is_refused_in_words(
+    seeded_home: Path, ollama_stub: str, closed_port: str
+) -> None:
+    """🔴 Red before: a second endpoint read "already bound" — ok — while nothing was set up for
+    it, so a step would have said it was added. The entry keeps its endpoint and says so."""
+    _install_stub_provider_app(seeded_home)
+    assert slm.bind_local_model(endpoint=ollama_stub).status == slm.BOUND
+    before = _tree(seeded_home)
+
+    for verb in (slm.add_local_model, slm.bind_local_model):
+        result = verb(endpoint=closed_port)
+        assert result.status == slm.SKIPPED_NAME_TAKEN
+        assert not result.ok
+        assert ollama_stub in result.detail and closed_port in result.detail
+        assert result.wrote == []
+    assert _tree(seeded_home) == before
+
+
 # ── direction 2: NO model is reachable (must degrade, not error) ─────────────
 
 

@@ -209,7 +209,7 @@ says what that means.
   (`ROUTE_AUTHZ` `OwnerOnly` rows; both are `SECURITY_ROUTE_FAMILIES` and
   `READ_DECLARED_FAMILIES`), and so is the onboarding wizard's one-click bind
   (`OWNER_ONLY_API_PATHS["/api/onboarding/local-model/bind"]`), which adds a model provider
-  and moves your chats onto it. The rest of the first-run setup (`/api/onboarding`) is a
+  and can move your chats onto it. The rest of the first-run setup (`/api/onboarding`) is a
   family of its own, owner-only the same way, reads included: its status read and model
   check name your chat binding, its local-model probe and LAN sweep have the gateway look
   for model servers on your machine and network, and its state is your setup's progress.

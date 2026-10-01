@@ -166,7 +166,7 @@ or clear your Hugging Face token, download, install, delete or unload a model, o
 what you stored. It may not read them either: your providers, your bindings, your routing
 table and your usage are yours. The onboarding wizard's one-click bind of a local model
 (`/api/onboarding/local-model/bind`) is refused for the same reason: it adds a model provider
-and moves your chats onto it. The rest of your first-run setup (`/api/onboarding`) is yours too.
+and can move your chats onto it. The rest of your first-run setup (`/api/onboarding`) is yours too.
 An app may not read it, since it names the model your chats are bound to, move its progress, or
 have the gateway look for model servers on this machine or sweep your network for them.
 

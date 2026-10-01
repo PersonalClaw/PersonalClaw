@@ -17,7 +17,10 @@ SDK on this path:
   before a single connection is opened, so a public host is never contacted.
 
 Both modes surface an endpoint ONLY after a live ``/api/tags`` response that
-contained a chat-capable model — a discovered card is never shown on a guess.
+contained a chat-capable model — a discovered card is never shown on a guess. The model
+proposed is the one the provider app's own description says suits chat
+(:func:`personalclaw.seed_local_model.pick_model`), and an endpoint already set up as a
+provider instance says which one, so a step that offers to add it can say it is added.
 
 No credential is read or written anywhere here; binding a discovered endpoint is
 :func:`personalclaw.seed_local_model.bind_local_model`, whose credential-free
@@ -33,7 +36,7 @@ import socket
 from dataclasses import dataclass
 from typing import Callable
 
-from personalclaw.seed_local_model import DEFAULT_ENDPOINT
+from personalclaw.seed_local_model import DEFAULT_ENDPOINT, DESCRIBE_BUDGET_SECS
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,9 @@ SCAN_BUDGET_SECS = 3.0
 #: Per-host connect/read budget. A LAN round-trip is sub-millisecond; a host with
 #: nothing on the port refuses instantly, and a firewalled one is cut at this wall.
 SCAN_PROBE_TIMEOUT_SECS = 0.3
+#: How long a host that answered may take to say what its models do. Inside the sweep's own
+#: budget, so a slow answer falls back to what the model ids suggest rather than losing the host.
+SCAN_DESCRIBE_BUDGET_SECS = 1.5
 #: Never probe more than one ``/24`` worth of hosts, whatever the interface mask is —
 #: a bound on how much of the network a single opt-in click may touch.
 SCAN_MAX_HOSTS = 256
@@ -53,31 +59,49 @@ SCAN_MAX_WORKERS = 64
 
 @dataclass(frozen=True)
 class DetectedEndpoint:
-    """A reachable Ollama endpoint and the chat model it will bind to."""
+    """A reachable Ollama endpoint and the chat model it will bind to.
+
+    ``provider`` names the provider instance already set up at this endpoint, or is ``""``.
+    """
 
     endpoint: str
     model: str
+    provider: str = ""
 
     def to_dict(self) -> dict[str, str]:
-        return {"endpoint": self.endpoint, "model": self.model}
+        out = {"endpoint": self.endpoint, "model": self.model}
+        if self.provider:
+            out["provider"] = self.provider
+        return out
 
 
-def _probe_chat(endpoint: str, *, timeout: float) -> str | None:
-    """Return a chat-capable model id at ``endpoint``, or None.
+def _probe_chat(
+    endpoint: str, *, timeout: float, describe_budget: float = DESCRIBE_BUDGET_SECS
+) -> str | None:
+    """Return the chat model to propose at ``endpoint``, or None.
 
-    Reuses the exact ``/api/tags`` probe and capability inference the seed path
-    ships, so localhost detection, the LAN scan and ``--seed-local-model`` all agree
-    on "is this a bindable chat endpoint" from one implementation.
+    The same listing and the same pick the bind uses
+    (:func:`personalclaw.seed_local_model.endpoint_models` and ``pick_model``), so the model a
+    card proposes is the model its "Use this model" binds, and localhost detection, the LAN scan
+    and ``--seed-local-model`` agree on "is this a bindable chat endpoint" from one
+    implementation.
     """
     from personalclaw import seed_local_model
 
-    models = seed_local_model._probe_models(
-        endpoint, timeout=timeout
-    )  # noqa: SLF001 — same subsystem: ONE /api/tags probe
+    models = seed_local_model.endpoint_models(
+        endpoint, timeout=timeout, describe_budget=describe_budget
+    )
     if not models:
         return None
-    model = seed_local_model._pick(models, "chat")  # noqa: SLF001 — shared capability inference
-    return model or None
+    return seed_local_model.pick_model(models, "chat") or None
+
+
+def _set_up_as(found: DetectedEndpoint) -> DetectedEndpoint:
+    """``found``, naming the provider instance already at its endpoint, if there is one."""
+    from personalclaw.seed_local_model import instance_at
+
+    name = instance_at(found.endpoint)
+    return DetectedEndpoint(found.endpoint, found.model, name) if name else found
 
 
 def detect_localhost(
@@ -95,7 +119,7 @@ def detect_localhost(
     model = _probe_chat(endpoint, timeout=timeout)
     if not model:
         return None
-    return DetectedEndpoint(endpoint=endpoint, model=model)
+    return _set_up_as(DetectedEndpoint(endpoint=endpoint, model=model))
 
 
 def _local_private_ipv4s() -> list[str]:
@@ -189,7 +213,9 @@ def scan_local_network(
     if prober is None:
 
         def prober(endpoint: str) -> str | None:  # noqa: F811 — the injectable default
-            return _probe_chat(endpoint, timeout=probe_timeout)
+            return _probe_chat(
+                endpoint, timeout=probe_timeout, describe_budget=SCAN_DESCRIBE_BUDGET_SECS
+            )
 
     endpoints = {h: f"http://{h}:{port}" for h in hosts}
     found: list[DetectedEndpoint] = []
@@ -214,4 +240,4 @@ def scan_local_network(
         executor.shutdown(wait=False, cancel_futures=True)
     # Deterministic order regardless of which probe finished first.
     found.sort(key=lambda d: d.endpoint)
-    return found
+    return [_set_up_as(d) for d in found]

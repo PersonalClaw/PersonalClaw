@@ -20,6 +20,8 @@ vi.mock('../../lib/api', () => ({
     themes: () => new Promise(() => {}),
     theme: () => new Promise(() => {}),
     personalclawConfig: () => new Promise(() => {}),
+    // The recap's model-providers line: none set up, so it says nothing.
+    modelProviders: () => Promise.resolve([]),
   },
 }))
 vi.mock('../identity', async (orig) => {

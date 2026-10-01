@@ -607,7 +607,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/onboarding/import/job` — the running or last import, and its report once finished.
 - `GET /api/onboarding/import/stream` — ``status`` frames: the reading pass and the import.
 - `GET /api/onboarding/local-model` — is a local Ollama reachable on localhost?
-- `POST /api/onboarding/local-model/bind` — credential-free bind of an endpoint.
+- `POST /api/onboarding/local-model/bind` — credential-free setup of an endpoint.
 - `POST /api/onboarding/local-model/scan` — opt-in LAN sweep for an Ollama.
 - `GET /api/onboarding/model-check` — did a chat provider actually build?
 - `POST /api/onboarding/state` — Record first-run progress — a partial merge into the onboarding entity state.

@@ -45,6 +45,8 @@ vi.mock('../lib/api', () => ({
     // The done screen's autonomy pointer reads the config for the auto-update switch; kept
     // PENDING for the same reason — the disclosure copy renders, the control stays withheld.
     personalclawConfig: () => new Promise(() => {}),
+    // The recap's model-providers line: none set up, so it says nothing.
+    modelProviders: () => Promise.resolve([]),
     theme: () => new Promise(() => {}),
   },
 }))

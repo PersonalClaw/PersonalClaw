@@ -19,6 +19,8 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 const saveOnboardingState = vi.fn()
 const onboarding = vi.fn()
 const setName = vi.fn()
+// The recap's providers line reads the list Settings → Providers shows.
+const modelProviders = vi.fn()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -29,6 +31,7 @@ vi.mock('../../lib/api', () => ({
     // The autonomy pointer's config read — PENDING here so its switch stays withheld;
     // `autonomyDisclosure.test.tsx` owns that pointer's behaviour with a resolved read.
     personalclawConfig: () => new Promise(() => {}),
+    modelProviders: () => modelProviders(),
   },
 }))
 vi.mock('../identity', async (orig) => {
@@ -89,6 +92,7 @@ beforeEach(() => {
   clearOnboardingExit()
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
   onboarding.mockResolvedValue({ needs_model: true, has_model_provider: false, has_chat_binding: false })
+  modelProviders.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -157,5 +161,26 @@ describe('the done screen unlock switch is the ONE nav-disclosure setting', () =
     expect(screen.getByText(/joins it the first time you open one/)).toBeTruthy()
     fireEvent.click(screen.getByRole('switch', { name: 'Show every surface' }))
     expect(screen.getByText(/every destination from the start/)).toBeTruthy()
+  })
+})
+
+describe('the recap names every model provider set up, not only the one chat uses', () => {
+  it('lists a local model added beside the cloud provider', async () => {
+    // 🔴 Red before: the recap said only "Chat model: …", so a provider added in step 3 beside the
+    // one chat uses was set up and never mentioned.
+    modelProviders.mockResolvedValue([{ name: 'bedrock' }, { name: 'Local Ollama' }])
+    await reachDoneScreen()
+    expect(await screen.findByText('Model providers: bedrock, Local Ollama')).toBeTruthy()
+  })
+
+  it.each([
+    ['none is set up', () => modelProviders.mockResolvedValue([])],
+    ['the list cannot be read', () => modelProviders.mockRejectedValue(new Error('gateway unreachable'))],
+  ])('says nothing about providers when %s', async (_why, arrange) => {
+    arrange()
+    await reachDoneScreen()
+    await waitFor(() => expect(modelProviders).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByText(/^Model provider/)).toBeNull())
+    expect(screen.getByText('Chat model — set up later in Settings')).toBeTruthy()
   })
 })

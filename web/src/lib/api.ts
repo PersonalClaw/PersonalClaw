@@ -5752,12 +5752,15 @@ export type OnboardingModelCheck =
   | { ok: true; source: 'binding' | 'fallback'; bound: string[]; floor?: boolean; provider?: string }
   | { ok: false; code: string; what: string; why: string; fix: string }
 /** A reachable local Ollama endpoint and the chat model it will bind to.
- *  Surfaced ONLY after a live `/api/tags` response, so a card is never shown on a guess. */
-export interface LocalModelEndpoint { endpoint: string; model: string }
-/** `GET /api/onboarding/local-model` — localhost detection. `endpoint`/`model` are
- *  present only when `detected` is true. */
-export interface LocalModelDetection { detected: boolean; endpoint?: string; model?: string }
-/** `POST /api/onboarding/local-model/bind` — the credential-free bind outcome. */
+ *  Surfaced ONLY after a live `/api/tags` response, so a card is never shown on a guess.
+ *  `provider` names the provider instance already set up at this endpoint, when there is one. */
+export interface LocalModelEndpoint { endpoint: string; model: string; provider?: string }
+/** `GET /api/onboarding/local-model` — localhost detection. `endpoint`/`model` (and `provider`,
+ *  the instance already set up there) are present only when `detected` is true. */
+export interface LocalModelDetection { detected: boolean; endpoint?: string; model?: string; provider?: string }
+/** `POST /api/onboarding/local-model/bind` — the credential-free setup's outcome. `status` is
+ *  `bound` (it is the chat model now), `added` (one more provider; nothing rebound) or
+ *  `already_bound` (that instance was there already). `provider` is the instance's name. */
 export interface LocalModelBindResult { ok: boolean; status: string; model: string; provider: string }
 /** What importing ONE item would do right now, read off the destination before anything is
  *  written — by the same planner the import then consults, so the state shown is the state
@@ -7972,10 +7975,11 @@ export const api = {
   /** The OPT-IN LAN sweep. Calling this IS the explicit user action; nothing
    *  scans the network until it fires. Returns only endpoints that answered live. */
   scanLocalModels: () => post<{ endpoints: LocalModelEndpoint[] }>('/api/onboarding/local-model/scan', {}),
-  /** One-click, credential-free bind of a discovered endpoint (mirrors
-   *  `--seed-local-model`: no API key, nothing written to `config.json` as a secret). */
-  bindLocalModel: (endpoint: string) =>
-    post<LocalModelBindResult>('/api/onboarding/local-model/bind', { endpoint }),
+  /** One-click, credential-free setup of a discovered endpoint (mirrors `--seed-local-model`: no
+   *  API key, nothing written to `config.json` as a secret). `bindChat` makes its model the chat
+   *  model; without it the endpoint is added beside the provider already chosen, rebinding nothing. */
+  bindLocalModel: (endpoint: string, bindChat: boolean) =>
+    post<LocalModelBindResult>('/api/onboarding/local-model/bind', { endpoint, bind_chat: bindChat }),
   chatModels: () => get<ChatModelOption[]>('/api/models/chat'),
   // Replaces the use case's WHOLE chain, so it names the revision of the chain it was built from
   // (`activeChains`); a chain another tab, onboarding or a provider's removal changed since is

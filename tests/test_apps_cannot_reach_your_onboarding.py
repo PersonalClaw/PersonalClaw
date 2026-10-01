@@ -54,7 +54,7 @@ ONBOARDING_ROUTES: list[tuple[str, str, Any]] = [
     ("GET", "/api/onboarding/model-check", None),
     ("GET", "/api/onboarding/local-model", None),
     ("POST", "/api/onboarding/local-model/scan", None),
-    ("POST", BIND, {"endpoint": "http://127.0.0.1:11434"}),
+    ("POST", BIND, {"endpoint": "http://127.0.0.1:11434", "bind_chat": True}),
     ("GET", "/api/onboarding/import", None),
     ("POST", "/api/onboarding/import", {"items": []}),
     ("GET", "/api/onboarding/import/job", None),

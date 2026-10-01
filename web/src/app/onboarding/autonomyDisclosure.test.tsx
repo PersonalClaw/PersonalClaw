@@ -33,6 +33,8 @@ vi.mock('../../lib/api', () => ({
     saveOnboardingState: (...a: unknown[]) => saveOnboardingState(...a),
     onboarding: () => onboarding(),
     personalclawConfig: () => personalclawConfig(),
+    // The recap's model-providers line: none set up, so it says nothing.
+    modelProviders: () => Promise.resolve([]),
     setAutoUpdate: (...a: unknown[]) => setAutoUpdate(...a),
     themes: () => new Promise(() => {}),
     theme: () => new Promise(() => {}),

@@ -965,6 +965,17 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
    *  pointer offers the Settings path instead of a switch claiming a state it cannot
    *  know — a control showing a guessed value is worse than none. */
   const [autonomy, setAutonomy] = useState<{ autoUpdate: boolean; registrySeeded: boolean } | 'failed' | null>(null)
+  /** The model providers set up, read live when the recap opens (`GET /api/model-providers`, the
+   *  list Settings → Providers shows), so a provider added beside the chat model in step 3 is in
+   *  the recap too. `null` while the read is out; `'failed'` when it could not be read. */
+  const [providers, setProviders] = useState<string[] | 'failed' | null>(null)
+  useEffect(() => {
+    let alive = true
+    api.modelProviders()
+      .then((ps) => { if (alive) setProviders(ps.map((p) => p.name)) })
+      .catch(() => { if (alive) setProviders('failed') })
+    return () => { alive = false }
+  }, [])
   useEffect(() => {
     let alive = true
     api.personalclawConfig().then((c) => {
@@ -1016,6 +1027,16 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
           : modelUnknown
             ? <Recap ok={null} label="Chat model — couldn't read whether one is set up" />
             : <Recap ok={chatReady} label={chatReady ? `Chat model: ${model?.summary}` : 'Chat model — set up later in Settings'} />}</motion.div>
+        {/* Every provider set up, not only the one chat uses: a local model added beside a cloud one
+            is set up too. No line when there is none — the chat-model line already says so — or
+            when the list could not be read, since this line is the detail, not the verdict. */}
+        {providers === null
+          ? <motion.div variants={listItemEnter}><Recap ok={null} label="Model providers" /></motion.div>
+          : providers !== 'failed' && providers.length > 0 && (
+            <motion.div variants={listItemEnter}>
+              <Recap ok label={`Model provider${providers.length > 1 ? 's' : ''}: ${providers.join(', ')}`} />
+            </motion.div>
+          )}
         <motion.div variants={listItemEnter}>{unread(triedRec)
           ? <Recap ok={null} label="First success" />
           : unknown(triedRec)

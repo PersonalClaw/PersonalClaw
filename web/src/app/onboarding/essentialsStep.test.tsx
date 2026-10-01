@@ -989,7 +989,7 @@ describe('Local + LAN Ollama zero-key on-ramp', () => {
     expect(screen.getAllByText(/no API key/i).length).toBeGreaterThan(0)
     await act(async () => { fireEvent.click(use) })
     // The bind rode the credential-free seed path — never the keyed provider-create path.
-    await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://localhost:11434'))
+    await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://localhost:11434', true))
     expect(createModelProvider).not.toHaveBeenCalled()
     // No key entry was ever shown on this path.
     expect(screen.queryByRole('button', { name: /Save and test/ })).toBeNull()
@@ -1021,7 +1021,7 @@ describe('Local + LAN Ollama zero-key on-ramp', () => {
     const use = await screen.findByRole('button', { name: /Use this model/ })
     expect(screen.getByText(/192\.168\.1\.50/)).toBeTruthy()
     await act(async () => { fireEvent.click(use) })
-    await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://192.168.1.50:11434'))
+    await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://192.168.1.50:11434', true))
     expect(createModelProvider).not.toHaveBeenCalled()
     await waitFor(() => expect(onProgress).toHaveBeenCalledWith({ essentials: { model: 'ollama-models' } }))
   })
@@ -1036,6 +1036,91 @@ describe('Local + LAN Ollama zero-key on-ramp', () => {
     // A failed bind does NOT mark the lane resolved.
     const cont = screen.getByRole('button', { name: /Continue/ })
     expect(cont.hasAttribute('disabled') || cont.getAttribute('aria-disabled') === 'true').toBe(true)
+  })
+})
+
+// ── Once chat is ready, a local model can still be added beside it ─────────────
+//
+// The lane used to drop the local-model on-ramp the moment it left 'pick', so a user who set up a
+// cloud provider first could not add the Ollama on her own machine during setup — no "add
+// another", and a reload did not bring it back. Once chat is ready it is offered as ONE MORE
+// provider: adding it appends an instance and rebinds nothing, so the chat model just verified
+// stays the chat model. An endpoint already set up says so, from the server's answer.
+
+describe('once chat is ready, a local model can still be added beside it', () => {
+  const READY = { needs_model: false, has_model_provider: true, has_chat_binding: true }
+  const CHAT = 'global.anthropic.claude-sonnet-5-5'
+  const LOCALHOST = { endpoint: 'http://localhost:11434', model: 'gemma4:12b' }
+  const LAN = { endpoint: 'http://192.168.1.50:11434', model: 'gemma4:12b' }
+
+  beforeEach(() => {
+    onboardingModelCheck.mockResolvedValue({ ok: true, source: 'binding', bound: [`bedrock:${CHAT}`] })
+    bindLocalModel.mockResolvedValue({ ok: true, status: 'added', model: 'gemma4:12b', provider: 'Local Ollama' })
+  })
+
+  it('offers the local model as one more provider, and adding it leaves chat as it was', async () => {
+    detectLocalModel.mockResolvedValue({ detected: true, ...LOCALHOST })
+    renderStep({ readiness: READY })
+    expect(await screen.findByText(`Chat model: ${CHAT}`)).toBeTruthy()
+    expect(await screen.findByText('Also add a local model — no API key')).toBeTruthy()
+    expect(screen.getByText(new RegExp(`Chat keeps using ${CHAT.replace(/\./g, '\\.')}`))).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Scan my local network/ })).toBeTruthy()
+
+    // The server answers the next detection with the instance it is now.
+    detectLocalModel.mockResolvedValue({ detected: true, ...LOCALHOST, provider: 'Local Ollama' })
+    const add = screen.getByRole('button', { name: /Add this model/ })
+    await act(async () => { fireEvent.click(add) })
+
+    await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://localhost:11434', false))
+    const said = await screen.findByText('Added Local Ollama. To chat with gemma4:12b, add it to Chat in Settings → Models.')
+    expect(said.getAttribute('role')).toBe('status')
+    expect(await screen.findByText(/added as Local Ollama/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Add this model/ })).toBeNull()
+    // Nothing rebound and nothing re-checked: chat is the model the lane verified.
+    expect(setActiveModel).not.toHaveBeenCalled()
+    expect(onboardingModelCheck).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(`Chat model: ${CHAT}`)).toBeTruthy()
+    const cont = screen.getByRole('button', { name: /Continue/ })
+    expect(cont.hasAttribute('disabled') || cont.getAttribute('aria-disabled') === 'true').toBe(false)
+  })
+
+  it('a reload shows an endpoint already set up as added, and offers nothing to add', async () => {
+    detectLocalModel.mockResolvedValue({ detected: true, ...LOCALHOST, provider: 'Local Ollama' })
+    renderStep({ readiness: READY })
+    expect(await screen.findByText(/added as Local Ollama/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Add this model/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Use this model/ })).toBeNull()
+  })
+
+  it('the scan runs after Ready too, and adds THAT endpoint', async () => {
+    scanLocalModels.mockResolvedValue({ endpoints: [LAN] })
+    renderStep({ readiness: READY })
+    await screen.findByText(`Chat model: ${CHAT}`)
+    const scan = await screen.findByRole('button', { name: /Scan my local network/ })
+    await act(async () => { fireEvent.click(scan) })
+    expect(await screen.findByText(/192\.168\.1\.50/)).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Add this model/ })) })
+    await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://192.168.1.50:11434', false))
+    expect(await screen.findByText(/added as Local Ollama/)).toBeTruthy()
+    expect(setActiveModel).not.toHaveBeenCalled()
+  })
+
+  it('when nothing is found it points at the route that exists then: Settings → Providers', async () => {
+    modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
+    renderStep({ readiness: READY })
+    expect(await screen.findByText('Nothing found on this machine yet. You can add one by its address in Settings → Providers.')).toBeTruthy()
+    // The manual form below is the PICK phase's route; it is not on screen once chat is ready.
+    expect(screen.queryByRole('button', { name: /Configure Ollama/ })).toBeNull()
+  })
+
+  it('a refused add is said in place, and chat stays ready', async () => {
+    detectLocalModel.mockResolvedValue({ detected: true, ...LOCALHOST })
+    bindLocalModel.mockRejectedValue(new ApiError("The provider 'Local Ollama' already uses http://192.168.1.9:11434, so nothing was written for http://localhost:11434.", 400, 'local_model_bind_failed'))
+    renderStep({ readiness: READY })
+    const add = await screen.findByRole('button', { name: /Add this model/ })
+    await act(async () => { fireEvent.click(add) })
+    expect((await screen.findByRole('alert')).textContent).toContain('already uses http://192.168.1.9:11434')
+    expect(screen.getByText(`Chat model: ${CHAT}`)).toBeTruthy()
   })
 })
 

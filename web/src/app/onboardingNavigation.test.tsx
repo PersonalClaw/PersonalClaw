@@ -44,6 +44,8 @@ vi.mock('../lib/api', () => ({
     // and "not loaded yet" is a real state for all three.
     themes: () => new Promise(() => {}),
     personalclawConfig: () => new Promise(() => {}),
+    // The recap's model-providers line: none set up, so it says nothing.
+    modelProviders: () => Promise.resolve([]),
     theme: () => new Promise(() => {}),
   },
 }))

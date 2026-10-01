@@ -5,7 +5,7 @@ Three routes under ``/api/onboarding/local-model``, all credential-free:
 ``GET /api/onboarding/local-model``
     Is a local Ollama reachable on ``localhost``? A loopback round-trip, not a scan,
     so the wizard may call it automatically. Answers ``{"detected": bool, endpoint?,
-    model?}``.
+    model?, provider?}`` — ``provider`` names the instance already set up there.
 
 ``POST /api/onboarding/local-model/scan``
     The OPT-IN LAN sweep. It exists as a ``POST`` the wizard fires from an explicit
@@ -16,11 +16,13 @@ Three routes under ``/api/onboarding/local-model``, all credential-free:
     partial/guessed result, and is logged.
 
 ``POST /api/onboarding/local-model/bind``
-    One-click bind of a discovered endpoint. Delegates to
-    :func:`personalclaw.seed_local_model.bind_local_model`, so the credential-free
-    contract (no ``api_key`` in ``config.json``) is the seed path's, not a second
-    copy. The endpoint is re-validated as loopback/RFC-1918 before binding, so the
-    route cannot be driven to bind an arbitrary (public/SSRF) URL.
+    One-click setup of a discovered endpoint, as the chat model (``bind_chat: true``,
+    :func:`personalclaw.seed_local_model.bind_local_model`) or as one more provider beside
+    the one already chosen, binding nothing (``bind_chat: false``, ``add_local_model``).
+    Either way the credential-free contract (no ``api_key`` in ``config.json``) is the seed
+    path's, not a second copy. The endpoint is re-validated as loopback/RFC-1918 before
+    anything is written, so the route cannot be driven to set up an arbitrary (public/SSRF)
+    URL.
 
 Both discovery calls run their synchronous socket work through
 :func:`asyncio.to_thread` — a first-run probe must not stall the event loop.
@@ -125,16 +127,21 @@ async def api_local_model_scan(request: web.Request) -> web.Response:
 
 
 async def api_local_model_bind(request: web.Request) -> web.Response:
-    """POST /api/onboarding/local-model/bind — credential-free bind of an endpoint.
+    """POST /api/onboarding/local-model/bind — credential-free setup of an endpoint.
 
-    Body: ``{"endpoint": "http://…:11434"}``. Mirrors ``--seed-local-model``: writes
-    the ``providers[]`` entry and the chat binding with NO credential, only after a
-    live re-probe confirms a bindable model. When the endpoint serves an embedding model it
-    binds Embedding too, and that change takes the one path every change of the embedding
-    model takes (``embedding_reindex.reindex_for_binding``).
+    Body: ``{"endpoint": "http://…:11434", "bind_chat": bool}``. ``bind_chat`` is required,
+    because the two answers differ in what they change:
+
+    * ``true`` mirrors ``--seed-local-model``: writes the ``providers[]`` entry and the chat
+      binding with NO credential, only after a live re-probe confirms a bindable model. When
+      the endpoint serves an embedding model it binds Embedding too, and that change takes the
+      one path every change of the embedding model takes
+      (``embedding_reindex.reindex_for_binding``).
+    * ``false`` appends the entry and binds nothing: the provider already chosen stays what
+      every use case uses.
     """
     from personalclaw.embedding_providers.registry import BoundEmbedding
-    from personalclaw.seed_local_model import bind_local_model
+    from personalclaw.seed_local_model import add_local_model, bind_local_model
 
     try:
         body = await request.json()
@@ -142,6 +149,15 @@ async def api_local_model_bind(request: web.Request) -> web.Response:
         return json_error("invalid_json", status=400)
     if not isinstance(body, dict):
         return json_error("invalid_body", status=400)
+    bind_chat = body.get("bind_chat")
+    if not isinstance(bind_chat, bool):
+        return json_error(
+            "invalid_body",
+            message=(
+                'Say whether this model becomes your chat model: "bind_chat" is true or false.'
+            ),
+            status=400,
+        )
     endpoint = str(body.get("endpoint") or "").strip()
     if not _endpoint_is_local(endpoint):
         return json_error(
@@ -154,7 +170,10 @@ async def api_local_model_bind(request: web.Request) -> web.Response:
         )
 
     embedding_before = BoundEmbedding.ref()
-    result = await asyncio.to_thread(bind_local_model, endpoint=endpoint)
+    if bind_chat:
+        result = await asyncio.to_thread(bind_local_model, endpoint=endpoint)
+    else:
+        result = await asyncio.to_thread(add_local_model, endpoint=endpoint)
     if result.ok:
         from personalclaw.llm.registry import sync_entries_from_config
 
@@ -169,7 +188,7 @@ async def api_local_model_bind(request: web.Request) -> web.Response:
             caller=_caller(request),
             operation="onboarding.local_model.bind",
             outcome="ok",
-            resources=result.provider_name,
+            resources=f"{result.provider_name} ({result.status})",
         )
         return web.json_response(
             {

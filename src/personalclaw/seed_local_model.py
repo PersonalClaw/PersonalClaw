@@ -25,8 +25,15 @@ operator then has to diagnose a broken home instead of reading one line of outpu
 No credential is involved anywhere. A local Ollama needs none, which is why it is the
 right provider for a committed demo path — do not extend this to a cloud provider,
 which would.
+
+Two verbs share every precondition. :func:`bind_local_model` makes the endpoint the chat
+model (onboarding's "Use this model", and this seed step). :func:`add_local_model` adds it
+as one more provider beside one already set up and changes no binding, so a cloud provider
+chosen first stays what chat uses.
 """
 
+import asyncio
+import concurrent.futures as cf
 import json
 import logging
 import os
@@ -35,6 +42,10 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from personalclaw.llm.catalog import ModelInfo
 
 logger = logging.getLogger(__name__)
 
@@ -66,19 +77,30 @@ PROVIDER_ENTRY_NAME = "Local Ollama"
 #: seed step must not hang there. Two seconds is well past a loopback round-trip.
 PROBE_TIMEOUT_SECS = 2.0
 
+#: How long the provider app's own model listing may take before the pick falls back to
+#: what the model ids suggest. That listing asks the server about each model, which a
+#: local server answers in well under a second.
+DESCRIBE_BUDGET_SECS = 5.0
+
+#: The capability tag a provider puts on a chat model it says calls tools
+#: (``ModelInfo.capabilities``). Every turn the agent sends offers it tools.
+CALLS_TOOLS = "tools"
+
 #: Request timeout written onto the provider entry. A cold local model has to load
 #: from disk into VRAM before it emits a first token, which on a 12B q4 model is tens
 #: of seconds — the app's own 120s default is the floor for a demo turn that must not
 #: die on the first prompt.
 REQUEST_TIMEOUT_SECS = 300
 
-# Outcome statuses. `bound` is the only one that writes anything.
+# Outcome statuses. `bound` and `added` are the only ones that write anything.
 BOUND = "bound"
+ADDED = "added"
 ALREADY_BOUND = "already_bound"
 SKIPPED_NO_SERVER = "skipped_no_server"
 SKIPPED_NO_MODEL = "skipped_no_model"
 SKIPPED_NO_PROVIDER_APP = "skipped_no_provider_app"
 SKIPPED_CONFIG_UNREADABLE = "skipped_config_unreadable"
+SKIPPED_NAME_TAKEN = "skipped_name_taken"
 
 
 @dataclass
@@ -99,12 +121,12 @@ class BindResult:
 
     @property
     def ok(self) -> bool:
-        """True when a model is bound — including when it already was.
+        """True when the endpoint is a provider now — bound, added, or already there.
 
         A skip is NOT a failure: on a machine with no Ollama the intended outcome is
         "seeded, unbound, and said so", so callers must not treat it as an error.
         """
-        return self.status in (BOUND, ALREADY_BOUND)
+        return self.status in (BOUND, ADDED, ALREADY_BOUND)
 
 
 def _probe_models(endpoint: str, *, timeout: float = PROBE_TIMEOUT_SECS) -> list[dict] | None:
@@ -133,36 +155,106 @@ def _probe_models(endpoint: str, *, timeout: float = PROBE_TIMEOUT_SECS) -> list
     return models if isinstance(models, list) else []
 
 
-def _by_recency(models: list[dict]) -> list[dict]:
-    """Sort tags most-recently-modified first.
+def _described_by_provider(endpoint: str, *, budget: float) -> "list[ModelInfo] | None":
+    """The models ``endpoint`` serves as the provider app itself describes them, or None.
 
-    ``modified_at`` is a documented field of the ``/api/tags`` payload, so ordering on
-    it is stable rather than relying on the server's incidental response order. Recency
-    is the right default because the model an operator last pulled or ran is the one
-    they meant to demo with.
+    The app that registers :data:`PROVIDER_TYPE` registers a catalog for it too, and that
+    catalog reads what each model does from the server's own record of it — whether it reads
+    images, whether it calls tools — where a model's id says neither. Core asks it through the
+    registry's catalog seam and names no wire format of its own here.
+
+    None when no loaded app registers one (a CLI run before the gateway loads its apps), or
+    when its listing fails or runs past ``budget``: what the ids suggest then stands.
     """
-    return sorted(models, key=lambda m: str(m.get("modified_at") or ""), reverse=True)
+    from personalclaw.llm.catalog import ModelInfo
+    from personalclaw.llm.registry import get_default_registry
+
+    factory = get_default_registry().catalog_of(PROVIDER_TYPE)
+    if factory is None:
+        return None
+
+    async def _listing() -> list[ModelInfo]:
+        return await asyncio.wait_for(factory({"endpoint": endpoint}).list_models(), budget)
+
+    try:
+        # A loop of its own on a thread of its own, so a caller on any thread can ask, one
+        # already running a loop included.
+        with cf.ThreadPoolExecutor(max_workers=1) as pool:
+            rows = pool.submit(asyncio.run, _listing()).result()
+    except Exception:  # noqa: BLE001 — the app's description refines the pick, it never gates it
+        logger.debug("the provider's model listing for %s failed", endpoint, exc_info=True)
+        return None
+    described = [row for row in rows if isinstance(row, ModelInfo) and row.id]
+    return described or None
 
 
-def _pick(models: list[dict], want: str) -> str:
-    """Return the newest model id whose inferred capabilities include ``want``.
+def _from_tags(models: list[dict]) -> "list[ModelInfo]":
+    """``/api/tags`` rows as models, each with the capabilities its id and families suggest.
 
     Capability inference is shared with every model app via
     ``llm.catalog.infer_capabilities`` — importing it here is what keeps an embedding
     model from being auto-bound to ``chat`` (and vice versa) by a second, drifting
     copy of the same name heuristics.
     """
-    from personalclaw.llm.catalog import infer_capabilities
+    from personalclaw.llm.catalog import ModelInfo, infer_capabilities
 
-    for m in _by_recency(models):
+    out: list[ModelInfo] = []
+    for m in models:
+        if not isinstance(m, dict):
+            continue
         mid = str(m.get("model") or m.get("name") or "")
         if not mid:
             continue
-        families = (m.get("details") or {}).get("families") if isinstance(m, dict) else None
-        caps = infer_capabilities(mid, families if isinstance(families, list) else None)
-        if want in caps:
-            return mid
-    return ""
+        details = m.get("details")
+        families = details.get("families") if isinstance(details, dict) else None
+        out.append(
+            ModelInfo(
+                id=mid,
+                name=mid,
+                capabilities=infer_capabilities(
+                    mid, families if isinstance(families, list) else None
+                ),
+                extra={"modified_at": str(m.get("modified_at") or "")},
+            )
+        )
+    return out
+
+
+def endpoint_models(
+    endpoint: str,
+    *,
+    timeout: float = PROBE_TIMEOUT_SECS,
+    describe_budget: float = DESCRIBE_BUDGET_SECS,
+) -> "list[ModelInfo] | None":
+    """The models ``endpoint`` serves, each with what it can be bound for; None when unreachable.
+
+    Reachability is the one cheap ``/api/tags`` probe (:func:`_probe_models`). What each model
+    can do is the provider app's description where a loaded app gives one
+    (:func:`_described_by_provider`), else what the ids suggest.
+    """
+    tags = _probe_models(endpoint, timeout=timeout)
+    if tags is None:
+        return None
+    if not tags:
+        return []
+    return _described_by_provider(endpoint, budget=describe_budget) or _from_tags(tags)
+
+
+def pick_model(models: "list[ModelInfo]", want: str) -> str:
+    """The model to bind for ``want``: one whose capabilities include it, newest first.
+
+    For chat, a model its provider says calls tools (:data:`CALLS_TOOLS`) comes before one it
+    does not: every turn the agent sends offers it tools, and a model that cannot call them
+    answers without them. Whether a model also reads images counts neither for it nor against
+    it. Recency is ``modified_at`` where the listing carries it — the
+    model an operator last pulled or ran is the one they meant — so the order never rests on
+    the server's incidental response order.
+    """
+    able = [m for m in models if want in (m.capabilities or [])]
+    able.sort(key=lambda m: str((m.extra or {}).get("modified_at") or ""), reverse=True)
+    if want == "chat":
+        able.sort(key=lambda m: CALLS_TOOLS not in (m.capabilities or []))
+    return able[0].id if able else ""
 
 
 def _installed_provider_app() -> bool:
@@ -216,15 +308,22 @@ def _resolve_app_source(apps_dir: str | None) -> Path | None:
     return None
 
 
-def _has_entry(data: dict, name: str) -> bool:
+def _entry_named(data: dict, name: str) -> dict | None:
     providers = data.get("providers")
-    return isinstance(providers, list) and any(
-        isinstance(p, dict) and p.get("name") == name for p in providers
-    )
+    if not isinstance(providers, list):
+        return None
+    return next((p for p in providers if isinstance(p, dict) and p.get("name") == name), None)
 
 
-def _config_has_entry(name: str) -> bool:
-    """Whether ``config.json`` already names a provider *name*.
+def _entry_endpoint(entry: dict) -> str:
+    """Where an entry of this type sends: its ``endpoint`` option, else the app's default."""
+    options = entry.get("options")
+    endpoint = options.get("endpoint") if isinstance(options, dict) else None
+    return str(endpoint or DEFAULT_ENDPOINT).rstrip("/")
+
+
+def _configured_entry(name: str) -> dict | None:
+    """The ``config.json`` provider entry named *name*, or None.
 
     Raises :class:`~personalclaw.config.loader.ConfigPreserveError` for a file that exists and
     cannot be read: "no entry" would be a guess, and the write that followed it used to replace
@@ -232,7 +331,28 @@ def _config_has_entry(name: str) -> bool:
     """
     from personalclaw.config.loader import config_path, read_config_for_merge
 
-    return _has_entry(read_config_for_merge(config_path()), name)
+    return _entry_named(read_config_for_merge(config_path()), name)
+
+
+def instance_at(endpoint: str) -> str:
+    """The name of the provider instance of this type already at ``endpoint``, or ``""``.
+
+    However it was made — this module's bind or add, or by hand in Settings → Providers — so a
+    discovered endpoint that is already set up is said as set up. ``""`` too when ``config.json``
+    cannot be read: nothing is known, and the add itself refuses such a file in words.
+    """
+    from personalclaw.config.loader import ConfigPreserveError, config_path, read_config_for_merge
+
+    try:
+        data = read_config_for_merge(config_path())
+    except ConfigPreserveError:
+        return ""
+    providers = data.get("providers")
+    want = endpoint.rstrip("/")
+    for p in providers if isinstance(providers, list) else []:
+        if isinstance(p, dict) and p.get("type") == PROVIDER_TYPE and _entry_endpoint(p) == want:
+            return str(p.get("name") or "")
+    return ""
 
 
 def _write_provider_entry(*, endpoint: str, model: str, embedding_model: str) -> None:
@@ -255,7 +375,7 @@ def _write_provider_entry(*, endpoint: str, model: str, embedding_model: str) ->
         options["embedding_model"] = embedding_model
 
     def _append(data: dict) -> None:
-        if _has_entry(data, PROVIDER_ENTRY_NAME):
+        if _entry_named(data, PROVIDER_ENTRY_NAME) is not None:
             return
         providers = data.get("providers")
         if not isinstance(providers, list):
@@ -290,6 +410,144 @@ def _write_active_models(*, model: str, embedding_model: str) -> None:
     save_active_models(active)
 
 
+@dataclass
+class _Plan:
+    """Everything a bind or an add would write, resolved before the first write."""
+
+    endpoint: str
+    chat_model: str
+    embedding_model: str
+    unpulled: bool
+    source: Path | None
+
+
+def _plan(
+    endpoint: str, want_model: str, want_embedding: str, apps_dir: str | None
+) -> "_Plan | BindResult":
+    """Resolve every precondition, or the :class:`BindResult` that says which one failed.
+
+    Writes nothing, which is what makes every skip leave the home untouched.
+    """
+    from personalclaw.config.loader import ConfigPreserveError
+
+    try:
+        existing = _configured_entry(PROVIDER_ENTRY_NAME)
+    except ConfigPreserveError as exc:
+        return BindResult(
+            status=SKIPPED_CONFIG_UNREADABLE,
+            detail=(
+                f"{exc} — nothing was written. Repair config.json (`personalclaw doctor` says "
+                f"what is wrong with it) and re-run."
+            ),
+            endpoint=endpoint,
+        )
+    if existing is not None:
+        there = _entry_endpoint(existing)
+        if there == endpoint.rstrip("/"):
+            return BindResult(
+                status=ALREADY_BOUND,
+                detail=(
+                    f"a provider entry named {PROVIDER_ENTRY_NAME!r} already exists in "
+                    f"config.json — leaving it alone"
+                ),
+                endpoint=endpoint,
+                provider_name=PROVIDER_ENTRY_NAME,
+            )
+        return BindResult(
+            status=SKIPPED_NAME_TAKEN,
+            detail=(
+                f"The provider {PROVIDER_ENTRY_NAME!r} already uses {there}, so nothing was "
+                f"written for {endpoint}. Add it under another name in Settings → Providers."
+            ),
+            endpoint=endpoint,
+        )
+
+    models = endpoint_models(endpoint)
+    if models is None:
+        return BindResult(
+            status=SKIPPED_NO_SERVER,
+            detail=(
+                f"no Ollama answered {endpoint}/api/tags — the home is seeded but no "
+                f"model is bound, so chat, approvals and artifacts stay empty. Start "
+                f"Ollama and re-run, or set ${ENDPOINT_ENV} to a reachable endpoint."
+            ),
+            endpoint=endpoint,
+        )
+
+    chat_model = want_model or pick_model(models, "chat")
+    if not chat_model:
+        return BindResult(
+            status=SKIPPED_NO_MODEL,
+            detail=(
+                f"{endpoint} is reachable but has no chat-capable model pulled — "
+                f"nothing was bound. Pull one (e.g. `ollama pull llama3.2:3b`) and "
+                f"re-run, or name one with ${MODEL_ENV}."
+            ),
+            endpoint=endpoint,
+        )
+
+    source: Path | None = None
+    if not _installed_provider_app():
+        source = _resolve_app_source(apps_dir)
+        if source is None:
+            return BindResult(
+                status=SKIPPED_NO_PROVIDER_APP,
+                detail=(
+                    f"{endpoint} is reachable with model {chat_model!r}, but the "
+                    f"{PROVIDER_APP!r} app is not installed in this home and no local "
+                    f"app source has it. Nothing was written — a providers[] entry "
+                    f"whose type no installed app registers is unbuildable. Install "
+                    f"the Ollama app from the App Store, or point ${APPS_DIR_ENV} at a "
+                    f"checkout of the apps repo."
+                ),
+                endpoint=endpoint,
+                model=chat_model,
+            )
+
+    # A named-but-absent model is still bound: naming it is an explicit instruction,
+    # and Ollama can pull it later. Say so rather than silently binding a dead ref.
+    return _Plan(
+        endpoint=endpoint,
+        chat_model=chat_model,
+        embedding_model=want_embedding or pick_model(models, "embedding"),
+        unpulled=chat_model not in {m.id for m in models},
+        source=source,
+    )
+
+
+def _install_provider_app(plan: _Plan) -> "list[str] | BindResult":
+    """Install the provider app when the plan found it in a local source; what that wrote."""
+    if plan.source is None:
+        return []
+    from personalclaw.apps import app_manager
+    from personalclaw.supply_chain import Verdict
+
+    # `--seed-local-model` is the operator asking for exactly this app, which is consent
+    # to install it — bound to the bytes reviewed here. It is NOT consent to scanner
+    # warnings nobody has read, so a warning still refuses, as it always did.
+    review = app_manager.preview(plan.source, origin="local")
+    if review.scan is not None and review.scan.verdict is Verdict.WARNING:
+        result, why = review, "install needs consent: scanner raised warnings"
+    elif review.consent:
+        result = app_manager.install(
+            plan.source, origin="local", consent=review.consent, caller="seed_local_model"
+        )
+        why = result.error
+    else:
+        result, why = review, review.error
+    if not result.ok:
+        return BindResult(
+            status=SKIPPED_NO_PROVIDER_APP,
+            detail=(
+                f"installing {PROVIDER_APP!r} from {plan.source} failed "
+                f"({why or 'unknown error'}) — nothing was written."
+            ),
+            endpoint=plan.endpoint,
+            model=plan.chat_model,
+        )
+    return [f"apps/{PROVIDER_APP}/"]
+
+
 def bind_local_model(
     *,
     endpoint: str | None = None,
@@ -312,125 +570,67 @@ def bind_local_model(
     want_model = (model or os.environ.get(MODEL_ENV, "")).strip()
     want_embedding = (embedding_model or os.environ.get(EMBEDDING_MODEL_ENV, "")).strip()
 
-    from personalclaw.config.loader import ConfigPreserveError
+    plan = _plan(endpoint, want_model, want_embedding, apps_dir)
+    if isinstance(plan, BindResult):
+        return plan
+    wrote = _install_provider_app(plan)
+    if isinstance(wrote, BindResult):
+        return wrote
 
-    try:
-        already_bound = _config_has_entry(PROVIDER_ENTRY_NAME)
-    except ConfigPreserveError as exc:
-        return BindResult(
-            status=SKIPPED_CONFIG_UNREADABLE,
-            detail=(
-                f"{exc} — nothing was written. Repair config.json (`personalclaw doctor` says "
-                f"what is wrong with it) and re-run."
-            ),
-            endpoint=endpoint,
-        )
-    if already_bound:
-        return BindResult(
-            status=ALREADY_BOUND,
-            detail=(
-                f"a provider entry named {PROVIDER_ENTRY_NAME!r} already exists in "
-                f"config.json — leaving it alone"
-            ),
-            endpoint=endpoint,
-            provider_name=PROVIDER_ENTRY_NAME,
-        )
-
-    models = _probe_models(endpoint)
-    if models is None:
-        return BindResult(
-            status=SKIPPED_NO_SERVER,
-            detail=(
-                f"no Ollama answered {endpoint}/api/tags — the home is seeded but no "
-                f"model is bound, so chat, approvals and artifacts stay empty. Start "
-                f"Ollama and re-run, or set ${ENDPOINT_ENV} to a reachable endpoint."
-            ),
-            endpoint=endpoint,
-        )
-
-    chat_model = want_model or _pick(models, "chat")
-    if not chat_model:
-        return BindResult(
-            status=SKIPPED_NO_MODEL,
-            detail=(
-                f"{endpoint} is reachable but has no chat-capable model pulled — "
-                f"nothing was bound. Pull one (e.g. `ollama pull llama3.2:3b`) and "
-                f"re-run, or name one with ${MODEL_ENV}."
-            ),
-            endpoint=endpoint,
-        )
-    embed_model = want_embedding or _pick(models, "embedding")
-
-    # A named-but-absent model is still bound: naming it is an explicit instruction,
-    # and Ollama can pull it later. Say so rather than silently binding a dead ref.
-    have = {str(m.get("model") or m.get("name") or "") for m in models}
-    unpulled = chat_model not in have
-
-    installed = _installed_provider_app()
-    source: Path | None = None
-    if not installed:
-        source = _resolve_app_source(apps_dir)
-        if source is None:
-            return BindResult(
-                status=SKIPPED_NO_PROVIDER_APP,
-                detail=(
-                    f"{endpoint} is reachable with model {chat_model!r}, but the "
-                    f"{PROVIDER_APP!r} app is not installed in this home and no local "
-                    f"app source has it. Nothing was written — a providers[] entry "
-                    f"whose type no installed app registers is unbuildable. Install "
-                    f"the Ollama app from the App Store, or point ${APPS_DIR_ENV} at a "
-                    f"checkout of the apps repo."
-                ),
-                endpoint=endpoint,
-                model=chat_model,
-            )
-
-    wrote: list[str] = []
-    if source is not None:
-        from personalclaw.apps import app_manager
-        from personalclaw.supply_chain import Verdict
-
-        # `--seed-local-model` is the operator asking for exactly this app, which is consent
-        # to install it — bound to the bytes reviewed here. It is NOT consent to scanner
-        # warnings nobody has read, so a warning still refuses, as it always did.
-        review = app_manager.preview(source, origin="local")
-        if review.scan is not None and review.scan.verdict is Verdict.WARNING:
-            result, why = review, "install needs consent: scanner raised warnings"
-        elif review.consent:
-            result = app_manager.install(
-                source, origin="local", consent=review.consent, caller="seed_local_model"
-            )
-            why = result.error
-        else:
-            result, why = review, review.error
-        if not result.ok:
-            return BindResult(
-                status=SKIPPED_NO_PROVIDER_APP,
-                detail=(
-                    f"installing {PROVIDER_APP!r} from {source} failed "
-                    f"({why or 'unknown error'}) — nothing was written."
-                ),
-                endpoint=endpoint,
-                model=chat_model,
-            )
-        wrote.append(f"apps/{PROVIDER_APP}/")
-
-    _write_provider_entry(endpoint=endpoint, model=chat_model, embedding_model=embed_model)
+    _write_provider_entry(
+        endpoint=endpoint, model=plan.chat_model, embedding_model=plan.embedding_model
+    )
     wrote.append("config.json")
-    _write_active_models(model=chat_model, embedding_model=embed_model)
+    _write_active_models(model=plan.chat_model, embedding_model=plan.embedding_model)
     wrote.append("active_models.json")
 
-    detail = f"bound {PROVIDER_ENTRY_NAME!r} -> {chat_model} at {endpoint}"
-    if embed_model:
-        detail += f" (embedding: {embed_model})"
-    if unpulled:
-        detail += f" — note: {chat_model!r} is not pulled yet on this endpoint"
+    detail = f"bound {PROVIDER_ENTRY_NAME!r} -> {plan.chat_model} at {endpoint}"
+    if plan.embedding_model:
+        detail += f" (embedding: {plan.embedding_model})"
+    if plan.unpulled:
+        detail += f" — note: {plan.chat_model!r} is not pulled yet on this endpoint"
     return BindResult(
         status=BOUND,
         detail=detail,
         endpoint=endpoint,
-        model=chat_model,
-        embedding_model=embed_model,
+        model=plan.chat_model,
+        embedding_model=plan.embedding_model,
+        provider_name=PROVIDER_ENTRY_NAME,
+        wrote=wrote,
+    )
+
+
+def add_local_model(*, endpoint: str, apps_dir: str | None = None) -> BindResult:
+    """Add a local Ollama as one more provider instance, binding no use case.
+
+    The way to set it up BESIDE a provider already chosen: the entry is appended to
+    ``providers[]`` and ``active_models.json`` is not touched, so what chat, embedding and every
+    other use case use stays as it was. The entry names the model the endpoint offers for chat
+    (and for embedding, when it has one) as its own defaults, which is what a binding to it later
+    starts from. Same preconditions, and the same refusal to write anything when one fails, as
+    :func:`bind_local_model`.
+    """
+    endpoint = endpoint.strip()
+    plan = _plan(endpoint, "", "", apps_dir)
+    if isinstance(plan, BindResult):
+        return plan
+    wrote = _install_provider_app(plan)
+    if isinstance(wrote, BindResult):
+        return wrote
+
+    _write_provider_entry(
+        endpoint=endpoint, model=plan.chat_model, embedding_model=plan.embedding_model
+    )
+    wrote.append("config.json")
+    return BindResult(
+        status=ADDED,
+        detail=(
+            f"added {PROVIDER_ENTRY_NAME!r} at {endpoint} ({plan.chat_model}); "
+            f"no use case was rebound"
+        ),
+        endpoint=endpoint,
+        model=plan.chat_model,
+        embedding_model=plan.embedding_model,
         provider_name=PROVIDER_ENTRY_NAME,
         wrote=wrote,
     )

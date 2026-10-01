@@ -20,8 +20,11 @@ re-deriving it here.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from aiohttp import web
@@ -30,7 +33,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from personalclaw import local_model_detect as lmd
 from personalclaw import seed_local_model as slm
 from personalclaw.dashboard.handlers.local_model import register_local_model_routes
-from personalclaw.seed_local_model import BOUND, SKIPPED_NO_SERVER, BindResult
+from personalclaw.seed_local_model import ADDED, BOUND, SKIPPED_NO_SERVER, BindResult
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +76,140 @@ def test_detect_localhost_returns_chat_model(monkeypatch):
     assert got is not None
     assert got.endpoint == lmd.DEFAULT_ENDPOINT
     assert got.model == "llama3.2:3b"
+
+
+# ── detection: which model it proposes ────────────────────────────────────────
+#
+# A machine running a chat model, a vision model and an embedding model, as Ollama itself
+# describes them. The vision model is the one pulled LAST, so recency alone proposes it; and
+# neither model's name says what the server's record does — that one calls tools and the other
+# does not. The chat model the agent should talk to is the one that calls the tools every turn
+# offers it.
+_SERVED = {
+    "qwen2.5vl:7b": (["completion", "vision"], "2026-09-20T00:00:00Z", "qwen25vl"),
+    "gemma4:12b": (["completion", "vision", "tools"], "2026-09-01T00:00:00Z", "gemma4"),
+    "qwen3-embedding:0.6b": (["embedding"], "2026-08-01T00:00:00Z", "qwen3"),
+}
+
+
+class _ServedHandler(BaseHTTPRequestHandler):
+    """A loopback stand-in for an Ollama server: its model list and its record of each model."""
+
+    def _json(self, payload: object) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler's spelling
+        if self.path != "/api/tags":
+            self.send_error(404)
+            return
+        self._json(
+            {
+                "models": [
+                    {"name": n, "model": n, "modified_at": at, "details": {"families": [fam]}}
+                    for n, (_caps, at, fam) in _SERVED.items()
+                ]
+            }
+        )
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path != "/api/show":
+            self.send_error(404)
+            return
+        asked = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+        self._json({"capabilities": _SERVED[asked["name"]][0]})
+
+    def log_message(self, *args: object) -> None:
+        """Quiet under -q."""
+
+
+@pytest.fixture
+def served_endpoint():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ServedHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def ollama_app_loaded(monkeypatch):
+    """The Ollama app as the gateway loads it: its type and its catalog in the registry."""
+    from personalclaw.apps.native_contract import NATIVE_DIR
+    from personalclaw.llm import registry as llm_registry
+
+    monkeypatch.setattr(llm_registry, "_default_registry", llm_registry.ProviderRegistry())
+    spec = importlib.util.spec_from_file_location(
+        "pc_test_ollama_proposal", NATIVE_DIR / "ollama-models" / "provider.py"
+    )
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+
+
+def test_it_proposes_the_chat_model_that_calls_tools_not_the_newer_vision_model(
+    served_endpoint, ollama_app_loaded
+):
+    """🔴 Red before: the newest chat-tagged model won, and that was the vision model, because
+    the pick read only the model ids, which say neither model reads images nor which one calls
+    tools. The provider app's own listing says both."""
+    found = lmd.detect_localhost(served_endpoint)
+    assert found is not None
+    assert found.model == "gemma4:12b"
+
+
+def test_without_the_apps_description_the_ids_decide_as_before(served_endpoint, monkeypatch):
+    """No loaded app describes the models (a CLI run before the gateway loads its apps): the pick
+    falls back to what the ids say, and still never proposes the embedding model."""
+    from personalclaw.llm import registry as llm_registry
+
+    monkeypatch.setattr(llm_registry, "_default_registry", llm_registry.ProviderRegistry())
+    found = lmd.detect_localhost(served_endpoint)
+    assert found is not None
+    assert found.model == "qwen2.5vl:7b"
+
+
+def test_an_endpoint_already_set_up_says_which_instance_it_is(isolated, monkeypatch):
+    """A step offering to add a discovered endpoint must be able to say it is added — after a
+    reload too — rather than offer it again."""
+    monkeypatch.setattr(
+        slm,
+        "endpoint_models",
+        lambda endpoint, **_: slm._from_tags(  # noqa: SLF001
+            [{"model": "gemma4:12b", "details": {"families": ["gemma4"]}}]
+        ),
+    )
+    (isolated / "config.json").write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {"name": "bedrock", "type": "bedrock", "options": {"region": "us-west-2"}},
+                    {
+                        "name": "Local Ollama",
+                        "type": "ollama",
+                        "options": {"endpoint": "http://localhost:11434/"},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    found = lmd.detect_localhost("http://localhost:11434")
+    assert found is not None and found.provider == "Local Ollama"
+    assert found.to_dict() == {
+        "endpoint": "http://localhost:11434",
+        "model": "gemma4:12b",
+        "provider": "Local Ollama",
+    }
+    elsewhere = lmd.detect_localhost("http://127.0.0.1:11434")
+    assert elsewhere is not None and elsewhere.provider == ""
+    assert "provider" not in elsewhere.to_dict()
 
 
 # ── detection: the LAN sweep safety rails ──────────────────────────────────────
@@ -236,7 +373,8 @@ async def test_bind_refuses_a_public_endpoint(monkeypatch):
     )
     async with TestClient(TestServer(_app())) as c:
         resp = await c.post(
-            "/api/onboarding/local-model/bind", json={"endpoint": "http://8.8.8.8:11434"}
+            "/api/onboarding/local-model/bind",
+            json={"endpoint": "http://8.8.8.8:11434", "bind_chat": True},
         )
         assert resp.status == 400
         body = await resp.json()
@@ -259,7 +397,8 @@ async def test_bind_accepts_localhost_and_reports_the_model(monkeypatch):
     )
     async with TestClient(TestServer(_app())) as c:
         resp = await c.post(
-            "/api/onboarding/local-model/bind", json={"endpoint": "http://localhost:11434"}
+            "/api/onboarding/local-model/bind",
+            json={"endpoint": "http://localhost:11434", "bind_chat": True},
         )
         assert resp.status == 200
         body = await resp.json()
@@ -283,7 +422,8 @@ async def test_bind_accepts_a_private_lan_endpoint(monkeypatch):
     )
     async with TestClient(TestServer(_app())) as c:
         resp = await c.post(
-            "/api/onboarding/local-model/bind", json={"endpoint": "http://192.168.1.50:11434"}
+            "/api/onboarding/local-model/bind",
+            json={"endpoint": "http://192.168.1.50:11434", "bind_chat": True},
         )
         assert resp.status == 200
     assert seen["endpoint"] == "http://192.168.1.50:11434"
@@ -340,7 +480,8 @@ async def test_bind_makes_chat_resolvable_without_a_restart(monkeypatch):
 
     async with TestClient(TestServer(_app())) as c:
         resp = await c.post(
-            "/api/onboarding/local-model/bind", json={"endpoint": "http://localhost:11434"}
+            "/api/onboarding/local-model/bind",
+            json={"endpoint": "http://localhost:11434", "bind_chat": True},
         )
         assert resp.status == 200
 
@@ -385,7 +526,8 @@ async def test_a_bind_that_binds_embedding_takes_the_reindex_path(
     monkeypatch.setattr(slm, "bind_local_model", bind_and_persist)
     async with TestClient(TestServer(_app())) as c:
         resp = await c.post(
-            "/api/onboarding/local-model/bind", json={"endpoint": "http://localhost:11434"}
+            "/api/onboarding/local-model/bind",
+            json={"endpoint": "http://localhost:11434", "bind_chat": True},
         )
         assert resp.status == 200
 
@@ -403,7 +545,8 @@ async def test_bind_reports_a_skip_as_a_failure_with_its_reason(monkeypatch):
     )
     async with TestClient(TestServer(_app())) as c:
         resp = await c.post(
-            "/api/onboarding/local-model/bind", json={"endpoint": "http://localhost:11434"}
+            "/api/onboarding/local-model/bind",
+            json={"endpoint": "http://localhost:11434", "bind_chat": True},
         )
         assert resp.status == 400
         body = await resp.json()
@@ -416,5 +559,68 @@ async def test_bind_rejects_a_bad_body():
     async with TestClient(TestServer(_app())) as c:
         assert (await c.post("/api/onboarding/local-model/bind", data="not json")).status == 400
         assert (
-            await c.post("/api/onboarding/local-model/bind", json={"endpoint": ""})
+            await c.post(
+                "/api/onboarding/local-model/bind", json={"endpoint": "", "bind_chat": True}
+            )
         ).status == 400
+
+
+@pytest.mark.asyncio
+async def test_a_bind_that_does_not_say_whether_it_is_the_chat_model_is_refused(monkeypatch):
+    """🔴 Red before: the route had one answer — make it the chat model — so a step adding a
+    second provider replaced the chat model the user had just chosen."""
+    called: list[str] = []
+    monkeypatch.setattr(slm, "bind_local_model", lambda **_: called.append("bind"))
+    monkeypatch.setattr(slm, "add_local_model", lambda **_: called.append("add"))
+    async with TestClient(TestServer(_app())) as c:
+        for body in (
+            {"endpoint": "http://localhost:11434"},
+            {"endpoint": "http://localhost:11434", "bind_chat": "no"},
+        ):
+            resp = await c.post("/api/onboarding/local-model/bind", json=body)
+            assert resp.status == 400
+            assert (await resp.json())["error"]["code"] == "invalid_body"
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_adding_it_beside_a_chosen_provider_appends_it_and_rebinds_nothing(
+    isolated, served_endpoint, ollama_app_loaded, monkeypatch
+):
+    """🔴 Red before: Essentials could only add a local model AS the chat model. Added beside a
+    cloud provider already chosen, it is one more instance, and chat stays what she picked."""
+    monkeypatch.setattr(slm, "_installed_provider_app", lambda: True)
+    (isolated / "config.json").write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {"name": "bedrock", "type": "bedrock", "options": {"region": "us-west-2"}}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chosen = {"chat": ["bedrock:global.anthropic.claude-sonnet-5-5"]}
+    (isolated / "active_models.json").write_text(json.dumps(chosen), encoding="utf-8")
+
+    async with TestClient(TestServer(_app())) as c:
+        resp = await c.post(
+            "/api/onboarding/local-model/bind",
+            json={"endpoint": served_endpoint, "bind_chat": False},
+        )
+        assert resp.status == 200, await resp.text()
+        body = await resp.json()
+        assert body == {
+            "ok": True,
+            "status": ADDED,
+            "model": "gemma4:12b",
+            "provider": "Local Ollama",
+        }
+        # Said as added from then on: a reload shows it set up, not on offer.
+        assert lmd.detect_localhost(served_endpoint).provider == "Local Ollama"
+
+    providers = json.loads((isolated / "config.json").read_text(encoding="utf-8"))["providers"]
+    assert [p["name"] for p in providers] == ["bedrock", "Local Ollama"]
+    assert providers[1]["options"]["endpoint"] == served_endpoint
+    assert providers[1]["model"] == "gemma4:12b"
+    assert json.loads((isolated / "active_models.json").read_text(encoding="utf-8")) == chosen

@@ -13,6 +13,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat channel app can say whether it carries groups, and how someone it pairs sends their code: `ChannelCapabilities.groups` and `ChannelTransportProvider.sender_pairing_hint()` (SDK additions, used by `*-channel`).**
 - **An agent can read what is waiting in your Inbox (`inbox_list`), so a Morning briefing that asks about your Inbox can answer.**
 - **An automation made in chat can send its result to the chat channel you name, and run when a workflow run you name finishes; the Triggers page makes one as "Run finishes"**
+- **Once a chat model is ready, onboarding's model lane still offers the Ollama on this machine or your network: "Also add a local model" adds it as one more provider and leaves the chat model as it is, and the recap lists every model provider set up.**
 - **An email's attachments are listed in the Inbox by name, type and size, each with a download, and an agent reading the message is given each one's text inside a fence: `IncomingMessage.files` and `ChannelMessage.files` carry `personalclaw.sdk.inbox.Attachment` (`personalclaw.sdk.channel.Attachment`), used by `mail-inbox` and `email-channel`.**
 - **An automation that starts an agent can name the files its job changes (Files it may change): its agent may write those and nothing else, and its Allow says what its agent may do.**
 - **"Make me a button that runs …" makes an automation that runs when you run it, and the chat shows it with its Run now.**
@@ -170,6 +171,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Every shared form field carries an id and says how the browser may fill it: setup and Settings → Account offer your saved name, the sign-in fields your username and a new password, and configuration fields and secrets ask the browser not to fill them.**
 - **Onboarding's bar of Back, Skip and Continue runs the full width of the window, and Plan Review's step bar the full width of its pane, with their buttons still in line with the content above.**
 - **An app update, or an edit of a provider instance in Settings → Providers, reaches the embeddings an app serves (Amazon Bedrock's) without a restart, and a removed instance or uninstalled app leaves no embedding adapter behind.**
+- **The local model onboarding proposes for chat is one its server says calls tools, not the newest model pulled, so a vision model no longer wins over a chat model; and setting up a second local server while "Local Ollama" points at another says so and writes nothing.**
+
 - **Saving a file as an artifact again while its artifact is being deleted answers that the artifact is not found (404 `not_found`) instead of an empty success.**
 - **Audio transcribes in the container image again: the image and the desktop app install exactly the dependency versions the tests ran (`uv.lock`) instead of the newest each range allows, and `personalclaw[stt]` keeps PyAV below 19, whose `av.open` faster-whisper cannot call.**
 - **Settings › Sender trust words each channel by what it does: a channel that sends as you, like Email, shows no group rule and no bot, says a stranger is sent nothing and waits in your Inbox, and says where someone mails their code; the consent to open it to anyone says your agent answers them as you.**
