@@ -738,6 +738,13 @@ export interface ChannelTrustProvider {
   seen_channels: ChannelTrustSeenChannel[]
   pairing_active: boolean
   pairing_expires_at: string
+  /** What the channel declares it can do, which its section is worded by. `groups`: it carries
+   *  group conversations. `speaks_as_owner`: it sends as you, from your own account, so a
+   *  stranger is sent nothing and their message waits in your Inbox. `pairing_hint`: how someone
+   *  sends it a code, in the channel's words, when it is not a DM to a bot (`''` for the page's). */
+  groups: boolean
+  speaks_as_owner: boolean
+  pairing_hint: string
 }
 export interface ChannelTrust {
   providers: ChannelTrustProvider[]

@@ -22,7 +22,7 @@ function provider(over: Partial<ChannelTrustProvider> = {}): ChannelTrustProvide
     provider: 'slack', display_name: 'Slack', registered: true,
     policies: { dm: 'pairing', group: 'tracked_only' },
     allowed_senders: [], tracked_channels: [], seen_channels: [],
-    pairing_active: false, pairing_expires_at: '', ...over,
+    pairing_active: false, pairing_expires_at: '', groups: true, speaks_as_owner: false, pairing_hint: '', ...over,
   }
 }
 

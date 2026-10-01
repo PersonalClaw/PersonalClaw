@@ -38,8 +38,16 @@ function viaLabel(via: string): string {
   return via
 }
 
-/** The DM posture, in the owner's words. This is what happens to someone NOT on the list. */
-function dmPolicyLabel(policy: string): string {
+/** The DM posture, in the owner's words. This is what happens to someone NOT on the list, and it
+ *  depends on what the channel is: a bot answers a stranger with the pairing note, while a channel
+ *  that sends as you sends them nothing and keeps their message in your Inbox. */
+function dmPolicyLabel(p: ChannelTrustProvider, policy: string): string {
+  if (p.speaks_as_owner) {
+    if (policy === 'pairing') return 'A stranger is sent nothing: their message waits in your Inbox, and a pairing code you give them lets them in'
+    if (policy === 'owner_only') return 'A stranger is sent nothing: their message waits in your Inbox, and only you can let them in'
+    if (policy === 'open') return 'Anyone may talk to your agent, and it answers them as you'
+    return policy
+  }
   if (policy === 'pairing') return 'Strangers must redeem a pairing code'
   if (policy === 'owner_only') return 'Strangers are ignored silently'
   if (policy === 'open') return 'Anyone may talk to your agent'
@@ -52,11 +60,35 @@ function groupPolicyLabel(policy: string): string {
   return policy
 }
 
-const DM_OPTIONS: { key: string; label: string }[] = [
-  { key: 'pairing', label: 'Ask for a code' },
-  { key: 'owner_only', label: 'Ignore them' },
-  { key: 'open', label: 'Anyone' },
-]
+/** The choices for people you haven't paired. A bot asks a stranger for a code; a channel that
+ *  sends as you asks nobody anything, so its choices say who can let them in. */
+function dmOptions(p: ChannelTrustProvider): { key: string; label: string }[] {
+  return p.speaks_as_owner
+    ? [
+        { key: 'pairing', label: 'A code lets them in' },
+        { key: 'owner_only', label: 'Only you let them in' },
+        { key: 'open', label: 'Anyone' },
+      ]
+    : [
+        { key: 'pairing', label: 'Ask for a code' },
+        { key: 'owner_only', label: 'Ignore them' },
+        { key: 'open', label: 'Anyone' },
+      ]
+}
+
+/** Whether the page shows a channel's group rule and its groups: when the channel carries groups,
+ *  or when a group is on record for it anyway, so nothing the store holds is ever hidden. */
+const showsGroups = (p: ChannelTrustProvider) =>
+  p.groups || (p.tracked_channels ?? []).length > 0 || (p.seen_channels ?? []).length > 0
+
+/** The sentence over a sender's code: the channel's own when it gave one (a mail, say), else a
+ *  message to you on a channel that sends as you, else a DM to the bot. */
+function codeSentence(p: ChannelTrustProvider, label: string): string {
+  if (p.pairing_hint) return `${p.pairing_hint}:`
+  return p.speaks_as_owner
+    ? `Have them send you this code on ${label}:`
+    : `Have them send this code to your bot in a direct message on ${label}:`
+}
 // Each choice says what it does. "Tracked groups" and "None" side by side read as a label and its
 // value, "Tracked groups: None", right above the groups the channel does track.
 const GROUP_OPTIONS: { key: string; label: string }[] = [
@@ -121,7 +153,7 @@ export function SenderTrustPanel({ navigate }: { navigate?: (path: string) => vo
     <div className="space-y-2xl">
       <PanelHeader
         title="Sender trust"
-        hint="Who can talk to your agent through each chat channel, and what happens to people and groups it doesn't know. You let someone in with a pairing code they send the bot. On a channel that sends as you, like email, a stranger is sent nothing: their message waits in your Inbox, where you can pair them."
+        hint="Who can talk to your agent through each chat channel, and what happens to someone it doesn't know. Each channel below says what a stranger gets there and how you let someone in."
       />
 
       {providers.length === 0 ? (
@@ -196,7 +228,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
     try {
       await api.setChannelTrustPolicies(p.provider, change)
       onSaid(change.dm
-        ? `${label}: ${dmPolicyLabel(change.dm)}.`
+        ? `${label}: ${dmPolicyLabel(p, change.dm)}.`
         : `${label}: ${groupPolicyLabel(change.group ?? '')}.`)
       onChanged()
     } catch (e) {
@@ -204,7 +236,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
     } finally {
       setBusy('')
     }
-  }, [p.provider, label, onChanged, onSaid])
+  }, [p, label, onChanged, onSaid])
 
   const pair = async () => {
     setBusy('pair')
@@ -232,6 +264,10 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
     }
   }
 
+  const groups = showsGroups(p)
+  // A sender's code lets someone in only while the rule asks for one, so it is offered only then.
+  const takesCodes = p.policies.dm === 'pairing'
+
   return (
     <Section
       title={`${label}${senders.length ? ` (${senders.length})` : ''}`}
@@ -239,32 +275,39 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
       // Muted, not coral: this glyph marks a CATEGORY (which channel this block is about), and
       // coral is reserved for something live or active. `sectionHeadingScale.test.tsx` holds the line.
       iconTone="muted"
-      hint={`${dmPolicyLabel(p.policies.dm)}. ${groupPolicyLabel(p.policies.group)}.`}
+      hint={`${dmPolicyLabel(p, p.policies.dm)}.${groups ? ` ${groupPolicyLabel(p.policies.group)}.` : ''}`}
     >
       <div className="space-y-3">
         <RowGroup>
-          <Row label="People you haven't paired" hint="Someone who messages the bot directly and isn't on the list below.">
+          <Row
+            label="People you haven't paired"
+            hint={p.speaks_as_owner
+              ? `Someone who writes to you on ${label} and isn't on the list below.`
+              : "Someone who messages the bot directly and isn't on the list below."}
+          >
             <SegPills
               value={p.policies.dm}
               onChange={(dm) => { if (dm !== p.policies.dm && !busy) void setPolicy({ dm }) }}
-              options={DM_OPTIONS}
-              ariaLabel={`${label} DMs from people you haven't paired`}
+              options={dmOptions(p)}
+              ariaLabel={`${label} ${p.speaks_as_owner ? 'messages' : 'DMs'} from people you haven't paired`}
             />
           </Row>
-          <Row label="Group chats" hint="A group the bot is in. What other people write there reaches your agent as their words, not your instructions.">
-            <SegPills
-              value={p.policies.group}
-              onChange={(group) => { if (group !== p.policies.group && !busy) void setPolicy({ group }) }}
-              options={GROUP_OPTIONS}
-              ariaLabel={`${label} group chats`}
-            />
-          </Row>
+          {groups && (
+            <Row label="Group chats" hint={`${p.speaks_as_owner ? `A group on ${label}.` : 'A group the bot is in.'} What other people write there reaches your agent as their words, not your instructions.`}>
+              <SegPills
+                value={p.policies.group}
+                onChange={(group) => { if (group !== p.policies.group && !busy) void setPolicy({ group }) }}
+                options={GROUP_OPTIONS}
+                ariaLabel={`${label} group chats`}
+              />
+            </Row>
+          )}
         </RowGroup>
 
         {code ? (
           <div className="flex flex-col gap-s rounded-md bg-surface-container p-m">
             <div data-type="body-s" className="text-on-surface">
-              Have them send this code to your bot in a direct message on {label}:
+              {codeSentence(p, label)}
             </div>
             <div className="flex items-center gap-s">
               <span role="img" data-type="headline-s" className="font-mono tracking-[0.2em] text-on-surface" aria-label={`Pairing code ${code.code.split('').join(' ')}`}>{code.code}</span>
@@ -290,7 +333,9 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
             {/* Until a TIME: a sender's code lasts ten minutes, and a date said nothing about when. */}
             <span>
               {untilSentence(`A pairing code is outstanding for ${label}`, p.pairing_expires_at, ' until ')}
-              {' '}Anyone who sends it becomes a trusted sender.
+              {' '}{takesCodes
+                ? 'Anyone who sends it becomes a trusted sender.'
+                : `It lets nobody in while ${label}'s rule for strangers doesn't ask for a code.`}
             </span>
             <Button size="xs" variant="ghost" onClick={cancelCode} loading={busy === 'cancel'} className="ml-auto">Cancel it</Button>
           </div>
@@ -300,8 +345,8 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
           <EmptyState
             icon={UserCheck}
             title={`Nobody is trusted on ${label}`}
-            hint={`${dmPolicyLabel(p.policies.dm)}.`}
-            action={!code ? { label: 'Pair someone', onClick: () => void pair() } : undefined}
+            hint={`${dmPolicyLabel(p, p.policies.dm)}.`}
+            action={!code && takesCodes ? { label: 'Pair someone', onClick: () => void pair() } : undefined}
           />
         ) : (
           <>
@@ -349,7 +394,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
                 )
               })}
             </RowGroup>
-            {!code && (
+            {!code && takesCodes && (
               <Button size="sm" variant="tonal" onClick={pair} loading={busy === 'pair'}>
                 <KeyRound size={14} /> Pair someone else
               </Button>
@@ -357,7 +402,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
           </>
         )}
 
-        <GroupsBlock p={p} label={label} onChanged={onChanged} onSaid={onSaid} />
+        {groups && <GroupsBlock p={p} label={label} onChanged={onChanged} onSaid={onSaid} />}
       </div>
     </Section>
   )
@@ -422,7 +467,12 @@ function GroupsBlock({ p, label, onChanged, onSaid }: {
     return (
       <div data-type="body-s" className="flex items-start gap-2 text-on-surface-low">
         <Users size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-        <span>No group has messaged your agent on {label} yet. Add the bot to a group and send a message there, and the group shows up here to track.</span>
+        <span>
+          No group has messaged your agent on {label} yet.{' '}
+          {p.speaks_as_owner
+            ? 'When one does, it shows up here to track.'
+            : 'Add the bot to a group and send a message there, and the group shows up here to track.'}
+        </span>
       </div>
     )
   }

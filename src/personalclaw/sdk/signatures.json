@@ -644,7 +644,8 @@
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "max_text_len"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "owner_pairing"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "dm_thread_is_channel"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "speaks_as_owner"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "speaks_as_owner"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "groups"}
    ],
    "returns": "None"
   },
@@ -905,6 +906,11 @@
      {"annotation": "OutboundMessage", "kind": "positional_or_keyword", "name": "message"}
     ],
     "returns": "bool"
+   },
+   "sender_pairing_hint": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
    },
    "start_inbound": {
     "kind": "async method",

@@ -56,6 +56,8 @@ class ReferenceEchoTransport(ChannelTransportProvider):
             threads=True,
             rich_text=True,
             max_text_len=4000,
+            # `handle_inbound` takes `is_dm`, so a group's message crosses the door as one.
+            groups=True,
         )
 
     # ── lifecycle ──

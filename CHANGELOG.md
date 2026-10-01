@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A chat channel app can say whether it carries groups, and how someone it pairs sends their code: `ChannelCapabilities.groups` and `ChannelTransportProvider.sender_pairing_hint()` (SDK additions, used by `*-channel`).**
 - **An agent can read what is waiting in your Inbox (`inbox_list`), so a Morning briefing that asks about your Inbox can answer.**
 - **An automation made in chat can send its result to the chat channel you name, and run when a workflow run you name finishes; the Triggers page makes one as "Run finishes"**
 - **An email's attachments are listed in the Inbox by name, type and size, each with a download, and an agent reading the message is given each one's text inside a fence: `IncomingMessage.files` and `ChannelMessage.files` carry `personalclaw.sdk.inbox.Attachment` (`personalclaw.sdk.channel.Attachment`), used by `mail-inbox` and `email-channel`.**
@@ -171,6 +172,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An app update, or an edit of a provider instance in Settings → Providers, reaches the embeddings an app serves (Amazon Bedrock's) without a restart, and a removed instance or uninstalled app leaves no embedding adapter behind.**
 - **Saving a file as an artifact again while its artifact is being deleted answers that the artifact is not found (404 `not_found`) instead of an empty success.**
 - **Audio transcribes in the container image again: the image and the desktop app install exactly the dependency versions the tests ran (`uv.lock`) instead of the newest each range allows, and `personalclaw[stt]` keeps PyAV below 19, whose `av.open` faster-whisper cannot call.**
+- **Settings › Sender trust words each channel by what it does: a channel that sends as you, like Email, shows no group rule and no bot, says a stranger is sent nothing and waits in your Inbox, and says where someone mails their code; the consent to open it to anyone says your agent answers them as you.**
 - **Files › Go to path opens a file given its path, on the folder that holds it, reads a relative path against the folder it shows, and offers files as well as folders.**
 - **A loop that stops at the budget it was given says "Stopped at its budget" on its run page, the Workflows list and the chat card, ends with its budget sentence instead of naming its template's loop as escalated, and is never told its workflow fails the same way until a step changes.**
 - **A subagent's start asks as `subagent_run` with what allowing it does, its whole task and a risk, and the Inbox shows the task whole where it is answered, with no line cut mid-word.**
@@ -892,6 +894,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A sender's pairing code lets someone in only while the channel's rule for strangers asks for one: a code Email found in a mail paired its sender under "only you let them in", Pair someone is offered only under the rule that takes codes, and changing the rule ends a code still outstanding.**
 - **The agent's shell refuses a command that lists a credential folder under your home, such as `ls ~/.aws` or `find ~/.ssh`, or a glob that reaches one, with the sentence a read of a file inside it gets.**
 - **A prompt sent through an OpenAI-compatible instance on this machine gets the outbound secret scan the setting asks for, since a proxy there can pass it on to a cloud service.**
 - **The gateway's internal credential opens only the operations PersonalClaw's own processes call, each one method on one route; it used to open every route under a listed path, every trigger route among them.**

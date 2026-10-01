@@ -255,8 +255,16 @@ def _pair(args: argparse.Namespace) -> None:
     A new sender on a channel (Telegram, Discord, …) redeems this code to start talking to
     the agent: within the 10-minute TTL it allow-lists them once, then the code is spent.
     The code is printed to the owner's terminal only — never persisted in plaintext, never
-    logged. Direct store call (no running gateway required): pairing is owner-side setup."""
-    from personalclaw.channel_trust import PAIRING_CODE_TTL_SECS, create_pairing_code
+    logged. Direct store call (no running gateway required): pairing is owner-side setup.
+
+    No channel is loaded here, so the sentence claims nothing a channel does (a bot, a mailbox):
+    the code goes to the agent on that channel. A code lets someone in only while the channel's
+    rule for strangers asks for one, so under any other rule the output says so."""
+    from personalclaw.channel_trust import (
+        PAIRING_CODE_TTL_SECS,
+        create_pairing_code,
+        trust_policies,
+    )
 
     provider = (getattr(args, "provider", "") or "").strip().lower()
     if not provider:
@@ -265,9 +273,14 @@ def _pair(args: argparse.Namespace) -> None:
     minutes = PAIRING_CODE_TTL_SECS // 60
     print(f"Pairing code for {provider}: {code}")
     print(
-        f"Have the new sender send this code to the {provider} bot within {minutes} minutes. "
-        "It works once, then expires."
+        f"Have the person you're letting in send it to your agent on {provider} within "
+        f"{minutes} minutes. It works once, then expires."
     )
+    if trust_policies(provider).get("dm") != "pairing":
+        print(
+            f"It lets nobody in until {provider}'s rule for strangers asks for a code again "
+            "(Settings › Sender trust)."
+        )
 
 
 def _discover(args: argparse.Namespace) -> None:

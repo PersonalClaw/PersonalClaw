@@ -5,8 +5,9 @@ crosses. This is where the owner sees and changes it, for every chat channel ali
 
 * ``GET /api/channels/trust`` — every chat channel that is set up, plus any the store still
   knows, each with its display name, its policies, its paired senders, its tracked groups and
-  the untracked groups that messaged the agent. No secret is projected (see
-  :func:`~personalclaw.channel_trust.provider_trust`).
+  the untracked groups that messaged the agent, and what the channel declares it can do
+  (``groups``, ``speaks_as_owner``, ``pairing_hint``), which the page words its section by. No
+  secret is projected (see :func:`~personalclaw.channel_trust.provider_trust`).
 * ``PUT /api/channels/trust/{provider}/policies`` — ``{dm?, group?}``. Opening DMs to anyone
   loosens a security setting, so it answers ``400 confirmation_required`` until the request
   carries ``"confirm": true`` (the SPA asks with :func:`consent_required`'s sentence).
@@ -47,9 +48,38 @@ _CHANNEL_ID_MAX = 256
 _CHANNEL_NAME_MAX = 200
 
 
+def _what_it_does(provider: str) -> dict[str, Any]:
+    """What the channel registered under ``provider`` declares, for the page to word its section
+    by: whether it carries groups (``ChannelCapabilities.groups``), whether it sends as the owner
+    (``speaks_as_owner``, read as the gate reads it), and how someone sends it a sender's code
+    (``sender_pairing_hint()``). Core names no channel, so these are the only source.
+
+    A channel no longer set up claims nothing. One whose capabilities cannot be read keeps its
+    group rule on the page, so groups can still be turned off there; the gate already treats it
+    as sending as the owner, and so does the page."""
+    from personalclaw.channel_inbound import speaks_as_owner
+    from personalclaw.channel_transports import get_transport
+
+    transport = get_transport(provider)
+    if transport is None:
+        return {"groups": False, "speaks_as_owner": False, "pairing_hint": ""}
+    try:
+        groups = bool(transport.capabilities().groups)
+    except Exception:  # noqa: BLE001 - fail open: the owner keeps the control over groups
+        logger.warning("channel %s: its capabilities could not be read", provider, exc_info=True)
+        groups = True
+    try:
+        hint = str(transport.sender_pairing_hint() or "")
+    except Exception:  # noqa: BLE001 - the page's own sentence stands in for the channel's
+        logger.debug("channel %s: sender_pairing_hint() failed", provider, exc_info=True)
+        hint = ""
+    return {"groups": groups, "speaks_as_owner": speaks_as_owner(provider), "pairing_hint": hint}
+
+
 def _entry(provider: str, channels: dict[str, str]) -> dict[str, Any]:
     return {
         **channel_trust.provider_trust(provider),
+        **_what_it_does(provider),
         "display_name": channels.get(provider) or provider,
         "registered": provider in channels,
     }
@@ -103,12 +133,16 @@ async def api_channel_trust_policies(request: web.Request) -> web.Response:
     before = channel_trust.trust_policies(provider)
     if dm == "open" and before.get("dm") != "open" and not confirm_granted(body):
         where = channel_trust.channel_display_name(provider)
-        return consent_required(
-            "dm",
-            f"anyone who messages your bot on {where} can talk to your agent, and it reads "
-            "what they write as your own instructions",
-            title=f"Let anyone message your agent on {where}?",
+        # Said of what this channel is: a bot the owner runs, or the owner's own account, where
+        # the agent's answer to whoever wrote goes out as the owner.
+        consent = (
+            f"anyone who writes to you on {where} can talk to your agent, it reads what they "
+            "write as your own instructions, and it answers them as you"
+            if _what_it_does(provider)["speaks_as_owner"]
+            else f"anyone who messages your bot on {where} can talk to your agent, and it reads "
+            "what they write as your own instructions"
         )
+        return consent_required("dm", consent, title=f"Let anyone message your agent on {where}?")
     policies = channel_trust.set_trust_policies(provider, dm=dm, group=group)
     logger.info("channel trust: policies for provider=%s now %s", provider, policies)
     return web.json_response({"ok": True, "provider": provider, "policies": policies})

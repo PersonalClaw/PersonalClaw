@@ -364,7 +364,11 @@ def set_trust_policies(
 
     A value outside :data:`DM_POLICIES` / :data:`GROUP_POLICIES` raises ``ValueError`` and
     changes nothing. Each change emits ``trust_policy_changed`` with the new value as its
-    outcome (``dm=open``, ``group=off``): who may talk to the agent is a security setting."""
+    outcome (``dm=open``, ``group=off``): who may talk to the agent is a security setting.
+
+    A sender's code is redeemed only under ``pairing`` (:func:`redeem_pairing_code`), so a DM
+    policy that leaves it ends the code outstanding (``pairing_code_cancelled``): a page that
+    still listed it would say that whoever sends it is let in."""
     if dm is not None and dm not in DM_POLICIES:
         raise ValueError(f"dm policy must be one of {', '.join(DM_POLICIES)}")
     if group is not None and group not in GROUP_POLICIES:
@@ -379,10 +383,17 @@ def set_trust_policies(
     if changed:
         for kind, value in changed:
             rec["policies"][kind] = value
+        code_ended = rec["policies"].get("dm") != "pairing" and bool(
+            (rec.get("pairing") or {}).get("code_hash")
+        )
+        if code_ended:
+            rec["pairing"] = {}
         store[provider] = rec
         _write_store(store)
         for kind, value in changed:
             _emit_sel("trust_policy_changed", f"{kind}={value}", provider)
+        if code_ended:
+            _emit_sel("pairing_code_cancelled", f"dm={rec['policies']['dm']}", provider)
     return dict(rec["policies"])
 
 
@@ -548,12 +559,23 @@ def redeem_pairing_code(provider: str, sender_id: str, code: str, name: str = ""
     ``sender_paired``) and the code is consumed. Expired / already-used / wrong code →
     ``False`` and ``sender_denied``. The compare is constant-time over the hashes.
 
+    Only under the DM policy ``pairing``: under ``owner_only`` the owner's own Allow is the one
+    way in, and under ``open`` nobody needs a code. Any other policy refuses the code without
+    consuming it (``sender_denied``, ``dm=<policy>``). The gate checks the same before it calls
+    this, and a channel that finds a code inside a longer message calls this itself, so the rule
+    lives here, where neither can leave it out.
+
     ``name`` is the sender's display name, kept beside the id so the Sender trust page can
     say who was let in; on most channels the id alone is a number."""
     store = _read_store()
     rec = _provider_record(store, provider)
     pairing = rec.get("pairing") or {}
     stored_hash = pairing.get("code_hash", "")
+    policy = rec["policies"].get("dm", DEFAULT_DM_POLICY)
+
+    if policy != "pairing":
+        _emit_sel("sender_denied", f"dm={policy}", provider, sender_id)
+        return False
 
     if not stored_hash:
         _emit_sel("sender_denied", "no_active_code", provider, sender_id)

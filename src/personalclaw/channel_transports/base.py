@@ -93,6 +93,11 @@ class ChannelCapabilities:
     #: someone new, where the owner can reply to it, pair them, or ignore it. Nothing goes to
     #: them until the owner replies or pairs them.
     speaks_as_owner: bool = False
+    #: This channel carries group conversations (a group chat, a server's channel, a room) and
+    #: hands their messages to the door with ``is_dm=False``. Settings › Sender trust then shows
+    #: the channel's rule for groups and the groups that messaged the agent. Leave it off for a
+    #: channel where every message is one person writing to the owner, like a mailbox.
+    groups: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
@@ -199,6 +204,13 @@ class ChannelTransportProvider(ABC):
         """How the owner sends the pairing code on this channel, when it is not a direct message
         to the bot: one sentence the Configure page shows over the code, or ``""`` for the
         page's own ("Send this code to your bot in a direct message on …")."""
+        return ""
+
+    def sender_pairing_hint(self) -> str:
+        """How someone the owner pairs sends their code on this channel, when it is not a direct
+        message to the bot: one sentence Settings › Sender trust shows over the code ("Have them
+        mail this code from the address you want to let in, to …"), or ``""`` for the page's
+        own."""
         return ""
 
     def validate_target(self, target: str) -> str:

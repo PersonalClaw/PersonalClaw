@@ -35,6 +35,9 @@ function provider(over: Partial<ChannelTrustProvider> = {}): ChannelTrustProvide
     seen_channels: [],
     pairing_active: false,
     pairing_expires_at: '',
+    groups: true,
+    speaks_as_owner: false,
+    pairing_hint: '',
     ...over,
   }
 }

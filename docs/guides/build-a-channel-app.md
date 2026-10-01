@@ -256,10 +256,23 @@ What that one call gets you, and what you must not re-implement:
   hands it over out of band; the sender sends it to your bot in a DM and the gate redeems it,
   so your transport only delivers `verdict.canned_reply`. Single-use, TTL-bound. Or the owner
   just hits **Allow** on the attention item. The same page sets your channel's DM policy
-  (`pairing`, `owner_only`, or `open` after a consent prompt) for every channel alike.
-- **Groups.** Default `group="tracked_only"`: an untracked group is denied *silently*
-  (`reason == "untracked_channel"` — no owner spam), a tracked one is allowed. Core
-  remembers the untracked group, and Settings → Sender trust lists it with a **Track**
+  (`pairing`, `owner_only`, or `open` after a consent prompt) for every channel alike. A code
+  lets someone in only under `pairing`: `redeem_pairing_code` refuses it under the other two
+  without spending it, the page offers **Pair someone** only then, and setting another DM policy
+  ends a code still outstanding. A channel whose messages cannot be the code alone (a mail)
+  hands each code-shaped word it finds to `redeem_pairing_code(PROVIDER, sender, word)`, and says
+  over the code how it is sent there (`sender_pairing_hint()`, e.g. "Have them mail this code
+  from the address you want to let in, to …"); a channel that `speaks_as_owner` and says nothing
+  gets "Have them send you this code".
+- **Groups.** Declare `ChannelCapabilities(groups=True)` when your channel carries group
+  conversations (a group chat, a server's channel, a room) and hands their messages to the door
+  with `is_dm=False`. Settings → Sender trust then shows your channel's group rule and its
+  groups; a channel without them (a mailbox) leaves it off, and the page shows no group rule, no
+  "add the bot to a group", unless a group is already on record for it. Its words for strangers
+  follow `speaks_as_owner` the same way: a bot asks a stranger for a code, a channel that sends
+  as the owner sends them nothing. Default `group="tracked_only"`: an untracked group is
+  denied *silently* (`reason == "untracked_channel"` — no owner spam), a tracked one is allowed.
+  Core remembers the untracked group, and Settings → Sender trust lists it with a **Track**
   button. Put the group's title in `ChannelMessage.metadata["channel_name"]` (or pass
   `channel_name=` to `guard_inbound`) so the owner sees a name rather than your vendor's id.
   Use core's `track()` / `untrack()` / `is_tracked_channel()`; a channel-local allowlist is a
