@@ -12,7 +12,7 @@
     "type": "str"
   },
   {
-    "default": "auto",
+    "default": "interactive",
     "path": "agent.approval_mode",
     "sensitive": false,
     "type": "str"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { AlertTriangle } from 'lucide-react'
 import { api, type RunnerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { reportingWrite } from '../../app/reportingWrite'
@@ -13,6 +14,7 @@ import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { accentChip } from '../../design/accent'
 import { setAgentYolo } from './agentYolo'
+import { APPROVAL_MODE_HINT, APPROVAL_MODES, approvalModeMeans } from './approvalModes'
 
 // The editable agent.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (types + ranges are the server's truth; we surface the same bounds).
@@ -136,14 +138,13 @@ export function AgentDefaultsPanel() {
 
       <Section title="Defaults" hint="Baseline behavior for every session.">
         <RowGroup>
-          <EnumRow label="Approval mode" hint="When the agent must ask before running a tool." cfg={cfg} field="approval_mode" patch={patch}
-            options={[{ key: 'auto', label: 'Auto' }, { key: 'interactive', label: 'Ask each time' }, { key: 'trust_reads', label: 'Trust reads' }]} />
+          <ApprovalModeRow cfg={cfg} patch={patch} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patchYolo}
             hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger />
           {/* Was a fixed two hours, so an approval asked at night was denied before anyone woke.
               Still fails closed: past the wait the call is denied, and the Inbox says so. */}
           <NumberRow label="Approval wait" cfg={cfg} field="approval_timeout_minutes" patch={patch} min={1} max={10080} suffix="min"
-            hint="How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. An approval a running subagent or workflow step asks for also ends with that work's own time limit; asking to start a subagent waits this long. A workflow's approval gates wait this long too, except in a run started unattended, where a gate gives up after 45 seconds and the run says so. Unattended runs never wait: no one is there to ask." />
+            hint="How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. An approval a running subagent or workflow step asks for also ends with that work's own time limit; asking to start a subagent waits this long. A workflow's approval gates wait this long too, except in a run started unattended, where a gate gives up after 45 seconds and the run says so. An automation or a loop allowed to run on its own never waits: a call its grant does not cover is declined at once, since no one is there to ask." />
         </RowGroup>
       </Section>
 
@@ -451,6 +452,30 @@ function TextRow({ label, hint, cfg, field, patch, placeholder }: {
           disabled={!dirty} disabledReason={!dirty ? 'No changes to save' : undefined} onClick={save}>
           Save
         </Button>
+      </div>
+    </Row>
+  )
+}
+
+/** Approval mode, saying what the chosen value does for a chat and for an agent no chat started
+ *  (`approvalModes.ts`). "Auto" carries the glyph every switch that relaxes a safety default does:
+ *  it lets such an agent approve all of its own calls, and a config from before the mode shipped
+ *  asking may still hold it without anyone having chosen it. A loosening asks the gateway's own
+ *  consent question before it is saved (`api.patchConfig`). */
+function ApprovalModeRow({ cfg, patch }: {
+  cfg: AgentCfg; patch: (k: string, v: unknown, cb: () => void) => void
+}) {
+  const [saved, flash] = useSavedFlash()
+  const value = String(cfg.approval_mode ?? APPROVAL_MODES[0].key)
+  const known = APPROVAL_MODES.some((m) => m.key === value)
+  const options = known ? APPROVAL_MODES : [{ key: value, label: value, means: '' }, ...APPROVAL_MODES]
+  return (
+    <Row label="Approval mode" hint={`${APPROVAL_MODE_HINT} ${approvalModeMeans(value)}`}>
+      <div className="flex items-center gap-s">
+        <SavedToast show={saved} />
+        {value === 'auto' && <AlertTriangle size={14} className="text-warn" role="img" aria-label="Relaxes a safety default" />}
+        <SegPills ariaLabel="Approval mode" value={value} onChange={(v) => patch('approval_mode', v, flash)}
+          options={options.map(({ key, label }) => ({ key, label }))} />
       </div>
     </Row>
   )

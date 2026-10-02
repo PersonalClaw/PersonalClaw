@@ -571,7 +571,10 @@ asks in the Inbox (`triggers/parks.py`).
 **An agent a trigger starts carries the trigger.** Both store-trigger dispatches
 set `ActionContext.trigger_id`, and so does a lifecycle hook's fire and its Test
 (`lifecycle:<id>`, `hooks.run_script_hook`); `invoke-agent` and `run-prompt` spawn their
-agent with it (`SubagentInfo.trigger_id`). An approval that agent asks for is
+agent with it (`SubagentInfo.trigger_id`). An Invoke Agent agent asks before each call
+that needs approval unless its step sets its own `approval_mode: auto` (saved with the
+owner's yes) or the owner chose Approval mode Auto, which ships off
+(`approval_grants.setting_grant`); its Allow says which. An approval that agent asks for is
 listed under the trigger ("The trigger “Nightly plan” is waiting for your
 decision on write_file"), and a call nobody answered leaves an Inbox note that
 can run the trigger again. That re-run is Run now, and a trigger with

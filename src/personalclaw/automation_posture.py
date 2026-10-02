@@ -1,7 +1,7 @@
 """Whether an automation's agent asks the owner — the per-automation half of the security posture.
 
-An automation step (a trigger's action, a workflow node) can carry the approval decision the
-global ``agent.approval_mode`` setting carries, stored on the step:
+An automation step (a trigger's action, a workflow node) carries its own approval decision, stored
+on the step, so its run asks the owner or not by the consent given for that step:
 
 * ``approval_mode: "auto"`` makes the agent it spawns approve its own tool calls
   (``subagent._run_inner``), and
@@ -83,6 +83,10 @@ class AgentRunPolicy:
     * ``capability_class`` is the resolved class: ``research`` reads, ``mutating`` may change.
     * ``writes`` are the files its job changes, as the owner wrote them (``write_scope``): a
       reading run may change those and nothing else.
+    * ``owners_auto`` is the owner's Approval mode "Auto" approving the calls of an agent whose
+      step does not (`approval_grants.setting_grant`, for an agent no chat started, as a
+      trigger's is). The run is handed nothing for it: the subagent manager reads the setting at
+      each call. So the Allow names it, rather than say an agent asks that will not.
 
     An automation's own agent may always tell its owner what it found (``notify``, to the owner
     only: ``tool_providers.base.only_tells_the_owner``), and that message leaves the machine when
@@ -92,10 +96,11 @@ class AgentRunPolicy:
     approval_mode: str
     capability_class: str
     writes: tuple[str, ...] = ()
+    owners_auto: bool = False
 
     @property
     def asks(self) -> bool:
-        return self.approval_mode != "auto"
+        return self.approval_mode != "auto" and not self.owners_auto
 
     @property
     def reads_only(self) -> bool:
@@ -121,6 +126,11 @@ class AgentRunPolicy:
                     "Its agent asks you before it changes a file, runs a command or sends a "
                     "message."
                 )
+            if self.owners_auto:
+                return (
+                    "Its agent may change files, run commands and send messages without asking "
+                    "you, because Settings → Agent defaults → Approval mode is Auto."
+                )
             return "Its agent may change files, run commands and send messages without asking you."
         changes = write_scope.sentence(self.writes) if self.writes else ""
         if self.asks:
@@ -142,9 +152,10 @@ def agent_run_policy(provider: str, config: Mapping[str, Any]) -> AgentRunPolicy
     may do when it runs, from its step *config*.
 
     ``run-prompt`` always runs its agent with nobody to ask; ``invoke-agent`` does when its step
-    (or the global setting) lets the agent approve its own calls (``approval_mode_of``), and its
-    agent asks otherwise. The class is ``subagent.resolve_capability_class``'s: read-only for a run
-    nobody is asked in, unless the step carries ``capability: "mutating"``."""
+    (or the hook setting) lets the agent approve its own calls (``approval_mode_of``), and its
+    agent asks otherwise, unless the owner chose Approval mode "Auto" (:attr:`owners_auto`). The
+    class is ``subagent.resolve_capability_class``'s: read-only for a run nobody is asked in,
+    unless the step carries ``capability: "mutating"``."""
     from personalclaw import write_scope
     from personalclaw.subagent import resolve_capability_class
 
@@ -160,7 +171,17 @@ def agent_run_policy(provider: str, config: Mapping[str, Any]) -> AgentRunPolicy
         approval_mode=approval,
         capability_class=capability,
         writes=tuple(write_scope.entries(dict(config))),
+        owners_auto=provider == "invoke-agent" and approval != "auto" and _the_owners_auto_stands(),
     )
+
+
+def _the_owners_auto_stands() -> bool:
+    """Whether the owner's Approval mode "Auto" approves an agent no chat started now, as the
+    operator ceiling lets it (`approval_grants`); a sentence asks it, so nothing is audited."""
+    from personalclaw import approval_grants
+
+    grant = approval_grants.setting_grant()
+    return bool(grant) and approval_grants.stands(grant, caller="automation", audit=False)
 
 
 def _posture_value(config: Mapping[str, Any], key: str) -> str:

@@ -552,7 +552,7 @@ the ceiling did not bound.
   is a stop, not a degraded mode.
 - **Every standing grant asks it** (`approval_grants.stands`). A grant approves a call or a spawn
   without asking anyone: the chat's Trust, YOLO and Trust reads, an agent's "Always allow", a
-  spawn's own `approval_mode: "auto"`, the global Auto-approve setting, the hook settings and
+  spawn's own `approval_mode: "auto"`, the owner's Approval mode "Auto", the hook settings and
   patterns, a listed source, the `--approval` flag, a remembered or policy-approved workflow gate,
   a workflow step's start its owner allowed before a restart cut the step off (for the same
   request, within the step's time limit, `approval_grants.APPROVED_BEFORE_RESUME`),
@@ -566,6 +566,20 @@ the ceiling did not bound.
   the `hook_based` level, which a `hook_based` ceiling still permits. A grant also no longer makes
   a run headless: an agent whose grant the ceiling refused asks you for each call, through the
   same relay as any other.
+- **An unattended run is approved by its own consent, never by a default.** Settings → Agent
+  defaults → Approval mode ships as `interactive`, the strictest end of its scale, so an agent no
+  chat started (a trigger's Invoke Agent agent whose step does not set its own approval, a
+  subagent started outside a chat) asks in the Inbox before each call that needs approval. What
+  approves one without asking is the consent given for that run: the step's own `approval_mode`,
+  saved with the owner's yes; a Run prompt action, whose Allow says what its agent may do; an
+  app's scheduled job, which install consent lists; a workflow run's own unattended grant; the
+  Mode its loop was started under. The setting reads as a grant in one place
+  (`approval_grants.setting_grant`, held there by `tests/test_approval_setting_one_reader_rail.py`),
+  and only once the owner chooses "Auto", whose loosening asks consent in words that say what it
+  does. A stored "Auto" from before the mode shipped asking cannot be told from a chosen one, so it
+  is kept, and the Doctor's `security.approval_mode` row and the Settings row name it. A gateway
+  with nowhere to ask (no dashboard, no channel) refuses such a call rather than approving it
+  (`approval_grants.NO_SURFACE` names the refusal).
 - **The `tools` scope and a spawn's capability class hold under a grant.** Both are enforced where
   the host is asked about a call, and a runtime that answers its own asks (the native one, while
   a grant stands) asked about none: a read-only research run's write tools ran. The native

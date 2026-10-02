@@ -15,8 +15,8 @@
  *
  * 🔴 WHAT THE EMPTY OBJECT CLAIMED, and why this key is worse than the legibility one that was fixed
  * first:
- *   · **Approval mode read "Ask each time"** from `?? 'interactive'`, while the stored default is
- *     `auto` (`AgentConfig.approval_mode`). The UI showed the SAFE mode and the runtime ran the
+ *   · **Approval mode read "Ask each time"** from `?? 'interactive'`, while the stored default was
+ *     then `auto` (`AgentConfig.approval_mode`). The UI showed the SAFE mode and the runtime ran the
  *     permissive one — so someone could check their setting, see exactly what they wanted, change
  *     nothing, and have every tool call still execute unprompted.
  *   · **YOLO read OFF** from `!!c.yolo` — a switch whose entire purpose is auto-approve-everything.

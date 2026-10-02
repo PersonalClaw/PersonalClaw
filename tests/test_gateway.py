@@ -344,8 +344,10 @@ class TestInteractiveApproval:
     """Tool approval callback logic."""
 
     @pytest.mark.asyncio
-    async def test_auto_approve_when_no_ui(self):
-        """No slack, no dashboard → auto-approve."""
+    async def test_a_call_with_nowhere_to_ask_is_refused(self):
+        """No channel, no dashboard: nobody can say yes, so the call does not run. It used to be
+        approved, which made a gateway with nowhere to ask approve every background call no grant
+        covered, whatever the run's own consent said."""
         orch = _make_orchestrator(slack_enabled=False)
         orch.dashboard_state = None
         callback = orch._interactive_approval("cron")
@@ -355,7 +357,7 @@ class TestInteractiveApproval:
         event.tool_input = ""
         event.tool_purpose = ""
         result = await callback(event, "")
-        assert result == ToolDecision(True, "auto_approved", "no_approval_surface")
+        assert result == ToolDecision(False, "rejected", "no_approval_surface")
 
     @pytest.mark.asyncio
     async def test_yolo_mode_approves(self):

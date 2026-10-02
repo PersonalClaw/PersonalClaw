@@ -2724,7 +2724,7 @@ async def run_chat(
         global_approval_mode: str = ""
         try:
             cfg = AppConfig.load()
-            global_approval_mode = cfg.agent.approval_mode or ""
+            global_approval_mode = approval_grants.approval_mode_now()  # a chat's own floor only
             bindings = resolve_agent_bindings(cfg, session.agent or None)
             provider_agent = bindings.provider_agent
             acp_mode = getattr(bindings, "acp_mode", "") or ""
@@ -2735,8 +2735,8 @@ async def run_chat(
             # this agent" the card's scope picker writes → AgentProfile.approval_mode).
             # Consumed below to seed a NEW session's trust — the single seam that makes the
             # grant auto-approve in chat. Only an explicit per-agent value counts: a "" that
-            # would inherit the schema-default global "auto" must NOT silently auto-approve
-            # every chat (that would make the Normal permission mode meaningless).
+            # would inherit an owner's global "auto" must NOT silently auto-approve every chat
+            # (that would make the Normal permission mode meaningless).
             agent_approval_mode = getattr(bindings, "approval_mode", "") or ""
             # The runtime kind resolved from the agent's actual PROFILE. Thread it
             # to the factory so routing honors the user's selection — we pass

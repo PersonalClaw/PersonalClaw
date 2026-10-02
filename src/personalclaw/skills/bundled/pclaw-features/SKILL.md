@@ -53,8 +53,10 @@ scheduling page, saved artifacts at `/artifacts/<slug>`.
 Configuration lives in `~/.personalclaw/config.json` (override the home dir with
 `PERSONALCLAW_HOME`). Common fields:
 
-- `agent.approval_mode` — `"auto"` (approve all tool calls) or `"interactive"`
-  (confirm each tool call).
+- `agent.approval_mode` — `"interactive"` (the default: every call that needs
+  approval asks, a chat on its card and an agent no chat started in the Inbox),
+  `"trust_reads"` (a chat also runs a read-only shell command unasked) or `"auto"`
+  (an agent no chat started approves every call it makes; chats still ask).
 - `agent.model` — default model (`"auto"` or a specific model id).
 - `dashboard.url` — hostname/port/bind for remote dashboard access. Omit for
   localhost-only.

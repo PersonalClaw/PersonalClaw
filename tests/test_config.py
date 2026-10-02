@@ -8,13 +8,13 @@ from personalclaw.config.loader import AppConfig, config_dir
 class TestAppConfig:
     def test_defaults(self):
         cfg = AppConfig()
-        assert cfg.agent.approval_mode == "auto"
+        assert cfg.agent.approval_mode == "interactive"
         assert cfg.session.timeout_secs == 3600
 
     def test_load_missing_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "empty"))
         cfg = AppConfig.load()
-        assert cfg.agent.approval_mode == "auto"
+        assert cfg.agent.approval_mode == "interactive"
 
     def test_load_from_file(self, tmp_path, monkeypatch):
         cfg_file = tmp_path / ".personalclaw" / "config.json"
@@ -43,8 +43,9 @@ class TestAppConfig:
         This row used to assert `approval_mode == "auto"` with the comment "falls back to
         defaults", and that assertion was the defect written down: `auto` auto-approves every
         tool call, so a truncated file silently widened a posture the operator had narrowed.
-        An unreadable file resolves to the most restrictive value instead. An ABSENT file
-        still yields the defaults — `test_load_missing_file` above is that half.
+        An unreadable file resolves to the most restrictive value instead, which is now also
+        the default. An ABSENT file still yields the defaults — `test_load_missing_file` above
+        is that half.
         """
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text("not json")

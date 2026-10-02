@@ -212,17 +212,18 @@ async def test_an_attended_loops_planner_asks_before_its_first_command(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_an_attended_loops_planner_asks_under_the_shipped_approval_mode_auto(
+async def test_an_attended_loops_planner_asks_under_the_owners_approval_mode_auto(
     tmp_path, monkeypatch
 ):
-    """Settings → Agent defaults → Approval mode ships as "auto": the grant an agent that no chat
-    started runs on. An Attended loop's planner is not answered by that grant, nor by any standing
-    one: its posture is its loop's, so its call is put to a person under "auto" too."""
+    """Settings → Agent defaults → Approval mode "auto", once the owner chooses it, is the grant an
+    agent that no chat started runs on. An Attended loop's planner is not answered by that grant,
+    nor by any standing one: its posture is its loop's, so its call is put to a person under
+    "auto" too."""
     from personalclaw.config.loader import AppConfig
 
-    shipped = AppConfig()
-    assert shipped.agent.approval_mode == "auto", "the premise: the shipped default is auto"
-    monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls: shipped))
+    chosen = AppConfig()
+    chosen.agent.approval_mode = "auto"
+    monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls: chosen))
     loop = _planning_loop(attended=True)
 
     run = await _design_pass(tmp_path, loop)

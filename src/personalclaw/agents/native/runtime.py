@@ -2246,9 +2246,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     def _policy_now(self) -> str:
         """The approval policy for THIS decision: the live source's answer when one is set.
 
-        A subagent's grants (its chat's Trust, YOLO, the Auto-approve setting, the hook setting)
-        are read when each call is decided, so one revoked while the agent runs stops waiving its
-        next call. A source that fails reads as asking.
+        A subagent's grants (its chat's Trust, YOLO, the owner's Approval mode "Auto", the hook
+        setting) are read when each call is decided, so one revoked while the agent runs stops
+        waiving its next call. A source that fails reads as asking.
         """
         source = self._approval_source
         if source is None:

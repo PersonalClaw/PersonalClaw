@@ -752,11 +752,10 @@ class GatewayOrchestrator:
                     annotations=getattr(event, "annotations", None),
                 )
                 return self._asked_decision(request_id, answered)
-            # Nowhere to ask (no dashboard, no channel). Approving was always the answer here, and
-            # it is a grant like any other: an `ask` ceiling says nothing runs unasked, so it
-            # does not run.
-            if approval_grants.stands(approval_grants.NO_SURFACE, caller=f"source:{source}"):
-                return ToolDecision(True, "auto_approved", approval_grants.NO_SURFACE)
+            # Nowhere to ask (no dashboard, no channel): nobody can say yes, so the call does not
+            # run. It was approved here, which let a gateway with nowhere to ask approve every
+            # background call no grant above covered; a run that may act on its own carries its
+            # own grant, and one that does not is refused rather than waved through.
             return ToolDecision(False, "rejected", approval_grants.NO_SURFACE)
 
         return _approve

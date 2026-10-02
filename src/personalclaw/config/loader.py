@@ -612,12 +612,20 @@ class SelfQaConfig:
 
 @dataclass
 class AgentConfig:
+    #: Ships asking, the strictest end of its own scale (`editable._EDITABLE_CONFIG`): an agent no
+    #: chat started gets its approval from the consent given for its own run, never from here,
+    #: unless the owner chooses "auto" (`approval_grants.setting_grant`).
     approval_mode: str = field(
-        default="auto",
+        default="interactive",
         metadata=_meta(
             "Approval Mode",
-            "Tool approval mode. A tool that only reads asks nobody in any mode; "
-            "'trust_reads' also approves a read-only shell command without asking.",
+            "Who approves a tool call that needs approval. 'interactive' asks you: a chat on "
+            "its card, and an agent no chat started (a trigger's Invoke Agent agent, a subagent "
+            "started outside a chat) in your Inbox. 'trust_reads' also lets a chat run a "
+            "read-only shell command without asking. 'auto' lets an agent no chat started "
+            "approve every call it makes, file changes and shell commands included; chats "
+            "still ask. A tool that only reads asks nobody in any mode, and an automation or a "
+            "loop runs as its own Allow or Mode says.",
             enum=["auto", "interactive", "trust_reads"],
         ),
     )
@@ -647,8 +655,9 @@ class AgentConfig:
             "How long a tool approval waits for your answer before it is denied. An approval a "
             "subagent or workflow step asks for also ends when that work's own time limit does. "
             "A workflow's approval gates wait this long too, except in a run started "
-            "unattended, where a gate gives up after 45 seconds and the run says so. "
-            "Unattended runs never wait: no one is there to ask, so they are denied at once.",
+            "unattended, where a gate gives up after 45 seconds and the run says so. An "
+            "automation or a loop allowed to run on its own never waits: a call its grant does "
+            "not cover is denied at once, since no one is there to ask.",
         ),
     )
     #: Which chat channel asks you to approve a tool call ("Send approvals to") when the chat
@@ -3527,7 +3536,7 @@ class PendingConfigChanges:
 #:
 #: The dataclass defaults answer "what does a user who has never chosen want?", and every one of
 #: them is right for a first run. They are the WRONG answer to "the user HAS chosen and we cannot
-#: read the choice", because three of them are *less safe than the narrowest value the field can
+#: read the choice", where one of them is *less safe than the narrowest value the field can
 #: hold* — so a truncated file re-widened a posture the operator had deliberately narrowed
 #: (#3424). A read that failed is not consent.
 #:
@@ -3541,18 +3550,16 @@ class PendingConfigChanges:
 #:   in front of them as if it were stored (the same reason ``INBOX_ON_DISCARDED_READ`` declines
 #:   to invent a ``retention_days``).
 #: * ``security.denied_commands`` and ``security.autonomy_denylist`` are DENYlists, so their
-#:   restrictive value is "everything", which a list cannot say. ``approval_mode`` below is what
-#:   covers them: with a human asked before every call, a lost denylist entry is visible rather
-#:   than silently waived.
+#:   restrictive value is "everything", which a list cannot say. ``agent.approval_mode``'s default
+#:   is what covers them: with a human asked before every call, a lost denylist entry is visible
+#:   rather than silently waived.
 #:
-#: Fields whose default is ALREADY the restrictive value (``agent.yolo``, every
-#: ``external_access.*`` flag, ``security.egress.allow_private``, ``dashboard.trusted_proxies``,
-#: ``agent.subagent_cwd_allowed_roots``, whose empty default keeps the file tools and a subagent
-#: in the workspace)
+#: Fields whose default is ALREADY the restrictive value (``agent.approval_mode``, which asks;
+#: ``agent.yolo``, every ``external_access.*`` flag, ``security.egress.allow_private``,
+#: ``dashboard.trusted_proxies``, ``agent.subagent_cwd_allowed_roots``, whose empty default keeps
+#: the file tools and a subagent in the workspace)
 #: are deliberately absent: an entry that changes nothing is dead code.
 CONFIG_ON_DISCARDED_READ: dict[str, Any] = {
-    # Auto-approves EVERY tool call for a subagent's lifetime. `interactive` asks.
-    "agent.approval_mode": "interactive",
     # Read plainly (defaulting OFF) on the normal path so an upgrade does not start blocking
     # existing unattended runs; that rationale is about a config we CAN read. An operator who
     # turned it on asked for nothing unproven to run while nobody is watching, and a file we
@@ -4208,7 +4215,7 @@ class AppConfig:
 
         cfg = cls(
             agent=AgentConfig(
-                approval_mode=agent_data.get("approval_mode", "auto"),
+                approval_mode=agent_data.get("approval_mode", AgentConfig.approval_mode),
                 # Parse default is the in-process native loop (matches
                 # AgentConfig.provider's field default). A config with no explicit
                 # agent.provider is native, NOT the legacy "acp" — ACP is opt-in.

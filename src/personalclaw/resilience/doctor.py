@@ -1713,6 +1713,39 @@ async def _probe_session_lifetime(_ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_approval_mode(_ctx: DoctorContext) -> ProbeResult:
+    """security — does an agent no chat started ask before it acts?
+
+    Settings → Agent defaults → Approval mode ships asking. "Auto" makes every agent no chat
+    started (a trigger's Invoke Agent agent, a subagent started outside a chat) approve every call
+    it makes, so a stored "Auto" is a loosened control this card names, with what it does and
+    where it changes. An "Auto" a config from before the mode shipped asking still holds reads
+    the same as one the owner chose: nothing records which it was, so the owner is told and the
+    choice stays theirs. The same words as ``personalclaw doctor`` (``setting_sentence``).
+    """
+    from personalclaw import approval_grants
+
+    def _read() -> tuple[str, str, bool]:
+        grant = approval_grants.setting_grant()
+        stands = bool(grant) and approval_grants.stands(grant, caller="doctor", audit=False)
+        return approval_grants.approval_mode_now(), approval_grants.setting_sentence(), stands
+
+    mode, sentence, loosened = await asyncio.to_thread(_read)
+    return ProbeResult(
+        ok=not loosened,
+        detail=sentence,
+        evidence={"approval_mode": mode, "agents_no_chat_started_ask": not loosened},
+        remedy=(
+            _no_automatic_fix(
+                "To have these agents ask you in your Inbox, set Settings → Agent defaults → "
+                "Approval mode to Ask each time. Auto stays if it is what you want."
+            )
+            if loosened
+            else ""
+        ),
+    )
+
+
 async def _probe_legacy_trigger_files(ctx: DoctorContext) -> ProbeResult:
     """automations — is a legacy automation file back after this home imported it?
 
@@ -2416,6 +2449,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_session_lifetime,
             "Sign-ins last no longer than the 90-day limit",
+        )
+    )
+    register_probe(
+        Probe(
+            "security.approval_mode",
+            "security",
+            Tier.CAPABILITY,
+            _probe_approval_mode,
+            "Agents no chat started ask before they act",
         )
     )
     register_probe(

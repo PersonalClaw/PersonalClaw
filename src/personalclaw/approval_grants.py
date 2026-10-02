@@ -3,7 +3,7 @@
 A tool call or a spawn that needs approval is settled one of two ways. A person ANSWERS it (Allow,
 Deny, or nobody in time), or a GRANT approves it without asking: the chat's Trust, YOLO, "trust
 reads", an agent's "Always allow", a spawn's own ``approval_mode: "auto"``, the Allow a trigger
-that starts an agent was given, the global Auto-approve setting, the operator's hook settings and
+that starts an agent was given, the owner's Approval mode "Auto", the operator's hook settings and
 patterns, the gateway's ``--approval`` flag.
 This module owns the three rules every grant is held to, because each was broken somewhere:
 
@@ -68,7 +68,8 @@ APPROVAL_MODE = "approval_mode"
 #: covers the start only; the agent's own calls ask as any agent's do
 #: (`triggers.grants.allows_its_agent`).
 TRIGGER = "trigger_grant"
-#: The global Settings → Agent defaults → Approval mode "Auto", for an agent no chat started.
+#: The owner's Settings → Agent defaults → Approval mode "Auto", for an agent no chat started. The
+#: mode ships asking, so this stands only once the owner has chosen it (:func:`setting_grant`).
 SETTING = "setting"
 #: ``hooks.auto_approve_subagent_spawn`` / ``hooks.auto_approve_subagent_tools``.
 HOOK_SETTING = "hook_setting"
@@ -102,7 +103,8 @@ AUTO_EXECUTE = "auto_execute"
 #: A subagent's result announced in the chat that started it: that turn's calls approve on their
 #: own (``gateway.injection_approval_policy``).
 INJECTION = "result_injection"
-#: The gateway has nowhere to ask (no dashboard, no channel) and approves.
+#: The gateway has nowhere to ask (no dashboard, no channel), so nobody can say yes: it names the
+#: refusal of a call no grant covered, never an approval.
 NO_SURFACE = "no_approval_surface"
 #: The eval runner's own allowlist: its read-only tools, and file reads outside sensitive paths.
 #: It also names the runner's refusal of every other call (`eval.runner`).
@@ -221,7 +223,12 @@ def refused(grant: str, *, caller: str, subject: str = "") -> None:
 
 
 def approval_mode_now() -> str:
-    """``agent.approval_mode`` as it reads now. An unreadable config reads as asking (``""``)."""
+    """``agent.approval_mode`` as it reads now. An unreadable config reads as asking (``""``).
+
+    What a chat's own floor reads (``chat_runner._apply_approval_floor``: "trust_reads" lets a
+    chat run a read-only shell command unasked) and what a surface describes. It is never read as
+    the grant of an agent no chat started: that is :func:`setting_grant`, and only it.
+    """
     try:
         from personalclaw.config.loader import AppConfig
 
@@ -229,6 +236,49 @@ def approval_mode_now() -> str:
     except Exception:  # noqa: BLE001 - fail toward asking
         logger.debug("could not read agent.approval_mode; asking", exc_info=True)
         return ""
+
+
+def setting_grant() -> str:
+    """:data:`SETTING` when the owner's Approval mode is "auto" now, else ``""`` (the agent asks).
+
+    THE ONE PLACE the global setting is read as a grant for an agent no chat started: a trigger's
+    Invoke Agent agent whose step does not set its own approval, a subagent started outside a
+    chat. Every other unattended run gets its approval from the consent given for that run alone
+    (the step's own ``approval_mode``, the Allow its trigger was given, the Mode its loop was
+    started under, a workflow run's own unattended grant), never from here. The mode ships asking
+    (``config.loader.AgentConfig``), so this stands only for an owner who chose "auto", with the
+    consent its loosening asks (``config.editable``). Not checked against the operator ceiling:
+    each caller asks :func:`stands`, as it does of every grant.
+    """
+    return SETTING if approval_mode_now() == "auto" else ""
+
+
+def setting_sentence() -> str:
+    """What the owner's Approval mode does now for an agent no chat started, in plain words: the
+    Doctor's row and ``personalclaw doctor`` say this, and Settings → Agent defaults says the same.
+    """
+    mode = approval_mode_now()
+    label = _MODE_LABELS.get(mode, _MODE_LABELS["interactive"])
+    if setting_grant():
+        if stands(SETTING, caller="doctor", audit=False):
+            return (
+                "Approval mode is Auto: an agent no chat started (a trigger's Invoke Agent agent, "
+                "a subagent started outside a chat) approves every tool call it makes, file "
+                "changes and shell commands included, without asking you."
+            )
+        return (
+            "Approval mode is Auto, but the operator ceiling says every call asks: an agent no "
+            "chat started asks you in your Inbox before each call that needs approval."
+        )
+    return (
+        f"Approval mode is {label}: an agent no chat started (a trigger's Invoke Agent agent, a "
+        "subagent started outside a chat) asks you in your Inbox before each call that needs "
+        "approval, unless its automation or loop was allowed to run on its own."
+    )
+
+
+#: Each value as Settings → Agent defaults → Approval mode names it.
+_MODE_LABELS = {"interactive": "Ask each time", "trust_reads": "Trust reads", "auto": "Auto"}
 
 
 def approval_window_secs() -> float:

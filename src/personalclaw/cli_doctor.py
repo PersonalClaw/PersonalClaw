@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from personalclaw import __version__ as _pc_version
+from personalclaw import approval_grants
 from personalclaw.agent import AGENT_FILENAME, agents_dir
 from personalclaw.atomic_write import atomic_write
 from personalclaw.auth.modes import classify_auth_mode_request
@@ -828,7 +829,9 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         print(f"  chat model:  {_refs[0] if _refs else '(none bound)'}")
     except Exception:
         print("  chat model:  (unresolved)")
-    print(f"  approval:    {cfg.agent.approval_mode}")
+    # In words, as the Doctor's own row says it (`approval_grants.setting_sentence`): a bare
+    # "auto" said nothing of what it lets an agent no chat started do.
+    print(f"  approval:    {approval_grants.setting_sentence()}")
     issues.extend(_doctor_config_readable())
 
     issues.extend(_doctor_timezone())

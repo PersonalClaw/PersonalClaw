@@ -163,24 +163,24 @@ describe('a config panel does not present fabricated values as saved state', () 
     const at = widgets.indexOf('title="Agent defaults"')
     expect(at, 'found the tile').toBeGreaterThan(-1)
     const body = widgets.slice(at - 1400, at + 1200)
-    // 🪤 `'interactive'` claimed the app would ask before every tool call; the stored default is
-    // `auto`. Unreachable now that the fetcher rejects — but a readout that lies whenever it IS
-    // reached is not worth keeping, and the direction matters: this string governs only the DISPLAY,
-    // so guessing the restrictive mode manufactures false assurance rather than adding safety.
-    expect(body, 'the honest fallback').toMatch(/approval_mode \?\? 'auto'/)
-    expect(body, 'the safe-looking lie is gone').not.toMatch(/approval_mode \?\? 'interactive'/)
+    // 🪤 The fallback is the stored default, `interactive` since the mode ships asking. Unreachable now
+    // that the fetcher rejects — but a readout that lies whenever it IS reached is not worth keeping:
+    // this string governs only the DISPLAY, so a value other than the default is a claim the config
+    // does not back. It was `auto` while `auto` was the default, and inverted when that did.
+    expect(body, 'the honest fallback').toMatch(/approval_mode \?\? 'interactive'/)
+    expect(body, 'the old default is gone').not.toMatch(/approval_mode \?\? 'auto'/)
   })
 
-  it("VACUITY: the backend default really is `auto`, so 'auto' is the truthful fallback", () => {
-    // If this ever becomes `interactive`, the assertion above inverts and the tile should follow the
-    // config rather than this rail. Guards the fallback's TRUTH, not its spelling.
+  it("VACUITY: the backend default really is `interactive`, so it is the truthful fallback", () => {
+    // If this ever changes, the assertion above inverts and the tile should follow the config rather
+    // than this rail. Guards the fallback's TRUTH, not its spelling.
     const { readFileSync } = require('node:fs') as typeof import('node:fs')
     const { join } = require('node:path') as typeof import('node:path')
     const loader = readFileSync(join(process.cwd(), '..', 'src/personalclaw/config/loader.py'), 'utf8')
     // Bounded to AgentConfig's own block, not the file — `approval_mode` also exists per-agent.
     const cls = loader.match(/class AgentConfig:[\s\S]*?\n\n/)?.[0] ?? ''
     expect(cls, 'found AgentConfig').not.toBe('')
-    expect(cls, 'approval_mode defaults to auto').toMatch(/approval_mode[\s\S]{0,120}?default="auto"/)
+    expect(cls, 'approval_mode defaults to interactive').toMatch(/approval_mode[\s\S]{0,120}?default="interactive"/)
   })
 
   it('the census is reproducible, and the rest of the population is stated not swept', () => {

@@ -31,14 +31,13 @@ const RAN_WITHOUT_ASKING: Record<string, string> = {
   agent_floor: 'the agent’s “Always allow”',
   parent_trust: 'the Trust of the chat that started it',
   approval_mode: 'its own approval mode',
-  setting: 'the Auto-approve setting',
+  setting: 'your Approval mode “Auto”',
   hook_setting: 'the hook settings',
   hook_pattern: 'an auto-approve pattern in the hook settings',
   source: 'the hook settings’ auto-approved sources',
   cli: 'the gateway’s --approval flag',
   app_grant: 'the app’s grant',
   session_policy: 'the session’s approval policy',
-  no_approval_surface: 'the gateway, which had nowhere to ask',
 }
 
 /** How a retry that settled this note ended: asked and answered, or run by a standing grant. */

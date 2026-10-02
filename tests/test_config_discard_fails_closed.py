@@ -20,7 +20,9 @@ unreachable.
 
 ``agent.subagent_cwd_allowed_roots`` is not in the table any more: its default is already its
 narrowest value (``[]``, the workspace only), so a discarded read has nothing to widen, and
-:func:`test_the_cwd_roots_need_no_discard_entry` holds that down.
+:func:`test_the_cwd_roots_need_no_discard_entry` holds that down. Nor is ``agent.approval_mode``
+since it ships asking (``interactive``): a discard still resolves it to asking, by its default,
+and :func:`test_the_approval_mode_needs_no_discard_entry` holds that down.
 
 This file is the same contract ``providers/entity_routes._load_entity_settings`` acquired in
 #3411, applied to ``config.json``: *absent* and *unreadable* are different claims, and only the
@@ -64,11 +66,14 @@ FAIL_CLOSED: dict[str, Any] = {
     "agent.unattended_requires_verified_adapter": True,
 }
 
-#: The dataclass defaults — correct for a first run, wrong for a discard. Asserted explicitly
-#: so a future default change that happens to make one of these restrictive cannot quietly turn
-#: an arm below into a tautology.
-PERMISSIVE_DEFAULTS: dict[str, Any] = {
-    "agent.approval_mode": "auto",
+#: The declared table: only the fields whose default is LOOSER than their narrowest value.
+TABLE: dict[str, Any] = {"agent.unattended_requires_verified_adapter": True}
+
+#: The dataclass defaults — correct for a first run, wrong for a discard where they are looser.
+#: Asserted explicitly so a future default change that happens to make one of these restrictive
+#: cannot quietly turn an arm below into a tautology.
+DEFAULTS: dict[str, Any] = {
+    "agent.approval_mode": "interactive",
     "agent.unattended_requires_verified_adapter": False,
 }
 
@@ -127,6 +132,16 @@ def test_the_cwd_roots_need_no_discard_entry() -> None:
     assert "agent.subagent_cwd_allowed_roots" not in CONFIG_ON_DISCARDED_READ
 
 
+def test_the_approval_mode_needs_no_discard_entry() -> None:
+    """Approval mode ships asking, the narrowest value the field has, so the table carries no
+    entry for it: a discarded read of a config that said "auto" already falls back to asking. If
+    this default ever loosens again, the entry has to come back."""
+    from personalclaw.config.loader import CONFIG_ON_DISCARDED_READ, AgentConfig
+
+    assert AgentConfig().approval_mode == "interactive"
+    assert "agent.approval_mode" not in CONFIG_ON_DISCARDED_READ
+
+
 def test_the_permissive_defaults_are_still_permissive() -> None:
     """The defaults this file calls unsafe ARE the defaults, measured from the dataclass.
 
@@ -137,8 +152,8 @@ def test_the_permissive_defaults_are_still_permissive() -> None:
     from personalclaw.config.loader import AgentConfig
 
     fresh = AppConfig(agent=AgentConfig())
-    assert _posture(fresh) == PERMISSIVE_DEFAULTS
-    assert PERMISSIVE_DEFAULTS != FAIL_CLOSED
+    assert _posture(fresh) == DEFAULTS
+    assert DEFAULTS != FAIL_CLOSED
 
 
 # ── the three corruption modes ──────────────────────────────────────────────────────────
@@ -152,9 +167,8 @@ def test_a_truncated_config_fails_closed(home: Path) -> None:
     cfg = AppConfig.load()
     assert _posture(cfg) == FAIL_CLOSED, (
         "a truncated config.json widened the posture: a file we cannot parse was read as 'no "
-        "restrictions declared'. approval_mode=auto auto-approves every tool call for a "
-        "subagent's lifetime, and unattended_requires_verified_adapter=false lets an unproven "
-        "runner start while nobody is watching."
+        "restrictions declared'. unattended_requires_verified_adapter=false lets an unproven "
+        "runner start while nobody is watching, and approval_mode must still ask."
     )
     assert cfg.agent.yolo is False
 
@@ -191,7 +205,7 @@ def test_an_absent_config_still_yields_the_permissive_defaults(home: Path) -> No
     the user's intent there. Failing closed here would ship an install that asks permission for
     every read before the user has expressed any preference."""
     assert not (home / "config.json").exists()
-    assert _posture(AppConfig.load()) == PERMISSIVE_DEFAULTS
+    assert _posture(AppConfig.load()) == DEFAULTS
 
 
 def test_a_zero_byte_config_reads_as_absent_not_as_a_discard(home: Path) -> None:
@@ -204,10 +218,10 @@ def test_a_zero_byte_config_reads_as_absent_not_as_a_discard(home: Path) -> None
     make-the-product-unusable half of this fix, not the safety half.
     """
     (home / "config.json").write_text("", encoding="utf-8")
-    assert _posture(AppConfig.load()) == PERMISSIVE_DEFAULTS
+    assert _posture(AppConfig.load()) == DEFAULTS
 
     (home / "config.json").write_text("   \n\t\n", encoding="utf-8")
-    assert _posture(AppConfig.load()) == PERMISSIVE_DEFAULTS
+    assert _posture(AppConfig.load()) == DEFAULTS
 
 
 # ── the operator's file is never overwritten by the substitute ───────────────────────────
@@ -253,7 +267,7 @@ def test_the_fail_closed_resolution_is_a_declared_surface(home: Path) -> None:
     """
     from personalclaw.config.loader import CONFIG_ON_DISCARDED_READ
 
-    assert dict(CONFIG_ON_DISCARDED_READ) == FAIL_CLOSED
+    assert dict(CONFIG_ON_DISCARDED_READ) == TABLE
 
 
 def test_a_discard_is_observable_and_a_repair_clears_it(home: Path) -> None:
@@ -296,7 +310,7 @@ def test_doctor_reports_an_unreadable_config_as_an_issue(home: Path, capsys) -> 
     assert "UNREADABLE" in printed
     assert str(home / "config.json") in printed
     # Rendered from the table, so the advice cannot describe a posture that is no longer applied.
-    for key in FAIL_CLOSED:
+    for key in TABLE:
         assert key in printed
 
     (home / "config.json").write_text(text, encoding="utf-8")

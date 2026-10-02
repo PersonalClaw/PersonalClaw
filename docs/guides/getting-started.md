@@ -227,7 +227,7 @@ If the small default model is all you have, chat from the dashboard. `personalcl
 doesn't load it, so the terminal prints a setup message instead of a reply.
 
 Tool calls the agent wants to make appear as approval prompts (default
-`agent.approval_mode: auto`; see the
+`agent.approval_mode: interactive`, Ask each time; see the
 [configuration reference](../reference/configuration.md) to tune approval,
 sandboxing, and security policy).
 
@@ -383,6 +383,13 @@ defaults flipped, and some routes refuse input they used to accept. Run
 
 ### After updating from 0.2.0
 
+- **An agent no chat started asks before it acts, unless its automation or loop was allowed to
+  run on its own.** Settings → Agent defaults → Approval mode now ships as Ask each time, so a
+  trigger's Invoke Agent agent whose step does not set its own approval, or a subagent started
+  outside a chat, asks you in your Inbox. A config written before keeps what it holds: if it says
+  Auto (one written while Auto was the default usually does), those agents still approve every
+  call they make, and Doctor and Settings → Agent defaults say so. Nothing records whether that Auto was
+  chosen, so it is left for you to keep or change there.
 - **The first start re-embeds your library once.** Knowledge items and memories that 0.2.0
   embedded do not record which embedding model wrote their vectors, and nothing else can
   tell one model's vector from another's, so the first start re-embeds them in the

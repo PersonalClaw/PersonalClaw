@@ -33,6 +33,7 @@ import {
 } from './bento'
 import { fvs } from '../../design/fontWeight'
 import { setAgentYolo } from './agentYolo'
+import { APPROVAL_MODES } from './approvalModes'
 import { hasSearchTool, SEARCH_TOOL, SEARCH_TOOL_APP } from './searchTool'
 import { updateVerdict, updateVerdictLabel, type UpdateVerdict } from './updateVerdict'
 
@@ -221,10 +222,10 @@ const useFeedbackProducers = () => useQuery('settings:feedback-producers', () =>
 // `if (!data && loadErr)` guard never fired — `data` was defined, just empty.
 //
 // What that fabricated `{}` claimed, on a config that never loaded:
-//   · Approval mode read **"Ask each time"** from `?? 'interactive'` — while the stored default is
-//     `auto` (`loader.py`'s `AgentConfig.approval_mode`). The UI showed the SAFE mode and the runtime
-//     ran the permissive one, so a user checked their setting, saw what they wanted, changed nothing,
-//     and every tool call still executed unprompted.
+//   · Approval mode read **"Ask each time"** from `?? 'interactive'` — while the stored default was
+//     then `auto` (`loader.py`'s `AgentConfig.approval_mode`). The UI showed the SAFE mode and the
+//     runtime ran the permissive one, so a user checked their setting, saw what they wanted, changed
+//     nothing, and every tool call still executed unprompted.
 //   · YOLO read **off** from `!!c.yolo`, on a switch whose whole job is auto-approve-everything.
 //
 // The block comment below states the rule this broke — *"match the PANEL exactly, or take a key of
@@ -653,13 +654,13 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       const { data, error: agentErr, refresh, stale: isStalePaint, status } = useAgentDefaults()
       const c = (data?.cfg ?? {}) as Record<string, unknown>
-      // 🪤 `'auto'`, NOT `'interactive'`. This is now unreachable on a failed read — the fetcher rejects,
+      // 🪤 The DEFAULT, whatever it is. This is now unreachable on a failed read — the fetcher rejects,
       // so `data` is undefined and the rows below never render — but the value it substitutes still has
-      // to be TRUE if the key is ever absent from a successful read. The stored default is `auto`
-      // (`loader.py`'s `AgentConfig.approval_mode`); `'interactive'` named the opposite, and guessing the
-      // restrictive mode is the worse direction precisely because this string governs only the READOUT.
-      // Behaviour is decided by the config, so a safe-looking guess manufactures false assurance.
-      const approval = String(c.approval_mode ?? 'auto')
+      // to be TRUE if the key is ever absent from a successful read. The stored default is
+      // `interactive` (`loader.py`'s `AgentConfig.approval_mode`, the first of `APPROVAL_MODES`); it
+      // was `auto`, and a guess that differs from the default in either direction is a readout the
+      // config does not back, because this string governs only the READOUT.
+      const approval = String(c.approval_mode ?? 'interactive')
       const setCfg = (key: string, value: unknown) => mutate(
         () => api.patchConfig(`agent.${key}`, value).then(refresh), 'settings:agent-defaults',
       )
@@ -681,7 +682,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
           {data && <KVList query={query} rows={[
             { k: 'Default agent', v: data.defaultAgent || '—', vText: data.defaultAgent || '—' },
             { k: 'Approval', control: true, v: <InlineSelect value={approval} ariaLabel="Approval mode" onPick={(v) => setCfg('approval_mode', v)}
-              options={[{ value: 'auto', label: 'Auto' }, { value: 'interactive', label: 'Ask each time' }, { value: 'trust_reads', label: 'Trust reads' }]} /> },
+              options={APPROVAL_MODES.map((m) => ({ value: m.key, label: m.label }))} /> },
             { k: 'YOLO', control: true, v: <Switch on={!!c.yolo} label="YOLO auto-approve all" onToggle={setYolo} /> },
           ]} />}
         </BentoCard>

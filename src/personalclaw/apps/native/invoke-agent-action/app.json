@@ -85,7 +85,7 @@
           "default": "",
           "x-meta": {
             "label": "Approval",
-            "help": "Set 'auto' to skip the spawn approval gate for this hook. Empty inherits the global auto_approve_subagent_spawn.",
+            "help": "Set 'auto' to let its agent approve every tool call it makes without asking you (read-only unless Capability is mutating). Empty: its agent asks you before each call that needs approval, unless Settings → Agent defaults → Approval mode is Auto.",
             "tags": [
               "advanced"
             ]

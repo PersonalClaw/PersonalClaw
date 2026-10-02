@@ -34,7 +34,7 @@ def test_the_field_is_declared_with_its_help_text():
     (spec,) = [f for f in fields(AgentConfig) if f.name == "approval_timeout_minutes"]
     assert spec.default == 120, "two hours stays the default"
     assert spec.metadata["label"] == "Approval Wait (minutes)"
-    assert "Unattended runs never wait" in spec.metadata["help"]
+    assert "allowed to run on its own never waits" in spec.metadata["help"]
 
 
 def test_it_round_trips_through_load_and_to_dict(home):

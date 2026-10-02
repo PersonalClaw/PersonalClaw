@@ -239,8 +239,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "values": ["auto", "interactive", "trust_reads"],
         "security": SecurityControl(
             loosens_toward("interactive", "trust_reads", "auto"),
-            "A looser approval mode lets tools run without asking you first — 'trust_reads' "
-            "approves read-only tools, and 'auto' approves every tool a subagent calls.",
+            "A looser approval mode lets tool calls run without asking you first. 'Trust "
+            "reads' lets a chat run a read-only shell command without asking. 'Auto' lets an "
+            "agent no chat started (a trigger's Invoke Agent agent, a subagent started outside a "
+            "chat) approve every tool call it makes, file changes and shell commands included, "
+            "without asking you; chats still ask.",
         ),
     },
     "agent.yolo": {

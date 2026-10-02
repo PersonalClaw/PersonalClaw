@@ -726,7 +726,8 @@ class SubagentManager:
 
         Each one is read at this moment, not at the spawn and not at startup: the chat that started
         the agent (its Trust or YOLO pushed into its policy), the spawn's own ``approval_mode``,
-        YOLO, the global Auto-approve setting (for an agent no chat started), the hook setting.
+        YOLO, the owner's Approval mode "Auto" (for an agent no chat started, and only once the
+        owner chose it: the mode ships asking, `approval_grants.setting_grant`), the hook setting.
         Not checked against the ceiling: :meth:`_grant_now` is.
         """
         if self._sessions.get_approval_policy(info.parent_session_key) in ("auto", "yolo"):
@@ -735,8 +736,8 @@ class SubagentManager:
             return approval_grants.APPROVAL_MODE
         if self._is_yolo and self._is_yolo():
             return approval_grants.YOLO
-        if not info.parent_session_key and approval_grants.approval_mode_now() == "auto":
-            return approval_grants.SETTING
+        if not info.parent_session_key and (setting := approval_grants.setting_grant()):
+            return setting
         hooks = self._ctx_builder.hooks if self._ctx_builder else None
         if hooks is not None and hooks.auto_approve_subagent_tools is True:
             return approval_grants.HOOK_SETTING
@@ -2096,7 +2097,7 @@ class SubagentManager:
         """Inner execution — called within timeout wrapper."""
         # Who may approve this agent's tool calls without asking. Read NOW, and again at every
         # call it makes (`_policy_source`, handed to its session below): the chat that started it,
-        # the spawn's own `approval_mode`, YOLO, the global Auto-approve setting for an agent no
+        # the spawn's own `approval_mode`, YOLO, the owner's Approval mode "Auto" for an agent no
         # chat started, the hook setting (`approval_grants`, rule 1). Bounded by the operator
         # ceiling (rule 2): a refusal is audited here, once, and the calls then ask.
         grant = self._grant_now(info, audit=True)

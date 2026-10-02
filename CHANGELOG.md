@@ -975,6 +975,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Unattended agents now ask unless their automation or loop was allowed to run on its own: Settings → Agent defaults → Approval mode ships as Ask each time, so a trigger's Invoke Agent agent or a subagent started outside a chat asks in your Inbox, an Auto a config already holds is kept, named by Doctor and by Settings, and said in the Allow of each trigger it reaches, and a gateway with nowhere to ask refuses their calls instead of approving them.**
 - **With automatic update checks off, the update check no longer reaches GitHub on its own: a source checkout's update status ran `git fetch` against its origin on every Settings visit, and the start-up line said "Already on latest version" with nothing checked. Settings › Updates has Check now, one check you ask for whatever the switch says; automatic checks run at start and then once per check interval; and the start-up line says what the check found.**
 - **The gateway's sign-in link stays out of its logs: under a service, after a detached restart and in a container it prints the dashboard's address and how to get a link, and the service's and restart's logs are readable only by you, with a link an older gateway left in one taken out.**
 - **Each gateway start replaces the startup sign-in link the start before it made, when no browser opened it, so a service that restarts again and again no longer piles up 30-day sign-ins in Settings → Devices.**
