@@ -1147,7 +1147,9 @@ def test_write_actions_call_the_dashboards_own_services_not_a_second_path():
     src = (pathlib.Path(personalclaw.__file__).parent / "inbound" / "bridge.py").read_text()
     assert "from personalclaw.tasks import registry" in src
     assert "registry.create_task(" in src
-    assert "store.set_enabled(" in src
+    # The switch the Triggers page, the chat and the CLI share (`triggers.tools.set_paused`), not
+    # the store's bare `set_enabled`, which skips the checks and the arming that switch carries.
+    assert "T.set_paused(" in src and "store.set_enabled(" not in src
     # And it must not have grown its own writer.
     assert "atomic_write(" in src  # the discovery file is the ONLY thing it writes itself
     assert src.count("atomic_write(") == 1

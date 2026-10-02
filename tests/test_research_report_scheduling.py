@@ -1,16 +1,10 @@
-"""A due research report actually fires, and `is_due` finally has a production caller.
+"""A saved research report is attached to the clock: one automation row, armed and granted.
 
-WF2KNO-12 shipped a report definition store, a runner, an API, a UI, a `research-finding`
-kind and a delivery path — and nothing attached the schedule to anything. Measured then and
-recorded as the change's UNMET clause: `grep -rn 'is_due' src/` found no caller of
-`research_reports.is_due` outside its own module. A report could be defined, run by hand,
-refused, listed and delivered; a *due* report never fired.
-
-The fix is a `clock` trigger row per report, whose action is the provider that already
-exists — deliberately NOT a second sweeper loop, because `gateway.py`'s `_clock_loop` is
-explicit that a clock fire and a file fire go through ONE dispatch path "rather than two
-that drift", and a second loop would re-decide arming, overlap, catch-up and audit slightly
-differently.
+The report's schedule becomes a `clock` trigger row per report, whose action is the provider that
+already exists — deliberately NOT a second sweeper loop, because `gateway.py`'s `_clock_loop` is
+explicit that a clock fire and a file fire go through ONE dispatch path "rather than two that
+drift", and a second loop would re-decide arming, overlap, catch-up and audit slightly differently.
+A fire of that row IS the report's run (`test_a_reports_schedule_is_one_schedule.py`).
 
 Two seams here would each have produced a row that looks scheduled and never fires, and
 neither is visible from the definition side:
@@ -205,8 +199,8 @@ def test_each_cadence_maps_to_a_clock_spec_the_substrate_accepts(home, sched, ex
     ],
 )
 def test_an_unusable_cadence_yields_no_row_rather_than_a_guess(home, sched):
-    """Fail closed, and never invent a default: `is_due` already refuses with a named reason,
-    and a guessed cadence would run a report on a schedule nobody chose."""
+    """Fail closed, and never invent a default: a guessed cadence would run a report on a
+    schedule nobody chose. With no row, it runs when you press Run now."""
     defn = _defn()
     defn.schedule = sched
     assert rs.clock_spec(defn) == {}
@@ -216,12 +210,9 @@ def test_an_unusable_cadence_yields_no_row_rather_than_a_guess(home, sched):
 def test_a_report_with_no_explicit_tz_still_carries_the_host_zone(home, monkeypatch):
     """The drift that had no test until a falsification leg found nothing to run.
 
-    `ReportDefinition.tz` documents `""` as "resolved", and `_report_tz` honours that. An
-    ABSENT `spec["timezone"]` used to mean something ELSE on the trigger side —
-    `arm._trigger_tz` fell back to UTC — so on a non-UTC host the row would arm for the UTC
-    hour while `is_due` waited for the local one: the fire arrives, the pre-flight skips it as
-    not-due, and the report runs late or not that day. Safe rather than wrong, which is why it
-    would have gone unnoticed.
+    `ReportDefinition.tz` documents `""` as "follow the machine". An ABSENT `spec["timezone"]`
+    used to mean something ELSE on the trigger side — `arm._trigger_tz` fell back to UTC — so on
+    a non-UTC host the row would arm for the UTC hour and the report run at the wrong time.
 
     Driven through the REAL resolution now (#2520) rather than a `get_local_tz` stub. The stub
     was hiding the actual bug: `get_local_tz`'s own fallback was UTC, so `_effective_tz`
@@ -233,7 +224,7 @@ def test_a_report_with_no_explicit_tz_still_carries_the_host_zone(home, monkeypa
     spec = rs.clock_spec(defn)
     assert spec.get("timezone") == "Europe/Berlin", (
         "a report with no explicit tz produced a spec with no timezone, so the trigger would "
-        f"arm in UTC while is_due waits for host local: {spec}"
+        f"arm in UTC rather than on this machine's clock: {spec}"
     )
 
 
@@ -249,111 +240,3 @@ def test_the_timezone_travels_with_the_spec(home):
     so dropping it would fire a 9am report at 9am UTC."""
     defn = _defn(tz="America/New_York")
     assert rs.clock_spec(defn)["timezone"] == "America/New_York"
-
-
-# ── The pre-flight: `is_due` gets its caller ──────────────────────────────
-
-
-class _Ctx:
-    event = "clock.fire"
-    context = ""
-    payload: dict = {}
-
-
-async def _run(config: dict):
-    from personalclaw.action_providers.knowledge_report_provider import (
-        KnowledgeReportActionProvider,
-    )
-
-    return await KnowledgeReportActionProvider().execute(config, _Ctx())
-
-
-@pytest.mark.asyncio
-async def test_a_scheduled_fire_that_is_not_due_is_a_named_skip(home, monkeypatch):
-    """The pre-flight. The trigger may be more eager than the report; `is_due` is the
-    authority for the window, and it owns the four hardening rules a cron cannot express."""
-    import json
-
-    defn = rr.save_report(_defn())
-    calls: list = []
-    monkeypatch.setattr(rr, "record_run", lambda *a, **k: calls.append((a, k)))
-    monkeypatch.setattr(rr, "is_due", lambda d, *, now: (False, "waiting for the window"))
-
-    result = await _run({"report_id": defn.id})
-
-    assert result.success is True, "a not-due fire is a skip, not a failure"
-    body = json.loads(result.stdout or "{}")
-    assert body.get("skipped") == "not_due" and body.get("reason")
-    assert calls == [], (
-        "a fire that did not run stamped the report — that advances the watermark past "
-        "material this fire never read"
-    )
-
-
-@pytest.mark.asyncio
-async def test_a_MANUAL_run_skips_the_dueness_check(home, monkeypatch):
-    """The user clicking Run now is the authority for that fire; refusing it as "not due"
-    would make the button lie. The flag rides the action CONFIG, which a trigger row never
-    sets — so a scheduled fire cannot acquire it by accident."""
-    defn = rr.save_report(_defn())
-    asked: list = []
-
-    def _is_due(d, *, now):
-        asked.append(d.id)
-        return (False, "not due")
-
-    monkeypatch.setattr(rr, "is_due", _is_due)
-    # The scope resolution is not under test; a store failure is a clean recorded failure.
-    monkeypatch.setattr(rr, "record_run", lambda *a, **k: None)
-
-    await _run({"report_id": defn.id, "manual": True})
-
-    assert asked == [], "a manual run consulted the schedule and could refuse the user"
-
-
-@pytest.mark.asyncio
-async def test_a_DUE_scheduled_fire_is_not_skipped(home, monkeypatch):
-    """Vacuity for the pre-flight, and the assertion that makes this change's claim true.
-
-    A gate that skips every fire would satisfy the not-due test while leaving the report
-    exactly as inert as before this change.
-    """
-    import json
-
-    defn = rr.save_report(_defn())
-    monkeypatch.setattr(rr, "is_due", lambda d, *, now: (True, "due"))
-    monkeypatch.setattr(rr, "record_run", lambda *a, **k: None)
-
-    result = await _run({"report_id": defn.id})
-
-    body = json.loads(result.stdout or "{}")
-    assert body.get("skipped") != "not_due", "a due report was skipped as not due"
-
-
-def test_is_due_now_has_a_production_caller(home):
-    """The rail on the change's own UNMET clause — a source scan, and only that.
-
-    The recorded evidence for leaving WF2KNO-12 `todo` was `grep -rn 'is_due' src/` finding no
-    caller, so this asserts the inverse of that exact measurement. It proves PRESENCE, not
-    reachability: with the pre-flight disabled by `if False:` this test still passed, because
-    the call site is still in the file. Reachability is
-    `test_a_scheduled_fire_that_is_not_due_is_a_named_skip`, which drives the shipped provider
-    and reds under the same mutation — the two are a pair on purpose, and neither is
-    sufficient alone.
-    """
-    import re
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
-    callers = []
-    for path in root.rglob("*.py"):
-        if path.name == "research_reports.py":
-            continue  # the definition itself
-        text = path.read_text(encoding="utf-8")
-        code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
-        if re.search(r"\brr\.is_due\(|research_reports\.is_due\(", code):
-            callers.append(str(path.relative_to(root)))
-    assert callers, (
-        "nothing in src/ calls research_reports.is_due — a due report still never fires, "
-        "which is the exact clause this atom was left `todo` for"
-    )

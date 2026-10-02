@@ -1720,6 +1720,9 @@ export interface ScheduleJob {
   needs_review?: boolean
   // What it is not allowed to use — see `Trigger`.
   needs_grant?: string[]
+  // The report this automation is the schedule of, else null: its time and switch are the
+  // report's, its name comes from the report, and deleting it leaves the report unscheduled.
+  report_id?: string | null
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
@@ -3975,19 +3978,40 @@ export interface ResearchReport {
   enabled: boolean
   created_ts: number
   last_run_ts: number | null
+  /** How the last run went: 'ok' (it wrote a finding), 'nothing_new' (it read its sources and
+   *  found no new material), 'error' (it failed), or '' (never run). */
   last_status: string
   last_error: string
+  /** The last finished run's own sentence ("Found no new material in your knowledge tagged perf
+   *  since its previous run."). A failed run leaves it, since `last_run_ts` still dates that run. */
+  last_result: string
   watermark_ts: number
   /** Its schedule as the Triggers page words it ("At 8:00 AM EDT, only on Monday"), the zone it
    *  runs in, and its next run (ISO, UTC). `words` is '' for a report with no schedule, and
    *  `next_run_at` is '' while it is paused. */
   schedule_shown: { words: string; timezone: string; next_run_at: string }
+  /** What it reads, in the sentence its card shows: which part of your knowledge, over which
+   *  window, what it may look at while writing, and that it does not search the web. Worded by
+   *  the server from the same scope a run reads. */
+  sources_shown: string
 }
 
 export type ResearchReportInput = Omit<
   ResearchReport,
-  'id' | 'created_ts' | 'last_run_ts' | 'last_status' | 'last_error' | 'watermark_ts' | 'schedule_shown'
+  'id' | 'created_ts' | 'last_run_ts' | 'last_status' | 'last_error' | 'last_result' | 'watermark_ts'
+  | 'schedule_shown' | 'sources_shown'
 >
+
+/** What a report's Run now answers once the run is over: whether it ran, what it did (`outcome`:
+ *  'wrote', 'nothing_new', 'already_running', or 'failed') and the run's own sentence (`result`).
+ *  `refused` is the guardrail's sentence when nothing was allowed to run. */
+export interface ResearchReportRun {
+  ok: boolean
+  report_id: string
+  outcome?: string
+  result?: string
+  refused?: string
+}
 
 export interface KnowledgeStaleness {
   item_id: string
@@ -9268,12 +9292,10 @@ export const api = {
     put<ResearchReport>(`/api/knowledge/reports/${encodeURIComponent(id)}`, body),
   deleteResearchReport: (id: string) =>
     del(`/api/knowledge/reports/${encodeURIComponent(id)}`),
-  /** Run one now. A 409 means a scheduled fire already holds the lease — the manual run is
-   *  idempotent against it rather than starting a second one. */
+  /** Run one now, and say what the run found. A 409 means a scheduled fire already holds the
+   *  lease — the manual run is idempotent against it rather than starting a second one. */
   runResearchReport: (id: string) =>
-    post<{ ok: boolean; report_id: string; outcome?: string; note?: string }>(
-      `/api/knowledge/reports/${encodeURIComponent(id)}/run`,
-    ),
+    post<ResearchReportRun>(`/api/knowledge/reports/${encodeURIComponent(id)}/run`),
   knowledgeStaleness: (id: string) =>
     get<KnowledgeStaleness>(`/api/knowledge/items/${encodeURIComponent(id)}/staleness`),
   /** The ONE action the staleness banner offers. It queues a proposal the owner accepts —

@@ -1,60 +1,45 @@
-"""Scheduled research reports — the DEFINITION and its dueness.
+"""Scheduled research reports — the DEFINITION, what it reads, and how its runs went.
 
-A research report is a standing question ("what changed in my sources about X?")
-that fires on a schedule, searches a *source* scope, writes findings as
-``research-finding`` knowledge nodes, and advances a watermark so the next run
-only considers what arrived since. This module owns the persisted definition and
-the single question a runner asks of it: *is this due right now?*
+A research report is a standing question ("what changed in my sources about X?") that runs on a
+schedule, reads a *source* scope of your knowledge, writes findings as ``research-finding``
+knowledge nodes, and advances a watermark so the next run only considers what arrived since. This
+module owns the persisted definition, the sentence a report states its sources in, and the record
+of its runs. Scope resolution, the model loop, node writing and delivery live in the runner
+(``action_providers.knowledge_report_provider``); WHEN a report runs belongs to the clock.
 
-It deliberately owns nothing else. Scope resolution, the model loop, node
-writing and delivery live in sibling modules; the runner is what calls
-``is_due`` and ``record_run``.
+**One schedule.** A report's schedule is stored here and nowhere else. Its automation on the
+Triggers page mirrors it (``knowledge.report_schedules``), the clock fires the automation, and a
+fire IS the report's run: nothing reads the schedule a second time when a fire arrives. A second
+reading was a second schedule — an automation moved on the Triggers page fired at its new time and
+was skipped as "not due" against this one, and its history called the skip a success. An edit on
+either side moves both (``report_schedules.adopt``).
 
-Four scheduling failures this module exists to prevent — each is a test in
-``tests/test_research_reports.py``:
+**What a report reads is said in the words of what decides it.** :func:`sources_shown` words the
+same ``Scope`` the runner resolves — no tags is anything in your knowledge, a window is a rolling
+span — and always says that a report does not search the web: it reads only what your sources,
+notes and imports have brought into the library.
 
-1. **An unparseable expression fails CLOSED.** ``is_due`` never raises. A runner
-   iterates *every* definition on every tick, so one malformed cron expression
-   that escaped as an exception would wedge the whole sweep and silently stop
-   every other report. A bad expression is therefore "not due, and here is why",
-   with the offending expression named in the reason so the user can fix it.
-2. **A never-run report anchors its first fire on its CREATION time.** The
-   tempting spelling is ``last_run_ts or 0`` — which anchors a brand-new report
-   on the Unix epoch, making every schedule already overdue by 56 years, so
-   every report a user creates fires the instant it is saved. ``_anchor_ts``
-   falls back to ``created_ts`` instead, and refuses to guess when even that is
-   unset (fail closed rather than fire at 1970).
-3. **A missed window fires ONCE, not once per window skipped.** Dueness compares
-   the anchor against the *most recent* boundary at or before now, never against
-   a count of elapsed boundaries. Catch-up-per-window is the wrong reading of a
-   schedule: a laptop asleep overnight would wake to fifty queued model calls
-   for a report the user only ever wanted the latest answer from. The user wants
-   one report, not fifty. ``record_run`` stamps *now* — not the boundary it
-   missed — for the same reason.
-4. **A failed run records its error WITHOUT advancing the last-run timestamp**,
-   so the next tick retries instead of skipping the window. The consequence is
-   deliberate: a persistently failing report retries on every tick rather than
-   on its own cadence, which is the honest trade (a visible ``last_status ==
-   "error"`` plus retries beats a report that silently produces nothing until
-   tomorrow). Runner-side backoff, if wanted, belongs to the runner.
+Three rules about a run's record, each a test in ``tests/test_research_reports.py``:
 
-And one watermark rule:
-
-5. **The watermark belongs to scope-resolution time, not completion time.**
-   ``record_run`` takes it as a parameter instead of stamping ``time.time()``
-   itself. A run that resolves its scope at T and finishes at T+90s would, if it
-   stamped its own completion, set the watermark past anything captured during
-   those 90 seconds — and those items would never be considered by any future
+1. **A run says what it found.** ``last_status`` is ``ok`` for a run that wrote a finding,
+   :data:`NOTHING_NEW` for one that read its sources and found no new material, and ``error`` for
+   one that failed; ``last_result`` is that run's sentence for a person. Nothing new is the normal
+   outcome of a frequent schedule and never a failure, and it is never an "ok" that says nothing.
+2. **A failed run records its error WITHOUT advancing the last-run stamp or the watermark**, so the
+   next run reads the same new material again instead of skipping it. ``last_result`` keeps the
+   sentence of the last run that finished, which is the run ``last_run_ts`` dates.
+3. **The watermark belongs to scope-resolution time, not completion time.** ``record_run`` takes it
+   as a parameter instead of stamping ``time.time()`` itself. A run that resolves its scope at T
+   and finishes at T+90s would, if it stamped its own completion, set the watermark past anything
+   captured during those 90 seconds — and those items would never be considered by any future
    run. The RUNNER passes the timestamp it resolved the scope at.
 
-The store is one JSON file under ``config_dir()``. A corrupt or absent file
-loads as an empty list and never raises: these definitions are read on the
-gateway's scheduler path and by the reports API, so an unreadable store must
-degrade to "no reports" rather than take the gateway down. The file is
-hand-editable by design, which is the other half of why rule 1 lives in
-``is_due`` and not only in ``save_report``. Every write re-reads it under its
-lock (``record_files.locked``), which a sync and a restore's merge hold too when
-they bring another machine's reports in, so neither writes over the other.
+The store is one JSON file under ``config_dir()``. A corrupt or absent file loads as an empty list
+and never raises: these definitions are read by the runner and by the reports API, so an unreadable
+store must degrade to "no reports" rather than take the gateway down. The file is hand-editable by
+design, which is why ``from_dict`` is tolerant. Every write re-reads it under its lock
+(``record_files.locked``), which a sync and a restore's merge hold too when they bring another
+machine's reports in, so neither writes over the other.
 """
 
 from __future__ import annotations
@@ -63,16 +48,14 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import tzinfo
 from pathlib import Path
 from uuid import uuid4
 
 from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
-from personalclaw.cron_clock import previous_fire as previous_cron_fire
 from personalclaw.knowledge.semantics import RESEARCH_FINDING_KIND as _RESEARCH_FINDING_KIND
-from personalclaw.schedule import ScheduleDefinition, validate_cron_expr
+from personalclaw.schedule import ScheduleDefinition
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 
@@ -113,6 +96,10 @@ def report_claim_id(report_id: str) -> str:
 
 CITATION_POLICIES = (CITE_SOURCE_ONLY, ALLOW_CITING_CONTEXT)
 
+#: ``last_status`` of a run that read its sources and found no new material in them: a finished
+#: run, not a failure, and not the ``ok`` of a run that wrote a finding.
+NOTHING_NEW = "nothing_new"
+
 _REPORTS_FILE = "research_reports.json"
 
 # Iteration ceiling. Each iteration is a full model call over the resolved scope,
@@ -122,8 +109,8 @@ _REPORTS_FILE = "research_reports.json"
 MIN_ITERATION_CAP = 1
 MAX_ITERATION_CAP = 10
 
-# Persisted error text is capped: the store is loaded on the scheduler path, and
-# a provider traceback pasted verbatim would grow the file without adding signal.
+# Persisted run text is capped: the store is read by the runner and the reports API, and a provider
+# traceback pasted verbatim would grow the file without adding signal.
 _MAX_ERROR_CHARS = 500
 
 
@@ -134,7 +121,8 @@ _MAX_ERROR_CHARS = 500
 class Scope:
     """What a report may read. ``tags`` are tag-subtree roots; ``()`` means no tag
     filter (the whole knowledge base). ``window_secs`` of 0 means "since this
-    report's watermark" — the incremental default — rather than "no window"."""
+    report's watermark" — the incremental default — rather than "no window".
+    :func:`sources_shown` says it in these terms, and the runner reads exactly this."""
 
     tags: tuple[str, ...] = ()
     window_secs: int = 0
@@ -146,7 +134,8 @@ class ReportDefinition:
 
     ``schedule`` REUSES ``personalclaw.schedule.ScheduleDefinition`` — the same
     ``every``/``at``/``cron`` shape the trigger store speaks. A second cadence
-    vocabulary for reports would be a dialect that drifts from the first one.
+    vocabulary for reports would be a dialect that drifts from the first one. It is
+    the report's one schedule; its automation mirrors it (``report_schedules``).
 
     ``context is None`` means nothing may be searched while writing the report:
     the model sees the source scope's items and nothing else. That is the
@@ -168,8 +157,11 @@ class ReportDefinition:
     enabled: bool = True
     created_ts: float = 0.0
     last_run_ts: float | None = None
-    last_status: str = ""  # "ok" | "error" | ""
+    last_status: str = ""  # "ok" | NOTHING_NEW | "error" | ""
     last_error: str = ""
+    #: What the last run that finished found, in a sentence for a person ("Found no new material in
+    #: your knowledge tagged perf since its previous run.").
+    last_result: str = ""
     watermark_ts: float = 0.0
 
 
@@ -228,7 +220,7 @@ def _schedule_from_dict(raw: object) -> ScheduleDefinition:
     if not isinstance(raw, dict):
         return ScheduleDefinition(kind="")
     # An unusable cadence becomes None rather than 0: a 0-second "every" would be a
-    # silently-hot schedule, whereas None fails closed in is_due with a named reason.
+    # silently-hot schedule, whereas None gives the mirror no cadence to arm (`clock_spec`).
     every = _as_int(raw.get("every_secs"))
     return ScheduleDefinition(
         kind=_as_str(raw.get("kind")),
@@ -255,6 +247,7 @@ def to_dict(defn: ReportDefinition) -> dict:
         "last_run_ts": defn.last_run_ts,
         "last_status": defn.last_status,
         "last_error": defn.last_error,
+        "last_result": defn.last_result,
         "watermark_ts": defn.watermark_ts,
     }
 
@@ -268,6 +261,7 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     "last_run_ts",
     "last_status",
     "last_error",
+    "last_result",
     "watermark_ts",
 )
 
@@ -313,6 +307,7 @@ def from_dict(raw: dict) -> ReportDefinition:
         last_run_ts=_as_opt_float(raw.get("last_run_ts")),
         last_status=_as_str(raw.get("last_status")),
         last_error=_as_str(raw.get("last_error")),
+        last_result=_as_str(raw.get("last_result")),
         watermark_ts=_as_float(raw.get("watermark_ts")),
     )
 
@@ -372,8 +367,9 @@ def save_report(defn: ReportDefinition) -> ReportDefinition:
     Validates the citation policy (an unknown policy would leave the runner with
     no rule to apply) and clamps ``iteration_cap``. It deliberately does NOT
     reject a malformed schedule expression: the store is hand-editable and
-    ``from_dict`` is tolerant, so rejecting here could never be the guarantee.
-    ``is_due`` failing closed is the guarantee (rule 1).
+    ``from_dict`` is tolerant, so rejecting here could never be the guarantee. The
+    API refuses one at the door, and the mirror (``report_schedules.to_trigger``)
+    arms nothing for a cadence the clock cannot read.
     """
     if defn.citation_policy not in CITATION_POLICIES:
         raise ValueError(
@@ -383,7 +379,6 @@ def save_report(defn: ReportDefinition) -> ReportDefinition:
     if not defn.id:
         defn.id = f"rpt-{uuid4().hex[:8]}"
     if not defn.created_ts:
-        # created_ts is the first-fire anchor (rule 2), so it can never stay 0.
         defn.created_ts = time.time()
     defn.iteration_cap = _clamp_iteration_cap(defn.iteration_cap)
     with record_files.locked(_store_path()):
@@ -439,100 +434,6 @@ def _remove_schedule(report_id: str) -> str:
         return f"schedule removal failed: {exc}"
 
 
-# ── Dueness ──
-
-
-def _report_tz(defn: ReportDefinition) -> tzinfo:
-    """The report's timezone, resolved by the one owner (`personalclaw.timezones`).
-
-    This docstring's own argument — "a cron expression is a wall-clock statement; evaluating
-    '0 7 * * *' in UTC for a user in Los Angeles delivers their morning report at midnight" —
-    was true and the code still delivered it at midnight (#2520): the fallback was
-    `get_local_tz()`, which itself answered UTC whenever `config.timezone` was blank, and it
-    is blank on a stock install. The owner now falls back to the machine's own zone.
-
-    An unusable `defn.tz` degrades to the resolved default with the value named, rather than
-    raising: `is_due` sweeps every definition on every tick and must never let one malformed
-    report wedge the others (rule 1 of this module).
-    """
-    from personalclaw.timezones import UnknownTimeZone, resolve_zone
-
-    try:
-        return resolve_zone(defn.tz)
-    except UnknownTimeZone as exc:
-        logger.warning("Report %s: %s — using this machine's zone instead", defn.id, exc)
-        return resolve_zone("")
-
-
-def _anchor_ts(defn: ReportDefinition) -> float | None:
-    """The instant the current window is measured from: the last run, or — for a
-    report that has never run — its CREATION time. Never 0. ``last_run_ts or 0``
-    would anchor every new report on the Unix epoch, making it instantly overdue
-    (rule 2). ``None`` means there is no honest anchor, and the caller fails closed
-    rather than inventing 1970."""
-    if defn.last_run_ts is not None:
-        return defn.last_run_ts
-    return defn.created_ts if defn.created_ts > 0 else None
-
-
-def is_due(defn: ReportDefinition, *, now: float) -> tuple[bool, str]:
-    """Whether *defn* should fire at *now*, and why (or why not).
-
-    Never raises: a runner sweeps every definition on every tick, so an exception
-    escaping here would let one malformed report wedge every other report's
-    schedule (rule 1). Every failure path returns ``(False, <reason>)`` with the
-    offending value named, so the reason is something a UI can show the user.
-    """
-    try:
-        if not defn.enabled:
-            return False, "disabled"
-        sched = defn.schedule
-        anchor = _anchor_ts(defn)
-        if anchor is None:
-            return False, "no anchor: created_ts is unset (refusing to anchor on the epoch)"
-
-        if sched.kind == "every":
-            every = sched.every_secs
-            if not isinstance(every, int) or every <= 0:
-                return False, f"invalid every_secs {every!r} (expected a positive integer)"
-            # One comparison against the CURRENT window, never a count of the
-            # windows that elapsed — fifty missed windows are still one report
-            # (rule 3).
-            due_at = anchor + every
-            if now >= due_at:
-                return True, f"every {every}s elapsed since {anchor:.0f}"
-            return False, f"next fire at {due_at:.0f}"
-
-        if sched.kind == "at":
-            at_ts = sched.at_ts
-            if at_ts is None:
-                return False, "invalid at schedule: at_ts is unset"
-            if defn.last_run_ts is not None:
-                return False, "one-shot 'at' schedule already ran"
-            if now >= at_ts:
-                return True, f"one-shot time {at_ts:.0f} reached"
-            return False, f"next fire at {at_ts:.0f}"
-
-        if sched.kind == "cron":
-            expr = sched.cron_expr or ""
-            if not expr or not validate_cron_expr(expr):
-                # Fail CLOSED and name the expression: this is the reason the
-                # whole function is wrapped, and the user's only repair hint.
-                return False, f"invalid cron expression {expr!r}"
-            # The most recent boundary at or before now, on the report zone's wall clock
-            # (`cron_clock`). Comparing that single boundary against the anchor is what makes
-            # fifty skipped windows fire once (rule 3).
-            prev_fire = previous_cron_fire(expr, now, _report_tz(defn))
-            if prev_fire > anchor:
-                return True, f"cron {expr!r} boundary at {prev_fire:.0f} passed"
-            return False, f"no cron {expr!r} boundary since {anchor:.0f}"
-
-        return False, f"unsupported schedule kind {sched.kind!r}"
-    except Exception as exc:  # fail closed — a bad definition must not wedge a sweep
-        logger.warning("Dueness evaluation failed for report %s", defn.id, exc_info=True)
-        return False, f"schedule evaluation failed: {exc}"
-
-
 # ── Run bookkeeping ──
 
 
@@ -548,27 +449,29 @@ def record_run(
     report_id: str,
     *,
     ok: bool,
+    result: str = "",
+    nothing_new: bool = False,
     error: str = "",
     watermark_ts: float | None = None,
 ) -> None:
     """Persist the outcome of one run.
 
-    On success: advance ``last_run_ts`` to now (NOT to the boundary that was
-    missed — stamping the boundary is exactly the catch-up-per-window bug of rule
-    3) and, when supplied, the watermark.
+    On success: advance ``last_run_ts`` to now and, when supplied, the watermark; record
+    ``ok`` — or :data:`NOTHING_NEW` for a run that found nothing new — and the run's sentence
+    (``result``) in ``last_result`` (rule 1).
 
-    On failure: record ``last_status``/``last_error`` and leave ``last_run_ts``
-    ALONE, so the next tick retries instead of skipping the window (rule 4). The
-    watermark is left alone too: advancing it past items a failed run never
-    successfully read would skip them forever.
+    On failure: record ``last_status``/``last_error`` and leave ``last_run_ts`` and
+    ``last_result`` ALONE, so they still describe the last run that finished (rule 2). The
+    watermark is left alone too: advancing it past items a failed run never successfully read
+    would skip them forever.
 
-    ``watermark_ts`` is a parameter, not ``time.time()``, because it belongs to
-    the moment the run RESOLVED ITS SCOPE, not the moment it finished (rule 5).
-    Stamping completion would silently skip everything captured mid-run. The
-    runner owns that timestamp and passes it here.
+    ``watermark_ts`` is a parameter, not ``time.time()``, because it belongs to the moment the
+    run RESOLVED ITS SCOPE, not the moment it finished (rule 3). Stamping completion would
+    silently skip everything captured mid-run. The runner owns that timestamp and passes it
+    here.
 
-    A missing id is a no-op: a report deleted while its run was in flight must
-    not make the runner's bookkeeping raise.
+    A missing id is a no-op: a report deleted while its run was in flight must not make the
+    runner's bookkeeping raise.
     """
     with record_files.locked(_store_path()):
         defns = load_reports()
@@ -579,11 +482,69 @@ def record_run(
         now = time.time()
         if ok:
             target.last_run_ts = now
-            target.last_status = "ok"
+            target.last_status = NOTHING_NEW if nothing_new else "ok"
             target.last_error = ""
+            target.last_result = result[:_MAX_ERROR_CHARS]
             if watermark_ts is not None:
                 target.watermark_ts = watermark_ts
         else:
             target.last_status = "error"
             target.last_error = _redact(error)
         _write(defns)
+
+
+# ── What a report says it reads, and what a run found ──
+
+
+def _where(tags: tuple[str, ...]) -> str:
+    """``your knowledge``, or ``your knowledge tagged perf`` / ``perf or ops`` /
+    ``perf, ops or ai`` — the part of the library a scope with these tags reads."""
+    names = [t for t in tags if t]
+    if not names:
+        return "your knowledge"
+    listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}"
+    return f"your knowledge tagged {listed}"
+
+
+def _span(window_secs: int) -> str:
+    """``from the last 7 days`` — a rolling window, as every surface words a length of time."""
+    from personalclaw.auth.lifetimes import duration_words
+
+    return f"from the last {duration_words(window_secs)}"
+
+
+def sources_shown(defn: ReportDefinition) -> str:
+    """What *defn* reads, in a sentence for its card: which part of your knowledge, over which
+    window, what it may look at while writing, and that it does not search the web.
+
+    Worded from the very ``Scope`` the runner resolves, so the card cannot promise a source the
+    run does not read. A report has no web source: what reaches it from the web is what a watched
+    source brought into the library first.
+    """
+    source = defn.source
+    if source.window_secs > 0:
+        parts = [f"Reads {_where(source.tags)} {_span(source.window_secs)} each time it runs."]
+    else:
+        parts = [f"Reads what is new in {_where(source.tags)} each time it runs."]
+    if defn.context is not None:
+        span = f" {_span(defn.context.window_secs)}" if defn.context.window_secs > 0 else ""
+        parts.append(f"While writing, it may also look at {_where(defn.context.tags)}{span}.")
+    parts.append("It does not search the web.")
+    return " ".join(parts)
+
+
+def wrote_words(defn: ReportDefinition, items: int) -> str:
+    """The sentence of a run that wrote its finding from *items* source items."""
+    noun = "item" if items == 1 else "items"
+    return f"Wrote a finding from {items} {noun} in {_where(defn.source.tags)}."
+
+
+def nothing_new_words(defn: ReportDefinition) -> str:
+    """The sentence of a run that found no new material, for the window that run read: its rolling
+    window, or what arrived since its previous run, or — before any run — everything so far."""
+    where = _where(defn.source.tags)
+    if defn.source.window_secs > 0:
+        return f"Found no material in {where} {_span(defn.source.window_secs)}."
+    if defn.watermark_ts > 0:
+        return f"Found no new material in {where} since its previous run."
+    return f"Found nothing in {where} to report on yet."

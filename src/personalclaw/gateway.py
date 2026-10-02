@@ -2277,6 +2277,12 @@ class GatewayOrchestrator:
                 float(decision.retry_after) if decision.state == TriggerState.PARKED.value else 0.0
             )
             store.upsert(live)
+            if autopause.needs_attention(decision.state):
+                # A report's automation the clock paused is its report paused: the Reports page
+                # must not say it runs (`knowledge.report_schedules.adopt`).
+                from personalclaw.knowledge import report_schedules
+
+                report_schedules.adopt(live)
             # 🔴 Criterion 3's SECOND clause — "and surfaces in the Runs inbox".
             # `attention_card`, `inbox_fingerprint` and `is_duplicate_card` were all dead: an
             # autopaused automation stopped silently, and a trigger that stops without saying so is

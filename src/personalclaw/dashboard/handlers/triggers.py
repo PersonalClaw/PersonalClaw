@@ -1376,9 +1376,10 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             return trigger_callbacks.delete(request, state, raw)
         if kind == _STORE:
             store = _trigger_store()
-            if store.get(raw) is None:
+            if (gone := store.get(raw)) is None:
                 return web.json_response({"error": "not found"}, status=404)
             store.delete(raw)
+            _report_unscheduled(gone.trigger)
             from personalclaw.triggers import review as _review
 
             _review.forget(raw, base_dir=store.base_dir)
@@ -1407,9 +1408,10 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         # `ScheduleRunStore` (keyed by a plain id, so it survives the cutover unchanged), so the
         # delete has two halves: drop the trigger, then drop its runs.
         store = _trigger_store()
-        if store.get(raw) is None:
+        if (gone := store.get(raw)) is None:
             return web.json_response({"error": "not found"}, status=404)
         store.delete(raw)
+        _report_unscheduled(gone.trigger)
         try:
             await _runs_store().delete_for_job(raw)
         except Exception:
@@ -1498,6 +1500,14 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         # exactly what the question named.
         _audit_grant(caller, "success", f"trigger:{raw}: {', '.join(grant.providers)}")
     return saved
+
+
+def _report_unscheduled(trigger: Any) -> None:
+    """A deleted automation that was a report's schedule leaves the report unscheduled, as the
+    chat's delete does (`knowledge.report_schedules.adopt_removal`)."""
+    from personalclaw.knowledge import report_schedules
+
+    report_schedules.adopt_removal(trigger)
 
 
 def _row_now(state: DashboardState, kind: str, raw: str) -> dict[str, Any] | None:

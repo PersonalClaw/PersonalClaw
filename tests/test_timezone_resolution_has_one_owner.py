@@ -69,7 +69,6 @@ DERIVED_CONSUMERS = (
     "triggers/arm.py",
     "schedule.py",
     "triggers/calendar.py",
-    "knowledge/research_reports.py",
     "knowledge/report_schedules.py",
     "cli_setup.py",
 )

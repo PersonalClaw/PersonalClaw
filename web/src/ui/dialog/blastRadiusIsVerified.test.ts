@@ -730,6 +730,23 @@ describe('three more bodies, checked against their handlers', () => {
     )
   })
 
+  it('a report’s schedule delete keeps the report, as its body says', () => {
+    // The body for an automation that is a report's schedule names what STAYS: the report, with no
+    // schedule. So the delete must hand the deleted row to the report, and that must clear the
+    // report's schedule and save it, never delete it.
+    expect(web('pages/schedule/ScheduleDetail.tsx')).toContain(
+      "'The report stays, with no schedule: it runs when you press Run now. Its run history is removed too. This cannot be undone.'",
+    )
+    const del = pyBetween(py('dashboard/handlers/triggers.py'), 'if request.method == "DELETE":', '    # PUT')
+    expect(del, 'the delete branch must be found').toMatch(/await _runs_store\(\)\.delete_for_job\(raw\)/)
+    expect(del, 'and the schedule delete tells the report').toMatch(/store\.delete\(raw\)\n\s+_report_unscheduled\(gone\.trigger\)/)
+    const removal = pyMethod(py('knowledge/report_schedules.py'), 'def adopt_removal')
+    expect(removal, 'which clears the report’s schedule and saves the report').toMatch(
+      /defn\.schedule = ScheduleDefinition\(kind=""\)\n\s+research_reports\.save_report\(defn\)/,
+    )
+    expect(removal, 'and never deletes it').not.toMatch(/delete_report/)
+  })
+
   it('the MCP remove says it deletes the saved values, and never reaches another tool’s config', () => {
     // 🪤 I EXPECTED A CROSS-APP BLAST RADIUS HERE AND WAS WRONG, and the rail that recorded it is kept
     // for the half that still matters: the delete never touches Claude Code's `~/.claude.json`

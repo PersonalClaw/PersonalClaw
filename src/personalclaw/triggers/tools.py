@@ -1369,6 +1369,14 @@ def update(
     before = copy.deepcopy(trigger)
     for key, value in applied.items():
         setattr(trigger, key, value)
+    # A report's automation mirrors the report's schedule (`knowledge.report_schedules`): an edit
+    # the report cannot hold is refused before anything is saved, and the rest is written into the
+    # report once the row is (`adopt`, below), so the two never say different things.
+    from personalclaw.knowledge import report_schedules
+
+    refused = report_schedules.edit_refusal(before, trigger)
+    if refused:
+        return AutomationToolResult(False, f"Error: {refused}")
     if "spec" in applied and "expires_at" not in applied:
         _expiry_after_its_time(trigger)
     # What the edit changed keeps no grant (`grants.narrow`), so `missing` below asks about it the
@@ -1412,6 +1420,9 @@ def update(
     else:
         standing = _standing(current, errors)
         lines.append(f"  {standing[:1].upper()}{standing[1:]}.")
+    unwritten = report_schedules.adopt(saved)
+    if unwritten:
+        lines.append(f"  {unwritten}")
     if rejected:
         lines.append(f"  Ignored (not settable via this tool): {', '.join(rejected)}.")
     return AutomationToolResult(
@@ -1479,6 +1490,11 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
             saved.next_fire_at = str(rearmed)
         if reset or armed:
             store.upsert(saved)
+    if saved is not None:
+        # A report's automation switched on or off is its report switched on or off.
+        from personalclaw.knowledge import report_schedules
+
+        report_schedules.adopt(saved)
     if saved is None:
         # 🔴 `set_enabled` returns None — not a trigger with `enabled` unchanged — when it
         # refuses a broken row. My first draft compared `saved.enabled`, a branch that could
@@ -1527,6 +1543,10 @@ def delete(store: Any, *, trigger_id: str, confirm: bool = False) -> AutomationT
         return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
     name = row.trigger.name
     store.delete(trigger_id)
+    from personalclaw.knowledge import report_schedules
+
+    # A report's automation deleted is the report's schedule removed: it stays, unscheduled.
+    report_schedules.adopt_removal(row.trigger)
     return AutomationToolResult(True, f"Deleted {trigger_id} ({name}).", {"deleted": trigger_id})
 
 
@@ -1566,6 +1586,8 @@ def delete_all(
             f"No {created_by}-created automations to delete.",
             {"deleted": [], "created_by": created_by},
         )
+    from personalclaw.knowledge import report_schedules
+
     deleted: list[str] = []
     for trigger in owned:
         try:
@@ -1573,6 +1595,8 @@ def delete_all(
             deleted.append(trigger.id)
         except Exception:  # noqa: BLE001 - one undeletable row must not strand the rest
             logger.debug("could not delete %s", trigger.id, exc_info=True)
+            continue
+        report_schedules.adopt_removal(trigger)
     text = f"Deleted {len(deleted)} {created_by}-created automation(s): {', '.join(deleted)}."
     if len(deleted) != len(owned):
         # Reported, not swallowed: a partial bulk delete that claimed full success would leave the

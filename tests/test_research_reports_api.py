@@ -140,6 +140,9 @@ def _make_stub() -> ModuleType:
     def delete_report(report_id: str) -> bool:
         return rows.pop(report_id, None) is not None
 
+    def sources_shown(defn: ReportDefinition) -> str:
+        return f"Reads {len(defn.source.tags)} tags."
+
     mod.CITATION_POLICIES = CITATION_POLICIES  # type: ignore[attr-defined]
     mod.Scope = Scope  # type: ignore[attr-defined]
     mod.ReportDefinition = ReportDefinition  # type: ignore[attr-defined]
@@ -149,6 +152,7 @@ def _make_stub() -> ModuleType:
     mod.load_reports = load_reports  # type: ignore[attr-defined]
     mod.get_report = get_report  # type: ignore[attr-defined]
     mod.delete_report = delete_report  # type: ignore[attr-defined]
+    mod.sources_shown = sources_shown  # type: ignore[attr-defined]
     mod._rows = rows  # type: ignore[attr-defined]
     return mod
 
@@ -229,6 +233,8 @@ class TestCrud:
             }
             assert report["source"] == {"tags": ["ai"], "window_secs": 604800}
             assert report["iteration_cap"] == 2
+            # What it reads, in the module's own sentence, served beside the stored form.
+            assert report["sources_shown"] == "Reads 1 tags."
 
             listed = await (await c.get("/api/knowledge/reports")).json()
             assert [r["id"] for r in listed["reports"]] == [rid]
@@ -358,6 +364,8 @@ class TestNotFound:
 class _FakeResult:
     success = True
     error = ""
+    stdout = '{"run": "nothing_new"}'
+    summary = "Found nothing in your knowledge to report on yet."
 
 
 class _FakeProvider:
@@ -389,15 +397,19 @@ class TestManualRun:
             rid = (await (await c.post("/api/knowledge/reports", json=BODY)).json())["report"]["id"]
             resp = await c.post(f"/api/knowledge/reports/{rid}/run")
             assert resp.status == 200
-            assert (await resp.json())["ok"] is True
+            # The run is over when this answers, so it says what the run found, in the run's
+            # own words — never "started" for a run that has finished.
+            assert await resp.json() == {
+                "ok": True,
+                "report_id": rid,
+                "outcome": "nothing_new",
+                "result": "Found nothing in your knowledge to report on yet.",
+            }
         assert len(fake_provider.calls) == 1
         config, ctx = fake_provider.calls[0]
-        # `manual: True` rides the CONFIG as well as the payload now: the provider's dueness
-        # pre-flight reads its config, because that is the surface a trigger row also fills —
-        # and a trigger row never sets this key, so a scheduled fire cannot skip the window
-        # check by accident.
-        assert config == {"report_id": rid, "manual": True}
-        assert ctx.payload["report_id"] == rid and ctx.payload["manual"] is True
+        # The same config a fire of the report's automation carries: a run by hand is a run.
+        assert config == {"report_id": rid}
+        assert ctx.payload == {"report_id": rid}
 
     @pytest.mark.asyncio
     async def test_run_reports_an_unresolvable_provider_as_ok_false(self, monkeypatch):
@@ -410,7 +422,7 @@ class TestManualRun:
             resp = await c.post(f"/api/knowledge/reports/{rid}/run")
             assert resp.status == 200
             body = await resp.json()
-            assert body["ok"] is False
+            assert body["ok"] is False and body["outcome"] == "failed"
             assert rr_api.RUN_ACTION_PROVIDER in body["result"]
 
     @pytest.mark.asyncio

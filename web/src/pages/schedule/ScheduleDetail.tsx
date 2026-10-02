@@ -32,6 +32,18 @@ function baseOf(job: ScheduleJob): Revisioned<ScheduleDraft> {
   return { value: toDraft(job), revision: job.revision ?? '' }
 }
 
+/** What an automation that is a report's schedule is: the report's time and switch, shown here
+ *  too, so an edit on either side moves both, while the report itself (its name, its deletion)
+ *  lives on its own page. Said where the edit is made, since a rename here is refused. */
+function ReportScheduleNote() {
+  return (
+    <p role="note" data-type="body-s" className="text-on-surface-var">
+      This is the schedule of a report: changing its time or switching it off here changes the report
+      too. Rename or delete the report itself in <TextLink href="#/knowledge/reports">Knowledge › Reports</TextLink>.
+    </p>
+  )
+}
+
 /** Schedule inspector for the SidePanel: view ↔ in-panel edit (same pattern as
  *  WorkflowDetail), the schedule + execution summary, last result/error, and a
  *  paginated run history that expands each run to its full trace.
@@ -161,7 +173,12 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
-    if (!(await confirmDelete('schedule', job.name, { body: 'Its run history is removed too. This cannot be undone.' }))) return
+    // A report's schedule goes, the report stays (`report_schedules.adopt_removal`): the dialog says
+    // which of the two is being deleted.
+    const body = job.report_id
+      ? 'The report stays, with no schedule: it runs when you press Run now. Its run history is removed too. This cannot be undone.'
+      : 'Its run history is removed too. This cannot be undone.'
+    if (!(await confirmDelete('schedule', job.name, { body }))) return
     try { await api.deleteSchedule(job.id); onDeleted() } catch { setErr('Delete failed') }
   }
   async function runNow() {
@@ -237,6 +254,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
+        {job.report_id && <ReportScheduleNote />}
         <HeldChange guard={guard}>
           <ScheduleForm draft={draft} onChange={setDraft} compact invokesModel={draftInvokesModel} />
         </HeldChange>
@@ -328,6 +346,8 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(mm.tone, 16)}><ActionIcon size={13} /> {actLabel}</span>
         {job.enabled && job.next_run_ts && <span className="text-on-surface-low text-[0.8125rem]">next {relFuture(job.next_run_ts)} · {absTime(job.next_run_ts)}</span>}
       </div>
+
+      {job.report_id && <ReportScheduleNote />}
 
       {/* The row's advisories IN WORDS (the cadence floor, an unknown spec key). The list badges
           them "check schedule"; the reason used to exist only as that badge's hover title, so a

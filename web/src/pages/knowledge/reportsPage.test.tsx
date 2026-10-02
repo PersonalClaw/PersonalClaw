@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ReportRow, ReportsPage } from './ReportsPage'
 import { api, type ResearchReport } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
@@ -34,12 +34,21 @@ function report(over: Partial<ResearchReport> = {}): ResearchReport {
     last_run_ts: null,
     last_status: '',
     last_error: '',
+    last_result: '',
     watermark_ts: 0,
     schedule_shown: {
       words: 'At 8:00 AM PDT, only on Monday', timezone: 'America/Los_Angeles', next_run_at: '2026-10-05T15:00:00+00:00',
     },
+    sources_shown: 'Reads what is new in your knowledge tagged research each time it runs. It does not search the web.',
     ...over,
   }
+}
+
+/** The toasts a test raised (`notify` dispatches `ne:toast` for the shell to render). */
+function toasts(): Array<{ message: string; level: string }> {
+  const seen: Array<{ message: string; level: string }> = []
+  window.addEventListener('ne:toast', (e) => seen.push((e as CustomEvent).detail))
+  return seen
 }
 
 // `useQuery` keeps a MODULE-GLOBAL cache, so a list fetched by one test is served to the
@@ -48,11 +57,14 @@ function report(over: Partial<ResearchReport> = {}): ResearchReport {
 afterEach(() => { vi.restoreAllMocks(); invalidateKeys('knowledge:reports') })
 
 describe('a report row states its scoping decisions', () => {
-  it('names the schedule, what it watches, and that it cites new material only', () => {
+  it('names the schedule, what it reads, that it does not search the web, and its citations', () => {
     render(<ReportRow report={report()} onChanged={() => {}} />)
     expect(screen.getByText(/Weekly contradiction scan/)).toBeTruthy()
     expect(screen.getByText(/At 8:00 AM PDT, only on Monday/)).toBeTruthy()
-    expect(screen.getByText(/tagged research/)).toBeTruthy()
+    // The server's own sentence for what it reads, worded from the scope a run reads.
+    expect(screen.getByText(
+      'Reads what is new in your knowledge tagged research each time it runs. It does not search the web.',
+    )).toBeTruthy()
     // The policy is the third leg of the triple — a row without it cannot be judged.
     expect(screen.getByText(/cites new material only/)).toBeTruthy()
   })
@@ -68,7 +80,23 @@ describe('a report row states its scoping decisions', () => {
       onChanged={() => {}} />)
     expect(screen.getByText(/last run failed/)).toBeTruthy()
     // Both facts survive: the stamp is deliberately not advanced by a failure.
-    expect(screen.getByText(/ran /)).toBeTruthy()
+    expect(screen.getByText(/Last run /)).toBeTruthy()
+  })
+
+  it('🔑 says what the last run found — a run that found nothing new says so', () => {
+    render(<ReportRow report={report({
+      last_run_ts: Date.now() / 1000 - 120,
+      last_status: 'nothing_new',
+      last_result: 'Found no new material in your knowledge tagged research since its previous run.',
+    })} onChanged={() => {}} />)
+    expect(screen.getByText(
+      'Last run 2m ago · Found no new material in your knowledge tagged research since its previous run.',
+    )).toBeTruthy()
+  })
+
+  it('a report that has never run says so', () => {
+    render(<ReportRow report={report()} onChanged={() => {}} />)
+    expect(screen.getByText('Never run yet.')).toBeTruthy()
   })
 
   it('offers a run that names the report, so two rows cannot share one name', () => {
@@ -77,10 +105,73 @@ describe('a report row states its scoping decisions', () => {
   })
 
   it('running calls the run endpoint and reports a refusal instead of swallowing it', async () => {
+    const seen = toasts()
     const run = vi.spyOn(api, 'runResearchReport').mockRejectedValue(new Error('a run is already in flight'))
     render(<ReportRow report={report()} onChanged={() => {}} />)
     screen.getByRole('button', { name: /Run Weekly contradiction scan now/i }).click()
     await waitFor(() => expect(run).toHaveBeenCalledWith('rep-1'))
+    await waitFor(() => expect(seen).toContainEqual({ message: 'a run is already in flight', level: 'error' }))
+  })
+
+  it('🔑 Run now says what the run found, not that it started', async () => {
+    const seen = toasts()
+    vi.spyOn(api, 'runResearchReport').mockResolvedValue({
+      ok: true, report_id: 'rep-1', outcome: 'nothing_new',
+      result: 'Found no new material in your knowledge tagged research since its previous run.',
+    })
+    const onChanged = vi.fn()
+    render(<ReportRow report={report()} onChanged={onChanged} />)
+    screen.getByRole('button', { name: /Run Weekly contradiction scan now/i }).click()
+    await waitFor(() => expect(seen).toContainEqual({
+      message: 'Weekly contradiction scan: Found no new material in your knowledge tagged research since its previous run.',
+      level: 'info',
+    }))
+    expect(seen.some((t) => /started/.test(t.message))).toBe(false)
+    // The card re-reads, so it says the same as the toast did.
+    expect(onChanged).toHaveBeenCalled()
+  })
+
+  it('a run that failed says it failed, in its own words', async () => {
+    const seen = toasts()
+    vi.spyOn(api, 'runResearchReport').mockResolvedValue({
+      ok: false, report_id: 'rep-1', outcome: 'failed', result: 'knowledge-report: rep-1 failed: the model timed out',
+    })
+    render(<ReportRow report={report()} onChanged={() => {}} />)
+    screen.getByRole('button', { name: /Run Weekly contradiction scan now/i }).click()
+    await waitFor(() => expect(seen).toContainEqual({
+      message: 'Weekly contradiction scan: knowledge-report: rep-1 failed: the model timed out', level: 'error',
+    }))
+  })
+})
+
+// ── What a report can read, said where it is made ───────────────────────────────────────────────
+//
+// A report was made with the prompt "What shipped this week, with links" and read only the
+// library, which nothing on the page said: the form promised "anything new" and never that the
+// web is not one of its sources. It says so first now, with the way to bring a site in.
+describe('the report form', () => {
+  it('🔑 says a report reads only your knowledge and does not search the web', async () => {
+    vi.spyOn(api, 'researchReports').mockResolvedValue({ reports: [] })
+    render(<ReportsPage onBack={() => {}} />)
+    // The header's New report and the empty list's both open the same form.
+    fireEvent.click((await screen.findAllByRole('button', { name: 'New report' }))[0])
+    const said = screen.getByText(/A report reads only your knowledge/)
+    expect(said.textContent).toMatch(/It does\s+not search the web\./)
+    const link = screen.getByRole('link', { name: /watch\s+it as a source/ })
+    expect(link.getAttribute('href')).toBe('#/knowledge/sources')
+  })
+
+  it('🔑 edits a report in place, and sends only what changed', async () => {
+    const update = vi.spyOn(api, 'updateResearchReport').mockResolvedValue(report())
+    const onChanged = vi.fn()
+    render(<ReportRow report={report()} onChanged={onChanged} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Weekly contradiction scan' }))
+    fireEvent.change(screen.getByDisplayValue('0 8 * * 1'), { target: { value: '28 3 * * 5' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save report' }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith('rep-1', {
+      schedule: { kind: 'cron', cron_expr: '28 3 * * 5' },
+    }))
+    await waitFor(() => expect(onChanged).toHaveBeenCalled())
   })
 })
 

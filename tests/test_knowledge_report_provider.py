@@ -6,18 +6,17 @@ them changes whether an item exists at the end, so every test here asserts on an
 CALL (how many model calls happened, what config reached the persist step, what was recorded)
 rather than on the store's final contents.
 
-⚠️  `personalclaw.knowledge.research_reports` is a sibling change that has not landed. The
-runner reaches it through the single `_reports_module()` seam, and this suite substitutes
-`FakeReports` there — a hand-written stand-in for the frozen contract (`FINDING_KIND`,
-`CITE_SOURCE_ONLY`, `ALLOW_CITING_CONTEXT`, `Scope`, `ReportDefinition`, `get_report`,
-`record_run`). When the real module lands, the fake should be deleted in favour of it; until
-then these tests prove the runner's behaviour against the contract, not against the module.
+The runner reaches the definition store through the single `_reports_module()` seam, and this
+suite substitutes `FakeReports` there — a hand-written stand-in for its contract (`FINDING_KIND`,
+`CITE_SOURCE_ONLY`, `ALLOW_CITING_CONTEXT`, `NOTHING_NEW`, `Scope`, `ReportDefinition`,
+`get_report`, `record_run`, and the module's own run sentences), so each test sets the definition
+it needs and reads exactly what was recorded. The same runs against the real module, end to end
+through the Reports page's routes, are `test_a_report_says_what_it_reads_and_what_it_found.py`.
 
-Two consequences of that, recorded so nobody reads a green suite as more than it is:
+Recorded so nobody reads a green suite as more than it is:
 
-  * `research-finding` is not in `semantics.KINDS` yet, so a real `knowledge-persist` would
-    REFUSE the write. The write is therefore asserted at the call (`_persist` stubbed, config
-    inspected) plus one test that the seam really does dispatch the persist provider.
+  * The write is asserted at the call (`_persist` stubbed, config inspected) plus one test that
+    the seam really does dispatch the persist provider.
   * The seeded source items are written through the REAL persist provider with a real kind, so
     the scope-resolution tests run against a real store, real tag rows and real timestamps.
 """
@@ -37,6 +36,7 @@ from personalclaw.action_providers.knowledge_persist_provider import (
     KnowledgePersistActionProvider,
     _open_store,
 )
+from personalclaw.knowledge import research_reports as real_reports
 
 FINDING_KIND = "research-finding"
 CITE_SOURCE_ONLY = "cite-source-only"
@@ -77,6 +77,8 @@ class RunRecord:
     ok: bool
     error: str
     watermark_ts: float | None
+    result: str = ""
+    nothing_new: bool = False
 
 
 class FakeReports:
@@ -85,8 +87,13 @@ class FakeReports:
     FINDING_KIND = FINDING_KIND
     CITE_SOURCE_ONLY = CITE_SOURCE_ONLY
     ALLOW_CITING_CONTEXT = ALLOW_CITING_CONTEXT
+    NOTHING_NEW = real_reports.NOTHING_NEW
     Scope = Scope
     ReportDefinition = ReportDefinition
+    # A run's sentences are the module's own: they read only the scope and the watermark, which
+    # this double's definition carries in the same shape.
+    wrote_words = staticmethod(real_reports.wrote_words)
+    nothing_new_words = staticmethod(real_reports.nothing_new_words)
 
     def __init__(self) -> None:
         self.reports: dict[str, ReportDefinition] = {}
@@ -99,24 +106,17 @@ class FakeReports:
     def get_report(self, report_id: str) -> ReportDefinition | None:
         return self.reports.get(report_id)
 
-    #: The dueness answer this double hands back. Default DUE, so every test in this file keeps
-    #: exercising the run path it was written for — the pre-flight is a gate on WHEN the runner
-    #: is invoked, and this file is about what the run then does. The gate itself is driven in
-    #: `test_research_report_scheduling.py`, against the real module.
-    due: tuple[bool, str] = (True, "due")
-
-    def is_due(self, defn: ReportDefinition, *, now: float) -> tuple[bool, str]:
-        return self.due
-
     def record_run(
         self,
         report_id: str,
         *,
         ok: bool,
+        result: str = "",
+        nothing_new: bool = False,
         error: str = "",
         watermark_ts: float | None = None,
     ) -> None:
-        self.runs.append(RunRecord(report_id, ok, error, watermark_ts))
+        self.runs.append(RunRecord(report_id, ok, error, watermark_ts, result, nothing_new))
 
 
 # ── stubs for the two expensive seams ──
@@ -364,7 +364,7 @@ def test_a_report_never_reads_its_own_findings(home, reports, provider, ctx, mod
     assert model.calls == 0, "the report fed on its own output"
 
 
-# ── bullet 3: an empty scope is a terminal success ──
+# ── bullet 3: an empty scope is a finished run that says it found nothing ──
 
 
 def test_an_empty_scope_never_calls_the_model(home, reports, provider, ctx, model, persist):
@@ -374,18 +374,22 @@ def test_an_empty_scope_never_calls_the_model(home, reports, provider, ctx, mode
     assert result.success, result.error
     assert model.calls == 0, "an empty scope spent a model call"
     assert persist.calls == 0
-    note = body(result)["note"]
-    assert "nothing new" in note
+    # It ran and changed nothing durable, and says what it read: never a bare "ok".
+    assert result.outcome == "skip"
+    assert result.summary == "Found nothing in your knowledge tagged perf to report on yet."
+    assert body(result)["run"] == "nothing_new"
 
 
 def test_an_empty_scope_still_advances_the_watermark(home, reports, provider, ctx, model, persist):
-    defn_for(reports)
+    defn_for(reports, watermark_ts=time.time() - 60)
     before = time.time()
-    run(provider.execute({"report_id": "rep-1"}, ctx))
+    result = run(provider.execute({"report_id": "rep-1"}, ctx))
 
     record = reports.runs[-1]
-    assert record.ok is True
+    assert record.ok is True and record.nothing_new is True
     assert record.watermark_ts is not None and record.watermark_ts >= before
+    said = "Found no new material in your knowledge tagged perf since its previous run."
+    assert record.result == said and result.summary == said
 
 
 # ── bullet 4: the loop is bounded by iteration_cap ──
@@ -534,8 +538,11 @@ def test_a_context_marker_resolves_only_under_allow_citing_context(
 def test_the_finding_is_written_with_the_finding_kind(home, reports, provider, ctx, model, persist):
     seed(ctx, title="Latency regressed", tags=["perf"])
     defn_for(reports)
-    run(provider.execute({"report_id": "rep-1"}, ctx))
+    result = run(provider.execute({"report_id": "rep-1"}, ctx))
 
+    said = "Wrote a finding from 1 item in your knowledge tagged perf."
+    assert result.summary == said and result.outcome == ""
+    assert reports.runs[-1].result == said
     assert persist.calls == 1, "one finding per run"
     cfg = persist.configs[0]
     assert cfg["kind"] == FINDING_KIND
@@ -678,13 +685,15 @@ def test_an_unknown_report_records_nothing(home, reports, provider, ctx, model, 
     assert reports.runs == [], "there is no report row to stamp"
 
 
-def test_a_disabled_report_does_nothing(home, reports, provider, ctx, model, persist):
+def test_a_paused_report_runs_when_it_is_run(home, reports, provider, ctx, model, persist):
+    """Pausing switches its automation off, so the clock never fires it; a run that reaches the
+    runner anyway is one somebody asked for (Run now), and it runs, as a paused automation's does.
+    Answering "skipped" there was the "ok" that ran nothing."""
     seed(ctx, title="Latency regressed", tags=["perf"])
     defn_for(reports, enabled=False)
     result = run(provider.execute({"report_id": "rep-1"}, ctx))
     assert result.success is True
-    assert body(result)["skipped"] == "disabled"
-    assert model.calls == 0 and persist.calls == 0 and reports.runs == []
+    assert model.calls == 1 and persist.calls == 1
 
 
 def test_a_dry_run_spends_nothing_and_stamps_nothing(home, reports, provider, ctx, model, persist):

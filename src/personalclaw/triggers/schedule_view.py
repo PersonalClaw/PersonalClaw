@@ -185,6 +185,7 @@ def to_schedule_row(
     `is_running` / `running_since` come from the CLAIM store (S97), not a process-local dict — which
     is why they are answerable at all from an API process that does not own the scheduler loop.
     """
+    from personalclaw.knowledge import report_schedules
     from personalclaw.triggers import claims
 
     spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
@@ -199,6 +200,12 @@ def to_schedule_row(
         "name": trigger.name,
         "enabled": bool(trigger.enabled),
         "action": action,
+        # The report this automation is the schedule of, or None. Its time and its switch are the
+        # report's (an edit of either moves both), its name is the report's, and deleting it leaves
+        # the report unscheduled, so the panel says so; read from the same predicate the edits use.
+        "report_id": (
+            report_schedules.report_id_for(trigger.id) if report_schedules.owns(trigger) else None
+        ),
         # The schedule mechanism. `expr`/`interval_secs`/`at` are the store's spellings of
         # the legacy
         # `cron_expr`/`every_secs`/`at_ts`; the wire keeps the legacy names so the FE is unchanged.

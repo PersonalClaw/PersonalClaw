@@ -254,6 +254,7 @@ async def _create_task(state: Any, params: dict) -> dict:
 
 
 async def _toggle_automation(state: Any, params: dict) -> dict:
+    from personalclaw.triggers import tools as T
     from personalclaw.triggers.store import TriggerStore
 
     trigger_id = str(params.get("id") or "").strip()
@@ -267,10 +268,13 @@ async def _toggle_automation(state: Any, params: dict) -> dict:
     # Absent `enabled` means TOGGLE, so the current value has to be read first — an
     # unconditional `True` would make a second identical call a no-op instead of a flip.
     enabled = (not loaded.trigger.enabled) if target is None else bool(target)
-    updated = store.set_enabled(trigger_id, enabled)
-    if updated is None:
-        raise ValueError(f"could not set enabled on {trigger_id}")
-    return {"id": trigger_id, "enabled": updated.enabled}
+    # Through the one switch the Triggers page, the chat and the CLI use (`tools.set_paused`):
+    # it refuses a row that cannot run or holds no grant for what it runs, arms one switched on,
+    # and moves what the row mirrors — a report's own switch — with it.
+    result = T.set_paused(store, trigger_id=trigger_id, paused=not enabled)
+    if not result.ok:
+        raise ValueError(result.text)
+    return {"id": trigger_id, "enabled": enabled}
 
 
 _REGISTRY: tuple[Action, ...] = (

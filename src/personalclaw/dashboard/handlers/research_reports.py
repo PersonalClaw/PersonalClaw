@@ -39,6 +39,7 @@ because it edits the serialized form of the row that already exists.
 
 from __future__ import annotations
 
+import json
 import logging
 from importlib import import_module
 from types import ModuleType
@@ -288,11 +289,16 @@ def _policies(rr: ModuleType) -> tuple[str, ...]:
 
 
 def _served(rr: ModuleType, defn: Any) -> dict[str, Any]:
-    """One definition as the page reads it: its stored form, and its schedule as the Reports page
-    states it (``knowledge.report_schedules.shown``) — in words, with its zone and next run."""
+    """One definition as the page reads it: its stored form, its schedule as the Reports page
+    states it (``knowledge.report_schedules.shown``) — in words, with its zone and next run — and
+    what it reads, in the sentence its card shows (``research_reports.sources_shown``)."""
     from personalclaw.knowledge.report_schedules import shown
 
-    return {**rr.to_dict(defn), "schedule_shown": shown(defn)}
+    return {
+        **rr.to_dict(defn),
+        "schedule_shown": shown(defn),
+        "sources_shown": rr.sources_shown(defn),
+    }
 
 
 async def api_reports_list(request: web.Request) -> web.Response:
@@ -363,6 +369,11 @@ async def api_report_run(request: web.Request) -> web.Response:
     double-spend the model budget and race the watermark write. 409 with a machine-readable
     ``reason`` so the button can say "already running" rather than "something failed".
 
+    The run is over when this answers, so the answer is what it found: ``outcome`` (``wrote``,
+    ``nothing_new``, ``already_running``, or ``failed``) and ``result``, the run's own sentence
+    ("Found no new material in your knowledge tagged perf since its previous run."). It answered
+    "the report run started" for every run, so a run that read nothing said nothing.
+
     A resolvable-provider failure answers 200 with ``ok: false`` — the rule the store-trigger
     Run path pins: the request was understood and answered honestly, and a provider that is
     not registered is not a malformed request. The FE branches on ``ok``, not on the status.
@@ -394,18 +405,23 @@ async def api_report_run(request: web.Request) -> web.Response:
             status=409,
         )
 
-    ran, note = await _dispatch_report(report_id)
-    _sel_log("knowledge_report.run", f"report_id={report_id} ran={ran}")
-    return web.json_response({"ok": ran, "report_id": report_id, "result": note})
+    ran, outcome, said = await _dispatch_report(report_id)
+    _sel_log("knowledge_report.run", f"report_id={report_id} ran={ran} outcome={outcome}")
+    return web.json_response(
+        {"ok": ran, "report_id": report_id, "outcome": outcome, "result": said}
+    )
 
 
-async def _dispatch_report(report_id: str) -> tuple[bool, str]:
-    """Dispatch the ``knowledge-report`` action through the action-provider registry.
+async def _dispatch_report(report_id: str) -> tuple[bool, str, str]:
+    """Dispatch the ``knowledge-report`` action through the action-provider registry, and say
+    how it went: ``(ran, outcome, sentence)``.
 
     The SAME seam the store-trigger Run button and the autonomous fire use, so a manual run
-    and a scheduled fire execute the same action the same way. ``ran`` is returned separately
-    from the note because the caller answers ``ok`` with it: a run that resolved no provider
-    is not a success, and folding it into prose behind a 200 is how a no-op hides.
+    and a scheduled fire execute the same action the same way — with the same config, so a run
+    by hand is a run like any other. ``ran`` is returned separately from the sentence because the
+    caller answers ``ok`` with it: a run that resolved no provider is not a success, and folding
+    it into prose behind a 200 is how a no-op hides. ``outcome`` is the run's own word for what it
+    did (``wrote`` / ``nothing_new`` / ``already_running``), ``failed`` when it did not run.
     """
     from personalclaw.action_providers import ActionContext, get_action_provider
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
@@ -413,25 +429,25 @@ async def _dispatch_report(report_id: str) -> tuple[bool, str]:
     _ensure_default_providers_registered()
     provider = get_action_provider(RUN_ACTION_PROVIDER)
     if provider is None:
-        return False, f"unknown action provider {RUN_ACTION_PROVIDER!r}"
-    ctx = ActionContext(
-        event="manual.run",
-        context="",
-        payload={"report_id": report_id, "manual": True},
-    )
+        return False, "failed", f"unknown action provider {RUN_ACTION_PROVIDER!r}"
+    ctx = ActionContext(event="manual.run", context="", payload={"report_id": report_id})
     try:
-        # `manual: True` in the ACTION CONFIG, not only in `ctx.payload`: the provider's
-        # dueness pre-flight reads its config, because that is the surface a trigger row also
-        # fills — and a trigger row never sets this key, so a scheduled fire cannot skip the
-        # window check by accident. The user clicking Run now is the authority for that fire;
-        # refusing it as "not due" would make the button lie.
-        result = await provider.execute({"report_id": report_id, "manual": True}, ctx)
+        result = await provider.execute({"report_id": report_id}, ctx)
     except Exception as exc:  # noqa: BLE001 - a failed manual run is REPORTED, not raised
         logger.warning("research report run failed for %s", report_id, exc_info=True)
-        return False, f"failed: {type(exc).__name__}: {exc}"
+        return False, "failed", f"failed: {type(exc).__name__}: {exc}"
     if result is not None and not bool(getattr(result, "success", True)):
-        return False, str(getattr(result, "error", "") or "the report action failed")
-    return True, "the report run started"
+        return False, "failed", str(getattr(result, "error", "") or "the report action failed")
+    return True, _run_word(result), str(getattr(result, "summary", "") or "")
+
+
+def _run_word(result: Any) -> str:
+    """The run's own word for what it did, from what it printed (``"run"``), or ``""``."""
+    try:
+        printed = json.loads(str(getattr(result, "stdout", "") or "") or "{}")
+    except (TypeError, ValueError):
+        return ""
+    return str(printed.get("run") or "") if isinstance(printed, dict) else ""
 
 
 def setup_research_report_routes(app: web.Application) -> None:

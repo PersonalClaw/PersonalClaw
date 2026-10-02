@@ -789,6 +789,38 @@ to a task is a new task, and a finished task takes its yes with it. Not
 "read-only until allowed": a waiting task does not run at all, so what it would
 do is never the question — only the owner's yes is.
 
+### A research report's schedule is one schedule
+
+A scheduled research report (`#/knowledge/reports`) owns its schedule — its
+cadence, the zone it runs in, and its switch (`knowledge.research_reports`) —
+and its automation, `report-schedule:<report id>` (`created_by:
+research-report`), mirrors it (`knowledge.report_schedules`). The clock fires
+the automation and a fire IS the report's run: the runner never reads the
+schedule a second time. An edit moves both, from either side. Saving the report
+re-derives only what the report owns on its automation (the cadence and zone in
+`spec`, the switch, the action, the name, the grant) and keeps the rest — where
+its result and failures go, a missed time's catch-up, its skip dates, and what
+the clock wrote (its next fire, runs, health). An edit through `triggers.tools`
+(the Triggers page, the chat's automation tools, the CLI) is asked
+`report_schedules.edit_refusal` before it is saved — a rename, another action,
+or a schedule a report cannot hold (a sequence) is refused in words — and
+`report_schedules.adopt` writes the saved cadence, zone and switch into the
+report; the clock's autopause hands its paused row there too. Deleting the
+automation leaves the report with no schedule (`adopt_removal`): it stays, and
+runs when you press Run now. The automation's row names its report
+(`report_id`, by the same `report_schedules.owns` rule the edits follow), so its
+panel on the Triggers page says it is a report's schedule and where the report
+is renamed or deleted, and its delete dialog says the report stays.
+
+A run that reads its sources and finds nothing new records `nothing_new` and its
+sentence on the report ("Found no new material in your knowledge tagged perf
+since its previous run."), and reports `skip`, which its automation's history
+records as the inert `skipped_noop` with that sentence. A fire that meets a run
+of the same report already in flight runs nothing and is recorded the same way.
+A report reads only the knowledge library — what a watched source, a note or an
+import brought in — and never the web; its card says what it reads, worded from
+the same scope a run resolves (`research_reports.sources_shown`).
+
 ### App-manifest crons
 
 Apps can declare crons in their manifest; `apps/app_crons.py` reconciles them

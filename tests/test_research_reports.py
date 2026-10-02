@@ -1,14 +1,15 @@
-"""Scheduled research reports — definition round-trip and hardened dueness.
+"""Scheduled research reports — the definition round-trip, what a report says it reads, and the
+record of its runs.
 
-Each of the five rules named in ``knowledge/research_reports.py``'s docstring gets a
-test here. They are regression tests for scheduling bugs that are invisible in a demo
-and obvious in production: firing at 1970, firing fifty times after a laptop nap,
-skipping a window after a transient failure, and skipping an item forever because the
-watermark was stamped at completion.
+Each of the three run-record rules named in ``knowledge/research_reports.py``'s docstring gets a
+test here: a run says what it found (``nothing_new`` is a finished run with its own sentence, never
+a bare "ok"), a failed run advances neither the stamp nor the watermark, and the watermark is the
+time the runner resolved its scope. WHEN a report runs is its automation's, and is driven in
+``test_a_reports_schedule_is_one_schedule.py``.
 
 Tests that call ``record_run`` anchor their simulated clock on the real one, because
-``record_run`` stamps ``time.time()`` by design (rule 3) — a synthetic "now" far from
-the wall clock would make the recorded run look either ancient or far in the future.
+``record_run`` stamps ``time.time()`` by design — a synthetic "now" far from the wall clock would
+make the recorded run look either ancient or far in the future.
 """
 
 from __future__ import annotations
@@ -23,25 +24,23 @@ from personalclaw.knowledge.research_reports import (
     CITE_SOURCE_ONLY,
     FINDING_KIND,
     MAX_ITERATION_CAP,
+    NOTHING_NEW,
     ReportDefinition,
     Scope,
     delete_report,
     from_dict,
     get_report,
-    is_due,
     load_reports,
+    nothing_new_words,
     record_run,
     save_report,
+    sources_shown,
     to_dict,
+    wrote_words,
 )
 from personalclaw.schedule import ScheduleDefinition
 
 HOUR = 3600.0
-
-# A fixed instant for pure is_due tests (no persistence, no wall clock involved):
-# 2027-01-01 12:30:00 UTC. Chosen on a :30 so an "on the hour" cron has an
-# unambiguous most-recent boundary 30 minutes back.
-FIXED_NOW = 1_798_806_600.0
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +71,7 @@ def _defn(**over) -> ReportDefinition:
 
 
 def _saved_with_last_run(report_id: str, *, created_ts: float, last_run_ts: float, **over):
-    """Persist a report that has already run once — the state every catch-up bug hides in."""
+    """Persist a report that has already run once."""
     defn = save_report(_defn(id=report_id, created_ts=created_ts, **over))
     defn.last_run_ts = last_run_ts
     return save_report(defn)
@@ -127,7 +126,7 @@ def test_save_clamps_iteration_cap():
 
 
 def test_round_trip_is_json_safe_with_context_none():
-    defn = save_report(_defn(citation_policy=CITE_SOURCE_ONLY))
+    defn = save_report(_defn(citation_policy=CITE_SOURCE_ONLY, last_result="Found nothing."))
     raw = to_dict(defn)
     json.dumps(raw)  # the API layer serves this dict verbatim
     assert raw["context"] is None
@@ -183,142 +182,82 @@ def test_finding_kind_is_the_shared_constant():
     assert FINDING_KIND == "research-finding"
 
 
-# ── rule 1: an unparseable expression fails CLOSED ──
+# ── rule 1: a run says what it found ──
 
 
-def test_malformed_cron_is_not_due_and_never_raises():
-    # A runner iterates EVERY definition per tick. If this raised, one malformed
-    # report would wedge every other report's schedule.
-    for expr in ("99 * * * *", "not a cron", "* * * *", "0 0 * * MOO", ""):
-        defn = _defn(
-            id="bad",
-            schedule=ScheduleDefinition(kind="cron", cron_expr=expr),
-            created_ts=FIXED_NOW - 10 * HOUR,
-        )
-        due, reason = is_due(defn, now=FIXED_NOW)
-        assert due is False
-        assert "invalid cron expression" in reason
-        assert repr(expr) in reason  # the reason names the offending expression
-
-
-def test_unsupported_schedule_kind_fails_closed():
-    defn = _defn(id="k", schedule=ScheduleDefinition(kind="weekly-ish"), created_ts=1.0)
-    due, reason = is_due(defn, now=FIXED_NOW)
-    assert due is False
-    assert "weekly-ish" in reason
-
-
-def test_nonsense_every_secs_fails_closed():
-    defn = _defn(
-        id="e",
-        schedule=ScheduleDefinition(kind="every", every_secs=0),
-        created_ts=FIXED_NOW - 10 * HOUR,
-    )
-    due, reason = is_due(defn, now=FIXED_NOW)
-    assert due is False
-    assert "every_secs" in reason
-
-
-def test_disabled_report_is_never_due():
-    defn = _defn(id="off", enabled=False, created_ts=FIXED_NOW - 10 * HOUR)
-    assert is_due(defn, now=FIXED_NOW) == (False, "disabled")
-
-
-# ── rule 2: a never-run report anchors on its CREATION time, not the epoch ──
-
-
-def test_new_report_anchors_first_fire_on_creation_not_the_epoch():
-    fresh = _defn(id="fresh", created_ts=FIXED_NOW - 60.0, last_run_ts=None)
-    due, reason = is_due(fresh, now=FIXED_NOW)
-    # `last_run_ts or 0` would anchor on 1970 here, making an hourly report
-    # overdue by 56 years and firing the instant the user saved it.
-    assert due is False, reason
-
-    aged = _defn(id="aged", created_ts=FIXED_NOW - 2 * HOUR, last_run_ts=None)
-    assert is_due(aged, now=FIXED_NOW)[0] is True
-
-
-def test_report_with_no_creation_time_fails_closed_rather_than_anchoring_on_1970():
-    orphan = _defn(id="orphan", created_ts=0.0, last_run_ts=None)
-    due, reason = is_due(orphan, now=FIXED_NOW)
-    assert due is False
-    assert "epoch" in reason
-
-
-def test_cron_never_run_also_anchors_on_creation():
-    # Hourly-on-the-hour cron at 12:30 UTC: the most recent boundary is 12:00.
-    hourly = ScheduleDefinition(kind="cron", cron_expr="0 * * * *")
-    fresh = _defn(id="cfresh", schedule=hourly, tz="UTC", created_ts=FIXED_NOW - 60.0)
-    assert is_due(fresh, now=FIXED_NOW)[0] is False
-    aged = _defn(id="caged", schedule=hourly, tz="UTC", created_ts=FIXED_NOW - 2 * HOUR)
-    assert is_due(aged, now=FIXED_NOW)[0] is True
-
-
-# ── rule 3: a missed window fires ONCE, not once per window skipped ──
-
-
-def _drain(report_id: str, *, now: float, ticks: int) -> int:
-    """Model the runner: sweep `ticks` times at the SAME instant, firing and recording
-    whenever the report is due. Returns how many times it fired."""
-    fires = 0
-    for _ in range(ticks):
-        defn = get_report(report_id)
-        assert defn is not None
-        if is_due(defn, now=now)[0]:
-            fires += 1
-            record_run(report_id, ok=True, watermark_ts=now)
-    return fires
-
-
-def test_fifty_skipped_windows_fire_exactly_once():
+def test_a_run_that_found_nothing_new_is_recorded_as_such_with_its_sentence():
     now = time.time()
-    # Hourly cadence, last ran 50 hours ago — a laptop asleep for two days.
-    saved = _saved_with_last_run("nap", created_ts=now - 100 * HOUR, last_run_ts=now - 50 * HOUR)
-    # Catch-up-per-window would queue fifty model calls for one missed night.
-    assert _drain(saved.id, now=now, ticks=10) == 1
-
-
-def test_not_due_again_until_the_next_window_elapses():
-    now = time.time()
-    saved = save_report(_defn(id="win", created_ts=now - 100 * HOUR))
-    record_run(saved.id, ok=True, watermark_ts=now)
+    saved = save_report(_defn(id="empty", created_ts=now - 10 * HOUR))
+    record_run(saved.id, ok=True, nothing_new=True, result="Found nothing.", watermark_ts=now)
     after = get_report(saved.id)
-    assert after is not None and after.last_run_ts is not None
-    ran_at = after.last_run_ts
-    assert is_due(after, now=ran_at)[0] is False
-    assert is_due(after, now=ran_at + HOUR - 1)[0] is False
-    assert is_due(after, now=ran_at + HOUR)[0] is True
+    assert after is not None
+    assert after.last_status == NOTHING_NEW, "a run that found nothing read as a plain ok"
+    assert after.last_result == "Found nothing."
+    assert after.last_run_ts is not None and after.watermark_ts == now
 
 
-def test_cron_missed_windows_also_fire_once():
+def test_a_run_that_wrote_a_finding_is_ok_with_its_sentence():
     now = time.time()
-    saved = _saved_with_last_run(
-        "cnap",
-        created_ts=now - 200 * HOUR,
-        last_run_ts=now - 50 * HOUR,
-        schedule=ScheduleDefinition(kind="cron", cron_expr="0 * * * *"),
-        tz="UTC",
+    saved = save_report(_defn(id="wrote", created_ts=now - 10 * HOUR))
+    record_run(saved.id, ok=True, nothing_new=True, result="Found nothing.", watermark_ts=now)
+    record_run(saved.id, ok=True, result="Wrote a finding.", watermark_ts=now)
+    after = get_report(saved.id)
+    assert after is not None
+    assert (after.last_status, after.last_result) == ("ok", "Wrote a finding.")
+
+
+def test_the_card_says_what_a_report_reads_in_the_terms_of_its_scope():
+    assert sources_shown(_defn()) == (
+        "Reads what is new in your knowledge each time it runs. It does not search the web."
     )
-    assert _drain(saved.id, now=now, ticks=6) == 1
+    assert sources_shown(_defn(source=Scope(tags=("perf", "ops", "ai")))) == (
+        "Reads what is new in your knowledge tagged perf, ops or ai each time it runs. "
+        "It does not search the web."
+    )
+    assert sources_shown(
+        _defn(source=Scope(tags=("perf",), window_secs=86400), context=Scope(tags=()))
+    ) == (
+        "Reads your knowledge tagged perf from the last 24 hours each time it runs. "
+        "While writing, it may also look at your knowledge. It does not search the web."
+    )
 
 
-# ── rule 4: a failed run records its error WITHOUT advancing last_run_ts ──
+def test_a_run_that_found_nothing_names_the_window_it_read():
+    tagged = Scope(tags=("perf",))
+    assert nothing_new_words(_defn(source=tagged)) == (
+        "Found nothing in your knowledge tagged perf to report on yet."
+    )
+    assert nothing_new_words(_defn(source=tagged, watermark_ts=1.0)) == (
+        "Found no new material in your knowledge tagged perf since its previous run."
+    )
+    assert nothing_new_words(_defn(source=Scope(window_secs=7 * 86400), watermark_ts=1.0)) == (
+        "Found no material in your knowledge from the last 7 days."
+    )
+    assert wrote_words(_defn(), 1) == "Wrote a finding from 1 item in your knowledge."
+    assert wrote_words(_defn(source=tagged), 3) == (
+        "Wrote a finding from 3 items in your knowledge tagged perf."
+    )
+
+
+# ── rule 2: a failed run records its error WITHOUT advancing last_run_ts ──
 
 
 def test_failed_run_records_error_and_leaves_last_run_ts_untouched():
     now = time.time()
     saved = _saved_with_last_run("fail", created_ts=now - 10 * HOUR, last_run_ts=now - 5 * HOUR)
     saved.watermark_ts = now - 5 * HOUR
+    saved.last_result = "Wrote a finding from 2 items in your knowledge."
     save_report(saved)
 
     record_run(saved.id, ok=False, error="provider timed out", watermark_ts=now)
     after = get_report(saved.id)
     assert after is not None
-    assert after.last_run_ts == now - 5 * HOUR  # untouched → the next tick RETRIES
+    assert after.last_run_ts == now - 5 * HOUR  # untouched → the next run reads it all again
     assert after.last_status == "error"
     assert "provider timed out" in after.last_error
     assert after.watermark_ts == now - 5 * HOUR  # a failed run never advances it either
-    assert is_due(after, now=now)[0] is True  # still due: the window was not consumed
+    # Still the sentence of the run `last_run_ts` dates, which did finish.
+    assert after.last_result == "Wrote a finding from 2 items in your knowledge."
 
 
 def test_successful_run_advances_last_run_ts_and_clears_the_error():
@@ -339,7 +278,7 @@ def test_record_run_for_unknown_id_is_a_noop():
     assert load_reports() == []
 
 
-# ── rule 5: the watermark is scope-resolution time, supplied by the runner ──
+# ── rule 3: the watermark is scope-resolution time, supplied by the runner ──
 
 
 def test_watermark_is_the_supplied_scope_resolution_time_not_completion():

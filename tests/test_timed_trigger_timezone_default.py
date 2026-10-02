@@ -48,7 +48,7 @@ import pytest
 
 from personalclaw import timezones as tzmod
 from personalclaw.knowledge.report_schedules import _effective_tz, clock_spec
-from personalclaw.knowledge.research_reports import ReportDefinition, _report_tz
+from personalclaw.knowledge.research_reports import ReportDefinition
 from personalclaw.schedule import (
     ScheduleDefinition,
     ScheduleJob,
@@ -452,7 +452,9 @@ class TestAnUnreadableDatabaseNeverRaisesOutOfAFirePath:
             DAILY_0830, "UTC"
         )
 
-    def test_the_week_grid_the_legacy_scheduler_and_a_report_read_utc(self, monkeypatch):
+    def test_the_week_grid_and_the_legacy_scheduler_read_utc(self, monkeypatch):
+        """A report's fire is its automation's, so its zone is read where the trigger's is —
+        `test_a_trigger_with_a_zone_still_arms_and_at_utc` above."""
         _make_the_database_unavailable(monkeypatch)
         assert _resolve_zone("Asia/Tokyo") is timezone.utc
         job = ScheduleJob(
@@ -462,7 +464,6 @@ class TestAnUnreadableDatabaseNeverRaisesOutOfAFirePath:
             timezone="Asia/Tokyo",
         )
         assert _job_tz(job) is timezone.utc
-        assert _report_tz(_tokyo_report()) is timezone.utc
 
     def test_a_report_schedule_keeps_the_zone_it_was_given(self, monkeypatch):
         """`_effective_tz` is WRITTEN into the trigger spec. Writing the UTC fallback there would
@@ -517,10 +518,12 @@ class TestOneOwnerForTheResolution:
         cli_setup.py:292                  _detect_system_timezone()   (found by the /etc clause)
 
     Before the fix these disagreed with each other, measured on a PDT host with a blank
-    `config.timezone`: `UTC`, `UTC`, `UTC`, **server-local**, `UTC`, `'UTC'`.
+    `config.timezone`: `UTC`, `UTC`, `UTC`, **server-local**, `UTC`, `'UTC'`. `_report_tz` has
+    since gone with the report's second reading of its own schedule: a report's fire is its
+    automation's, armed in the zone `_effective_tz` writes into the automation's spec.
     """
 
-    def test_all_six_resolvers_name_the_same_zone_for_an_absent_input(self, monkeypatch):
+    def test_all_five_resolvers_name_the_same_zone_for_an_absent_input(self, monkeypatch):
         monkeypatch.setenv("TZ", "Asia/Tokyo")
         expected = ZoneInfo("Asia/Tokyo")
 
@@ -538,7 +541,6 @@ class TestOneOwnerForTheResolution:
         assert _job_tz(job) == expected
         assert get_local_tz() == ("Asia/Tokyo", expected)
         assert _resolve_zone("") == expected
-        assert _report_tz(defn) == expected
         assert _effective_tz(defn) == "Asia/Tokyo"
 
     def test_get_local_tz_is_actually_local(self, monkeypatch):
@@ -569,7 +571,7 @@ class TestOneOwnerForTheResolution:
         assert clock_spec(defn)["timezone"] == "Asia/Tokyo"
 
     def test_an_explicit_report_zone_still_wins_over_the_resolved_default(self, monkeypatch):
-        """Vacuity for `_report_tz`'s fallback, added because a mutant that ignored `defn.tz`
+        """Vacuity for `_effective_tz`'s fallback, added because a mutant that ignored `defn.tz`
         entirely survived the first falsification pass — every other assertion here drives the
         ABSENT case, so nothing was holding the explicit one."""
         monkeypatch.setenv("TZ", "Asia/Tokyo")
@@ -580,14 +582,12 @@ class TestOneOwnerForTheResolution:
             schedule=ScheduleDefinition(kind="cron", cron_expr=DAILY_0830),
             tz="America/New_York",
         )
-        assert _report_tz(defn) == ZoneInfo("America/New_York")
         assert _effective_tz(defn) == "America/New_York"
 
-    def test_an_unusable_report_zone_degrades_instead_of_wedging_every_other_report(
-        self, monkeypatch
-    ):
-        """`is_due` sweeps every definition on every tick, so one malformed report must not be
-        able to raise out and stop the others (rule 1 of `research_reports`)."""
+    def test_an_unusable_report_zone_degrades_instead_of_refusing_the_schedule(self, monkeypatch):
+        """A zone that is not a zone writes none into the report's automation, which then runs on
+        this machine's clock: the schedule stays writable while the zone is being corrected, and
+        `arm.semantic_spec_issues` names the bad zone where it is authored."""
         monkeypatch.setenv("TZ", "Asia/Tokyo")
         defn = ReportDefinition(
             id="r",
@@ -596,7 +596,10 @@ class TestOneOwnerForTheResolution:
             schedule=ScheduleDefinition(kind="cron", cron_expr=DAILY_0830),
             tz="CEST",
         )
-        assert _report_tz(defn) == ZoneInfo("Asia/Tokyo")
+        assert _effective_tz(defn) == ""
+        spec = clock_spec(defn)
+        assert spec == {"kind": "cron", "expr": DAILY_0830}
+        assert _trigger_tz(_reminder()) == ZoneInfo("Asia/Tokyo")
 
     def test_the_legacy_scheduler_and_the_trigger_engine_arm_to_the_same_instant(self, monkeypatch):
         """`_job_tz` was the issue's named lead. It consulted `config.timezone` first — which
