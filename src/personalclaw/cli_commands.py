@@ -379,7 +379,13 @@ def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
     inline = (candidate.workflow or {}).get("inline") or {}
     raw = inline.get("config")
     config: dict = raw if isinstance(raw, dict) else {}
-    loosened = unconsented_step_loosening("action", current=stored, new=config, body={})
+    loosened = unconsented_step_loosening(
+        "action",
+        current=stored,
+        new=config,
+        body={},
+        provider=str(inline.get("provider") or ""),
+    )
     if loosened is not None:
         sentences.append(loosened[1])
     return sentences

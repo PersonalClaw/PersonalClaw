@@ -4107,12 +4107,10 @@ class GatewayOrchestrator:
                 trigger_id = getattr(member, "trigger_id", "")
                 if not isinstance(trigger_id, str) or getattr(member, "silent", False):
                     return False
-                from personalclaw.triggers.settle import what_it_said
+                from personalclaw.triggers.settle import what_it_said, why_it_failed
 
                 return self._report_to_its_trigger(
-                    trigger_id,
-                    error=str(getattr(member, "error", "") or ""),
-                    summary=what_it_said(member),
+                    trigger_id, error=why_it_failed(member), summary=what_it_said(member)
                 )
 
             told = all([_reported(m) for m in batch])
@@ -4127,10 +4125,14 @@ class GatewayOrchestrator:
                 # Subagent result → the parent transcript. A blind head-cut here was a
                 # real failure class; route long output through project_and_retain
                 # (Context Economy §2.5a) for a type-projected digest + raw_ref handle.
+                from personalclaw.triggers.settle import why_it_failed, with_why_it_was_held_back
+
+                # A run held back (`SubagentInfo.held_back`) says why first, as on its trigger: a
+                # lifecycle trigger's agent keeps no run row, so this is all that says how it went.
                 if member.declined is True:
                     m_detail = member.error
                 elif member.error:
-                    m_detail = f"Error: {member.error}"
+                    m_detail = f"Error: {why_it_failed(member)}"
                 else:
                     m_detail = member.result or "_No response._"
                     if len(m_detail) > 3000:
@@ -4139,6 +4141,7 @@ class GatewayOrchestrator:
                         m_detail, _m = project_and_retain(
                             m_detail, session_key=parent_key, cap=3000
                         )
+                    m_detail = with_why_it_was_held_back(member, m_detail)
                 m_detail, _ = redact_exfiltration_urls(m_detail)
                 m_detail, _ = redact_credentials(m_detail)
                 return m_detail

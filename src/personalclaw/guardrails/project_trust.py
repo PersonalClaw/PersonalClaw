@@ -1,26 +1,32 @@
 """Project-folder Trust/Preview gate.
 
-Before a project-bound run executes *project* scripts — a project ``<cwd>/loop.md`` picked up by
-run-prompt, or a Code-loop deliverable gate running project commands — the first touch of a folder
-asks **Trust** vs **Preview**:
+An automation's agent works in the folder its step names (``cwd``: a Run Prompt or Invoke Agent
+step), and that folder's own files steer it: a project ``<cwd>/loop.md`` is the very prompt a Run
+Prompt step with none of its own runs, and the folder's scripts are what a run with write access
+would execute. So a folder answers **Trust** vs **Preview**:
 
-* **Trust** → the run may execute project scripts; its declared capability grant stands.
+* **Trust** → the run gets the write access its step asks for.
 * **Preview** (the safe default, and what an untrusted/undecided folder gets) → the run proceeds
-  under ``REVIEW_ONLY``: read-only, no script execution.
+  under ``REVIEW_ONLY``: read-only, no script execution. The files its Allow names one by one
+  (``write_scope``) stay its to change; what Preview holds back is the write access to change
+  anything else and run commands.
 
 Preview maps onto the capability class rather than inventing a second read-only mechanism:
-:func:`gate_project_capability` forces the spawn's ``capability_class`` to ``research`` for an
-untrusted folder, so "REVIEW_ONLY for project-script execution" is the SAME approval-layer denial a
-read-only research spawn gets (``subagent._run_inner``). One read-only control, two entry points.
+:func:`held_to` is the class a run in a folder is held to, ``research`` for one not trusted, so
+"REVIEW_ONLY for project-script execution" is the SAME approval-layer denial a read-only research
+spawn gets (``subagent._run_inner``). One read-only control, asked through one door by both actions
+and by what their Allow says (``automation_posture.agent_run_policy``).
 
 Decisions persist in ``~/.personalclaw/project_trust.json`` keyed by the RESOLVED directory::
 
     {"<resolved dir>": {"trusted": bool, "decided_at": "<iso8601>"}}
 
-The FIRST touch of an unknown folder persists a Preview record (so the prompt fires ONCE, not every
-fire) and raises a needs-input inbox row asking the user to Trust the folder. An explicit Trust
-(:func:`record_project_trust` with ``trusted=True``, exposed at ``POST /api/guardrails/project-
-trust``) flips the record; only then does a write grant execute in that folder.
+The first fire a folder holds back (:func:`gate_project_capability`) persists a Preview record (so
+the prompt fires ONCE, not every fire) and raises a needs-input inbox row asking the owner to Trust
+the folder. A run that asks for no write access is not held back by Preview, so nothing is asked of
+it. An explicit Trust (:func:`record_project_trust` with ``trusted=True``, exposed at
+``POST /api/guardrails/project-trust``) flips the record; only then does a write grant execute in
+that folder.
 
 **Fail direction.** Reads are fail-OPEN for the *store* (a corrupt/missing file never crashes a
 fire) but fail-CLOSED for the *decision*: absence of a record means Preview (read-only), never
@@ -73,14 +79,16 @@ def _trust_path() -> Path:
 def resolve_dir(cwd: str) -> str:
     """The canonical store key for a project directory.
 
-    ``realpath`` collapses symlinks and ``..`` so two spellings of one folder share one decision —
-    a decision recorded for ``/proj`` must not be bypassed by touching ``/proj/./`` or a symlink to
-    it. An empty/blank ``cwd`` yields ``""`` (no project folder → the caller does not gate)."""
+    ``~`` is expanded and ``realpath`` collapses symlinks and ``..``, so every spelling of one
+    folder shares one decision: a decision recorded for ``/home/user/proj`` must not be bypassed by
+    touching ``/home/user/proj/./``, a symlink to it, or ``~/proj``, the form a step's working
+    folder is written in. An empty/blank ``cwd`` yields ``""`` (no project folder → the caller
+    does not gate)."""
     c = (cwd or "").strip()
     if not c:
         return ""
     try:
-        return os.path.realpath(c)
+        return os.path.realpath(os.path.expanduser(c))
     except OSError:
         return c
 
@@ -124,7 +132,8 @@ def record_project_trust(cwd: str, trusted: bool) -> dict[str, Any]:
 
     Returns the stored record. ``trusted=True`` is the explicit **Trust**; ``trusted=False`` records
     (or keeps) **Preview**. Idempotent per state — re-recording the same decision only refreshes
-    ``decided_at``."""
+    ``decided_at``. A Trust answers the folder's open request (:func:`_prompt_trust_vs_preview`),
+    so it is closed as handled rather than left asking for a decision already made."""
     key = resolve_dir(cwd)
     if not key:
         raise ValueError("project trust requires a non-empty directory")
@@ -132,6 +141,8 @@ def record_project_trust(cwd: str, trusted: bool) -> dict[str, Any]:
     record = {"trusted": bool(trusted), "decided_at": _now_iso()}
     store[key] = record
     _write_store(store)
+    if trusted:
+        _settle_the_request(key)
     try:
         from personalclaw.sel import sel
 
@@ -145,6 +156,28 @@ def record_project_trust(cwd: str, trusted: bool) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 - audit is best-effort; the decision still persisted
         logger.debug("project_trust: SEL audit failed", exc_info=True)
     return record
+
+
+def _request_refs(resolved_dir: str) -> dict[str, str]:
+    """What a folder's Trust request names, so the Trust that answers it can close it."""
+    return {"dir": resolved_dir, "guardrail": "project_trust"}
+
+
+def _settle_the_request(resolved_dir: str) -> None:
+    """Close the open request asking to trust *resolved_dir*, now that it is trusted. Best-effort,
+    like raising it: the decision is already recorded."""
+    try:
+        from personalclaw.inbox import resolve_attention_items
+
+        try:
+            from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+            state = get_dashboard_state()
+        except Exception:  # noqa: BLE001 - headless: the stored Inbox is closed directly
+            state = None
+        resolve_attention_items(state, _request_refs(resolved_dir))
+    except Exception:  # noqa: BLE001 - the request is best-effort; the decision persisted
+        logger.warning("project_trust: could not close the Trust request", exc_info=True)
 
 
 def _prompt_trust_vs_preview(resolved_dir: str, state: Any | None) -> None:
@@ -169,38 +202,46 @@ def _prompt_trust_vs_preview(resolved_dir: str, state: Any | None) -> None:
             item_kind=_PROMPT_KIND,
             title="Trust this project folder?",
             body=(
-                f"An automation wants to run project scripts in {resolved_dir!r}. Until you Trust "
-                "it, the run stays in Preview (read-only, no script execution). Trust the folder "
+                f"An automation given write access works in {resolved_dir}. Until you Trust it, "
+                "the run stays in Preview (read-only, no script execution). Trust the folder "
                 "to allow it to write and run project scripts."
             ),
-            refs={"dir": resolved_dir, "guardrail": "project_trust"},
+            refs=_request_refs(resolved_dir),
             dedup_key=f"project_trust:{resolved_dir}",
         )
     except Exception:  # noqa: BLE001 - the prompt is best-effort; the safe default already applied
         logger.warning("project_trust: could not raise the Trust prompt", exc_info=True)
 
 
+def held_to(cwd: str, requested: str | None) -> str | None:
+    """The capability class a run in the folder *cwd* is held to, read without changing anything.
+
+    * **Trusted** folder, or no folder (a blank ``cwd``: the gate is for project-bound runs only) →
+      ``requested`` stands (the run's own capability grant decides).
+    * **Preview** or **unknown** → :data:`PREVIEW_CAPABILITY` (read-only). Fail-CLOSED: a folder
+      nobody decided about is not trusted.
+
+    What an automation's Allow is said from (``automation_posture.agent_run_policy``), so it says
+    what the run will be held to; :func:`gate_project_capability` is the same answer at a fire."""
+    if not (cwd or "").strip() or project_decision(cwd) == DECISION_TRUSTED:
+        return requested
+    return PREVIEW_CAPABILITY
+
+
 def gate_project_capability(
     cwd: str, requested: str | None, *, state: Any | None = None
 ) -> str | None:
-    """Bound a spawn's capability class by the project folder's trust decision (§4.3).
+    """Bound a fire's capability class by the project folder's trust decision (§4.3), as
+    :func:`held_to` reads it.
 
-    * **Trusted** folder → ``requested`` stands (the run's own capability grant decides).
-    * **Preview** (already decided) → forced to :data:`PREVIEW_CAPABILITY` (read-only).
-    * **Unknown** (first touch) → persist a Preview record, raise the Trust prompt, and force
-      read-only. The write grant a caller passed CANNOT execute project scripts in a folder the user
-      never trusted — the dangerous direction this gate exists to refuse.
-
-    A blank ``cwd`` (no project folder) passes ``requested`` through unchanged: the gate is for
-    project-bound runs only."""
-    if not (cwd or "").strip():
-        return requested
-    decision = project_decision(cwd)
-    if decision == DECISION_TRUSTED:
-        return requested
-    if decision == DECISION_UNKNOWN:
-        resolved = resolve_dir(cwd)
+    The first fire a folder holds back (an **unknown** folder, and a run that asked for more than
+    reading) persists a Preview record and raises the Trust prompt: the write grant a caller passed
+    CANNOT execute project scripts in a folder the owner never trusted, the dangerous direction this
+    gate exists to refuse, and the owner is told once where it is given. A run that asked only to
+    read is not held back by Preview, so it asks nobody and records nothing: "an automation wants to
+    run project scripts" was false of it."""
+    held = held_to(cwd, requested)
+    if held != requested and project_decision(cwd) == DECISION_UNKNOWN:
         record_project_trust(cwd, trusted=False)
-        _prompt_trust_vs_preview(resolved, state)
-    # Preview (decided or just-recorded first touch): read-only, no script execution.
-    return PREVIEW_CAPABILITY
+        _prompt_trust_vs_preview(resolve_dir(cwd), state)
+    return held

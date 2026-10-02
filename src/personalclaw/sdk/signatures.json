@@ -3243,7 +3243,8 @@
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_read"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_change"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "refused"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "app"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "app"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "held_back"}
    ],
    "returns": "None"
   },
@@ -3348,7 +3349,8 @@
      {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "approved_at"},
      {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_read"},
      {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_change"},
-     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "app"}
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "app"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "held_back"}
     ],
     "returns": "SubagentInfo | None"
    },

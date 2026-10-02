@@ -386,6 +386,22 @@ def run_agent(capability_class: str | None, agent: str) -> str:
     return LITE_AGENT_NAME if (capability_class or "").strip().lower() == CAPABILITY_TEXT else agent
 
 
+def give_up_files_on_a_cli(info: SubagentInfo, runtime: str) -> None:
+    """Take back the files *info*'s run was handed to change when its runtime is an agent CLI
+    (*runtime*, ``acp:<cli>``): a CLI changes files with its own tools, which no write scope can
+    be held to (``write_scope.not_held_on``), so its run changes none of them and says why
+    (``SubagentInfo.held_back``). PersonalClaw's own runtime (``native``) keeps them: its file
+    tools are held to them. Called before the run's tier is built from what it may change; an agent
+    that inherits a CLI from the session that started it is how such a run gets here."""
+    if not (info.may_change and runtime.startswith("acp")):
+        return
+    from personalclaw import write_scope
+
+    gave_up = write_scope.not_held_on(runtime, info.may_change)
+    info.held_back = f"{info.held_back} {gave_up}".strip()
+    info.may_change = ()
+
+
 def refuse_unheld(info: SubagentInfo, agent: str) -> bool:
     """End *info*'s run refused, with why, when an app started it at fewer tools than every one
     and its runtime is an agent CLI (*agent*, or the default), which cannot be held to them; else

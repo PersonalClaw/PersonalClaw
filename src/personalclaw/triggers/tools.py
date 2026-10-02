@@ -462,14 +462,17 @@ def denied_command_refusal(workflow: Any) -> AutomationToolResult | None:
 def write_scope_refusal(workflow: Any) -> AutomationToolResult | None:
     """Refuse an agent-starting action whose ``writes`` names a file no automation may change
     (`write_scope.problem`): PersonalClaw's own files, a credential location, a secret file, a
-    whole disk. The Triggers page asks the same question where it saves
+    whole disk, or any file at all for an agent that runs on an agent CLI
+    (`automation_posture.step_problem`). The Triggers page asks the same question where it saves
     (`dashboard/handlers/triggers._action_problem`); this is the chat's and the CLI's door."""
-    from personalclaw import write_scope
+    from personalclaw.automation_posture import step_problem
 
     action = _inline_action_of(workflow)
     config = action.get("config")
-    problem = write_scope.problem(config.get("writes") if isinstance(config, dict) else None)
-    return AutomationToolResult(False, f"Error: {problem}") if problem else None
+    problem = step_problem(config if isinstance(config, dict) else {})
+    if not problem:
+        return None
+    return AutomationToolResult(False, f"Error: the files it may change can't be saved: {problem}.")
 
 
 def posture_refusal(
@@ -488,9 +491,14 @@ def posture_refusal(
     """
     from personalclaw.automation_posture import unconsented_step_loosening
 
-    config = _inline_action_of(workflow).get("config")
+    action = _inline_action_of(workflow)
+    config = action.get("config")
     loosened = unconsented_step_loosening(
-        "action", current=stored, new=config if isinstance(config, dict) else {}, body={}
+        "action",
+        current=stored,
+        new=config if isinstance(config, dict) else {},
+        body={},
+        provider=str(action.get("provider") or ""),
     )
     if loosened is None:
         return None

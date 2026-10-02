@@ -64,6 +64,7 @@ from personalclaw.subagent_tier import (
     CAPABILITY_TEXT,
     CallBudget,
     ended_without_answering,
+    give_up_files_on_a_cli,
     refuse_unheld,
     run_agent,
     tier_for,
@@ -498,6 +499,8 @@ class SubagentInfo:
     refused: list[str] = field(default_factory=list)
     # The app whose `agent` permission started this run, or "" (`subagent_tier`). Last, too.
     app: str = ""
+    # Why it may do less than its step asks (`AgentRunPolicy.held_back`); its ending says so first.
+    held_back: str = ""
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1164,6 +1167,7 @@ class SubagentManager:
         may_read: tuple[str, ...] = (),
         may_change: tuple[str, ...] = (),
         app: str = "",
+        held_back: str = "",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1220,6 +1224,7 @@ class SubagentManager:
                 own record of her answer, handed back to resume it. The start then does not
                 ask again, within the time limit a subagent is given (:meth:`_spawn_grant`).
             app (str): The app whose ``agent`` permission starts this run (``subagent_tier``).
+            held_back (str): Why it may do less than its step asks (``AgentRunPolicy.held_back``).
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1415,6 +1420,7 @@ class SubagentManager:
             may_read=tuple(may_read),
             may_change=tuple(may_change),
             app=app,
+            held_back=held_back or "",
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
         memory_writes.hand_on(agent_work_id(agent_id), parent_session_key)  # keeps what it keeps
@@ -2255,6 +2261,7 @@ class SubagentManager:
 
         _rp = _agent_dir(info.id) / "result.txt"
         info.result_path = str(_rp)
+        give_up_files_on_a_cli(info, str(getattr(client, "provider_id", "") or ""))
         # §4.1 read-only research class: resolve ONCE per run, before the stream opens (`tier_for`).
         # An auto-fired spawn defaults to the research (read-only) class, so its write/execute
         # tools are denied at the approval loop below. A call is within the grant by what its tool

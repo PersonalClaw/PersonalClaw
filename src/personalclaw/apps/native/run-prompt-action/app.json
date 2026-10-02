@@ -44,7 +44,7 @@
           "x-meta": {
             "label": "Files it may change",
             "widget": "paths",
-            "help": "The files or folders this automation's job changes, each a full path (from / or ~/): its agent may write to these and to nothing else, and every other change and every command stay refused. Allowing the automation says so. Leave it empty for an automation that only reads."
+            "help": "The files or folders this automation's job changes, each a full path (from / or ~/): its agent may write to these and to nothing else, and every other change and every command stay refused. Allowing the automation says so. Leave it empty for an automation that only reads. Not for an agent that runs on an agent CLI: PersonalClaw can't limit a CLI's own file edits to them."
           }
         },
         "vars": {
@@ -61,7 +61,7 @@
           "type": "string",
           "x-meta": {
             "label": "Working Directory",
-            "help": "Directory to run in (and where a project loop.md is looked up when no Prompt is set).",
+            "help": "Directory to run in (and where a project loop.md is looked up when no Prompt is set). In a folder you haven't trusted, its agent only reads, whatever its Capability, until you trust the folder.",
             "tags": [
               "advanced"
             ]
@@ -125,7 +125,7 @@
           ],
           "x-meta": {
             "label": "Capability",
-            "help": "Read-only by default: an unattended run gets read/search tools only, and write/execute is denied. Set 'mutating' to grant this automation write and execute tools (the creation-time write grant).",
+            "help": "Read-only by default: an unattended run gets read/search tools only, and write/execute is denied. Set 'mutating' to grant this automation write and execute tools (the creation-time write grant), which it gets in a Working Directory only once you trust that folder.",
             "tags": [
               "advanced"
             ]

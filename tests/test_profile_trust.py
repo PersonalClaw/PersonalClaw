@@ -351,6 +351,50 @@ def test_preview_does_not_reprompt_on_second_touch(trust_home, monkeypatch):
     assert len(prompts) == 1  # only the first touch prompted
 
 
+def test_a_run_that_only_reads_is_not_held_back_so_nothing_is_asked(trust_home, monkeypatch):
+    """Preview holds back write access. A run that asked only to read is not held back by it, so
+    its first touch records nothing and asks nobody: "an automation wants to run project scripts"
+    was false of it. The same folder is asked about once a run asks for more."""
+    from personalclaw.guardrails import project_trust as pt
+    from personalclaw.subagent import CAPABILITY_RESEARCH
+
+    prompts: list[str] = []
+    monkeypatch.setattr(pt, "_prompt_trust_vs_preview", lambda d, s: prompts.append(d))
+    project = str(trust_home / "proj")
+    (trust_home / "proj").mkdir()
+
+    assert pt.gate_project_capability(project, CAPABILITY_RESEARCH) == CAPABILITY_RESEARCH
+    assert prompts == [] and not (trust_home / "project_trust.json").exists()
+    assert pt.held_to(project, CAPABILITY_MUTATING) == pt.PREVIEW_CAPABILITY
+    assert prompts == [], "reading what a run is held to changes nothing"
+
+    assert pt.gate_project_capability(project, CAPABILITY_MUTATING) == pt.PREVIEW_CAPABILITY
+    assert prompts == [pt.resolve_dir(project)]
+
+
+def test_trusting_a_folder_answers_the_request_it_raised(trust_home):
+    """🔴 Before: the request stayed open after the folder was trusted, asking for a decision
+    already made. Keeping a folder in Preview answers nothing, so its request stays."""
+    from personalclaw.guardrails import project_trust as pt
+    from personalclaw.inbox import InboxStore
+
+    project = str(trust_home / "proj")
+    (trust_home / "proj").mkdir()
+
+    def requests() -> list[str]:
+        store = InboxStore()
+        store.load()
+        rows = store.items.values()
+        return [i.status for i in rows if i.refs.get("guardrail") == "project_trust"]
+
+    pt.gate_project_capability(project, CAPABILITY_MUTATING)
+    assert requests() == ["pending"]
+    pt.record_project_trust(project, trusted=False)
+    assert requests() == ["pending"]
+    pt.record_project_trust(project, trusted=True)
+    assert requests() == ["handled"]
+
+
 def test_trusted_folder_honors_write_grant(trust_home):
     """An explicit Trust admits the write grant — Trust is what lets project scripts run/write."""
     from personalclaw.guardrails import project_trust as pt

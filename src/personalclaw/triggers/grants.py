@@ -255,8 +255,10 @@ def consent(
 
     An action that starts an agent ends the sentence with what that agent may do when it runs
     (:func:`what_its_agent_may_do`): only read, change only the files its job names, or change
-    files and run commands, and every message it may send. An automation allowed without being
-    told it could only read was an automation allowed to do a job it could not do.
+    files and run commands, and every message it may send; and what holds it to less as things
+    stand, a working folder the owner has not trusted (with what trusting it gives) or an agent CLI
+    no files to change can be held to. An automation allowed without being told it could only read
+    was an automation allowed to do a job it could not do.
     """
     from personalclaw.triggers.legacy_import import IMPORTED_BY
 
@@ -284,21 +286,44 @@ def consent(
     return f"{said} {reach}" if reach else said
 
 
-def what_its_agent_may_do(trigger: Any) -> str:
-    """What the agent `trigger`'s action starts may do when it runs, in the Allow's words
-    (``automation_posture.AgentRunPolicy.sentence``), or ``""`` when its action starts no agent."""
-    from personalclaw.automation_posture import AGENT_STARTING_PROVIDERS, agent_run_policy
-
+def _action_of(trigger: Any) -> tuple[str, dict[str, Any]]:
+    """`trigger`'s action as ``(provider, config)``, from either stored shape (`{"inline": …}` or
+    the flat `{provider, config}`): ``("", {})`` when it declares none."""
     workflow = getattr(trigger, "workflow", None)
     action: dict[str, Any] = workflow if isinstance(workflow, dict) else {}
     nested = action.get("inline")
     if isinstance(nested, dict):
         action = nested
-    provider = str(action.get("provider") or "")
+    config = action.get("config")
+    return str(action.get("provider") or "").strip(), config if isinstance(config, dict) else {}
+
+
+def what_its_agent_may_do(trigger: Any) -> str:
+    """What the agent `trigger`'s action starts may do when it runs, in the Allow's words
+    (``automation_posture.AgentRunPolicy.sentence``), or ``""`` when its action starts no agent."""
+    from personalclaw.automation_posture import AGENT_STARTING_PROVIDERS, agent_run_policy
+
+    provider, config = _action_of(trigger)
     if provider not in AGENT_STARTING_PROVIDERS:
         return ""
-    config = action.get("config")
-    return agent_run_policy(provider, config if isinstance(config, dict) else {}).sentence()
+    return agent_run_policy(provider, config).sentence()
+
+
+def held_back(trigger: Any) -> dict[str, str] | None:
+    """Why the agent `trigger`'s action starts may do less than its step asks, as things stand now
+    (``automation_posture.AgentRunPolicy.held_back``), and the working folder the owner would trust
+    to give it back (``""`` when no folder holds it back): ``{"why", "folder"}``. None when nothing
+    holds it back, or its action starts no agent. The Triggers page shows it with the trigger."""
+    from personalclaw.automation_posture import AGENT_STARTING_PROVIDERS, agent_run_policy
+    from personalclaw.guardrails.project_trust import resolve_dir
+
+    provider, config = _action_of(trigger)
+    if provider not in AGENT_STARTING_PROVIDERS:
+        return None
+    policy = agent_run_policy(provider, config)
+    if not policy.held_back:
+        return None
+    return {"why": policy.held_back, "folder": resolve_dir(policy.untrusted_folder)}
 
 
 def _only_on_the_page(trigger: Any) -> str:
@@ -386,12 +411,7 @@ def allows_its_agent(trigger_id: str) -> bool:
         return False
     if trigger is None:
         return False
-    workflow = getattr(trigger, "workflow", None)
-    action: dict[str, Any] = workflow if isinstance(workflow, dict) else {}
-    nested = action.get("inline")
-    if isinstance(nested, dict):
-        action = nested
-    if str(action.get("provider") or "").strip() not in _STARTS_AN_AGENT:
+    if _action_of(trigger)[0] not in _STARTS_AN_AGENT:
         return False
     return not missing(trigger)
 

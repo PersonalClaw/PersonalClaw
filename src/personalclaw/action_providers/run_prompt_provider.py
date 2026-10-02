@@ -217,13 +217,10 @@ class RunPromptActionProvider(ActionProvider):
             f"{rendered}\n\n{ctx.fire_facts}" if ctx.fire_facts else rendered
         )
         from personalclaw import write_scope
-        from personalclaw.automation_posture import agent_run_policy
 
-        # What its agent may do, as its Allow said it (`automation_posture.agent_run_policy`): the
-        # run is built from the same mapping the Allow's sentence is. The files it may change are
-        # checked again here: a scope no save would take, written some other way, changes nothing.
-        policy = agent_run_policy(self.name, action_config)
-        scope_refused = write_scope.problem(list(policy.writes))
+        # The files it may change, checked again here: a scope no save would take, written some
+        # other way, changes nothing.
+        scope_refused = write_scope.problem(write_scope.entries(action_config))
         if scope_refused:
             return ActionResult(success=False, error=f"run-prompt: {scope_refused}")
         # What the run is called: its trigger's name, else the prompt it runs — never the framing
@@ -257,16 +254,15 @@ class RunPromptActionProvider(ActionProvider):
 
         dry_run = bool(action_config.get("dry_run", False))
 
-        # §4.1 creation-time write grant, read from the policy: this fire is auto-fired, so it is
-        # read-only unless the automation was created with ``capability: "mutating"``. A
-        # project-bound run (a project ``<cwd>/loop.md`` or project scripts) touches a project
-        # folder, and an untrusted/Preview one runs read-only (REVIEW_ONLY) — a write grant cannot
-        # silently execute project scripts in a folder the user never trusted.
-        capability_class: str | None = policy.capability_class
-        if cwd:
-            from personalclaw.guardrails.project_trust import gate_project_capability
+        # What its agent may do, as its Allow said it (`automation_posture.fire_policy`, the check
+        # invoke-agent builds its run from too): the run is built from the same mapping the Allow's
+        # sentence is. §4.1 creation-time write grant: this fire is auto-fired, so it is read-only
+        # unless the automation was created with ``capability: "mutating"``, and a working folder
+        # (a project ``<cwd>/loop.md``, project scripts) the owner has not trusted holds it to
+        # reading too: a write grant cannot silently execute project scripts there.
+        from personalclaw.automation_posture import fire_policy
 
-            capability_class = gate_project_capability(cwd, capability_class)
+        policy = fire_policy(self.name, action_config)
 
         # Fire-and-forget: spawn() schedules the turn and returns at once. A spawn it refuses
         # there (no memory, an incident, the budget, the fan-out stop) is this fire's failure:
@@ -281,7 +277,7 @@ class RunPromptActionProvider(ActionProvider):
                 model=model,
                 cwd=cwd,
                 approval_mode=policy.approval_mode,
-                capability_class=capability_class,
+                capability_class=policy.capability_class,
                 silent=False,
                 dry_run=dry_run,
                 # The trigger whose fire this is (`ActionContext.trigger_id`): a call the agent
@@ -291,6 +287,7 @@ class RunPromptActionProvider(ActionProvider):
                 title=title,
                 may_read=ctx.fire_files,
                 may_change=policy.may_change,
+                held_back=policy.held_back,
             )
         except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
             logger.warning("run-prompt: spawn failed", exc_info=True)

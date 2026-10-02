@@ -20,6 +20,7 @@ import { InboxSection as Section } from './InboxSection'
 import { TriggerParkActions } from './TriggerParkActions'
 import { BridgeConfirmActions } from './BridgeConfirmActions'
 import { SomeoneNewActions } from './SomeoneNewActions'
+import { TrustFolderButton } from '../triggers/HeldBackNote'
 import { ApprovalDecision } from '../../app/ApprovalDecision'
 import { mirroredApprovalId } from '../../lib/attentionLanes'
 import { invalidateKeys } from '../../lib/data'
@@ -129,6 +130,10 @@ export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, nav
   // is waiting for your decision. A trigger's run asks with no chat behind it, so this is the only
   // place on the row that can answer it.
   const approvalId = mirroredApprovalId(item)
+  // A project folder an automation's run was held to reading in (`guardrails/project_trust.py`):
+  // answered here with Trust, while it is still open.
+  const trustFolder = item.refs?.guardrail === 'project_trust' && typeof item.refs?.dir === 'string'
+    && item.refs.dir && !settled ? item.refs.dir : ''
 
   return (
     <div className="flex flex-col gap-l">
@@ -251,6 +256,14 @@ export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, nav
         <Section label="Approval">
           <ApprovalDecision approvalId={approvalId} onDecided={onChanged}
             ended={item.status === 'expired' ? String(item.refs?.ended ?? '') : ''} />
+        </Section>
+      )}
+
+      {/* A project folder in Preview (`guardrails/project_trust.py`): Trust is the answer it asks
+          for. The row settles once the folder is trusted (`approval_state._decision_stands`). */}
+      {trustFolder && (
+        <Section label="Waiting on you">
+          <TrustFolderButton folder={trustFolder} onTrusted={onChanged} busy={!!busy} />
         </Section>
       )}
 

@@ -1739,6 +1739,8 @@ export interface ScheduleJob {
   // The report this automation is the schedule of, else null: its time and switch are the
   // report's, its name comes from the report, and deleting it leaves the report unscheduled.
   report_id?: string | null
+  // Why its agent may do less than its step asks, now — see `Trigger`.
+  held_back?: HeldBack | null
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
@@ -2906,6 +2908,8 @@ export interface HookItem {
   // What it is not allowed to use — see `Trigger`. A lifecycle trigger's fires are refused until
   // the owner allows it, like a store trigger's.
   needs_grant?: string[]
+  // Why its agent may do less than its step asks, now — see `Trigger`.
+  held_back?: HeldBack | null
 }
 // The wired data-event patterns (event_triggers.EVENT_PATTERNS). Each belongs to exactly one
 // source (event_triggers.PATTERN_SOURCE), which the backend derives — the wire never supplies it.
@@ -2918,6 +2922,11 @@ export type EventPattern =
 // Unified Trigger wire shape from /api/triggers (both kinds). The schedule
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
+/** Why the agent a trigger starts may do less than its step asks, as things stand
+ *  (`triggers/grants.py` `held_back`): its working folder is in Preview until the owner trusts it,
+ *  or its agent runs on an agent CLI no files to change can be held to. `folder` is the working
+ *  folder to trust for it, `''` when no folder holds it back. */
+export interface HeldBack { why: string; folder: string }
 /** A callback the agent registered with `hook_register` (`webhook_callbacks.py`): an outside
  *  system's post to `/api/hooks/agent` with `session_key` starts an agent turn, with the agent's
  *  tools, from `context_summary`. `enabled` IS the owner's yes to that context — switching it on is
@@ -2963,6 +2972,9 @@ export interface Trigger {
   // it may run. Run now and every fire are refused until the owner allows it — Allow on its panel,
   // or switching it on, both of which ask first (`triggers/grants.py`).
   needs_grant?: string[]
+  // Why its agent may do less than its step asks, now, and the folder to trust for it (`HeldBack`);
+  // null when nothing holds it back.
+  held_back?: HeldBack | null
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -3029,6 +3041,7 @@ function _triggerToHook(t: Trigger): HookItem {
     blocking: t.blocking, enforcement: t.enforcement,
     revision: t.revision,
     needs_grant: t.needs_grant,
+    held_back: t.held_back,
   }
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
@@ -9835,6 +9848,11 @@ export const api = {
     api.patchConfigItem('security.mcp_read_only_servers', 'add', server, confirmed),
   distrustMcpReadOnly: (server: string) =>
     api.patchConfigItem('security.mcp_read_only_servers', 'remove', server),
+  // Trust a project folder (`guardrails/project_trust.py`): an automation working in it then gets
+  // the write access its own step asks for, where Preview held it to reading. `dir` is the folder as
+  // the gateway resolved it (`HeldBack.folder`, an Inbox request's `refs.dir`).
+  trustProjectFolder: (dir: string) =>
+    post<{ dir: string; trusted: boolean; decided_at: string }>('/api/guardrails/project-trust', { dir, trusted: true }),
   // The secrets vault. The READ carries presence, scope and consumer links and NEVER a
   // value: `/api/secrets` has no code path to one (the server builds its rows from key names
   // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",

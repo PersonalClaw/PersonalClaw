@@ -18,6 +18,13 @@ again (``triggers.grants.narrow``).
 A path is refused when it is saved (:func:`problem`) if a write there could reach what says what
 runs as the owner: PersonalClaw's own home (its workspace excepted), a credential location, a
 secret file, the filesystem root or the home folder itself.
+
+**Not on an agent CLI.** An agent CLI changes files with its own tools: PersonalClaw neither runs
+them nor sees what they write, only the CLI's own description of an edit it asks about, and some
+CLIs change files without asking at all. No scope can be held to that, so an agent that runs on a
+CLI is given none: its automation is refused files to change when it is saved
+(:func:`not_given_on`), and one that reaches a CLI anyway changes none of them and says why
+(:func:`not_held_on`).
 """
 
 from __future__ import annotations
@@ -114,3 +121,30 @@ def sentence(writes: Iterable[str]) -> str:
     if len(named) == 1:
         return named[0]
     return "these: " + ", ".join(named)
+
+
+def _runtime_name(runtime: str) -> str:
+    """A person's name for the agent CLI *runtime* (``acp:<cli>``) an agent runs on."""
+    if ":" not in runtime:
+        return "an agent CLI"
+    from personalclaw.providers.image_input import agent_label
+
+    return agent_label(runtime)
+
+
+def not_held_on(runtime: str, writes: Iterable[str]) -> str:
+    """Why an agent on the agent CLI *runtime* may not change the *writes* its automation names."""
+    named = [w for w in writes if w]
+    them = "it" if len(named) == 1 else "them"
+    return (
+        f"Its agent runs on {_runtime_name(runtime)}, whose own file edits PersonalClaw can't "
+        f"limit to {sentence(named)}, so it may not change {them}."
+    )
+
+
+def not_given_on(runtime: str) -> str:
+    """Why files to change cannot be saved for an agent on the agent CLI *runtime*."""
+    return (
+        f"its agent runs on {_runtime_name(runtime)}, whose own file edits PersonalClaw can't "
+        "limit to them, so leave them out and it only reads, or run it on PersonalClaw's own agent"
+    )

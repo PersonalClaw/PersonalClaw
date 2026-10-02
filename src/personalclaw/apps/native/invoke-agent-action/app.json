@@ -41,7 +41,7 @@
           "type": "string",
           "x-meta": {
             "label": "Working folder",
-            "help": "The folder the agent works in, so its file tools reach the files there, e.g. ~/Documents. The workspace, or a folder listed in Settings → Agent defaults → Allowed working directories. Empty uses the workspace."
+            "help": "The folder the agent works in, so its file tools reach the files there, e.g. ~/Documents. The workspace, or a folder listed in Settings → Agent defaults → Allowed working directories. Empty uses the workspace. In a folder you haven't trusted, its agent only reads, whatever its Capability, until you trust the folder."
           }
         },
         "writes": {
@@ -53,7 +53,7 @@
           "x-meta": {
             "label": "Files it may change",
             "widget": "paths",
-            "help": "The files or folders this automation's job changes, each a full path (from / or ~/): its agent may write to these and to nothing else, and every other change and every command stay refused. Allowing the automation says so. Leave it empty for an automation that only reads."
+            "help": "The files or folders this automation's job changes, each a full path (from / or ~/): its agent may write to these and to nothing else, and every other change and every command stay refused. Allowing the automation says so. Leave it empty for an automation that only reads. Not for an agent that runs on an agent CLI: PersonalClaw can't limit a CLI's own file edits to them."
           }
         },
         "max_turns": {
@@ -99,7 +99,7 @@
           ],
           "x-meta": {
             "label": "Capability",
-            "help": "Read-only by default: an auto-fired child agent gets read/search tools only, and write/execute is denied. Set 'mutating' to grant this hook write and execute tools (the creation-time write grant).",
+            "help": "Read-only by default: an auto-fired child agent gets read/search tools only, and write/execute is denied. Set 'mutating' to grant this hook write and execute tools (the creation-time write grant), which it gets in a Working folder only once you trust that folder.",
             "tags": [
               "advanced"
             ]

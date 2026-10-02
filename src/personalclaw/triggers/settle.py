@@ -21,6 +21,10 @@ A failure or a refusal is also stamped on the trigger (`last_failure_at`, `last_
 and a success moves `last_success_at`, as the fire's own recorders stamp a run that ended when its
 action did, so the Triggers list's last run says what the history says, and why.
 
+A run that may do less than the step that started it asks (`SubagentInfo.held_back`: a working
+folder its owner has not trusted, an agent CLI no files to change can be held to) leads its row, its
+trigger's last error and the note it sends with why, whichever way it ended.
+
 A lifecycle hook (`lifecycle:<id>`) keeps no run rows — only its last status — so there is no row
 to settle for one.
 """
@@ -51,10 +55,31 @@ def refused_line(refused: list[str]) -> str:
 
 def what_it_said(info: Any) -> str:
     """What the agent *info* describes said when it ended, as its run's row and its trigger's note
-    say it: a run its limits refused leads with the calls they refused (:func:`refused_line`)."""
+    say it: a run held back leads with why (:func:`_held_back`), and a run its limits refused with
+    the calls they refused (:func:`refused_line`)."""
     result = str(getattr(info, "result", "") or "")
     refused = list(getattr(info, "refused", None) or [])
-    return f"{refused_line(refused)} {result}".strip() if refused else result
+    said = f"{refused_line(refused)} {result}".strip() if refused else result
+    return with_why_it_was_held_back(info, said)
+
+
+def why_it_failed(info: Any) -> str:
+    """Why the agent *info* describes failed, as its run's row and its trigger's note say it: a
+    run held back leads with why (:func:`_held_back`). Empty for an agent that did not fail."""
+    error = str(getattr(info, "error", "") or "")
+    return with_why_it_was_held_back(info, error) if error else ""
+
+
+def _held_back(info: Any) -> str:
+    """Why the run *info* describes may do less than its step asks (`SubagentInfo.held_back`)."""
+    held = getattr(info, "held_back", "")
+    return held if isinstance(held, str) else ""
+
+
+def with_why_it_was_held_back(info: Any, said: str) -> str:
+    """*said*, about the run *info* describes, led by why it may do less than its step asks."""
+    held = _held_back(info)
+    return f"{held} {said}".strip() if held else said
 
 
 def settle_agent_run(info: Any, *, base_dir: Path | None = None) -> bool:
@@ -85,13 +110,21 @@ def settle_agent_run(info: Any, *, base_dir: Path | None = None) -> bool:
             if declined
             else ("failure" if error else ("refused" if refused else "success"))
         )
-        said = DECLINED_LINE if declined else (error or what_it_said(info))
+        if declined:
+            said = DECLINED_LINE
+        else:
+            said = why_it_failed(info) if error else what_it_said(info)
         taken = ScheduleRunStore(home).settle_sync(
             trigger_id, agent_work_id(agent_id), status=status, summary=said, error=error
         )
         if taken and not declined:
             why = refused_line(refused) if status == "refused" else error
-            _stamp(trigger_id, failed=status != "success", error=why, home=home)
+            _stamp(
+                trigger_id,
+                failed=status != "success",
+                error=with_why_it_was_held_back(info, why),
+                home=home,
+            )
         return taken
     except Exception:  # noqa: BLE001 - see the docstring: the row is bookkeeping about the run
         logger.warning("could not settle the run of trigger %s", trigger_id, exc_info=True)

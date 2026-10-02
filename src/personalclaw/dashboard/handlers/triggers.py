@@ -395,6 +395,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "warnings": warnings,
         "needs_review": _needs_review(trigger),
         "needs_grant": _needs_grant(trigger),
+        "held_back": _held_back(trigger),
         **_attribution(trigger, owner=owner),
     }
 
@@ -443,6 +444,7 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
     projected["warnings"] = warnings
     projected["needs_review"] = _needs_review(trigger)
     projected["needs_grant"] = _needs_grant(trigger)
+    projected["held_back"] = _held_back(trigger)
     projected.update(_attribution(trigger, owner=owner))
     return trigger_revisions.with_revision(projected, schedule=True)
 
@@ -461,6 +463,15 @@ def _needs_grant(trigger: Any) -> list[str]:
     from personalclaw.triggers.grants import labels
 
     return labels(trigger)
+
+
+def _held_back(trigger: Any) -> dict[str, str] | None:
+    """Why the row's agent may do less than its step asks, as things stand, and the working folder
+    to trust for it (`triggers.grants.held_back`). The page says it with the trigger and offers
+    Trust; its runs say it in their history (`triggers.settle`)."""
+    from personalclaw.triggers.grants import held_back
+
+    return held_back(trigger)
 
 
 def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
@@ -498,6 +509,8 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         # What it is not allowed to use — the same verdict a store trigger carries: the page badges
         # the row and offers Allow, and its fires are refused (`hooks.run_script_hook`).
         "needs_grant": _needs_grant(hook),
+        # Why the agent its action starts may do less than its step asks, as a store trigger says.
+        "held_back": _held_back(hook),
     }
     return trigger_revisions.with_revision(row, schedule=False)
 
@@ -726,12 +739,6 @@ def _stored_action(state: DashboardState, kind: str, raw: str) -> dict[str, Any]
     }
 
 
-def _stored_action_config(state: DashboardState, kind: str, raw: str) -> dict[str, Any]:
-    """The config of the action trigger *raw* runs now, or ``{}`` — what a write is compared to
-    when deciding whether it loosens the trigger's approval posture."""
-    return dict(_stored_action(state, kind, raw)["config"])
-
-
 async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) -> str:
     """Why a trigger's action could not run as written, asked when it is SAVED; "" when it could.
 
@@ -749,14 +756,14 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
     provider = str(action.get("provider") or stored.get("provider") or "")
     config = action.get("config") if "config" in action else stored.get("config")
     if provider in ("invoke-agent", "run-prompt") and isinstance(config, dict):
-        from personalclaw import write_scope
         from personalclaw.action_providers.services import validate_spawn_cwd
+        from personalclaw.automation_posture import step_problem
 
         cwd = str(config.get("cwd") or "").strip()
         refused = validate_spawn_cwd(cwd)
         if refused:
             return f"The working folder {cwd} can't be used: {refused}"
-        scope_refused = write_scope.problem(config.get("writes"))
+        scope_refused = step_problem(config)
         if scope_refused:
             return f"The files it may change can't be saved: {scope_refused}."
     if provider == "run-workflow":
@@ -779,8 +786,9 @@ def _unconsented_loosening(
 ) -> tuple[str, str] | None:
     """``(field, consent)`` when *body*'s action loosens whether the trigger's agent asks you — an
     ``approval_mode: "auto"``, a ``capability: "mutating"`` write grant — over the *stored* action
-    config (``{}`` for a new trigger) without ``confirm: true``; ``None`` otherwise. The refusal is
-    written to the security audit; the caller answers ``consent_required``.
+    (``{provider, config}``, ``{}`` for a new trigger) without ``confirm: true``; ``None``
+    otherwise. The refusal is written to the security audit; the caller answers
+    ``consent_required``.
 
     The owner's half of the rule; an app cannot define a trigger at all
     (``apps/permissions.ROUTE_AUTHZ``). The Schedule form's "Auto-approve tools" switch is the
@@ -791,9 +799,15 @@ def _unconsented_loosening(
     action = body.get("action")
     if not isinstance(action, dict):
         return None
-    new = action.get("config") if "config" in action else stored
+    raw = stored.get("config")
+    stored_config: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    new = action.get("config") if "config" in action else stored_config
     loosened = unconsented_step_loosening(
-        where, current=stored, new=new if isinstance(new, dict) else {}, body=body
+        where,
+        current=stored_config,
+        new=new if isinstance(new, dict) else {},
+        body=body,
+        provider=str(action.get("provider") or stored.get("provider") or ""),
     )
     if loosened is None:
         return None
@@ -1487,7 +1501,7 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         request,
         body,
         where=f"triggers.{request.match_info['id']}.action",
-        stored=_stored_action_config(state, kind, raw),
+        stored=_stored_action(state, kind, raw),
     )
     if loosened is not None:
         asks.append((*loosened, LOOSEN_TITLE))

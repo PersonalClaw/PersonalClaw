@@ -14,7 +14,8 @@ Three runs broke that, each on a real automation:
 
 So one mapping (``automation_posture.agent_run_policy``) turns a step's posture into what its run
 may do; the runs it starts are built from it, the Allow is said from it, and the rail at the end of
-this file holds the two equal for every posture. A run its limits refused is recorded as
+this file holds the two equal for every posture, in a working folder its owner trusts or keeps in
+Preview and with an agent that runs on an agent CLI. A run its limits refused is recorded as
 ``refused``, saying which calls, and never as a plain success.
 
 Every run here is a real native runtime with the platform's file tools, driven by a scripted
@@ -415,15 +416,21 @@ async def test_a_run_its_limits_refused_nothing_is_a_success(home):
 # ── the rail: for every posture, the Allow says what the run may do ─────────────────────────────
 
 NOTE = "~/Notes/Home/kitchen-reno.md"
+#: A working folder the owner allowed agents to work in, trusted or kept in Preview per posture.
+FOLDER = "~/Documents/Home/Kitchen"
 
 #: Every posture an agent-starting step can carry: its action, its `capability`, whether it names
-#: the files it changes, and, for `invoke-agent`, whether its agent approves its own calls.
+#: the files it changes, and, for `invoke-agent`, whether its agent approves its own calls; and the
+#: two facts outside the step its run follows: its working folder's trust (none, trusted, Preview)
+#: and whether its agent runs on an agent CLI.
 POSTURES = [
-    (provider, capability, writes, approval)
+    (provider, capability, writes, approval, folder, cli)
     for provider, approvals in (("run-prompt", ("",)), ("invoke-agent", ("auto", "")))
     for approval in approvals
     for capability in ("", "research", "mutating")
     for writes in ((), (NOTE,))
+    for folder in ("", "trusted", "preview")
+    for cli in (False, True)
 ]
 
 
@@ -479,11 +486,14 @@ def _what_the_run_may_do(handed: dict, note: str) -> dict[str, bool]:
     }
 
 
-@pytest.mark.parametrize(("provider", "capability", "writes", "approval"), POSTURES)
+@pytest.mark.parametrize(
+    ("provider", "capability", "writes", "approval", "folder", "cli"), POSTURES
+)
 def test_the_allow_says_exactly_what_the_run_may_do(
-    provider, capability, writes, approval, home, monkeypatch
+    provider, capability, writes, approval, folder, cli, home, monkeypatch
 ):
     from personalclaw.automation_posture import agent_run_policy
+    from personalclaw.guardrails import project_trust
 
     config: dict = (
         {"message": "Summarise the quote."}
@@ -496,6 +506,14 @@ def test_the_allow_says_exactly_what_the_run_may_do(
         config["writes"] = list(writes)
     if approval:
         config["approval_mode"] = approval
+    if folder:
+        config["cwd"] = FOLDER
+        project_trust.record_project_trust(str(home.kitchen), trusted=folder == "trusted")
+    if cli:
+        settings = json.loads((home.pc / "config.json").read_text(encoding="utf-8"))
+        settings["agents"] = {"helper": {"provider": "acp:example-cli"}}
+        (home.pc / "config.json").write_text(json.dumps(settings), encoding="utf-8")
+        config["agent"] = "helper"
     policy = agent_run_policy(provider, config)
     said = grants.consent(_trigger(config, provider=provider), [provider])
     assert said.endswith(" " + policy.sentence()), "the Allow is said from the policy"
@@ -504,9 +522,18 @@ def test_the_allow_says_exactly_what_the_run_may_do(
     assert (handed.get("approval_mode") or "") == policy.approval_mode
     assert handed["capability_class"] == policy.capability_class
     assert tuple(handed["may_change"]) == policy.may_change
+    assert handed["held_back"] == policy.held_back
 
     may = _what_the_run_may_do(handed, os.path.realpath(os.path.expanduser(NOTE)))
     sentence = policy.sentence()
+    if policy.untrusted_folder:
+        # A folder in Preview holds back the write access the step asked for, and says what
+        # trusting the folder gives: never as what the run may do now.
+        assert folder == "preview" and not may["runs commands"]
+        assert f"Its working folder {FOLDER} is in Preview: once you trust that folder" in sentence
+        assert FOLDER in policy.held_back
+    else:
+        assert "Preview" not in sentence
     assert may["reads"]
     assert may["messages you"], "an automation's agent may always tell its owner what it found"
     if may["asks"]:
@@ -518,12 +545,21 @@ def test_the_allow_says_exactly_what_the_run_may_do(
         assert "cannot" not in sentence
         assert may["changes anything"] and may["messages anyone"]
         assert "send messages" in sentence or "sends a message" in sentence
+        assert policy.held_back == ""
         return
     # A reading run: everything it may do named, everything else in what it cannot.
     assert not may["changes anything"] and not may["messages anyone"]
     assert "message you" in sentence or "messages you" in sentence
     assert "run commands or message anyone else" in sentence
+    lets_it = (f"may change only {NOTE}", f"before it changes {NOTE}")
     if may["changes the note"]:
-        assert NOTE in sentence and "cannot change anything else" in sentence
+        assert any(words in sentence for words in lets_it)
+        assert "cannot change anything else" in sentence
     else:
-        assert NOTE not in sentence and "cannot change files" in sentence
+        assert not any(words in sentence for words in lets_it)
+        assert "cannot change files" in sentence
+    if writes and cli:
+        # Its agent's own file edits cannot be held to the note, so it is given none, and says so.
+        assert not may["changes the note"]
+        assert f"can't limit to {NOTE}, so it may not change it." in sentence
+        assert "so it may not change it." in policy.held_back

@@ -10,6 +10,7 @@ import { triggerStatusMeta, explainsCause, runFlashMeta } from '../schedule/sche
 import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMeta'
 import { DryRunResult } from './DryRunResult'
 import { ConfigReadout, GrantNote, ReviewNote } from './ReviewNote'
+import { HeldBackNote } from './HeldBackNote'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -207,6 +208,9 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
       {needsReview && <ReviewNote />}
       {needsGrant.length > 0 && !readOnly && (
         <GrantNote labels={needsGrant} enabled={trigger.enabled} busy={busy} onAllow={allow} />
+      )}
+      {trigger.held_back && (
+        <HeldBackNote heldBack={trigger.held_back} onTrusted={onChanged} readOnly={readOnly} busy={busy} />
       )}
 
       <div className="flex items-center justify-between">

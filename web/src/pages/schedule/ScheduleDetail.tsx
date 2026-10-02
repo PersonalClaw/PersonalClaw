@@ -14,6 +14,7 @@ import { kindMeta, modeMeta, deriveKind, deriveMode, scheduleWhenMet, statusMeta
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
+import { HeldBackNote } from '../triggers/HeldBackNote'
 import { HeartbeatQueue } from '../triggers/HeartbeatQueue'
 import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, type ScheduleDraft,
@@ -367,6 +368,11 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           owner allows it. The sections below are what they are allowing. */}
       {!job.needs_review && (job.needs_grant ?? []).length > 0 && (
         <GrantNote labels={job.needs_grant ?? []} enabled={job.enabled} busy={busy} onAllow={allow} />
+      )}
+      {/* Its agent held to less than its step asks, as things stand: the same note a store kind's
+          panel shows, with the folder to trust when a folder in Preview is why. */}
+      {job.held_back && (
+        <HeldBackNote heldBack={job.held_back} onTrusted={onChanged} readOnly={job.read_only === true} busy={busy} />
       )}
 
       {/* what runs — provider-aware: show the action's defining field(s) */}

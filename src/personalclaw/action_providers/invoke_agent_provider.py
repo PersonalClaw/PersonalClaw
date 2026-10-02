@@ -31,7 +31,10 @@ incident, the day's budget) is this action's failure.
 The working folder is where the agent works, so its file tools reach the files there. It is held to
 the rule every subagent's folder is (`subagent.validate_cwd`): the workspace, or a folder the owner
 listed under Settings → Agent defaults → Allowed working directories. Checked when the trigger is
-saved (`dashboard.handlers.triggers._action_problem`), here before the spawn, and by the spawn.
+saved (`dashboard.handlers.triggers._action_problem`), here before the spawn, and by the spawn. A
+folder its owner has not trusted is in Preview, and its agent only reads there, whatever write
+access the step asks for (`guardrails.project_trust`, through `automation_posture.fire_policy`, the
+check a run-prompt fire makes too).
 """
 
 from __future__ import annotations
@@ -112,13 +115,9 @@ class InvokeAgentActionProvider(ActionProvider):
         if ctx.fire_facts:
             task = f"{task}\n\n{ctx.fire_facts}"
         from personalclaw import write_scope
-        from personalclaw.automation_posture import agent_run_policy
 
-        # What its agent may do, as its Allow said it (`automation_posture.agent_run_policy`): the
-        # run is built from the same mapping the Allow's sentence is. The files it may change are
-        # checked again at the fire.
-        policy = agent_run_policy(self.name, action_config)
-        scope_refused = write_scope.problem(list(policy.writes))
+        # The files it may change, checked again at the fire.
+        scope_refused = write_scope.problem(write_scope.entries(action_config))
         if scope_refused:
             return ActionResult(success=False, error=f"invoke-agent: {scope_refused}")
 
@@ -139,8 +138,13 @@ class InvokeAgentActionProvider(ActionProvider):
         except (ValueError, TypeError):
             max_turns = 0
         parent_key = str((ctx.payload or {}).get("session_key", "") or "")
+        from personalclaw.automation_posture import fire_policy
         from personalclaw.triggers.store import run_title
 
+        # What its agent may do, as its Allow said it (`automation_posture.fire_policy`, the check
+        # run-prompt builds its run from too): the run is built from the same mapping the Allow's
+        # sentence is, and a working folder the owner has not trusted holds it to reading.
+        policy = fire_policy(self.name, action_config)
         title = run_title(ctx.trigger_id, task)
 
         # Fire-and-forget: spawn() schedules the child and returns at once, so the lifecycle never
@@ -167,6 +171,7 @@ class InvokeAgentActionProvider(ActionProvider):
                 title=title,
                 may_read=ctx.fire_files,
                 may_change=policy.may_change,
+                held_back=policy.held_back,
             )
         except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
             logger.warning("invoke-agent: spawn failed", exc_info=True)

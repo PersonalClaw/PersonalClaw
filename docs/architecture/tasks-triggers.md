@@ -355,6 +355,22 @@ every posture). A run whose own limits refused calls it made (its grants, or an 
 nobody was there to give) is recorded as `refused`, naming the calls, rather than as a
 success (`triggers.settle`).
 
+Two facts outside the step decide what its run may do too, and the Allow says both as they
+stand. A working folder (`cwd`) the owner has not trusted is in Preview
+(`guardrails.project_trust`): its agent only reads, whatever write access the step asks for,
+for Run Prompt and Invoke Agent alike (one check, `automation_posture.fire_policy`), and the
+Allow names the folder and what trusting it gives. The files the Allow names one by one stay
+its to change. The first fire a folder holds back records it as Preview and asks the owner
+once, in the Inbox, where the request offers Trust; the trigger's panel says why its agent is
+held back and offers Trust too (`held_back` on the trigger). A step that only reads is not
+held back by Preview and asks nothing. An agent that runs on an agent CLI changes files with
+its own tools, which no scope can be held to, so it is given none (`write_scope.not_held_on`):
+saving files to change for one is refused, its Allow says it may not change them, and a run
+that reaches a CLI anyway (an agent inherited from the session that started it) gives them
+up. When either fact changes after the Allow, the run follows it as it is now and never goes
+past what the Allow named for that case: a run held back says why in its history, in its
+trigger's last error and in the note it sends when it ends (`SubagentInfo.held_back`).
+
 **What another machine's owner allowed is theirs.** A workflow step's
 `approval_mode: auto` and `capability: mutating` are the owner's yes, given where
 a save shows them, so a workflow definition from another machine arrives without
