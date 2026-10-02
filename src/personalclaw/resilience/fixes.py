@@ -324,15 +324,19 @@ def _memory_index_preview() -> str:
                 "installed, so there is no index to rebuild."
             )
         return "faiss is not installed, so there is no index to rebuild."
+    # The index holds episodes, so it is counted against the embedded episodes, not against every
+    # embedded memory: facts and lessons are compared by their own vectors (`memory_index_gaps`).
+    holds = (
+        f"it holds {ev['indexed_episodes']} of the {ev['embedded_episodes']} embedded episodes now"
+    )
     preview = (
-        f"Would rebuild the search index from the memories embedded by the current model; it "
-        f"holds {ev['faiss_ids']} of {ev['embedded_count']} now."
+        f"Would rebuild the search index from the episodes embedded by the current model; {holds}."
     )
     if waiting:
         preview = (
             f"Would first embed the {waiting} memor{'y' if waiting == 1 else 'ies'} the model "
             "bound now has not embedded, with that model (one embedding each), then rebuild "
-            f"the search index; it holds {ev['faiss_ids']} of {ev['embedded_count']} now."
+            f"the search index; {holds}."
         )
     return preview
 
@@ -374,9 +378,13 @@ def rebuild_memory_index(*, reembed: bool = True) -> str:
             f"Embedded {embedded} memor{'y' if embedded == 1 else 'ies'} with the model bound "
             "now. faiss is not installed, so semantic recall searches the stored vectors directly."
         )
+    # A rebuild indexes every episode the bound model embedded at its width, so what it reports is
+    # how many: the index holds episodes, and the facts and lessons in the Memory page's Embedded
+    # count are compared by their own vectors.
+    indexed = res["indexed"]
     msg = (
-        f"Rebuilt the memory search index: {res['indexed']} of {res['embedded']} embedded "
-        "memories indexed."
+        f"Rebuilt the memory search index: {indexed} embedded "
+        f"episode{'' if indexed == 1 else 's'} indexed."
     )
     if redone and redone["reembedded"]:
         n = redone["reembedded"]
@@ -388,7 +396,11 @@ def rebuild_memory_index(*, reembed: bool = True) -> str:
             if reembed
             else "a rebuild cannot index them; the Doctor's Fix re-embeds them"
         )
-        msg += f" {res['other_model']} still came from a different embedding model: {why}."
+        k = res["other_model"]
+        msg += (
+            f" {k} more episode{'' if k == 1 else 's'} still came from a different embedding "
+            f"model: {why}."
+        )
     return msg
 
 

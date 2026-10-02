@@ -1666,7 +1666,10 @@ def _memory_cmd(args: argparse.Namespace) -> None:
                 f"  Episodic: {stats['episodic_active']} active, {stats['episodic_deleted']} deleted"  # noqa: E501
             )
             if "faiss_index_size" in stats:
-                print(f"  FAISS index: {stats['faiss_index_size']} vectors")
+                print(
+                    f"  FAISS index: {stats['faiss_index_size']} of the "
+                    f"{stats['episodes_embedded']} embedded episodes"
+                )
             else:
                 print(f"  FAISS index: none ({NO_INDEX_NOTE})")
             print(f"  Audit events: {stats['events_count']}")

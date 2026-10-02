@@ -348,6 +348,7 @@ def test_the_stats_count_an_index_only_where_there_is_one(models, tmp_path, monk
 
     stats = store.memory_stats()
     assert stats["embedded_count"] == 2
+    assert stats["episodes_embedded"] == 2
     if installed:
         assert stats["faiss_index_size"] == 2
     else:
@@ -357,11 +358,22 @@ def test_the_stats_count_an_index_only_where_there_is_one(models, tmp_path, monk
     store.close()
 
 
-def test_the_index_count_is_of_the_memories_search_can_return(models, tmp_path, caplog):
+def _vector_of(store: VectorMemoryStore, key: str) -> tuple:
+    row = store.db.execute(
+        "SELECT length(embedding) / 4, embedding_model FROM semantic_memory WHERE key = ?", (key,)
+    ).fetchone()
+    return tuple(row) if row else ()
+
+
+def test_the_index_count_is_of_the_episodes_search_can_return(models, tmp_path, caplog):
     """A memory consolidation folds into a fact (or one deleted) keeps its vector in the index
     until the next build, and search skips it. Counted as index rows, the stats said "faiss index
-    size 6" beside "embedded count 0" with nothing wrong; the count is of the live memories the
-    index holds, the number the Doctor's memory check compares."""
+    size 6" with no episode left; the count is of the live episodes the index holds.
+
+    The fact the six became is embedded as it is written, so the Embedded count, which counts
+    every memory recall compares by meaning, holds it. The index holds episodes only (a fact is
+    compared by its own vector), so it is set beside the embedded EPISODES, never beside that
+    count: "0 faiss index size · 1 embedded count" read as an index missing a memory."""
     pytest.importorskip("faiss")
     _bind("wide")
     store = _store(tmp_path / "memory.db")
@@ -369,6 +381,50 @@ def test_the_index_count_is_of_the_memories_search_can_return(models, tmp_path, 
     _consolidates_every_preference(store, caplog)
 
     stats = store.memory_stats()
-    assert stats["embedded_count"] == 0
     assert stats["faiss_index_size"] == 0
+    assert stats["episodes_embedded"] == 0
+    assert stats["embedded_count"] == 1, "the fact the six became"
+    assert _vector_of(store, "pref.general") == (1024, f"{ENTRY}:wide")
+    store.close()
+
+
+def test_the_doctor_compares_the_index_with_the_embedded_episodes(models, monkeypatch):
+    """The index holds episodes; facts and lessons hold vectors of their own and are in no index.
+    With a fact embedded and every episode indexed the check is healthy, and with an episode the
+    index does not hold, its sentence counts episodes: the numbers the Memory page shows beside the
+    index, not the Embedded count, which also counts the fact."""
+    import asyncio
+
+    from personalclaw.config.loader import config_dir
+    from personalclaw.resilience import doctor
+    from personalclaw.resilience.doctor import DoctorContext
+
+    pytest.importorskip("faiss")
+    home = config_dir()
+    _bind("wide")
+    store = _store(home / "memory.db")
+    store.serve_recall()
+    _remember(store, PREFERENCES[:3])
+    assert (
+        store.set_semantic("pref.kettle", "descaler under the sink", 1.0, "user_explicit") is None
+    )
+    assert _vector_of(store, "pref.kettle") == (1024, f"{ENTRY}:wide")
+
+    stats = store.memory_stats()
+    assert (stats["embedded_count"], stats["episodes_embedded"], stats["faiss_index_size"]) == (
+        4,
+        3,
+        3,
+    )
+    in_step = asyncio.run(doctor._probe_memory(DoctorContext(home=home)))
+    assert in_step.ok is True, in_step
+
+    other = _store(home / "memory.db")  # another store on the same database
+    _remember(other, PREFERENCES[3:4])
+    other.close()
+    gap = asyncio.run(doctor._probe_memory(DoctorContext(home=home)))
+    assert gap.ok is False and gap.fix_id == doctor.MEMORY_INDEX_FIX, gap
+    assert gap.detail == "faiss index desync: 3 of 4 embedded episodes indexed"
+    after = store.memory_stats()
+    assert (after["episodes_embedded"], after["faiss_index_size"]) == (4, 3)
     store.close()

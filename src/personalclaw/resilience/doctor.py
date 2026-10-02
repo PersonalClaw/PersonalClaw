@@ -391,6 +391,13 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
     ``unembedded`` are ``vector_memory.embedding_coverage``'s, the counts the recall disclosure
     and the Memory page read, so the three say one number.
 
+    The index holds episodes (a fact's or a lesson's vector is compared row by row and is in no
+    index), so it is measured against the embedded EPISODES: ``embedded_episodes`` are the bound
+    model's at the width it writes now, the rule ``EmbeddingCoverage.episodes`` and the Memory
+    page's ``episodes_embedded`` count by, and ``indexed_episodes`` are the ones the index holds.
+    The Memory page's Embedded count also counts facts and lessons, so the index is never compared
+    with it.
+
     Shared by the ``memory.store`` probe and its Fix preview, so the row and the Fix cannot
     disagree about what is broken.
     """
@@ -422,7 +429,6 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
         coverage = vm.embedding_coverage(conn, space, bound=bound is not None)
     finally:
         conn.close()
-    ev["embedded_count"] = len(rows)
     live = vm.recall_store(db_path)
     if live is not None:
         indexed = set(live.index_state()["ids"])
@@ -437,8 +443,10 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
         ev["index_source"] = "file"
     ours = [r for r in rows if (r[2] or "") == space]
     current = ours[-1][1] if ours else 0  # its newest vector's byte width: its width now
-    ev["faiss_ids"] = sum(1 for r in rows if r[0] in indexed)
+    embedded_episodes = sum(1 for r in ours if r[1] == current)
     ev["missing"] = sum(1 for r in ours if r[1] == current and r[0] not in indexed)
+    ev["embedded_episodes"] = embedded_episodes
+    ev["indexed_episodes"] = embedded_episodes - ev["missing"]
     ev["other_model"] = coverage.other_model
     ev["unembedded"] = coverage.unembedded
     ev["dim"] = current // 4
@@ -447,8 +455,8 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
 
 
 async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
-    """memory — memory.db opens + WAL, the index recall reads holds every embedded row, and the
-    model bound now has embedded every memory.
+    """memory — memory.db opens + WAL, the index recall reads holds every embedded episode, and
+    the model bound now has embedded every memory.
 
     Read-only; the measurement is :func:`memory_index_gaps`. Without faiss there is no index to
     hold anything — recall searches the SQLite vectors directly — so that is a note, not a desync.
@@ -468,12 +476,15 @@ async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
                 "Durability, or copy the file aside before anything writes to it again."
             ),
         )
-    embedded, missing = ev["embedded_count"], ev["missing"]
+    missing = ev["missing"]
     other, unembedded = ev["other_model"], ev["unembedded"]
     if missing and ev.get("faiss_available"):
         return ProbeResult(
             ok=False,
-            detail=f"faiss index desync: {ev['faiss_ids']} indexed vs {embedded} embedded rows",
+            detail=(
+                f"faiss index desync: {ev['indexed_episodes']} of {ev['embedded_episodes']} "
+                "embedded episodes indexed"
+            ),
             evidence=ev,
             fix_id=MEMORY_INDEX_FIX,
         )

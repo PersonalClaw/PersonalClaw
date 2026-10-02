@@ -14,7 +14,7 @@ import type { DoctorProbe } from '../../lib/api'
 
 const LINT = { flags: [], auto_fixed: {} }
 const OBS = {
-  stats: { faiss_index_size: 0, embedded_count: 40 },
+  stats: { faiss_index_size: 0, episodes_embedded: 40, embedded_count: 40 },
   rejections: {},
   context_preview: { total_chars: 2404, semantic_chars: 1664, episodic_chars: 0, lessons_chars: 740 },
 }
@@ -22,14 +22,14 @@ const FIX = {
   id: 'memory.rebuild-faiss-index',
   title: 'Rebuild the memory search index',
   impact: 'Rebuilds the faiss index semantic recall reads from the vectors already stored in memory.db.',
-  preview: 'Would rebuild the search index from the memories embedded by the current model; it holds 0 of 40 now.',
+  preview: 'Would rebuild the search index from the episodes embedded by the current model; it holds 0 of the 40 embedded episodes now.',
 }
 const probe = (over: Partial<DoctorProbe>): DoctorProbe => ({
   id: 'memory.store', capability: 'memory', tier: 3, ok: true,
   title: 'Memory store + faiss consistency', detail: 'memory.db healthy', evidence: {}, ...over,
 })
 const DESYNC = probe({
-  ok: false, detail: 'faiss index desync: 0 indexed vs 40 embedded rows', fix_id: FIX.id,
+  ok: false, detail: 'faiss index desync: 0 of 40 embedded episodes indexed', fix_id: FIX.id,
 })
 const HEALTHY = probe({})
 const NO_FAISS = probe({
@@ -75,7 +75,7 @@ async function mount() {
         doctorFixes: () => Promise.resolve({ fixes: [FIX] }),
         doctorFixApply: (id: string) => {
           calls.applied.push(id)
-          return Promise.resolve({ ok: true, fix_id: id, result: 'Rebuilt the memory search index: 40 of 40 embedded memories indexed.' })
+          return Promise.resolve({ ok: true, fix_id: id, result: 'Rebuilt the memory search index: 40 embedded episodes indexed.' })
         },
       },
     }
@@ -109,7 +109,7 @@ describe('the Search index section', () => {
     answers = { before: DESYNC, after: HEALTHY }
     await mount()
     const box = await section()
-    expect(await within(box).findByText('faiss index desync: 0 indexed vs 40 embedded rows')).toBeTruthy()
+    expect(await within(box).findByText('faiss index desync: 0 of 40 embedded episodes indexed')).toBeTruthy()
 
     fireEvent.click(within(box).getByRole('button', { name: /Fix/ }))
     await waitFor(() => expect(calls.applied).toEqual(['memory.rebuild-faiss-index']))

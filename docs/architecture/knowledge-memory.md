@@ -334,11 +334,14 @@ item vector).
     consolidation reads it from the database, with or without faiss. The index holds no width
     until it holds a vector: a vector it cannot take (it holds none yet, or holds the model's
     at another width) has it rebuilt from the database at that vector's width, which also
-    takes in what another store on the same database wrote meanwhile. `/api/memory/stats`'
-    `faiss_index_size` counts the live memories the index holds (a deleted one's vector stays
-    in it until the next build), the number the Doctor's memory check compares; without faiss
-    there is no index, so the stats count none, and that check, which Memory → Health shows with
-    its Fix, says so.
+    takes in what another store on the same database wrote meanwhile. The index holds
+    episodes only (a fact's or a lesson's vector is compared row by row), so it is compared with
+    the embedded EPISODES and never with `embedded_count`, which counts every memory recall
+    compares by meaning: `/api/memory/stats`' `faiss_index_size` counts the live episodes the
+    index holds (a deleted one's vector stays in it until the next build) beside
+    `episodes_embedded` (`EmbeddingCoverage.episodes`), and the Doctor's memory check says
+    "N of M embedded episodes indexed" with the same numbers. Without faiss there is no index,
+    so the stats count none, and that check, which Memory → Health shows with its Fix, says so.
   - **It embeds with the model bound now.** Every store — the main `memory.db` and
     each partition's — embeds through `embedding_providers/registry.py::bound_embedding()`,
     which reads the `embedding` binding at each call and rebuilds when it, or the

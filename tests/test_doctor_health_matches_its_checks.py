@@ -223,7 +223,7 @@ def test_the_failures_a_real_home_shows_each_offer_a_fix_or_say_what_to_do(home,
         fix = row.get("fix_id")
         assert (fix and fixes.get_fix(fix)) or row.get("remedy"), row
     assert failed["memory.store"]["fix_id"] == MEMORY_INDEX_FIX
-    assert "0 indexed vs 2 embedded" in failed["memory.store"]["detail"]
+    assert "0 of 2 embedded episodes indexed" in failed["memory.store"]["detail"]
     assert failed["durability.inventory"]["remedy"].startswith("No automatic fix")
     assert str(home / "crashes") in failed["crashes.recent"]["remedy"]
 
@@ -295,12 +295,12 @@ def test_the_doctor_fix_rebuilds_the_index_recall_reads(home):
 
     before = asyncio.run(doctor._probe_memory(DoctorContext(home=home)))
     assert before.ok is False and before.fix_id == MEMORY_INDEX_FIX, before
-    assert before.detail == "faiss index desync: 0 indexed vs 2 embedded rows"
+    assert before.detail == "faiss index desync: 0 of 2 embedded episodes indexed"
     assert "rebuild the search index" in fixes.get_fix(MEMORY_INDEX_FIX).dry_preview()
 
     applied = fixes.apply_fix(MEMORY_INDEX_FIX)
     assert applied["ok"], applied
-    assert "2 of 2 embedded memories indexed" in applied["result"]
+    assert "Rebuilt the memory search index: 2 embedded episodes indexed." in applied["result"]
 
     after = asyncio.run(doctor._probe_memory(DoctorContext(home=home)))
     assert after.ok is True, after
@@ -388,7 +388,7 @@ def test_the_maintenance_job_rebuilds_without_spending_an_embedding(home, monkey
 
     message = remediation._JOBS[MEMORY_INDEX_FIX].run()
     assert calls == [], "an unattended pass called the embedding model"
-    assert "1 of 3 embedded memories indexed" in message, message
+    assert "1 embedded episode indexed. 2 more episodes still came from" in message, message
     assert "the Doctor's Fix re-embeds them" in message
     store.close()
 

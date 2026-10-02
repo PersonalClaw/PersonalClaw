@@ -699,11 +699,16 @@ class EmbeddingCoverage:
     embeds them (``VectorMemoryStore._fts5_episodic_search``'s ``beside``, and the fact and lesson
     ranking's keyword arm), so every surface that counts them — the recall disclosure, the Memory
     page, the Doctor, the gateway's start — reads :attr:`read_by_keyword` from here.
+
+    ``episodes`` is the part of ``comparable`` that is episodes: what the faiss index holds once it
+    is in step, since a fact's or a lesson's vector is compared row by row and is in no index. The
+    index's count is compared with it, never with ``comparable``.
     """
 
     comparable: int
     other_model: int
     unembedded: int
+    episodes: int
 
     @property
     def read_by_keyword(self) -> int:
@@ -737,16 +742,22 @@ def embedding_coverage(conn: sqlite3.Connection, space: str, *, bound: bool) -> 
     # one each write stores), else a fact's or a lesson's.
     width = next((w for w in (t.newest_width(space) for t in tables) if w), 0)
     comparable = other_width = other_models = unembedded = 0
-    for table in tables:
-        counts = table.counts(space, width)
+    per_table = [table.counts(space, width) for table in tables]
+    for counts in per_table:
         comparable += counts[0]
         other_width += counts[1]
         other_models += counts[2]
         unembedded += counts[3]
+    episodes = per_table[0][0]  # the episodic table's comparable rows
     if not bound:
-        return EmbeddingCoverage(comparable=comparable, other_model=other_width, unembedded=0)
+        return EmbeddingCoverage(
+            comparable=comparable, other_model=other_width, unembedded=0, episodes=episodes
+        )
     return EmbeddingCoverage(
-        comparable=comparable, other_model=other_width + other_models, unembedded=unembedded
+        comparable=comparable,
+        other_model=other_width + other_models,
+        unembedded=unembedded,
+        episodes=episodes,
     )
 
 
@@ -2898,11 +2909,12 @@ class VectorMemoryStore(MemoryProvider):
 
     def rebuild_faiss_index(self) -> dict[str, int]:
         """Rebuild the index from the stored vectors and persist it — the Doctor's Fix and the
-        maintenance job for a desynced index. Returns ``{indexed, embedded, other_model, dim}``:
-        ``other_model`` counts the vectors the index cannot hold (another model's, or this one's
-        at another width), and is 0 with no embedding model bound, where nothing is compared;
-        ``dim`` is 0 when the index holds no vector."""
-        embedded = self._count_vectors()
+        maintenance job for a desynced index. Returns ``{indexed, other_model, dim}``: ``indexed``
+        is every episode the bound model embedded at its width (a build takes in all of them);
+        ``other_model`` counts the episodes whose vector the index cannot hold (another model's,
+        or this one's at another width), and is 0 with no embedding model bound, where nothing is
+        compared; ``dim`` is 0 when the index holds no vector."""
+        with_vectors = self._count_vectors()
         with self._index_lock:
             built = self._build_index_for(self._comparison_space())
             self.save_faiss_index()
@@ -2910,8 +2922,7 @@ class VectorMemoryStore(MemoryProvider):
         bound = self._embedding_ref() is not None
         return {
             "indexed": indexed,
-            "embedded": embedded,
-            "other_model": embedded - indexed if (faiss_available() and bound) else 0,
+            "other_model": with_vectors - indexed if (faiss_available() and bound) else 0,
             "dim": built.dim,
         }
 
@@ -2927,10 +2938,12 @@ class VectorMemoryStore(MemoryProvider):
         }
 
     def _live_indexed(self) -> int:
-        """How many live memories the index holds: the ones semantic search can return from it,
-        and the count the Doctor's memory check compares (``memory_index_gaps``). A memory
-        deleted or folded into a fact keeps its vector in the index until the next build (search
-        skips it), so the index's own row count read higher than the memories embedded."""
+        """How many live memories the index holds: the ones semantic search can return from it.
+        They are episodes, so the count is compared with the embedded episodes
+        (:attr:`EmbeddingCoverage.episodes`), as the Doctor's memory check compares them
+        (``memory_index_gaps``). A memory deleted or folded into a fact keeps its vector in the
+        index until the next build (search skips it), so the index's own row count read higher
+        than the episodes embedded."""
         held = set(self._index.ids)
         if not held:
             return 0
@@ -3726,7 +3739,13 @@ class VectorMemoryStore(MemoryProvider):
                 "SELECT COUNT(*) FROM semantic_memory WHERE is_deleted = 0 "
                 f"AND embedding IS NOT NULL AND {_RANKED_SEMANTIC_CLAUSE}"
             ).fetchone()[0]
-            coverage = EmbeddingCoverage(self._count_vectors() + int(ranked_vectors), 0, 0)
+            episodes = self._count_vectors()
+            coverage = EmbeddingCoverage(
+                comparable=episodes + int(ranked_vectors),
+                other_model=0,
+                unembedded=0,
+                episodes=episodes,
+            )
         else:
             coverage = embedding_coverage(self.db, ref, bound=True)
         return {
@@ -3739,6 +3758,11 @@ class VectorMemoryStore(MemoryProvider):
             # is no index (recall compares the stored vectors themselves), and a count of one read
             # as an index that had lost every memory.
             **({"faiss_index_size": self._live_indexed()} if faiss_available() else {}),
+            # The index holds episodes, so its count sits beside the embedded EPISODES — the two
+            # agree when it is in step. `embedded_count` also counts the facts and lessons recall
+            # ranks by meaning, each compared by its own vector, so it is larger whenever one is
+            # embedded and is never what the index is compared with.
+            "episodes_embedded": coverage.episodes,
             "embedded_count": coverage.comparable,
             "embedded_stale": coverage.other_model,
             "unembedded": coverage.unembedded,

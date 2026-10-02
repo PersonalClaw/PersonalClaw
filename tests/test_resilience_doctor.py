@@ -287,8 +287,8 @@ async def test_memory_probe_detects_faiss_desync(tmp_path, monkeypatch):
 
     res = await doctor._probe_memory(DoctorContext(home=tmp_path))
     assert res.ok is False
-    assert res.detail == "faiss index desync: 1 indexed vs 2 embedded rows"
-    assert res.evidence["embedded_count"] == 2 and res.evidence["faiss_ids"] == 1
+    assert res.detail == "faiss index desync: 1 of 2 embedded episodes indexed"
+    assert res.evidence["embedded_episodes"] == 2 and res.evidence["indexed_episodes"] == 1
     assert res.evidence["missing"] == 1 and res.evidence["other_model"] == 0
     assert res.fix_id == doctor.MEMORY_INDEX_FIX
 
