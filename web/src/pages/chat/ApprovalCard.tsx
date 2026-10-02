@@ -86,6 +86,9 @@ type Action = 'approved' | 'rejected' | 'trust' | 'trust_agent'
  *  recorded as a remainder in the plan instead. Widening it into `trust` was the
  *  alternative, and it is the worse of the two by a distance.
  */
+/** What no standing grant covers (`run_bounds`): said with every promise of "without asking". */
+const STILL_ASKS = 'A command that reaches a host off your allowed hosts still asks.'
+
 const REMEMBER_SCOPES = [
   {
     key: 'once',
@@ -99,7 +102,7 @@ const REMEMBER_SCOPES = [
     action: 'trust' as const,
     // `trust` sets session._trust AND set_approval_policy(dashboard:<key>, "auto") — it is
     // not scoped to this tool, and saying "this tool" here would be the lie above.
-    promise: () => 'Every tool in this chat runs without asking, until you change it back.',
+    promise: () => `Every tool in this chat runs without asking, until you change it back. ${STILL_ASKS}`,
   },
   {
     key: 'agent',
@@ -123,8 +126,8 @@ const REMEMBER_SCOPES = [
     // exactly what a non-persistable `trust_agent` does, so nothing is over- or under-stated.
     promise: (grantAgent: string) =>
       grantAgent
-        ? `Saved on ${grantAgent}: every tool runs without asking, in this chat and future ones.`
-        : 'This chat only — this chat has no saved agent profile, so nothing carries to future chats.',
+        ? `Saved on ${grantAgent}: every tool runs without asking, in this chat and future ones. ${STILL_ASKS}`
+        : `This chat only — this chat has no saved agent profile, so nothing carries to future chats. ${STILL_ASKS}`,
   },
 ] as const
 
@@ -141,14 +144,14 @@ const LOOP_SCOPE_WORDS: Record<RememberScope, { label: string; promise: (grantAg
   once: { label: 'Just this once', promise: () => 'Nothing is remembered. The next tool call asks again.' },
   chat: {
     label: 'This loop',
-    promise: () => 'Every worker of this loop, and its planner, runs its tools without asking until this run ends. A launch, a pause, a stop or a restart asks again.',
+    promise: () => `Every worker of this loop, and its planner, runs its tools without asking until this run ends. A launch, a pause, a stop or a restart asks again. ${STILL_ASKS}`,
   },
   agent: {
     label: 'This agent',
     promise: (grantAgent: string) =>
       grantAgent
-        ? `Saved on ${grantAgent}: every tool runs without asking, in this loop and in future chats and loops.`
-        : 'This run of the loop only — its agent has no saved profile, so nothing carries past this run.',
+        ? `Saved on ${grantAgent}: every tool runs without asking, in this loop and in future chats and loops. ${STILL_ASKS}`
+        : `This run of the loop only — its agent has no saved profile, so nothing carries past this run. ${STILL_ASKS}`,
   },
 }
 
@@ -171,7 +174,8 @@ function wordsFor(scope: (typeof REMEMBER_SCOPES)[number], words: ScopeWords) {
  *  `destructive` and `unchecked` (a shell command the screen could not vouch for), matching the
  *  route's own gate. An absent tier keeps every scope: legacy transcript rows and risk-less
  *  external tools must not be harder to answer than `bash`. */
-function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean) {
+function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean, reach: boolean) {
+  if (reach) return [REMEMBER_SCOPES[0]]
   if (mayDestroy(risk) && !widened) return [REMEMBER_SCOPES[0]]
   return REMEMBER_SCOPES
 }
@@ -251,7 +255,9 @@ export function ApprovalCard({
   // Resolve against what is actually OFFERED, not the whole vocabulary. That is what makes
   // un-ticking the unlock fall back to Allow-once instead of leaving a withdrawn standing
   // grant selected — a scope the user can no longer see must not be the one Allow posts.
-  const offered = answers === 'once' ? [REMEMBER_SCOPES[0]] : offeredScopes(seg.risk, widened)
+  // A call reaching a host off the allowed hosts is asked about whatever a grant says, so no
+  // standing grant is offered for it: one would promise a "without asking" it cannot keep.
+  const offered = answers === 'once' ? [REMEMBER_SCOPES[0]] : offeredScopes(seg.risk, widened, Boolean(seg.reach))
   const chosen = offered.find((s) => s.key === scope) ?? offered[0]
   const chosenWords = wordsFor(chosen, scopeWords)
   const promise = chosenWords.promise(seg.grantAgent || '')
@@ -265,7 +271,10 @@ export function ApprovalCard({
       source={source}
       sourceHref={sourceHref}
       badge={seg.risk ? <RiskChip risk={seg.risk} /> : undefined}
-      meta={<BlastRadiusChips radius={seg.blastRadius} />}
+      meta={<>
+        <BlastRadiusChips radius={seg.blastRadius} />
+        {seg.reach && <p data-type="caption" className="mt-xs text-on-surface-var">{seg.reach}</p>}
+      </>}
       scope={
         answers === 'once' ? undefined : <div className="mt-2 flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -281,7 +290,7 @@ export function ApprovalCard({
               cannot read is a scope they cannot consent to. Announced politely (not
               assertively) because the user caused the change by choosing it. */}
           <p aria-live="polite" data-type="caption" className="text-on-surface-low">{promise}</p>
-          {mayDestroy(seg.risk) && (
+          {mayDestroy(seg.risk) && !seg.reach && (
             // The extra rung, and it states the CONSEQUENCE rather than the risk — the chip
             // above already names the tier, and "destructive" is not what the user is
             // deciding here. What they are deciding is whether future destructive calls stop

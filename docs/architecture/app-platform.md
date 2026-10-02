@@ -108,7 +108,7 @@ backend**.
 - **What it starts, installs and writes outside PersonalClaw** — three manifest declarations
   install consent shows under what the app runs (`apps/disclosure.describe`), each of which an
   update that adds or widens one asks for again:
-  - `launches: [{program, why, inherits, inheritsWhile}]` (`manifest.LaunchedProgram`) — each
+  - `launches: [{program, why, inherits, inheritsWhile, hosts}]` (`manifest.LaunchedProgram`) — each
     program on this machine it starts by name, outside PersonalClaw: an agent app's own CLI, a
     tool. `inherits` is what it runs with, from a closed list. Three are the owner's: `sign-in`
     (the account the program is signed in to), `settings` (its own configuration folder) and
@@ -119,11 +119,17 @@ backend**.
     from whoever wrote the folder. `inheritsWhile: {setting, value}` names a boolean setting of
     the app's provider when that decides it (Claude Code runs with all four only while *Isolated
     Claude settings* is off); consent words it with the setting's label and where it starts.
-    `hosts` are the hosts the program reaches. An `npx` entry must name, in `npmPackage`, the npm
-    package npx downloads and runs (no version: consent says each start fetches its newest
-    version, runs it as the owner, and runs npm's install scripts). A program the owner chooses,
-    such as a runbook action they wrote, is `program: "*"`: consent says "the programs you name
-    for it", and the entry names no program core may start for the app.
+    `hosts` are the hosts the program reaches on the network (host names; a bare domain covers its
+    subdomains), which consent names. The app's code may start the program toward those and the
+    owner's Allowed hosts only: a launch whose command line names another host is refused before
+    it starts, and every launch that reaches the network leaves an `egress_launch` audit row naming
+    the app, the program and the host (`apps/launch_egress.py`, read at Python's own audit event
+    for a process launch). A declared npm package covers the npm registry for `npm`, `npx`, `pnpm`,
+    `yarn` and `bun`, and so does the package an `npx` entry names. An `npx` entry must name, in
+    `npmPackage`, the npm package npx downloads and runs (no version: consent says each start
+    fetches its newest version, runs it as the owner, and runs npm's install scripts). A program the
+    owner chooses, such as a runbook action they wrote, is `program: "*"`: consent says "the
+    programs you name for it", and the entry names no program core may start for the app.
   - An agent app passes its CLI per-session options with `register_acp_cli_entry(session_meta=…)`:
     a JSON object core adds as the `_meta` of every `session/new` and `session/load` it sends
     from the app's entry (the runtime, a resumed session, the readiness probe and a pooled

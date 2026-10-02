@@ -116,8 +116,10 @@ TOOL_META_AUTO_DENIED = "auto_denied"
 #: anyone could be asked, naming the gate: ``deny_list``, ``task_mode``, ``tool_grants`` (the host's
 #: grants for this run, ``NativeAgentRuntime.set_tool_grants``), ``hook``, ``loop_breaker``,
 #: ``unknown_tool``, ``withdrawn`` (the tool's app was removed, or the tool switched off, after the
-#: turn's catalog was built), or ``dry_run`` (observe mode, which runs nothing that writes). Or a
-#: control the tool itself enforces, which then names its rule in :data:`TOOL_META_REFUSED_RULE`.
+#: turn's catalog was built), ``run_bounds`` (an unattended run's call that reaches a host off the
+#: allowed hosts or writes outside its folders), or ``dry_run`` (observe mode, which runs nothing
+#: that writes). Or a control the tool itself enforces, which then names its rule in
+#: :data:`TOOL_META_REFUSED_RULE`.
 TOOL_META_REFUSED_BY = "refused_by"
 
 #: The ``tool_meta`` key a TOOL_RESULT carries when a control the TOOL enforces refused the call,

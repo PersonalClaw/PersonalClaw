@@ -86,6 +86,7 @@ describe('install consent for a program that downloads and runs a package', () =
       + 'unless npm already holds it, and runs it as you. '
       + 'npm runs the install scripts of that package and of every package it depends on. '
       + 'It reaches registry.npmjs.org and finder.example.com. '
+      + 'A launch whose command names another host is stopped unless you allowed that host. '
       + 'It runs with your own npx sign-in and settings.')
   })
 
@@ -93,6 +94,7 @@ describe('install consent for a program that downloads and runs a package', () =
     const text = await dialogFor(review({ launches: [GIT] }))
     expect(text).toContain(
       "It clones a listing's repository into a temporary folder to read it. It reaches git.example.org. "
+      + 'A launch whose command names another host is stopped unless you allowed that host. '
       + 'It runs with your own git settings.')
     expect(text).not.toContain('npm registry')
   })

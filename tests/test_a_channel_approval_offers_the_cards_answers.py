@@ -113,7 +113,9 @@ def _state(tmp_path):
     return state
 
 
-async def _ask(state, chat, request_id: str = "r-1", *, risk: str = "caution") -> asyncio.Future:
+async def _ask(
+    state, chat, request_id: str = "r-1", *, risk: str = "caution", reach: str = ""
+) -> asyncio.Future:
     """What the chat's runner does for a call that needs approval (``hold_session_approval``)."""
     future: asyncio.Future = asyncio.get_running_loop().create_future()
     chat._approval_futures[request_id] = future
@@ -128,6 +130,7 @@ async def _ask(state, chat, request_id: str = "r-1", *, risk: str = "caution") -
         is_read_only=False,
         blast_radius=None,
         grant_agent="",
+        reach=reach,
     )
     return future
 
@@ -170,7 +173,8 @@ async def test_a_prompt_in_the_chat_that_asks_offers_allow_for_this_chat(tmp_pat
             "label": "Allow for this chat",
             "ends": "approved",
             "word": "TRUST",
-            "promise": "Every tool in this chat runs without asking, until you change it back.",
+            "promise": "Every tool in this chat runs without asking, until you change it back. "
+            "A command that reaches a host off your allowed hosts still asks.",
         },
         {"key": "rejected", "label": "Deny", "ends": "rejected", "word": "DENY", "promise": ""},
     ]
@@ -190,6 +194,26 @@ async def test_a_call_that_may_destroy_something_is_offered_this_call_alone(tmp_
     waiting = await _ask(state, chat, risk=risk)
     await _until(lambda: channel.prompts, "asked")
     assert _keys(channel.prompts[0]) == ["approved", "rejected"]
+    waiting.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_call_to_a_host_off_the_allowed_hosts_is_offered_this_call_alone(tmp_path):
+    """The card asks about a command reaching a host off the allowed hosts whatever a grant says,
+    so it offers that call no standing answer, and neither does the prompt: "Allow for this chat"
+    would promise a "without asking" the call never gets. The prompt says why, as the card does."""
+    from personalclaw.run_bounds import Reach, ask_note
+
+    channel = _connect()
+    state = _state(tmp_path)
+    chat = state.get_or_create_session(app=CHANNEL)
+    reach = ask_note(Reach(hosts=("pkgs.example.com",)))
+
+    waiting = await _ask(state, chat, reach=reach)
+    await _until(lambda: channel.prompts, "asked")
+    assert _keys(channel.prompts[0]) == ["approved", "rejected"]
+    assert channel.prompts[0].brief["reach"] == reach
+    assert "pkgs.example.com" in reach
     waiting.cancel()
 
 
@@ -411,14 +435,21 @@ async def test_the_audit_row_names_the_channel_that_answered(tmp_path):
 
 
 def _card_scope(key: str) -> dict[str, str]:
-    """One of the card's remember-scopes (``REMEMBER_SCOPES`` in ApprovalCard.tsx)."""
+    """One of the card's remember-scopes (``REMEMBER_SCOPES`` in ApprovalCard.tsx). Its promise is
+    a quoted string, or a template whose ``${NAME}`` parts are the card's own string constants."""
     text = CARD.read_text(encoding="utf-8")
     block = text[text.index("const REMEMBER_SCOPES") :]
     scope = block[block.index(f"key: '{key}'") :]
     scope = scope[: scope.index("},")]
+    promise = re.search(r"promise: \(\) => (?:'([^']+)'|`([^`]+)`)", scope)
+    words = promise.group(1) or re.sub(
+        r"\$\{([A-Z_]+)\}",
+        lambda name: re.search(rf"const {name.group(1)} = '([^']+)'", text).group(1),
+        promise.group(2),
+    )
     return {
         "action": re.search(r"action: '([a-z_]+)' as const", scope).group(1),
-        "promise": re.search(r"promise: \(\) => '([^']+)'", scope).group(1),
+        "promise": words,
     }
 
 

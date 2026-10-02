@@ -24,6 +24,7 @@ from personalclaw.approval_brief import RISK_LABELS, derive_blast_radius
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
+from personalclaw.run_bounds import reach_note
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
 from personalclaw.task_modes import read_call, tool_input_to_str
@@ -374,6 +375,7 @@ class DashboardApprovalState:
             # own tool, an MCP server's question) has no risk anybody established, and "" says
             # exactly that.
             risk=reading.risk if risk_level or reading.effects is not None else "",
+            reach=reach_note(risk_level, tool, tool_kind, tool_input, session),
         )
         if asked_on_channel:
             self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
@@ -427,6 +429,7 @@ class DashboardApprovalState:
         is_read_only: bool,
         blast_radius: dict[str, bool] | None,
         grant_agent: str,
+        reach: str = "",
     ) -> None:
         """Publish the approval a chat's runner is about to wait on, under
         :func:`chat_approval_id`.
@@ -455,6 +458,7 @@ class DashboardApprovalState:
             agent=agent,
             risk=risk,
             grant_agent=grant_agent,
+            reach=reach,
             asked_by=approval_answer.asker_of_chat(
                 f"{DASHBOARD_SESSION_PREFIX}{session.key}", created_by_app=session.created_by_app
             ).label,
@@ -478,6 +482,7 @@ class DashboardApprovalState:
         risk: str = "",
         grant_agent: str = "",
         trigger: str = "",
+        reach: str = "",
     ) -> dict[str, Any]:
         """The ONE shape a pending approval has, whatever raised it.
 
@@ -491,7 +496,9 @@ class DashboardApprovalState:
         declares, when it declares one. ``blast_radius`` is what the call can touch
         (``approval_brief.call_blast_radius``), or ``None`` when nothing was established.
         ``trigger`` is known only to a trigger's run, and its name
-        is read once, here, so the ask and its note name it the same way. ``asked_by`` is the
+        is read once, here, so the ask and its note name it the same way. ``reach`` says why a
+        call is asked about though a grant would answer any other: it reaches a host off the
+        allowed hosts (``run_bounds.ask_note``). ``asked_by`` is the
         principal that raised it, which may never answer it (``approval_answer``, rule 2).
         ``source_label`` is where it came from in words
         (:func:`~personalclaw.approval_source.approval_source_label`).
@@ -517,6 +524,7 @@ class DashboardApprovalState:
             "is_read_only": is_read_only,
             "blast_radius": blast_radius,
             "grant_agent": grant_agent,
+            "reach": redact_field(reach),
             "trigger": trigger,
             "trigger_name": named,
             # Where it came from, in the words every surface shows it by: the dashboard's cards,
@@ -1145,6 +1153,9 @@ class DashboardApprovalState:
         * the call may not destroy anything (``task_modes.MAY_DESTROY``): the card withholds its
           standing answers on such a call until the owner unlocks them, and a prompt has no
           unlock, so it offers what the card offers before one;
+        * the call reaches no host off the allowed hosts (the entry's ``reach``): such a call is
+          asked about whatever a grant says (``run_bounds``), so the card offers no standing
+          answer for it, and "Allow for this chat" would promise a "without asking" it never gets;
         * the operator ceiling lets a chat's Trust stand, as the card's own route asks before it
           grants it (``approval_grants.stands``): an answer that would be refused is not offered.
 
@@ -1168,6 +1179,7 @@ class DashboardApprovalState:
             not in_its_chat
             or not its_own
             or str(entry.get("risk") or "") in MAY_DESTROY
+            or entry.get("reach")
             or not approval_grants.stands(approval_grants.TRUST, caller="channel", audit=False)
         ):
             return ONE_CALL_ANSWERS

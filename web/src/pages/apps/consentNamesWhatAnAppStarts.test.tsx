@@ -111,6 +111,19 @@ describe('install consent', () => {
     expect(text).not.toContain('your own kiro-cli')
   })
 
+  it('names the hosts a program it starts reaches, and that another host is stopped', async () => {
+    const text = await dialogFor(review({ launches: [{ ...KIRO, hosts: ['registry.example.com', 'code.example'] }] }))
+    expect(text).toContain(
+      'It reaches registry.example.com and code.example. '
+      + 'A launch whose command names another host is stopped unless you allowed that host.')
+  })
+
+  it('says nothing of the network for a program that declares no host', async () => {
+    const text = await dialogFor(review({ launches: [KIRO] }))
+    expect(text).not.toContain('It reaches')
+    expect(text).not.toContain('another host is stopped')
+  })
+
   it('names the npm package it installs, where it goes, and that npm runs its scripts', async () => {
     const text = await dialogFor(review({ npmPackages: [ADAPTER] }))
     expect(text).toContain(

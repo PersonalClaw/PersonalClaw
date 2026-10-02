@@ -102,6 +102,10 @@ _REFUSED_BY_WHY = {
     "task_mode": "the run's mode does not run it",
     "hook": "a hook blocked it",
     "unknown_tool": "there is no tool by that name",
+    "run_bounds": (
+        "it reaches past the run's bounds (a host off the allowed hosts, or a file outside the "
+        "folders the run works in), and nobody was there to allow it"
+    ),
 }
 _NOT_RUN_WHY = {
     "missing_arguments": "it was sent without arguments the tool requires",

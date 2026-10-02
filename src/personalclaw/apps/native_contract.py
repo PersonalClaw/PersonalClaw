@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from personalclaw import app_code
+from personalclaw.apps import launch_egress
 
 # The bundled-app root. ``providers/loader.py`` exposes the same directory as
 # ``BUNDLED_DIR``; this module is the lower layer (``apps/`` knows nothing about
@@ -131,6 +132,8 @@ def app_dir_on_path(app: str, ext_dir: Path | None) -> Iterator[None]:
     code registers, and the modules it loads, leave with the app when it is unloaded.
     """
     if ext_dir is not None:
+        # What a program the app's code starts reaches is read from here on (`launch_egress`).
+        launch_egress.install()
         app_code.claim(app, ext_dir)
     entry = str(ext_dir) if ext_dir is not None else ""
     added = bool(entry) and entry not in sys.path

@@ -257,6 +257,12 @@ async def _resolve_permission(
 
     title = str(event.title or "")[:80]
     caller = session_key or "background"
+    # A command reaching a host off the allowed hosts is answered by a person or not at all
+    # (`run_bounds`): no hook pattern and no policy approves it. A hook's refusal (the shell
+    # denylist's, for a CLI's request) still comes first: nobody is asked about what cannot run.
+    from personalclaw.run_bounds import off_list
+
+    reaches_off_list = off_list(event, session_key)
     if policy == ToolApprovalPolicy.REJECT_ALL:
         await provider.reject_tool(event.request_id)
         _log(
@@ -276,11 +282,15 @@ async def _resolve_permission(
                 metadata={"decided_by": control.get("control", "hook_deny"), **control},
             )
             return False
-        if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands(
-            approval_grants.HOOK_PATTERN,
-            caller=caller,
-            subject=title,
-            level=approval_grants.LEVEL_HOOK,
+        if (
+            not reaches_off_list
+            and tool_result.action == TOOL_AUTO_APPROVE
+            and approval_grants.stands(
+                approval_grants.HOOK_PATTERN,
+                caller=caller,
+                subject=title,
+                level=approval_grants.LEVEL_HOOK,
+            )
         ):
             await provider.approve_tool(event.request_id)
             _log(
@@ -291,6 +301,11 @@ async def _resolve_permission(
                 },
             )
             return True
+
+    if reaches_off_list and on_tool_approval is None:
+        await provider.reject_tool(event.request_id)
+        _log("denied", metadata={"reason": "run_bounds", "decided_by": "run_bounds"})
+        return False
 
     # Interactive approval if callback provided
     if on_tool_approval:

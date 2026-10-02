@@ -28,8 +28,9 @@ from personalclaw.acp.types import (  # noqa: F401
 )
 
 # ── The approval prompt's content (what will run, masked) ──
-# A channel's `request_approval` renders from this alone: the tool, its arguments, the purpose
-# and the summary line, as the dashboard's card shows them, every string already masked.
+# A channel's `request_approval` renders from this alone: the tool, its arguments, the purpose,
+# the summary line and the reach line under it (a host off the allowed hosts), as the dashboard's
+# card shows them, every string already masked.
 from personalclaw.approval_brief import approval_brief_for
 
 # ── How long an approval waits for a person ──

@@ -1145,7 +1145,8 @@ export interface AppLaunchedProgram {
   inheritsWhile: { setting: string; label: string; value: boolean; default: boolean | null } | null
   /** The npm package an `npx` entry downloads and runs each time it starts; `''` for any other. */
   npmPackage: string
-  /** The hosts the program reaches, as the manifest names them. */
+  /** The hosts the program reaches, as the manifest names them; the app's code may start it toward
+   *  these and the owner's allowed hosts only (`apps/launch_egress.py`). */
   hosts: string[]
 }
 /** A place outside the app's own folder it writes: relative to the PersonalClaw folder, or `~/…`
@@ -5342,6 +5343,9 @@ export interface PendingApproval {
    *  (`approval_brief.call_blast_radius`). Decode it with `blastRadiusOf`. */
   blast_radius?: unknown
   grant_agent: string
+  /** Why it is asked though a standing grant answers any other call: it reaches a host off the
+   *  allowed hosts (`run_bounds.ask_note`); "" for every other call. */
+  reach?: string
   /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */

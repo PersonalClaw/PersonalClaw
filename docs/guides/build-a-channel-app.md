@@ -121,9 +121,12 @@ relays without core, is yours to mask (`personalclaw.sdk.channel.redact`).
 ### An approval prompt shows what will run
 
 Render `request_approval`'s prompt from `personalclaw.sdk.channel.approval_brief_for(event)`: the
-tool, its arguments (`input`), the purpose the runner gave, and the `summary` line (what the call
-can touch, and its risk). That is what the dashboard's approval card shows, and a prompt showing
-less asks the owner to approve a call they cannot see. Tag it with `source`, where the call came
+tool, its arguments (`input`), the purpose the runner gave, the `summary` line (what the call can
+touch, and its risk) and, when the brief has one, the `reach` line under it: a shell command that
+reaches a host off the owner's allowed hosts, or one its command does not name, is asked about
+whatever a grant says, and `reach` says so. That is what the dashboard's approval card shows (its
+chips, and the line under them), and a prompt showing less asks the owner to approve a call they
+cannot see. Tag it with `source`, where the call came
 from in the words the dashboard names it by (`loop “Fix the README”`, `workflow “deep-research” ·
 step “sweep”`), and show that as text too: a chat's or a loop's name is in it. Every string in
 the brief is already masked with core's mask, so print it as it is and add no masking of your
@@ -138,7 +141,8 @@ The brief's `answers` list is what the prompt offers, in order: one button each 
 with no buttons, one reply word each, `word`), labelled `label`, and nothing else. Core composes it
 per call, as the dashboard's approval card does: `Allow once` and `Deny` always, and `Allow for
 this chat` (`key` `trust`, the card's "This chat") when the prompt is asked in the chat that is
-asking and the call may not destroy anything. An answer with a `promise` is a standing one; the
+asking, the call may not destroy anything and it has no `reach`. An answer with a `promise` is a
+standing one; the
 prompt says its promise beside it, so the owner reads what it does before pressing it. A press
 resolves the pending record's future with the pressed answer's `key`, and `request_approval`
 returns whether that answer's `ends` is `approved`. Core then decides it the way the card would:

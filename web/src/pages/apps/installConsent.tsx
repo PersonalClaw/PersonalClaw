@@ -443,7 +443,7 @@ function LaunchItem({ launch: l }: { launch: AppLaunchedProgram }) {
       {l.hosts.length > 0 && (
         <> It reaches {l.hosts.map((h, i) => (
           <span key={h}>{i === 0 ? '' : i === l.hosts.length - 1 ? ' and ' : ', '}{cmd(h)}</span>
-        ))}.</>
+        ))}. A launch whose command names another host is stopped unless you allowed that host.</>
       )}
       <InheritsSentence launch={l} />
     </span>

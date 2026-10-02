@@ -35,6 +35,7 @@ from personalclaw import (
     approval_grants,
     gateway_base,
     notification_kinds,
+    run_bounds,
     shutdown_event,
 )
 from personalclaw.acp.errors import AcpError, AcpProcessDied
@@ -604,8 +605,17 @@ class GatewayOrchestrator:
             # started with (`approval_grants`, rule 1), and only if the operator ceiling lets it
             # stand (rule 2). What approved it is what the caller's audit row says (rule 3), and
             # the Inbox note a previous unanswered ask of the same call left is settled.
-            grant, grant_row = self._relay_grant(
-                source, event, session_resolver=session_resolver, resolved_session=resolved_session
+            # Never for a command that reaches a host off the allowed hosts (`run_bounds`): it is
+            # put to a person whatever grant stands.
+            grant, grant_row = (
+                ("", None)
+                if run_bounds.off_list(event, asked_in)
+                else self._relay_grant(
+                    source,
+                    event,
+                    session_resolver=session_resolver,
+                    resolved_session=resolved_session,
+                )
             )
             if grant and approval_grants.stands(
                 grant,

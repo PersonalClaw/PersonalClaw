@@ -997,7 +997,8 @@ class LaunchedProgram:
     app setting decides that, ``inheritsWhile`` names it and the value under which it holds.
     ``npmPackage`` is the npm package an ``npx`` entry downloads and runs, which every ``npx``
     entry names, and ``hosts`` are the hosts the program reaches. Install consent shows all of
-    it, and core registers no agent CLI the app does not declare here.
+    it, core registers no agent CLI the app does not declare here, and the app's code may start
+    the program toward no other host the owner has not allowed (``apps.launch_egress``).
     """
 
     program: str = ""

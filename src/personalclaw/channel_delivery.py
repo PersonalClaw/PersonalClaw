@@ -93,13 +93,15 @@ class ApprovalAnswer:
 #: Approve this one call. Nothing is remembered: the next call asks again.
 ALLOW_ONCE = ApprovalAnswer("approved", "Allow once", "approved", "APPROVE")
 #: Approve this call, and every later one in the same chat, until the owner changes it back: the
-#: dashboard card's "This chat", the chat's Trust. Offered only by a prompt asked in that chat.
+#: dashboard card's "This chat", the chat's Trust. Offered only by a prompt asked in that chat. A
+#: command reaching a host off the allowed hosts is asked about past it (``run_bounds``).
 ALLOW_FOR_THIS_CHAT = ApprovalAnswer(
     "trust",
     "Allow for this chat",
     "approved",
     "TRUST",
-    "Every tool in this chat runs without asking, until you change it back.",
+    "Every tool in this chat runs without asking, until you change it back. "
+    "A command that reaches a host off your allowed hosts still asks.",
 )
 #: Refuse this call. Nothing is remembered.
 DENY = ApprovalAnswer("rejected", "Deny", "rejected", "DENY")
@@ -321,12 +323,16 @@ class ChannelDelivery(Protocol):
                                        #   DECLARED event.risk_level)
              "summary": str,           # "Can: writes files · Risk: Caution", or ""
              "answers": [...],         # what the prompt offers (above)
+             "reach": str,             # optional: why it is asked though a grant would
+                                       #   answer any other call (a host off the allowed
+                                       #   hosts), masked
              "blastRadius": {"writes": bool, "network": bool,
                              "shell": bool, "readOnly": bool},   # optional
              "blastRadiusLine": str}                             # optional
 
-        A prompt shows the tool, the arguments, the purpose and the summary line, which is
-        what the dashboard's approval card shows, and splits like a reply when that is too
+        A prompt shows the tool, the arguments, the purpose and the summary line, and the reach
+        line under it when there is one, which is what the dashboard's approval card shows (its
+        chips, and its line under them), and splits like a reply when that is too
         long for one message, the buttons (the answers) on the last part. Every string is
         already masked (:func:`~personalclaw.security.redact_field`), so a channel masks
         nothing itself.

@@ -64,6 +64,7 @@ export function applyApprovalFrame(segs: Segment[], d: Frame): Segment[] {
     kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''),
     purpose: String(d.tool_purpose ?? ''), risk: approvalRiskOf(d.risk),
     blastRadius: blastRadiusOf(d.blast_radius), grantAgent: d.grant_agent ? String(d.grant_agent) : '',
+    reach: d.reach ? String(d.reach) : '',
   }]
 }
 

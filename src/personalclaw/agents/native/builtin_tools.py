@@ -25,7 +25,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from personalclaw import cancellation
+from personalclaw import cancellation, run_bounds
 from personalclaw.agents.native import read_gate
 from personalclaw.agents.native.decision_tool_defs import decision_tool_definitions
 from personalclaw.agents.native.inbox_tool_defs import (
@@ -114,11 +114,12 @@ def bind_tool_context(
     agent: str = "",
     extra_roots: list | None = None,
     project_id: str = "",
+    scratch: str = "",
 ):
     """Bind the per-turn workspace context for native tool dispatch; returns a
     list of reset tokens the caller restores after the call. Called by the native
     runtime in ``_invoke`` so the registry-singleton category providers resolve
-    this turn's cwd/agent/extra-roots/project."""
+    this turn's cwd/agent/extra-roots/project, and the shell its temporary folder."""
     from personalclaw.tool_providers import projection as _projection
 
     tokens = [
@@ -126,6 +127,7 @@ def bind_tool_context(
         _CURRENT_AGENT.set(agent or ""),
         _CURRENT_EXTRA_ROOTS.set(tuple(str(r) for r in (extra_roots or []))),
         _CURRENT_PROJECT_ID.set(project_id or ""),
+        run_bounds.CURRENT_SCRATCH.set(scratch or ""),
         # Also bind the projection PROJECT rule layer to this turn's cwd, so a
         # repo's `.personalclaw/projection_rules.json` shapes ITS tools' output only.
         _projection.bind_project_dir(cwd),
@@ -156,6 +158,7 @@ def reset_tool_context(tokens) -> None:
         _CURRENT_AGENT,
         _CURRENT_EXTRA_ROOTS,
         _CURRENT_PROJECT_ID,
+        run_bounds.CURRENT_SCRATCH,
     )
     for var, tok in zip(_vars, tokens or []):
         try:
@@ -1651,11 +1654,7 @@ class NativeBuiltinToolProvider(ToolProvider):
             # agent-influenced spawn — deliver the ``tool`` ceiling via the post-exec
             # shim (full caps + OOM bias so a runaway command is killed before the
             # gateway). No preexec_fn: delivery is after exec, off the event-loop fork.
-            from personalclaw.sandbox import (
-                PROFILE_TOOL,
-                build_child_env,
-                create_subprocess_limited,
-            )
+            from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
             proc = await create_subprocess_limited(
                 *wrapped,
@@ -1665,7 +1664,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 # hook or a cron script, never with a copy of the gateway's environment: the
                 # gateway holds every secret saved in PersonalClaw. `bash -l` still reads the
                 # owner's login profile, so the shell is set up the way theirs is.
-                env=build_child_env(site="native-bash"),
+                env=run_bounds.shell_env(site="native-bash"),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 # Its own process group. Two reasons, both load-bearing:

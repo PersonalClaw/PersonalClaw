@@ -13,7 +13,9 @@ line that matters.
 The brief also carries the call itself: the tool, its arguments and the purpose the
 runner gave, each MASKED with :func:`~personalclaw.security.redact_field` — the mask the
 dashboard's pending-approval entry applies to the same three strings — plus the one
-``summary`` line (what the call can touch, and its risk). A channel renders its prompt
+``summary`` line (what the call can touch, and its risk) and, for a call that reaches a host
+off the allowed hosts, the ``reach`` line saying so (the card's line under its chips). A
+channel renders its prompt
 from these alone (:func:`approval_brief_for`), so every channel shows what the
 dashboard's card shows and none has a masking pass of its own to get wrong. Three channels
 used to show the tool's name and nothing else, and people approved a call they could not
@@ -64,6 +66,7 @@ from typing import Any
 
 from personalclaw.channel_delivery import ONE_CALL_ANSWERS, ApprovalAnswer
 from personalclaw.command_effects import CommandEffects
+from personalclaw.run_bounds import reach_note
 from personalclaw.security import redact_field
 from personalclaw.task_modes import read_call, resolve_effective_risk, tool_input_to_str
 
@@ -373,10 +376,13 @@ def _brief(
     shown_purpose: str,
     risk: str,
     answers: tuple[ApprovalAnswer, ...],
+    reach: str = "",
 ) -> dict[str, Any]:
     """The brief's one shape. ``radius`` is what the call can touch; the ``shown_*`` strings are
     what a channel prints, already masked by the caller. ``answers`` is what the prompt offers
-    (``channel_delivery.ApprovalAnswer``), which its caller decided."""
+    (``channel_delivery.ApprovalAnswer``), which its caller decided. ``reach`` is why it is asked
+    though a grant answers any other call (``run_bounds.ask_note``): a line of its own, under the
+    summary, as the dashboard's card shows it under its chips."""
     brief: dict[str, Any] = {
         "tool": shown_tool,
         "input": shown_input,
@@ -388,6 +394,8 @@ def _brief(
         brief["blastRadius"] = radius
         brief["blastRadiusLine"] = blast_radius_line(radius)
     brief["summary"] = summary_line(radius, risk)
+    if reach:
+        brief["reach"] = reach
     return brief
 
 
@@ -432,6 +440,9 @@ def compose_approval_brief(event: Any) -> dict[str, Any] | None:
         # origin's (the gateway's relay), or one a channel's own turn raised. Its prompt answers
         # this call and nothing beyond it.
         answers=ONE_CALL_ANSWERS,
+        reach=redact_field(
+            reach_note(getattr(event, "risk_level", ""), tool, tool_kind, tool_input)
+        ),
     )
 
 
@@ -459,6 +470,7 @@ def entry_approval_brief(
         shown_purpose=str(entry.get("tool_purpose") or ""),
         risk=risk,
         answers=answers,
+        reach=str(entry.get("reach") or ""),
     )
 
 
@@ -468,8 +480,9 @@ def approval_brief_for(event: Any) -> dict[str, Any] | None:
     The brief core stamped on the event (``tool_meta``) when core asked the channel; composed
     from the event itself when the channel's own turn raised the approval. Either way every
     string in it is masked: ``tool``, ``input`` (the arguments, as the dashboard's card shows
-    them), ``purpose`` and ``summary`` (what the call can touch, and its risk). A channel prints
-    those and masks nothing of its own, and offers the ``answers`` it carries
+    them), ``purpose`` and ``summary`` (what the call can touch, and its risk), and ``reach``
+    when the call reaches a host off the allowed hosts (a line of its own, under the summary). A
+    channel prints those and masks nothing of its own, and offers the ``answers`` it carries
     (``ChannelDelivery.request_approval``). ``None`` when the event names no tool.
 
     A stamped brief that lacks one of those four strings, or answers a prompt can offer, is not

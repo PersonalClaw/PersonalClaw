@@ -84,19 +84,38 @@ def relayed_failure_copy(exc: BaseException, *, endpoint: str = "") -> str:
     """The user-facing text for relaying a provider-operation failure.
 
     Connectivity classes get their guidance sentence (naming ``endpoint`` when the
-    caller knows it); a model-discovery failure and a ``ValueError`` carrying a
-    message keep their own words (authored copy — "model card missing 'name'" is
-    meant for the user); anything else is an internal crash whose text belongs in
-    the log, so the wire gets :data:`UNEXPECTED_FAILURE_COPY`.
+    caller knows it); a program launch the network settings stopped, a model-discovery
+    failure and a ``ValueError`` carrying a message keep their own words (authored copy —
+    "model card missing 'name'" is meant for the user); anything else is an internal
+    crash whose text belongs in the log, so the wire gets :data:`UNEXPECTED_FAILURE_COPY`.
     """
     guidance = connectivity_guidance(exc, endpoint=endpoint)
     if guidance is not None:
         return guidance
+    refused = _launch_refusal(exc)
+    if refused:
+        return refused
     from personalclaw.llm.catalog import ModelDiscoveryError
 
     if isinstance(exc, (ModelDiscoveryError, ValueError)) and str(exc):
         return str(exc)
     return UNEXPECTED_FAILURE_COPY
+
+
+def _launch_refusal(exc: BaseException) -> str:
+    """The sentence of a program launch the network settings stopped, when *exc* is one or was
+    raised over one (an app that wraps the refusal in its own error): core's own words, which name
+    the app, the program, the host and how to allow it, so they are said as they are."""
+    from personalclaw.apps.launch_egress import LaunchRefused
+
+    seen: set[int] = set()
+    found: BaseException | None = exc
+    while found is not None and id(found) not in seen:
+        if isinstance(found, LaunchRefused):
+            return str(found)
+        seen.add(id(found))
+        found = found.__cause__ or found.__context__
+    return ""
 
 
 def sentence_with_detail(sentence: str, error: BaseException | str) -> str:

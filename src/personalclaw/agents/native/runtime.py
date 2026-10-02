@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import cancellation
+from personalclaw import cancellation, run_bounds
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate, refusal_of
@@ -2025,10 +2025,11 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             return self._unknown_tool(tool_name, meta)
         if (gone := self._no_longer_offered(tool_name, meta)) is not None:
             return gone
-        if self._requires_approval(tool_name):
-            # A call its tool will refuse is answered with why before anyone is asked: approving
-            # it could run nothing, and the identical retry would ask again.
-            refused = await self._preflight(tool_name, args, meta)
+        bounds = run_bounds.native_check(self, tool_name, args)  # where it reaches past its bounds
+        if bounds or self._requires_approval(tool_name):
+            # A call its tool will refuse is answered with why before anyone is asked (and before
+            # an unattended run is refused it for its bounds): no answer could let it run.
+            refused = await self._preflight(tool_name, args, meta) or bounds.refuse(meta)
             return _NEEDS_APPROVAL if refused is None else refused
         if self._asks_first(tool_name):
             # The tool asks before it runs, and the session's approval policy answered for it.
@@ -2186,8 +2187,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # constructor. (The platform filesystem/shell provider is still built
         # per-session in provider_bridge with cwd+extra_roots, so its own confinement
         # is unaffected; this binding makes the singletons resolve THIS session too.)
+        scratch = run_bounds.runtime_scratch(self)
         ctx_tokens = _bt.bind_tool_context(
-            cwd=self._cwd, agent=self._agent_id, project_id=self._project_id
+            cwd=self._cwd, agent=self._agent_id, project_id=self._project_id, scratch=scratch
         )
         # Bind this turn's stop signal for the dispatch, so a spawn site deep
         # inside a tool registers its child without every layer between here and there

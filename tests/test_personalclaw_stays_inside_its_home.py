@@ -98,6 +98,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("write_scope.py", "problem"): "a guard: the home folder itself is no file a job changes",
     ("agent.py", "_apply_user_agent_hooks"): "a guard: a configured hooks folder must sit in HOME",
     ("command_paths.py", "named_paths"): "a guard: reads ~ and $HOME in a command as a shell does",
+    ("run_bounds.py", "_expand_leading"): "a guard: reads $HOME in a path a command writes",
     (
         "context.py",
         "_home_directory_line",

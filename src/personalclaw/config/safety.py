@@ -37,14 +37,17 @@ class EgressConfig:
         default_factory=list,
         metadata=_meta(
             "Allowed Egress Hosts",
-            "Hosts (bare domain covers subdomains, no wildcards) permitted to be "
-            "reached even if they resolve to a private/LAN address. For homelab "
-            "webhooks/services on "
-            "your own network. Applies to all egress surfaces. On the EXCLUSIVE "
-            "surfaces this list is the only reach there is, not a waiver on top of "
-            "the public internet: automated fetches (the net-fetch action) and "
-            "outbound A2A calls can reach these hosts and nothing else, so leaving it "
-            "empty means those surfaces reach nowhere.",
+            "Hosts (bare domain covers subdomains, no wildcards). The agent's fetches, "
+            "scrapes and webhooks may reach these even if they resolve to a private/LAN "
+            "address (homelab webhooks/services on your own network). They are also the "
+            "only hosts the agent's shell commands (an agent CLI's when it asks first), and "
+            "the programs apps start, reach without a person saying yes: a chat asks about "
+            "any other host, an unattended "
+            "run (a loop, a schedule) is refused it, and an app's program is stopped unless "
+            "its install review named the host. On the EXCLUSIVE surfaces this list is the "
+            "only reach there is, not a waiver on top of the public internet: automated "
+            "fetches (the net-fetch action) and outbound A2A calls can reach these hosts and "
+            "nothing else, so leaving it empty means those surfaces reach nowhere.",
         ),
     )
     deny_hosts: list[str] = field(
@@ -61,9 +64,10 @@ class EgressConfig:
         default=False,
         metadata=_meta(
             "Allow Private Networks",
-            "When true, egress to private/LAN addresses is permitted globally (not "
+            "When true, the agent's fetches may reach any private/LAN address (not "
             "just allow_hosts). Only enable on a fully trusted network — it removes "
-            "SSRF protection for the whole LAN.",
+            "SSRF protection for the whole LAN. A shell command still reaches only "
+            "allow_hosts without asking.",
         ),
     )
 

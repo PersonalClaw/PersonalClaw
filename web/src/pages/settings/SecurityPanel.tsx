@@ -891,9 +891,9 @@ function EgressPolicyEditor() {
   }
 
   return (
-    <Section title="Network egress" hint="The agent's outbound fetches, scrapes, and webhooks are blocked from reaching non-public addresses (loopback, LAN, cloud metadata) by default — SSRF protection. Relax it for your own network below; a deny always wins over an allow.">
+    <Section title="Network egress" hint="The agent's outbound fetches, scrapes, and webhooks are blocked from reaching non-public addresses (loopback, LAN, cloud metadata) by default — SSRF protection. Shell commands reach only the allowed hosts below without a person saying yes (the built-in agent's always, an agent CLI's when it asks first), and so do the programs apps start: a chat asks you about any other host, an unattended run (a loop, a schedule) is refused it, and an app's program is stopped unless its install review named the host. A deny always wins over an allow.">
       <div className="flex flex-col gap-4">
-        <HostList label="Allowed hosts" hint="Reachable even if they resolve to a private/LAN address (e.g. a homelab service). Bare domain covers subdomains."
+        <HostList label="Allowed hosts" hint="Fetches reach these even if they resolve to a private/LAN address (e.g. a homelab service), and a shell command or an app's program reaches them without asking. Bare domain covers subdomains."
           hosts={eg.allow_hosts} disabled={busy || guard.conflict !== null}
           onChange={(hosts) => editHosts('allow_hosts', hosts)} />
         <HostList label="Denied hosts" hint="Never reachable, even if public. Overrides an allow."
@@ -914,7 +914,7 @@ function EgressPolicyEditor() {
             className="mt-0.5 size-4 shrink-0 accent-primary" />
           <span className="min-w-0">
             <span data-type="body-s" className="text-on-surface">Allow all private networks</span>
-            <span data-type="body-s" className="block text-on-surface-low">Permit egress to any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN.</span>
+            <span data-type="body-s" className="block text-on-surface-low">Let fetches reach any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN. A shell command still reaches only the allowed hosts without asking.</span>
           </span>
         </label>
         <StaleWriteNotice guard={guard} what="Your network egress overrides" />

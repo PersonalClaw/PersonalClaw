@@ -746,6 +746,34 @@ chokepoint:
   host they have not allowed, is still refused by the guard. The record is in-process
   per session; deleting or forgetting a chat drops it (`dashboard/chat_forget.py`).
 
+## Where a run reaches without a person saying yes (`run_bounds.py`)
+
+The fetch surfaces above own their sockets; the agent's shell and the programs an app's code
+starts do not, so what they reach is read from the command they run
+(`command_effects`: the hosts a command names, and the paths its writes name) and held there:
+
+- **Network.** `shell_egress_policy` is `LISTED` layered with `security.egress` (the operator's
+  allow and deny hosts, exclusively) and narrowed by the run's egress tier. A shell command whose
+  network facet names a host off it, or names no host it can read, is refused in an unattended
+  run (the native runtime's `_guard_and_invoke`, and the dashboard's gate for an agent CLI's ask)
+  and put to a person in an attended one: every grant that would answer a call unasked (Trust,
+  YOLO, a hook's auto-approve, a subagent's standing grant, the relay's grant) skips it, and the
+  pending approval carries the host (`reach`) to every surface that shows it, a channel's prompt
+  included (the approval brief's `reach`), none of which offers a standing answer for it. The
+  native runtime asks the call's tool first (`_preflight`): a call its tool refuses anyway, such
+  as a denied command, is refused with the tool's reason and put to nobody.
+- **Writes.** An unattended run's writes are held to its own folders (`session_roots`: the folder
+  it works in and the ones it was given) and its own temporary folder (`scratch_dir`, its shell's
+  `TMPDIR`). A native file write or a shell command's write facet outside them is refused; a write
+  whose path the command does not name is too.
+- **Apps.** `apps/launch_egress.py` reads every launch an app's code makes, at Python's own audit
+  event for it, so whatever helper started it: each host its command line names gets an
+  `egress_launch` row naming the app and the program, and a host neither the manifest declares for
+  that program (`launches[].hosts`) nor the owner allowed is refused before the program starts.
+
+It is defence in depth in front of the OS sandbox, which confines neither egress nor writes
+([limitations §16](../security/limitations.md#16-where-a-shell-command-or-an-apps-program-reaches-is-read-from-its-command-line)).
+
 ## Browsing on the user's behalf (`browse/`)
 
 The `browse` action provider has two execution targets. `gateway` drives the gateway's own

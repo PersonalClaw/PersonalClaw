@@ -6,7 +6,8 @@ Discord printed the name alone ("Approve: bash?"), so people approved a command 
 see, and each channel that did show more masked the arguments with its own copy of the passes.
 
 The brief core hands every channel now carries the call: ``tool``, ``input`` and ``purpose``,
-masked exactly as the dashboard's pending approval masks them, and the ``summary`` line. Both
+masked exactly as the dashboard's pending approval masks them, the ``summary`` line, and the
+``reach`` line for a command whose host is on no allowed list. Both
 askers stamp it (the gateway's, and the registry's Channel DM target), and
 ``personalclaw.sdk.channel.approval_brief_for`` is the one read a channel makes, composing a brief
 for an approval its own turn raised.
@@ -158,7 +159,11 @@ async def test_a_channel_is_handed_the_call_the_dashboard_card_shows(tmp_path):
         "readOnly": False,
     }
     assert brief["summary"] == "Can: runs a command, uses the network · Risk: Not checked"
-    for text in (brief["tool"], brief["input"], brief["purpose"], brief["summary"]):
+    # Its host is on no allowed list, which the card says on a line of its own under its chips,
+    # and so does the channel, in the card's words.
+    assert brief["reach"] == entry["reach"]
+    assert brief["reach"].startswith("It reaches api.example.test, which is not on Allowed hosts")
+    for text in (brief["tool"], brief["input"], brief["purpose"], brief["summary"], brief["reach"]):
         assert SECRET not in text, "a key reached the channel"
 
     state.resolve_approval("ap-1", False, by=YOU)

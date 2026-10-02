@@ -359,7 +359,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "security": SecurityControl(
             loosens_egress,
             "The agent's outbound fetches, scrapes and webhooks can reach an address the egress "
-            "guard blocked before — a private or LAN address, or a host you had denied.",
+            "guard blocked before — a private or LAN address, or a host you had denied — and its "
+            "shell commands, and the programs apps start, reach a host you add without asking.",
         ),
     },
     # Flipping this changes where NEW credentials are written; it deliberately does

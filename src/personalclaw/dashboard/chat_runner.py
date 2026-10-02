@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import approval_grants, auto_denials, memory_writes
+from personalclaw import approval_grants, auto_denials, memory_writes, run_bounds
 from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.acp.types import (
@@ -24,7 +24,7 @@ from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
-from personalclaw.dashboard import running_turn, turn_endings
+from personalclaw.dashboard import chat_refusals, running_turn, turn_endings
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
@@ -2251,8 +2251,11 @@ def _grant_stands(
     The operator ceiling bounds every grant a chat has — its Trust, YOLO, Trust reads, an agent's
     "always allow", an app's grant, a hook pattern — and a refusal is audited, naming the call.
     A refused grant falls through to what comes next: the call asks, or on an unattended turn
-    is declined because nobody can answer it.
+    is declined because nobody can answer it. No grant answers a call that reaches a host off the
+    allowed hosts (`run_bounds`): that one is put to a person.
     """
+    if run_bounds.off_list(event, session_key):
+        return False
     title, _ = redact_exfiltration_urls(event.title or "")
     title, _ = redact_credentials(title)
     return approval_grants.stands(
@@ -4271,6 +4274,11 @@ async def run_chat(
                                 },
                             )
                             continue
+                # An unattended turn is refused a call past its run's bounds (`run_bounds`).
+                if _unattended_turn and await chat_refusals.refuse_past_bounds(
+                    state, session, session_key, event, _refuse_call, agent=_agent_label(session)
+                ):
+                    continue
                 if state.context_builder:
                     tool_result = state.context_builder.hooks.on_tool_call(
                         event.title, cwd=_file_change_base(session)
@@ -4655,58 +4663,22 @@ async def run_chat(
                     )
                     logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
                     continue
-                # §2.3 (gap 3) — UNATTENDED FAIL-FAST, the last gate before the wedge.
-                # Everything below this point waits on a human: it publishes the approval
-                # to every surface (the card, the approvals list, the Inbox) and then blocks
-                # for up to two hours. On an unattended turn there is no human, so that
-                # is not a gate — it is a two-hour stall that ends in a rejection
-                # anyway. Deny NOW, with the reason, and let the turn continue: the CLI
-                # sees a normal denial and can adapt or stop, which is the T5 semantic
-                # ("never wedge waiting for a human") the native runtime already has.
-                #
-                # Deliberately placed LAST, after trust/YOLO and after every deny path.
-                # An unattended loop sets ``_trust``, so its tools were already
-                # auto-approved above and never reach here; what reaches here is a
-                # request nothing could resolve. This ordering means the fail-fast can
-                # only ever turn a two-hour park into an immediate denial — it can
-                # never turn a denial into an approval.
+                # §2.3 (gap 3) — UNATTENDED FAIL-FAST, the last gate before the wedge, and
+                # deliberately LAST: see `chat_refusals.refuse_unattended`.
                 if _unattended_turn:
-                    await _refuse_call(event, why=turn_endings.UNATTENDED, kind="user")
-                    _ff_title, _ = redact_exfiltration_urls(event.title)
-                    _ff_title, _ = redact_credentials(_ff_title)
-                    session.append(
-                        "tool",
-                        f"{_ff_title} (auto-denied: unattended run, no one to approve)",
-                        "msg msg-tool",
-                        meta=({"tool_call_id": event.tool_call_id} if event.tool_call_id else None),
-                    )
-                    logger.warning(
-                        "unattended fail-fast: auto-denied %r on %s (no human to approve)",
-                        event.title,
-                        session.key,
-                    )
-                    sel().log_tool_invocation(
-                        session_key=session_key,
+                    await chat_refusals.refuse_unattended(
+                        state,
+                        session,
+                        session_key,
+                        event,
+                        _refuse_call,
                         agent=_agent_label(session),
-                        source="dashboard",
-                        tool_name=event.title,
-                        tool_kind=event.tool_kind,
-                        outcome="denied",
-                        request_id=event.request_id,
-                        metadata={
-                            "reason": "unattended_fail_fast",
-                            "risk": effective_risk,
-                            "decided_by": "unattended_no_one_to_ask",
-                        },
-                    )
-                    # The transcript line and the SEL row are nowhere a person looks in the
-                    # morning; the Inbox is.
-                    _ff_input = ""
-                    if event.tool_input:
-                        _ff_input, _ = redact_exfiltration_urls(tool_input_to_str(event.tool_input))
-                        _ff_input, _ = redact_credentials(_ff_input)
-                    auto_denials.note_unattended(
-                        state, session_key=session.key, tool=_ff_title, tool_input=_ff_input
+                        said="auto-denied: unattended run, no one to approve",
+                        reason="unattended_fail_fast",
+                        decided_by="unattended_no_one_to_ask",
+                        risk=effective_risk,
+                        why=turn_endings.UNATTENDED,
+                        kind="user",
                     )
                     continue
                 # Interactive approval — send to frontend, wait for decision
@@ -4746,6 +4718,7 @@ async def run_chat(
                 # answer may reach: the card withholds the standing-grant scopes on a
                 # destructive call until the user widens them deliberately.
                 perm_meta["risk"] = effective_risk
+                perm_meta["reach"] = _reach_note = run_bounds.event_note(event, session_key)
                 # Whether "Always for this agent" can actually persist, and onto WHICH
                 # agent — the fact the card needs BEFORE the user picks that scope (#541).
                 # Without it the card promised "in this chat and future ones"
@@ -4819,6 +4792,7 @@ async def run_chat(
                         # one — a prompt answered without a reload is the COMMON case, and
                         # it is the one that was promising blind (#541).
                         grant_agent=perm_meta.get("grant_agent", ""),
+                        reach=_reach_note,
                     )
                     # Push via global SSE AFTER registering the future, so the
                     # session dict reflects pending_approval=true and Board cards

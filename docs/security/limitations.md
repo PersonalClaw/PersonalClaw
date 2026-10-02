@@ -800,6 +800,50 @@ What the patterns do not see:
 away from the agent entirely, do not install it or give it credentials where PersonalClaw runs,
 and keep approvals on for work that might reach for it.
 
+## 16. Where a shell command or an app's program reaches is read from its command line
+
+The agent's shell, and every program an app's code starts, is held to two bounds read from the
+command it runs (`run_bounds`, `apps/launch_egress.py`):
+
+- **The network.** A command that reaches the network is checked by the hosts it names: a URL's
+  host, ssh's `user@host`, and a package manager's registry when its command line names no other
+  (`pip`, `uv`, `npm`, `npx`, `yarn` and the rest). Only a host on Allowed hosts (Settings → Security
+  → Network egress), and not on Denied hosts, goes ahead without a person saying yes. Any other host,
+  or a command that reaches one it does not name (a git remote by name, a URL in a variable, a
+  proxy or a registry set in a variable for it), is refused in an unattended run (a loop, a
+  schedule, a subagent nobody watches) and asked about in an attended one, with the host on the
+  card, whatever Trust, YOLO or a standing grant would have said.
+  A program an app's code starts may also reach a host its manifest declares for that program, which
+  its install review names; every such launch leaves an egress row in the audit log, and one toward
+  any other host is stopped before it starts.
+- **Writes.** An unattended run writes only inside the folder it works in, the folders it was given
+  and its own temporary folder (its shell's `TMPDIR`, where `mktemp -d` makes one). A native file
+  write, or a shell command's redirect, `-o`, `mkdir`, `cp`, `mv` or `rm` target outside them is
+  refused.
+
+What the reading does not see:
+
+- **A program's own requests.** `npx` fetches the package it is told to, and that package's code
+  reaches whatever it reaches; a tool reads its own configuration (`.npmrc`, `pip.conf`, `~/.ssh/config`)
+  for where to go. A script the command runs (`python probe.py`) reaches and writes what it likes.
+- **A command it cannot read.** A command substitution, a subshell, a background job, or a program
+  the reading does not know (a script, `make`) establishes nothing it reaches or writes, so neither
+  bound holds it: the run's approval mode decides it, as it decides any other call.
+- **An agent CLI that does not ask.** An agent CLI an unattended run starts runs its own tools without
+  asking PersonalClaw, so they are not read (§1, §11).
+- **An app's own code.** An app's provider runs inside the gateway, so its own Python reaches the
+  network without starting a program, and a launch it hands to another thread as a bare function
+  (`asyncio.to_thread(subprocess.run, …)`) has none of the app's code on that thread to say whose it
+  is, so it is read as PersonalClaw's own. Install consent, the security scan and the review of what
+  an app's code does are what hold an app's code itself.
+
+**What this means for you:** list on Allowed hosts the hosts you want an unattended run to reach on
+its own, such as your package registry, and the hosts you set an app to reach: Git Sync's
+repository (its clone and connection check name it) and Rsync Sync's server are named on the
+command lines those apps start, so each is stopped, with a sentence saying how to allow it, until
+its host is on that list. The bounds stop a command that says where it goes; they are not a
+network fence around one that does not.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -816,6 +860,8 @@ repository an agent can write under that agent's own sandbox, for #12; hiding th
 from the agent's shell at every sandbox level, for #13; running a command Trust reads approves
 inside a read-only sandbox with the program's own configuration ignored, for #14; a list of the
 programs a run may start, enforced by its sandbox rather than read from the command's text, for
-#15). This page will shrink as those land.
+#15; a network and a write fence around an unattended run's shell and an app's programs,
+enforced by the OS rather than read from a command line, for #16). This page will shrink as
+those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

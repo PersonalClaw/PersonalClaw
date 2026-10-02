@@ -21,8 +21,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
-from personalclaw import approval_grants, memory_writes
-from personalclaw.acp.permission_authority import screen_tool_call
+from personalclaw import approval_grants, memory_writes, run_bounds
 from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
@@ -2102,9 +2101,7 @@ class SubagentManager:
         # `approval_mode: "auto"` grants nothing (the spawn itself asked you), so its agent is not
         # headless either: each call it makes reaches the relay and asks you, as an agent no grant
         # covers does, instead of being declined with nobody asked.
-        has_interactive_parent = bool(
-            info.parent_session_key and self._sessions.has_session(info.parent_session_key)
-        )
+        has_interactive_parent = run_bounds.attended(self._sessions, info.parent_session_key)
         if grant and (info.approval_mode == "auto" or not has_interactive_parent):
             extra_kwargs["unattended"] = True
         # Dry-run replay (T9): observe-mode — write-capable tools don't execute, so
@@ -2278,9 +2275,10 @@ class SubagentManager:
                         },
                     )
                     continue
-                # Shell checks see the command that would RUN, not only the CLI's title.
-                tool_result = screen_tool_call(
-                    self._ctx_builder.hooks, event.title or "", event.tool_input, info.cwd or None
+                # Shell checks see the command that would RUN, not only the CLI's title, and a host
+                # off the allowed hosts is put to a person past every grant (`run_bounds.screen`).
+                tool_result, off_list = run_bounds.screen(
+                    self._ctx_builder.hooks, event, session_key, info.cwd or None
                 )
                 if tool_result.action == TOOL_DENY:
                     tier.refused(
@@ -2335,7 +2333,7 @@ class SubagentManager:
                     continue
                 # A standing grant, read at THIS call (it may have been revoked since the agent
                 # started) and bounded by the ceiling.
-                grant = self._grant_now(info, audit=True)
+                grant = "" if off_list else self._grant_now(info, audit=True)
                 if grant:
                     await self._approve_and_log(
                         client,

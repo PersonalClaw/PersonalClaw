@@ -51,6 +51,30 @@ def declares_npm_package(package: str) -> bool:
     return manifest is not None and package in manifest.dependencies.npmPackages
 
 
+#: The package managers whose registry a declared npm package is fetched from.
+_NPM_PROGRAMS = frozenset({"npm", "npx", "pnpm", "pnpx", "yarn", "bun", "bunx"})
+
+
+def declared_hosts(app: str, program: str) -> tuple[str, ...]:
+    """The hosts *app*'s manifest says *program* reaches: its ``launches`` entry's ``hosts``, and,
+    for an npm program, the npm registry when the app declares ``dependencies.npmPackages`` or
+    its entry names the package it runs (``npmPackage``): install consent names those packages,
+    and says they are fetched from there. None for an app whose manifest is not loaded."""
+    from personalclaw.command_effects import NPM_HOSTS, YARN_HOSTS
+    from personalclaw.providers.registry import get_provider_registry
+
+    record = get_provider_registry().get(app)
+    manifest = record.manifest if record is not None else None
+    if manifest is None:
+        return ()
+    entries = [launch for launch in manifest.launches if launch.program == program]
+    hosts = [h for launch in entries for h in launch.hosts]
+    named = manifest.dependencies.npmPackages or any(launch.npmPackage for launch in entries)
+    if program in _NPM_PROGRAMS and named:
+        hosts.extend(YARN_HOSTS if program == "yarn" else NPM_HOSTS)
+    return tuple(dict.fromkeys(hosts))
+
+
 def declared_programs() -> set[str] | None:
     """The programs the calling app lists under ``launches``, or ``None`` when core itself is the
     caller (and so no manifest applies). An entry for the programs the owner names for the app
@@ -63,4 +87,10 @@ def declared_programs() -> set[str] | None:
     return {p.program for p in manifest.launches if p.program != PROGRAM_YOU_NAME}
 
 
-__all__ = ["UNNAMED", "NotDeclared", "declared_programs", "declares_npm_package"]
+__all__ = [
+    "UNNAMED",
+    "NotDeclared",
+    "declared_hosts",
+    "declared_programs",
+    "declares_npm_package",
+]
