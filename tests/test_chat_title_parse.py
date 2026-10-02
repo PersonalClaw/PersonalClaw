@@ -22,7 +22,6 @@ from chat_test_helpers import _make_state
 
 from personalclaw.dashboard.chat_title import _maybe_auto_title, _parse_tags_line
 from personalclaw.dashboard.state import _ChatSession
-from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.sdk.channel import parse_title as _parse_title
 
 
@@ -137,19 +136,13 @@ class TestTheTagLineStillParses:
         ]
 
 
-def _stream_reply(state, text):
-    from unittest.mock import AsyncMock, MagicMock
+def _stream_reply(monkeypatch, text):
+    """Answer the title chore (``chores.run_chore``) with *text*."""
 
-    client = MagicMock()
-    client.reject_tool = AsyncMock()
+    async def _run_chore(prompt, **_kw):
+        return text
 
-    async def _stream(prompt):
-        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=text)
-        yield LLMEvent(kind=EVENT_COMPLETE)
-
-    client.stream = _stream
-    state.sessions.get_or_create = AsyncMock(return_value=(client, False, False))
-    state.sessions.release = MagicMock()
+    monkeypatch.setattr("personalclaw.chores.run_chore", _run_chore)
 
 
 def _session(state):
@@ -168,7 +161,7 @@ class TestAutoTitleStoresOnlyARealTitle:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = _session(state)
-        _stream_reply(state, "TAGS: Planned, Review")
+        _stream_reply(monkeypatch, "TAGS: Planned, Review")
         await _maybe_auto_title(state, session)
         # Untitled: the title is still the key (rendered as the first-message snippet), and the
         # chat is retried on its next turn rather than frozen on junk.
@@ -181,7 +174,7 @@ class TestAutoTitleStoresOnlyARealTitle:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = _session(state)
-        _stream_reply(state, "Title: Example Site Docs\nTAGS: Docs")
+        _stream_reply(monkeypatch, "Title: Example Site Docs\nTAGS: Docs")
         await _maybe_auto_title(state, session)
         assert session.title == "Example Site Docs"
         assert session._titled is True
