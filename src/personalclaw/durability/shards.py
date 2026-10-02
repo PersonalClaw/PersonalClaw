@@ -586,6 +586,10 @@ def export_shards(
                 continue
             src = home / entry.path
             if not src.exists():
+                if wanted is not None:
+                    # Asked for by name and gone: what an earlier export holds of it goes too, or
+                    # the export would keep a removed store's last content for good.
+                    _drop_shards_of(out_dir, entry.id)
                 continue
             result.entries += 1
 
@@ -661,7 +665,7 @@ def export_shards(
     return result
 
 
-def _is_an_export(directory: Path) -> bool:
+def is_an_export(directory: Path) -> bool:
     """Whether *directory* holds a shard export: a manifest an export wrote."""
     try:
         manifest = json.loads((directory / _MANIFEST).read_text(encoding="utf-8"))
@@ -670,11 +674,19 @@ def _is_an_export(directory: Path) -> bool:
     return isinstance(manifest, dict) and "schema_version" in manifest and "shards" in manifest
 
 
+def _drop_shards_of(out_dir: Path, entry_id: str) -> None:
+    """Remove the folder an earlier export wrote for *entry_id* in *out_dir*: only in a folder that
+    holds an export, and never through a link."""
+    folder = out_dir / entry_id
+    if is_an_export(out_dir) and folder.is_dir() and not folder.is_symlink():
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 def _drop_earlier_folder_copies(out_dir: Path) -> None:
     """Remove what an export before this one copied of a folder store into *out_dir*: the
     store's files as blobs named by their content (``<entry>/blobs/``), which nothing could put
     back at their paths. Only in a folder that holds an export, and only that layout."""
-    if not _is_an_export(out_dir):
+    if not is_an_export(out_dir):
         return
     for entry in inv.INVENTORY:
         if entry.kind != inv.KIND_TREE:
@@ -1189,7 +1201,7 @@ def clear_shards(out_dir: Path) -> None:
     if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
         raise ValueError(f"{out_dir} is not a folder")
     make_private_dirs(out_dir)
-    if not _is_an_export(out_dir):
+    if not is_an_export(out_dir):
         if any(out_dir.iterdir()):
             raise ValueError(
                 f"{out_dir} holds files and no shard export; choose an empty folder, or the "

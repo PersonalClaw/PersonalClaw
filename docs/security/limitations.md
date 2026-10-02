@@ -439,7 +439,8 @@ so if onboarding made this your chat model, choose another in **Settings → Mod
 ## 6. Where a stored secret can still appear in plaintext
 
 A provider's API key, every app setting its manifest declares `x-meta.sensitive`, every value
-in an MCP server's `env` and `headers`, and the webhook token (`hooks.webhook_token`, which
+in an MCP server's `env` and `headers`, a credential in an MCP server's arguments or URL that
+PersonalClaw can place (below), and the webhook token (`hooks.webhook_token`, which
 `POST /api/hooks/agent` checks) are kept in the credential store: the OS keychain, or the
 `.env` file in the PersonalClaw home (`~/.personalclaw/.env` unless `PERSONALCLAW_HOME` names
 another) at mode 0600. The file that configures them holds a `{{secret:…}}`
@@ -466,18 +467,27 @@ A secret still appears in plaintext in these places:
   quoted.
 - **A value typed into `mcp.json` or `config.json` by hand** (`personalclaw config edit`, an
   editor) stays in the file until the gateway next starts and moves it.
-- **A token in an MCP server's arguments or URL.** Only `env` and `headers` values are stored.
-  A key passed as an argument (`--api-key …`, `--api-token=…`) or carried in the URL (`?token=…`,
-  `https://user:pw@…`) stays in `mcp.json` as written and travels with an export. Every page that
-  shows a server masks both with one mask — the Tools page's edit form, the MCP Tool Servers card in
-  Settings → Providers, the import list and the question Allow asks — and the list of configured
-  servers leaves them out; a save keeps a masked value as it was, or replaces it with what you type
-  over the mask. The file keeps them. Put a token in an environment variable or a header instead.
+- **A token in an MCP server's arguments or URL that PersonalClaw cannot place.** A credential in
+  the arguments or the URL is kept in the credential store, `mcp.json` holding a reference in its
+  place, when where it sits says what it is: the value of a flag named for one (`--api-key …`,
+  `--api-token=…`), a header's value (`--header "Authorization: …"`), the login in an address
+  (`https://user:pw@…`), a query value named for one or shaped like one (`?token=…`), a part of an
+  address's path shaped like a token, or an argument in a format only credentials have (a provider
+  key). A token standing alone as an argument, with no flag naming it and in no format PersonalClaw
+  knows, stays in `mcp.json` as written and travels with an export: it cannot be told from a
+  package or project name that looks the same. So does anything in the command itself. Every page
+  that shows a server masks all of these with one mask — the Tools page's edit form, the MCP Tool
+  Servers card in Settings → Providers, the import list and the question Allow asks — and the list
+  of configured servers leaves them out; a save keeps a masked value as it was, or replaces it with
+  what you type over the mask. Put such a token after a flag that names it, in an environment
+  variable or in a header instead. On a machine whose store lacks a stored value (a restore onto
+  another machine), the server does not start, and the Tools page says which value to type in.
 - **A sync's older copies.** Each sync sends your records to the store you chose as one whole
   copy (encrypted for a bucket or a shared folder), and a token in a file a sync carries — one in
-  an MCP server's arguments or URL, above — is in every copy sent while it was there. On a
-  transport that removes old copies (Folder Sync, S3 Sync), the store keeps this machine's newest
-  copy, and the one before it until a newer copy has stood 15 minutes
+  an MCP server's arguments or URL that PersonalClaw cannot place (above), or one sent before
+  PersonalClaw kept such tokens in the credential store — is in every copy sent while it was there.
+  On a transport that removes old copies (Folder Sync, S3 Sync), the store keeps this machine's
+  newest copy, and the one before it until a newer copy has stood 15 minutes
   (`durability/published.py`): the first sync after you remove the token sends a copy without it,
   and a sync at least 15 minutes after that removes the last copy with it — within about 40
   minutes at the default 15-minute window, and within twice the window when you set it longer.

@@ -555,6 +555,19 @@ skills that run what they hold, arriving without this machine's owner's yes.
 Settings → Backups, `personalclaw backup export` and `personalclaw backup
 validate` say which to trust.
 
+**Configuration leaves the export when it changes.** The hourly export
+re-exports a store within the hour after it changed, so a configuration that
+was removed stayed in the shards until then: an MCP server removed on the Tools
+page kept its definition there. A store that can carry a credential, or a
+reference to one (`mcp.json`, `config.json`, the agent definitions, hooks,
+automations, runners, the agent overrides and the connector catalog:
+`StateEntry.exported_on_write`), is re-exported as soon as a write to it lands
+(`durability.export_follow`), into the export the hourly job keeps. A write
+that finds that job running is exported once it ends, and the gateway's start
+re-exports each such store once, after it has moved any plaintext credential
+into the credential store. A sync cycle exports the live stores, so the next
+one carries a removal too.
+
 **A pull writes only what changed, over what it read.** It writes back only
 the files the merge changed, and replaces a file only while it still holds what
 the pull read (`durability.writeback.apply_rows` compares its sha256): a file

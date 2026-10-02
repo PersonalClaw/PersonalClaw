@@ -1373,10 +1373,13 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
 const EDIT_ENV_HINT = `One KEY=value per line. ${STORED_VALUE_MASK} is a value already in your credential store: leave it to keep that value, type over it to replace it, or move the line to Plain values to keep it readable in mcp.json. Delete a line to remove the variable.`
 
 /** The EDIT form's hints for a command line or an address the gateway sent with a credential in it
- *  masked (`mcp_discovery.masked_args`, the Allow question's mask). Unlike a variable's, that value
- *  is not in the credential store: it is kept in mcp.json as written, and these say so. */
-const EDIT_ARGS_MASK_HINT = `${STORED_VALUE_MASK} hides a value that looks like a credential, which this page is not shown: leave it to keep that value, or type over it to replace it. Arguments are kept in mcp.json as written; a token in Environment is kept in your credential store instead.`
-const EDIT_URL_MASK_HINT = `${STORED_VALUE_MASK} hides a part of the address that can carry a credential, which this page is not shown. Leave the URL as it is to keep it; to change it, type it in full, the credential included. It is kept in mcp.json as written; a token in Headers is kept in your credential store instead.`
+ *  masked (`mcp_discovery.masked_args`, the Allow question's mask). A credential the gateway can
+ *  place (after a flag that names it, in a header or an address, or in a key's format) is in the
+ *  credential store and mcp.json holds a reference (`mcp_argument_secrets`); one masked only for its
+ *  shape, and anything in the command itself, is kept in mcp.json as written. These say which. */
+const EDIT_ARGS_MASK_HINT = `${STORED_VALUE_MASK} hides a value that looks like a credential, which this page is not shown: leave it to keep that value, or type over it to replace it. A key or token after a flag that names it, in a header or an address, or in a known key format is kept in your credential store, and mcp.json holds a reference to it; one hidden only for its shape is kept in mcp.json as written, so put that one in Environment instead.`
+const EDIT_COMMAND_MASK_HINT = `${STORED_VALUE_MASK} hides a value that looks like a credential, which this page is not shown: leave it to keep that value, or type over it to replace it. The command is kept in mcp.json as written; put a token in Environment instead.`
+const EDIT_URL_MASK_HINT = `${STORED_VALUE_MASK} hides a part of the address that can carry a credential, which this page is not shown. Leave the URL as it is to keep it; to change it, type it in full, the credential included. A login, key or token in it is kept in your credential store, and mcp.json holds a reference to it.`
 
 /** A field's hint, with what its mask means when the value it was seeded with holds one. */
 function maskedHint(base: string, seeded: string | undefined, maskHint: string): string {
@@ -1467,7 +1470,7 @@ function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose
                 <TextArea value={form.headers} onChange={(v) => set('headers', v)} rows={3} placeholder="Authorization: Bearer …" mono size="md" />
               </Field>
             </>) : (<>
-              <Field label="Command" hint={maskedHint('The executable that starts the server over stdio.', base?.value.command, EDIT_ARGS_MASK_HINT)}>
+              <Field label="Command" hint={maskedHint('The executable that starts the server over stdio.', base?.value.command, EDIT_COMMAND_MASK_HINT)}>
                 <TextInput value={form.command} onChange={(v) => set('command', v)} placeholder="npx" size="md" surface="high" mono />
               </Field>
               <Field label="Arguments" hint={maskedHint(ARGS_HINT, base?.value.args, EDIT_ARGS_MASK_HINT)}>

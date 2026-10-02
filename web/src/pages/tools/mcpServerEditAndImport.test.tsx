@@ -233,7 +233,8 @@ describe('Edit on an MCP server', () => {
   it('shows a credential in the arguments as the gateway masked it, says what the mask is, and saves it back', async () => {
     // The gateway masks a credential-named flag's value (`--api-token=…`) the way the Allow question
     // does, and puts the stored value back when the mask comes back where it was shown. The field
-    // says what the mask stands for, and that arguments are kept in mcp.json as written.
+    // says what the mask stands for, and that such a credential is kept in the credential store,
+    // mcp.json holding a reference to it.
     mockApi({
       name: 'gh', editable: true, transport: 'stdio', command: 'uvx', args: ['todo-mcp', `--api-token=${STORED_VALUE_MASK}`],
       env: [],
@@ -243,7 +244,7 @@ describe('Edit on an MCP server', () => {
     const argsField = await screen.findByRole('textbox', { name: 'Arguments' })
     expect((argsField as HTMLInputElement).value).toBe(`todo-mcp --api-token=${STORED_VALUE_MASK}`)
     expect(screen.getByText(/hides a value that looks like a credential/)).toBeInTheDocument()
-    expect(screen.getByText(/Arguments are kept in mcp\.json as written/)).toBeInTheDocument()
+    expect(screen.getByText(/after a flag that names it, in a header or an address, or in a known key format is kept in your credential store, and mcp\.json holds a reference to it/)).toBeInTheDocument()
 
     fireEvent.change(argsField, { target: { value: `todo-mcp --api-token=${STORED_VALUE_MASK} --verbose` } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))

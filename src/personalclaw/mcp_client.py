@@ -935,7 +935,9 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
 
     A server whose spec names a credential its owner does not hold is left out — never spawned,
     and no value read for it. The refusal is logged and in the security log, and the server's
-    probe (the Tools page) reports it as that server's error.
+    probe (the Tools page) reports it as that server's error. So is one whose arguments or URL name
+    a credential this machine's store does not have (a home restored here without its
+    credentials): its probe asks for the value.
 
     So is a server the owner has not allowed as it is defined now (`mcp_grants`): it waits, and
     the Tools page says so with Allow. And a server named as PersonalClaw's own is never read
@@ -944,7 +946,11 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
     import json
 
     from personalclaw.config.loader import config_dir
-    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_spec
+    from personalclaw.config.secret_refs import (
+        ForeignSecretReference,
+        MissingSecretValue,
+        resolve_mcp_spec,
+    )
 
     # `config_dir()`, not `Path.home()`: this is the store the NATIVE agent loop spawns
     # from, so a `Path.home()` hardcode made a dev session with PERSONALCLAW_HOME set read
@@ -976,7 +982,7 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
             continue
         try:
             specs[name] = resolve_mcp_spec(name, spec)
-        except ForeignSecretReference as exc:
+        except (ForeignSecretReference, MissingSecretValue) as exc:
             logger.warning("MCP server %r not started: %s", name, exc)
     return specs
 

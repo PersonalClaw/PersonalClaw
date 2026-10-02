@@ -1916,11 +1916,15 @@ def _set_scope_entry(path: Path, name: str, *, enabled: bool, spec: dict | None 
             # and that tool reads only its own file, so the values go with it — resolved from
             # the credential store, in the one form it understands, against the server's own
             # owner: one naming another owner's credential is not copied at all.
-            from personalclaw.config.secret_refs import ForeignSecretReference, foreign_mcp_spec
+            from personalclaw.config.secret_refs import (
+                ForeignSecretReference,
+                MissingSecretValue,
+                foreign_mcp_spec,
+            )
 
             try:
                 entry = foreign_mcp_spec(name, entry, with_secrets=True)
-            except ForeignSecretReference as exc:
+            except (ForeignSecretReference, MissingSecretValue) as exc:
                 logger.warning("mcp: not copying %r into %s — %s", name, path, exc)
                 return "refused"
         servers[name] = entry

@@ -33,6 +33,8 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from mcp_owner_allowed import confirmed
 
+from personalclaw.config.secret_refs import resolve_mcp_spec
+
 # A credential-shaped literal the redactor recognises. Not a real key.
 SECRET = "sk-ant-api03-" + ("A" * 20) + ("B" * 20) + ("C" * 15)
 MASK = "[REDACTED: credential]"
@@ -729,8 +731,10 @@ def test_a_servers_edit_form_shows_its_arguments_masked_and_a_save_keeps_them(mc
         headers={"If-Match": read["revision"]},
     )
     assert resp.status == 200, resp.text
+    # The value is kept, in the credential store: the file holds a reference where it was.
     spec = json.loads((mcp_home / "mcp.json").read_text())["mcpServers"]["search"]
-    assert spec["args"] == ["--api-key", SECRET, "--verbose"]
+    assert resolve_mcp_spec("search", spec)["args"] == ["--api-key", SECRET, "--verbose"]
+    assert SECRET not in (mcp_home / "mcp.json").read_text()
 
 
 def test_a_servers_save_keeps_an_argument_another_save_changed_while_it_waited(
@@ -770,7 +774,8 @@ def test_a_servers_save_keeps_an_argument_another_save_changed_while_it_waited(
     )
     assert resp.status == 200, resp.text
     spec = json.loads((mcp_home / "mcp.json").read_text())["mcpServers"]["search"]
-    assert spec["args"] == ["--api-key", rotated, "--verbose"]
+    assert resolve_mcp_spec("search", spec)["args"] == ["--api-key", rotated, "--verbose"]
+    assert rotated not in (mcp_home / "mcp.json").read_text()
 
 
 def test_a_servers_connection_error_is_masked_on_every_read():

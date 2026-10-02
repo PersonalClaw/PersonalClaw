@@ -99,6 +99,13 @@ _DRIVER = textwrap.dedent("""
                 out["apply"] = await resp.json()
             out["listed"] = await (await c.get("/api/mcp")).text()
             await asyncio.gather(*app["state"]._background_tasks, return_exceptions=True)
+        # Each configured server as it is started: its arguments with every stored value in place.
+        from personalclaw.config.loader import config_dir
+        from personalclaw.config.secret_refs import resolve_mcp_spec
+
+        mcp_json = config_dir() / "mcp.json"
+        servers = json.loads(mcp_json.read_text())["mcpServers"] if mcp_json.is_file() else {}
+        out["started"] = {n: resolve_mcp_spec(n, spec) for n, spec in servers.items()}
         print("RESULT " + json.dumps(out))
 
 
@@ -201,9 +208,13 @@ def test_the_import_list_names_each_server_and_carries_no_credential(world) -> N
     assert rows["cc-userinfo"]["transport"] == "sse"
     assert rows["cc-userinfo"]["url"] == f"https://{MASK}@sse.fixture.invalid/sse"
 
-    # The import itself reads the whole definition, server-side.
+    # The import itself reads the whole definition, server-side: the server starts with every
+    # argument as Claude Code has it, and mcp.json keeps each credential in them as a reference.
     assert not any(c.get("error") for c in out["apply"]["results"]), out["apply"]
-    assert _mcp_json(world)["cc-args"]["args"] == ARGS
+    assert out["started"]["cc-args"]["args"] == ARGS
+    stored = json.dumps(_mcp_json(world))
+    for secret in SECRETS:
+        assert secret not in stored, f"mcp.json kept {secret!r} as written"
     # And the list of configured servers carries no definition at all.
     for secret in SECRETS:
         assert secret not in out["listed"], f"GET /api/mcp sent {secret!r} to the browser"

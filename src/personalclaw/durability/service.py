@@ -1158,6 +1158,7 @@ class DurabilityService:
         # the first write of the process, and its gate is `time_travel`, not
         # `auto_backup` (they are different promises).
         self._install_history()
+        self._install_export_follower()
         logger.info("Durability service started (tick=%ds)", int(self._tick_secs))
 
     def _install_history(self) -> None:
@@ -1170,6 +1171,19 @@ class DurabilityService:
         except Exception:  # noqa: BLE001 — history must never block boot
             logger.warning("durability: could not install time-travel history", exc_info=True)
 
+    def _install_export_follower(self) -> None:
+        """The hourly export's other half: a store that can carry a credential is re-exported as
+        soon as it is written (`export_follow`). Gated like the hourly export, by ``auto_backup``.
+        """
+        try:
+            if not enabled():
+                return
+            from personalclaw.durability.export_follow import install
+
+            install(home=active_home())
+        except Exception:  # noqa: BLE001 — following writes must never block boot
+            logger.warning("durability: could not follow configuration writes", exc_info=True)
+
     def stop(self) -> None:
         if self._task is not None:
             self._task.cancel()
@@ -1180,6 +1194,12 @@ class DurabilityService:
             uninstall()
         except Exception:  # noqa: BLE001
             logger.debug("durability: history uninstall failed", exc_info=True)
+        try:
+            from personalclaw.durability.export_follow import uninstall as stop_following
+
+            stop_following()
+        except Exception:  # noqa: BLE001
+            logger.debug("durability: export follower uninstall failed", exc_info=True)
 
     async def _loop(self) -> None:
         from personalclaw import shutdown_event

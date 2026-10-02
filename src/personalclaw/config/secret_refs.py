@@ -589,6 +589,15 @@ def resolve_provider_records(records: Any) -> list[dict[str, Any]]:
 # which no marking overrides. Header values are always stored: headers are how a remote server
 # authenticates, and nothing in the product writes a plain one.
 #
+# **A credential in the arguments or the URL** (``--api-token=…``, ``--header "Authorization: …"``,
+# ``https://user:pw@…``, ``?token=…``) is stored too, each spot
+# :mod:`personalclaw.mcp_argument_secrets` finds holding the reference in the argument or the URL
+# as written around it. The arguments are what the server runs, so they cannot all be stored the
+# way the environment is: only a spot that holds a credential by where it is, or by a format only
+# credentials have. A home that has the definition and not the value — restored or synced onto a
+# machine whose store never held it, since credentials never travel — starts nothing, and the
+# server's error asks for the value (:class:`MissingSecretValue`).
+#
 # **Removing a server** goes through :func:`remove_mcp_servers`, and only through it: it takes the
 # server out of both documents, so the second write finds its keys referenced nowhere and deletes
 # them. A delete that reached one document left the other holding the server and its secrets.
@@ -624,6 +633,32 @@ MCP_SIGN_IN = "signIn"
 _MCP_OWNED_PREFIX = f"{OWNED_KEY_PREFIX}MCP_"
 _MCP_PARTS = {"env": "ENV", "headers": "HDR"}
 _MCP_SIGN_IN_PART = "OAUTH"
+_MCP_COMMAND_LINE_PART = "ARG"
+
+
+class MissingSecretValue(ValueError):
+    """A server's arguments or URL refer to a credential this machine's store does not hold.
+
+    The home was restored or synced onto this machine, and credentials never travel: the
+    definition came, its values did not. Nothing is started, and the message asks for each value
+    by where it goes (``mcp_argument_secrets.described``), never by a value.
+    """
+
+    def __init__(self, server: str, missing: Iterable[str], *, in_address: bool) -> None:
+        from personalclaw.apps.secret_fields import SECRET_MASK
+
+        self.server = server
+        self.missing = tuple(missing)
+        named = ", ".join(self.missing[:-1]) + " and " if len(self.missing) > 1 else ""
+        how = (
+            "type its URL in full, the credential included"
+            if in_address
+            else f"type the value in place of {SECRET_MASK}"
+        )
+        super().__init__(
+            f"{server} needs {named}{self.missing[-1]}, which is not saved on this machine, so it "
+            f"was not started. Edit it on the Tools page and {how}."
+        )
 
 
 @dataclass(frozen=True)
@@ -658,6 +693,171 @@ def mcp_sign_in_owner(server: str) -> SecretOwner:
     return _ExactNameOwner(
         f"{mcp_server_prefix(server)}{_MCP_SIGN_IN_PART}__", app=server_app(server)
     )
+
+
+def _mcp_command_line_owner(server: str) -> SecretOwner:
+    """Whose keys the credentials in server ``server``'s arguments and URL are stored under: the
+    server's own, beside its ``env`` and ``headers``."""
+    from personalclaw.apps.mcp_bridge import server_app
+
+    return _ExactNameOwner(
+        f"{mcp_server_prefix(server)}{_MCP_COMMAND_LINE_PART}__", app=server_app(server)
+    )
+
+
+def _command_line(spec: Mapping[str, Any]) -> list[tuple[str, int, str, tuple[Any, ...]]]:
+    """``(field, index, text, spots)`` for each argument of *spec*, and its URL, that holds a
+    credential spot (:mod:`personalclaw.mcp_argument_secrets`). ``index`` is the argument's, and
+    ``-1`` for the URL. An argument that is not a string holds none."""
+    from personalclaw.mcp_argument_secrets import address_spots, argument_spots
+
+    found: list[tuple[str, int, str, tuple[Any, ...]]] = []
+    args = spec.get("args")
+    if isinstance(args, list):
+        texts = [a if isinstance(a, str) else str(a) for a in args]
+        for index, spots in enumerate(argument_spots(texts)):
+            if spots and isinstance(args[index], str):
+                found.append(("args", index, texts[index], spots))
+    url = spec.get("url")
+    if isinstance(url, str) and url:
+        spots = address_spots(url)
+        if spots:
+            found.append(("url", -1, url, spots))
+    return found
+
+
+def _with_command_line(spec: Mapping[str, Any], texts: Mapping[tuple[str, int], str]) -> dict:
+    """*spec* with the arguments and the URL in *texts*, keyed as :func:`_command_line` lists
+    them."""
+    out = dict(spec)
+    if any(field == "args" for field, _index in texts):
+        args = list(spec.get("args") or [])
+        for (field, index), text in texts.items():
+            if field == "args":
+                args[index] = text
+        out["args"] = args
+    if ("url", -1) in texts:
+        out["url"] = texts[("url", -1)]
+    return out
+
+
+def _command_line_refs(spec: Mapping[str, Any]) -> dict[str, str]:
+    """Every reference a credential spot of *spec* holds, by what the spot is, in words (a second
+    spot of the same words is numbered): what a refusal names, never a value."""
+    from personalclaw.mcp_argument_secrets import described
+
+    refs: dict[str, str] = {}
+    for _field, _index, text, spots in _command_line(spec):
+        for spot in spots:
+            value = text[spot.start : spot.end]
+            if ref_key(value) is None:
+                continue
+            what = name = described(spot)
+            n = 2
+            while name in refs:
+                name, n = f"{what} ({n})", n + 1
+            refs[name] = value
+    return refs
+
+
+def _store_command_line(server: str, spec: Mapping[str, Any]) -> dict[str, Any]:
+    """*spec* with each credential in its arguments and URL saved under a key the server owns,
+    the spot holding the reference. A spot that holds a reference already is left as it is (one
+    to another owner's key is refused where the server starts), and one no credential can hold
+    stays as written, and is logged. The key is the spot's own (what it is, and which of its kind),
+    so storing the same definition again re-uses it, and a value typed over the mask replaces it."""
+    from personalclaw.mcp_argument_secrets import replaced
+
+    found = _command_line(spec)
+    if not found:
+        return dict(spec)
+    owner = _mcp_command_line_owner(server)
+    taken = {
+        key
+        for _f, _i, text, spots in found
+        for s in spots
+        if (key := ref_key(text[s.start : s.end]))
+    }
+
+    def mint(label: str) -> str:
+        n = 0
+        while (key := owner.key(f"{label}#{n}")) in taken:
+            n += 1
+        taken.add(key)
+        return key
+
+    texts: dict[tuple[str, int], str] = {}
+    for field, index, text, spots in found:
+
+        def kept(spot: Any, value: str, field: str = field) -> str:
+            held = value.strip()
+            if not held or ref_key(held) is not None:
+                return value
+            if _UNSTORABLE_CHAR in held or _is_display_mask(held):
+                logger.warning(
+                    "MCP server %r: a credential in its %s cannot be stored (%s); it stays in the "
+                    "file",
+                    server,
+                    field,
+                    _unstorable_reason(held),
+                )
+                return value
+            key = mint(f"{field}:{spot.kind}:{spot.name}")
+            save_credential(key, held)
+            if get_credential(key) != held:
+                raise OSError(
+                    f"the credential store did not keep a value of {field}; nothing was written"
+                )
+            start = len(value) - len(value.lstrip())
+            return f"{value[:start]}{make_ref(key)}{value[start + len(held):]}"
+
+        texts[(field, index)] = replaced(text, spots, kept)
+    return _with_command_line(spec, texts)
+
+
+def resolve_mcp_command_line(server: str, spec: Mapping[str, Any]) -> dict[str, Any]:
+    """*spec* with the arguments and URL server ``server`` is started with: each reference a
+    credential spot holds replaced by the stored value, for the moment it starts, never for a file.
+
+    Resolves only keys the server's owner holds: a reference to another owner's raises
+    :class:`ForeignSecretReference` before any value is read. A reference the store cannot answer
+    raises :class:`MissingSecretValue`: an argument with its credential missing would start the
+    server to fail it, or send another one in its place.
+    """
+    from personalclaw.mcp_argument_secrets import described, replaced
+
+    found = _command_line(spec)
+    if not found:
+        return dict(spec)
+    _refuse_foreign(
+        _command_line_refs(spec),
+        _mcp_command_line_owner(server),
+        operation="secrets.resolve",
+        advise=False,
+    )
+    missing: list[tuple[str, str]] = []
+    texts: dict[tuple[str, int], str] = {}
+    for field, index, text, spots in found:
+
+        def real(spot: Any, value: str, field: str = field) -> str:
+            key = ref_key(value)
+            if key is None:
+                return value
+            stored = get_credential(key)
+            if not stored:
+                missing.append((field, described(spot)))
+                return value
+            start = len(value) - len(value.lstrip())
+            return f"{value[:start]}{stored}{value[start + len(value.strip()):]}"
+
+        texts[(field, index)] = replaced(text, spots, real)
+    if missing:
+        raise MissingSecretValue(
+            server,
+            list(dict.fromkeys(what for _field, what in missing)),
+            in_address=all(field == "url" for field, _what in missing),
+        )
+    return _with_command_line(spec, texts)
 
 
 def resolve_mcp_sign_in_value(server: str, value: Any) -> str:
@@ -702,11 +902,18 @@ def check_mcp_spec(server: str, spec: Mapping[str, Any]) -> None:
             if _unstorable(value):
                 raise ValueError(_unstorable_message(name, value))
         _refuse_foreign(values, _mcp_owner(server, part), operation="secrets.store", advise=True)
+    _refuse_foreign(
+        _command_line_refs(spec),
+        _mcp_command_line_owner(server),
+        operation="secrets.store",
+        advise=True,
+    )
 
 
 def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dict[str, Any]:
-    """The STORED form of one MCP server spec: each ``env`` value (bar the plain ones) and each
-    ``headers`` value saved under a key the server owns, the field holding the reference.
+    """The STORED form of one MCP server spec: each ``env`` value (bar the plain ones), each
+    ``headers`` value and each credential in its arguments and URL (:func:`_store_command_line`)
+    saved under a key the server owns, the field or the spot holding the reference.
 
     ``strict`` is for a value a user is typing now: one no credential can hold (a NUL character)
     raises :class:`ValueError`, and a reference to a key another owner holds raises
@@ -754,7 +961,7 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
             previous=None,
         )
         out[part] = {n: inline[n] if n in inline else stored[n] for n in values}
-    return out
+    return _store_command_line(server, out)
 
 
 def resolve_mcp_values(server: str, part: str, values: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -783,13 +990,14 @@ def resolve_mcp_spec(server: str, spec: Mapping[str, Any]) -> dict[str, Any]:
     """The LOGICAL form of server ``server``'s spec — for the moment it is started, never for a
     file. ``plainEnv`` is dropped: it describes the stored form and means nothing to a child.
     The sign-in (:data:`MCP_SIGN_IN`) keeps its references: the connection reads its tokens at
-    each request. Raises :class:`ForeignSecretReference` as :func:`resolve_mcp_values` does."""
+    each request. Raises :class:`ForeignSecretReference` as :func:`resolve_mcp_values` does, and
+    :class:`MissingSecretValue` as :func:`resolve_mcp_command_line` does."""
     out = {k: v for k, v in spec.items() if k != MCP_PLAIN_ENV}
     for part in _MCP_PARTS:
         values = spec.get(part)
         if isinstance(values, Mapping):
             out[part] = resolve_mcp_values(server, part, values)
-    return out
+    return resolve_mcp_command_line(server, out)
 
 
 def mcp_env_view(spec: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -906,26 +1114,37 @@ def foreign_mcp_spec(server: str, spec: Mapping[str, Any], *, with_secrets: bool
         resolved = resolve_mcp_spec(server, spec)
         resolved.pop(MCP_SIGN_IN, None)
         return resolved
+    from personalclaw.mcp_argument_secrets import replaced
+
     out = {k: v for k, v in spec.items() if k not in (MCP_PLAIN_ENV, MCP_SIGN_IN)}
     for part in _MCP_PARTS:
         values = spec.get(part)
         if isinstance(values, Mapping):
             out[part] = {n: v for n, v in values.items() if ref_key(v) is None}
-    return out
+    texts = {
+        (field, index): replaced(text, spots, lambda _s, v: "" if ref_key(v) else v)
+        for field, index, text, spots in _command_line(spec)
+    }
+    return _with_command_line(out, texts)
 
 
 def _mcp_refs(doc: Any) -> set[str]:
     """Every owned MCP key a ``{"mcpServers": …}`` document references: its servers' ``env`` and
-    ``headers`` values and their sign-ins' tokens and client secrets."""
+    ``headers`` values, the credentials in their arguments and URLs, and their sign-ins' tokens
+    and client secrets."""
     servers = doc.get("mcpServers") if isinstance(doc, dict) else None
     keys: set[str] = set()
     for spec in servers.values() if isinstance(servers, dict) else ():
+        if not isinstance(spec, dict):
+            continue
+        listed = [*_command_line_refs(spec).values()]
         for part in (*_MCP_PARTS, MCP_SIGN_IN):
-            values = spec.get(part) if isinstance(spec, dict) else None
-            for value in values.values() if isinstance(values, dict) else ():
-                key = ref_key(value)
-                if key and key.startswith(_MCP_OWNED_PREFIX):
-                    keys.add(key)
+            values = spec.get(part)
+            listed.extend(values.values() if isinstance(values, dict) else ())
+        for value in listed:
+            key = ref_key(value)
+            if key and key.startswith(_MCP_OWNED_PREFIX):
+                keys.add(key)
     return keys
 
 
@@ -1222,10 +1441,15 @@ def _point_mcp_at_live(spec: dict[str, Any], live: Any) -> dict[str, Any]:
     """The agent config's copy of a server ``mcp.json`` also defines: each plaintext value in it
     is pointed at ``mcp.json``'s key for that variable instead of being stored. The rebuild lays
     ``mcp.json``'s spec over this copy, so ``mcp.json`` holds the value that is live — storing the
-    copy's (possibly older) value under the same key would overwrite it."""
+    copy's (possibly older) value under the same key would overwrite it. Its arguments and URL are
+    ``mcp.json``'s as they are: the rebuild takes them whole (``MCP_DEFINITION_KEYS``), and their
+    keys are named by where each value sits, which an older copy's can share."""
     if not isinstance(live, Mapping):
         return spec
     out = dict(spec)
+    for field in ("args", "url"):
+        if field in spec and field in live:
+            out[field] = live[field]
     for part in _MCP_PARTS:
         mine, theirs = spec.get(part), live.get(part)
         if isinstance(mine, Mapping) and isinstance(theirs, Mapping):
@@ -1251,12 +1475,20 @@ def _move_mcp_document(path: Path, live: Path | None) -> bool:
         return False
     live_doc = _read_json(live) if live is not None else None
     live_servers = live_doc.get("mcpServers") if isinstance(live_doc, dict) else None
+    from personalclaw import mcp_grants
+
     changed = False
     for name, spec in servers.items():
         if not isinstance(spec, dict):
             continue
         twin = live_servers.get(name) if isinstance(live_servers, dict) else None
         moved = store_mcp_spec(str(name), _point_mcp_at_live(spec, twin), strict=False)
+        try:
+            mcp_grants.carry_over(
+                mcp_grants.server_of(str(name), spec), mcp_grants.server_of(str(name), moved)
+            )
+        except Exception:  # noqa: BLE001 — a yes that cannot be kept must not stop the move
+            logger.warning("could not keep the owner's yes to MCP server %r", name, exc_info=True)
         if moved != spec:
             servers[name] = moved
             changed = True

@@ -10,8 +10,11 @@ So a server runs only once the owner allowed what it runs (`owner_grants`), seal
 DEFINITION: how it is reached, its command and arguments, the folder it starts in, the NAMES of
 the variables it sets, and for a server at a URL, its address and the names of its headers. Those
 are what the owner is shown before they say yes. Values are not in the seal: a secret is never
-shown, so a yes could not be to it, and replacing one is not a new question. A change to anything
-in the seal is: the server waits again, and keeps waiting until the owner allows the new one.
+shown, so a yes could not be to it, and replacing one is not a new question. That holds for a
+credential in the arguments or the address too (`mcp_argument_secrets`): the seal reads each as
+the mask, so a definition seals alike whether the value is written there or kept in the
+credential store behind a reference. A change to anything in the seal is a new question: the
+server waits again, and keeps waiting until the owner allows the new one.
 
 🔴 ONLY THE OWNER'S SURFACES GIVE A YES, and each shows what will run first
 (`http_errors.consent_required`): the Tools page's Add and Edit, the MCP Tool Servers card in
@@ -66,23 +69,46 @@ def server_of(name: str, spec: dict[str, Any], source: str = "mcp.json") -> McpS
 def definition(server: McpServerInfo) -> dict[str, Any]:
     """What the seal is taken of: what the server runs, or where it connects, and nothing else.
 
-    ``env`` and ``headers`` are names: their values may be secrets, which no one is shown.
+    ``env`` and ``headers`` are names: their values may be secrets, which no one is shown. A
+    credential in the arguments or the address reads as the mask, for the same reason.
     """
+    from personalclaw.mcp_argument_secrets import sealed_address, sealed_arguments
+
     env = server.env if isinstance(server.env, dict) else {}
     headers = server.headers if isinstance(server.headers, dict) else {}
     return {
         "transport": server.transport,
         "command": server.command or "",
-        "args": [str(a) for a in (server.args or [])],
+        "args": sealed_arguments([str(a) for a in (server.args or [])]),
         "cwd": server.cwd or "",
         "env": sorted(str(n) for n in env),
-        "url": server.url or "",
+        "url": sealed_address(server.url) if server.url else "",
         "headers": sorted(str(n) for n in headers),
     }
 
 
 def _content(server: McpServerInfo) -> str:
     return json.dumps(definition(server), sort_keys=True, separators=(",", ":"))
+
+
+def carry_over(before: McpServerInfo, after: McpServerInfo) -> None:
+    """Keep a yes the book holds for *before* as it was WRITTEN for *after*, the same server once
+    the credentials in its arguments and address are in the credential store (the gateway's
+    start moves them, `secret_refs.migrate_plaintext_secrets`).
+
+    A yes taken before the seal read those credentials as the mask was sealed to them as written,
+    values included, so it no longer matches the definition it was given to, and the server would
+    wait for an Allow the owner had already given. Only that exact yes is kept, and nothing is
+    given that the book did not hold. Idempotent."""
+    if allowed(after):
+        return
+    written = {
+        **definition(before),
+        "args": [str(a) for a in (before.args or [])],
+        "url": before.url or "",
+    }
+    if BOOK.holds(before.name, json.dumps(written, sort_keys=True, separators=(",", ":"))):
+        give(after)
 
 
 def allowed(server: McpServerInfo) -> bool:

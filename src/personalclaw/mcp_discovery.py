@@ -24,6 +24,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
 from personalclaw.env import augmented_path, gateway_env, startup_path
 from personalclaw.hooks import safe_read_file
+from personalclaw.mcp_argument_secrets import HEADER_FLAGS, SCHEME_RE, flag_carries, looks_secret
 from personalclaw.security import redact_for_display
 
 if TYPE_CHECKING:
@@ -796,15 +797,19 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
     from personalclaw.config.secret_refs import (
         MCP_SIGN_IN,
         ForeignSecretReference,
+        MissingSecretValue,
+        resolve_mcp_command_line,
         resolve_mcp_values,
     )
     from personalclaw.mcp_client import try_start
 
     try:
-        # The spec holds `{{secret:…}}` references; the header values are resolved here, where the
-        # connection is made, and never written anywhere — only keys the server's owner holds.
+        # The spec holds `{{secret:…}}` references; the header values, and a credential in the
+        # URL, are resolved here, where the connection is made, and never written anywhere — only
+        # keys the server's owner holds.
         headers = resolve_mcp_values(server.name, "headers", server.headers)
-    except ForeignSecretReference as exc:
+        url = resolve_mcp_command_line(server.name, {"url": server.url}).get("url", server.url)
+    except (ForeignSecretReference, MissingSecretValue) as exc:
         # No request was made and no value was read: the whole sentence is this server's error.
         server.status = "error"
         server.error = str(exc)
@@ -813,7 +818,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         server.status = "error"
         server.error = f"PersonalClaw cannot connect over the {server.transport!r} transport"
     else:
-        spec: dict[str, Any] = {"type": server.transport, "url": server.url, "headers": headers}
+        spec: dict[str, Any] = {"type": server.transport, "url": url, "headers": headers}
         if server.sign_in:
             spec[MCP_SIGN_IN] = server.sign_in
         waited = _get_probe_timeout()
@@ -1000,13 +1005,20 @@ async def _probe(server: McpServerInfo) -> None:
         logger.warning("MCP probe failed [%s]: no command configured", server.name)
         return
 
-    from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
+    from personalclaw.config.secret_refs import (
+        ForeignSecretReference,
+        MissingSecretValue,
+        resolve_mcp_command_line,
+        resolve_mcp_values,
+    )
 
     try:
         # The spec holds `{{secret:…}}` references; the values are resolved here, at spawn, and
-        # reach only the child's environment — only keys the server's owner holds.
+        # reach only the child's environment and its arguments — only keys the server's owner
+        # holds.
         server_env = resolve_mcp_values(server.name, "env", server.env)
-    except ForeignSecretReference as exc:
+        args = resolve_mcp_command_line(server.name, {"args": list(server.args or [])})["args"]
+    except (ForeignSecretReference, MissingSecretValue) as exc:
         # Nothing was spawned and no value was read: the whole sentence is this server's error.
         server.status = "error"
         server.error = str(exc)
@@ -1018,7 +1030,7 @@ async def _probe(server: McpServerInfo) -> None:
     # and one that cannot says why in the same words. Given the probe's own time to answer.
     spec: dict[str, Any] = {
         "command": server.command,
-        "args": list(server.args or []),
+        "args": args,
         "env": server_env,
     }
     if server.cwd:
@@ -1204,34 +1216,11 @@ def _names_with_presence(values: Any) -> list[dict[str, Any]]:
 # it saves it back unchanged.
 #
 # A form that shows a mask gets it back on save, and the ``keep_masked_*`` functions put the
-# stored value in its place: the mask stands for the value, and nothing else. The value itself
-# still sits in ``mcp.json`` as written (only ``env`` and ``headers`` values are kept in the
-# credential store), which `docs/security/limitations.md` says.
-
-#: Flags whose NEXT argument is an HTTP header (``mcp-remote --header "Authorization: Bearer …"``,
-#: curl's ``-H``): its name stays, its value is masked.
-_HEADER_FLAGS = frozenset({"--header", "--headers", "-H"})
-#: A scheme, as ``urlsplit`` reads one: so ``--url=https://…`` is not mistaken for a URL.
-_SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
-#: A run of token characters. Long enough, and mixing letters and digits, it is a key in a format
-#: no named rule knows (a hex or base64url secret). ``/`` and ``.`` are not in it: a path, a host
-#: name and a version number are not tokens, and a JWT's parts are tested one by one.
-_TOKEN_RUN_RE = re.compile(r"[A-Za-z0-9_\-+=~]{20,}")
-_LETTER_RE = re.compile(r"[A-Za-z]")
-_DIGIT_RE = re.compile(r"\d")
-
-
-def _looks_secret(text: str) -> bool:
-    """Shaped like a credential: a format the credential redactor knows (a provider key, a bearer
-    token, ``api_key=…``), or a long run of token characters mixing letters and digits."""
-    from personalclaw.security import redact_credentials
-
-    if redact_credentials(text)[1]:
-        return True
-    return any(
-        _TOKEN_RUN_RE.fullmatch(piece) and _LETTER_RE.search(piece) and _DIGIT_RE.search(piece)
-        for piece in text.split(".")
-    )
+# stored value in its place: the mask stands for the value, and nothing else. A credential the
+# arguments or the URL carry where its place or its format says so is kept in the credential
+# store, and the file holds a reference (`mcp_argument_secrets`, `config.secret_refs`); a reference
+# is masked like the value it stands for. One masked here only for its shape stays in ``mcp.json``
+# as written, which `docs/security/limitations.md` says.
 
 
 def _command_name(command: str) -> str:
@@ -1255,15 +1244,15 @@ def masked_url(url: str) -> str:
         return SECRET_MASK
     host = parts.hostname
     if not parts.scheme or not host:
-        return SECRET_MASK if _looks_secret(url) else url
+        return SECRET_MASK if looks_secret(url) else url
     netloc = (f"[{host}]" if ":" in host else host) + (f":{port}" if port else "")
     if "@" in parts.netloc:
         netloc = f"{SECRET_MASK}@{netloc}"
     path = "/".join(
-        SECRET_MASK if seg and _looks_secret(unquote(seg)) else seg for seg in parts.path.split("/")
+        SECRET_MASK if seg and looks_secret(unquote(seg)) else seg for seg in parts.path.split("/")
     )
     query = "&".join(
-        (SECRET_MASK if _looks_secret(key) else key) + (f"={SECRET_MASK}" if value else "")
+        (SECRET_MASK if looks_secret(key) else key) + (f"={SECRET_MASK}" if value else "")
         for key, value in parse_qsl(parts.query, keep_blank_values=True)
     )
     shown = urlunsplit((parts.scheme, netloc, path, query, SECRET_MASK if parts.fragment else ""))
@@ -1291,7 +1280,7 @@ def masked_args(args: Iterable[Any]) -> list[str]:
         else:
             shown = _masked_word(arg)
         out.append(shown if SECRET_MASK in shown else arg)
-        carries = _what_flag_carries(arg)
+        carries = flag_carries(arg)
     return out
 
 
@@ -1383,15 +1372,6 @@ def keep_masked_url(submitted: str, stored: str) -> str:
     raise MaskConflict(MASK_MOVED)
 
 
-def _what_flag_carries(arg: str) -> str | None:
-    """What the argument AFTER ``arg`` holds: ``"header"``, a credential ``"value"``, or neither."""
-    if arg in _HEADER_FLAGS:
-        return "header"
-    if arg.startswith("-") and "=" not in arg and is_credential_field_name(arg.lstrip("-")):
-        return "value"
-    return None
-
-
 def _masked_header(text: str) -> str:
     name, sep, _value = text.partition(":")
     return f"{name.strip()}: {SECRET_MASK}" if sep and name.strip() else SECRET_MASK
@@ -1399,18 +1379,20 @@ def _masked_header(text: str) -> str:
 
 def _masked_word(arg: str) -> str:
     scheme, sep, _rest = arg.partition("://")
-    if sep and _SCHEME_RE.fullmatch(scheme):
+    if sep and SCHEME_RE.fullmatch(scheme):
         return masked_url(arg)
     name, sep, value = arg.partition("=")
-    if sep and name:
-        if name in _HEADER_FLAGS:
+    # A name holds no space: in ``server --token abc --level=2`` the first ``=`` is a later
+    # word's, and the words before it are read one by one below.
+    if sep and name and not any(ch.isspace() for ch in name):
+        if name in HEADER_FLAGS:
             return f"{name}={_masked_header(value)}"
         if is_credential_field_name(name.lstrip("-")):
             return f"{name}={SECRET_MASK}"
         return f"{name}={_masked_word(value)}" if value else arg
     if any(ch.isspace() for ch in arg):
         return " ".join(masked_args(arg.split()))
-    return SECRET_MASK if _looks_secret(arg) else arg
+    return SECRET_MASK if looks_secret(arg) else arg
 
 
 def sync_to_agent_config(servers: list[McpServerInfo]) -> bool:

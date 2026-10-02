@@ -87,6 +87,14 @@ def _spec(home, name: str) -> dict[str, Any]:
     return json.loads((home / "mcp.json").read_text(encoding="utf-8"))["mcpServers"][name]
 
 
+def _started(home, name: str) -> dict[str, Any]:
+    """The server as it is started: every value the file keeps in the credential store, in
+    place. ``mcp.json`` itself holds a reference where each credential was."""
+    from personalclaw.config.secret_refs import resolve_mcp_spec
+
+    return resolve_mcp_spec(name, _spec(home, name))
+
+
 def _add(name: str, body: dict[str, Any]) -> None:
     resp = _call("PUT", name, confirmed(body))
     assert resp.status == 200, resp.text
@@ -112,7 +120,8 @@ def test_a_mask_left_as_shown_keeps_the_token_and_one_typed_over_replaces_it(hom
     read = _read("todo")
     kept = _save("todo", {"command": read["command"], "args": [*read["args"], "--verbose"]}, read)
     assert kept.status == 200, kept.text
-    assert _spec(home, "todo")["args"] == ["todo-mcp", f"--api-token={TOKEN}", "--verbose"]
+    assert _started(home, "todo")["args"] == ["todo-mcp", f"--api-token={TOKEN}", "--verbose"]
+    assert TOKEN not in (home / "mcp.json").read_text(encoding="utf-8")
 
     read = _read("todo")
     replaced = _save(
@@ -121,7 +130,7 @@ def test_a_mask_left_as_shown_keeps_the_token_and_one_typed_over_replaces_it(hom
         read,
     )
     assert replaced.status == 200, replaced.text
-    assert _spec(home, "todo")["args"] == ["todo-mcp", f"--api-token={ROTATED}", "--verbose"]
+    assert _started(home, "todo")["args"] == ["todo-mcp", f"--api-token={ROTATED}", "--verbose"]
     assert ROTATED not in json.dumps(_read("todo"))
 
 
@@ -134,7 +143,7 @@ def test_a_mask_whose_flag_changed_is_refused_and_nothing_is_saved(home) -> None
     assert resp.status == 409, resp.text
     error = json.loads(resp.text)["error"]
     assert error["code"] == "mask_conflict" and "Nothing was saved" in error["message"]
-    assert _spec(home, "todo")["args"] == ["todo-mcp", f"--api-token={TOKEN}"]
+    assert _started(home, "todo")["args"] == ["todo-mcp", f"--api-token={TOKEN}"]
 
 
 def test_each_masked_flag_value_keeps_its_own_value_when_the_arguments_around_it_move(
@@ -146,7 +155,7 @@ def test_each_masked_flag_value_keeps_its_own_value_when_the_arguments_around_it
     assert read["args"] == ["--api-key", SECRET_MASK, "--token", SECRET_MASK]
     resp = _save("pair", {"command": read["command"], "args": ["--token", SECRET_MASK]}, read)
     assert resp.status == 200, resp.text
-    assert _spec(home, "pair")["args"] == ["--token", OTHER]
+    assert _started(home, "pair")["args"] == ["--token", OTHER]
 
 
 def test_an_argument_with_nothing_to_mask_comes_back_exactly_as_it_was(home) -> None:
@@ -167,7 +176,7 @@ def test_a_url_shows_its_token_masked_and_a_changed_address_never_takes_it(home)
     assert read["url"] == f"https://mcp.example.test/mcp?token={SECRET_MASK}"
     kept = _save("hosted", {"transport": "http", "url": read["url"]}, read)
     assert kept.status == 200, kept.text
-    assert _spec(home, "hosted")["url"] == url
+    assert _started(home, "hosted")["url"] == url
 
     read = _read("hosted")
     moved = _save(
@@ -177,7 +186,7 @@ def test_a_url_shows_its_token_masked_and_a_changed_address_never_takes_it(home)
     )
     assert moved.status == 409, moved.text
     assert json.loads(moved.text)["error"]["code"] == "mask_conflict"
-    assert _spec(home, "hosted")["url"] == url, "the hidden token went to a new address"
+    assert _started(home, "hosted")["url"] == url, "the hidden token went to a new address"
 
 
 # ── the MCP Tool Servers card in Settings → Providers ────────────────────────
@@ -243,7 +252,7 @@ def test_the_card_saves_a_masked_server_with_its_token_kept(home, monkeypatch) -
     )
     assert resp.status == 200, resp.text
     assert TOKEN not in resp.text
-    assert _spec(home, "todo")["args"] == ["todo-mcp", f"--api-token={TOKEN}", "--verbose"]
+    assert _started(home, "todo")["args"] == ["todo-mcp", f"--api-token={TOKEN}", "--verbose"]
 
     moved = confirmed({"config": {**card["config"], "args": f"todo-mcp --key={SECRET_MASK}"}})
     listed = json.loads(_card_call(instance_routes.handle_list_instances, "GET").text)
@@ -257,4 +266,4 @@ def test_the_card_saves_a_masked_server_with_its_token_kept(home, monkeypatch) -
     )
     assert refused.status == 409, refused.text
     assert json.loads(refused.text)["error"]["code"] == "mask_conflict"
-    assert _spec(home, "todo")["args"] == ["todo-mcp", f"--api-token={TOKEN}", "--verbose"]
+    assert _started(home, "todo")["args"] == ["todo-mcp", f"--api-token={TOKEN}", "--verbose"]

@@ -95,6 +95,11 @@ class StateEntry:
     merge: str
     secret: bool = False  # never leaves this machine
     credential: bool = False  # holds credential VALUES — not even a snapshot captures it
+    # Configuration that can carry a credential, or a reference to one: its shard is rewritten as
+    # soon as a write lands (`durability.export_follow`) rather than at the next hourly export, so
+    # a definition that is removed or rewritten (an MCP server, a provider, a hook) leaves the
+    # export at once instead of up to an hour later.
+    exported_on_write: bool = False
     derived: bool = False  # rebuildable index/cache — excluded from exports
     # One machine's own account of itself — what it spent, what it last ran, which notices it
     # sent, the legacy files it imported once — and what ran on it: its workflow runs and loops.
@@ -637,6 +642,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="triggers.json",
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
+        exported_on_write=True,
         help="the one trigger store (automations, event triggers, hooks)",
         # Synced one automation at a time. A peer's arrive switched off, with nothing of what
         # happened to them there and no grant its owner gave there: its armed fires, run counts,
@@ -697,6 +703,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="hooks.json",
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
+        exported_on_write=True,
         help="lifecycle triggers",
         # A hook runs on every prompt or tool call it matches, so one from a peer arrives as an
         # automation does: switched off, with no grant and nothing of what happened to it there.
@@ -787,6 +794,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="agents",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
+        exported_on_write=True,
         help="agent definitions",
         # `personalclaw.json` is the agent CLI's runtime config, which each home rebuilds from its
         # own configuration and keeps as the base of the next rebuild
@@ -1273,6 +1281,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="config.json",
         domain=DOMAIN_CONFIG,
         merge=MERGE_REPLACE_ONLY,
+        exported_on_write=True,
         help="the main configuration document",
     ),
     StateEntry(
@@ -1361,6 +1370,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="mcp.json",
         domain=DOMAIN_CONFIG,
         merge=MERGE_REPLACE_ONLY,
+        exported_on_write=True,
         help="MCP server configuration",
     ),
     StateEntry(
@@ -1738,6 +1748,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="runners",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
+        exported_on_write=True,
         help="bring-your-own agent runner definitions, one JSON per runner id",
         # A definition names the CLI PersonalClaw runs, so it runs only once this home's owner
         # allowed what it runs, sealed to it (`agents.runner_grants`, machine-local): one from
@@ -1902,6 +1913,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="agent.json",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_REPLACE_ONLY,
+        exported_on_write=True,
         help="your overrides of the agent's settings",
     ),
     StateEntry(
@@ -1977,6 +1989,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="connector_catalog.json",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_REPLACE_ONLY,
+        exported_on_write=True,
         help="the connector catalog packs resolve against, with your additions",
     ),
     # The monthly usage recap's idempotency mark, the same kind of bookkeeping as

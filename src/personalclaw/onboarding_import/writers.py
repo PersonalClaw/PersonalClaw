@@ -441,8 +441,9 @@ def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
     if isinstance(existing, dict):
         # Compared in LOGICAL form: the file holds the server's values as credential-store
         # references, so the stored spec never equals the scanned one byte for byte. A spec
-        # naming a credential its owner does not hold cannot be read to compare, so it is
-        # "configured differently" — and kept, like any other.
+        # naming a credential its owner does not hold, or one this machine's store does not
+        # have, cannot be read to compare, so it is "configured differently" — and kept, like
+        # any other.
         #
         # And only the keys that say how the server starts (`MCP_DEFINITION_KEYS`) are compared.
         # The rest are what the owner did with it here — signed in to it, turned it or a tool
@@ -451,6 +452,7 @@ def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
         from personalclaw.config.secret_refs import (
             MCP_DEFINITION_KEYS,
             ForeignSecretReference,
+            MissingSecretValue,
             resolve_mcp_spec,
         )
 
@@ -461,7 +463,7 @@ def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
 
         try:
             same = definition(existing) == definition(item.payload)
-        except ForeignSecretReference:
+        except (ForeignSecretReference, MissingSecretValue):
             same = False
         if same:
             return Plan(ItemState.EXISTING, dest, "already configured identically")
