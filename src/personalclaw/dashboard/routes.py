@@ -685,6 +685,10 @@ def register_dashboard_routes(app: web.Application) -> None:
     # capture hazard as `bulk`/`templates` above, hence this position — and `bound-project`
     # rather than `project` so it can never be misread as a session named "project".
     app.router.add_get("/api/chat/sessions/bound-project", chat.api_chat_session_bound_project)
+    # Whether the calling session keeps nothing, for the same `mcp-core` process: its tools run
+    # outside the gateway's session scope, so each call asks before it hands anything to a model.
+    # Registered here for the same capture hazard.
+    app.router.add_get("/api/chat/sessions/model-reach", chat.api_chat_session_model_reach)
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
     # The durable session map: the in-session index's marks + per-turn telemetry,
     # served without hydrating the whole transcript client-side.

@@ -36,6 +36,7 @@ import socket
 from dataclasses import dataclass
 from typing import Callable
 
+from personalclaw import memory_writes
 from personalclaw.seed_local_model import DEFAULT_ENDPOINT
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ def scan_local_network(
 
     endpoints = {h: f"http://{h}:{port}" for h in hosts}
     found: list[DetectedEndpoint] = []
-    executor = cf.ThreadPoolExecutor(max_workers=min(SCAN_MAX_WORKERS, len(hosts)))
+    executor = memory_writes.ScopeCarryingExecutor(max_workers=min(SCAN_MAX_WORKERS, len(hosts)))
     try:
         futures = {executor.submit(prober, ep): ep for ep in endpoints.values()}
         try:

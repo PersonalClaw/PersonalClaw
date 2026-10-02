@@ -969,6 +969,7 @@ def _turn_failover(
     Settings → Models. ``None`` when nothing comes after it, or ``served`` is not in that order at
     all (a provider built outside the resolution seam), so nothing is guessed.
     """
+    from personalclaw import memory_writes
     from personalclaw.agents.native.failover import ModelFailover
     from personalclaw.llm_helpers import failure_clause, use_case_chain
 
@@ -998,6 +999,7 @@ def _turn_failover(
         build=lambda ref: (resolve(ref), _strip_provider_prefix(ref)),
         describe=failure_clause,
         takes_images=takes_images,
+        admits=memory_writes.model_may_read,
     )
 
 
@@ -1380,6 +1382,12 @@ def resolve_provider_for_use_case(
     # prior session), so the ONE path that needs a real, resumable ACP client was the one
     # path that never got one — this is gap 6's actual content.
     if _kind == "acp" and _provider_kind.startswith("acp:"):
+        # An agent CLI built for work nobody typed (a subagent, a loop, a webhook turn) is a model
+        # beside the one a chat's turn runs on, as a guarded model is in ``metered``.
+        if (_model_axis or use_case) in METERED_AXES:
+            from personalclaw import memory_writes
+
+            memory_writes.require_model(_provider_kind)
         return _build_acp_runtime(
             _provider_kind,
             session_key=session_key,
@@ -2243,10 +2251,18 @@ def metered(
     The one place guardrails config becomes a guard: the resolution seam wraps here, and so does a
     model built outside it (``one_shot_completion``'s last resort). Config-derived tuning is read
     fail-open — a broken config must never wedge resolution.
+
+    Every model built for anything but a person's own turn passes here (a tool's model, a
+    subagent's, a knowledge node's, a loop's), so here is where work that derives from an Incognito
+    or Temporary chat is refused any model but the chat's own
+    (:func:`personalclaw.memory_writes.require_model`), before anything is sent to it.
     """
+    from personalclaw import memory_writes
     from personalclaw.guardrails import wrap_model_call_guard
     from personalclaw.guardrails.breaker import get_breaker
     from personalclaw.guardrails.budgets import budget_from_config, run_budget_from_config
+
+    memory_writes.require_model(f"{provider_name}:{model}")
 
     scan_mode = "warn"
     breaker = None

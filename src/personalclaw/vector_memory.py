@@ -4009,14 +4009,13 @@ class VectorMemoryStore(MemoryProvider):
     ) -> list[float] | None:
         """Embed ``text`` with ``fn`` (resolved once by the caller), else with :attr:`embed_fn`.
 
-        Nothing is embedded inside work that derives from an Incognito or Temporary session
-        (:mod:`personalclaw.memory_writes`): no vector, and the model is not called. The bound
-        model's function refuses the same way; this covers a function pinned on the store.
+        Asks :func:`personalclaw.memory_writes.model_may_read` for the model the function embeds
+        with, as the bound model's own function does: inside work that derives from an Incognito or
+        Temporary session nothing is embedded (no vector, and the model is not called). A function
+        pinned on the store names no model, so it embeds nothing there either.
         """
-        if memory_writes.writes_refused():
-            return None
         fn = fn if fn is not None else self.embed_fn
-        if fn is not None:
+        if fn is not None and memory_writes.model_may_read(str(getattr(fn, "model_ref", ""))):
             try:
                 result = fn(text)
                 if result:

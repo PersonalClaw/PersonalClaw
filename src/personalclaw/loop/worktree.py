@@ -574,10 +574,10 @@ def add_worktrees(
         # (full hydration). Best-effort: on failure the per-call retry in
         # :func:`set_sparse_scope` still covers the race.
         _git(workspace, "config", "extensions.worktreeConfig", "true")
-    from concurrent.futures import ThreadPoolExecutor
+    from personalclaw import memory_writes
 
     results: dict[str, str | None] = {}
-    with ThreadPoolExecutor(max_workers=pool_size(len(specs))) as pool:
+    with memory_writes.ScopeCarryingExecutor(max_workers=pool_size(len(specs))) as pool:
         futures = {
             pool.submit(add_worktree, workspace, tid, project_id, scope): tid
             for tid, scope in specs

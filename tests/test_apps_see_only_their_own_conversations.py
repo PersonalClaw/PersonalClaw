@@ -340,6 +340,7 @@ class TestAListHoldsOnlyTheAppsOwnConversations:
 OWNER_ONLY_READS: list[tuple[str, str]] = [
     ("GET", "/api/chat/sessions/templates"),
     ("GET", "/api/chat/sessions/bound-project"),
+    ("GET", "/api/chat/sessions/model-reach"),
     ("GET", "/api/chat/folders"),
     ("GET", "/api/chat/tags"),
     ("GET", "/api/chat/tag-columns"),

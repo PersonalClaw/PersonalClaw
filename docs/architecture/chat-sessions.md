@@ -49,15 +49,53 @@ chat, channel thread, loop worker, webhook, subagent).
     (`HistoryConsolidator._consolidate` / `consolidate_session`) and by every
     API request that names a session in `X-Session-Key`
     (`dashboard/memory_write_gate.py`), and it follows the work into the tasks
-    it spawns, `asyncio.to_thread`, and the gateway's default executor
-    (`ScopeCarryingExecutor`).
+    it spawns, `asyncio.to_thread`, and every worker pool, each of which is a
+    `ScopeCarryingExecutor` (the gateway's default executor too). A plain pool
+    drops it: a memory read bounded by a timeout once ran on one, and an
+    Incognito chat's message reached the embedding model from its worker.
   - Inside a restricted scope the memory, knowledge and vocabulary databases
-    refuse every statement that changes them (`SharedConnection.statement_check`),
-    `MemoryStore._persist` refuses the markdown files, and the embedding
-    functions (`embed_fn_for` / `embed_many_fn_for`, and a function pinned on the
-    memory store) return no vector without calling the model. Reads still work,
-    by keyword, and leave no mark (no recall counts, access stamps or volunteer
+    refuse every statement that changes them (`SharedConnection.statement_check`)
+    and `MemoryStore._persist` refuses the markdown files. Reads still work, by
+    keyword, and leave no mark (no recall counts, access stamps or volunteer
     log). The API answers a refused write `403`.
+  - Nothing of a restricted session reaches a model but the one its turn runs
+    on. `model_may_read(ref)` is the one answer to "may this work hand what it
+    carries to that model": the turn names its model once its runtime is built
+    (`answered_by`, in `run_chat`), and inside such work every other model is
+    refused (`OtherModelRefused`, before anything is sent). Every seam that
+    reaches a model asks it: the embedding functions (`embed_fn_for` /
+    `embed_many_fn_for`, and `VectorMemoryStore._try_embed` for a function
+    pinned on a store), so such a session's memory is searched by keyword;
+    `provider_bridge.metered`, the guard every model built for anything but a
+    person's own turn passes (a tool's model, a subagent's, a knowledge node's,
+    a loop's), and an agent CLI built for such work; the image reader
+    (`image_input.resolve_image_reader`); the image and video tools
+    (`mcp_artifacts`); and the models a turn falls back to
+    (`ModelFailover.admits`). A one-shot call such work makes
+    (`one_shot_completion`, e.g. `web_extract` or `visualize`) runs on the
+    chat's own model: the model-call log names that model as the one that
+    answered, and the call is stamped as serving in the bound model's place, so a
+    call log that captures it reads "ran on <chat model> instead of <Reasoning
+    model>: this chat is Incognito, …". A tool that needs another kind of model
+    says it cannot run in this chat. A restricted chat whose own model cannot run is not
+    sent to the chain's next one: the turn ends saying why
+    (`chat_runner.refused_on_a_substitute`). An agent CLI runs PersonalClaw's
+    tools in a process of its own (`personalclaw mcp-core`), which no context
+    variable reaches, so that server runs each call as the chat it serves
+    (`mcp_core._call_as_its_session`): it asks the gateway what the calling
+    session is (`GET /api/chat/sessions/model-reach`, answered under the same
+    scope the gateway's stores use), once per session, and runs the call as
+    deriving from it when it keeps nothing; a session the gateway cannot answer
+    for is taken to keep nothing. What the person gives such a chat in a form
+    its model cannot read is the one exception, and the chat's notice says so: a
+    file they attach, read for its text, and a screen they share, described, are
+    read by the models set up for them (`reading_their_input`, which changes only
+    which model may read and nothing the work may write). Dictation and
+    read-aloud are the page's own requests, made as the dashboard rather than as
+    the chat. `tests/test_model_reach_census.py` holds the tree to all of it:
+    every pool carries the scope, every seam asks, the agent CLI's tool server
+    serves each call as its chat, the exception is taken only where it names, and
+    nothing builds a model provider or calls an embedding model around them.
   - A consolidation pass over a restricted session is skipped before its
     transcript is read or a model is called: the idle sweep's expiry, a
     channel's end of session, `personalclaw consolidate`, the consolidate

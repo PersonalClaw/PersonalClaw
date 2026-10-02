@@ -986,8 +986,14 @@ the same rotation on demand, and keeps the live log if the archive cannot be wri
 Restricted sessions (temporary/incognito) gate memory reads/writes and lesson
 capture — enforced in the after-turn path, session listing/search, and the
 recall API — and keep nothing in long-term memory by any path: the stores
-refuse every write made for one and embed nothing of it (`memory_writes.py`,
-failing closed on a mode it cannot read), and no background model is given
-anything of one (`blocks_background_models`). Details in
+refuse every write made for one (`memory_writes.py`, failing closed on a mode it
+cannot read), no background model is given anything of one
+(`blocks_background_models`), and nothing of one reaches any model but the one
+its turn runs on: not the embedding model, a tool's model, a subagent's, the
+image reader or a fallback (`model_may_read`, asked at every seam that reaches a
+model, carried into every worker thread and into the tool process an agent CLI
+runs). What the person gives such a chat in a form its model cannot read (an
+attached file, a shared screen) is read by the model set up for it, and the
+chat's notice says so. Details in
 [chat-sessions.md](chat-sessions.md#session-model) and
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard).

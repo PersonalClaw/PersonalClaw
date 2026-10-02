@@ -93,9 +93,9 @@ def fetch_catalog_text(url: str) -> str:
     else:
         # Called from inside a running loop (a request-handler thread) — drive the
         # coroutine on a private loop in a worker thread rather than deadlocking.
-        import concurrent.futures
+        from personalclaw import memory_writes
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with memory_writes.ScopeCarryingExecutor() as pool:
             resp = pool.submit(asyncio.run, _go()).result()
 
     status = int(getattr(resp, "status", 0) or 0)

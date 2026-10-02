@@ -379,8 +379,8 @@ def _save_def_sync(spec: dict[str, Any]) -> str:
     except RuntimeError:
         saved = asyncio.run(_go())
     else:
-        import concurrent.futures
+        from personalclaw import memory_writes
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with memory_writes.ScopeCarryingExecutor() as pool:
             saved = pool.submit(asyncio.run, _go()).result()
     return str(getattr(saved, "name", "") or spec.get("name", ""))

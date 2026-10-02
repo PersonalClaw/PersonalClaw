@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from personalclaw import memory_writes
 from personalclaw.hooks import fire_tool_hooks, get_global_hook_store
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
@@ -23,6 +24,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_RESULT,
     LLMEvent,
     ModelProvider,
+    ModelSubstitution,
 )
 from personalclaw.llm.events import (
     EVENT_MODEL_SUBSTITUTION,
@@ -666,7 +668,6 @@ async def run_over_use_case_chain(
     """
     from personalclaw.guardrails.failure import EmptyCompletion, OutputContractError
     from personalclaw.guardrails.local_queue import next_entry
-    from personalclaw.llm.base import ModelSubstitution
     from personalclaw.providers.provider_bridge import (
         resolve_metered_model,
         stamp_substitution,
@@ -1034,15 +1035,27 @@ async def _one_shot_completion(
             return await _run(provider)
         return await asyncio.wait_for(_run(provider), float(attempt_timeout))
 
+    # Work that derives from an Incognito or Temporary chat hands nothing to a model but the one
+    # the chat's turn runs on (`memory_writes.model_may_read`): a call that names no model runs
+    # on that one, stamped as serving in the bound model's place; one before the turn named its
+    # model, or pinned to another, is refused by the guard every model built here passes.
+    own = memory_writes.own_model()
+    stays_on_own = own is not None and not model and bool(own)
+    if stays_on_own:
+        model = str(own)
+
     # A pinned model bypasses the active-selection chain entirely — a pin is not a
     # chain. The caller has already decided WHICH model must run (a
     # cross-model judge validated against the worker's family), so walking the
     # use-case fallback chain would defeat the pin: a fallback entry could be the
     # very family the isolation control excluded. Resolve the one model and run it.
     if model:
-        return await _attempt(
-            resolve_metered_model(resolved_uc, model_override=model, **(await _entry_kw(model)))
+        pinned = resolve_metered_model(
+            resolved_uc, model_override=model, **(await _entry_kw(model))
         )
+        if stays_on_own:
+            _stamp_own_model(pinned, resolved_uc, model)
+        return await _attempt(pinned)
 
     # Call-failure chain advance: with a multi-entry chain declared, a failure from entry N
     # (a provider error, an open breaker, a busy local model, an empty answer or one in the
@@ -1130,6 +1143,24 @@ async def _one_shot_completion(
         )
 
     return await _attempt(provider)
+
+
+def _stamp_own_model(provider: object, use_case: str, own: str) -> None:
+    """Say on every call *provider* makes that it serves in *use_case*'s bound model's place, on
+    the chat's own model *own*, because the work is an Incognito or Temporary chat's — in the
+    words every substitution uses ("ran on <own> instead of <bound>: this chat is Incognito, …").
+    Nothing to say when *use_case* is bound to *own* itself, or to nothing."""
+    from personalclaw.providers.provider_bridge import stamp_substitution
+
+    chain = use_case_chain(use_case)
+    requested = chain[0] if chain else ""
+    if requested and requested != own:
+        stamp_substitution(
+            provider,
+            ModelSubstitution(
+                requested=requested, served=own, why=memory_writes.own_model_reason()
+            ),
+        )
 
 
 def failed_endpoint(exc: BaseException) -> str:

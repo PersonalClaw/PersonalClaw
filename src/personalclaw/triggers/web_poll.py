@@ -320,9 +320,9 @@ def _await_maybe(result: Any) -> Any:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(result)
-    import concurrent.futures
+    from personalclaw import memory_writes
 
-    with concurrent.futures.ThreadPoolExecutor() as pool:
+    with memory_writes.ScopeCarryingExecutor() as pool:
         return pool.submit(asyncio.run, result).result(timeout=120)
 
 

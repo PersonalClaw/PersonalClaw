@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **903 registrations** over **731 distinct paths** — 896 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **904 registrations** over **732 distinct paths** — 897 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 128 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 79 | 67 |
+| `/api/chat` | 80 | 68 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 49 | 41 |
 | `/api/workflows` | 45 | 40 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 896 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 897 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -307,6 +307,7 @@ The 896 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/chat/sessions/bound-project` | the CALLING session's bound Project id. |
 | `POST` | `/api/chat/sessions/bulk` | apply one op to many sessions. |
 | `POST` | `/api/chat/sessions/cleanup` | bulk-archive inactive sessions to history. |
+| `GET` | `/api/chat/sessions/model-reach` | whether the CALLING session keeps nothing. |
 | `GET` | `/api/chat/sessions/templates` | every saved session starter. |
 | `POST` | `/api/chat/sessions/templates` | save a chat setup as a reusable starter. |
 | `DELETE` | `/api/chat/sessions/templates/{template}` | remove a starter. |

@@ -901,6 +901,27 @@ async def api_chat_session_bound_project(request: web.Request) -> web.Response:
     )
 
 
+async def api_chat_session_model_reach(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/model-reach — whether the CALLING session keeps nothing.
+
+    An agent CLI's tools run in the separate ``mcp-core`` process, where the session scope a
+    chat's turn holds in the gateway (``memory_writes``) is empty, so each of their calls asks this
+    first and runs under the answer: ``{"memory_mode": "incognito"}`` (or ``"temporary"``, or
+    ``"unreadable"`` when no record says which) for a session that keeps nothing, whose work no
+    model but its own may read and whose writes the stores refuse, and ``{"memory_mode":
+    "persistent"}`` for any other. The request runs as deriving from the session it names
+    (``memory_write_gate``), so this is the answer the gateway's own stores give it.
+
+    Keyed off the ``X-Session-Key`` header, never off a path segment or a query parameter: the
+    caller asks about the session it is. No header, or the dashboard's own, is no session.
+    """
+    from personalclaw import memory_writes
+
+    return web.json_response(
+        {"memory_mode": memory_writes.restricted_mode() or memory_writes.PERSISTENT}
+    )
+
+
 async def api_chat_session_detail(request: web.Request) -> web.Response:
     """GET /api/chat/sessions/{session} — message history for a session.
 

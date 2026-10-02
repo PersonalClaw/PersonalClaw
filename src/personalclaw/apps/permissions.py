@@ -1421,6 +1421,10 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/chat/sessions/bound-project": OwnerOnly(
         "which project one of your chats is bound to — the chat's own tools ask, as that chat"
     ),
+    "GET /api/chat/sessions/model-reach": OwnerOnly(
+        "whether one of your chats is Incognito or Temporary — the chat's own tools ask, as that "
+        "chat, before they hand anything to a model"
+    ),
     "GET /api/chat/folders": OwnerOnly(_YOUR_ORGANISATION),
     "GET /api/chat/tags": OwnerOnly(_YOUR_ORGANISATION),
     "GET /api/chat/tag-columns": OwnerOnly(_YOUR_ORGANISATION),

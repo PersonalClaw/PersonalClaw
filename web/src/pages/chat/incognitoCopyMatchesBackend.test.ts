@@ -50,15 +50,43 @@ describe('incognito copy matches the backend contract', () => {
     expect(src).toMatch(/nothing from this chat is written back to it/)
   })
 
-  it('says nothing of the chat is embedded, and the backend keeps that at the stores', () => {
-    expect(readFileSync(COPY, 'utf8')).toMatch(/or sent to the embedding model/)
+  it('says nothing of the chat reaches a model but its own, and every seam asks the one answer', () => {
+    for (const [mode, text] of Object.entries(MEMORY_MODE_NOTICE)) {
+      expect(text, mode).toMatch(/sent to any model but the one it runs on: a tool that needs a model uses this one or says it can't/)
+    }
+    expect(MEMORY_MODE_NOTICE.incognito).toMatch(/memory is still read for context, searched by keyword/)
     const gateway = join(__dirname, '..', '..', '..', '..', 'src', 'personalclaw')
-    const registry = readFileSync(join(gateway, 'embedding_providers', 'registry.py'), 'utf8')
-    // Both embedding builders (one text, a batch) answer no vector in a restricted chat's work.
-    expect(registry.match(/if memory_writes\.writes_refused\(\):/g)?.length).toBe(2)
-    const history = readFileSync(join(gateway, 'history.py'), 'utf8')
+    const read = (...p: string[]) => readFileSync(join(gateway, ...p), 'utf8')
+    // Both embedding builders (one text, a batch) answer no vector before the model is asked, so a
+    // restricted chat's memory is searched by keyword.
+    expect(read('embedding_providers', 'registry.py').match(/if not memory_writes\.model_may_read\(ref\):/g)?.length).toBe(2)
+    // Every model built for anything but a person's own turn passes the guard, which asks it.
+    expect(read('providers', 'provider_bridge.py')).toMatch(/memory_writes\.require_model\(f"\{provider_name\}:\{model\}"\)/)
+    // A tool's one-shot call runs on the model the chat's turn named.
+    expect(read('llm_helpers.py')).toMatch(/own = memory_writes\.own_model\(\)/)
+    expect(read('dashboard', 'chat_runner.py')).toMatch(/memory_writes\.answered_by\(str\(getattr\(client, "served_model_ref", ""\) or ""\)\)/)
     // Every consolidation pass runs as deriving from its session and is skipped for one.
-    expect(history).toMatch(/with memory_writes\.derived_from\(key, memory_mode=self\._log\.recorded_memory_mode\(key\)\):\s*\n\s*if memory_writes\.writes_refused\(\):/)
+    expect(read('history.py')).toMatch(/with memory_writes\.derived_from\(key, memory_mode=self\._log\.recorded_memory_mode\(key\)\):\s*\n\s*if memory_writes\.writes_refused\(\):/)
+    // The tools an agent CLI runs, in a process of their own, run as the chat they serve.
+    expect(read('mcp_core.py')).toMatch(/run_mcp_stdio_loop\("personalclaw-core", "1\.0\.0", _aggregated_list_tools, _call_as_its_session\)/)
+  })
+
+  it('says what the person gives the chat is still read by the models set up for it, and only that', () => {
+    for (const [mode, text] of Object.entries(MEMORY_MODE_NOTICE)) {
+      expect(text, mode).toMatch(/Files you attach, a screen you share, your dictation and replies read aloud still use the models you set up for them\./)
+    }
+    const gateway = join(__dirname, '..', '..', '..', '..', 'src', 'personalclaw')
+    const read = (...p: string[]) => readFileSync(join(gateway, ...p), 'utf8')
+    // An attachment's reading and a shared screen's description are the readings that take it.
+    expect(read('dashboard', 'attachment_extract.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(2)
+    expect(read('dashboard', 'chat_runner.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(1)
+    // Dictation and read-aloud are the page's own requests, made as the dashboard and not as the
+    // chat, so no chat's scope reaches them.
+    expect(read('dashboard', 'memory_write_gate.py')).toMatch(/if not session_key or session_key == _DASHBOARD_UI:\s*\n\s*return await handler\(request\)/)
+    const client = readFileSync(join(__dirname, '..', '..', 'lib', 'api.ts'), 'utf8')
+    expect(client).toMatch(/const SK = \{ 'X-Session-Key': 'dashboard:ui'/)
+    expect(client).toMatch(/fetch\(url, \{ method: 'POST', headers: \{ \.\.\.SK \}, body: fd \}\)/)
+    expect(client).toMatch(/voiceSynthesize: \(text: string, session = ''\) => post</)
   })
 
   it('says no background model reads the chat, and each such chore asks the one answer first', () => {

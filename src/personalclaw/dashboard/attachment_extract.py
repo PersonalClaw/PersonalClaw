@@ -10,6 +10,10 @@ it isn't done yet) and prepends the extracted text to the prompt context.
 An image is the exception: it is read only when something asks for its text (see
 :meth:`AttachmentExtractor.start`).
 
+Reading an attachment is reading what the person gave the chat, so it runs as such
+(``memory_writes.reading_their_input``): the models set up for reading images, recordings and
+scans read it in an Incognito or Temporary chat as in any other, and the chat's notice says so.
+
 Singleton, keyed by absolute upload path. Bounded so a long session can't grow
 it without bound.
 """
@@ -20,6 +24,7 @@ import asyncio
 import logging
 import os
 
+from personalclaw import memory_writes
 from personalclaw.knowledge.extract import Extracted
 
 logger = logging.getLogger(__name__)
@@ -59,7 +64,11 @@ class AttachmentExtractor:
             for k in [k for k, t in list(self._tasks.items()) if t.done()][:50]:
                 self._tasks.pop(k, None)
         try:
-            self._tasks[path] = asyncio.create_task(self._run(path, mime))
+            # Reading a file someone attached is reading what they gave the chat, so the models
+            # set up for reading it do, in an Incognito or Temporary chat too. The task keeps
+            # that from the context it is made in.
+            with memory_writes.reading_their_input():
+                self._tasks[path] = asyncio.create_task(self._run(path, mime))
         except RuntimeError:
             # no running loop (shouldn't happen on the gateway) — skip; the
             # await-path will fall back to a synchronous extract.
@@ -85,7 +94,8 @@ class AttachmentExtractor:
         task = self._tasks.get(path)
         if task is None:
             # couldn't schedule a task (no loop) → extract inline
-            return await self._run(path, mime)
+            with memory_writes.reading_their_input():
+                return await self._run(path, mime)
         try:
             return await task
         except Exception:

@@ -180,9 +180,9 @@ def _list_models_for_provider(name: str) -> list:
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(catalog_for(provider))
-        import concurrent.futures
+        from personalclaw import memory_writes
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
+        with memory_writes.ScopeCarryingExecutor() as pool:
             return pool.submit(asyncio.run, catalog_for(provider)).result(timeout=30)
     except Exception:
         logger.debug("catalog list failed for provider=%s", name, exc_info=True)

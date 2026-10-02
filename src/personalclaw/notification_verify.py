@@ -44,6 +44,8 @@ import logging
 import re
 from collections.abc import Callable
 
+from personalclaw import memory_writes
+
 logger = logging.getLogger(__name__)
 
 #: The closed verdict vocabulary. Everything the model says maps onto exactly one of these,
@@ -126,7 +128,7 @@ async def verify_attention_item(title: str, body: str = "") -> str:
 #: a provider that blocks holds one of these and nothing else. Two, so one slow claim does not
 #: queue the next behind it. Not daemon threads: a CLI that raised an item waits at exit for its
 #: check to land rather than leaving the row saying it is still being checked.
-_WORKER = concurrent.futures.ThreadPoolExecutor(
+_WORKER = memory_writes.ScopeCarryingExecutor(
     max_workers=2, thread_name_prefix="notification-verify"
 )
 

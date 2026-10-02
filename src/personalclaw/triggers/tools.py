@@ -1192,21 +1192,18 @@ def _default_cadence_to_cron(cadence: str) -> Any:
     two would drift, and this one is already proven against a running loop.
     """
     import asyncio
-    import contextvars
 
+    from personalclaw import memory_writes
     from personalclaw.nl_to_cron import nl_to_cron
 
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(nl_to_cron(cadence))
-    import concurrent.futures
-
-    # The worker thread starts with an empty context; the turn's session key travels with the
+    # The worker thread carries the call's context: the turn's session key travels with the
     # call, so the chat whose tool is waiting is the one that says why.
-    ctx = contextvars.copy_context()
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        return pool.submit(ctx.run, asyncio.run, nl_to_cron(cadence)).result(timeout=60)
+    with memory_writes.ScopeCarryingExecutor() as pool:
+        return pool.submit(asyncio.run, nl_to_cron(cadence)).result(timeout=60)
 
 
 def list_automations(store: Any, *, kind: str = "", state: str = "") -> AutomationToolResult:

@@ -264,6 +264,44 @@ def record_from_event(
     )
 
 
+def record_call(
+    *,
+    source: str,
+    session_key: str,
+    provider: str,
+    model: str,
+    input_tokens: int,
+    cost_usd: float,
+    priced: bool,
+    local: bool,
+    duration_ms: int = 0,
+    audit_ids: list[str] | None = None,
+) -> None:
+    """Record one ledger row for a call billed by its tokens that streams no event to read them
+    off: an embedding call (``embedding_providers.registry``), priced by its maker through the one
+    pricing function (``routing.rates.price_call``). ``audit_ids`` names the call's
+    ``model_calls.jsonl`` row, so the usage fold does not count it a second time. Fail-open
+    through :func:`record_turn`."""
+    from datetime import datetime, timezone
+
+    record_turn(
+        TurnUsage(
+            ts=datetime.now(timezone.utc).isoformat(),
+            session_key=session_key,
+            source=source,
+            agent="",
+            provider=provider,
+            model=model,
+            input_tokens=input_tokens,
+            cost_usd=cost_usd,
+            priced=priced,
+            local=local,
+            duration_ms=duration_ms,
+            audit_ids=list(audit_ids or []),
+        )
+    )
+
+
 def record_units(
     *,
     source: str,

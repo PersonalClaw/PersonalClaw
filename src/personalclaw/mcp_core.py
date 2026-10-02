@@ -1789,9 +1789,9 @@ def _run_coro(coro: Any) -> Any:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    import concurrent.futures
+    from personalclaw import memory_writes
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+    with memory_writes.ScopeCarryingExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
 
 
@@ -1998,9 +1998,47 @@ def _aggregated_call_tool(name: str, raw_args: dict[str, Any]) -> str:
     return _call_tool(name, raw_args)
 
 
+#: The mode the gateway answered for each session this process has served
+#: (:func:`_call_as_its_session`). A session's mode is fixed when it is created, so one answer
+#: holds for the life of the process; an answer that could not be had is not kept.
+_SESSION_MODES: dict[str, str] = {}
+
+
+def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
+    """Run one call of this server's tools as the chat it serves: the ``mcp-core`` dispatch.
+
+    An agent CLI's tools run in this process, outside the gateway, where the session scope a
+    chat's turn holds (:mod:`personalclaw.memory_writes`) is empty, so an Incognito chat's request
+    for an image reached the image model from here. A call made for a session therefore asks the
+    gateway what that session is (``GET /api/chat/sessions/model-reach``, the answer the gateway's
+    own stores give it) and runs as deriving from it when it keeps nothing: no model but its own
+    reads the call's work, and the stores refuse its writes, as in the gateway. A session the
+    gateway cannot answer for is taken to keep nothing. A call made for no session runs as it
+    always has.
+    """
+    from personalclaw import memory_writes
+
+    key = _resolve_session_key()
+    if not key:
+        return _aggregated_call_tool(name, raw_args)
+    mode = _SESSION_MODES.get(key)
+    if mode is None:
+        reply = _get("/api/chat/sessions/model-reach")
+        answered = reply.get("memory_mode") if not reply.get("error") else None
+        if isinstance(answered, str) and answered:
+            mode = _SESSION_MODES[key] = answered
+        else:
+            mode = memory_writes.UNREADABLE
+    if mode == memory_writes.PERSISTENT:
+        return _aggregated_call_tool(name, raw_args)
+    with memory_writes.derived_from(key, memory_mode=mode):
+        return _aggregated_call_tool(name, raw_args)
+
+
 def run_mcp_core_server() -> None:
     """Run MCP stdio server for core agent tools — the single endpoint an ACP CLI
-    consumes, aggregating every native tool category into one surface."""
+    consumes, aggregating every native tool category into one surface. Each call runs as the chat
+    it serves (:func:`_call_as_its_session`)."""
     from personalclaw.mcp_shared import run_mcp_stdio_loop
 
-    run_mcp_stdio_loop("personalclaw-core", "1.0.0", _aggregated_list_tools, _aggregated_call_tool)
+    run_mcp_stdio_loop("personalclaw-core", "1.0.0", _aggregated_list_tools, _call_as_its_session)

@@ -112,6 +112,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_CALL,
     EVENT_TOOL_CALL_UPDATE,
     EVENT_TOOL_RESULT,
+    ModelSubstitution,
 )
 from personalclaw.llm.events import (
     COMPACTION_AUTOMATIC,
@@ -948,6 +949,31 @@ def _turn_complete_line(
 #: WORKER behaviour off ``"loop"`` alone, on purpose — the planner is not a cycle worker — but both
 #: are loop work, so both take the loops axis.
 _LOOP_WORK_APPS = frozenset({"loop", "loops"})
+
+
+def refused_on_a_substitute(state: DashboardState, session: _ChatSession, client: object) -> bool:
+    """End an Incognito or Temporary chat's turn whose runtime would answer in place of the chat's
+    own model, saying why, before anything is sent; True when it did.
+
+    The runtime is built on another model when the chat's own cannot run (its breaker is open, its
+    entry cannot be built). A normal chat's turn goes on there and says so; a restricted chat's
+    words go to no model but the one it runs on (``memory_writes.model_may_read``), and the model
+    that would answer is not that one.
+    """
+    substitution = getattr(client, "model_substitution", None)
+    if not (session.is_restricted and isinstance(substitution, ModelSubstitution)):
+        return False
+    whose = f"{substitution.who} " if substitution.who else ""
+    cannot = f"{whose}{substitution.requested} can't answer right now: {substitution.why}."
+    fix = f" {substitution.fix[:1].upper()}{substitution.fix[1:]}." if substitution.fix else ""
+    text = (
+        f"{cannot[:1].upper()}{cannot[1:]} "
+        f"{memory_writes.other_model_refusal(substitution.served)}{fix}"
+    )
+    session.append("error", text, "msg msg-err")
+    state.broadcast_ws("chat_message", {"session": session.key, "role": "error", "content": text})
+    session._last_turn_errored = True
+    return True
 
 
 def model_axis_for(session: object) -> str:
@@ -1841,8 +1867,6 @@ async def _describe_screen_frame(data_url: str, *, usage: Attribution) -> str:
     """
     from personalclaw.providers.image_input import resolve_image_reader
 
-    # The person's own turn reads the frame, so the reading is that turn's: unmetered, like it.
-    provider = await resolve_image_reader(metered=False)
     prompt = (
         "Describe this screenshot of the user's screen factually and in detail: what "
         "application or page is shown, the visible text, and any errors or highlighted "
@@ -1857,13 +1881,18 @@ async def _describe_screen_frame(data_url: str, *, usage: Attribution) -> str:
             ],
         }
     ]
-    record = recorder(provider, usage)
     parts: list[str] = []
-    async for ev in spent_rows(provider.complete(messages), record):
-        if ev.kind == EVENT_TEXT_CHUNK:
-            parts.append(getattr(ev, "text", "") or "")
-        elif ev.kind == EVENT_COMPLETE:
-            record(ev)
+    # A screen the person shared is what they gave the chat, so the model set up for reading
+    # images describes it, in an Incognito or Temporary chat too (the chat's notice says so).
+    with memory_writes.reading_their_input():
+        # The person's own turn reads the frame, so the reading is that turn's: unmetered, like it.
+        provider = await resolve_image_reader(metered=False)
+        record = recorder(provider, usage)
+        async for ev in spent_rows(provider.complete(messages), record):
+            if ev.kind == EVENT_TEXT_CHUNK:
+                parts.append(getattr(ev, "text", "") or "")
+            elif ev.kind == EVENT_COMPLETE:
+                record(ev)
     return "".join(parts).strip()
 
 
@@ -2864,6 +2893,11 @@ async def run_chat(
             unmetered=not loop_posture.spend_metered(session),
         )
         _acquired = True
+        if refused_on_a_substitute(state, session, client):
+            return
+        # The model this turn runs on is the one its work may hand anything to: in an Incognito or
+        # Temporary chat its tools, recall and fallbacks stay on it.
+        memory_writes.answered_by(str(getattr(client, "served_model_ref", "") or ""))
         # The chosen model could not run and another answers: said now, before the reply streams
         # (an activity line is not drawn once tool cards arrive), and stamped on the reply below
         # so a reload still says it.

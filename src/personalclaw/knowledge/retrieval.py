@@ -969,9 +969,9 @@ def _run_rerank_prompt(prompt: str) -> "list | None":
     except RuntimeError:
         text = asyncio.run(_call())
     else:
-        import concurrent.futures
+        from personalclaw import memory_writes
 
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        pool = memory_writes.ScopeCarryingExecutor(max_workers=1)
         try:
             text = pool.submit(asyncio.run, _call()).result(timeout=_RERANK_TIMEOUT_SECS)
         finally:

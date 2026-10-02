@@ -1447,7 +1447,8 @@ class MemoryConfig:
             "Active Recall",
             "On an interactive turn, surface query-relevant memory just before the "
             "reply (grounding it at the natural moment) — bounded by a timeout + "
-            "circuit breaker. Skipped for temporary/incognito/headless turns.",
+            "circuit breaker. Skipped for temporary and headless turns; an incognito "
+            "turn recalls by keyword, without the embedding model.",
         ),
     )
     proactive_commitments: bool = field(

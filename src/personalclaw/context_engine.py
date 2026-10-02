@@ -31,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from personalclaw import memory_writes
 from personalclaw.context_headroom import (
     Component,
     Headroom,
@@ -159,9 +160,10 @@ class DefaultContextEngine:
         if window is not None and getattr(window, "request_only", False) is True:
             active_recall = False
         # Active recall (the assemble hook): on an eligible interactive turn,
-        # surface query-relevant memory just before the reply. Skipped on
-        # temporary/incognito turns (blocks_reads) and when a headless caller
-        # opts out (active_recall=False).
+        # surface query-relevant memory just before the reply. Skipped on a
+        # temporary turn (blocks_reads) and when a headless caller opts out
+        # (active_recall=False). An incognito turn recalls too, by keyword: its
+        # message reaches no embedding model (`memory_writes.model_may_read`).
         if is_new_session and not kwargs.get("blocks_reads") and active_recall:
             recall = active_recall_block(
                 builder,
@@ -187,7 +189,8 @@ class DefaultContextEngine:
         #
         # Gated on `blocks_reads` (temporary sessions), same as active recall. Incognito
         # is NOT blocked here: it suppresses memory WRITES, and §3 wants the reflex to
-        # run there with only its volunteer logging suppressed.
+        # run there with only its volunteer logging suppressed. Its words reach no model:
+        # the reflex resolves the entities a turn names by their names.
         if not kwargs.get("blocks_reads") and active_recall:
             pushed = push_context_block(
                 builder,
@@ -288,7 +291,11 @@ def active_recall_block(
     # anyway. A 0.2s budget against a 3s read returned after 3.00s; with
     # `shutdown(wait=False)` the same call returns in 0.21s. The budget was inert for every
     # caller that mattered. The orphaned worker finishes into a result nobody reads.
-    _ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    #
+    # A pool that carries the turn's scope (`memory_writes.ScopeCarryingExecutor`): on a plain
+    # one the worker did not know which chat the recall was for, and an Incognito chat's
+    # message went to the embedding model from it.
+    _ex = memory_writes.ScopeCarryingExecutor(max_workers=1)
     try:
         recalled = _ex.submit(_recall).result(timeout=timeout_ms / 1000.0)
         _recall_consecutive_timeouts = 0  # success resets the breaker
@@ -385,8 +392,8 @@ def push_context_block(
         # Masked as it is read, for the reason the recall block is.
         return redact_for_model(block or "")
 
-    # Same join hazard as the recall path above — see the note there.
-    _ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    # Same join hazard, and the same scope, as the recall path above — see the notes there.
+    _ex = memory_writes.ScopeCarryingExecutor(max_workers=1)
     try:
         block = _ex.submit(_push).result(timeout=_PUSH_TIMEOUT_MS / 1000.0)
         _push_consecutive_timeouts = 0

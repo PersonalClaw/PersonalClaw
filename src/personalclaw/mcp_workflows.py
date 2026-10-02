@@ -577,9 +577,9 @@ def _run(coro: Any) -> Any:
     except RuntimeError:
         return asyncio.run(coro)  # the normal path: no loop on this thread
 
-    import concurrent.futures
+    from personalclaw import memory_writes
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+    with memory_writes.ScopeCarryingExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
 
 

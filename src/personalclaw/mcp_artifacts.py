@@ -562,9 +562,9 @@ def _run_async(coro: Any) -> Any:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    import concurrent.futures
+    from personalclaw import memory_writes
 
-    with concurrent.futures.ThreadPoolExecutor() as pool:
+    with memory_writes.ScopeCarryingExecutor() as pool:
         return pool.submit(asyncio.run, coro).result()
 
 
@@ -997,6 +997,18 @@ def images_made_in(messages: list[dict]) -> list[str]:
     return out
 
 
+def _other_model_refusal(model_ref: str) -> str:
+    """Why the media model ``model_ref`` may not be handed this work, or ``""`` when it may.
+
+    An image or video model is a model beside the one a chat's turn runs on, so a chat that is
+    Incognito or Temporary sends it nothing (:func:`personalclaw.memory_writes.model_may_read`)."""
+    from personalclaw import memory_writes
+
+    if memory_writes.model_may_read(model_ref):
+        return ""
+    return memory_writes.other_model_refusal(model_ref)
+
+
 def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any) -> str:
     """image_generate: resolve the image_gen capability, generate/edit, save kind:image.
 
@@ -1021,6 +1033,10 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
             "in Settings → Models."
         )
     provider, model_id = resolved
+    refused = _other_model_refusal(f"{provider.name}:{model_id}")
+    if refused:
+        _audit("denied", error="the chat's words go to its own model only")
+        return tool_failure(refused)
     prompt = str(args.get("prompt", "")).strip()
     if not prompt:
         _audit("denied", error="empty prompt")
@@ -1190,6 +1206,10 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
             "in Settings → Models."
         )
     provider, model_id = resolved
+    refused = _other_model_refusal(f"{provider.name}:{model_id}")
+    if refused:
+        _audit("denied", error="the chat's words go to its own model only")
+        return tool_failure(refused)
     prompt = str(args.get("prompt", "")).strip()
     if not prompt:
         _audit("denied", error="empty prompt")
@@ -1284,6 +1304,9 @@ def regenerate_image_at_slug(
         return False, "no image-generation model is configured"
     provider, model_id = resolved
     size = (size or "").strip()
+    refused = _other_model_refusal(f"{provider.name}:{model_id}")
+    if refused:
+        return False, refused
     try:
         results = _metered(
             provider,

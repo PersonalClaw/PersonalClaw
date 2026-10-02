@@ -71,6 +71,9 @@ class ModelFailover:
     #: Whether a ref takes images, from the platform's record: a turn carrying images falls back
     #: only to a model that reads them.
     takes_images: Callable[[str], Awaitable[bool]]
+    #: Whether the turn may be moved to a ref at all (``memory_writes.model_may_read``): a turn
+    #: of an Incognito or Temporary chat stays on the model it runs on.
+    admits: Callable[[str], bool]
 
     def substitution(self, served: str, failures: list[tuple[str, str]]) -> ModelSubstitution:
         """What a turn that fell back says: ``served`` answered after ``failures``, in order."""
@@ -111,10 +114,16 @@ class TurnFallback:
 
     def begin(self, failover: ModelFailover | None) -> Callable[[str], str] | None:
         """Start a turn and return its check. What the caller asked is taken as the turn starts,
-        so the late cleanup of a turn its caller stopped reading cannot take it away."""
+        so the late cleanup of a turn its caller stopped reading cannot take it away. The models
+        the turn may move to are those the failover admits, so a turn that may move nowhere names
+        no next model either (:meth:`next_ref`)."""
         announced, self.announced = self.announced and failover is not None, False
         expect, self.expect = self.expect, None
-        self.queue = list(failover.candidates) if announced and failover is not None else []
+        self.queue = (
+            [ref for ref in failover.candidates if failover.admits(ref)]
+            if announced and failover is not None
+            else []
+        )
         self.failures, self.pending = [], ""
         return expect
 

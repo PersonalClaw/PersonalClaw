@@ -127,7 +127,12 @@ async def resolve_image_reader(*, metered: bool) -> ModelProvider:
     step's is automation's, behind the spend guard
     (:func:`~personalclaw.providers.provider_bridge.resolve_metered_model`). Keyword-only and
     without a default, so every caller says which.
+
+    The reader is a model beside the one a chat's turn runs on, so work that derives from an
+    Incognito or Temporary chat is refused it (:func:`personalclaw.memory_writes.require_model`,
+    asked of the model the reader was built for), before the image is sent anywhere.
     """
+    from personalclaw import memory_writes
     from personalclaw.providers.provider_bridge import (
         resolve_metered_model,
         resolve_provider_for_use_case,
@@ -136,7 +141,9 @@ async def resolve_image_reader(*, metered: bool) -> ModelProvider:
     reader = await image_reader()
     named = reader.ref if reader.ref and not reader.bound else None
     resolve = resolve_metered_model if metered else resolve_provider_for_use_case
-    return resolve(IMAGE_USE_CASE, model_override=named)
+    provider = resolve(IMAGE_USE_CASE, model_override=named)
+    memory_writes.require_model(str(getattr(provider, "served_ref", "") or reader.ref))
+    return provider
 
 
 def clear_cache() -> None:

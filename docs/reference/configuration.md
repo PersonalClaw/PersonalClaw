@@ -149,7 +149,7 @@ Behavior toggles live in Settings → Memory; tuning constants are backend-only.
 | `memory.episodic_max_count` | integer | `10000` | backend-only | Episodic store size cap; oldest records are pruned past it. |
 | `memory.semantic_keys` | list of strings | `[]` | backend-only | Extra top-level semantic-record prefixes (namespaces) beyond the built-ins. |
 | `memory.l1_manifest` | boolean | `true` | Settings → Memory | Inject only a small always-on manifest of your most-recalled facts; the agent pulls deeper memory on demand via the `memory_recall` tool. Off = inject full semantic + episodic memory every turn (legacy). |
-| `memory.active_recall` | boolean | `true` | Settings → Memory | On an interactive turn, surface query-relevant memory just before the reply — bounded by a timeout + circuit breaker. Skipped for temporary/incognito/headless turns. |
+| `memory.active_recall` | boolean | `true` | Settings → Memory | On an interactive turn, surface query-relevant memory just before the reply — bounded by a timeout + circuit breaker. Skipped for temporary and headless turns; an incognito turn recalls by keyword, without the embedding model. |
 | `memory.proactive_commitments` | boolean | `false` | Settings → Memory | Let the agent infer future check-ins from conversation and deliver ONE natural reminder per window via the heartbeat. Opt-in; high-confidence only; capped per day; one-tap dismiss. |
 | `memory.proactive_commitments_max_per_day` | integer | `3` | backend-only | Hard maximum active proactive check-ins per agent per day. |
 | `memory.active_recall_timeout_ms` | integer | `1500` | backend-only | Hard budget for the pre-reply recall pass; on timeout the turn proceeds without it (circuit breaker trips after repeats). |

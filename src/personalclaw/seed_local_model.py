@@ -33,7 +33,6 @@ chosen first stays what chat uses.
 """
 
 import asyncio
-import concurrent.futures as cf
 import json
 import logging
 import os
@@ -43,6 +42,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from personalclaw import memory_writes
 
 if TYPE_CHECKING:
     from personalclaw.llm.catalog import ModelInfo
@@ -181,7 +182,7 @@ def _described_by_provider(endpoint: str, *, budget: float) -> "list[ModelInfo] 
     try:
         # A loop of its own on a thread of its own, so a caller on any thread can ask, one
         # already running a loop included.
-        with cf.ThreadPoolExecutor(max_workers=1) as pool:
+        with memory_writes.ScopeCarryingExecutor(max_workers=1) as pool:
             rows = pool.submit(asyncio.run, _listing()).result()
     except Exception:  # noqa: BLE001 — the app's description refines the pick, it never gates it
         logger.debug("the provider's model listing for %s failed", endpoint, exc_info=True)

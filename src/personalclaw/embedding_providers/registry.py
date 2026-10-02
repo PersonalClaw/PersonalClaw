@@ -343,20 +343,33 @@ def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
 def embed_fn_for(provider_name: str, model_id: str) -> Callable[[str], list[float] | None] | None:
     """A sync embed fn for ``provider_name``'s ``model_id``, or None when it cannot be built.
 
-    Every embedding of a single text is made through a function built here, and the function
-    embeds nothing inside work that derives from an Incognito or Temporary session: it answers
-    ``None`` (no vector) without calling the model, so nothing from such a session is embedded
-    (:mod:`personalclaw.memory_writes`). A caller already reads ``None`` as "no vector".
+    Every embedding of a single text is made through a function built here. The function asks
+    :func:`personalclaw.memory_writes.model_may_read` first, so inside work that derives from an
+    Incognito or Temporary session it answers ``None`` (no vector) without calling the model, and
+    nothing from such a session reaches the embedding model. A caller already reads ``None`` as "no
+    vector". Each call that reaches the model is recorded in the model-call log and, when it
+    answers, in Usage (:func:`_record_embedding`).
     """
     fn = _embed_fn_for(provider_name, model_id)
     if fn is None:
         return None
+    ref = f"{provider_name}:{model_id}"
 
     def _embed(text: str) -> list[float] | None:
-        if memory_writes.writes_refused():
+        if not memory_writes.model_may_read(ref):
             return None
-        return fn(text)
+        started = time.monotonic()
+        try:
+            vector = fn(text)
+        except Exception:
+            _record_embedding(provider_name, model_id, [text], started=started, ok=False)
+            raise
+        _record_embedding(provider_name, model_id, [text], started=started, ok=bool(vector))
+        return vector
 
+    # The model it embeds with, for a holder that asks the same question of a function it is
+    # handed (``VectorMemoryStore._try_embed``).
+    _embed.model_ref = ref  # type: ignore[attr-defined]
     return _embed
 
 
@@ -560,19 +573,94 @@ def embed_many_fn_for(
     without a running loop (a raw `asyncio.run()` raises inside one — the ingest and chunk-backfill
     paths run there).
 
-    Like :func:`embed_fn_for`, the function embeds nothing inside work that derives from an
-    Incognito or Temporary session: every text gets ``None`` and the model is not called.
+    Like :func:`embed_fn_for`, the function asks ``model_may_read`` first, so inside work that
+    derives from an Incognito or Temporary session every text gets ``None`` and the model is not
+    called, and it records each call that reaches the model.
     """
     many = _embed_many_fn_for(provider_name, model_id)
     if many is None:
         return None
+    ref = f"{provider_name}:{model_id}"
 
     def _embed_many(texts: list[str]) -> list[list[float] | None]:
-        if memory_writes.writes_refused():
+        if not memory_writes.model_may_read(ref):
             return [None] * len(texts)
-        return many(texts)
+        started = time.monotonic()
+        try:
+            vectors = many(texts)
+        except Exception:
+            _record_embedding(provider_name, model_id, texts, started=started, ok=False)
+            raise
+        _record_embedding(provider_name, model_id, texts, started=started, ok=any(vectors))
+        return vectors
 
     return _embed_many
+
+
+def _record_embedding(
+    provider_name: str, model_id: str, texts: list[str], *, started: float, ok: bool
+) -> None:
+    """Record an embedding call that reached its model: its row in ``model_calls.jsonl`` and, when
+    it answered, its Usage row (``usage_ledger.record_call``), which names that row.
+
+    What a person checking where their words went needs: the model, when, how many texts and about
+    how many tokens, how long it took, what it cost, whether it answered, and the session the work
+    was for. Never the text. The tokens are estimated from the text's length, since an embedding
+    model reports none here, and the call-log row says so. The call is priced by the one pricing
+    function (``routing.rates.price_call``): a price you set, a model on this machine at its known
+    $0, the shipped table. A call that failed is charged nothing and writes no Usage row, as no
+    model call that fails does. Fail-open: recording a call never breaks the embedding it records.
+    """
+    try:
+        from personalclaw.guardrails.audit import AttemptRecord, current_caller, record_attempt
+        from personalclaw.guardrails.budgets import prompt_tokens
+        from personalclaw.guardrails.failure import FailureMode
+        from personalclaw.guardrails.media_call import is_unattended
+        from personalclaw.guardrails.model_call import new_audit_id
+        from personalclaw.routing.rates import price_call
+        from personalclaw.usage_ledger import record_call
+
+        tokens = prompt_tokens(sum(len(t) for t in texts))
+        price = price_call(provider_name, model_id, input_tokens=tokens)
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        session = memory_writes.source_session()
+        audit_id = new_audit_id()
+        record_attempt(
+            AttemptRecord(
+                audit_id=audit_id,
+                ts=time.time(),
+                use_case="embedding",
+                provider=provider_name,
+                model=model_id,
+                attempt=1,
+                failure_mode=(FailureMode.NONE if ok else FailureMode.PROVIDER_ERROR).value,
+                latency_ms=round(elapsed_ms, 1),
+                tokens_in=tokens,
+                dollars_est=round(price.dollars, 6) if ok else 0.0,
+                estimated=True,
+                passed=ok,
+                caller=current_caller(),
+                priced=price.priced or not ok,
+                extra={"texts": len(texts), **({"session": session} if session else {})},
+            )
+        )
+        if ok:
+            record_call(
+                source="chat" if session and not is_unattended(session) else "background",
+                session_key=session,
+                provider=provider_name,
+                model=model_id,
+                input_tokens=tokens,
+                cost_usd=round(price.dollars, 6),
+                priced=price.priced,
+                local=price.source == "local",
+                duration_ms=int(elapsed_ms),
+                audit_ids=[audit_id],
+            )
+    except Exception:  # noqa: BLE001 — the record is observability; the embedding is the product
+        logger.debug(
+            "embedding call for %s:%s not recorded", provider_name, model_id, exc_info=True
+        )
 
 
 def _embed_many_fn_for(

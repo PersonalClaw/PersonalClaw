@@ -506,9 +506,13 @@ Data leaving the running system:
   `primary_deliverable` named out of either reads nothing.
 - **Memory privacy** (`session_restrictions.py`, `memory_writes.py`):
   temporary/incognito sessions gate memory reads/writes; the memory, knowledge
-  and vocabulary stores refuse every write made for one, by any path, and embed
-  nothing of it; no background model (titles, tags, follow-ups, a condensed
-  history, suggestions) is given anything of one.
+  and vocabulary stores refuse every write made for one, by any path; no
+  background model (titles, tags, follow-ups, a condensed history, suggestions)
+  is given anything of one; and nothing of one reaches any model but the one its
+  turn runs on (the embedding model, a tool's or a subagent's model, the image
+  reader, a fallback, an agent CLI's tool process: `memory_writes.model_may_read`),
+  except what the person gives the chat in a form its model cannot read (an
+  attached file, a shared screen), which the model set up for it reads.
 
 ## OWASP Agentic Security (ASI) Top-10 mapping
 

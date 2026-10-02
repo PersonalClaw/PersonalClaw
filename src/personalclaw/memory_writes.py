@@ -16,14 +16,32 @@ That promise is kept at the stores, not by each caller remembering to ask:
   the work: into every task the work spawns, into ``asyncio.to_thread``, and on the gateway into
   every worker thread it hands work to (:func:`carry_scope_into_worker_threads`).
 * The stores refuse inside such a scope. The memory, knowledge and vocabulary databases refuse
-  every statement that would change them (:func:`check_statement`, run by their connection), the
-  markdown memory files are not written (:func:`refuse_write`), and the embedding functions return
-  no vector without calling the model (:func:`writes_refused`).
+  every statement that would change them (:func:`check_statement`, run by their connection) and
+  the markdown memory files are not written (:func:`refuse_write`).
 
 Nothing of such a session is handed to a background model either: its title, tags and suggested
 follow-ups, a condensed copy of its history, the suggestions built from recent chats. Each of those
 chores asks :func:`blocks_background_models`, the same answer, before it reads the session to a
 model.
+
+Nor to any model but the one its turn runs on. :func:`model_may_read` is the one answer to "may
+this work hand what it carries to that model", asked by every seam that does: the embedding
+functions (so such a session's memory is searched by keyword, and nothing of it is embedded), the
+guard every model built for anything but a person's own turn passes (a tool's model, a subagent's,
+a knowledge node's), the image reader, the image and video tools, and the models a turn falls back
+to. Inside work that derives from a restricted session it allows only the model the session's turn
+named (:func:`answered_by`). A one-shot call such work makes runs on that model, stamped as serving
+in the bound model's place (``llm_helpers.one_shot_completion``); anything else is refused with
+:class:`OtherModelRefused` before anything is sent. The scope follows the work into the worker
+threads it hands work to only through :class:`ScopeCarryingExecutor`, so every worker pool is one,
+and into the tool process an agent CLI runs only because that process asks the gateway what the
+chat it serves is (``mcp_core._call_as_its_session``, answered by :func:`restricted_mode`).
+
+What the person gives such a chat themselves in a form its model cannot read is the exception, and
+the only one: a file they attach, read for its text, and a screen they share, described. The model
+they set up for that form reads it, as in any chat (:func:`reading_their_input`); the chat's notice
+says so. Their own voice never runs inside the chat's work at all: dictation and reading a reply
+aloud are requests of their own.
 
 Work that derives from no session (the owner's own edit in Memory Studio, an import, the
 maintenance passes) runs outside any scope and is not affected.
@@ -38,7 +56,7 @@ import re
 from collections.abc import Awaitable, Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
@@ -74,13 +92,27 @@ class MemoryWriteRefused(Exception):
         self.what = what
 
 
+class OtherModelRefused(RuntimeError):
+    """A model other than the one an Incognito or Temporary session's turn runs on was asked to
+    read that session's work (:func:`model_may_read`). Raised before anything is sent; its text is
+    the sentence that says so."""
+
+    def __init__(self, model_ref: str) -> None:
+        super().__init__(other_model_refusal(model_ref))
+        self.model_ref = model_ref
+
+
 @dataclass(frozen=True)
 class _Source:
-    """One session the current work derives from: the spellings of its key and the mode the code
-    that named it holds (``None`` when it holds none)."""
+    """One session the current work derives from: the spellings of its key, the mode the code
+    that named it holds (``None`` when it holds none), the model its turn runs on as
+    ``"<entry>:<model>"`` once the turn has named it (``""`` until then), and whether the work is
+    reading what the person gave the chat (:func:`reading_their_input`)."""
 
     keys: tuple[str, ...]
     mode: str | None
+    model: str = ""
+    their_input: bool = False
 
 
 _SCOPE: contextvars.ContextVar[_Source | None] = contextvars.ContextVar(
@@ -174,6 +206,128 @@ def refuse_write(what: str) -> None:
     """Raise :class:`MemoryWriteRefused` when the current work may not write ``what``."""
     if writes_refused():
         raise MemoryWriteRefused(what)
+
+
+# ── the models a session's work reaches ─────────────────────────────────────────────────────
+
+
+def answered_by(model_ref: str) -> None:
+    """Name ``model_ref`` (``"<entry>:<model>"``) as the model the current work's turn runs on.
+
+    The turn engine says it once the turn's runtime is built and before anything is sent
+    (``chat_runner.run_chat``). It holds for the rest of the scope it is said in. Work started
+    before it was said does not see it, so that work may hand nothing on. Outside any scope it does
+    nothing.
+    """
+    source = _SCOPE.get()
+    if source is not None:
+        _SCOPE.set(replace(source, model=(model_ref or "").strip()))
+
+
+def model_may_read(model_ref: str) -> bool:
+    """Whether the current work may hand what it carries to the model ``model_ref``.
+
+    THE answer every seam that hands work to a model asks (see the module docstring). Always,
+    outside work that derives from an Incognito or Temporary session, and while such work reads
+    what the person gave the chat (:func:`reading_their_input`). Otherwise inside such work only
+    the model the session's turn runs on (:func:`answered_by`): not before the turn has named it,
+    and never a model no ref names (an embedding function pinned on a store).
+    """
+    source = _SCOPE.get()
+    if source is None or source.their_input or not _source_blocks(source):
+        return True
+    ref = (model_ref or "").strip()
+    return bool(ref) and ref == source.model
+
+
+def require_model(model_ref: str) -> None:
+    """Raise :class:`OtherModelRefused` when the current work may not hand its text to
+    ``model_ref`` (:func:`model_may_read`)."""
+    if not model_may_read(model_ref):
+        raise OtherModelRefused(model_ref)
+
+
+def own_model() -> str | None:
+    """The model work that derives from an Incognito or Temporary session stays on: the one its
+    turn named (``""`` before it has). ``None`` for any other work, which may use every model."""
+    source = _SCOPE.get()
+    if source is None or source.their_input or not _source_blocks(source):
+        return None
+    return source.model
+
+
+@contextmanager
+def reading_their_input() -> Iterator[None]:
+    """Run the enclosed work as reading what the person gave the chat themselves in a form its
+    model cannot read: a file they attached, read for its text, or a screen they shared, described.
+
+    The model they set up for that form reads it in an Incognito or Temporary chat as in any other
+    (:func:`model_may_read`): they handed it to the chat themselves, the chat's own model cannot
+    read it, and the chat's notice says so. Nothing else changes: the work still writes nothing for
+    such a chat (:func:`writes_refused`) and hands nothing to a background model. Outside any scope
+    it changes nothing. The readings that run under it are named in
+    ``tests/test_model_reach_census.py``, which fails for any other.
+    """
+    source = _SCOPE.get()
+    if source is None:
+        yield
+        return
+    token = _SCOPE.set(replace(source, their_input=True))
+    try:
+        yield
+    finally:
+        _SCOPE.reset(token)
+
+
+def _restricted_label() -> str:
+    """What the current work's session is, as its chat is called ("Incognito", "Temporary"), or
+    ``""`` when nothing says which."""
+    source = _SCOPE.get()
+    if source is None:
+        return ""
+    if source.mode in RESTRICTED_MODES:
+        return source.mode.capitalize()
+    from personalclaw import session_restrictions
+    from personalclaw.history import read_memory_mode, session_path
+
+    for key in source.keys:
+        if not key:
+            continue
+        if session_restrictions.is_temporary(key):
+            return "Temporary"
+        if session_restrictions.is_incognito(key):
+            return "Incognito"
+        recorded = read_memory_mode(session_path(key))
+        if recorded in RESTRICTED_MODES:
+            return str(recorded).capitalize()
+    return ""
+
+
+def restricted_mode() -> str | None:
+    """The mode of the session the current work derives from when that session keeps nothing:
+    ``"incognito"``, ``"temporary"``, or :data:`UNREADABLE` when no record says which. ``None``
+    for any other work. What the gateway tells a tool process outside it that asks about its own
+    session (``GET /api/chat/sessions/model-reach``), so the tool runs under the same answer."""
+    if not writes_refused():
+        return None
+    label = _restricted_label()
+    return label.lower() if label else UNREADABLE
+
+
+def own_model_reason() -> str:
+    """Why the current work stays on its chat's model, as a clause: "this chat is Incognito, so
+    nothing from it is sent to any model but the one it runs on"."""
+    label = _restricted_label()
+    who = f"this chat is {label}" if label else "this chat keeps nothing"
+    return f"{who}, so nothing from it is sent to any model but the one it runs on"
+
+
+def other_model_refusal(model_ref: str) -> str:
+    """What a refused model call says: "This chat is Incognito, so nothing from it is sent to any
+    model but the one it runs on: <model> was not asked." """
+    reason = own_model_reason()
+    named = f": {model_ref} was not asked" if model_ref else ""
+    return f"{reason[:1].upper()}{reason[1:]}{named}."
 
 
 _Turn = TypeVar("_Turn", bound=Callable[..., Awaitable[None]])
@@ -307,10 +461,12 @@ def check_statement(sql: str, *, script: bool = False) -> None:
 class ScopeCarryingExecutor(ThreadPoolExecutor):
     """A worker pool that runs each piece of work in the context of the code that handed it over.
 
-    ``loop.run_in_executor`` does not carry context variables into the worker thread (and
-    ``asyncio.to_thread`` does). Installed as the gateway's default executor, this makes the two
-    agree, so a store a handler reaches from a worker thread knows which session the work derives
-    from, as it does on the loop.
+    A plain ``ThreadPoolExecutor`` (and so ``loop.run_in_executor``) does not carry context
+    variables into the worker thread, while ``asyncio.to_thread`` does. So every worker pool is one
+    of these, and it is the gateway's default executor: a store, an embedding function or a model
+    reached from a worker thread knows which session the work derives from, as it does on the loop.
+    A memory read bounded by a timeout once ran on a plain pool, and an Incognito chat's message
+    reached the embedding model from its worker.
     """
 
     def submit(self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> Future[_T]:

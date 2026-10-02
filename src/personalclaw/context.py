@@ -513,14 +513,14 @@ def _guarded_recall(label: str, fn, *, timeout_secs: float | None = None):
     try:
         if timeout_secs is None:
             return fn()
-        import concurrent.futures
-
         # NOT a `with` block. `ThreadPoolExecutor.__exit__` calls `shutdown(wait=True)`, which
         # JOINS the still-running worker — so the future times out and the caller then blocks
         # anyway. Measured while writing this test: a 0.2s budget against a 30s read took 30.3s
         # to return. `shutdown(wait=False)` is what makes the budget real; the orphaned worker
         # finishes into a result nobody reads, which is the cost of bounding a sync read.
-        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        # The worker carries the turn's scope, so the read knows which chat it is for and an
+        # Incognito chat's message reaches no embedding model from it.
+        ex = memory_writes.ScopeCarryingExecutor(max_workers=1)
         try:
             return ex.submit(fn).result(timeout=timeout_secs)
         finally:

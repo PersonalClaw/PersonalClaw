@@ -159,6 +159,17 @@ wrote no vector and no chunk, so it is recorded `unsearchable` rather than
 `done` (see [Searchability](#searchability)). Any provider works: the native
 `apps/sentence-transformers` app or any bound remote model.
 
+Every embedding call that reaches a model is recorded with the model calls
+(`model_calls.jsonl`, use case `embedding`): the model, how many texts and about
+how many tokens (estimated from their length, and marked so), how long it took,
+what it cost, whether it answered, and the session the work was for. Never the
+text. One that answered also writes its Settings → Usage row
+(`usage_ledger.record_call`), which names that model-call row so the two are not
+counted twice. The call is priced by the one pricing function
+(`routing.rates.price_call`: a price you set, a model on this machine at its known
+$0, the shipped table); one that fails is charged nothing and is in the
+model-call log only, as any failed model call is.
+
 Every vector records the model that wrote it — a chunk's and an item's alike
 (`embedding_model_id` / `embedding_provider`, `knowledge/embedding_fingerprint.py`) —
 so the re-index Settings → Models starts after an embedding change re-embeds only
@@ -437,7 +448,9 @@ item vector).
   session blocks memory READS at the API layer (`_blocks_reads_session`). Both
   temporary and **incognito** sessions keep nothing: the memory, knowledge and
   vocabulary stores refuse every write made in their name, by any path, and
-  nothing from them is embedded (`memory_writes.py`) — see
+  nothing from them reaches the embedding model, so an incognito chat's memory
+  is searched by keyword (`memory_writes.model_may_read`, asked by the embedding
+  functions, including on the worker threads recall runs on) — see
   [chat-sessions.md](chat-sessions.md#session-model).
 - Recalled episodic content is fenced as data:
   the recall block is labeled `[Recalled episodes — past conversation

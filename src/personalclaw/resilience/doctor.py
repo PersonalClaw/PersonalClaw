@@ -283,7 +283,7 @@ def failed_checks(ctx: Optional[DoctorContext] = None) -> list[dict[str, Any]]:
     that works whether or not the calling thread already has a loop. Core tiers are not re-run —
     in-process they report the process this is running in.
     """
-    import concurrent.futures
+    from personalclaw import memory_writes
 
     probes = [p for p in all_probes() if p.tier == Tier.CAPABILITY]
     ctx = ctx or DoctorContext()
@@ -292,7 +292,7 @@ def failed_checks(ctx: Optional[DoctorContext] = None) -> list[dict[str, Any]]:
         results = await asyncio.gather(*(_safe_run(p, ctx) for p in probes))
         return [_row(p, res) for p, res in zip(probes, results) if not res.ok]
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+    with memory_writes.ScopeCarryingExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, _run()).result()
 
 

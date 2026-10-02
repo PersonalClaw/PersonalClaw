@@ -365,19 +365,22 @@ def held_workers() -> Iterator[HeldWorkers]:
     A timeout bounds the CALLER of a read on a worker, not the read: the worker cannot be stopped
     and finishes later into a result nobody reads. In a test, later is after the test ends and its
     home isolation is undone, so a worker that went on to resolve the home reached the real one,
-    during some other test. Every ``concurrent.futures.ThreadPoolExecutor`` made inside the block
-    is recorded; a stub for the slow read calls ``held.hold()``; the block's end releases the
-    stubs and joins every recorded pool, so each worker finishes inside the test.
+    during some other test. Every worker pool made inside the block is recorded (each is a
+    ``memory_writes.ScopeCarryingExecutor``, which ``test_model_reach_census`` holds the tree to); a
+    stub for the slow read calls ``held.hold()``; the block's end releases the stubs and joins
+    every recorded pool, so each worker finishes inside the test.
     """
+    from personalclaw import memory_writes
+
     held = HeldWorkers()
-    real = concurrent.futures.ThreadPoolExecutor
+    real = memory_writes.ScopeCarryingExecutor
 
     class _Recorded(real):  # type: ignore[misc, valid-type]
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             super().__init__(*args, **kwargs)
             held.pools.append(self)
 
-    with mock.patch.object(concurrent.futures, "ThreadPoolExecutor", _Recorded):
+    with mock.patch.object(memory_writes, "ScopeCarryingExecutor", _Recorded):
         try:
             yield held
         finally:
