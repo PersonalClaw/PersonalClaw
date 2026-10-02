@@ -58,7 +58,14 @@ from personalclaw.subagent_persistence import (
     write_result_chunk,
     write_tombstone,
 )
-from personalclaw.subagent_tier import CallBudget, ended_without_answering, tier_for
+from personalclaw.subagent_tier import (
+    CAPABILITY_TEXT,
+    CallBudget,
+    ended_without_answering,
+    refuse_unheld,
+    run_agent,
+    tier_for,
+)
 from personalclaw.task_modes import declared_level
 from personalclaw.textfmt import extract_options
 from personalclaw.usage_ledger import spent_rows
@@ -378,15 +385,15 @@ CAPABILITY_MUTATING = "mutating"
 def resolve_capability_class(*, capability_class: str, approval_mode: str) -> str:
     """The effective capability class for a spawn (§4.1).
 
-    An explicit ``research``/``mutating`` always wins — a caller that decided is obeyed. An unset
-    class defaults BY CONSTRUCTION: ``research`` (read-only) for an AUTO-FIRED spawn
+    An explicit ``research``/``mutating``/``text`` always wins — a caller that decided is obeyed.
+    An unset class defaults BY CONSTRUCTION: ``research`` (read-only) for an AUTO-FIRED spawn
     (``approval_mode == "auto"`` — a cron/unattended run with no human watching), ``mutating`` for a
     human-watched spawn. This is the plan's "auto-fired runs default read-only" rule: write/execute
     on an unattended run is a creation-time grant a caller passes explicitly (``capability_class=
     "mutating"``), never a capability an auto-fired run acquires by default.
     """
     cc = (capability_class or "").strip().lower()
-    if cc in (CAPABILITY_RESEARCH, CAPABILITY_MUTATING):
+    if cc in (CAPABILITY_RESEARCH, CAPABILITY_MUTATING, CAPABILITY_TEXT):
         return cc
     return CAPABILITY_RESEARCH if approval_mode == "auto" else CAPABILITY_MUTATING
 
@@ -406,9 +413,9 @@ class SubagentInfo:
     agent: str = ""
     approval_mode: str = ""  # "auto" to skip tool approvals in the subagent session
     # Tool-capability class: "research" (read-only — write/execute tools default-denied at
-    # the approval layer) or "mutating" (full grant). Empty resolves by construction via
-    # ``resolve_capability_class`` — auto-fired spawns default to research so an unattended run
-    # cannot write without an explicit creation-time grant.
+    # the approval layer), "mutating" (full grant) or "text" (no tools, the task alone). Empty
+    # resolves by construction via ``resolve_capability_class`` — auto-fired spawns default to
+    # research so an unattended run cannot write without an explicit creation-time grant.
     capability_class: str = ""
     dry_run: bool = False  # observe-mode: write-capable tools don't execute (T9 replay)
     silent: bool = False  # suppress completion notification (dashboard + channel)
@@ -487,6 +494,8 @@ class SubagentInfo:
     # The tools of the calls its own limits refused (`SubagentTier.limited`): its trigger's history
     # then records it as refused, not as a success (`triggers.settle`). Last, as `trigger_id` is.
     refused: list[str] = field(default_factory=list)
+    # The app whose `agent` permission started this run, or "" (`subagent_tier`). Last, too.
+    app: str = ""
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -687,6 +696,8 @@ class SubagentManager:
         the “Invoke Agent” action when it runs", and asking again at the start asked it twice. It
         is a grant for the start alone, so :meth:`_standing_grant` does not read it.
         """
+        if info.app:  # its `agent` permission, agreed to at install: the start alone, too
+            return approval_grants.APP
         if self._is_yolo and self._is_yolo():
             return approval_grants.YOLO
         if info.approval_mode == "auto":
@@ -745,7 +756,7 @@ class SubagentManager:
 
     def _grant_now(self, info: SubagentInfo, *, audit: bool) -> str:
         """:meth:`_standing_grant`, if the operator ceiling lets it stand; else ``""``."""
-        grant = self._standing_grant(info)
+        grant = "" if info.app else self._standing_grant(info)  # never an app's (`subagent_tier`)
         if grant and approval_grants.stands(
             grant,
             caller=info.parent_session_key or f"subagent:{info.id}",
@@ -1154,6 +1165,7 @@ class SubagentManager:
         approved_at: float = 0.0,
         may_read: tuple[str, ...] = (),
         may_change: tuple[str, ...] = (),
+        app: str = "",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1209,6 +1221,7 @@ class SubagentManager:
             approved_at (float): When the owner allowed this same start before — the caller's
                 own record of her answer, handed back to resume it. The start then does not
                 ask again, within the time limit a subagent is given (:meth:`_spawn_grant`).
+            app (str): The app whose ``agent`` permission starts this run (``subagent_tier``).
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1375,6 +1388,7 @@ class SubagentManager:
                 return SubagentInfo(
                     id=uuid.uuid4().hex[:8], task=_redacted_task, agent="", done=True, error=err
                 )
+        agent = run_agent(capability_class, agent)
 
         # --- Build the addressable info up front: a queued spawn carries a
         # REAL id and its full parameter set (approval_mode/model/silent/dry_run/
@@ -1387,7 +1401,7 @@ class SubagentManager:
             parent_session_key=parent_session_key,
             agent=agent,
             approval_mode=approval_mode or "",
-            capability_class=capability_class or "",
+            capability_class=(capability_class or "").strip().lower(),
             dry_run=dry_run,
             silent=silent,
             max_turns=max_turns,
@@ -1402,6 +1416,7 @@ class SubagentManager:
             approved_at=float(approved_at or 0.0) if request_key else 0.0,
             may_read=tuple(may_read),
             may_change=tuple(may_change),
+            app=app,
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
         memory_writes.hand_on(agent_work_id(agent_id), parent_session_key)  # keeps what it keeps
@@ -2198,9 +2213,11 @@ class SubagentManager:
             message = prefix + raw_task
         from personalclaw.context_headroom import resolve_window
 
-        full_message, _ = self._ctx_builder.build_message(
-            message, is_new, session_key, window=await resolve_window(serving=client)
-        )
+        full_message = message  # a text run is handed the task alone (`subagent_tier`)
+        if info.capability_class != CAPABILITY_TEXT:
+            full_message, _ = self._ctx_builder.build_message(
+                message, is_new, session_key, window=await resolve_window(serving=client)
+            )
 
         result_text = ""
         info.turns = 0
@@ -2254,6 +2271,8 @@ class SubagentManager:
         native = _is_native(client)
         if _is_native(client):
             tier.hold(client)
+        elif refuse_unheld(info, agent):  # a run its runtime cannot hold to its tier
+            return
         # Each call's input by its id, from the moment it is made to its result: a call its runtime
         # approved from the policy is reported with the input it ran with (`_fire_granted`).
         call_inputs: dict[str, Any] = {}

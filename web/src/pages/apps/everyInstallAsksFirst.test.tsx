@@ -38,7 +38,7 @@ const SOURCE = '/apps/growth'
 const DIGEST = 'a'.repeat(64)
 
 const DISCLOSURE: AppDisclosure = {
-  permissions: { api: ['/api/projects', '/api/tasks', '/api/knowledge'], agent: true, cron: true, storage: true, network: false },
+  permissions: { api: ['/api/projects', '/api/tasks', '/api/knowledge'], agent: 'text', cron: true, storage: true, network: false },
   crons: [{
     name: 'daily-capture', cron_expr: '3 18 * * *', cadence: 'At 06:03 PM', agent: '',
     message: 'scan today and capture growth artifacts', scheduled: true,
@@ -111,7 +111,7 @@ describe('a clean-scanning app still asks before it installs', () => {
     expect(text(dialog)).toMatch(/Nothing is installed until you choose Install/)
     expect(text(dialog)).toMatch(/Permissions the gateway enforces/)
     expect(text(dialog)).toMatch(/API: \/api\/projects, \/api\/tasks, \/api\/knowledge/)
-    expect(text(dialog)).toMatch(/Run background agents/)
+    expect(text(dialog)).toMatch(/Run AI tasks on the text it sends/)
     expect(text(dialog)).toMatch(/Starts its own server process/)
     expect(text(dialog)).toMatch(/Runs bash setup\.sh in the app's folder during the install/)
     expect(text(dialog)).toMatch(/Security scan: clean/)
@@ -174,7 +174,7 @@ describe('what the dialog discloses is what the app gets', () => {
     grid(pointer)
     const dialog = await openReview()
     expect(previewApp).toHaveBeenCalledWith('https://github.com/acme/apps.git#growth', undefined, undefined)
-    expect(text(dialog)).toMatch(/Run background agents/)
+    expect(text(dialog)).toMatch(/Run AI tasks on the text it sends/)
     expect(text(dialog)).toMatch(/Installing turns on a scheduled job/)
   })
 

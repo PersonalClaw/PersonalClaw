@@ -987,9 +987,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // open. Sourced from the server (not from the navigation that created the branch) so
   // the breadcrumb is still there after a reload. `title: ''` = the origin is gone.
   const [branchedFrom, setBranchedFrom] = useState<{ key: string; title: string } | null>(null)
-  // The app that started this conversation, and whether its grant approves on its own — `null`
-  // for one of yours. Read from the session detail on every open.
-  const [startedBy, setStartedBy] = useState<{ name: string; autoApproves: boolean } | null>(null)
+  // The app that started this conversation — `null` for one of yours. Read from the session
+  // detail on every open.
+  const [startedBy, setStartedBy] = useState<{ name: string } | null>(null)
   // Investigate origin: the entity this chat was opened to investigate.
   // Rendered as a header chip deep-linking back to the source surface.
   const [investigateOrigin, setInvestigateOrigin] = useState<import('../lib/api').InvestigateOrigin | null>(null)
@@ -1306,10 +1306,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           ? { key: branchParentKey(d.forked_from), title: d.forked_from_title || '' }
           : null)
         // Which app started this conversation, if one did: a turn here runs under that app's
-        // grant whoever sends it, and the composer and the Permission pill say so (`StartedByApp`).
-        setStartedBy(startedByName(d)
-          ? { name: startedByName(d), autoApproves: !!d.app_auto_approves }
-          : null)
+        // permissions whoever sends it, and the composer and the Permission pill say so
+        // (`StartedByApp`).
+        setStartedBy(startedByName(d) ? { name: startedByName(d) } : null)
         // Investigate origin chip — present on sessions opened via
         // POST /api/investigate; survives the first turn (display fields kept).
         setInvestigateOrigin((d as { investigate?: import('../lib/api').InvestigateOrigin | null }).investigate ?? null)
@@ -3360,7 +3359,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       )}
       {/* An app's conversation: what you send runs under the APP's grant, not your approval
           switches — said before you type, like the memory notice above. */}
-      {startedBy && <AppPermissionNotice name={startedBy.name} autoApproves={startedBy.autoApproves} />}
+      {startedBy && <AppPermissionNotice name={startedBy.name} />}
       {/* The composer's notice: what failed (voice input, screen sharing, a switched answer, a
           branch…), which stays until dismissed or the next send, or what just happened. */}
       <ComposerNoticeLine notice={notice.notice} onDismiss={notice.clear} />

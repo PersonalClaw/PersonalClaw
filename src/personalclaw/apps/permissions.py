@@ -20,12 +20,13 @@ sandbox). Enforcement status of each method:
   exists because ``permissions.api`` is a path-PREFIX allowlist and a prefix says nothing
   about power: ``/api/ws`` prefix-matched ``/api/ws/terminal/{id}``, so declaring the event
   socket also handed the app an owner shell (#2964). See that registry.
-* ``can_use_agent`` — the app agent-run endpoints (handlers/apps.py), checked
-  against the CALLING app's identity rather than the ``{name}`` path segment, plus
-  a per-run ownership check so an app only reads runs it spawned. The same grant
-  gates every ``agent_work`` route in :data:`ROUTE_AUTHZ` (a turn in the app's own
-  conversation) and decides how that conversation approves
-  (:func:`app_conversation_auto_approves`).
+* ``agent_tier`` — the tier the app's agent work runs at (``agent_tiers.AGENT_TIERS``). The app
+  agent-run endpoints (handlers/apps.py) start a task at that tier or a narrower one the task
+  asks for, checked against the CALLING app's identity rather than the ``{name}`` path segment,
+  plus a per-run ownership check so an app only reads runs it spawned; the subagent holds the
+  run to it. Every ``agent_work`` route in :data:`ROUTE_AUTHZ` names the tier its work needs (a
+  turn in the app's own conversation needs ``tools``). No tier approves the app's calls: an
+  app's conversation, like its background tasks, asks for each call that needs approval.
 * ``can_use_event`` — WS fan-out (state.broadcast_ws) filters an app connection's
   events to its declared set, and a frame about a conversation or an inbox item reaches it only
   when the app started that conversation or raised that item (``dashboard/ws_state.py::
@@ -76,6 +77,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from personalclaw.apps.agent_tiers import AGENT_READ, AGENT_TEXT, AGENT_TOOLS, agent_tier_covers
 from personalclaw.apps.manifest import Permissions
 
 logger = logging.getLogger(__name__)
@@ -242,8 +244,8 @@ class PermissionChecker:
     def can_use_storage(self) -> bool:
         return self.permissions.storage
 
-    def can_use_agent(self) -> bool:
-        """May the app run background agent tasks (headless subagent runs)?"""
+    def agent_tier(self) -> str:
+        """The tier the app's agent work runs at (``permissions.agent``), or ``""`` for none."""
         return self.permissions.agent
 
 
@@ -489,14 +491,16 @@ class AppMay:
     (``dashboard/server.py::app_permission_middleware``). A conversation that is yours, another
     app's, or none at all gets the same refusal, so the answer confirms nothing.
 
-    ``agent_work`` marks a route that runs your model with your tools: a turn, a side question,
-    a revised plan, a generated title. An app does agent work only under its own ``agent``
-    permission, which install consent names, so it is refused without that grant however it
-    declared the path."""
+    ``agent_work`` names the agent tier a route's work needs (``agent_tiers.AGENT_TIERS``), or is
+    ``""`` for a route that runs no model. A turn, a side question, a revised plan or a generated
+    title in the app's own conversation runs your model with that conversation's tools, so it
+    needs ``tools``; summarising text the app sends needs only ``text``. An app does agent work
+    only under its own ``agent`` permission, which install consent words by tier, so a route is
+    refused to an app whose tier does not cover it, however it declared the path."""
 
     reason: str
     owns: tuple[OwnedTarget, ...] = ()
-    agent_work: bool = False
+    agent_work: str = ""
 
 
 #: The verbs that write. A read under a security family is governed by the ordinary allowlist,
@@ -730,8 +734,8 @@ _WRITES_OWN_INSTANCE = (
 )
 #: The conversation a ``/api/chat/sessions/{session}/…`` route addresses.
 _OWN_CHAT = (OwnedTarget("session"),)
-#: A turn is your model working with your tools, so it runs under the app's own `agent` grant —
-#: the one install consent words as "background agents that use any tool without asking you".
+#: A turn is your model working with your tools, so it needs the app's `agent` permission at the
+#: `tools` tier — and it approves none of its calls, which ask you as the tier's consent says.
 _TURN_IN_OWN_CHAT = (
     "runs a turn in a conversation the app started, under the app's own `agent` permission"
 )
@@ -1263,7 +1267,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "sends into a conversation the app started, or starts one that is the app's, and runs "
         "the turn under the app's own `agent` permission",
         owns=(OwnedTarget("session", in_body=True, optional=True),),
-        agent_work=True,
+        agent_work=AGENT_TOOLS,
     ),
     "POST /api/chat/sessions": AppMay(
         "starts a conversation that is the app's — a name returns a conversation only if the app "
@@ -1277,25 +1281,25 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         owns=(OwnedTarget("session"), OwnedTarget("key", in_body=True, optional=True)),
     ),
     "POST /api/chat/sessions/{session}/regenerate": AppMay(
-        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=AGENT_TOOLS
     ),
     "POST /api/chat/sessions/{session}/edit-resend": AppMay(
-        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=AGENT_TOOLS
     ),
     "POST /api/chat/sessions/{session}/side/turn": AppMay(
-        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=AGENT_TOOLS
     ),
     "POST /api/chat/sessions/{session}/plan/comment": AppMay(
-        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=AGENT_TOOLS
     ),
     "POST /api/chat/sessions/{session}/plan/approve": AppMay(
-        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=True
+        _TURN_IN_OWN_CHAT, owns=_OWN_CHAT, agent_work=AGENT_TOOLS
     ),
     "POST /api/chat/sessions/{session}/generate-title": AppMay(
         "titles a conversation the app started, with your model under the app's own `agent` "
         "permission",
         owns=_OWN_CHAT,
-        agent_work=True,
+        agent_work=AGENT_TOOLS,
     ),
     "POST /api/chat/sessions/{session}/context": AppMay(
         "adds background context to the next turn of a conversation the app started",
@@ -1378,7 +1382,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/chat/nav/resolve-links": AppMay(
         "summarises links with your model under the app's own `agent` permission; it writes "
         "nothing",
-        agent_work=True,
+        agent_work=AGENT_TEXT,
     ),
     "POST /api/chat/folders": OwnerOnly(_ORGANISES_CHATS),
     "PATCH /api/chat/folders/{id}": OwnerOnly(_ORGANISES_CHATS),
@@ -1410,7 +1414,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "proposes a folder and tags for a conversation the app started, with your model under "
         "the app's own `agent` permission",
         owns=_OWN_CHAT,
-        agent_work=True,
+        agent_work=AGENT_TOOLS,
     ),
     "GET /api/chat/sessions/templates": OwnerOnly(_CHAT_TEMPLATES),
     # Keyed off the caller's `X-Session-Key`: the chat's own tools ask it, as the chat they run in.
@@ -1778,39 +1782,35 @@ def app_request_denial(app_name: str, path: str, *, method: str = "", route: str
     # declaring the path in permissions.api is necessary but not sufficient.
     if path.startswith(MEMORY_API_PATHS) and not checker.can_use_memory():
         return "memory access not declared (permissions.memory)"
-    # A turn is your model working with your tools. Declaring `/api/chat` shows the owner a path;
-    # the grant that says an app runs agents is `agent`, and it is worded at install consent as
-    # agents that use any tool without asking — so that is the grant a turn needs.
+    # Declaring `/api/chat` shows the owner a path; what the work may use is the `agent` tier,
+    # worded at install consent tier by tier, so that is what a route that runs her model needs.
     authz = route_authz(method, route)
-    if isinstance(authz, AppMay) and authz.agent_work and not checker.can_use_agent():
-        return (
-            "this runs your model with your tools — agent work, which an app does only under its "
-            "own `agent` permission (permissions.agent), and this app does not hold it"
-        )
+    if isinstance(authz, AppMay) and authz.agent_work:
+        short = agent_tier_shortfall(checker.agent_tier(), authz.agent_work)
+        if short:
+            return f"this runs your model — agent work, which {short}"
     return ""
 
 
-def app_conversation_auto_approves(app_name: str) -> bool:
-    """Whether a conversation the app *app_name* started approves its own tool calls.
+#: What each agent tier lets an app's agent do, in the words a refusal names it by — the install
+#: consent's own meaning of each (``web/src/pages/apps/installConsent.tsx``), said shorter.
+AGENT_TIER_MEANS: dict[str, str] = {
+    AGENT_TEXT: "the model answers from what the app sends, with no tools",
+    AGENT_READ: "an agent with read-only tools",
+    AGENT_TOOLS: "an agent with your tools, each call that needs approval asking you",
+}
 
-    An app's conversation runs under the APP's grant, never under the approval switches the owner
-    set for the owner's chats: YOLO, Trust, Trust reads and an agent's "always allow" are not read
-    for it (``dashboard/chat_runner.py``), so none of them can widen it. The grant a turn needs is
-    ``agent``, which install consent words as "background agents that use any tool without asking
-    you", so a conversation of an app that holds it approves on its own — as the app's background
-    agent runs do (``handlers/apps.py::api_app_agent_run``) — and one whose app no longer holds it,
-    or is disabled or gone, asks.
 
-    The operator CEILING still bounds it, as it bounds every grant (`approval_grants.stands`): a
-    ceiling that says every run asks makes this answer False, and the refusal is audited.
-    """
-    if not app_name or app_lifecycle_denial(app_name):
-        return False
-    checker = checker_for(app_name)
-    if checker is None or not checker.can_use_agent():
-        return False
-    from personalclaw import approval_grants
+def agent_tier_shortfall(held: str, needed: str) -> str:
+    """Why an app holding agent tier *held* may not do work that needs tier *needed*, as the end
+    of a sentence about that work, or ``""`` when *held* covers it.
 
-    return approval_grants.stands(
-        approval_grants.APP, caller=f"app:{app_name}", subject="conversation"
-    )
+    It names both tiers and what each means, so the reason an app's developer reads says what
+    to declare, and the owner's audit row says what the app tried."""
+    if agent_tier_covers(held, needed):
+        return ""
+    means = AGENT_TIER_MEANS.get(needed, "a tier PersonalClaw does not have")
+    wants = f'needs the `agent` permission at the "{needed}" tier ({means})'
+    if not held:
+        return f"{wants}, and this app declares no `agent` permission"
+    return f'{wants}, and this app\'s is "{held}" ({AGENT_TIER_MEANS.get(held, held)})'

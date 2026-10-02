@@ -809,13 +809,22 @@ export interface ModelItem { name: string; model_name: string; description: stri
 // chokepoint (provider code is imported in-process). The consent UI must therefore
 // render `network` as advisory and outside the enforced list; see `PermissionList` in
 // pages/apps and docs/security/limitations.md §2.
+/** What an app's agent work may use (`permissions.agent`, `apps/agent_tiers`): `text`
+ *  hands the model the task the app sends and nothing else, with no tools; `read` is an agent
+ *  with read-only tools; `tools` an agent with your tools, each call that needs approval asking
+ *  you. No tier approves the app's calls. */
+export type AgentTier = 'text' | 'read' | 'tools'
+
 export interface AppPermissionsWire {
   api?: string[]; events?: string[]; mcpTools?: string[]
   // #3501: `memory` is a boolean grant, not a tier. It was `"" | "app-scoped" | "shared"`
   // and `app-scoped` granted nothing on any path (the gateway checked for `"shared"`), so
   // the consent bullet interpolated a tier name the user was told they had approved and
   // that the gateway never honoured. One grant, absent when not held.
-  storage?: boolean; network?: boolean; memory?: boolean; cron?: boolean; agent?: boolean
+  storage?: boolean; network?: boolean; memory?: boolean; cron?: boolean
+  // The tier an app's agent work runs at, absent when it runs none. Enforced where the work
+  // runs: a task asking for a wider one is refused, and the run is held to it.
+  agent?: AgentTier
   // Apps this app may send a brokered message to (exact name, or a
   // trailing-`*` prefix pattern). Enforced — `POST /api/apps/message` is the only
   // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message
@@ -8341,11 +8350,10 @@ export const api = {
     /** What the context ring was last told — the `context_usage` frame's reading and window
      *  (`null` window = none declared or served) — or null before any turn said anything. */
     context_usage?: { pct: number | null; window?: number | null } | null
-    /** Present only on a conversation an APP started. A turn in it runs under that app's
-     *  grant, whoever sends the message — your approval switches never reach it — and
-     *  `app_auto_approves` says which way that grant decides: `true` its tool calls run without
-     *  asking you, `false` they ask. */
-  } & AppStarted & { app_auto_approves?: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}`),
+    /** Present only on a conversation an APP started (`AppStarted`). A turn in it runs under
+     *  that app's permissions, whoever sends the message: your approval switches never reach it,
+     *  and the app approves none of its calls, so each one that needs approval asks you. */
+  } & AppStarted>(`/api/chat/sessions/${encodeURIComponent(key)}`),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
   /** Set the per-conversation natural-voice scope. `''` clears the override so
    *  the conversation inherits the bound agent's preference again. The response is the

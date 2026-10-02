@@ -34,7 +34,7 @@ import { StoreView, SourcesPanel } from './AppsSection'
 const SOURCE = 'https://github.com/acme/reporter.git'
 
 const GRANTS: AppDisclosure = {
-  permissions: { api: ['/api/knowledge'], cron: true, agent: true, network: false },
+  permissions: { api: ['/api/knowledge'], cron: true, agent: 'tools', network: false },
   crons: [{
     name: 'nightly-digest', cron_expr: '23 * * * *', cadence: 'At 23 minutes past the hour',
     agent: 'researcher', message: 'summarise the day', scheduled: true,
@@ -98,7 +98,7 @@ describe('a card-grid install discloses the grants at consent', () => {
     // …and so are the grants the card used to skip.
     expect(text).toMatch(/Permissions the gateway enforces/)
     expect(text).toMatch(/API: \/api\/knowledge/)
-    expect(text).toMatch(/Run background agents/)
+    expect(text).toMatch(/Run background agents that use your tools/)
     expect(text).toMatch(/Scheduled jobs/)
     expect(text).toMatch(/nightly-digest/)
   })

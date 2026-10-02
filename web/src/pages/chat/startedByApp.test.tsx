@@ -4,9 +4,9 @@ import { HeaderModePill } from '../../ui/HeaderActions'
 import { AppPermissionNotice, StartedByApp, appPermissionSentence, startedByName } from './StartedByApp'
 
 // A conversation an app started sits in your history beside yours, and a turn in it runs under
-// the APP's grant whoever sends it — your Trust and YOLO never reach it. The server names the app
-// (`created_by_app`, `created_by_app_name`) and says how its grant decides (`app_auto_approves`);
-// these pin that every surface prints that and nothing it does not know.
+// the APP's permissions whoever sends it — your Trust and YOLO never reach it, and the app approves
+// none of its calls. The server names the app (`created_by_app`, `created_by_app_name`); these pin
+// that every surface prints that and nothing it does not know.
 
 describe('Started by <app>', () => {
   it('names the app as install consent showed it', () => {
@@ -26,21 +26,17 @@ describe('Started by <app>', () => {
     expect(startedByName({ created_by_app: '', created_by_app_name: '' })).toBe('')
   })
 
-  it('says whose permissions the turn runs under, for both answers the grant can give', () => {
-    const auto = appPermissionSentence('Probe Chat', true)
-    const asks = appPermissionSentence('Probe Chat', false)
-    for (const sentence of [auto, asks]) {
-      expect(sentence).toContain("runs with Probe Chat's permissions")
-      expect(sentence).toContain("Your Trust and YOLO settings don't apply in this chat.")
-    }
-    expect(auto).toContain('run without asking you')
-    expect(asks).toContain('asks you')
-    expect(asks).not.toContain('without asking')
+  it('says whose permissions the turn runs under, and that each call needing approval asks you', () => {
+    const sentence = appPermissionSentence('Probe Chat')
+    expect(sentence).toContain("runs with Probe Chat's permissions")
+    expect(sentence).toContain("Your Trust and YOLO settings don't apply in this chat.")
+    expect(sentence).toContain('asks you')
+    expect(sentence).not.toContain('without asking')
   })
 
   it('shows the note above the composer', () => {
-    render(<AppPermissionNotice name="Probe Chat" autoApproves={false} />)
-    expect(screen.getByText(appPermissionSentence('Probe Chat', false))).toBeTruthy()
+    render(<AppPermissionNotice name="Probe Chat" />)
+    expect(screen.getByText(appPermissionSentence('Probe Chat'))).toBeTruthy()
   })
 })
 

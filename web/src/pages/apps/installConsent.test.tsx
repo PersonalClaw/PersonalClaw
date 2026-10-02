@@ -221,8 +221,8 @@ describe('the dialog discloses the grants, not only the scan', () => {
   })
 
   it('discloses the grants on a REFUSAL too — they are why the findings matter', async () => {
-    const dialog = await dialogFor(refused(scan({ verdict: 'dangerous' }), { permissions: { agent: true } }))
-    expect(text(dialog)).toMatch(/Run background agents/)
+    const dialog = await dialogFor(refused(scan({ verdict: 'dangerous' }), { permissions: { agent: 'read' } }))
+    expect(text(dialog)).toMatch(/Run background agents with read-only tools/)
     expect(footerButtons().some((n) => /Install/.test(n)), 'still terminal').toBe(false)
   })
 })

@@ -185,7 +185,7 @@ async def test_consent_is_to_the_reviewed_bytes_and_no_others(tmp_path):
         first = await _review(client, src)
 
         manifest = json.loads((Path(src) / "app.json").read_text())
-        manifest["permissions"]["agent"] = True
+        manifest["permissions"]["agent"] = "tools"
         manifest["crons"].append({"name": "hourly", "every": 3600, "message": "check in"})
         (Path(src) / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -246,14 +246,14 @@ async def test_an_update_that_changes_what_the_app_gets_waits_for_consent(tmp_pa
             tmp_path,
             subdir="src2",
             version="2.0.0",
-            permissions={"cron": True, "network": False, "agent": True},
+            permissions={"cron": True, "network": False, "agent": "read"},
         )
 
         r = await client.post("/api/apps/digest/update", json={"source": v2})
         assert r.status == 409, await r.text()
         body = await r.json()
         assert "agent" not in body["previous"]["permissions"]
-        assert body["disclosure"]["permissions"]["agent"] is True
+        assert body["disclosure"]["permissions"]["agent"] == "read"
         got = await (await client.get("/api/apps/digest")).json()
         assert got["installed"]["version"] == "1.0.0", "an unconsented update changed the app"
 
@@ -267,6 +267,32 @@ async def test_an_update_that_changes_what_the_app_gets_waits_for_consent(tmp_pa
         assert (updated["displayName"], updated["version"]) == ("Daily Digest", "2.0.0")
         got = await (await client.get("/api/apps/digest")).json()
         assert got["installed"]["version"] == "2.0.0"
+
+
+@pytest.mark.asyncio
+async def test_an_update_that_widens_its_agent_tier_waits_for_consent(tmp_path):
+    """The tier is what the owner agreed to at install, worded by tier: an app whose agent tasks
+    answered in text and now want her tools is a different app, so its update asks again."""
+    async with _client(tmp_path) as client:
+        v1 = _app(tmp_path, permissions={"network": False, "agent": "text"})
+        r = await client.post(
+            "/api/apps", json={"source": v1, "consent": (await _review(client, v1))["consent"]}
+        )
+        assert r.status == 201, await r.text()
+        v2 = _app(
+            tmp_path,
+            subdir="src2",
+            version="2.0.0",
+            permissions={"network": False, "agent": "tools"},
+        )
+
+        r = await client.post("/api/apps/digest/update", json={"source": v2})
+        assert r.status == 409, await r.text()
+        body = await r.json()
+        assert body["previous"]["permissions"]["agent"] == "text"
+        assert body["disclosure"]["permissions"]["agent"] == "tools"
+        got = await (await client.get("/api/apps/digest")).json()
+        assert got["installed"]["version"] == "1.0.0", "an unconsented update widened the tier"
 
 
 @pytest.mark.asyncio

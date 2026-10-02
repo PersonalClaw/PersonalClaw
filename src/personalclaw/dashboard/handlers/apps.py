@@ -30,6 +30,7 @@ review, and nothing is installed.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
@@ -125,6 +126,9 @@ def _sel_log(op: str, outcome: str, resources: str, request: web.Request, error:
 
     Screened ONCE, here, at the point of entry to the log: the row can never be cleaned after it
     is written, so the screen has to come before it, where this field is known to be a source.
+
+    A request carrying an app's identity (``request["app"]``, an app-scoped token) is the app's
+    doing, so its row names the app: an app's refused agent task was audited as the owner's.
     """
     try:
         from personalclaw.security import redact_credentials
@@ -132,8 +136,9 @@ def _sel_log(op: str, outcome: str, resources: str, request: web.Request, error:
 
         safe_resources, _ = redact_credentials(resources)
         safe_error, _ = redact_credentials(error)
+        app = request.get("app", "")
         _s().log_api_access(
-            caller=request.get("user", "dashboard"),
+            caller=f"app:{app}" if app else request.get("user", "dashboard"),
             operation=op,
             outcome=outcome,
             source="apps",
@@ -1078,12 +1083,13 @@ async def api_app_config_put(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Background agent tasks: an app runs a headless agent + polls its result.
 # This is the NON-iframe agentic path — for apps that act on agent output
-# rather than show a human a chat window. Gated by permissions.agent.
+# rather than show a human a chat window. Held to the app's permissions.agent tier.
 # ---------------------------------------------------------------------------
 
 
-def _app_agent_allowed(name: str) -> bool:
-    """Whether the app may run an agent: installed, enabled, and declaring `agent`.
+def _app_agent_tier(name: str) -> str:
+    """The agent tier the app may run work at now (``agent_tiers.AGENT_TIERS``): installed, enabled,
+    and declaring one. ``""`` when it may run none.
 
     The lifecycle half is not redundant with ``app_permission_middleware``. That runs
     only for a request carrying an app identity, and ``_agent_run_identity`` falls back
@@ -1094,9 +1100,30 @@ def _app_agent_allowed(name: str) -> bool:
     from personalclaw.apps.permissions import app_lifecycle_denial, checker_for
 
     if app_lifecycle_denial(name):
-        return False
+        return ""
     checker = checker_for(name)
-    return checker is not None and checker.can_use_agent()
+    return checker.agent_tier() if checker is not None else ""
+
+
+def _no_agent_tier(name: str) -> web.Response:
+    """The 403 for an app that may run no agent work, saying why in words that are true.
+
+    An app installed before ``permissions.agent`` named a tier still declares ``true``, which
+    names none: it does declare the permission, so "does not declare" would be false, and what
+    she can do about it is update the app (which asks her again, in the tier's words)."""
+    from personalclaw.apps.permissions import checker_for
+
+    checker = checker_for(name)
+    raw = checker.permissions.agent_declared_raw if checker is not None else ""
+    if raw:
+        message = (
+            f"app {name!r} declares the 'agent' permission as {raw}, which names no tier, so it "
+            'runs no agent tasks: update it to a version that declares "text", "read" or '
+            '"tools"'
+        )
+    else:
+        message = f"app {name!r} does not declare the 'agent' permission"
+    return web.json_response({"error": message}, status=403)
 
 
 def _agent_run_identity(request: web.Request) -> tuple[str, str]:
@@ -1117,16 +1144,28 @@ def _agent_run_identity(request: web.Request) -> tuple[str, str]:
 async def api_app_agent_run(request: web.Request) -> web.Response:
     """POST /api/apps/{name}/agent-run — start a background agent task.
 
-    Body: ``{task, agent?, max_turns?}``. Runs a headless subagent (auto-approve,
-    silent) on behalf of the app and returns its ``{id}``; the app polls
-    ``/agent-run/{id}`` for the result. Requires the ``agent`` permission of the
-    CALLING app, not of the app named in the path."""
+    Body: ``{task, tier?, agent?, max_turns?}``. Runs a headless, silent subagent on behalf of the
+    app at the app's ``agent`` tier, or at the narrower ``tier`` the task asks for, and returns its
+    ``{id, tier}``; the app polls ``/agent-run/{id}`` for the result. The tier is the CALLING app's,
+    not the app named in the path's, and the run is held to it (``subagent_tier``):
+
+    * ``text`` — the model is handed the task alone and shown no tools, so a text task names no
+      agent (it runs on the worker that has none);
+    * ``read`` — an agent with read-only tools;
+    * ``tools`` — an agent with the owner's tools.
+
+    The app approves none of its run's calls, whatever the tier: each one that needs approval asks
+    the owner. A task that asks for a wider tier than its app's is refused, and nothing runs."""
+    from personalclaw.apps.agent_tiers import AGENT_READ, AGENT_TEXT, AGENT_TIERS, AGENT_TOOLS
+    from personalclaw.apps.permissions import agent_tier_shortfall
+    from personalclaw.subagent import CAPABILITY_MUTATING, CAPABILITY_RESEARCH
+    from personalclaw.subagent_tier import CAPABILITY_TEXT
+
     _, name = _agent_run_identity(request)
-    if not _app_agent_allowed(name):
+    held = _app_agent_tier(name)
+    if not held:
         _sel_log("apps.agent_run", "denied", name, request, error="agent permission not granted")
-        return web.json_response(
-            {"error": f"app {name!r} does not declare the 'agent' permission"}, status=403
-        )
+        return _no_agent_tier(name)
 
     state = request.app["state"]
     if not getattr(state, "subagents", None):
@@ -1150,20 +1189,55 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
         max_turns = int(body.get("max_turns", 0) or 0)
     except (TypeError, ValueError):
         max_turns = 0
+    # The tier this task asks for: its app's own unless it names a narrower one.
+    tier = body.get("tier")
+    if tier is None or tier == "":
+        tier = held
+    if tier not in AGENT_TIERS:
+        return json_error(
+            "agent_tier_unknown",
+            message=(
+                f'"tier" must be "text", "read" or "tools", or left out for the app\'s own '
+                f"({held!r}) — got: {json.dumps(tier, default=str)}"
+            ),
+            status=400,
+        )
+    short = agent_tier_shortfall(held, tier)
+    if short:
+        refusal = (
+            f"This task {short}. A task may ask for its app's tier or a narrower one: the tier is "
+            "declared in the app's app.json, and the owner agrees to it when installing the app."
+        )
+    elif tier == AGENT_TEXT and agent:
+        refusal = (
+            f'This task is a "text" task and names an agent ({agent!r}), and a text task runs on '
+            "none: its model is handed the task alone, with no tools. Leave the agent out, or ask "
+            'for "read" or "tools" if the app holds one.'
+        )
+    else:
+        refusal = ""
+    if refusal:
+        _sel_log("apps.agent_run", "denied", name, request, error=refusal)
+        return json_error("agent_tier_exceeded", message=refusal, status=403)
 
-    # App-run agents are headless: auto-approve tools + silent (no chat surfacing),
-    # tagged by the app so the run is attributable. `capability_class="mutating"` is EXPLICIT
-    # behaviour-preservation: an app-run agent is an established write surface whose
-    # permissions the app already declares, so it keeps a full grant rather than inheriting the
-    # auto-fired read-only default that cron run-prompt / invoke-agent take.
+    # What each tier may use, as the subagent's capability class: a text task no tools at all, a
+    # read task read-only ones, a tools task every tool.
+    capability = {
+        AGENT_TEXT: CAPABILITY_TEXT,
+        AGENT_READ: CAPABILITY_RESEARCH,
+        AGENT_TOOLS: CAPABILITY_MUTATING,
+    }
+    # App-run agents are headless and silent (no chat surfacing), tagged by the app so the run is
+    # attributable, and held to the tier: what the run may use is the tier's capability class, and
+    # `app` is what lets it start on the app's install consent while approving none of its calls.
     info = state.subagents.spawn(
         task,
         parent_session_key=f"app:{name}",
         agent=agent,
         max_turns=max_turns,
-        approval_mode="auto",
-        capability_class="mutating",
+        capability_class=capability[tier],
         silent=True,
+        app=name,
     )
     if not info:
         return web.json_response(
@@ -1173,7 +1247,9 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
         _sel_log("apps.agent_run", "error", name, request, error=info.error)
         return web.json_response({"error": info.error}, status=400)
     _sel_log("apps.agent_run", "ok", name, request, error="")
-    return web.json_response({"id": info.id, "task": task, "status": "running"}, status=202)
+    return web.json_response(
+        {"id": info.id, "task": task, "status": "running", "tier": tier}, status=202
+    )
 
 
 async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
@@ -1183,10 +1259,8 @@ async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
     permission of the CALLING app, and the run must belong to that app."""
     request_app, name = _agent_run_identity(request)
     run_id = request.match_info["run_id"]
-    if not _app_agent_allowed(name):
-        return web.json_response(
-            {"error": f"app {name!r} does not declare the 'agent' permission"}, status=403
-        )
+    if not _app_agent_tier(name):
+        return _no_agent_tier(name)
 
     state = request.app["state"]
     if not getattr(state, "subagents", None):

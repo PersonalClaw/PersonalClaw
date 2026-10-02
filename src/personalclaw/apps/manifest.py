@@ -16,6 +16,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from personalclaw.apps.agent_tiers import declared_agent
+
 # ---------------------------------------------------------------------------
 # Nested manifest types
 # ---------------------------------------------------------------------------
@@ -532,7 +534,9 @@ class Permissions:
     # surface" shape as ``network_declared`` above).
     memory_declared_raw: str = ""
     cron: bool = False
-    agent: bool = False  # may run background agent tasks (headless subagent runs)
+    # The tier its agent work runs at (``apps.agent_tiers``), or "" for none: what its background
+    # agent tasks and the turns of its own conversations may use.
+    agent: str = ""
     # Target app names this app may send a brokered message to (via
     # POST /api/apps/message). Same list-of-names shape as ``events``/``mcpTools``
     # — an exact name or a trailing-``*`` prefix. Empty → may message NO app (deny
@@ -629,6 +633,19 @@ class Permissions:
     # would take out the listing, while ``validate`` runs only at install and update. So a
     # malformed app still renders a Store card explaining itself, and still cannot be installed.
     unknown_keys: tuple[str, ...] = ()
+    # The raw ``agent`` value a manifest declared when it names no tier (``true`` above all), the
+    # bookkeeping shape of ``memory_declared_raw``: ``validate()`` refuses it by name, and ``agent``
+    # stays "", so an install declaring it runs no agent work until an update names a tier. Never
+    # read as one, which would keep a grant nobody agreed to in its words. Last, as fields go.
+    agent_declared_raw: str = ""
+
+    def __post_init__(self) -> None:
+        # ``agent`` was a boolean, and one passed still would bind and grant nothing, silently.
+        if not isinstance(self.agent, str):
+            raise TypeError(
+                "Permissions.agent names a tier — 'text', 'read' or 'tools' — or is '' for no "
+                f"agent work; got {self.agent!r}"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -652,7 +669,7 @@ class Permissions:
         if self.cron:
             d["cron"] = True
         if self.agent:
-            d["agent"] = True
+            d["agent"] = self.agent
         if self.appMessaging:
             d["appMessaging"] = self.appMessaging
         if self.storageShared:
@@ -673,6 +690,7 @@ class Permissions:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Permissions":
+        agent, agent_declared_raw = declared_agent(data.get("agent"))
         return cls(
             api=[str(p) for p in data.get("api", []) if p],
             events=[str(e) for e in data.get("events", []) if e],
@@ -685,7 +703,8 @@ class Permissions:
                 "" if isinstance(data.get("memory", False), bool) else str(data.get("memory"))
             ),
             cron=bool(data.get("cron", False)),
-            agent=bool(data.get("agent", False)),
+            agent=agent,
+            agent_declared_raw=agent_declared_raw,
             appMessaging=[str(t) for t in data.get("appMessaging", []) if t],  # noqa: N815
             storageShared=bool(data.get("storageShared", False)),  # noqa: N815
             storageRead=[str(t) for t in data.get("storageRead", []) if t],  # noqa: N815
@@ -713,18 +732,19 @@ class Permissions:
 #:
 #: DERIVED from the dataclass rather than hand-listed, because a hand-listed copy drifts the
 #: moment a permission is added — and a vocabulary that has silently fallen behind the fields
-#: refuses a permission that works, which is worse than not checking at all. The three excluded
+#: refuses a permission that works, which is worse than not checking at all. The four excluded
 #: names are internal bookkeeping, not wire keys: ``network_declared`` records whether the
-#: author mentioned ``network``, ``memory_declared_raw`` records the raw ``memory`` value so a
-#: non-boolean can be named back to the author (#3501), and ``unknown_keys`` is the refusal
-#: record itself. Leaving a bookkeeping field IN the vocabulary makes it declarable: an app
-#: could write ``"memory_declared_raw": true``, be accepted, and have it rendered on the
-#: install-consent surface while granting nothing — the exact defect the unknown-key refusal
-#: below exists to prevent.
+#: author mentioned ``network``, ``memory_declared_raw`` and ``agent_declared_raw`` record a raw
+#: ``memory`` or ``agent`` value so one that is not a grant can be named back to the author
+#: (#3501), and ``unknown_keys`` is the refusal record itself. Leaving a bookkeeping field IN the
+#: vocabulary makes it declarable: an app could write ``"memory_declared_raw": true``, be
+#: accepted, and have it rendered on the install-consent surface while granting nothing — the
+#: exact defect the unknown-key refusal below exists to prevent.
 PERMISSION_KEYS: frozenset[str] = frozenset(
     f.name
     for f in fields(Permissions)
-    if f.name not in {"network_declared", "memory_declared_raw", "unknown_keys"}
+    if f.name
+    not in {"network_declared", "memory_declared_raw", "agent_declared_raw", "unknown_keys"}
 )
 
 
@@ -2222,6 +2242,16 @@ class AppManifest:
                 f'"app-scoped"/"shared" tier vocabulary was removed because "app-scoped" '
                 f"granted nothing; declare true for memory access or omit the key, got: "
                 f"{self.permissions.memory_declared_raw!r}"
+            )
+
+        # ``permissions.agent`` names a tier, and ``true`` (every tool, nothing asked) is refused
+        # by name rather than read as one: the author picks what its agent tasks need.
+        if self.permissions.agent_declared_raw:
+            errors.append(
+                'permissions.agent must name what the app\'s agent work needs: "text" (the model '
+                'answers from what the task sends, with no tools), "read" (read-only tools) or '
+                '"tools" (the owner\'s tools, where each call that needs approval asks the owner) '
+                f"— got: {self.permissions.agent_declared_raw}"
             )
 
         # An undeclarable permission is an install error, not something to drop quietly.

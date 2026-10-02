@@ -33,11 +33,11 @@ def sel_rows():
 
 
 #: What the probe app declares: the chat, session, room, inbox and reveal families, so a refusal
-#: is never "path not declared". `agent` too, so a refusal on a turn route is the OWNERSHIP rule
-#: and not the missing grant (the agent grant has its own tests below).
+#: is never "path not declared". `agent` at the `tools` tier too, so a refusal on a turn route is
+#: the OWNERSHIP rule and not the missing grant (the agent grant has its own tests below).
 DECLARED = {
     "api": ["/api/chat", "/api/sessions", "/api/rooms", "/api/inbox", "/api/reveal"],
-    "agent": True,
+    "agent": "tools",
 }
 
 
@@ -634,50 +634,37 @@ class TestAnAppsConversationApprovesByItsOwnGrant:
         client.approve_tool.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_the_agent_grant_approves_the_apps_own_conversation(self, tmp_path) -> None:
-        """The grant install consent words as agents that use any tool without asking — the same
-        posture the app's background agent runs take — and the audit row says whose grant it was."""
+    async def test_an_app_holding_every_tool_still_approves_none_of_its_calls(
+        self, tmp_path
+    ) -> None:
+        """The `tools` tier is an agent with your tools, each call that needs approval asking you,
+        as install consent words it — so a change in the app's own conversation asks you, with
+        your YOLO on, and nothing approves it in the app's name."""
         from test_acp_permission_authority import _drive
 
         state, client = _runner(tmp_path)
+        state.is_yolo_active = lambda: True
         rows = MagicMock()
         with _home(tmp_path):
             _install(tmp_path, APP, DECLARED)
             session = _chat("chat-app-2", creator=APP)
             _ask(client)
             await _drive(state, session, answer="denied", sel_mock=rows)
-        client.approve_tool.assert_awaited_once()
-        client.reject_tool.assert_not_awaited()
-        reasons = [
+        client.approve_tool.assert_not_awaited()
+        client.reject_tool.assert_awaited_once()
+        assert any(m.get("role") == "permission" for m in session.messages), "you were asked"
+        approved = [
             c.kwargs.get("metadata", {}).get("reason")
             for c in rows.return_value.log_tool_invocation.call_args_list
             if c.kwargs.get("outcome") == "auto_approved"
         ]
-        assert reasons == ["app_grant"], reasons
+        assert approved == [], approved
 
-    def test_the_operator_ceiling_still_bounds_the_grant(self, tmp_path) -> None:
-        from personalclaw.apps.permissions import app_conversation_auto_approves
-        from personalclaw.dashboard.chat_runner import app_conversation_posture
+    def test_whose_conversation_it_is_is_the_app_that_started_it(self, tmp_path) -> None:
+        from personalclaw.dashboard.chat_runner import started_by_app
 
-        with _home(tmp_path):
-            _install(tmp_path, APP, DECLARED)
-            assert app_conversation_auto_approves(APP) is True
-            with patch(
-                "personalclaw.guardrails.policy.ceiling_permits_approval", return_value=False
-            ):
-                assert app_conversation_auto_approves(APP) is False
-            assert app_conversation_posture(_chat("c", creator=APP)) is True
-            assert app_conversation_posture(_chat("c")) is None, "yours: your switches decide"
-
-    def test_a_disabled_or_uninstalled_app_approves_nothing(self, tmp_path) -> None:
-        from personalclaw.apps.permissions import app_conversation_auto_approves
-
-        with _home(tmp_path):
-            _install(tmp_path, APP, DECLARED)
-            installed = tmp_path / "apps" / APP / "installed.json"
-            installed.write_text(json.dumps({"name": APP, "enabled": False}), encoding="utf-8")
-            assert app_conversation_auto_approves(APP) is False
-            assert app_conversation_auto_approves("never-installed") is False
+        assert started_by_app(_chat("c", creator=APP)) == APP
+        assert started_by_app(_chat("c")) == "", "yours: your switches decide"
 
 
 # ── 5. Approvals: whether a tool call runs is yours to say ─────────────────────────────
@@ -1050,7 +1037,9 @@ class TestTheRouteTableDeclaresYourConversations:
         missing = sorted(live - listed)
         assert not missing, f"session writes this file never drives as an app: {missing}"
 
-    def test_every_route_that_runs_a_turn_needs_the_agent_grant(self) -> None:
+    def test_every_route_that_runs_a_turn_needs_the_tools_tier(self) -> None:
+        """A turn in the app's own conversation runs your model with that conversation's tools;
+        summarising the links an app sends hands the model nothing else of yours."""
         from personalclaw.apps.permissions import ROUTE_AUTHZ
 
         for key in (
@@ -1061,9 +1050,10 @@ class TestTheRouteTableDeclaresYourConversations:
             "POST /api/chat/sessions/{session}/plan/comment",
             "POST /api/chat/sessions/{session}/plan/approve",
             "POST /api/chat/sessions/{session}/generate-title",
-            "POST /api/chat/nav/resolve-links",
+            "GET /api/chat/sessions/{session}/organize",
         ):
-            assert ROUTE_AUTHZ[key].agent_work, key
+            assert ROUTE_AUTHZ[key].agent_work == "tools", key
+        assert ROUTE_AUTHZ["POST /api/chat/nav/resolve-links"].agent_work == "text"
 
     def test_running_work_is_steered_only_by_you(self) -> None:
         """A loop's nudge and a workflow run's steer stay owner-only; a loop's WORKER, reached

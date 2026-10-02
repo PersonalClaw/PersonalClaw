@@ -31,7 +31,7 @@ const entry: AppCatalogEntry = {
   name: 'reporter', displayName: 'Reporter', description: 'reports', version: '1.0.0',
   icon: '', author: 'acme', source: 'https://github.com/acme/reporter.git', sourceKind: 'git',
   isProvider: false, providerType: '', tags: [],
-  permissions: { api: [], cron: false, agent: false, network: false }, crons: [],
+  permissions: { api: [], cron: false, network: false }, crons: [],
 }
 
 const EMPTY_CATALOG = {

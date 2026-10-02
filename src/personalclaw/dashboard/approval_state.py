@@ -126,6 +126,12 @@ def _who_asked(entry: dict[str, Any]) -> str:
         # A workflow step's agent asks under its run's key: the step is named as the run page, and
         # the Inbox's "Run this step again", name it — by its label.
         return f"The “{_step_name(*step)}” step of a workflow run"
+    session = str(entry.get("session") or "")
+    if entry.get("source") == "subagent" and session.startswith("app:"):
+        # An app's background agent (`SubagentInfo.app`), named by the app it works for.
+        from personalclaw.apps.app_manager import display_name_of
+
+        return f"A background agent of the app “{display_name_of(session[len('app:') :])}”"
     if entry.get("source") == "subagent":
         return f"A subagent of “{title}”" if title else "A subagent"
     return "A background task"

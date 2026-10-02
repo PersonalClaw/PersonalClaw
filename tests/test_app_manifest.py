@@ -7,6 +7,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from personalclaw.apps.agent_tiers import AGENT_TIERS
 from personalclaw.apps.manifest import (
     PERMISSION_KEYS,
     AppManifest,
@@ -85,7 +86,12 @@ def _valid_value_for(key: str):
     drifts the moment a permission is added, and this test's whole point is catching drift.
     """
     field = next(f for f in fields(Permissions) if f.name == key)
-    return True if field.type is bool else []
+    if field.type is bool:
+        return True
+    if field.type is str:
+        # The one string-valued grant is ``agent``, whose values are a closed set of tiers.
+        return AGENT_TIERS[0]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -246,17 +252,19 @@ class TestPermissionVocabulary:
         """A hand-listed copy drifts the moment a permission is added, and a vocabulary that
         has fallen behind its fields refuses a permission that works — worse than no check.
 
-        Both bookkeeping names are asserted absent by name: they are fields but not wire keys,
-        and letting either through would make ``network_declared`` a declarable permission.
+        Every bookkeeping name is asserted absent by name: they are fields but not wire keys,
+        and letting one through would make ``network_declared`` a declarable permission.
         """
         declared = {f.name for f in fields(Permissions)}
         assert PERMISSION_KEYS == declared - {
             "network_declared",
             "memory_declared_raw",
+            "agent_declared_raw",
             "unknown_keys",
         }
         assert "network_declared" not in PERMISSION_KEYS
         assert "memory_declared_raw" not in PERMISSION_KEYS
+        assert "agent_declared_raw" not in PERMISSION_KEYS
         assert "unknown_keys" not in PERMISSION_KEYS
         assert len(PERMISSION_KEYS) >= 15, "the vocabulary shrank — did a permission move?"
 
@@ -290,7 +298,7 @@ class TestPermissionVocabulary:
             network=True,
             memory="shared",
             cron=True,
-            agent=True,
+            agent="tools",
             appMessaging=["other"],
             storageShared=True,
             storageRead=["other"],

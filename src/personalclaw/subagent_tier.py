@@ -32,6 +32,21 @@ last tool while it worked, and its budget never held.
 its capability class (§4.1), the files it may change and, for an automation's own agent, the
 message it may send its owner. An automation's step is turned into those by
 ``automation_posture.agent_run_policy``, which its Allow is said from too.
+
+**An app's run.** An app's agent work runs at the tier its manifest declares and its owner agreed
+to at install (``apps.agent_tiers``; ``handlers/apps.api_app_agent_run``): ``text`` at
+:data:`CAPABILITY_TEXT`, ``read`` at the research class, ``tools`` at the mutating one, and the run
+names its app (``SubagentInfo.app``), as does an agent the app's conversation or run spawns
+(``handlers/messaging._app_behind``). That permission starts it (``approval_grants.APP``) and
+approves none of its calls: the owner's standing grants (YOLO, a chat's Trust, the Approval mode, a
+setting that approves every background call) are hers, for her own agents, so each call of an
+app's agent that needs approval asks her, as its install consent says (``SubagentManager.
+_grant_now``, ``GatewayOrchestrator._relay_grant``). A text run is shown no tool and may call
+none, whatever the operator ceiling allows, and its model is handed the app's task alone: none of
+her memory, lessons or history is put ahead of it, since what it answers goes back to the app. It
+runs on the worker built with no tools (:func:`run_agent`). An agent CLI runs its own tools where
+the host never sees them, so a run held to fewer tools than every one is refused there before its
+task is sent (:func:`refuse_unheld`).
 """
 
 from __future__ import annotations
@@ -57,6 +72,7 @@ from personalclaw.llm.events import (
     out_of_room,
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.sel import sel
 from personalclaw.stats import Stats
 from personalclaw.subagent_persistence import update_state
 
@@ -65,6 +81,11 @@ if TYPE_CHECKING:
     from personalclaw.subagent import SubagentInfo
 
 logger = logging.getLogger(__name__)
+
+#: The class of a run that may use no tool at all, beside ``subagent.CAPABILITY_RESEARCH`` and
+#: ``CAPABILITY_MUTATING``: an app's ``text`` tier. A subagent's class only; the workflow-leaf
+#: vocabulary (``workflows.batch_compile.Capability``) has no leaf without tools.
+CAPABILITY_TEXT = "text"
 
 #: How a subagent ends that did nothing it was asked: every tool call it made was refused. It is
 #: its ERROR, so every reader of how it ended (its workflow step, its completion note, the
@@ -325,7 +346,7 @@ class SubagentTier:
 def tier_for(info: SubagentInfo) -> SubagentTier:
     """The tier *info*'s run is held to, from what its spawn was handed. A ceiling that will not
     resolve raises here, before the run starts, which fails the spawn CLOSED."""
-    from personalclaw.guardrails.policy import TOOL_READ, tool_grant_posture
+    from personalclaw.guardrails.policy import TOOL_CUSTOM, TOOL_READ, tool_grant_posture
     from personalclaw.subagent import CAPABILITY_RESEARCH, resolve_capability_class
 
     capability = resolve_capability_class(
@@ -335,12 +356,67 @@ def tier_for(info: SubagentInfo) -> SubagentTier:
     # ceiling. `research` → `read`, `mutating` → `read_write`; a ceiling's `tools` scope may narrow
     # either to `read` or to a `custom` allowlist, which is the only thing standing between a
     # composed ceiling value and a control nobody reads.
-    profile = tool_grant_posture(
-        f"spawn_{capability}", TOOL_READ if capability == CAPABILITY_RESEARCH else TOOL_READ_WRITE
-    )
+    #
+    # `text` → `custom` with an EMPTY allowlist, which admits nothing
+    # (`guardrails.policy.tool_grant_denial`), and it is NOT intersected with the ceiling: a ceiling
+    # only narrows, nothing is narrower, and the ceiling's projection of a posture reads an empty
+    # allowlist as no restriction (`ceiling._profile_gate`), which handed a text run the ceiling's
+    # own allowlist, or its read-only tools.
+    if capability == CAPABILITY_TEXT:
+        profile = SafetyProfile(name=f"spawn_{capability}", tool_grants=TOOL_CUSTOM)
+    else:
+        profile = tool_grant_posture(
+            f"spawn_{capability}",
+            TOOL_READ if capability == CAPABILITY_RESEARCH else TOOL_READ_WRITE,
+        )
     return SubagentTier(
         profile,
         owner_notices=bool(info.trigger_id),
         may_change=info.may_change,
         capability_class=capability,
     )
+
+
+def run_agent(capability_class: str | None, agent: str) -> str:
+    """The agent a spawn at *capability_class* runs on: a text run's is the worker built with no
+    tools to call (``agents.defaults.LITE_AGENT_NAME``), whichever agent asked for it, so every
+    list of background agents names the agent that really runs it; any other's is *agent*."""
+    from personalclaw.agents.defaults import LITE_AGENT_NAME
+
+    return LITE_AGENT_NAME if (capability_class or "").strip().lower() == CAPABILITY_TEXT else agent
+
+
+def refuse_unheld(info: SubagentInfo, agent: str) -> bool:
+    """End *info*'s run refused, with why, when an app started it at fewer tools than every one
+    and its runtime is an agent CLI (*agent*, or the default), which cannot be held to them; else
+    leave it be and return ``False``. Called for a runtime that is not PersonalClaw's own, before
+    the task is sent to it."""
+    from personalclaw.subagent import CAPABILITY_MUTATING, resolve_capability_class
+
+    capability = resolve_capability_class(
+        capability_class=info.capability_class, approval_mode=info.approval_mode
+    )
+    if not info.app or capability == CAPABILITY_MUTATING:
+        return False
+    tools = "no tools" if capability == CAPABILITY_TEXT else "read-only tools"
+    info.error = (
+        f"{info.app}'s agent work may use {tools}, and only PersonalClaw's own agent can be held "
+        f"to that: {agent or 'the default agent'} runs its own tools where PersonalClaw can't see "
+        "them, so the task didn't run."
+    )
+    info.done = True
+    Stats().inc_subagent_failed()
+    sel().log_tool_invocation(
+        session_key=info.parent_session_key,
+        source="subagent",
+        tool_name="subagent_run",
+        outcome="refused",
+        metadata={
+            "subagent_id": info.id,
+            "app": info.app,
+            "capability_class": capability,
+            "agent": agent or "",
+            "reason": "runtime_cannot_be_held",
+        },
+    )
+    return True

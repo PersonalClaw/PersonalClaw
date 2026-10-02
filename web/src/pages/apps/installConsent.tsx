@@ -13,7 +13,7 @@ import { FieldError } from '../../ui/forms'
 import {
   api, type AppSummary, type AppInstallResult, type AppCronSummary, type AppScanReport, type AppCatalogEntry,
   type AppPythonDependency, type AppDisclosure, type AppScanFinding, type AppPrerequisite,
-  type AppLaunchedProgram, type AppExternalWrite,
+  type AppLaunchedProgram, type AppExternalWrite, type AgentTier,
 } from '../../lib/api'
 import { terminalRefusalReason } from '../../lib/useGuardedInstall'
 import { readableErrText } from '../../lib/errText'
@@ -765,6 +765,17 @@ function PythonDepsRow({ deps }: { deps: AppPythonDependency[] }) {
   )
 }
 
+/** What an app's agent work may do at each tier (`permissions.agent`, `apps/agent_tiers`),
+ *  in the words install consent shows. Each is held where the work runs (`subagent_tier`): a `text`
+ *  task's model is handed the task alone on a worker with no tools, a `read` task's agent is
+ *  offered and allowed only read-only tools and can't message anyone, and no tier lets the app,
+ *  or the owner's own standing grants, approve a call — so no sentence says "without asking". */
+export const AGENT_TIER_SENTENCE: Record<AgentTier, string> = {
+  text: 'Run AI tasks on the text it sends — the model is handed only that text, with no tools, so it can’t read your files or memory, change anything, run commands or send messages',
+  read: 'Run background agents with read-only tools — they can read your files and data, and can’t change anything or send messages',
+  tools: 'Run background agents that use your tools — they can change files, run commands and send messages, and the app can’t approve their calls, so each one that needs approval asks you',
+}
+
 /** The enforced-grant bullets for `perms`, worded as the consent surface shows them. ONE
  *  builder, so the install dialog's bullets and an update's "what changes" list cannot word
  *  one grant two ways. */
@@ -781,10 +792,9 @@ export function permissionRows(perms: AppSummary['permissions']): string[] {
   if (perms.memory) rows.push('Read and change your memory — what your agents recall, including the lessons they follow')
   if (perms.storage) rows.push('Storage')
   if (perms.cron) rows.push('Scheduled jobs')
-  // An app's agent runs approve their own tool calls and hold the write grant
-  // (`handlers/apps.api_app_agent_run`), so the bullet says so rather than letting "background
-  // agents" read as agents that will ask you.
-  if (perms.agent) rows.push('Run background agents that use any tool without asking you — they can change files, run commands and send messages')
+  // The tier says what the app's agent work may use, and its sentence says it plainly: what the
+  // model is handed and which tools it may call (`AGENT_TIER_SENTENCE`).
+  if (perms.agent) rows.push(AGENT_TIER_SENTENCE[perms.agent])
   const messaging = perms.appMessaging ?? []
   if (messaging.length) {
     rows.push(`App messaging: ${messaging.map(describeMessagingTarget).join(', ')}`)

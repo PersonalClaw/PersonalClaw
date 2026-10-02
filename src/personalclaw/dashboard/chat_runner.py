@@ -2076,21 +2076,16 @@ async def _abort_acp_turn(client: object, why: str) -> None:
         logger.warning("ACP cancel after %s failed", why, exc_info=True)
 
 
-def app_conversation_posture(session: _ChatSession) -> bool | None:
-    """How a conversation an app started approves its tool calls, or ``None`` for one of yours.
+def started_by_app(session: _ChatSession) -> str:
+    """The app that started this conversation, or ``""`` for one of yours.
 
-    ``True`` approves on its own and ``False`` asks, decided by the APP's grant
-    (:func:`~personalclaw.apps.permissions.app_conversation_auto_approves`). ``None`` means your
-    own switches decide, as they always have. An app's conversation never reads them: the bound
-    agent's "always allow", the Trust-reads default and YOLO are yours, for your chats. Asked
-    once per turn, so an app update that drops the ``agent`` grant takes effect on the next one.
+    A conversation an app started approves none of its calls on its own. No ``agent`` tier lets an
+    app approve its agent's calls (``apps/agent_tiers``), and your approval switches — the
+    bound agent's "always allow", the Trust-reads default, Trust and YOLO — are yours, for your
+    chats, so none of them is read for it. Each call there that needs approval asks you, whoever
+    sent the message, as the app's install consent says.
     """
-    creator = getattr(session, "created_by_app", "") or ""
-    if not creator:
-        return None
-    from personalclaw.apps.permissions import app_conversation_auto_approves
-
-    return app_conversation_auto_approves(creator)
+    return getattr(session, "created_by_app", "") or ""
 
 
 def _apply_approval_floor(
@@ -2191,17 +2186,15 @@ def _apply_approval_floor(
             logger.warning("SEL audit failed for trust_reads floor seeding", exc_info=True)
 
 
-def auto_approval_reason(app_auto: bool | None, yolo_active: bool) -> str:
+def auto_approval_reason(yolo_active: bool) -> str:
     """Whose switch approved a call nobody was asked about — the ``reason`` its audit row names.
 
-    ``app_grant`` in a conversation an app started (its ``agent`` grant, see
-    :func:`app_conversation_posture`), else ``yolo`` while your YOLO is on, else ``trust``: your
-    Trust for this chat, or an agent's "always allow" seeded into it. One answer for both runtimes —
-    the ACP gate asks it when it auto-approves a permission request, and the native runtime's
-    waived asks (``TOOL_META_APPROVAL_WAIVED``) are recorded with it at their result.
+    ``yolo`` while your YOLO is on, else ``trust``: your Trust for this chat, or an agent's "always
+    allow" seeded into it. Neither reaches a conversation an app started (:func:`started_by_app`),
+    which approves nothing on its own. One answer for both runtimes — the ACP gate asks it when it
+    auto-approves a permission request, and the native runtime's waived asks
+    (``TOOL_META_APPROVAL_WAIVED``) are recorded with it at their result.
     """
-    if app_auto:
-        return approval_grants.APP
     return approval_grants.YOLO if yolo_active else approval_grants.TRUST
 
 
@@ -2707,9 +2700,9 @@ async def run_chat(
     _turn_cancelled = _answered = False
     # Who serves the turn, and what it says if its agent ends it after her Deny (`turn_endings`).
     _turn_agent = _deny_note = ""
-    # How a conversation an app started approves (`app_conversation_posture`); None for yours.
-    # Read again by the approval gate below, which must not let YOLO into an app's conversation.
-    _app_auto: bool | None = None
+    # The app that started this conversation (`started_by_app`), "" for one of yours. Read again by
+    # the approval gate below, which must not let YOLO into an app's conversation.
+    _app_chat = ""
     try:
         # Resolve agent bindings early so we pass the correct ACP agent
         # name (e.g. "personalclaw") instead of the PersonalClaw session name
@@ -2981,12 +2974,12 @@ async def run_chat(
             except Exception:
                 logger.warning("attached-image delivery failed", exc_info=True)
 
-        # A conversation an app started takes its posture from the APP's grant, set here every
-        # turn, and never from the floor below (the per-agent grant is yours, for your chats).
-        _app_auto = app_conversation_posture(session)
-        if _app_auto is not None:
+        # A conversation an app started approves nothing on its own, set here every turn, and never
+        # takes the floor below (the per-agent grant is yours, for your chats).
+        _app_chat = started_by_app(session)
+        if _app_chat:
             session._agent_floor_seeded = True
-            session._trust = _app_auto
+            session._trust = False
             session._trust_reads = False
             session._trust_from_floor = ""
         # Otherwise the bound agent's persistent approval floor seeds it (`_apply_approval_floor`).
@@ -3000,7 +2993,7 @@ async def run_chat(
 
         # Propagate trust/YOLO to session so subagents inherit auto-approve. YOLO is yours, so it
         # does not reach a conversation an app started.
-        if session._trust or (_app_auto is None and state.is_yolo_active()):
+        if session._trust or (not _app_chat and state.is_yolo_active()):
             state.sessions.set_approval_policy(session_key, "auto")
         else:
             state.sessions.set_approval_policy(session_key, "")
@@ -3974,9 +3967,7 @@ async def run_chat(
                 if not _acp_cli and event.tool_call_id not in _gated_tool_calls:
                     _waived = bool(_tmeta.get(TOOL_META_APPROVAL_WAIVED))
                     _decided_by = (
-                        auto_approval_reason(
-                            _app_auto, _app_auto is None and state.is_yolo_active()
-                        )
+                        auto_approval_reason(not _app_chat and state.is_yolo_active())
                         if _waived
                         else unasked_reason(_tmeta)
                     )
@@ -4357,9 +4348,9 @@ async def run_chat(
                         continue
                     _pre_tool_hooks_fired = True
                     # Hooks passed — fall through to trust-reads/trust/yolo/interactive
-                # YOLO is your switch, for your chats: an app's conversation approves by the
-                # app's grant alone, which the posture above already put in `session._trust`.
-                yolo_active = _app_auto is None and state.is_yolo_active()
+                # YOLO is your switch, for your chats: an app's conversation approves nothing on
+                # its own, which the posture above already put in `session._trust`.
+                yolo_active = not _app_chat and state.is_yolo_active()
                 # Effective risk of THIS call (per-invocation): the tool's declared
                 # risk downgraded to safe when it's a read-only invocation. The
                 # single source of truth (task_modes.resolve_effective_risk) — also
@@ -4447,7 +4438,7 @@ async def run_chat(
                 # Trust mode (per-session) or YOLO mode (global) — auto-approve, if the operator
                 # ceiling lets that grant stand.
                 if (session._trust or yolo_active) and _grant_stands(
-                    auto_approval_reason(_app_auto, yolo_active),
+                    auto_approval_reason(yolo_active),
                     session_key=session_key,
                     event=event,
                 ):
@@ -4526,9 +4517,9 @@ async def run_chat(
                         # YOLO without a human prompt — the highest-value audit signal
                         # under the "risk is an indicator, floor covers everything" model.
                         metadata={
-                            "reason": auto_approval_reason(_app_auto, yolo_active),
+                            "reason": auto_approval_reason(yolo_active),
                             "risk": effective_risk,
-                            "decided_by": auto_approval_reason(_app_auto, yolo_active),
+                            "decided_by": auto_approval_reason(yolo_active),
                         },
                     )
                     _settle_granted(
@@ -4536,7 +4527,7 @@ async def run_chat(
                         session,
                         tool=event.title,
                         tool_input=event.tool_input,
-                        grant=auto_approval_reason(_app_auto, yolo_active),
+                        grant=auto_approval_reason(yolo_active),
                     )
                     continue
                 # A request sent together with a refused one is refused the way it was: a Deny,

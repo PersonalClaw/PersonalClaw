@@ -40,6 +40,18 @@ def _sel():
 # ── Subagents ──
 
 
+def _app_behind(state: DashboardState, parent: str) -> str:
+    """The app whose agent work *parent* is: a conversation it started, or a run of its agent
+    (``SubagentInfo.app``); ``""`` for the owner's own. An agent spawned there is that app's agent
+    work too, so none of the owner's standing grants approves its calls (``subagent_tier``)."""
+    if parent.startswith("subagent:"):
+        owner = state.subagents.get(parent.removeprefix("subagent:")) if state.subagents else None
+        app = getattr(owner, "app", "")
+    else:
+        app = getattr(state.get_session(parent.removeprefix("dashboard:")), "created_by_app", "")
+    return app if isinstance(app, str) else ""
+
+
 async def api_spawn(request: web.Request) -> web.Response:
     """POST /api/spawn — spawn a subagent."""
     state: DashboardState = request.app["state"]
@@ -93,6 +105,7 @@ async def api_spawn(request: web.Request) -> web.Response:
         cwd=cwd,
         approval_mode=approval_mode or None,
         silent=silent,
+        app=_app_behind(state, str(parent_session or "")),
     )
     if not info:
         return web.json_response(

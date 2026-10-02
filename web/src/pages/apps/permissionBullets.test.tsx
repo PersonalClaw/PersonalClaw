@@ -4,8 +4,9 @@ import { PermissionList, permissionRows } from './installConsent'
 
 // Two enforced grants whose bullets understated what they give an app.
 //
-// `agent` read "Run background agents", which sounds like agents that will ask you. They do not:
-// `handlers/apps.api_app_agent_run` spawns with `approval_mode="auto"` and the write grant.
+// `agent` read "Run background agents", which said nothing about what they may use. It names a tier
+// now, and its sentence says it (`agentTierConsent.test.tsx` holds every tier); the widest still
+// says each call that needs approval asks you, because no tier lets an app approve one.
 //
 // `config` is new. It names the exact settings `/api/config` reaches for the app
 // (`permissions.can_use_config_field`), and install consent is where the owner sees them.
@@ -13,10 +14,10 @@ import { PermissionList, permissionRows } from './installConsent'
 const text = (el: HTMLElement) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ')
 
 describe('the permission bullets say what an app agent and a settings grant really do', () => {
-  it('an `agent` grant says its agents act without asking', () => {
-    render(<PermissionList perms={{ agent: true }} />)
+  it('an `agent` grant at the widest tier says its agents use your tools and ask you', () => {
+    render(<PermissionList perms={{ agent: 'tools' }} />)
     expect(text(document.body)).toContain(
-      'Run background agents that use any tool without asking you — they can change files, run commands and send messages',
+      'Run background agents that use your tools — they can change files, run commands and send messages, and the app can’t approve their calls, so each one that needs approval asks you',
     )
   })
 

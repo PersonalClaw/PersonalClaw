@@ -32,7 +32,7 @@ import {
   RefreshCw, RotateCcw, Search, Send, ShieldCheck, Sparkles, SquareCheck, Star,
   Target, Trash2, Users, Video, X, Zap,
 } from 'lucide-react'
-import { apiError } from '../lib/api'
+import { apiError, type AgentTier } from '../lib/api'
 import { useInvestigate } from '../lib/investigate'
 import { basedOn, isStaleWrite } from '../lib/staleWrite'
 // The host's own design-system primitives, re-exported to apps under
@@ -58,6 +58,11 @@ export interface AppPermissions {
   network?: boolean
   memory?: string
   cron?: boolean
+  /** The tier the app's agent tasks run at, as its manifest declares it and the owner agreed to
+   *  at install — absent when it runs none. `text`: the model is handed the task alone, with no
+   *  tools. `read`: an agent with read-only tools. `tools`: an agent with the owner's tools, each
+   *  call that needs approval asking her. A task may ask for this tier or a narrower one. */
+  agent?: AgentTier
 }
 
 /** The closed vocabulary of declared UI capabilities. MIRRORS
@@ -241,36 +246,56 @@ export interface AgentTaskResult {
   elapsed?: number
 }
 
+export interface AgentTaskOptions {
+  /** The tier this task asks for: the app's own (`ctx.permissions.agent`) when left out, or a
+   *  narrower one, such as a `tools` app running a task that only reads. The gateway refuses a
+   *  wider one and nothing runs: `start` rejects with an {@link AppPermissionError} that says
+   *  which tier the app holds. */
+  tier?: AgentTier
+  /** One of the owner's agents to run the task on. A `text` task names none: it runs on the
+   *  worker that has no tools. */
+  agent?: string
+  maxTurns?: number
+}
+
 export interface AgentTaskClient {
-  start: (task: string, opts?: { agent?: string; maxTurns?: number }) => Promise<string>
+  start: (task: string, opts?: AgentTaskOptions) => Promise<string>
   poll: (id: string) => Promise<AgentTaskResult>
-  run: (task: string, opts?: { agent?: string; maxTurns?: number; signal?: AbortSignal }) => Promise<AgentTaskResult>
+  run: (task: string, opts?: AgentTaskOptions & { signal?: AbortSignal }) => Promise<AgentTaskResult>
 }
 
 /** IMPERATIVE background-agent client — usable from ANYWHERE (event handlers,
  *  imperative `mount(el, ctx)` apps, async callbacks), no React render context
  *  required. This is the primitive; pass the app name (e.g. from the `ctx` your
- *  mount function receives). Requires the app's `agent` permission.
+ *  mount function receives). Requires the app's `agent` permission, and a task runs
+ *  at its tier (`ctx.permissions.agent`) or a narrower one it asks for.
  *  `run(task)` starts a headless agent and polls to completion. Use ChatEmbed
- *  instead when you want to show the user a live chat UI. */
+ *  instead when you want to show the user a live chat UI.
+ *
+ *  A refusal rejects with the gateway's sentence: an {@link AppPermissionError} when the
+ *  task asked for more than its app's tier, an `ApiError` (with `status` and `code`) for
+ *  anything else. The gateway decides, so a bundle that skips this client gains nothing. */
 export function createAgentTask(appName: string): AgentTaskClient {
-  async function start(task: string, opts?: { agent?: string; maxTurns?: number }): Promise<string> {
+  async function start(task: string, opts?: AgentTaskOptions): Promise<string> {
     const r = await fetch(`/api/apps/${encodeURIComponent(appName)}/agent-run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await appAuthHeaders(appName)) },
-      body: JSON.stringify({ task, agent: opts?.agent, max_turns: opts?.maxTurns }),
+      body: JSON.stringify({ task, tier: opts?.tier, agent: opts?.agent, max_turns: opts?.maxTurns }),
     })
-    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || `HTTP ${r.status}`)
+    if (!r.ok) {
+      const refused = await apiError(r)
+      throw refused.code === 'agent_tier_exceeded' ? new AppPermissionError(refused.message) : refused
+    }
     return (await r.json()).id as string
   }
 
   async function poll(id: string): Promise<AgentTaskResult> {
     const r = await fetch(`/api/apps/${encodeURIComponent(appName)}/agent-run/${encodeURIComponent(id)}`, { headers: await appAuthHeaders(appName) })
-    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || `HTTP ${r.status}`)
+    if (!r.ok) throw await apiError(r)
     return await r.json() as AgentTaskResult
   }
 
-  async function run(task: string, opts?: { agent?: string; maxTurns?: number; signal?: AbortSignal }): Promise<AgentTaskResult> {
+  async function run(task: string, opts?: AgentTaskOptions & { signal?: AbortSignal }): Promise<AgentTaskResult> {
     const id = await start(task, opts)
     for (;;) {
       if (opts?.signal?.aborted) throw new Error('aborted')

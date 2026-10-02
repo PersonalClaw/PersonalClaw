@@ -7,7 +7,7 @@ import { StatusPill } from '../../ui/StatusPill'
  *  An installed app can hold conversations of its own, and they sit in your history beside
  *  yours: you can read them and speak in them. What a title cannot tell you is whose permissions
  *  a turn there runs under — the APP's, whoever sends the message, and never your approval
- *  switches (`chat_runner.app_conversation_posture`). So every history row and every "Jump back
+ *  switches (`chat_runner.started_by_app`). So every history row and every "Jump back
  *  in" link names the app, the chat's header says it under the title, and the composer says what
  *  it means before you send. This module is the one place those words are written.
  */
@@ -27,13 +27,11 @@ export function startedByTitle(name: string): string {
   return `${name} started this chat. A turn in it runs with ${name}'s permissions.`
 }
 
-/** What a message you send into an app's conversation runs under. `autoApproves` is the server's
- *  answer for the app's grant right now (`app_auto_approves`): the grant approves every call, or
- *  it approves none and each call that needs approval asks you. Neither reads Trust or YOLO. */
-export function appPermissionSentence(name: string, autoApproves: boolean): string {
-  return autoApproves
-    ? `What you send here runs with ${name}'s permissions: its tool calls run without asking you. Your Trust and YOLO settings don't apply in this chat.`
-    : `What you send here runs with ${name}'s permissions: ${name} can't approve tool calls, so each one that needs approval asks you. Your Trust and YOLO settings don't apply in this chat.`
+/** What a message you send into an app's conversation runs under. No agent tier lets an app
+ *  approve its calls (`apps/agent_tiers`), and your Trust and YOLO are yours, for your
+ *  chats (`chat_runner.started_by_app`), so each call that needs approval asks you. */
+export function appPermissionSentence(name: string): string {
+  return `What you send here runs with ${name}'s permissions: ${name} can't approve tool calls, so each one that needs approval asks you. Your Trust and YOLO settings don't apply in this chat.`
 }
 
 /** "Started by <App>" on a row that lists a chat — a history row, a "Jump back in" link.
@@ -57,11 +55,11 @@ export function StartedByApp({ s }: { s: AppStarted }) {
 }
 
 /** Above the composer of an app's conversation: whose permissions what you send runs under. */
-export function AppPermissionNotice({ name, autoApproves }: { name: string; autoApproves: boolean }) {
+export function AppPermissionNotice({ name }: { name: string }) {
   return (
     <div data-type="caption" className="mb-2 flex items-center gap-1.5 text-on-surface-low">
       <Blocks size={13} className="shrink-0" aria-hidden />
-      <span>{appPermissionSentence(name, autoApproves)}</span>
+      <span>{appPermissionSentence(name)}</span>
     </div>
   )
 }

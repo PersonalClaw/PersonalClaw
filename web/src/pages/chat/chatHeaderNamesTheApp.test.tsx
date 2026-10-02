@@ -108,7 +108,7 @@ const contextLine = (banner: HTMLElement) => banner.querySelector<HTMLElement>('
 
 describe('an app-started chat', () => {
   it('says "Started by <App>" in the header, with what that means as its tooltip', async () => {
-    open({ created_by_app: 'probe-alpha', created_by_app_name: 'Probe Alpha', app_auto_approves: false })
+    open({ created_by_app: 'probe-alpha', created_by_app_name: 'Probe Alpha' })
     const banner = await header()
     const line = contextLine(banner)
     expect(line, 'the header has no context line for an app-started chat').not.toBeNull()
@@ -119,7 +119,7 @@ describe('an app-started chat', () => {
   })
 
   it('falls back to the app id when the server sent no name', async () => {
-    open({ created_by_app: 'probe-alpha', app_auto_approves: false })
+    open({ created_by_app: 'probe-alpha' })
     const line = contextLine(await header())
     expect(within(line!).getByText('Started by probe-alpha')).toBeTruthy()
   })

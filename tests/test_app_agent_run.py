@@ -2,8 +2,9 @@
 
 An app that declares the ``agent`` permission can run a headless agent task and
 poll its result — the NON-iframe agentic path (for apps that act on agent output
-rather than show a human a chat window). Gated by permissions.agent; proxies to
-the subagent runner. An app WITHOUT the permission is 403'd.
+rather than show a human a chat window). Held to the tier permissions.agent names
+(``test_an_apps_agent_is_held_to_its_tier.py``); proxies to the subagent runner. An app
+WITHOUT the permission is 403'd.
 
 Authorization is two-layered (#410): the permission gate reads the CALLING app's
 verified identity (``request["app"]``), never the caller-chosen ``{name}`` path
@@ -70,6 +71,7 @@ class _FakeSubagents:
         capability_class=None,
         silent=False,
         cwd="",
+        app="",
     ):
         info = self.record(
             f"run-{len(self._runs) + 1}", parent_session_key=parent_session_key, task=task
@@ -77,6 +79,7 @@ class _FakeSubagents:
         info.approval_mode = approval_mode
         info.capability_class = capability_class
         info.silent = silent
+        info.app = app
         return info
 
     def get(self, run_id):
@@ -112,7 +115,7 @@ def _install(tmp_path: Path, name: str, *, agent_perm: bool):
     d.mkdir(parents=True)
     mani = {"name": name, "version": "1.0.0", "displayName": name, "description": "x"}
     if agent_perm:
-        mani["permissions"] = {"agent": True}
+        mani["permissions"] = {"agent": "tools"}
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
     res = app_manager.install(d, confirm=True)
     assert res.ok, res.error

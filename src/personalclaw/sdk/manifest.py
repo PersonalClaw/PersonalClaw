@@ -15,8 +15,13 @@ are fields whose types an app could not import. A generator cannot build a value
 cannot name, so the only way to use this module was to reach past it — which is exactly
 what the boundary exists to prevent. ``tests/test_sdk_surface_is_public.py`` now asserts
 the surface is CLOSED under its own signatures, so the subset cannot re-form.
+
+``AGENT_TIERS`` is the vocabulary ``permissions.agent`` takes, narrowest first (``text``, ``read``,
+``tools``): what a tool that writes or checks a manifest offers, and what an app's own tests check
+its declaration against.
 """
 
+from personalclaw.apps.agent_tiers import AGENT_TIERS  # noqa: F401
 from personalclaw.apps.manifest import (  # noqa: F401
     AppManifest,
     AppSkill,
@@ -46,6 +51,7 @@ from personalclaw.apps.manifest import (  # noqa: F401
 )
 
 __all__ = [
+    "AGENT_TIERS",
     "AppManifest",
     "AppSkill",
     "AutonomyConfig",

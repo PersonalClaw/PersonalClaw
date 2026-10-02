@@ -30,7 +30,8 @@ from test_apps_cannot_run_code_or_bypass_approvals import APP, _denials, _home, 
 OTHER = "probe-other"
 
 #: What the probe app declares: every family this file drives, so no refusal here is "path not
-#: declared", and `agent`, so a refusal on a route that runs your model is the OWNERSHIP rule.
+#: declared", and `agent` at the `tools` tier, so a refusal on a route that runs your model is the
+#: OWNERSHIP rule.
 DECLARED = {
     "api": [
         "/api/chat",
@@ -43,7 +44,7 @@ DECLARED = {
         "/api/notifications",
         "/api/session-keepalive",
     ],
-    "agent": True,
+    "agent": "tools",
 }
 
 
@@ -890,9 +891,7 @@ class TestAnAutoApprovedCallSaysWhoseGrantItWas:
         assert TOOL_META_APPROVAL_WAIVED not in never_asks, "no ask, so no grant answered one"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("whose", "reason"), [("app", "app_grant"), ("trust", "trust"), ("yolo", "yolo")]
-    )
+    @pytest.mark.parametrize(("whose", "reason"), [("trust", "trust"), ("yolo", "yolo")])
     async def test_the_row_names_the_grant(self, tmp_path, whose, reason) -> None:
         from test_acp_permission_authority import _drive
 
@@ -903,9 +902,7 @@ class TestAnAutoApprovedCallSaysWhoseGrantItWas:
         with _home(tmp_path):
             _install(tmp_path, APP, DECLARED)
             session = _ChatSession("chat-native-1")
-            if whose == "app":
-                session.created_by_app = APP
-            elif whose == "trust":
+            if whose == "trust":
                 session._trust = True
             else:
                 state.is_yolo_active = lambda: True
@@ -954,10 +951,8 @@ class TestYouSeeWhichAppStartedAConversation:
         assert not rows["mine"].get("created_by_app_name")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("holds_agent", [True, False])
-    async def test_the_chat_says_whose_permissions_a_turn_runs_under(
-        self, tmp_path, holds_agent
-    ) -> None:
+    @pytest.mark.parametrize("tier", ["tools", None], ids=["every tool", "no agent"])
+    async def test_the_chat_says_whose_permissions_a_turn_runs_under(self, tmp_path, tier) -> None:
         from personalclaw.dashboard import chat
 
         state = _make_state(tmp_path)
@@ -965,7 +960,9 @@ class TestYouSeeWhichAppStartedAConversation:
         _owner_chat(state, "mine")
         state.is_yolo_active = lambda: True
         route = ("GET", "/api/chat/sessions/{session}", chat.api_chat_session_detail)
-        permissions = {**DECLARED, "agent": holds_agent}
+        permissions = {k: v for k, v in DECLARED.items() if k != "agent"}
+        if tier:
+            permissions["agent"] = tier
         with _home(tmp_path):
             _install(tmp_path, APP, permissions, displayName="Probe Chat")
             async with TestClient(TestServer(_gateway(state, "", [route]))) as client:
@@ -973,12 +970,11 @@ class TestYouSeeWhichAppStartedAConversation:
                 mine = await (await client.get("/api/chat/sessions/mine")).json()
         assert ours["created_by_app"] == APP
         assert ours["created_by_app_name"] == "Probe Chat"
-        assert ours["app_auto_approves"] is holds_agent
-        # Your YOLO is on, and it does not reach the app's conversation, so the posture the
-        # composer restores there is the app's, not yours.
-        assert ours["approval"] == ("trust" if holds_agent else "normal")
+        # Your YOLO is on, and it does not reach the app's conversation, which approves nothing on
+        # its own whatever its tier: the posture the composer restores there is the one that asks.
+        assert ours["approval"] == "normal"
         assert mine["approval"] == "yolo"
-        assert "app_auto_approves" not in mine
+        assert "app_auto_approves" not in ours and "app_auto_approves" not in mine
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("caller", [APP, ""], ids=["the app", "you"])

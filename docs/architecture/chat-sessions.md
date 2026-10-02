@@ -163,18 +163,19 @@ chat, channel thread, loop worker, webhook, subagent).
   conversation the app's and never makes one of yours an app's. It is not
   `_app`: that is an origin tag (`loop`, a channel's provider name, an app's
   name) saying where a conversation came from, which the chat list groups by,
-  and an app can share its name. An app's conversation runs under the app's
-  `agent` grant, never under your approval switches, whoever sends the message
-  (`chat_runner.app_conversation_posture`). The same field decides what an app
+  and an app can share its name. A turn in an app's conversation needs the app's
+  `agent` permission at the `tools` tier, and runs under it, never under your
+  approval switches, whoever sends the message: the app approves none of its
+  calls, so each one that needs approval asks you (`chat_runner.started_by_app`).
+  The same field decides what an app
   READS: a detail, map, export or tool result of any other conversation is
   refused before the handler loads it; the chat list, `/api/sessions` and the
   content search leave out every conversation it did not start; and the
   websocket drops a frame about one (`dashboard/ws_state.py::frame_subject`).
   The chat list and the detail carry `created_by_app` and `created_by_app_name`,
-  so your history says "Started by <app>". The detail also carries
-  `app_auto_approves`, the app's grant as it stands, which the composer reads to
-  say what a message you send there runs under. A folder chosen for an app's
-  conversation is not added to your recent projects.
+  so your history says "Started by <app>", and the composer says what a message
+  you send there runs under. A folder chosen for an app's conversation is not
+  added to your recent projects.
 
 ## The dashboard chat pipeline
 

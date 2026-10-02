@@ -107,8 +107,9 @@ unattended runs and judges start from, launch a prompt template (which starts a 
 loop), or rewrite the routing notes your orchestrator reads. It may still read those, check
 a skill's integrity, and decline a proposed skill. An app ships its skills in its
 manifest, which install consent lists by name, and runs agent work through its own
-`agent` permission. A lesson is memory that every agent is handed as a rule, so
-`/api/lessons` needs the `memory` grant, the same as `/api/memory`.
+`agent` permission, at the tier it declares (`text`, `read` or `tools`). A lesson is memory that
+every agent is handed as a rule, so `/api/lessons` needs the `memory` grant, the same as
+`/api/memory`.
 
 Your conversations are in the same class, because a message in one of them is an
 instruction your agent carries out. An app may not send into one of your chats, or edit,
@@ -119,14 +120,16 @@ It may not speak in a room (a line there is written as yours, and every member a
 it), answer an agent's question in your inbox, approve a proposal, write an inbox note in
 your name, or post through the schedules' delivery door (`/api/send-message`), which
 speaks as your agent. An app may hold conversations of its own: it starts one, and only
-that one is its to reach. Its turns need its `agent` permission and run under that grant,
-never under your approval switches (YOLO, Trust, Trust reads, an agent's "always allow").
-The operator ceiling still bounds it, and an app never answers an approval raised in its
-own conversation. It reaches you through a proposal, which the inbox labels with the
-app's name, and `/api/reveal` opens only a file in its own data folder. The exception is
-the relay you install for approvals: an app that declares `/api/approvals` (the menu-bar
-companion does) can approve or reject your pending approvals one at a time, and the
-gateway cannot tell whether an answer it relays was yours.
+that one is its to reach. Its turns need its `agent` permission at the `tools` tier and run
+under it, never under your approval switches (YOLO, Trust, Trust reads, an agent's "always
+allow"): no tier approves a call, so each one that needs approval asks you, and an app never
+answers an approval raised in its own conversation. Its background agent tasks are held the
+same way, and what one finishes goes back to the app alone, never into a turn of your own
+agent. It reaches you through a proposal, which the inbox labels with the app's name, and
+`/api/reveal` opens only a file in its own data folder. The exception is the relay you install
+for approvals: an app that declares `/api/approvals` (the menu-bar companion does) can approve
+or reject your pending approvals one at a time, and the gateway cannot tell whether an answer it
+relays was yours.
 
 What your conversations say is yours to read, too. An app reads only the conversations it
 started: a transcript, its map, a tool's full output, an export, a draft skill or a

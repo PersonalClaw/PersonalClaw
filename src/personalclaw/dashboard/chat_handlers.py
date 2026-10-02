@@ -33,7 +33,7 @@ from personalclaw.dashboard.chat_persistence import (
     save_session_to_history,
     session_key_exists,
 )
-from personalclaw.dashboard.chat_runner import TURN_STOPPED, app_conversation_posture, run_chat
+from personalclaw.dashboard.chat_runner import TURN_STOPPED, run_chat, started_by_app
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
     _emit_agent_assignment,
@@ -975,11 +975,10 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             if parent_meta:
                 forked_from_title = str(parent_meta.get("title") or "") or parent_key
 
-    # A conversation an app started runs under the APP's grant, whoever sends into it — your
-    # approval switches never reach it (`chat_runner.app_conversation_posture`). The chat names the
-    # app and says so above the composer, and the posture it restores is that grant's: it approves
-    # like Trust, or it asks. None for one of yours.
-    app_auto = app_conversation_posture(session)
+    # A conversation an app started approves nothing on its own, whoever sends into it — your
+    # approval switches never reach it (`chat_runner.started_by_app`). The chat names the app and
+    # says so above the composer, and the posture it restores is the one that asks.
+    app_chat = started_by_app(session)
 
     return web.json_response(
         {
@@ -1040,8 +1039,8 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
                 else None
             ),
             "approval": (
-                ("trust" if app_auto else "normal")
-                if app_auto is not None
+                "normal"
+                if app_chat
                 else (
                     "yolo"
                     if state.is_yolo_active()
@@ -1052,11 +1051,7 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
                     )
                 )
             ),
-            **(
-                {**_started_by(session.created_by_app, {}), "app_auto_approves": app_auto}
-                if app_auto is not None
-                else {}
-            ),
+            **(_started_by(session.created_by_app, {}) if app_chat else {}),
             # Memory mode so mode-gated affordances restore on reopen (e.g. the chat
             # page hides Fork on a non-persistent session — the backend refuses to
             # fork temporary/incognito). The session-list endpoint already returns

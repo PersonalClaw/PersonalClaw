@@ -922,6 +922,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "fetch from for it; the message says which and why.",
     "app_preview_failed": "The app was fetched but cannot be offered for install; the message "
     "says why.",
+    # ── app agent work (dashboard/handlers/apps.py — api_app_agent_run) ──
+    # A 403: the task asked for more than its app's `agent` tier lets its agent work use (a wider
+    # tier, or a text task naming an agent), so nothing ran. The message names both tiers.
+    "agent_tier_exceeded": "The task asks for more than its app's agent tier allows, so nothing "
+    "ran; the message names the tier it asked for and the app's.",
+    # A 400: the task's `tier` names no tier.
+    "agent_tier_unknown": 'The task\'s tier must be "text", "read" or "tools", or left out for '
+    "the app's own.",
     # ── pending approvals (dashboard/approval_owner.py) ──
     # A 409 state refusal: the approval was listed, but the work that asked for it (its turn,
     # subagent, workflow run or loop) has ended, so it was cancelled rather than answered and

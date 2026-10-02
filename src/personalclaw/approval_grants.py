@@ -79,7 +79,9 @@ HOOK_PATTERN = "hook_pattern"
 SOURCE = "source"
 #: The gateway was started with ``--approval yolo`` or ``--approval reads``.
 CLI = "cli"
-#: An app's own conversation, under the grant it was installed with.
+#: An app's background task starting on the ``agent`` permission the owner agreed to at install
+#: (`subagent.SubagentManager._spawn_grant`). It covers the start alone: no agent tier approves
+#: the task's calls, so each one that needs approval asks.
 APP = "app_grant"
 #: A workflow step the owner chose "always allow" for earlier in the run.
 REMEMBERED = "remembered"

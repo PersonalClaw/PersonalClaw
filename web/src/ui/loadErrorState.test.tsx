@@ -704,8 +704,8 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // the sites #532's own comment warns against blanket-deleting, and they are why this map is a
   // budget rather than a target of zero.
   // 3 → 2: `createAppApi`'s refusal is read by `lib/api.ts`'s `apiError` now, not a local
-  // `r.text().catch(() => '')`.
-  'app/appSdk.tsx': 2,
+  // `r.text().catch(() => '')`. 2 → 0: so are `createAgentTask`'s, at its start and its poll.
+  'app/appSdk.tsx': 0,
   'lib/api.ts': 5,
   'lib/errText.ts': 1,
 

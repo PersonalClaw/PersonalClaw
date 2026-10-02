@@ -398,6 +398,12 @@ defaults flipped, and some routes refuse input they used to accept. Run
   and its progress while it runs, and if PersonalClaw stops part way, the next start
   resumes where it stopped. No model bound means nothing is re-embedded until you choose
   one.
+- **An app says what its agent work may use, and its agents approve nothing.** An app's
+  `agent` permission now names a tier: `text` (the model is handed only the text the app sends,
+  with no tools), `read` (read-only tools) or `tools` (your tools, each call that needs approval
+  asking you). An app you installed that still declares `"agent": true` runs no agent tasks
+  until you update it to a version that names its tier, and that update asks you again in the
+  tier's words. Minutes and Growth declare `text`.
 
 ## Where to go next
 

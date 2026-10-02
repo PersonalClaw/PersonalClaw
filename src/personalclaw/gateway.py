@@ -778,8 +778,16 @@ class GatewayOrchestrator:
         Every read here is of the setting as it is now: ``hooks.auto_approve_sources`` came from
         the config the gateway started with, so a source the owner took off the list kept
         approving until a restart.
+
+        None stands for a call of an app's agent (``SubagentInfo.app``): the owner's grants are for
+        her own agents, and no app's agent approves its calls (``subagent_tier``), so it is asked.
         """
         from personalclaw.trust_mode import is_yolo_active as is_yolo_mode
+
+        mgr = getattr(self, "subagent_mgr", None)
+        asker = mgr.get(approval_subagent_id(str(event.request_id))) if mgr else None
+        if isinstance(app := getattr(asker, "app", ""), str) and app:
+            return "", None
 
         safe_title = redact_exfiltration_urls(redact_credentials(event.title or "")[0])[0]
         try:
@@ -4298,8 +4306,10 @@ class GatewayOrchestrator:
                 # injected into whatever chat session happened to start the run" — and passes
                 # `silent=True` to say so; the only reader of `silent` is the notification tail
                 # below, which is where this now lands. The PREFIX (not `is_owned`) is the right
-                # test for routing: a malformed owned key is still not a channel.
-                ("cron:", "subagent:", ownership.OWNED_PREFIX)
+                # test for routing: a malformed owned key is still not a channel. Nor is
+                # `app:<name>`, an app's agent work (`handlers/apps.api_app_agent_run`): its result
+                # is the app's to read, and handing it to her agent's turn ran it on her tools.
+                ("cron:", "subagent:", "app:", ownership.OWNED_PREFIX)
             ):
                 # Channel session — inject silently into ACP session (no visible channel message).
                 # Retry up to _MAX_INJECT_ATTEMPTS times on timeout.

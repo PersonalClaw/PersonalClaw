@@ -22,7 +22,7 @@ def _manifest(**over) -> AppManifest:
         "version": "1.0.0",
         "displayName": "Growth-like",
         "description": "fixture",
-        "permissions": {"api": ["/api/tasks"], "agent": True, "cron": True, "network": False},
+        "permissions": {"api": ["/api/tasks"], "agent": "tools", "cron": True, "network": False},
         "crons": [
             {"name": "daily", "cron_expr": "3 18 * * *", "message": "capture today"},
             {"name": "hourly", "every": 3600, "agent": "researcher", "message": "advance"},
@@ -42,7 +42,7 @@ def _manifest(**over) -> AppManifest:
 
 def test_it_states_what_the_install_grants_and_runs():
     d = describe(_manifest())
-    assert d["permissions"]["api"] == ["/api/tasks"] and d["permissions"]["agent"] is True
+    assert d["permissions"]["api"] == ["/api/tasks"] and d["permissions"]["agent"] == "tools"
     assert [c["name"] for c in d["crons"]] == ["daily", "hourly"]
     assert all(c["scheduled"] for c in d["crons"]), "the cron permission switches both on"
     assert d["crons"][0]["cadence"], "a clock-time job is described in words"

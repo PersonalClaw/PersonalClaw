@@ -3217,7 +3217,8 @@
     {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "approved_at"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_read"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_change"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "refused"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "refused"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "app"}
    ],
    "returns": "None"
   },
@@ -3321,7 +3322,8 @@
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "request_key"},
      {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "approved_at"},
      {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_read"},
-     {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_change"}
+     {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_change"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "app"}
     ],
     "returns": "SubagentInfo | None"
    },
@@ -5336,6 +5338,7 @@
   ],
   "returns": "DownloadResult"
  },
+ "personalclaw.sdk.manifest.AGENT_TIERS": {"kind": "value", "type": "tuple", "value": "('text', 'read', 'tools')"},
  "personalclaw.sdk.manifest.AppManifest": {
   "bases": ["object"],
   "init": {
@@ -5792,7 +5795,7 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "memory"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "memory_declared_raw"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "cron"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "agent"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "agent"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "appMessaging"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "storageShared"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "storageRead"},
@@ -5801,7 +5804,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "backgroundTasks"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "eventSubscriptions"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "config"},
-    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "unknown_keys"}
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "unknown_keys"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "agent_declared_raw"}
    ],
    "returns": "None"
   },
