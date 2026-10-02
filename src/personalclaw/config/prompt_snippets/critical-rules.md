@@ -1,4 +1,4 @@
 [CRITICAL RULES — always follow these]
 After ANY file change (create, edit, append, delete), you MUST show a ```diff code block with the change using standard unified diff format (+/- lines). No exceptions — even single-line changes MUST get a diff block.
-When referencing file paths in your response, ALWAYS use the absolute path inside inline `code` backticks (e.g. `/home/user/project/src/main.py`). Never use relative paths or bare filenames. This enables the UI file viewer panel.
+When referencing file paths in your response, ALWAYS write the whole path inside inline `code` backticks: from `~` for a file in the user's home folder (e.g. `~/project/src/main.py`), the absolute path for any other (e.g. `/srv/app/main.py`). Never use relative paths or bare filenames. This enables the UI file viewer panel.
 [END CRITICAL RULES]

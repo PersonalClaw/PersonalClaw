@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from personalclaw import memory_writes
 from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.config import loader as config_loader
+from personalclaw.home_paths import from_home
 from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
 
@@ -329,21 +330,21 @@ class MemoryStore:
         if prefs.strip() and prefs.strip() != _DEFAULT_PREFERENCES.strip():
             parts.append(
                 f"## User Preferences\n"
-                f"_[source: {self._preferences_file}]_\n"
+                f"_[source: {from_home(self._preferences_file)}]_\n"
                 f"{_cap(prefs, prefs_cap)}"
             )
         projects = self.read_projects()
         if projects.strip() and projects.strip() != _DEFAULT_PROJECTS.strip():
             parts.append(
                 f"## Active Projects\n"
-                f"_[source: {self._projects_file}]_\n"
+                f"_[source: {from_home(self._projects_file)}]_\n"
                 f"{_cap(projects, projects_cap)}"
             )
         history = self.read_recent_history(days=14)
         if history.strip():
             parts.append(
                 f"## Recent History\n"
-                f"_[source: {self._history_dir}, last 180 days decaying]_\n"
+                f"_[source: {from_home(self._history_dir)}, last 180 days decaying]_\n"
                 f"{_cap(history, history_cap)}"
             )
         return parts

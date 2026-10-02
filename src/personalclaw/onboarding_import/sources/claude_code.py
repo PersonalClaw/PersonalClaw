@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from personalclaw.home_paths import from_home
 from personalclaw.onboarding_import.floors import (
     FileUnreadable,
     one_walk,
@@ -73,7 +74,6 @@ from personalclaw.onboarding_import.sources.common import (
     Unreadable,
     conversation_note,
     denied_command_item,
-    display_path,
     file_signature,
     give_way,
     is_final,
@@ -209,7 +209,7 @@ class Project:
 
     @property
     def label(self) -> str:
-        return display_path(self.local) if self.local is not None else self.recorded
+        return from_home(self.local) if self.local is not None else self.recorded
 
     @property
     def distrusted(self) -> bool:
@@ -400,7 +400,7 @@ def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) ->
                     scope=SCOPE_PROJECT,
                     project=project.recorded,
                     spec=expanded,
-                    origin=f"Project · {display_path(mcp_file)}",
+                    origin=f"Project · {from_home(mcp_file)}",
                     approved=not reason,
                     note=_project_server_note(reason, sorted(missing)),
                 )

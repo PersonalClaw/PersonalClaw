@@ -3,7 +3,6 @@
 import contextlib
 import json
 import logging
-import os
 import re
 from collections.abc import Iterator
 from dataclasses import replace
@@ -11,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from personalclaw import memory_writes
+from personalclaw import home_paths, memory_writes
 from personalclaw.agent import _shipped_prompt
 from personalclaw.agents.defaults import is_default_agent
 from personalclaw.config import loader as config_loader
@@ -655,17 +654,24 @@ _RUNTIME_DISPLAY = {
 
 
 def _home_directory_line() -> str:
-    """What ``~`` means in a path the user writes: the home of the account the gateway runs as.
+    """What ``~`` means, and that a path in the home is named from it (``home_paths``).
 
     A saved prompt said "Run my weekly review from ~/Notes/Garden", and the only folder the request
     named was the working directory, so the model wrote the path under that and the notes tool,
     allowed the real folder only, refused it. The built-in file tools already read a leading ``~/``
-    as this folder (``NativeBuiltinToolProvider._resolve``); this tells the model the same, and
-    widens nothing any tool may reach.
+    as this folder (``FileScope.resolve``); this tells the model the same, and widens nothing any
+    tool may reach. The absolute path is written here once, so a path a command prints in full can
+    be told for one in the home; asked to spell such paths out, the model cut the middle of a long
+    home and named a folder that is not the user's.
     """
-    home = os.path.expanduser("~")
-    notes = Path(home) / "Notes"
-    return f"[HOME DIRECTORY] {home}: ~ in a path is this folder, so ~/Notes is {notes}\n"
+    home = home_paths.home()
+    if not home:
+        return ""
+    return (
+        f"[HOME DIRECTORY] ~ is the user's home folder, {home}. Name a file or folder in it from "
+        "~, as ~/Notes/today.md, when you tell the user about it or give a tool its path: the file "
+        "tools, the shell and the file viewer all read ~ as this folder.\n"
+    )
 
 
 def _runtime_display_name(session_key: str) -> str:
@@ -1442,7 +1448,7 @@ class ContextBuilder:
         # Workspace identity — personalclaw-only (custom agents don't use workspaces).
         # The workspace IS the working directory; memory is scoped to it.
         if not is_custom:
-            ws_path = cwd or "(none)"
+            ws_path = home_paths.from_home(cwd) if cwd else "(none)"
             parts.append(render_snippet_block("workspace-identity", {"ws_path": ws_path}) + "\n\n")
 
         # The user's standing instructions: the instruction files they brought over from their

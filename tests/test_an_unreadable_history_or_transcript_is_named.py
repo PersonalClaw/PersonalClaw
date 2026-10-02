@@ -23,9 +23,10 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.home_paths import from_home
 from personalclaw.onboarding_import.model import ImportCategory, NotImported
 from personalclaw.onboarding_import.sources import claude_code, codex
-from personalclaw.onboarding_import.sources.common import SessionUnreadable, display_path
+from personalclaw.onboarding_import.sources.common import SessionUnreadable
 
 DENIED = "could not be read (Permission denied)"
 
@@ -156,7 +157,7 @@ def test_a_prompt_history_that_will_not_open_is_named_not_counted_as_none(
     result = scan(root)
     assert [n.what for n in result.not_imported if n.what == "Prompt history"] == []
     assert result.to_dict()["unreadable_files"] == [
-        {"path": display_path(history), "why": "it could not be opened (Permission denied)"}
+        {"path": from_home(history), "why": "it could not be opened (Permission denied)"}
     ]
 
 
@@ -184,7 +185,7 @@ def test_a_codex_session_index_that_will_not_open_is_named_and_the_sessions_stil
     conversations = [i for i in result.items if i.category is ImportCategory.CONVERSATIONS]
     assert [i.title for i in conversations] == ["Why is CI red?"], "under its first prompt"
     assert result.to_dict()["unreadable_files"] == [
-        {"path": display_path(index), "why": "it could not be opened (Permission denied)"}
+        {"path": from_home(index), "why": "it could not be opened (Permission denied)"}
     ]
 
 

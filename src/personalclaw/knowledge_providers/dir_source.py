@@ -78,6 +78,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
+from personalclaw.home_paths import from_home
 from personalclaw.knowledge_providers.base import (
     CHANGE_CREATED,
     CHANGE_DELETED,
@@ -329,13 +330,14 @@ def takes(spec: dict, rel: str, *, is_dir: bool) -> bool:
 
 
 def note_path(store: Any, item: dict) -> str:
-    """The file a library item came from, as the owner wrote its folder (``~/Notes/a.md``), when
-    it came from a watched folder that is still watched; ``""`` for any other item."""
+    """The file a library item came from, as the owner wrote its folder and from ``~`` in the home
+    (``~/Notes/a.md``), when it came from a watched folder that is still watched; ``""`` for any
+    other item."""
     source_id = item.get("source_id")
     source = store.get_source(source_id) if source_id else None
     if not source or source.get("provider") != "watched-dir" or not source.get("enabled"):
         return ""
-    folder = str((source.get("spec") or {}).get("path") or "").rstrip("/")
+    folder = from_home(str((source.get("spec") or {}).get("path") or "").rstrip("/"))
     guid = str(item.get("guid") or "")
     return f"{folder}/{guid}" if folder and guid else ""
 

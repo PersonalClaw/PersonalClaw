@@ -443,19 +443,24 @@ protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own 
 `governance/`); and no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
 or `*.secret` file, nor any alias of one. A path that starts with `~/` names the owner's home, as
 the owner writes it, and meets every one of these checks as any absolute path does (`~name` stays
-a plain name). A `glob` or `grep` pattern is relative to the folder searched (the workspace, or the
-call's `path`); one that is absolute, starts at `~` or climbs with `..` is refused as a whole, and
-every match is checked one by one, so a listing, a search or a map leaves out what the tools could
-not open. `code_map` indexes the workspace, an allowed working directory or a folder inside one,
-never a knowledge source's folder, whose other files the tools do not read; its index skips the
-same files (`codegraph.CodeGraphIndex`).
+a plain name). The home is the one the gateway runs with (`HOME`, as its shell reads `~`), and a
+path the tools show in it is written from `~` (`home_paths.from_home`: a search hit, a place in the
+`[file places]` note, a note's file), as is every path in the home the request names; a path
+outside the home is shown in full. The request says once what `~` is, and asks the agent to name a
+file in the home from `~`: spelling a long home out, it cut the middle and named a folder that was
+not the owner's. A `glob` or `grep` pattern is relative to the folder searched (the workspace, or
+the call's `path`); one that is absolute, starts at `~` or climbs with `..` is refused as a whole,
+and every match is checked one by one, so a listing, a search or a map leaves out what the tools
+could not open. `code_map` indexes the workspace, an allowed working directory or a folder inside
+one, never a knowledge source's folder, whose other files the tools do not read; its index skips
+the same files (`codegraph.CodeGraphIndex`).
 
 A file the agent names in a chat opens where the owner reads the chat: the Files view's read
 surfaces (`/api/file-read`, `/api/file-raw`, `/api/file-watch`) also admit what the agent's file
 tools may read (`files._agent_readable_path`, the same scope), for the owner's own requests and
-never an app's, and never for a write. A mention that names a note by its file alone resolves to
-the one watched-folder note with that file (`dir_source.note_file`); a name two notes share
-resolves to neither.
+never an app's, and never for a write. A `~/` mention opens as written, the gateway reading `~` as
+its home. A mention that names a note by its file alone resolves to the one watched-folder note
+with that file (`dir_source.note_file`); a name two notes share resolves to neither.
 
 PersonalClaw's own stores inside the workspace (every state-inventory entry inside its `workspace`
 entry: the knowledge library's database and stored documents, the lexicon) are not files to the

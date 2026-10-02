@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from personalclaw.config import loader as config_loader
+from personalclaw.home_paths import from_home
 
 
 def config_dir() -> Path:
@@ -1183,7 +1184,8 @@ class SkillsLoader:
                 "",
             ]
             for s in on_demand:
-                summary_lines.append(f"- **{s['name']}**: {s['description']} (dir: `{s['dir']}`)")
+                line = f"- **{s['name']}**: {s['description']} (dir: `{from_home(s['dir'])}`)"
+                summary_lines.append(line)
             parts.append("\n".join(summary_lines))
 
         return "[Skills:]\n" + "\n\n---\n\n".join(parts) + "\n[End of skills]\n\n"

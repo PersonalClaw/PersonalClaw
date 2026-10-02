@@ -46,6 +46,7 @@ from typing import Any, BinaryIO, TextIO
 
 import zstandard
 
+from personalclaw.home_paths import from_home
 from personalclaw.onboarding_import.floors import (
     FileUnreadable,
     one_walk,
@@ -78,7 +79,6 @@ from personalclaw.onboarding_import.sources.common import (
     and_list,
     conversation_note,
     denied_command_item,
-    display_path,
     file_signature,
     give_way,
     is_final,
@@ -495,7 +495,7 @@ def _skill_roots(base: Path, explicit: Path | None) -> list[tuple[Path, str]]:
     roots = [(base / _SKILLS_DIR, "")]
     if explicit is None:
         agents_skills = Path.home() / ".agents" / _SKILLS_DIR
-        roots.append((agents_skills, display_path(agents_skills)))
+        roots.append((agents_skills, from_home(agents_skills)))
     roots.append((base / _MEMORIES_DIR / _SKILLS_DIR, "Codex memories"))
     return roots
 

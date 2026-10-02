@@ -267,8 +267,9 @@ function WebImage({ src, alt }: { src: string; alt: string }) {
   )
 }
 
-/** Heuristic: does an inline-code string look like a clickable file path? */
-const FILE_PATH_RE = /^(?:~|\.{0,2}\/)?[\w.\-]+(?:\/[\w.\-]+)*\.\w{1,8}\/?$/
+/** Heuristic: does an inline-code string look like a clickable file path? A path from the home
+ *  starts `~/` (the gateway reads `~` as the home it runs with); `~name` is a name, not a path. */
+const FILE_PATH_RE = /^(?:~\/|\.{0,2}\/)?[\w.\-]+(?:\/[\w.\-]+)*\.\w{1,8}\/?$/
 function looksLikeFile(s: string): boolean {
   const t = s.trim()
   return t.length <= 200 && !t.includes(' ') && FILE_PATH_RE.test(t)
@@ -452,9 +453,9 @@ const INLINE_COMPONENTS: Record<string, React.ComponentType<any>> = {
   a({ children }: any) { return <span className="underline underline-offset-2 decoration-current/40">{children}</span> },
 }
 
-// Bare file paths inside prose (not just inline-code): /a/b.ext, ~/a/b.ext, or
+// Bare file paths inside prose (not just inline-code): /a/b.ext, ~/a/b.ext, ~/b.ext, or
 // workspace-relative a/b.ext with an extension. Conservative to avoid prose.
-const BARE_FILE_RE = /((?:~|\.{0,2}\/)?[\w.\-]+(?:\/[\w.\-]+)+\.\w{1,8})/g
+const BARE_FILE_RE = /((?:~\/|\.{0,2}\/)?[\w.\-]+(?:\/[\w.\-]+)+\.\w{1,8}|~\/[\w.\-]+\.\w{1,8})/g
 
 /** Linkify bare file paths inside a markdown text node. Returns the children
  *  unchanged unless a path is found, in which case the string is split into

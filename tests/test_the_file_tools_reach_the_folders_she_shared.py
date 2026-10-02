@@ -112,7 +112,8 @@ def test_the_folder_lists_and_searches_as_the_source_shares_it(home):
 
     found = _call(home, "grep", query="15:30", path="~/Notes/Daily")
     assert found.success, found.error
-    named = str(home.daily / "2026-09-30.md")
+    # Named from ~, as her home's files are (`home_paths`), and opened as written.
+    named = "~/Notes/Daily/2026-09-30.md"
     assert f"{named}:2:" in found.output, found.output
     assert _call(home, "read_file", path=named).success, "a hit names a file read_file opens"
 

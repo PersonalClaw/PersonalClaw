@@ -1170,7 +1170,7 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
     BundledSnippet(
         name="critical-rules",
         filename="critical-rules.md",
-        description="The always-on critical rules injected every session: diff-after-change, absolute paths in backticks.",  # noqa: E501
+        description="The always-on critical rules injected every session: diff-after-change, whole paths in backticks (from ~ in the home).",  # noqa: E501
     ),
     BundledSnippet(
         name="workspace-identity",

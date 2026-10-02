@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import make_mocked_request
 
+from personalclaw.home_paths import from_home
 from personalclaw.onboarding_import import detected
 from personalclaw.onboarding_import.sources import claude_code, codex
-from personalclaw.onboarding_import.sources.common import display_path
 
 #: Sits inside every broken fixture, so a test can show the reason never quotes the file.
 PLANTED = "planted-value-7c1f"
@@ -67,7 +67,7 @@ def test_a_claude_config_that_does_not_parse_is_named_and_lists_nothing(claude_r
     listing = claude_code.mcp_servers(claude_root)
     assert listing.servers == []
     assert _entries(listing) == [
-        {"path": display_path(config), "why": "it is not valid JSON (line 1, column 91)"}
+        {"path": from_home(config), "why": "it is not valid JSON (line 1, column 91)"}
     ]
     assert PLANTED not in json.dumps(_entries(listing)), "the reason quoted the file"
 
@@ -82,7 +82,7 @@ def test_a_config_that_is_not_an_object_is_named(claude_root):
     config = claude_root / ".claude.json"
     config.write_text('["notes"]', encoding="utf-8")
     assert _entries(claude_code.mcp_servers(claude_root)) == [
-        {"path": display_path(config), "why": "it is not a JSON object"}
+        {"path": from_home(config), "why": "it is not a JSON object"}
     ]
 
 
@@ -107,7 +107,7 @@ def test_an_unreadable_settings_file_leaves_out_only_the_project_servers(claude_
     listing = claude_code.mcp_servers(claude_root)
     assert [(s.name, s.scope) for s in listing.servers] == [("notes", "user"), ("ledger", "local")]
     assert _entries(listing) == [
-        {"path": display_path(settings), "why": "it is not valid JSON (line 1, column 20)"}
+        {"path": from_home(settings), "why": "it is not valid JSON (line 1, column 20)"}
     ]
 
 
@@ -126,7 +126,7 @@ def test_an_unreadable_project_file_leaves_out_that_project_alone(claude_root, t
     assert [s.name for s in listing.servers] == ["planner"]
     assert _entries(listing) == [
         {
-            "path": display_path(bad / ".mcp.json"),
+            "path": from_home(bad / ".mcp.json"),
             "why": "it is not valid JSON (line 1, column 16)",
         }
     ]
@@ -138,7 +138,7 @@ def test_a_codex_config_that_does_not_parse_is_named_and_lists_nothing(codex_roo
     listing = codex.mcp_servers(codex_root)
     assert listing.servers == []
     assert _entries(listing) == [
-        {"path": display_path(config), "why": "it is not valid TOML (line 3, column 37)"}
+        {"path": from_home(config), "why": "it is not valid TOML (line 3, column 37)"}
     ]
     assert PLANTED not in json.dumps(_entries(listing)), "the reason quoted the file"
 
@@ -172,7 +172,7 @@ def test_the_import_list_names_the_file_it_could_not_read_beside_what_it_could(t
     assert unreadable == [
         {
             "backend": "Claude Code",
-            "path": display_path(two_tools),
+            "path": from_home(two_tools),
             "why": "it is not valid JSON (line 1, column 91)",
         }
     ]
@@ -187,7 +187,7 @@ async def test_the_import_route_answers_the_unreadable_file(two_tools):
     assert resp.status == 200
     assert [s["name"] for s in body["servers"]] == ["planner"]
     assert [(u["backend"], u["path"]) for u in body["unreadable"]] == [
-        ("Claude Code", display_path(two_tools))
+        ("Claude Code", from_home(two_tools))
     ]
 
 
@@ -200,7 +200,7 @@ def test_a_tool_whose_config_is_unreadable_stays_on_the_step_and_says_so(claude_
     result = claude_code.scan(claude_root)
     assert result.items == []
     assert result.to_dict()["unreadable_files"] == [
-        {"path": display_path(config), "why": "it is not valid JSON (line 1, column 91)"}
+        {"path": from_home(config), "why": "it is not valid JSON (line 1, column 91)"}
     ]
     assert detected([result]) == [result], "left off the step, it reads as nothing found"
 
@@ -217,7 +217,7 @@ def test_a_file_asked_for_twice_is_named_once(claude_root):
     settings = claude_root / "settings.json"
     settings.write_text('{"env": {"A": "1"},', encoding="utf-8")
     result = claude_code.scan(claude_root)
-    assert [entry.path for entry in result.unreadable_files] == [display_path(settings)]
+    assert [entry.path for entry in result.unreadable_files] == [from_home(settings)]
 
 
 def test_an_instruction_file_that_will_not_open_is_named(claude_root, monkeypatch):
@@ -234,7 +234,7 @@ def test_an_instruction_file_that_will_not_open_is_named(claude_root, monkeypatc
     result = claude_code.scan(claude_root)
     assert result.items == []
     assert result.to_dict()["unreadable_files"] == [
-        {"path": display_path(instructions), "why": "it could not be opened (Permission denied)"}
+        {"path": from_home(instructions), "why": "it could not be opened (Permission denied)"}
     ]
 
 
@@ -254,6 +254,6 @@ def test_a_codex_config_and_agent_that_do_not_parse_are_named_and_the_rest_comes
     result = codex.scan(codex_root)
     assert [item.title for item in result.items] == ["writer"]
     assert result.to_dict()["unreadable_files"] == [
-        {"path": display_path(config), "why": "it is not valid TOML (line 3, column 37)"},
-        {"path": display_path(agents / "reviewer.toml"), "why": "it is not valid TOML"},
+        {"path": from_home(config), "why": "it is not valid TOML (line 3, column 37)"},
+        {"path": from_home(agents / "reviewer.toml"), "why": "it is not valid TOML"},
     ]

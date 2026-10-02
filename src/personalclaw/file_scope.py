@@ -40,7 +40,8 @@ Inside every place the checks the Files view makes still hold (``file_roots.Admi
 symlinks and ``..`` are resolved first, so a link or a climb out of a place reaches nothing it
 does not already reach; no credential location or secret file; and nothing in PersonalClaw's own
 home except through a place inside it (``file_roots.within``). A path that starts with ``~/``
-names the owner's home, as the owner writes it; ``~name`` stays a plain name.
+names the owner's home, as the owner writes it; ``~name`` stays a plain name. A path the tools show
+in the home is written from ``~`` (:mod:`personalclaw.home_paths`), and either form opens it.
 """
 
 from __future__ import annotations
@@ -51,6 +52,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from personalclaw.home_paths import from_home
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +96,8 @@ class OutOfScope(ValueError):
 
 @dataclass(frozen=True)
 class Place:
-    """One folder the file tools reach: its real path, how the owner wrote it, and its kind."""
+    """One folder the file tools reach: its real path, how it is named (as the owner wrote it,
+    from ``~`` in the home), and its kind."""
 
     root: str
     shown: str
@@ -154,7 +158,7 @@ def _allowed_places() -> list[Place]:
         if is_system_root(real):
             logger.warning("file scope: %r is a system folder, so it is not a place", text)
             continue
-        places.append(Place(real, text, ALLOWED))
+        places.append(Place(real, from_home(text), ALLOWED))
     return places
 
 
@@ -185,7 +189,7 @@ def _source_places() -> list[Place]:
         real = canonicalize(str(spec.get("path") or ""))
         if not real or is_system_root(real):
             continue
-        shown = str(spec["path"]).strip()
+        shown = from_home(str(spec["path"]).strip())
         places.append(Place(real, shown, SOURCE, str(row.get("name") or ""), spec))
     return places
 
@@ -205,10 +209,10 @@ class FileScope:
 
         session = [os.path.realpath(str(r)) for r in session_roots if str(r)]
         self.base = session[0] if session else ""
-        places = [Place(root, root, WORKSPACE) for root in dict.fromkeys(session)]
+        places = [Place(root, from_home(root), WORKSPACE) for root in dict.fromkeys(session)]
         # The folders this session's work reads: never a system folder, as for an allowed one.
         read_only = [os.path.realpath(str(r)) for r in reads if str(r)]
-        read_places = [Place(r, r, READS) for r in read_only if not is_system_root(r)]
+        read_places = [Place(r, from_home(r), READS) for r in read_only if not is_system_root(r)]
         for extra in _allowed_places() + read_places + _source_places():
             if not any(p.root == extra.root and p.changes >= extra.changes for p in places):
                 places.append(extra)
@@ -319,11 +323,11 @@ class FileScope:
 
     def shown(self, path: str | os.PathLike) -> str:
         """*path* as a result names it: relative to the session's folder inside it, else whole,
-        so the next call can open it as written."""
+        from ``~`` in the home, so the next call can open it as written."""
         text = str(path)
         if self.base and _inside(text, self.base) and text != self.base:
             return os.path.relpath(text, self.base)
-        return text
+        return from_home(text)
 
 
 #: The files SQLite keeps beside a database, which hold its pages too.

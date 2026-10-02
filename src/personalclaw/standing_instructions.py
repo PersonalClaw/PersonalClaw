@@ -31,6 +31,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from personalclaw.home_paths import from_home
+
 logger = logging.getLogger(__name__)
 
 #: The folder, inside the memory directory, the import writes instruction files to.
@@ -82,7 +84,7 @@ class InstructionFile:
         return f"{self.name} from {self.tool}" if self.tool else self.name
 
     def heading(self) -> str:
-        where = f", for work in {self.workspace}" if self.workspace else ""
+        where = f", for work in {from_home(self.workspace)}" if self.workspace else ""
         also = f" (also {', '.join(self.same_as)})" if self.same_as else ""
         return f"### {self.label}{where}{also}\n"
 
@@ -222,10 +224,11 @@ def instruction_files(cwd: str | None = None) -> list[InstructionFile]:
 
 
 def _left_out_line(left_out: list[InstructionFile], budget: int) -> str:
-    named = [f"{f.path} ({len(f.text):,} characters)" for f in left_out[:_NAMED_LEFT_OUT]]
+    shown = left_out[:_NAMED_LEFT_OUT]
+    named = [f"{from_home(f.path)} ({len(f.text):,} characters)" for f in shown]
     more = len(left_out) - len(named)
     if more:
-        named.append(f"{more} more in {instructions_dir()}")
+        named.append(f"{more} more in {from_home(instructions_dir())}")
     return (
         f"[Left out for lack of room: this conversation has {budget:,} characters for the user's "
         f"instructions, and these did not fit. Read one with read_file when the request touches "

@@ -39,9 +39,10 @@ def test_the_request_names_the_home_a_tilde_path_starts_from(tmp_path, home):
         session_key="dashboard:chat-1",
     )
     assert (
-        f"[HOME DIRECTORY] {home}: ~ in a path is this folder, so ~/Notes is {home / 'Notes'}\n"
-        in msg
-    )
+        f"[HOME DIRECTORY] ~ is the user's home folder, {home}. Name a file or folder in it from "
+        "~, as ~/Notes/today.md, when you tell the user about it or give a tool its path: the file "
+        "tools, the shell and the file viewer all read ~ as this folder.\n"
+    ) in msg
 
 
 def test_it_survives_a_context_cut_to_the_cap_and_the_date_stays_last(tmp_path, home, monkeypatch):
@@ -56,11 +57,11 @@ def test_it_survives_a_context_cut_to_the_cap_and_the_date_stays_last(tmp_path, 
     )
     ctx = builder.build_session_context(session_key="s1", cwd=str(tmp_path / "ws"))
     assert ctx.count("[HOME DIRECTORY]") == 1
-    assert f"[HOME DIRECTORY] {home}: " in ctx
+    assert f"[HOME DIRECTORY] ~ is the user's home folder, {home}. " in ctx
     assert ctx.index("[HOME DIRECTORY]") < ctx.rindex("[CURRENT DATE]")
     assert "\n\n" not in ctx[ctx.rindex("[CURRENT DATE]") :].rstrip("\n")
 
 
 def test_a_custom_agent_is_told_too(tmp_path, home):
     ctx = _builder(tmp_path).build_session_context(session_key="s1", agent="reviewer")
-    assert f"[HOME DIRECTORY] {home}: " in ctx
+    assert f"[HOME DIRECTORY] ~ is the user's home folder, {home}. " in ctx

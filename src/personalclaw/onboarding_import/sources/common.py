@@ -2,7 +2,7 @@
 
 - **Paths another machine recorded.** A tool's home copied from an old laptop names that laptop's
   home (``/Users/old-name/src/app``). :func:`on_this_machine` finds the same path under THIS home,
-  and :func:`display_path` says it the way a person reads it.
+  and :func:`~personalclaw.home_paths.from_home` says it the way a person reads it.
 - **One file, one item** (:func:`text_item`), read through floors 1 and 2.
 - **Skills** (:func:`scan_skills`): a directory with a ``SKILL.md``, whichever tool it came from,
   with the supply-chain scan its install will make (:class:`ImportedSkillMarketplace`).
@@ -34,6 +34,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from personalclaw.home_paths import from_home
 from personalclaw.onboarding_import.floors import (
     FileUnreadable,
     read_text_safely,
@@ -93,22 +94,11 @@ def on_this_machine(recorded: str) -> Path | None:
     return moved if moved.is_dir() else None
 
 
-def display_path(path: Path) -> str:
-    """A path as a person reads it: ``~/src/app`` under the home, the full path elsewhere."""
-    home = Path.home()
-    if path == home:
-        return "~"
-    try:
-        return "~/" + path.relative_to(home).as_posix()
-    except ValueError:
-        return str(path)
-
-
 def recorded_label(recorded: str) -> str:
     """A directory a tool recorded, as a person reads it: where it is on this machine when it is
     here, and the path as recorded when it is not."""
     local = on_this_machine(recorded)
-    return display_path(local) if local is not None else recorded
+    return from_home(local) if local is not None else recorded
 
 
 # ── files ─────────────────────────────────────────────────────────────────────
@@ -130,7 +120,7 @@ def slug_name(raw: str, *, lower: bool) -> str:
 
 def unreadable_file(exc: FileUnreadable) -> UnreadableFile:
     """The file ``exc`` could not read, as the step names it."""
-    return UnreadableFile(path=display_path(exc.path), why=exc.why)
+    return UnreadableFile(path=from_home(exc.path), why=exc.why)
 
 
 def note_unreadable(result: ScanResult, entry: UnreadableFile) -> None:
