@@ -161,10 +161,10 @@ def _summarize_artifact(artifact: dict) -> str:
 def parse_artifact_sentinel(text: str) -> dict | None:
     """Parse a step's artifact JSON (tolerates code-fenced / prose-wrapped). Ensures
     ``markdown`` is a string when present; keeps all other fields as authored."""
-    from personalclaw.loop.code_classify import _parse_obj  # shared JSON-from-prose helper
+    from personalclaw.llm_helpers import parse_llm_json
 
-    data = _parse_obj(text or "")
-    if not isinstance(data, dict):
+    data = parse_llm_json(text)
+    if data is None:
         return None
     if "markdown" in data and not isinstance(data["markdown"], str):
         data["markdown"] = str(data["markdown"])

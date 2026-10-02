@@ -15,7 +15,6 @@ completes normally and the FE simply renders no chips.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -23,7 +22,7 @@ from typing import TYPE_CHECKING
 from personalclaw.dashboard.chat_title import keeps_to_its_own_model
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
-from personalclaw.llm_helpers import let_fail_over, say_background_substitution
+from personalclaw.llm_helpers import let_fail_over, parse_llm_json_list, say_background_substitution
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY, chore_usage
@@ -138,29 +137,16 @@ def _build_exchange(session: "_ChatSession") -> str:
 
 
 def _followups_problem(text: str) -> str:
-    """What is wrong with *text* as a follow-ups answer, ``""`` when it is a JSON list."""
-    body = text.strip()
-    if body.startswith("```"):
-        parts = body.split("\n")
-        body = "\n".join(parts[1:-1] if parts[-1].startswith("```") else parts[1:]).strip()
-    try:
-        return "" if isinstance(json.loads(body), list) else "not a JSON list"
-    except (json.JSONDecodeError, TypeError):
-        return "not JSON"
+    """What is wrong with *text* as a follow-ups answer, ``""`` when it holds a JSON list: read as
+    :func:`_parse_followups` reads it, and an empty list (nothing worth suggesting) is an answer."""
+    return "" if parse_llm_json_list(text) is not None else "no JSON list"
 
 
 def _parse_followups(text: str) -> list[str]:
     """Parse the LLM response into ≤3 short follow-up strings."""
-    text = text.strip()
-    if text.startswith("```"):
-        parts = text.split("\n")
-        text = "\n".join(parts[1:-1] if parts[-1].startswith("```") else parts[1:]).strip()
-    try:
-        result = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        logger.debug("Failed to parse followups response: %s", text[:200])
-        return []
-    if not isinstance(result, list):
+    result = parse_llm_json_list(text)
+    if result is None:
+        logger.debug("Failed to parse followups response: %s", text.strip()[:200])
         return []
     out: list[str] = []
     for s in result:

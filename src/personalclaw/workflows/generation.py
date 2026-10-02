@@ -439,12 +439,10 @@ def parse_emission(raw: Any) -> tuple[dict[str, Any] | None, str]:
     caller reports the reason rather than treating it as a failure, because a planner that
     declines has told the user something true.
     """
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (TypeError, ValueError):
-            return None, ""
-    if not isinstance(raw, dict):
+    from personalclaw.llm_helpers import parse_llm_json
+
+    raw = parse_llm_json(raw)
+    if raw is None:
         return None, ""
     if raw.get("cannot_plan"):
         return None, str(raw["cannot_plan"])

@@ -23,7 +23,6 @@ which is why the TTL is explicit and the expiry is reported rather than assumed.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -122,14 +121,11 @@ def parse_revision(raw: Any) -> tuple[list[Patch], bool]:
     The sentinel is checked FIRST and as a literal, before any JSON parse — that is the whole point
     of having one. A model that emits `NO_UPDATE` costs a string comparison.
     """
-    if isinstance(raw, str):
-        if raw.strip() == NO_UPDATE:
-            return [], True
-        try:
-            raw = json.loads(raw)
-        except (TypeError, ValueError):
-            return [], False
+    if isinstance(raw, str) and raw.strip() == NO_UPDATE:
+        return [], True
+    from personalclaw.llm_helpers import parse_llm_json_value
 
+    raw = parse_llm_json_value(raw)
     if isinstance(raw, dict) and str(raw.get("op", "")).strip() == NO_UPDATE:
         return [], True
     if isinstance(raw, dict) and raw.get("no_update") is True:

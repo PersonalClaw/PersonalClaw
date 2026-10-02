@@ -396,34 +396,106 @@ async def _resolve_permission(
     return True
 
 
-# ── JSON Parsing ──
+# ── Reading a JSON answer ──
+#
+# ONE reading of a model's JSON answer. The one-shot call's own check (``output_type``), every
+# caller's check of the answer's shape (``validate=``, ``expecting``) and every parser of the same
+# answer read it here, so an answer the call accepted is one its caller can read. Each used to keep
+# a reading of its own, and they disagreed: the call took an answer in a markdown fence as usable,
+# the triage's proposal check read the same text with ``json.loads`` and called it "not JSON", and
+# the chain moved on from every model that had answered.
+
+#: The body of each markdown code fence (```json … ``` or ``` … ```).
+_FENCED = re.compile(r"```[^\n`]*\n(.*?)```", re.DOTALL)
+
+#: Where a JSON value of each kind can start, for the kinds a reader asks for.
+_OPENERS: dict[type, re.Pattern[str]] = {dict: re.compile(r"\{"), list: re.compile(r"\[")}
+_ANY_OPENER = re.compile(r"[{\[]")
+
+#: The most places in one answer a JSON value is tried from. An answer asked for JSON that has not
+#: begun one after this many braces is prose, and the bound keeps an answer of thousands of unclosed
+#: openers from costing the event loop a decode at every one of them.
+_MOST_STARTS = 256
+
+#: What :func:`_document` returns for text that is not one JSON document.
+_NOT_JSON = object()
 
 
-def _parse_llm(text: str, expected_type: type) -> dict | list | None:
-    """Parse JSON from LLM output, stripping markdown fences if present."""
-    text = text.strip()
-    if not text:
-        return None
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+def _document(text: str) -> Any:
+    """*text* decoded as one JSON document, or :data:`_NOT_JSON`."""
     try:
-        data = json.loads(text)
-        if isinstance(data, expected_type):
-            return data  # type: ignore[return-value]
+        return json.loads(text)
+    except (ValueError, RecursionError):
+        return _NOT_JSON
+
+
+def _first_value(text: str, kind: type) -> Any:
+    """The first object or array of *kind* that starts anywhere in *text*, or ``None``.
+
+    The decoder itself decides where each candidate ends, so a brace inside a string, a nested
+    object and prose after the value are all read as JSON reads them.
+    """
+    opener = _OPENERS.get(kind, _ANY_OPENER)
+    decoder = json.JSONDecoder()
+    found = opener.search(text)
+    for _ in range(_MOST_STARTS):
+        if found is None:
+            return None
+        try:
+            value, _end = decoder.raw_decode(text, found.start())
+        except (ValueError, RecursionError):
+            value = None
+        if value is not None and isinstance(value, kind):
+            return value
+        found = opener.search(text, found.start() + 1)
+    return None
+
+
+def _parse_llm(text: object, kind: type) -> Any:
+    """The JSON value of *kind* a model's answer holds, or ``None``: the one reading.
+
+    *kind* is ``dict``, ``list`` or ``object`` (any value). Models wrap the JSON they were asked
+    for in a markdown fence and put a sentence before or after it, and that is what this reads
+    through: the whole answer when it is one JSON document of the kind, else a fenced block that
+    is one, else the first object or array of the kind that starts inside a fenced block, then
+    anywhere in the answer. So the answer a model fenced is preferred to an object it quoted before
+    it. A bare word, a near-miss and a value of another kind are no value. An answer that was
+    already read (an object an injected completion returns) is itself.
+    """
+    if isinstance(text, (dict, list)):
+        return text if isinstance(text, kind) else None
+    if not isinstance(text, str):
         return None
-    except json.JSONDecodeError:
-        logger.debug("Failed to parse LLM JSON: %.200s", text)
+    body = text.strip()
+    if not body:
         return None
+    fenced = [block.strip() for block in _FENCED.findall(body)]
+    for region in (body, *fenced):
+        value = _document(region)
+        if value is not _NOT_JSON and isinstance(value, kind):
+            return value
+    for region in (*fenced, body):
+        value = _first_value(region, kind)
+        if value is not None:
+            return value
+    logger.debug("No JSON %s in the model's answer: %.200s", kind.__name__, body)
+    return None
 
 
-def parse_llm_json(text: str) -> dict | None:
-    """Parse JSON dict from LLM output, stripping markdown fences if present."""
-    return _parse_llm(text, dict)  # type: ignore[return-value]
+def parse_llm_json(text: object) -> dict | None:
+    """The JSON object a model's answer holds (:func:`_parse_llm`), or ``None``."""
+    return _parse_llm(text, dict)
 
 
-def parse_llm_json_list(text: str) -> list | None:
-    """Parse a JSON array from LLM output, stripping markdown fences."""
-    return _parse_llm(text, list)  # type: ignore[return-value]
+def parse_llm_json_list(text: object) -> list | None:
+    """The JSON array a model's answer holds (:func:`_parse_llm`), or ``None``."""
+    return _parse_llm(text, list)
+
+
+def parse_llm_json_value(text: object) -> Any:
+    """Any JSON value a model's answer holds (:func:`_parse_llm`), or ``None``: for a reader that
+    takes an object or an array, and tells a bare string or number apart from text."""
+    return _parse_llm(text, object)
 
 
 # ── Conversation History Helpers ──
@@ -798,8 +870,10 @@ async def one_shot_completion(
     raised, carrying the last answer's text for a caller that salvages it. A caller therefore
     never checks the shape after the fact to decide whether another model should have been
     asked. A caller that calls through a completion function it was handed binds the same check
-    around the call instead (:func:`expecting`). The response is always returned as text (typed
-    callers parse it, e.g. via ``json.loads``).
+    around the call instead (:func:`expecting`). The response is always returned as text, and a
+    caller reads its JSON with :func:`parse_llm_json` / :func:`parse_llm_json_list` /
+    :func:`parse_llm_json_value`: the reading this call's ``output_type`` check uses, so the answer
+    the call accepted is the one its caller reads, and a ``validate`` check reads it the same way.
 
     ``output_type`` ALSO rides the bridge as a build kwarg (AG-9) — but only to an entry
     whose provider advertised ``StructuredOutput.JSON_SCHEMA``, so a natively capable

@@ -1,6 +1,5 @@
 """LLM Judge — scores agent responses via a separate agent session."""
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -85,6 +84,7 @@ class LLMJudge:
             from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
             prompt = render_use_case_prompt("eval_judge", values) or ""
+        from personalclaw.llm_helpers import parse_llm_json
         from personalclaw.usage_ledger import Attribution, recorder
 
         record = recorder(self._provider, Attribution(source="eval", session_key="eval_judge"))
@@ -112,15 +112,14 @@ class LLMJudge:
                 record(event)
                 break
         raw = "".join(chunks)
+        # Read the way every model's JSON answer is read: a fence, or prose either side of it.
+        data = parse_llm_json(raw) or {}
         try:
-            start = raw.index("{")
-            end = raw.rindex("}") + 1
-            data = json.loads(raw[start:end])
             return JudgeVerdict(
                 score=float(data["score"]),
                 reason=data.get("reason", ""),
                 reasoning=str(data.get("reasoning", "")).strip(),
             )
-        except (ValueError, KeyError, json.JSONDecodeError):
+        except (TypeError, ValueError, KeyError):
             logger.warning("Judge returned unparseable response: %s", raw[:200])
             return JudgeVerdict(score=0, reason=f"parse_error: {raw[:100]}")

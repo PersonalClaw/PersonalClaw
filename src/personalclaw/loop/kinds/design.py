@@ -330,8 +330,6 @@ class DesignKind(LoopKindStrategy):
         the defaults on any failure/malformed output. Each row is {stage, title, objective} —
         `stage` is the shared phase id every kind uses (`PHASE_KEY_FIELDS`), so the row a design
         planner emits keys `phase_status` the same way a code planner's does."""
-        import json as _json
-
         # The phase-planner instruction lives in the prompt system (bundled
         # ``task-design-phases``), rendered with the task.
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
@@ -339,27 +337,24 @@ class DesignKind(LoopKindStrategy):
         prompt = render_use_case_prompt("design_phases", {"task": task}) or ""
         if not prompt:
             return [dict(p) for p in self._DEFAULT_PHASES]
-        from personalclaw.llm_helpers import expecting
+        from personalclaw.llm_helpers import expecting, parse_llm_json_list
 
         try:
             # An answer with no JSON array of phases is that model failing the call: the next
             # model of the chain is asked inside the call (`expecting`).
             with expecting(_phases_problem):
                 raw = await ask(prompt)
-            start, end = raw.find("["), raw.rfind("]")
-            if start != -1 and end > start:
-                rows = _json.loads(raw[start : end + 1])
-                out = [
-                    {
-                        "stage": str(r.get("stage", "")).strip() or str(r.get("title", "")).strip(),
-                        "title": str(r.get("title", "")).strip(),
-                        "objective": str(r.get("objective", "")).strip(),
-                    }
-                    for r in rows
-                    if isinstance(r, dict) and (r.get("title") or r.get("stage"))
-                ]
-                if out:
-                    return out
+            out = [
+                {
+                    "stage": str(r.get("stage", "")).strip() or str(r.get("title", "")).strip(),
+                    "title": str(r.get("title", "")).strip(),
+                    "objective": str(r.get("objective", "")).strip(),
+                }
+                for r in parse_llm_json_list(raw) or []
+                if isinstance(r, dict) and (r.get("title") or r.get("stage"))
+            ]
+            if out:
+                return out
         except Exception:
             pass
         return [dict(p) for p in self._DEFAULT_PHASES]
@@ -567,14 +562,8 @@ register(DesignKind())
 
 
 def _phases_problem(raw: str) -> str:
-    """What makes a design-phases answer unusable, ``""`` when it holds a JSON array."""
-    import json
+    """What makes a design-phases answer unusable, ``""`` when it holds a JSON array, read as
+    ``DesignKind._plan_phases`` reads it (``llm_helpers.parse_llm_json_list``)."""
+    from personalclaw.llm_helpers import parse_llm_json_list
 
-    start, end = raw.find("["), raw.rfind("]")
-    if start == -1 or end <= start:
-        return "no JSON array"
-    try:
-        rows = json.loads(raw[start : end + 1])
-    except ValueError:
-        return "no JSON array"
-    return "" if isinstance(rows, list) else "no JSON array"
+    return "" if parse_llm_json_list(raw) is not None else "no JSON array"

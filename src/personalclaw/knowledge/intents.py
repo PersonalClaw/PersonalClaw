@@ -272,22 +272,22 @@ async def match_intent(
     if not pool or not (content or "").strip() or not intent.goal.strip():
         return None
     from personalclaw.guardrails.failure import OutputContractError
-    from personalclaw.llm_helpers import expecting
+    from personalclaw.llm_helpers import expecting, parse_llm_json
 
     try:
         # An answer with no JSON object in it is that model failing the call: the next model of
         # the chain is asked inside the call (`expecting`).
         with expecting(_answer_problem):
             resp = await pool.send(build_match_prompt(intent, content), timeout=180.0)
-        parsed = _parse_json(resp)
+        parsed = parse_llm_json(resp)
     except OutputContractError as exc:
-        parsed = _parse_json(exc.raw)  # every model answered, none usably: not relevant
+        parsed = parse_llm_json(exc.raw)  # every model answered, none usably: not relevant
     except Exception:
         logger.debug("intent %s match failed", intent.id, exc_info=True)
         if raise_on_error:
             raise
         return None
-    if not isinstance(parsed, dict) or not parsed.get("relevant"):
+    if parsed is None or not parsed.get("relevant"):
         return None
     return IntentMatch(
         intent_id=intent.id,
@@ -327,26 +327,8 @@ async def run_intents(
 
 
 def _answer_problem(response: str) -> str:
-    """What makes a match answer unusable, ``""`` when it holds a JSON object."""
-    return "" if isinstance(_parse_json(response), dict) else "no JSON object"
+    """What makes a match answer unusable, ``""`` when it holds a JSON object, read as
+    :func:`match_intent` reads it."""
+    from personalclaw.llm_helpers import parse_llm_json
 
-
-def _parse_json(response: str) -> object:
-    for text in (response, _code_block(response)):
-        if text:
-            try:
-                return json.loads(text)
-            except (json.JSONDecodeError, ValueError):
-                pass
-    m = re.search(r"\{[\s\S]*\}", response or "")
-    if m:
-        try:
-            return json.loads(m.group())
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return None
-
-
-def _code_block(response: str) -> str | None:
-    m = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", response or "")
-    return m.group(1) if m else None
+    return "" if parse_llm_json(response) is not None else "no JSON object"

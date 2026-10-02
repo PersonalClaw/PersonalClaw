@@ -322,10 +322,10 @@ def _summarize_artifact(artifact: dict) -> str:
 
 def parse_steps_sentinel(text: str) -> tuple[str, list[dict]] | None:
     """Parse pass-1 output → ``(summary, [{kind,title,objective}, ...])`` or None."""
-    from personalclaw.loop.code_classify import _parse_obj
+    from personalclaw.llm_helpers import parse_llm_json
 
-    data = _parse_obj(text or "")
-    if not isinstance(data, dict):
+    data = parse_llm_json(text)
+    if data is None:
         return None
     raw_steps = data.get("steps")
     if not isinstance(raw_steps, list):
@@ -353,10 +353,10 @@ def parse_steps_sentinel(text: str) -> tuple[str, list[dict]] | None:
 
 def parse_artifact_sentinel(text: str) -> dict | None:
     """Parse pass-2 output → the step's artifact dict, or None if nothing parseable."""
-    from personalclaw.loop.code_classify import _parse_obj
+    from personalclaw.llm_helpers import parse_llm_json
 
-    data = _parse_obj(text or "")
-    if not isinstance(data, dict):
+    data = parse_llm_json(text)
+    if data is None:
         return None
     if "markdown" in data and not isinstance(data["markdown"], str):
         data["markdown"] = str(data["markdown"])

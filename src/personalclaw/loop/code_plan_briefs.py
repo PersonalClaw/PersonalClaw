@@ -285,13 +285,13 @@ def _summarize_artifact(artifact: dict) -> str:
 def parse_steps_sentinel(text: str) -> tuple[str, list[dict]] | None:
     """Parse pass-1 output → ``(summary, [{kind,title,objective}, ...])`` or None.
 
-    Tolerates code-fenced / prose-wrapped JSON (reuses the deep_plan parser). A
+    Tolerates code-fenced / prose-wrapped JSON (``llm_helpers.parse_llm_json``). A
     step needs at least a ``kind`` or a ``title`` to count; blank entries drop.
     """
-    from personalclaw.loop.code_classify import _parse_obj
+    from personalclaw.llm_helpers import parse_llm_json
 
-    data = _parse_obj(text or "")
-    if not isinstance(data, dict):
+    data = parse_llm_json(text)
+    if data is None:
         return None
     raw_steps = data.get("steps")
     if not isinstance(raw_steps, list):
@@ -323,10 +323,10 @@ def parse_artifact_sentinel(text: str) -> dict | None:
     Always returns a dict with at least a ``markdown`` string when parseable, so
     the FE has a human view even if the model omitted structured fields.
     """
-    from personalclaw.loop.code_classify import _parse_obj
+    from personalclaw.llm_helpers import parse_llm_json
 
-    data = _parse_obj(text or "")
-    if not isinstance(data, dict):
+    data = parse_llm_json(text)
+    if data is None:
         return None
     # Normalize: ensure markdown is a string; keep all other fields as-authored.
     if "markdown" in data and not isinstance(data["markdown"], str):

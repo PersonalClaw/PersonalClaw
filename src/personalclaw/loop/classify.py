@@ -12,10 +12,8 @@ this module has no provider/dashboard coupling and is unit-testable.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -160,14 +158,14 @@ async def classify(
     prompt = render_use_case_prompt("goal_classify", {"catalog": catalog, "goal": goal})
     if not prompt:
         return Classification(classified=False)
-    from personalclaw.llm_helpers import expecting
+    from personalclaw.llm_helpers import expecting, parse_llm_json
 
     try:
         # An answer with no JSON object in it is that model failing the call: the next model of
         # the chain is asked inside the call (`expecting`).
         with expecting(answer_problem):
             raw = await ask(prompt)
-        data = _parse_obj(raw)
+        data = parse_llm_json(raw)
     except Exception:
         logger.debug("classify failed", exc_info=True)
         data = None
@@ -321,15 +319,8 @@ def _normalize_roster(roster) -> list[dict]:
 
 
 def answer_problem(raw: str) -> str:
-    """What makes a classifier answer unusable, ``""`` when it holds a JSON object."""
-    return "" if isinstance(_parse_obj(raw), dict) else "no JSON object"
+    """What makes a classifier answer unusable, ``""`` when it holds a JSON object, read as
+    :func:`classify` reads it (``llm_helpers.parse_llm_json``)."""
+    from personalclaw.llm_helpers import parse_llm_json
 
-
-def _parse_obj(raw: str) -> object:
-    m = re.search(r"\{[\s\S]*\}", raw or "")
-    if not m:
-        return None
-    try:
-        return json.loads(m.group())
-    except (json.JSONDecodeError, ValueError):
-        return None
+    return "" if parse_llm_json(raw) is not None else "no JSON object"

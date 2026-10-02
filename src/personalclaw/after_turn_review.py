@@ -664,29 +664,11 @@ def _build_ladder_prompt(
 
 
 def _ladder_problem(raw: str) -> str:
-    """What makes a skill-ladder answer unusable, ``""`` when it holds a decision object."""
-    return "" if _parse_ladder_json(raw) else "no decision object"
+    """What makes a skill-ladder answer unusable, ``""`` when it holds a decision object: read as
+    the review reads it (``llm_helpers.parse_llm_json``), a fence or prose around it and all."""
+    from personalclaw.llm_helpers import parse_llm_json
 
-
-def _parse_ladder_json(raw: str) -> dict | None:
-    """Extract the JSON object from a one-shot response (tolerant of code fences)."""
-    import json
-
-    if not raw:
-        return None
-    text = raw.strip()
-    # Strip a ```json fence if present.
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
-    # Grab the outermost {...} if there's leading/trailing chatter.
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        obj = json.loads(text[start : end + 1])
-        return obj if isinstance(obj, dict) else None
-    except ValueError:
-        return None
+    return "" if parse_llm_json(raw) else "no decision object"
 
 
 async def _template_already_surfaced(slug: str) -> bool:
@@ -911,7 +893,7 @@ async def _ladder_pass(
         loaded_skills=loaded_skills,
     )
     from personalclaw.guardrails.failure import OutputContractError
-    from personalclaw.llm_helpers import expecting
+    from personalclaw.llm_helpers import expecting, parse_llm_json
 
     try:
         # An answer with no decision object in it is that model failing the call: the next
@@ -929,7 +911,7 @@ async def _ladder_pass(
         from personalclaw.llm_helpers import why_no_model_answered
 
         return "provider_error", why_no_model_answered(exc), None
-    decision = _parse_ladder_json(raw)
+    decision = parse_llm_json(raw)
     if not decision:
         return (
             "unparsable",

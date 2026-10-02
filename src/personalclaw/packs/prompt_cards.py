@@ -101,7 +101,7 @@ async def convert_card(card: str) -> dict[str, Any]:
     or oversized card and on an answer that is not a usable object.
     """
     from personalclaw.guardrails.local_queue import Attended
-    from personalclaw.llm_helpers import one_shot_completion
+    from personalclaw.llm_helpers import one_shot_completion, parse_llm_json
 
     text = (card or "").strip()
     if not text:
@@ -119,11 +119,9 @@ async def convert_card(card: str) -> dict[str, Any]:
         output_type=dict,
         attended=Attended("Reading the prompt card"),
     )
-    try:
-        parsed = json.loads(raw) if isinstance(raw, str) else raw
-    except (ValueError, TypeError) as exc:
-        raise PromptCardError(f"the model's answer was not JSON: {exc}") from exc
-    if not isinstance(parsed, dict):
+    # Read as the call read it when it accepted the answer (a fence and all), never a second way.
+    parsed = parse_llm_json(raw)
+    if parsed is None:
         raise PromptCardError("the model's answer was not a JSON object")
     return parsed
 

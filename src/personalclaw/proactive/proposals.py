@@ -195,16 +195,18 @@ def proposal_schema(allowed_ordinals: frozenset[str] | set[str] | None = None) -
 
 
 def _proposals_payload(raw: object) -> tuple[dict | None, str]:
-    """The reply as a dict carrying a ``proposals`` list, or ``None`` and what is wrong with it."""
-    import json
+    """The reply as a dict carrying a ``proposals`` list, or ``None`` and what is wrong with it.
 
-    payload: object = raw
-    if isinstance(raw, str):
-        try:
-            payload = json.loads(raw)
-        except ValueError:
-            return None, "not JSON"
-    if not isinstance(payload, dict) or not isinstance(payload.get("proposals"), list):
+    Read as the one-shot call that produced it read it (``llm_helpers.parse_llm_json``): a reading
+    of its own here refused the fenced answer the call had already accepted, so a usable answer
+    moved the chain on and the digest degraded.
+    """
+    from personalclaw.llm_helpers import parse_llm_json
+
+    payload = parse_llm_json(raw)
+    if payload is None:
+        return None, "no JSON object"
+    if not isinstance(payload.get("proposals"), list):
         return None, "no 'proposals' array"
     return payload, ""
 
@@ -222,9 +224,9 @@ def parse_proposals(
 ) -> ProposalBatch:
     """Turn the model's reply into a batch, enforcing every §1.3 constraint.
 
-    `raw` may be the dict `output_type=dict` returns or a JSON string. Anything that is not a
-    dict carrying a `proposals` list is a degraded batch — zero proposals, one `unparseable`
-    refusal — and the caller renders a plain digest.
+    `raw` is the model's answer, or the dict an injected completion already read from one. An
+    answer that holds no object carrying a `proposals` list is a degraded batch — zero proposals,
+    one `unparseable` refusal — and the caller renders a plain digest.
     """
     payload, why = _proposals_payload(raw)
     if payload is None:

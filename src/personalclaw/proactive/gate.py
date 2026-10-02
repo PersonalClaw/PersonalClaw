@@ -138,17 +138,16 @@ def _coerce_disposition(raw: object) -> GateDisposition | None:
 
 
 def _dispositions(raw: object) -> tuple[list | None, str]:
-    """The reply's ``dispositions`` list, or ``None`` and what is wrong with the reply."""
-    import json
+    """The reply's ``dispositions`` list, or ``None`` and what is wrong with the reply.
 
-    payload: object = raw
-    if isinstance(raw, str):
-        try:
-            payload = json.loads(raw)
-        except ValueError:
-            return None, "not JSON"
-    if not isinstance(payload, dict):
-        return None, "not a JSON object"
+    Read as the one-shot call that produced it read it (``llm_helpers.parse_llm_json``), so an
+    answer the call accepted is never refused here for its fence.
+    """
+    from personalclaw.llm_helpers import parse_llm_json
+
+    payload = parse_llm_json(raw)
+    if payload is None:
+        return None, "no JSON object"
     entries = payload.get("dispositions")
     if not isinstance(entries, list):
         return None, "no 'dispositions' array"
@@ -164,9 +163,9 @@ def dispositions_problem(raw: str) -> str:
 def parse_gate_output(raw: object, manifest: Manifest) -> dict[str, GateOutcome]:
     """Read the gate's strict-JSON reply into per-ordinal outcomes, failing OPEN.
 
-    Accepts ``{"dispositions": [{"item_id", "disposition", "rationale", "rule"}]}`` — a dict from
-    `output_type=dict`, or a JSON string. Anything else yields ``{}``, which `apply_gate`
-    then fills with `propose` for every item.
+    Accepts ``{"dispositions": [{"item_id", "disposition", "rationale", "rule"}]}`` — the model's
+    answer, or the dict an injected completion already read from one. Anything else yields ``{}``,
+    which `apply_gate` then fills with `propose` for every item.
 
     A disposition for an ordinal the manifest never minted is DISCARDED, not resolved. The
     manifest is the only id authority (§1.1); honouring an id it does not contain would let

@@ -50,19 +50,17 @@ def _run(**kw):
 # ── prompt + parse ───────────────────────────────────────────────────────────
 
 
-def test_parse_tolerates_code_fence():
-    raw = '```json\n{"action":"none"}\n```'
-    assert atr._parse_ladder_json(raw) == {"action": "none"}
+def test_a_fenced_decision_is_read():
+    assert atr._ladder_problem('```json\n{"action":"none"}\n```') == ""
 
 
-def test_parse_extracts_embedded_object():
-    raw = 'Here is my decision: {"action":"create","slug":"x"} — done.'
-    assert atr._parse_ladder_json(raw)["action"] == "create"
+def test_a_decision_inside_prose_is_read():
+    assert atr._ladder_problem('Here is my decision: {"action":"create","slug":"x"} — done.') == ""
 
 
-def test_parse_returns_none_on_garbage():
-    assert atr._parse_ladder_json("not json at all") is None
-    assert atr._parse_ladder_json("") is None
+def test_an_answer_with_no_object_holds_no_decision():
+    assert atr._ladder_problem("not json at all") == "no decision object"
+    assert atr._ladder_problem("") == "no decision object"
 
 
 # ── action routing (all through the propose-only queue) ──────────────────────

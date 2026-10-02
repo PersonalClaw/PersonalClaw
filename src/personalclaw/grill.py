@@ -21,9 +21,7 @@ callables, so this module has no dashboard/provider coupling and is unit-testabl
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
@@ -110,14 +108,14 @@ def _assess_prompt(goal: str) -> str:
 
 async def assess_goal(goal: str, ask: AskFn) -> tuple[bool, list[str]]:
     """Return ``(ambiguous, clarifying_questions)``. Never raises."""
-    from personalclaw.llm_helpers import expecting
+    from personalclaw.llm_helpers import expecting, parse_llm_json
 
     try:
         # Each grill answer has a shape, and one without it is that model failing the call: the
         # next model of the chain is asked inside the call (`expecting`).
         with expecting(_object_problem):
             raw = await ask(_assess_prompt(goal))
-        data = _parse_obj(raw)
+        data = parse_llm_json(raw)
     except Exception:
         return False, []
     if not isinstance(data, dict):
@@ -163,21 +161,21 @@ async def grill(
 
     prior = await check_memory(goal, recall)
     result.memory_hits = 1 if prior else 0
-    from personalclaw.llm_helpers import expecting
+    from personalclaw.llm_helpers import expecting, parse_llm_json, parse_llm_json_list
 
     try:
         if shape == "flat":
             with expecting(_list_problem):
                 raw = await ask(_flat_prompt(goal, prior))
-            items = _parse_list(raw)
+            items = parse_llm_json_list(raw)
             result.sub_goals = [
                 str(s).strip() for s in (items or []) if isinstance(s, str) and str(s).strip()
             ][:20]
         else:
             with expecting(_phases_problem):
                 raw = await ask(_tree_prompt(goal, prior))
-            data = _parse_obj(raw)
-            phases = data.get("phases") if isinstance(data, dict) else None
+            data = parse_llm_json(raw)
+            phases = data.get("phases") if data is not None else None
             result.phases = _normalize_phases(phases or [])
     except Exception:
         logger.debug("grill decompose failed", exc_info=True)
@@ -218,39 +216,24 @@ def _normalize_phases(phases: list) -> list[dict]:
     return out
 
 
+# Each check reads the answer the way its parser above does (``llm_helpers.parse_llm_json`` /
+# ``parse_llm_json_list``), so an answer the chain accepts is one the scoping pass can use.
+
+
 def _object_problem(raw: str) -> str:
-    return "" if isinstance(_parse_obj(raw), dict) else "no JSON object"
+    from personalclaw.llm_helpers import parse_llm_json
+
+    return "" if parse_llm_json(raw) is not None else "no JSON object"
 
 
 def _list_problem(raw: str) -> str:
-    return "" if _parse_list(raw) is not None else "no JSON array"
+    from personalclaw.llm_helpers import parse_llm_json_list
+
+    return "" if parse_llm_json_list(raw) is not None else "no JSON array"
 
 
 def _phases_problem(raw: str) -> str:
-    data = _parse_obj(raw)
-    return (
-        ""
-        if isinstance(data, dict) and isinstance(data.get("phases"), list)
-        else ("no 'phases' array")
-    )
+    from personalclaw.llm_helpers import parse_llm_json
 
-
-def _parse_list(raw: str) -> list | None:
-    start, end = raw.find("["), raw.rfind("]")
-    if start < 0 or end <= start:
-        return None
-    try:
-        v = json.loads(raw[start : end + 1])
-        return v if isinstance(v, list) else None
-    except (json.JSONDecodeError, ValueError):
-        return None
-
-
-def _parse_obj(raw: str) -> object:
-    m = re.search(r"\{[\s\S]*\}", raw or "")
-    if not m:
-        return None
-    try:
-        return json.loads(m.group())
-    except (json.JSONDecodeError, ValueError):
-        return None
+    data = parse_llm_json(raw)
+    return "" if data is not None and isinstance(data.get("phases"), list) else "no 'phases' array"

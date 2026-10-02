@@ -1091,11 +1091,10 @@ class TestEntityExtractorExtended:
             "summary": "",
         }
 
-    def test_extract_code_block(self):
+    def test_parse_reads_a_fenced_block(self):
         ext = EntityExtractor()
-        assert ext._extract_code_block("no block here") is None
-        result = ext._extract_code_block('```\n{"a": 1}\n```')
-        assert result == '{"a": 1}'
+        assert ext._parse_response('```\n{"title": "a"}\n```')["title"] == "a"
+        assert ext._parse_response("no block here")["title"] == ""
 
     def test_validate_partial_data(self):
         ext = EntityExtractor()

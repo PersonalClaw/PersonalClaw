@@ -116,7 +116,6 @@ of all 7 live gates in a change whose subject is enforcement, so the node keeps 
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -912,62 +911,15 @@ def parse_judge_json(text: Any) -> dict[str, Any] | None:
     verdict, because "the judge did not answer in the required shape" and "the judge said
     REJECT" are different facts and only one of them is about the work.
 
-    Tolerant of the two things models do to JSON and nothing else: a ```json fence, and
-    prose either side of the object. Deliberately NOT tolerant of a bare verdict word — that
-    was the old protocol, and accepting it would let a PASS with no proof through the exact
+    Read the way every model's JSON answer is read (``llm_helpers.parse_llm_json``), which is
+    tolerant of the two things models do to JSON and nothing else: a ```json fence, and prose
+    either side of the object. Deliberately NOT tolerant of a bare verdict word — that was the
+    old protocol, and accepting it would let a PASS with no proof through the exact
     precondition this contract exists to apply.
     """
-    if text is None:
-        return None
-    body = str(text).strip()
-    if not body:
-        return None
-    fence = re.search(r"```(?:json)?\s*(.+?)```", body, flags=re.DOTALL)
-    if fence:
-        body = fence.group(1).strip()
-    for candidate in (body, _first_object(body)):
-        if not candidate:
-            continue
-        try:
-            parsed = json.loads(candidate)
-        except (ValueError, TypeError):
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
+    from personalclaw.llm_helpers import parse_llm_json
 
-
-def _first_object(text: str) -> str:
-    """The first balanced `{...}` in `text`, brace-counted outside string literals.
-
-    A regex cannot do this: the contract object nests (`scores`), and `reasoning` routinely
-    contains braces and escaped quotes.
-    """
-    start = text.find("{")
-    if start < 0:
-        return ""
-    depth = 0
-    in_string = False
-    escaped = False
-    for index in range(start, len(text)):
-        char = text[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : index + 1]
-    return ""
+    return parse_llm_json(text)
 
 
 def judge_instruction(prompt: str, hints: JudgeHints) -> str:

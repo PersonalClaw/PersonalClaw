@@ -18,7 +18,6 @@ from personalclaw.workflows.engine import (
     NodeResult,
     apply_judge_contract,
     apply_schema_notice,
-    parse_json_loose,
     release_execution_claim,
 )
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
@@ -381,8 +380,8 @@ def _settled_stage_output(ctl: RunController, node: Node | None, text: str) -> N
       `{{nodes.work.output.summary}}` could not resolve either, which is why closing #3524's `last`
       gap alone only moves the error from `unresolved reference at 'last'` to `unresolved reference
       at 'summary'`. An `infer` node in the same run has always been parsed
-      (`engine.parse_json_loose` at its DONE branch) — that asymmetry between two node kinds reading
-      the same templates was the whole defect.
+      (`llm_helpers.parse_llm_json` at its DONE branch) — that asymmetry between two node kinds
+      reading the same templates was the whole defect.
     * **`judge_contract`.** `engine.apply_judge_contract` runs at the dispatch seam so "a node
       kind cannot skip it", and a `stage` skipped it anyway: at that seam a stage's result is
       still `RUNNING` with `{"subagent_id": …}`, which the contract declines. ALL SEVEN
@@ -406,7 +405,9 @@ def _settled_stage_output(ctl: RunController, node: Node | None, text: str) -> N
     cfg = node.config or {}
     parsed: Any = None
     if isinstance(cfg.get("schema"), dict) and cfg["schema"]:
-        parsed = parse_json_loose(text)
+        from personalclaw.llm_helpers import parse_llm_json
+
+        parsed = parse_llm_json(text)
     output: Any = parsed if isinstance(parsed, dict) else {"result": text}
     # Through the same helper the dispatch seam uses, so there is ONE definition of what a
     # validated verdict is — a second copy here would drift from the gate's.

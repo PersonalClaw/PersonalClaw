@@ -17,9 +17,7 @@ ONE objective, explicit exit criteria, and ONE deliverable.
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -194,14 +192,14 @@ async def classify(
     prompt = render_use_case_prompt("code_classify", {"catalog": catalog, "task": task})
     if not prompt:
         return _fallback_classification()
-    from personalclaw.llm_helpers import expecting
+    from personalclaw.llm_helpers import expecting, parse_llm_json
 
     try:
         # An answer with no JSON object in it is that model failing the call: the next model of
         # the chain is asked inside the call (`expecting`).
         with expecting(answer_problem):
             raw = await ask(prompt)
-        data = _parse_obj(raw)
+        data = parse_llm_json(raw)
     except Exception:
         # WARNING, not debug: a failed classify silently degrades every Code intake
         # to the bare implement→verify fallback (the user sees "couldn't auto-analyze"
@@ -483,58 +481,9 @@ def _normalize_roster(roster) -> list[dict]:
     return out[:5]
 
 
-def _first_json_object(raw: str) -> str | None:
-    """Extract the first COMPLETE top-level ``{...}`` object by brace-depth counting,
-    honoring string literals + escapes so braces inside strings don't miscount. This
-    beats a greedy ``\\{[\\s\\S]*\\}`` regex, which spans from the first ``{`` to the
-    LAST ``}`` anywhere — so valid JSON followed by trailing prose that contains a
-    brace (e.g. ``use {key: val}``) would capture the prose too and fail to parse."""
-    start = raw.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, len(raw)):
-        ch = raw[i]
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return raw[start : i + 1]
-    return None
-
-
 def answer_problem(raw: str) -> str:
-    """What makes a classifier answer unusable, ``""`` when it holds a JSON object."""
-    return "" if isinstance(_parse_obj(raw), dict) else "no JSON object"
+    """What makes a classifier answer unusable, ``""`` when it holds a JSON object, read as
+    :func:`classify` reads it (``llm_helpers.parse_llm_json``)."""
+    from personalclaw.llm_helpers import parse_llm_json
 
-
-def _parse_obj(raw: str) -> object:
-    raw = raw or ""
-    # Prefer the first BALANCED object (robust to trailing prose); fall back to the
-    # greedy first-{-to-last-} span only if balanced extraction finds nothing
-    # parseable (e.g. minified JSON the balance scanner still handles, or odd input).
-    candidates = [_first_json_object(raw)]
-    greedy = re.search(r"\{[\s\S]*\}", raw)
-    if greedy:
-        candidates.append(greedy.group())
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            return json.loads(candidate)
-        except (json.JSONDecodeError, ValueError):
-            continue
-    return None
+    return "" if parse_llm_json(raw) is not None else "no JSON object"

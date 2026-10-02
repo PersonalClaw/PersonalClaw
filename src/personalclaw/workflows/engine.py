@@ -433,7 +433,11 @@ async def dispatch_infer(
 
     output: Any = text
     if want_json:
-        parsed = parse_json_loose(text)
+        from personalclaw.llm_helpers import parse_llm_json
+
+        # The object the call's own check accepted (it asked for `output_type=dict`), read the
+        # same way: a second reading here failed a node whose answer the call had taken.
+        parsed = parse_llm_json(text)
         if parsed is None:
             return NodeResult(
                 state=InstanceState.FAILED,
@@ -2173,9 +2177,11 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
     silently propagates through the graph. Returns "" when the value conforms, or a
     human-readable problem.
     """
+    from personalclaw.llm_helpers import parse_llm_json, parse_llm_json_value
+
     if contract.get("must_be_json"):
         if isinstance(value, str):
-            if parse_json_loose(value) is None:
+            if parse_llm_json_value(value) is None:
                 return "expected JSON, got unparseable text"
         elif not isinstance(value, (dict, list)):
             return f"expected JSON object/array, got {type(value).__name__}"
@@ -2184,7 +2190,7 @@ def check_output_contract(value: Any, contract: dict[str, Any]) -> str:
     if isinstance(required, list) and required:
         target = value
         if isinstance(target, str):
-            target = parse_json_loose(target)
+            target = parse_llm_json(target)
         if not isinstance(target, dict):
             return "required_keys declared but output is not an object"
         missing = [k for k in required if str(k) not in target]
@@ -2250,9 +2256,11 @@ def schema_shortfall(schema: Any, value: Any) -> str:
     declared = sorted(str(k) for k in schema)
     target = value
     if isinstance(target, str):
+        from personalclaw.llm_helpers import parse_llm_json_value
+
         # An `infer` node's own parse already ran; this catches a model that answered with a JSON
         # STRING ("…prose…") — valid JSON, and no object could ever carry the declared keys.
-        parsed = parse_json_loose(target)
+        parsed = parse_llm_json_value(target)
         if parsed is not None:
             target = parsed
     if not isinstance(target, dict):
@@ -2318,49 +2326,13 @@ def apply_schema_notice(node: Node, result: NodeResult, observed: Any) -> NodeRe
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def parse_json_loose(text: Any) -> Any:
-    """Parse JSON, stripping markdown fencing first.
-
-    Fenced output is the dominant real-world format failure and stripping it fixes most
-    cases with ZERO retries — measurably cheaper than a retry round-trip.
-
-    PUBLIC because a stage's output is not produced at a dispatch seam: `dispatch_stage` returns at
-    the spawn, so `stage_settlement._settled_stage_output` is where a subagent's text becomes an
-    output and it has to apply the same parse an `infer` node gets here (#3524).
-    """
-    if isinstance(text, (dict, list)):
-        return text
-    if not isinstance(text, str):
-        return None
-    raw = text.strip()
-    if raw.startswith("```"):
-        lines = raw.splitlines()
-        if lines:
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        raw = "\n".join(lines).strip()
-    try:
-        return json.loads(raw)
-    except (TypeError, ValueError):
-        pass
-    # Last resort: the outermost {...} / [...] span. Last-match-wins on self-correction.
-    for opener, closer in (("{", "}"), ("[", "]")):
-        start = raw.find(opener)
-        end = raw.rfind(closer)
-        if 0 <= start < end:
-            try:
-                return json.loads(raw[start : end + 1])
-            except (TypeError, ValueError):
-                continue
-    return None
-
-
 def _action_output(result: Any) -> Any:
     """A provider's canonical output. Prefers parsed JSON stdout (the BYOI contract is
     "stdout = one JSON object"), falling back to raw text."""
+    from personalclaw.llm_helpers import parse_llm_json_value
+
     stdout = getattr(result, "stdout", "") or ""
-    parsed = parse_json_loose(stdout)
+    parsed = parse_llm_json_value(stdout)
     if parsed is not None:
         return parsed
     return {

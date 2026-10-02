@@ -1,7 +1,5 @@
 """Entity extraction using the LLM pool."""
 
-import json
-import re
 from typing import TYPE_CHECKING
 
 from personalclaw.knowledge.llm_pool import WorkerError
@@ -95,44 +93,16 @@ class EntityExtractor:
     @classmethod
     def answer_problem(cls, response: str) -> str:
         """What makes an extraction answer unusable, ``""`` when a JSON object can be read from
-        it, by the same reading :meth:`_parse_response` does."""
-        for text in (response, cls._extract_code_block(response)):
-            if text:
-                try:
-                    if isinstance(json.loads(text), dict):
-                        return ""
-                except (json.JSONDecodeError, ValueError):
-                    pass
-        m = re.search(r"\{[\s\S]*\}", response or "")
-        if m:
-            try:
-                if isinstance(json.loads(m.group()), dict):
-                    return ""
-            except (json.JSONDecodeError, ValueError):
-                pass
-        return "no JSON object"
+        it, by the same reading :meth:`_parse_response` does (``llm_helpers.parse_llm_json``)."""
+        from personalclaw.llm_helpers import parse_llm_json
+
+        return "" if parse_llm_json(response) is not None else "no JSON object"
 
     def _parse_response(self, response: str) -> dict:
-        for text in (response, self._extract_code_block(response)):
-            if text:
-                try:
-                    data = json.loads(text)
-                    return self._validate(data)
-                except (json.JSONDecodeError, ValueError):
-                    pass
-        m = re.search(r"\{[\s\S]*\}", response)
-        if m:
-            try:
-                data = json.loads(m.group())
-                return self._validate(data)
-            except (json.JSONDecodeError, ValueError):
-                pass
-        return _empty_result()
+        from personalclaw.llm_helpers import parse_llm_json
 
-    @staticmethod
-    def _extract_code_block(response: str) -> str | None:
-        m = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", response)
-        return m.group(1).strip() if m else None
+        data = parse_llm_json(response)
+        return self._validate(data) if data is not None else _empty_result()
 
     @staticmethod
     def _normalize_entities(raw) -> list[dict]:

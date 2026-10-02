@@ -19,6 +19,7 @@ import pytest
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+from personalclaw.proactive.proposals import proposals_problem
 from personalclaw.routing import rates as rates_mod
 
 
@@ -95,16 +96,6 @@ def chain(monkeypatch):
     return answers, asked
 
 
-def _proposals_problem(text: str) -> str:
-    import json
-
-    try:
-        payload = json.loads(text)
-    except ValueError:
-        return "not JSON"
-    return "" if isinstance(payload.get("proposals"), list) else "no 'proposals' array"
-
-
 def test_valid_json_in_the_wrong_shape_is_answered_by_the_next_model(chain):
     from personalclaw.llm_helpers import one_shot_completion
 
@@ -113,7 +104,7 @@ def test_valid_json_in_the_wrong_shape_is_answered_by_the_next_model(chain):
 
     answer = asyncio.run(
         one_shot_completion(
-            "Propose.", use_case="background", output_type=dict, validate=_proposals_problem
+            "Propose.", use_case="background", output_type=dict, validate=proposals_problem
         )
     )
 
@@ -131,7 +122,7 @@ def test_the_last_model_is_reminded_once_and_its_miss_says_what_was_wrong(chain)
     with pytest.raises(OutputContractError) as caught:
         asyncio.run(
             one_shot_completion(
-                "Propose.", use_case="background", model="here:tiny", validate=_proposals_problem
+                "Propose.", use_case="background", model="here:tiny", validate=proposals_problem
             )
         )
 

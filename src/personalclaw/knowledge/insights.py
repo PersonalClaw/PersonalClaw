@@ -6,8 +6,6 @@ a concise summary plus key points, topics, and action items. The category keys
 match what the typed-item UI renders as labeled rows.
 """
 
-import json
-import re
 from typing import TYPE_CHECKING
 
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -84,12 +82,17 @@ class InsightsExtractor:
 
     @classmethod
     def answer_problem(cls, response: str) -> str:
-        """What makes an insights answer unusable, ``""`` when it holds a JSON object."""
-        return "" if isinstance(cls._loads(response), dict) else "no JSON object"
+        """What makes an insights answer unusable, ``""`` when it holds a JSON object, read as
+        :meth:`_parse` reads it (``llm_helpers.parse_llm_json``)."""
+        from personalclaw.llm_helpers import parse_llm_json
+
+        return "" if parse_llm_json(response) is not None else "no JSON object"
 
     def _parse(self, response: str) -> dict:
-        data = self._loads(response)
-        if not isinstance(data, dict):
+        from personalclaw.llm_helpers import parse_llm_json
+
+        data = parse_llm_json(response)
+        if data is None:
             return {}
         out: dict[str, object] = {}
         title = _redact(str(data.get("title") or "")).strip().rstrip(".")
@@ -107,24 +110,3 @@ class InsightsExtractor:
             if items:
                 out[key] = items[:6]
         return out
-
-    @staticmethod
-    def _loads(response: str) -> object:
-        for text in (response, _code_block(response)):
-            if text:
-                try:
-                    return json.loads(text)
-                except (json.JSONDecodeError, ValueError):
-                    pass
-        m = re.search(r"\{[\s\S]*\}", response or "")
-        if m:
-            try:
-                return json.loads(m.group())
-            except (json.JSONDecodeError, ValueError):
-                pass
-        return None
-
-
-def _code_block(response: str) -> str | None:
-    m = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", response or "")
-    return m.group(1).strip() if m else None

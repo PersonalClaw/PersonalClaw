@@ -1,7 +1,6 @@
 """Contextual prompt suggestions — pre-computed via background LLM."""
 
 import asyncio
-import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -18,6 +17,7 @@ from personalclaw.llm_helpers import (
     failure_clause,
     is_model_call_failure,
     let_fail_over,
+    parse_llm_json_list,
     say_background_substitution,
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -186,23 +186,14 @@ def _time_context() -> str:
 
 def _parse_suggestions(text: str, *, quiet: bool = False) -> list[str]:
     """Parse LLM response into a list of suggestion strings; ``[]`` when it holds none, said in the
-    log unless *quiet* (the check a fallback is decided by reads the same answer first)."""
-    text = text.strip()
-    # Strip markdown fences if present
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
-        text = text.strip()
-
-    try:
-        result = json.loads(text)
-        if isinstance(result, list) and all(isinstance(s, str) for s in result):
-            return [s.strip() for s in result if s.strip() and len(s.strip()) <= 80][:6]
-    except (json.JSONDecodeError, TypeError):
-        pass
+    log unless *quiet* (the check a fallback is decided by reads the same answer first). The list
+    is read the way every model's JSON answer is (``llm_helpers.parse_llm_json_list``)."""
+    result = parse_llm_json_list(text)
+    if result is not None and all(isinstance(s, str) for s in result):
+        return [s.strip() for s in result if s.strip() and len(s.strip()) <= 80][:6]
 
     if not quiet:
-        logger.warning("Failed to parse suggestions response: %s", text[:200])
+        logger.warning("Failed to parse suggestions response: %s", text.strip()[:200])
     return []
 
 

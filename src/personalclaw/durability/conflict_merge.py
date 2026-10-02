@@ -36,7 +36,7 @@ from personalclaw.durability.conflicts import (
 )
 from personalclaw.guardrails.audit import caller_scope
 from personalclaw.guardrails.failure import OutputContractError
-from personalclaw.llm_helpers import one_shot_completion
+from personalclaw.llm_helpers import one_shot_completion, parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -106,19 +106,12 @@ def _merge_problem(text: str) -> str:
 def _parse(text: str) -> tuple[dict | None, str]:
     """``(merged, rationale)`` from the model's answer; ``(None, "")`` on anything unusable.
 
-    Tolerates a fenced code block, since that is the single most common shape drift; anything
-    else unparseable is a fail-open miss, not an exception.
+    Read the way every model's JSON answer is read (``llm_helpers.parse_llm_json``): a fenced
+    block, the single most common shape drift, or a sentence around the object. Anything else
+    unparseable is a fail-open miss, not an exception.
     """
-    body = (text or "").strip()
-    if body.startswith("```"):
-        body = body.split("\n", 1)[-1]
-        if body.rstrip().endswith("```"):
-            body = body.rstrip()[: -len("```")]
-    try:
-        obj = json.loads(body)
-    except (json.JSONDecodeError, ValueError):
-        return None, ""
-    if not isinstance(obj, dict):
+    obj = parse_llm_json(text)
+    if obj is None:
         return None, ""
     merged = obj.get("merged")
     if not isinstance(merged, dict) or not merged:

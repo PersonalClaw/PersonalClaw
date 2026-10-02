@@ -458,18 +458,14 @@ def _parse_verdict(
     time in a second spelling — asking a model to restate a fact it already stated is how a
     third vocabulary starts. ``evidence_refs`` are the supervisor's, threaded in from
     :func:`evidence_refs_from_observation`; the judge is never asked to cite proof, because the
-    bundled prompt does not offer it the field.
+    bundled prompt does not offer it the field. The answer is read the way every model's JSON
+    answer is (``llm_helpers.parse_llm_json``): a fence, or prose either side of the object.
     """
-    m = re.search(r"\{[\s\S]*\}", raw or "")
-    if not m:
+    from personalclaw.llm_helpers import parse_llm_json
+
+    data = parse_llm_json(raw)
+    if data is None:
         logger.warning("judge returned unparseable verdict: %s", (raw or "")[:200])
-        return None
-    try:
-        data = json.loads(m.group())
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("judge returned unparseable verdict: %s", (raw or "")[:200])
-        return None
-    if not isinstance(data, dict):
         return None
     done = bool(data.get("done") is True)
     regressed = bool(data.get("regressed") is True)
