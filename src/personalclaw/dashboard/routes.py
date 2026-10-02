@@ -1140,6 +1140,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     app.router.add_post("/api/inbox/send", handlers_inbox.api_inbox_send)
     app.router.add_put("/api/inbox/{id}", handlers_inbox.api_inbox_update)
     app.router.add_post("/api/inbox/{id}/draft", handlers_inbox.api_inbox_draft)
+    app.router.add_post("/api/inbox/{id}/sort", handlers_inbox.api_inbox_sort)
     app.router.add_post("/api/inbox/{id}/open", handlers_inbox.api_inbox_open)
     app.router.add_post("/api/inbox/{id}/favorite", handlers_inbox.api_inbox_favorite)
     app.router.add_get("/api/inbox/{id}/attachments/{aid}", handlers_inbox.api_inbox_attachment)

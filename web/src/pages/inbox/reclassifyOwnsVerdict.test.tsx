@@ -73,7 +73,9 @@ describe('reclassify owns the verdict (issue 623)', () => {
   })
 
   it('a machine verdict still renders its thumbs (the gate must not over-hide)', () => {
-    render(<InboxDetail item={makeItem()} onChanged={() => {}} navigate={() => {}} />)
+    // A machine verdict is one whose row names the prompt that made it.
+    const producers = { classification: { producer_kind: 'prompt', producer_id: 'native:task-inbox-classify' } }
+    render(<InboxDetail item={makeItem({ feedback_producers: producers } as Partial<InboxItem>)} onChanged={() => {}} navigate={() => {}} />)
     expect(screen.getByTestId('thumbs-inbox_classification')).toBeInTheDocument()
     expect(screen.getByText('High confidence')).toBeInTheDocument()
   })
@@ -84,6 +86,6 @@ describe('reclassify owns the verdict (issue 623)', () => {
   })
 
   it("confMeta resolves 'user' to its own entry, not the needs_review fallback", () => {
-    expect(confMeta('user').label).toBe('Set by you')
+    expect(confMeta('user')?.label).toBe('Set by you')
   })
 })

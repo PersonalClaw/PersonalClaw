@@ -1,22 +1,22 @@
 """Inbox service — the runtime behind the dashboard Inbox page.
 
-Holds the inbox entity (``state`` + ``store``) and provides the AI affordances the
-dashboard calls on demand:
+Holds the inbox entity (``state`` + ``store``), sorts each new message in the background
+(:attr:`InboxService.sorter`, :mod:`personalclaw.inbox_sorting`), and provides the AI
+affordances the dashboard calls on demand:
 
-* :meth:`classify` — triage a stored item into needs_reply / fyi / noise.
 * :meth:`draft_reply` — draft a reply to a stored item in the user's voice, standing on the
   notes the owner's own words name (:mod:`personalclaw.reply_grounding`).
 * :meth:`generate_digest` — summarize a channel's recent messages into a catch-up item.
 
-All three run one-shot LLM jobs over the item's stored content through the bound
-chat model (``one_shot_completion``). The message text is EXTERNAL, untrusted
+Each runs one-shot LLM jobs over the item's stored content on the background model chain
+(``one_shot_completion``). The message text is EXTERNAL, untrusted
 content (a scraped channel/filesystem message can carry a prompt-injection), so it is
 wrapped with :func:`fence_untrusted` before it ever reaches a prompt — the model
 reads it as quoted data, not instructions. This is the one seam where third-party
 message text enters an LLM prompt, mirroring how the web-tools app fences web_fetch
 output at its tool boundary.
 
-The service is channel-independent: draft/classify/digest operate on the stored items
+The service is channel-independent: sorting, drafting and digests operate on the stored items
 (populated by the native push source + every polled source), so they work even with no
 external source connected.
 
@@ -55,7 +55,6 @@ from personalclaw.identity import contributor_label, current_username, operator_
 from personalclaw.inbox import (
     SOURCE_DECLARABLE_KINDS,
     Classification,
-    Confidence,
     InboxItem,
     InboxState,
     InboxStore,
@@ -64,6 +63,7 @@ from personalclaw.inbox import (
     evaluate_alert,
     notify_inbox_alert,
 )
+from personalclaw.inbox_sorting import InboxSorter
 from personalclaw.security import fence_untrusted
 
 if TYPE_CHECKING:
@@ -259,7 +259,14 @@ def _resolve_source_kind(declared: str, source_name: str) -> str:
     return ItemKind.MESSAGE.value
 
 
-def fence_message_for_prompt(item: InboxItem, owner: str | None = None) -> str:
+def fence_message_for_prompt(
+    item: InboxItem,
+    owner: str | None = None,
+    *,
+    max_chars: int = _MAX_MESSAGE_CHARS,
+    max_turns: int = _MAX_THREAD_TURNS,
+    heading: str = "",
+) -> str:
     """Render an item's external text (body + thread context) as ONE fenced block.
 
     Everything the sender controlled is inside a single ``<untrusted_content>`` fence
@@ -277,18 +284,21 @@ def fence_message_for_prompt(item: InboxItem, owner: str | None = None) -> str:
     the label exists for.
 
     *owner* defaults to the live attribution username, so the two service call sites need
-    no argument; tests pass it explicitly.
+    no argument; tests pass it explicitly. ``max_chars`` and ``max_turns`` bound how much of
+    the message and its thread go in; ``heading`` opens the fenced block (the sorter's
+    ``Channel:`` line: a channel's name can be text someone else wrote).
     """
     if owner is None:
         owner = current_username()
     label = contributor_label(item.owner_username, owner)
-    parts: list[str] = []
-    for turn in (item.thread_context or [])[-_MAX_THREAD_TURNS:]:
+    parts: list[str] = [heading] if heading else []
+    turns = (item.thread_context or [])[-max_turns:] if max_turns > 0 else []
+    for turn in turns:
         who = str(turn.get("sender") or turn.get("sender_name") or "someone")
         txt = str(turn.get("text") or "")
         if txt.strip():
             parts.append(f"{who}: {txt}")
-    body = (item.message or "")[:_MAX_MESSAGE_CHARS]
+    body = (item.message or "")[:max_chars]
     parts.append(f"{item.sender_name or 'sender'}{label}: {body}")
     if item.attachments:
         parts.append(f"Attached:\n{attachments.listing(item.attachments)}")
@@ -332,6 +342,9 @@ class InboxService:
         # The event loop that owns the store, captured in start(). The remediation engine
         # drives maintenance from a worker thread and must bounce onto this loop.
         self._owner_loop: asyncio.AbstractEventLoop | None = None
+        #: Sorts each new message on the background model, a batch per call. Woken by every
+        #: ingest and every poll tick; runs on the loop that owns the store.
+        self.sorter = InboxSorter(self.inbox)
 
     # ── health (mirrors what the dashboard status handler expects) ──
     def health(self) -> dict:
@@ -351,6 +364,7 @@ class InboxService:
             "poll_count": self._poll_count,
             "stale": stale,
             "sources": rows,
+            "sorting": self.sorter.health(),
         }
 
     def _note_poll(self, source: "MessageSourceProvider", error: str) -> None:
@@ -379,11 +393,13 @@ class InboxService:
             self._task = asyncio.create_task(self._loop())
             names = [str(source.source_name) for source in self._sources()]
             logger.info("Inbox loop started (polling: %s)", ", ".join(names) or "nothing yet")
+        self.sorter.start()
 
     def stop(self) -> None:
         if self._task is not None:
             self._task.cancel()
             self._task = None
+        self.sorter.stop()
 
     def _poll_interval(self) -> float:
         try:
@@ -399,6 +415,7 @@ class InboxService:
         while not shutdown_event.is_set():
             try:
                 await asyncio.wait_for(shutdown_event.wait(), timeout=self._poll_interval())
+                self.sorter.wake()  # so it sees the shutdown and stops
                 return  # shutdown signaled
             except asyncio.TimeoutError:
                 pass  # normal wake-up
@@ -408,6 +425,10 @@ class InboxService:
                 await self._poll_once()
             except Exception:  # noqa: BLE001 - the loop outlives any one pass
                 logger.warning("Inbox poll pass failed", exc_info=True)
+            # Every tick, not only one that brought mail: a message held while sorting was off,
+            # in an incident or past the day's spend ceiling, or one a sync brought in, is
+            # sorted on the first tick that can.
+            self.sorter.wake()
 
     async def _poll_once(self) -> None:
         """Poll every source :attr:`_sources` names, one after another, and ingest each.
@@ -559,6 +580,7 @@ class InboxService:
                     logger.debug("inbox ingest broadcast failed", exc_info=True)
         if count:
             self.inbox.flush()
+            self.sorter.wake()
         return count
 
     def run_maintenance(self) -> int:
@@ -651,59 +673,11 @@ class InboxService:
 
     # ── AI affordances ──
     #
-    # Both affordances declare their action type here, so the
-    # governed inventory is complete in a process that never dispatched a provider action.
-    # `inbox.reply_draft` is declared at the BOTTOM rung with a `one_tap` ceiling and
-    # `leaves_machine=True`: an AI-drafted reply is written and shown, never sent, and no
-    # accumulated track record can propose sending one by itself. `inbox.classify` labels
-    # the user's own row, so it declares `autonomous` — which is what it already does.
-    async def classify(self, item_id: str) -> InboxItem | None:
-        """Triage a stored item into needs_reply/fyi/noise + confidence, persist, return it."""
-        from personalclaw.guardrails.rungs import ensure_core_action_types
-
-        ensure_core_action_types()
-        item = self.inbox.items.get(item_id)
-        if item is None:
-            return None
-        from personalclaw.llm_helpers import one_shot_completion
-        from personalclaw.prompt_providers.runtime import render_use_case_prompt
-
-        prompt = (
-            render_use_case_prompt(
-                "inbox_classify",
-                {
-                    "channel": item.channel_name or item.channel,
-                    "sender": item.sender_name or "unknown",
-                    "message": fence_message_for_prompt(item),
-                },
-            )
-            or ""
-        )
-        from personalclaw.guardrails.failure import OutputContractError
-
-        try:
-            # output_type=dict adds one targeted-retry attempt. A parse miss
-            # that survives the retry still safe-defaults to needs_reply/needs_review
-            # (the error carries the retry text) — never a silent drop.
-            # `caller_scope` so the attempt row names WHICH background pass spent this
-            # (`G47`): triage, drafting and digests all resolve on the same axis.
-            # An answer naming no known classification is that model failing the call: the
-            # chain's next model is asked inside it.
-            with caller_scope("inbox_triage"):
-                raw = await one_shot_completion(
-                    prompt,
-                    use_case="background",
-                    output_type=dict,
-                    validate=_classification_problem,
-                )
-        except OutputContractError as exc:
-            raw = exc.raw
-        except Exception:
-            logger.warning("inbox classify failed for %s", item_id, exc_info=True)
-            return None
-        cls, conf = _parse_classification(raw)
-        return self.inbox.update(item_id, classification=cls, confidence=conf)
-
+    # Drafting declares its action type here, so the governed inventory is complete in a
+    # process that never dispatched a provider action. `inbox.reply_draft` is declared at the
+    # BOTTOM rung with a `one_tap` ceiling and `leaves_machine=True`: an AI-drafted reply is
+    # written and shown, never sent, and no accumulated track record can propose sending one by
+    # itself. (`inbox.classify`, the sorter's, is declared where it runs: `inbox_sorting`.)
     async def draft_reply(self, item_id: str, *, instructions: str = "") -> DraftOutcome | None:
         """Draft a reply to a stored item in the user's voice; persist it and say what it did.
 
@@ -733,6 +707,7 @@ class InboxService:
             return None
         from personalclaw.llm_helpers import one_shot_completion
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
+        from personalclaw.providers.prompt_use_cases import active_prompt_ref
         from personalclaw.reply_grounding import ground, word_count
 
         said = instructions.strip()
@@ -745,6 +720,9 @@ class InboxService:
             if self._style_rules
             else ""
         )
+        # The prompt this draft is written from, named with the draft it writes: what a verdict
+        # on the draft is rated against.
+        producer = active_prompt_ref("inbox_draft")
         prompt = (
             render_use_case_prompt(
                 "inbox_draft",
@@ -789,12 +767,14 @@ class InboxService:
             return DraftOutcome(item, grounding, question=text)
         if text and limit and word_count(text) > limit:
             text = await self._within_limit(prompt, text, limit, item_id)
-        # A produced draft implies the item wanted a reply — reflect that so the UI
-        # sorts it sensibly, but never downgrade an escalate.
-        updates: dict = {"draft": text, "context_summary": grounding.summary() if text else ""}
-        if text and item.classification == Classification.NOISE:
-            updates["classification"] = Classification.NEEDS_REPLY.value
-        stored = self.inbox.update(item_id, **updates)
+        # The verdict is left as it is: asking for a draft is not sorting the message, and a
+        # verdict written here would name no maker (her own Noise read "Needs reply · Set by you").
+        stored = self.inbox.update(
+            item_id,
+            draft=text,
+            drafted_by=producer if text else "",
+            context_summary=grounding.summary() if text else "",
+        )
         if stored is None:
             return None
         return DraftOutcome(stored, grounding, skipped=kind == "skip")
@@ -879,8 +859,8 @@ class InboxService:
             message=summary,
             sender_id="",
             sender_name=f"Digest · last {hours:g}h",
+            # FYI by what it is, a summary to read: no model sorted it, so no confidence.
             classification=Classification.FYI.value,
-            confidence=Confidence.HIGH.value,
             status=ItemStatus.PENDING.value,
             created_at=ts,
             context_summary=f"AI digest of {len(messages)} messages",
@@ -952,31 +932,3 @@ def run_live_inbox_maintenance() -> str:
         return "no inbox service running"
     removed = svc.run_maintenance_threadsafe()
     return f"inbox maintenance: {removed} item(s) removed"
-
-
-def _classification_problem(raw: str) -> str:
-    """What makes a classify answer unusable, ``""`` when it names a known classification."""
-    from personalclaw.llm_helpers import parse_llm_json
-
-    data = parse_llm_json(raw)
-    label = str(data.get("classification", "")).lower() if isinstance(data, dict) else ""
-    return "" if label in {c.value for c in Classification} else "no known 'classification'"
-
-
-def _parse_classification(raw: str) -> tuple[str, str]:
-    """Parse the classify model output → (classification, confidence), defaulting
-    safely to needs_reply/needs_review when the JSON is malformed."""
-    valid_cls = {c.value for c in Classification}
-    valid_conf = {c.value for c in Confidence}
-    try:
-        from personalclaw.llm_helpers import parse_llm_json
-
-        data = parse_llm_json(raw) or {}
-    except Exception:
-        data = {}
-    cls = str(data.get("classification", "")).lower()
-    conf = str(data.get("confidence", "")).lower()
-    return (
-        cls if cls in valid_cls else Classification.NEEDS_REPLY.value,
-        conf if conf in valid_conf else Confidence.NEEDS_REVIEW.value,
-    )

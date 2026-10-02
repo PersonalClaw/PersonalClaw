@@ -243,7 +243,9 @@ class InboxOpActionProvider(ActionProvider):
         if not text:
             return ActionResult(success=False, error="inbox-op: reply_draft needs a draft body")
         prior_draft = str(getattr(item, "draft", "") or "")
-        store.update(item_id, draft=text)
+        # The digest's proposal wrote this text, not the drafting prompt, so it names no producer
+        # a verdict on the draft could be rated against.
+        store.update(item_id, draft=text, drafted_by="")
         _broadcast(state, store.items.get(item_id) or item)
         return ActionResult(
             success=True,
@@ -313,7 +315,9 @@ class InboxOpActionProvider(ActionProvider):
             return ActionResult(success=True, stdout=json.dumps({"undone": op, "item_id": item_id}))
 
         if op == "reply_draft":
-            store.update(item_id, draft=prior)
+            # The text put back names no producer: an undo handle is not where a draft's
+            # maker is read from.
+            store.update(item_id, draft=prior, drafted_by="")
             _broadcast(state, store.items.get(item_id) or item)
             return ActionResult(success=True, stdout=json.dumps({"undone": op, "item_id": item_id}))
 

@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **898 registrations** over **727 distinct paths** — 891 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **899 registrations** over **728 distinct paths** — 892 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -30,8 +30,8 @@ The 128 families the surface divides into, largest first.
 | `/api/workflows` | 45 | 40 |
 | `/api/models` | 38 | 30 |
 | `/api/artifacts` | 25 | 16 |
+| `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
-| `/api/inbox` | 23 | 22 |
 | `/api/loops` | 23 | 18 |
 | `/api/mcp` | 19 | 15 |
 | `/api/skills` | 19 | 15 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 891 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 892 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -498,6 +498,7 @@ The 891 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/inbox/{id}/open` | record that the user opened/read this item (a moderate |
 | `POST` | `/api/inbox/{id}/pair` | let someone new talk to your agent on the channel they wrote on. |
 | `POST` | `/api/inbox/{id}/restore` | undo a verification filter (INU-6). |
+| `POST` | `/api/inbox/{id}/sort` | sort a message again, after its sorting failed. |
 | `GET` | `/api/incident` | current state; POST /api/incident — activate. |
 | `POST` | `/api/incident` | current state; POST /api/incident — activate. |
 | `POST` | `/api/incident/resume` | turn incident mode OFF. |

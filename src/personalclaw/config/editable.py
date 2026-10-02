@@ -938,6 +938,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "loops.check_work_stages": {"type": "bool"},
     "loops.worktree_sparse": {"type": "bool"},
     "inbox.engagement_ranking_enabled": {"type": "bool"},
+    # "Sort new messages": read before every sorting call, so no restart is needed.
+    "inbox.sort_messages": {"type": "bool"},
     "inbox.engagement_half_life_days": {"type": "float", "min": 0.0, "max": 365.0},
     # "Poll the drop folder": the built-in drop folder's switch alone (an installed inbox
     # app is polled while it is enabled). Read at every poll, so no restart is needed.

@@ -2769,6 +2769,16 @@ class InboxConfig:
         default_factory=list,
         metadata=_meta("Style Rules", "Initial communication style rules for drafting."),
     )
+    #: Read before every sorting call (``inbox_sorting.sorting_hold``), so it binds at once.
+    sort_messages: bool = field(
+        default=True,
+        metadata=_meta(
+            "Sort New Messages",
+            "Have the background model read each new message and sort it into Needs reply, "
+            "FYI or Noise, a few messages per call. Off: messages arrive unsorted and nothing "
+            "is sent to a model for them.",
+        ),
+    )
     # NOTE: auto_cleanup_enabled / retention live in the inbox ENTITY settings
     # store (entity_settings/inbox.json via /api/inbox/settings), not here —
     # one store, read by retention maintenance at runtime. Alerting moved OUT
@@ -4500,6 +4510,7 @@ class AppConfig:
                 style_rules=[
                     str(r) for r in inbox_data.get("style_rules", []) if isinstance(r, str)
                 ],
+                sort_messages=bool(inbox_data.get("sort_messages", True)),
                 test_mode=bool(inbox_data.get("test_mode", False)),
                 engagement_ranking_enabled=bool(
                     inbox_data.get("engagement_ranking_enabled", False)

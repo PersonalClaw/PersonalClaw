@@ -23,7 +23,6 @@ import pytest
 from personalclaw import notification_kinds as nk
 from personalclaw.inbox import (
     NON_CHANNEL_KINDS,
-    Classification,
     InboxItem,
     InboxStore,
     ItemKind,
@@ -205,12 +204,6 @@ def test_emitted_item_cannot_be_replied_to(store, state):
     """No channel behind it — a Send button here would be a dead control."""
     item_id = emit_attention_item(state, source="loop", kind="needs_input", title="T", store=store)
     assert store.items[item_id].can_reply is False
-
-
-def test_emitted_item_is_classified_as_needing_a_reply(store, state):
-    """It must not be filtered out as noise by the classification-based views."""
-    item_id = emit_attention_item(state, source="loop", kind="needs_input", title="T", store=store)
-    assert store.items[item_id].classification == Classification.NEEDS_REPLY.value
 
 
 def test_item_kind_defaults_to_the_notification_kind(store, state):

@@ -50,6 +50,8 @@ __all__ = [
     "notify_inbox_alert",
     "owner_view",
     "redact_item",
+    "judgment_producers",
+    "FEEDBACK_TARGETS",
 ]
 
 
@@ -331,9 +333,15 @@ class InboxItem:
     # a row raised in this process differed from the same row after a restart: `str()` of a member
     # is "ItemStatus.PENDING", so a reader comparing `str(item.status)` (the triage digest's
     # collector) skipped every row raised since the gateway started.
-    classification: str = Classification.NEEDS_REPLY.value
+    #: The triage verdict (:class:`Classification`), or ``""`` while nobody has made one: a
+    #: message waiting for the sorter (:mod:`personalclaw.inbox_sorting`), and every row that is
+    #: not a message. The default used to be ``needs_reply``, so every row read "Needs reply"
+    #: before anything had read it.
+    classification: str = ""
     draft: str = ""
-    confidence: str = Confidence.NEEDS_REVIEW.value
+    #: How sure the verdict's maker was (:class:`Confidence`), ``user`` for her own verdict, or
+    #: ``""`` where nobody made one or a machine certainty would describe nothing.
+    confidence: str = ""
     status: str = ItemStatus.PENDING.value
     created_at: float = 0.0
     context_summary: str = ""  # what context the LLM used for drafting
@@ -379,6 +387,16 @@ class InboxItem:
     # prevent. Attribution is set at creation and never by a client.
     owner_username: str = ""
     origin_harness: str = ""
+    #: The prompt that produced ``classification`` (its ref, ``provider:name``), written by the
+    #: sorter with the verdict and cleared when anyone else sets one. A verdict on the row is
+    #: rated against this, and only this (:func:`judgment_producers`).
+    classified_by: str = ""
+    #: Why the sorter could not sort this message, in a sentence; ``""`` when it did or has not
+    #: tried. Sorting it again (``POST /api/inbox/{id}/sort``) clears it.
+    classify_error: str = ""
+    #: The prompt that wrote ``draft`` (its ref), or ``""`` when the text on the row is not that
+    #: prompt's: written or saved by her, or put there by anything else.
+    drafted_by: str = ""
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -470,7 +488,27 @@ class InboxItem:
                 )
                 continue
             clean[key] = value
+        if "classified_by" not in d:
+            _drop_unmade_verdict(clean)
         return cls(**clean)
+
+
+def _drop_unmade_verdict(row: dict[str, Any]) -> None:
+    """Clear the verdict a row stored before verdicts named their maker carries, where nobody
+    made it.
+
+    Every such row was stamped when it was made: a message ``needs_reply`` / ``needs_review``,
+    every other kind ``needs_reply`` / ``high``. Nothing ever sorted one, so those are cleared,
+    and a message among them is then sorted like any new one. Kept: her own verdict
+    (``confidence`` ``user``), and the kind an agent's post or a digest was given when it was
+    made (``post_to_inbox``'s question or notice, a digest's FYI), without a confidence no maker
+    had. A row written since carries ``classified_by``, so this runs once per row.
+    """
+    if row.get("confidence") == Confidence.USER.value:
+        return
+    if row.get("source") not in ("native", "digest"):
+        row["classification"] = ""
+    row["confidence"] = ""
 
 
 #: What of an item is where THIS machine is with it rather than what came in: its triage, what was
@@ -480,6 +518,9 @@ _TRIAGE_FIELDS: tuple[str, ...] = (
     "status",
     "classification",
     "confidence",
+    "classified_by",
+    "classify_error",
+    "drafted_by",
     "draft",
     "context_summary",
     "replied_at",
@@ -718,6 +759,28 @@ class InboxStore:
         self.save()
         return item
 
+    def update_many(self, changes: dict[str, dict[str, Any]]) -> list[InboxItem]:
+        """:meth:`update` for several rows at once, written in ONE save: ``{item_id: fields}``.
+
+        Every row's fields are validated before the first is applied, so one bad value refuses
+        the whole write. An id no longer in the store is skipped. Returns the rows changed."""
+        if any("status" in fields for fields in changes.values()):
+            raise TypeError("an inbox row's status moves through inbox.set_item_status")
+        for fields in changes.values():
+            validate_updatable_fields(fields)
+        changed: list[InboxItem] = []
+        for item_id, fields in changes.items():
+            item = self.items.get(item_id)
+            if item is None:
+                continue
+            for k, v in fields.items():
+                if hasattr(item, k):
+                    setattr(item, k, v)
+            changed.append(item)
+        if changed:
+            self.save()
+        return changed
+
     def pending(self) -> list[InboxItem]:
         return [i for i in self.items.values() if i.status == ItemStatus.PENDING]
 
@@ -831,34 +894,56 @@ def redact_item(item: dict) -> dict:
         for record in item.get("attachments") or []
         if isinstance(record, dict)
     ]
-    # Feedback producer meta (additive): each judgment field on the
-    # item names its producing artifact — the bound prompt ref — so the FE thumbs
-    # can attribute a verdict without a second lookup. Digest items are their own
-    # judgment (source == "digest").
+    # Feedback producer meta (additive): each machine judgment on the item names the artifact
+    # that produced it, so the thumbs attribute a verdict without a second lookup, and a field
+    # nobody's prompt wrote gets no thumbs at all.
     try:
-        from personalclaw.providers.prompt_use_cases import active_prompt_ref
-
-        producers: dict[str, dict] = {}
-        if item.get("classification"):
-            producers["classification"] = {
-                "producer_kind": "prompt",
-                "producer_id": active_prompt_ref("inbox_classify"),
-            }
-        if item.get("draft"):
-            producers["draft"] = {
-                "producer_kind": "prompt",
-                "producer_id": active_prompt_ref("inbox_draft"),
-            }
-        if item.get("source") == "digest":
-            producers["digest"] = {
-                "producer_kind": "prompt",
-                "producer_id": active_prompt_ref("inbox_digest"),
-            }
+        producers = judgment_producers(item)
         if producers:
             item["feedback_producers"] = producers
     except Exception:  # noqa: BLE001 — meta must never break the inbox payload
         logger.debug("feedback producer meta failed", exc_info=True)
     return item
+
+
+#: The feedback target kind each machine judgment on a row is rated as → that judgment's key in
+#: :func:`judgment_producers`.
+FEEDBACK_TARGETS: dict[str, str] = {
+    "inbox_classification": "classification",
+    "inbox_draft": "draft",
+    "inbox_digest": "digest",
+}
+
+
+def judgment_producers(row: dict) -> dict[str, dict]:
+    """What produced each machine judgment on a stored *row*: ``{judgment: {"producer_kind",
+    "producer_id"}}``, naming only a judgment a prompt really made.
+
+    The verdict is the sorter's while ``classified_by`` names its prompt, and nobody's once she
+    set one herself (``confidence`` ``user``). The draft is the drafting prompt's while
+    ``drafted_by`` names it. A digest is its prompt's by construction: only
+    ``InboxService.generate_digest`` makes one. Every judgment used to be credited to the prompt
+    bound for it whether or not it ran, so a verdict she gave against a row's stamped default
+    trained the sorting prompt on a label it never produced.
+
+    The thumbs read this (:func:`redact_item`), and so does ``POST /api/feedback``, which records
+    the producer named here or refuses: one answer, so the two cannot disagree.
+    """
+    producers: dict[str, dict] = {}
+    sorted_by = str(row.get("classified_by") or "")
+    if sorted_by and row.get("classification") and row.get("confidence") != Confidence.USER.value:
+        producers["classification"] = {"producer_kind": "prompt", "producer_id": sorted_by}
+    drafted_by = str(row.get("drafted_by") or "")
+    if drafted_by and row.get("draft"):
+        producers["draft"] = {"producer_kind": "prompt", "producer_id": drafted_by}
+    if row.get("source") == "digest":
+        from personalclaw.providers.prompt_use_cases import active_prompt_ref
+
+        producers["digest"] = {
+            "producer_kind": "prompt",
+            "producer_id": active_prompt_ref("inbox_digest"),
+        }
+    return producers
 
 
 def live_store(state: Any) -> "InboxStore | None":
@@ -965,10 +1050,9 @@ def emit_attention_item(
         created_at=now,
         source=source,
         # Non-channel kinds have nowhere to send a reply; the UI keys its send affordance
-        # off this, so leaving it True would render a Send button that cannot work.
+        # off this, so leaving it True would render a Send button that cannot work. Nor a
+        # triage verdict: only a message is sorted, so this row carries none.
         can_reply=False,
-        classification=Classification.NEEDS_REPLY.value,
-        confidence=Confidence.HIGH.value,
         item_kind=resolved_kind,
         refs=dict(refs or {}),
     )

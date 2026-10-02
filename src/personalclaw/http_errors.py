@@ -787,6 +787,23 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # or refused by the disk), which the site's message says in the row's own words.
     "inbox_attachment_not_found": "That Inbox message has no attachment by that id.",
     "inbox_attachment_not_kept": "That attachment is listed, but its file was not kept.",
+    # ── sorting a message again (handlers_inbox.api_inbox_sort) ──
+    # Only an open message the sorter reads (`inbox_sorting.wants_sorting`) can be sent again: a
+    # row that is not a message, an agent's own post, one that already has a verdict, or one she
+    # has handled or dismissed is not one.
+    "inbox_not_running": "The Inbox is not running, so nothing can be sorted.",
+    "inbox_item_not_sortable": (
+        "That item is not a message waiting to be sorted: it is not a message, it is an "
+        "agent's own post, it already has a verdict, or it is no longer open."
+    ),
+    # ── a verdict on an Inbox judgment (dashboard/handlers/feedback.py) ──
+    # The producer a verdict is rated against is the one the row names
+    # (`inbox.judgment_producers`), never one the caller claims. A row whose judgment no prompt
+    # made (unsorted, sorted by her, a draft she wrote) has nothing to rate.
+    "feedback_no_judgment": (
+        "Nothing a model produced is on that item to rate: its verdict or draft is not a "
+        "prompt's."
+    ),
     # ── legibility context-adapter regeneration (dashboard/handlers/context.py — #358) ──
     # The project's bound workspace_dir is a WRITE target for CLAUDE.md / AGENTS.md /
     # .cursorrules. A relative path, the home dir itself, a credential dir or an OS/system

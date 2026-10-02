@@ -758,6 +758,12 @@
     "type": "int"
   },
   {
+    "default": true,
+    "path": "inbox.sort_messages",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": [],
     "path": "inbox.style_rules",
     "sensitive": false,

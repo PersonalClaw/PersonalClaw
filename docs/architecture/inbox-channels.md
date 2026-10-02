@@ -20,6 +20,31 @@ against core protocols). Paths are relative to
   deficit off the live store (`resilience/remediation.py`). `run_maintenance`
   is the implementation the engine drives, bounced onto the loop that owns the
   store via `run_maintenance_threadsafe` so nothing mutates it off-thread.
+- **Sorting** (`inbox_sorting.py`) — a message arrives unsorted (`classification` `""`, shown
+  as "Not sorted yet"), and the service's `InboxSorter` gives it its verdict in the background:
+  woken by every ingest, a held message from someone new and every poll tick, it waits a moment
+  for the rest of a burst, then sends the open unsorted messages to the background model in
+  batches of at most `BATCH_MAX`, one call per batch, each message fenced on its own, through
+  the prompt bound for `inbox_classify` (`task-inbox-classify`). Each verdict lands with the
+  prompt that made it (`classified_by`); a message the answer left out, an answer that could
+  not be read, or a failed call puts the reason on the row (`classify_error`) instead of a
+  verdict, and `POST /api/inbox/{id}/sort` sends it again. A message is sent once: never again
+  after it has a verdict or a failure, and an answer lands only on a row still unsorted, so a
+  verdict she gave while the model read it stands. Nothing is sent while `inbox.sort_messages`
+  is off (Settings → Inbox → Sort new messages) or incident mode is on, and a call the daily
+  spend ceiling refuses, or that no background model can take (none is set up, or the bound one
+  is resting after failing), leaves its messages waiting; each is a hold whose sentence is
+  `health.sorting.held` in `/api/inbox/status`, and the next tick tries again. Only messages
+  are sorted: a row that is not one (a notice, a proposal, a note) carries no verdict, and an
+  agent's own post (`post_to_inbox`) keeps the kind the agent gave it and is never read, since
+  its text may come from a Temporary or Incognito chat.
+- **Every judgment names its maker.** `inbox.judgment_producers` says which prompt produced a
+  row's verdict (`classified_by`) and draft (`drafted_by`, written by Generate draft and cleared
+  when she saves her own text); her own verdict (`confidence` `user`) and a draft she wrote name
+  none. The thumbs read it (`redact_item`'s `feedback_producers`), and `POST /api/feedback` for
+  `inbox_classification` / `inbox_draft` / `inbox_digest` records the producer it names, whatever
+  the body claims, or refuses with `409 feedback_no_judgment`. A row stored before this carried
+  a stamped verdict nobody made; reading it clears that (`_drop_unmade_verdict`), once.
 - **AI drafts** write on behalf of the operator (the `dashboard.user_name`
   identity), not the bot. The reply panel's "What should the reply say?" field is the
   owner's instruction for one draft: `POST /api/inbox/{id}/draft {"instructions"}` (text of

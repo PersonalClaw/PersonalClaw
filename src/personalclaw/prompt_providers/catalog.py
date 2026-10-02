@@ -290,15 +290,13 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         filename="task-inbox-classify.md",
         kind="user",
         category="internal",
-        description="Triage an inbox message into needs_reply/fyi/noise + a confidence (JSON out).",
+        description="Sort a batch of new inbox messages, each into needs_reply/fyi/noise + a confidence (JSON out).",  # noqa: E501
         variables=(
-            PromptVariable(name="channel", required=True, description="The channel/DM name."),
-            PromptVariable(name="sender", required=True, description="The sender's display name."),
             PromptVariable(
-                name="message",
+                name="messages",
                 type="textarea",
                 required=True,
-                description="The fenced message + thread context.",
+                description="The numbered messages, each fenced with its channel, sender and thread context.",  # noqa: E501
             ),
         ),
     ),

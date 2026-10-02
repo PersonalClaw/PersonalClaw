@@ -10,7 +10,7 @@ import { InlineLoadError } from '../../ui/ListScaffold'
 import { TextArea, Segmented, Field, FieldError, useSyncedDraft } from '../../ui/forms'
 import { api, ApiError, type InboxItem, type InboxClassification, type InboxDrafting, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
-import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, CLASSIFICATIONS, isChannelItem, refTarget, refLabel, verifyNote } from './inboxMeta'
+import { verdictMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, isOpen, CLASSIFICATIONS, isChannelItem, refTarget, refLabel, verifyNote } from './inboxMeta'
 import { InboxMessageBody } from './ForeignContent'
 import { InboxAttachments } from './InboxAttachments'
 import { WorkflowGateActions } from './WorkflowGateActions'
@@ -29,8 +29,10 @@ import { BUSY_REASON } from '../../ui/unavailable'
 /** Inbox item triage panel: the full message + thread context, the triage
  *  verdict (classification + confidence), the AI-drafted reply (generate / edit),
  *  and triage actions. Sending a reply depends on the source provider supporting
- *  it (filesystem/Slack-bot don't here) — Send is shown but gated. */
-export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: InboxItem; owner?: string; onChanged: () => void; navigate: (path: string) => void }) {
+ *  it (filesystem/Slack-bot don't here) — Send is shown but gated.
+ *  `sortingHeld` is why the background sorter is sending nothing now ('' while it may): what an
+ *  unsorted message says while it waits. */
+export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, navigate }: { item: InboxItem; owner?: string; sortingHeld?: string; onChanged: () => void; navigate: (path: string) => void }) {
   // Re-seeded when another item is shown, never on mount (`useSyncedDraft`).
   const [draft, setDraft] = useSyncedDraft(item.draft ?? '', item.id)
   // What she says the reply should contain. Kept for Regenerate; another item starts empty.
@@ -40,7 +42,7 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   // What the last Generate draft in this view stood on, and why it wrote nothing when it didn't.
   const [drafting, setDrafting] = useState<InboxDrafting | null>(null)
   const [draftErr, setDraftErr] = useState('')
-  const cm = classMeta(item.classification)
+  const cm = verdictMeta(item)
   const cf = confMeta(item.confidence)
 
   useEffect(() => { setErr(''); setDraftErr(''); setDrafting(null) }, [item.id])
@@ -88,6 +90,12 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
     try { await api.restoreInboxItem(item.id); onChanged() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Restore failed') } finally { setBusy(null) }
   }
+  // A message the sorter could not sort goes out again with its next batch.
+  async function sortAgain() {
+    setBusy('sort'); setErr('')
+    try { await api.sortInboxItem(item.id); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : "Couldn't send it to be sorted again") } finally { setBusy(null) }
+  }
 
   const dirtyDraft = draft !== (item.draft ?? '')
   const canReply = item.can_reply ?? false
@@ -125,26 +133,28 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   return (
     <div className="flex flex-col gap-l">
       {/* triage verdict — the classification is an AI judgment: thumbs attribute
-          to its bound prompt. Digest items judge the digest instead. */}
+          to the prompt that made it. Digest items judge the digest instead. */}
       <div className="flex flex-wrap items-center gap-s">
         {channelBacked ? (
           <>
             <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${cm.tone} 16%, transparent)`, color: cm.tone }}><cm.icon size={13} /> {cm.label}</span>
-            <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${cf.tone} 16%, transparent)`, color: cf.tone }}><cf.icon size={13} /> {cf.label}</span>
-            {/* After a manual reclassification the displayed verdict is the user's own,
-                so there is no machine judgment on screen to rate — a thumbs-down here
-                would file feedback against a classification the model never produced.
-                Hidden rather than shown inert, like every other gated control on this
-                page. The AI's verdicts on OTHER items stay ratable as before. */}
-            {item.confidence !== 'user' && (item.source === 'digest' ? (
-              <FeedbackThumbs targetKind="inbox_digest" targetId={item.id}
-                producer={item.feedback_producers?.digest}
-                snapshot={{ classification: item.classification }} />
-            ) : (
+            {cf && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${cf.tone} 16%, transparent)`, color: cf.tone }}><cf.icon size={13} /> {cf.label}</span>}
+            {/* Thumbs only on a judgment a prompt made: the server names its producer
+                (`feedback_producers`), and names none for a message not sorted yet, a verdict she
+                set herself or an agent gave with its post. Rating any of those would file feedback
+                against a classification the model never produced, so they are hidden rather than
+                shown inert, like every other gated control on this page. */}
+            {item.source === 'digest' ? (
+              item.confidence !== 'user' && item.feedback_producers?.digest && (
+                <FeedbackThumbs targetKind="inbox_digest" targetId={item.id}
+                  producer={item.feedback_producers.digest}
+                  snapshot={{ classification: item.classification }} />
+              )
+            ) : item.feedback_producers?.classification && (
               <FeedbackThumbs targetKind="inbox_classification" targetId={item.id}
-                producer={item.feedback_producers?.classification}
+                producer={item.feedback_producers.classification}
                 snapshot={{ classification: item.classification, confidence: item.confidence }} />
-            ))}
+            )}
           </>
         ) : (
           <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span>
@@ -154,6 +164,20 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
             context (fenced, ask mode) — "what does this message need from me?" */}
         <InvestigateButton kind="inbox_item" id={item.id} backLink="#/inbox" />
       </div>
+
+      {/* A message with no verdict says why: the sorter could not sort it (and it can go again),
+          or it waits for the sorter, which may itself be waiting. A handled message is not sorted,
+          so it waits for nothing. */}
+      {channelBacked && !cm.sorted && isOpen(item.status) && (
+        item.classify_error ? (
+          <div data-testid="sort-failed" className="flex flex-wrap items-center gap-s">
+            <p data-type="body-s" className="text-on-surface-low">{item.classify_error}</p>
+            <Button size="sm" variant="secondary" onClick={sortAgain} loading={busy === 'sort'} disabled={!!busy} disabledReason={BUSY_REASON}><RotateCcw size={14} /> Sort again</Button>
+          </div>
+        ) : (
+          <p data-type="body-s" className="text-on-surface-low">{sortingHeld || 'Waiting for the background model to sort it.'}</p>
+        )
+      )}
 
       {/* Provenance. For a channel item that's sender + #channel; for a non-channel item
           the "sender" is the emitting subsystem, so showing it twice (as sender AND as
@@ -277,7 +301,8 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
           </Section>
 
           {/* drafted reply — the draft is an AI judgment: thumbs attribute to the
-              inbox_draft prompt binding. Only shown once a draft exists.
+              prompt that wrote it, and only while the row says one did (a draft she wrote or
+              edited names none). Only shown once a draft exists.
               Issue 621: composing is gated by canReply like SENDING always was — the
               composer ran the model and badged the row on items whose Send is
               permanently disabled. Same doctrine as the needs_input comment
@@ -296,9 +321,9 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
             ) : null
           ) : canReply ? (
             <Section label="Drafted reply"
-              right={item.draft ? (
+              right={item.draft && item.feedback_producers?.draft ? (
                 <FeedbackThumbs targetKind="inbox_draft" targetId={item.id}
-                  producer={item.feedback_producers?.draft}
+                  producer={item.feedback_producers.draft}
                   snapshot={{ draft_preview: (item.draft ?? '').slice(0, 200) }} />
               ) : undefined}>
               <div className="flex flex-col gap-s">

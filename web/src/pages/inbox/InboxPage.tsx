@@ -19,7 +19,7 @@ import { ForeignBadge } from './ForeignContent'
 import { rowSubject } from '../../lib/rowSubject'
 import { previewText } from '../../lib/previewText'
 import { Segmented } from '../../ui/Segmented'
-import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isSettled, isForeignItem, ITEM_KINDS, isChannelItem, isOpenWithVerdict, itemKindOf, refTarget, refLabel } from './inboxMeta'
+import { verdictMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isSettled, isForeignItem, ITEM_KINDS, isChannelItem, isOpenWithVerdict, itemKindOf, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { AttachmentCount } from './InboxAttachments'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
@@ -426,7 +426,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                 those rows "lead with the KIND and its own icon instead" — and `InboxDetail:101`
                 already hides the sender line for exactly those rows. Only this header still
                 printed it, so a note the USER wrote opened a panel titled **"user"** under a
-                REPLY arrow (`classMeta` is the triage verdict, and a non-channel row was never
+                REPLY arrow (`verdictMeta` is the triage verdict, and a non-channel row was never
                 triaged — the same reason the row hides its confidence chip). Measured in the
                 browser on its own surface; the sibling kinds read "system" and "loop".
                 This applies the file's existing rule to the one place that had drifted from it,
@@ -434,14 +434,14 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
             <SidePanel key={open.id} fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'open', setQuery }}
               icon={(() => {
                 const channelBacked = isChannelItem(open)
-                const m = channelBacked ? classMeta(open.classification) : kindMeta(open.item_kind)
+                const m = channelBacked ? verdictMeta(open) : kindMeta(open.item_kind)
                 return <m.icon size={18} style={{ color: m.tone }} />
               })()}
               title={isChannelItem(open)
                 ? (open.sender_name || open.sender_id || 'Item')
                 : kindMeta(open.item_kind).label}
               onClose={() => setOpenId("")}>
-              <InboxDetail item={open} owner={me} onChanged={load} navigate={navigate} />
+              <InboxDetail item={open} owner={me} sortingHeld={status?.health?.sorting?.held ?? ''} onChanged={load} navigate={navigate} />
             </SidePanel>
           )}
           {settingsOpen && (
@@ -648,7 +648,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
             className="flex flex-col gap-s"
           >
             {(it, i, listCtx) => {
-              const cm = classMeta(it.classification)
+              const cm = verdictMeta(it)
               const cf = confMeta(it.confidence)
               const sm = statusMeta(it.status)
               const km = kindMeta(it.item_kind)
@@ -719,9 +719,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                     <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{previewText(it.message)}</p>
                   </div>
                   <div className="hidden sm:flex shrink-0 items-center gap-s">
-                    {/* Confidence is a TRIAGE judgment; a needs_input row was never triaged,
-                        so showing "needs review" against it would invent a verdict. */}
-                    {channelBacked && <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>}
+                    {/* Confidence is a TRIAGE judgment; a needs_input row was never triaged, and a
+                        message not sorted yet has none, so showing "needs review" against either
+                        would invent a verdict. */}
+                    {channelBacked && cf && <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>}
                     {!open ? <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low"><sm.icon size={12} style={{ color: sm.tone }} /> {sm.label}</span> : it.created_at && <span data-type="caption" className="text-on-surface-low">{relPast(it.created_at)}</span>}
                     {unread && <Circle size={7} fill={accentTone} stroke="none" />}
                   </div>

@@ -1483,6 +1483,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "turn"
     ),
     "POST /api/inbox/{id}/draft": OwnerOnly("drafting a reply with your model"),
+    "POST /api/inbox/{id}/sort": OwnerOnly("sorting a message again with your background model"),
     "POST /api/inbox/{id}/apply": OwnerOnly(
         "approving a proposal — the decision is yours, whoever raised it"
     ),

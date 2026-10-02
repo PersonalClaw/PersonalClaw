@@ -1,5 +1,6 @@
 """Inbox API handlers — message inbox management and setup wizard."""
 
+import dataclasses
 import json
 import logging
 import time
@@ -11,6 +12,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.inbox import (
     OPEN_STATUSES,
     SOURCE_DECLARABLE_KINDS,
+    Confidence,
     InboxFieldTypeError,
     InboxItem,
     InboxState,
@@ -530,6 +532,13 @@ async def api_inbox_update(request: web.Request) -> web.Response:
             updates["draft"] = keep_masked_spans(updates["draft"], item.draft or "")
         except MaskConflict as exc:
             return web.json_response({"error": str(exc)}, status=409)
+        # A draft she saved is hers, unless she saved the drafted text unchanged.
+        if updates["draft"] != (item.draft or ""):
+            updates["drafted_by"] = ""
+    # A verdict written here is hers: no machine confidence describes it, no prompt made it, and
+    # a sorting failure it replaces is no longer the row's to say.
+    if "classification" in updates:
+        updates.update(confidence=Confidence.USER.value, classified_by="", classify_error="")
 
     # 4. Mutate.
     status_before = item.status
@@ -758,6 +767,36 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
     if outcome.wrote:
         state.broadcast_ws("inbox_item_updated", shown)
     return web.json_response({"item": shown, "drafting": outcome.report()})
+
+
+async def api_inbox_sort(request: web.Request) -> web.Response:
+    """POST /api/inbox/{id}/sort — sort a message again, after its sorting failed.
+
+    Clears the reason the row carries and wakes the sorter, which sends it with the next batch
+    (``inbox_sorting``). Answers the row as it stands, still unsorted until that batch lands.
+    Only an open message the sorter reads can be sorted: not a notice, a proposal or a note, not
+    an agent's own post, not one that already has a verdict, and not one she has handled or
+    dismissed (the sorter sorts only what is still open)."""
+    from personalclaw.inbox_sorting import wants_sorting
+
+    state: "DashboardState" = request.app["state"]
+    svc = getattr(state, "_inbox_svc", None)
+    if not svc:
+        return json_error("inbox_not_running", status=503)
+    item = svc.inbox.items.get(request.match_info["id"])
+    if item is None:
+        return json_error("not_found", message="No Inbox item has that id.", status=404)
+    if str(item.status) not in OPEN_STATUSES or not wants_sorting(
+        dataclasses.replace(item, classify_error="")
+    ):
+        return json_error("inbox_item_not_sortable", status=409)
+    updated = svc.inbox.update(item.id, classify_error="")
+    if updated is None:  # unreachable after the lookup above; keeps the Optional narrowed
+        return json_error("not_found", message="No Inbox item has that id.", status=404)
+    svc.sorter.wake()
+    shown = _redact_item(updated.to_dict())
+    state.broadcast_ws("inbox_item_updated", shown)
+    return web.json_response(shown)
 
 
 async def api_inbox_restart(request: web.Request) -> web.Response:

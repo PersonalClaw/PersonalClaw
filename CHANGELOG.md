@@ -166,6 +166,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The Inbox sorts each new message on the background model, a few per call, and shows one it has not sorted as "Not sorted yet" (one it could not sort says why, with Sort again); a notice, a note or an agent's post carries no made-up verdict, Mark accurate / Mark wrong appear only on a verdict or draft a prompt produced, and a verdict is credited to the prompt that made it. Settings → Inbox → Sort new messages turns it off.**
 - **An automation allowed to change a file can change it: its edit of the very file its Allow named was refused, and only that file can be changed.**
 - **An automation run whose own limits refused calls it made is recorded as refused, naming the calls, instead of as a success.**
 - **A reading automation refused a tool of an MCP server whose read-only labels you have not trusted is told so, and where you trust them, and that its file tools read the folders you shared.**

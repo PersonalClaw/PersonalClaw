@@ -345,6 +345,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/inbox/{id}/open` — record that the user opened/read this item (a moderate
 - `POST /api/inbox/{id}/pair` — let someone new talk to your agent on the channel they wrote on.
 - `POST /api/inbox/{id}/restore` — undo a verification filter (INU-6).
+- `POST /api/inbox/{id}/sort` — sort a message again, after its sorting failed.
 - `GET /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.

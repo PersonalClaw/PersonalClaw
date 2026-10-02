@@ -1,4 +1,4 @@
-"""Inbox AI triage service — classify / draft / digest over stored items, with the
+"""Inbox AI triage service — draft / digest over stored items, with the
 external (untrusted) message text fenced before it reaches any LLM prompt."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from personalclaw.inbox import Classification, Confidence, InboxItem, InboxState, InboxStore
+from personalclaw.inbox import InboxItem, InboxState, InboxStore
 from personalclaw.inbox_service import InboxService, fence_message_for_prompt, polled_item_id
 
 
@@ -158,50 +158,6 @@ async def test_draft_reply_model_failure_returns_none(monkeypatch):
 
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", boom)
     assert await svc.draft_reply(item.id) is None
-
-
-# ── classify ──
-
-
-@pytest.mark.asyncio
-async def test_classify_parses_json_and_persists(monkeypatch):
-    item = _item()
-    svc = _svc_with(item)
-
-    async def fake_one_shot(
-        prompt: str, *, use_case: str = "background", output_type=None, validate=None
-    ) -> str:
-        assert "<untrusted_content" in prompt  # fenced
-        return '{"classification": "needs_reply", "confidence": "high"}'
-
-    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", fake_one_shot)
-    out = await svc.classify(item.id)
-    assert out is not None
-    assert out.classification == Classification.NEEDS_REPLY
-    assert out.confidence == Confidence.HIGH
-
-
-@pytest.mark.asyncio
-async def test_classify_malformed_json_defaults_safe(monkeypatch):
-    item = _item()
-    svc = _svc_with(item)
-
-    async def fake_one_shot(
-        prompt: str, *, use_case: str = "background", output_type=None, validate=None
-    ) -> str:
-        # Mirror the real typed-output contract: a parse miss under output_type
-        # raises OutputContractError, which classify() catches and safe-defaults.
-        if output_type is not None:
-            from personalclaw.guardrails.failure import OutputContractError
-
-            raise OutputContractError("dict", "not json at all")
-        return "not json at all"
-
-    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", fake_one_shot)
-    out = await svc.classify(item.id)
-    assert out is not None
-    assert out.classification == Classification.NEEDS_REPLY  # safe default
-    assert out.confidence == Confidence.NEEDS_REVIEW
 
 
 # ── generate_digest ──

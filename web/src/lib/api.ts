@@ -4215,7 +4215,11 @@ export interface InboxItem {
   id: string; channel: string; channel_name: string; thread_ts?: string | null
   message: string; sender_id: string; sender_name: string
   thread_context?: InboxThreadMsg[]
-  classification: InboxClassification; draft?: string; confidence: InboxConfidence
+  /** The triage verdict, '' while nobody has made one: a message the sorter has not sorted yet,
+   *  and every row that is not a message. `confidence` is '' where no maker had one. */
+  classification: InboxClassification | ''; draft?: string; confidence: InboxConfidence | ''
+  /** Why the sorter could not sort this message, in a sentence; '' when it did or has not tried. */
+  classify_error?: string
   status: InboxItemStatus; created_at?: number; context_summary?: string; ts?: string
   // which source produced it (native / filesystem / slack / …) + whether the
   // source supports a reply (drives the Send gate). reply_target is native-only.
@@ -4283,7 +4287,10 @@ export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCo
 /** A source the inbox knows. `watches_channels`: it reads the channels in `inbox.watched_channels`,
  *  which Settings → Inbox lists while such a source is `polled`. */
 export interface InboxProvider { name: string; display_name: string; source_name: string; polled?: boolean; watches_channels?: boolean }
-export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
+/** The sorter's state: `held` says why it is sending nothing now ('' while it may), `waiting` how
+ *  many open messages are unsorted. */
+export interface InboxSortingHealth { held: string; waiting: number }
+export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean; sorting?: InboxSortingHealth }
 /** One source the inbox knows. A poll source is `active` while it is polled (an installed inbox
  *  app's always is; the drop folder only while `inbox.enabled` is on), and `error` is the sentence
  *  its last poll raised ("" while it reads). */
@@ -9440,6 +9447,9 @@ export const api = {
   // Undo a verification filter — flips FILTERED→PENDING and fires the ONE
   // notification the second-opinion pass withheld (server enforces fire-exactly-once).
   restoreInboxItem: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/restore`),
+  // Sort a message again after its sorting failed: clears the reason and sends it with the next
+  // batch. Answers the row, still unsorted until that batch lands.
+  sortInboxItem: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/sort`),
   // Someone new (a row a channel that speaks as you held back): let them talk to your agent on
   // that channel. Their message itself is not handed to the agent.
   // Letting them in asks your consent first: the server asks, and this confirms.

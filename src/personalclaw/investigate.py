@@ -121,10 +121,14 @@ async def _resolve_inbox_item(entity_id: str, state) -> InvestigateContext | Non
         f"Channel: {item.channel_name or item.channel}",
     ]
     if (item.item_kind or ItemKind.MESSAGE.value) in SOURCE_DECLARABLE_KINDS:
-        # The triage verdict of a channel message. Every other row carries the store's default
-        # (`needs_reply`, high confidence) that nobody made: quoted, it tells the chat that a note
-        # she wrote to herself is waiting on her reply.
-        lines.append(f"Classification: {item.classification} (confidence: {item.confidence})")
+        # The triage verdict of a channel message, as the row has it: only a message is sorted,
+        # and one not sorted yet says so rather than quoting a verdict nobody made.
+        if not item.classification:
+            lines.append("Classification: not sorted yet")
+        elif item.confidence:
+            lines.append(f"Classification: {item.classification} (confidence: {item.confidence})")
+        else:
+            lines.append(f"Classification: {item.classification}")
     else:
         lines.append(f"Kind: {item.item_kind}")
     lines.append(f"Status: {item.status}")

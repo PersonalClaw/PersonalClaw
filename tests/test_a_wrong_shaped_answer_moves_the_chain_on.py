@@ -259,7 +259,7 @@ STRUCTURED = [
     ("grill.py", "grill"),  # the decomposition
     ("after_turn_review.py", "_ladder_pass"),  # the skill review's decision
     ("durability/conflict_merge.py", "draft_proposals"),  # a sync conflict's merge
-    ("inbox_service.py", "classify"),  # an inbox item's classification
+    ("inbox_sorting.py", "_sort"),  # a batch of inbox messages' verdicts
 ]
 
 

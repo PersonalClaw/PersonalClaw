@@ -1,4 +1,4 @@
-import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck, TimerOff } from 'lucide-react'
+import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck, TimerOff, CircleDashed, CircleAlert } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import { isOpenStatus } from '../../lib/attentionLanes'
 import { approvalDestination } from '../../app/approvalDestination'
@@ -13,8 +13,19 @@ export const CLASSIFICATIONS: ClassMeta[] = [
   { key: 'fyi', label: 'FYI', tone: 'var(--color-on-surface-low)', icon: Info },
   { key: 'noise', label: 'Noise', tone: 'var(--color-on-surface-low)', icon: BellOff },
 ]
-export function classMeta(c?: string): ClassMeta {
-  return CLASSIFICATIONS.find((x) => x.key === c) ?? CLASSIFICATIONS[0]
+
+/** What a message shows where its verdict goes: the verdict, or what stands in for one.
+ *  `sorted` is false for the two stand-ins, which nobody can choose (Reclassify and the filters
+ *  offer only CLASSIFICATIONS). A message waits for the background sorter until it has a verdict,
+ *  and says so; one it could not sort says that instead. The verdict used to fall back to
+ *  "Needs reply", so every message nobody had read showed it. */
+export interface VerdictMeta { key: InboxClassification | 'unsorted' | 'sort_failed'; label: string; tone: string; icon: LucideIcon; sorted: boolean }
+export const UNSORTED: VerdictMeta = { key: 'unsorted', label: 'Not sorted yet', tone: 'var(--color-on-surface-low)', icon: CircleDashed, sorted: false }
+export const SORT_FAILED: VerdictMeta = { key: 'sort_failed', label: "Couldn't sort", tone: 'var(--color-warn)', icon: CircleAlert, sorted: false }
+export function verdictMeta(it: Pick<InboxItem, 'classification' | 'classify_error'>): VerdictMeta {
+  const made = CLASSIFICATIONS.find((x) => x.key === it.classification)
+  if (made) return { ...made, sorted: true }
+  return it.classify_error ? SORT_FAILED : UNSORTED
 }
 
 // ── confidence (how sure the triage layer is — drives review urgency) ──
@@ -27,8 +38,10 @@ export const CONFIDENCES: ConfMeta[] = [
   // applies. Neutral tone — a human decision needs no review urgency.
   { key: 'user', label: 'Set by you', tone: 'var(--color-info)', icon: UserCheck },
 ]
-export function confMeta(c?: string): ConfMeta {
-  return CONFIDENCES.find((x) => x.key === c) ?? CONFIDENCES[1]
+/** The confidence a verdict was given with, or null where it has none (a verdict nobody made, or
+ *  one an agent gave with its post). It used to fall back to "Needs review". */
+export function confMeta(c?: string): ConfMeta | null {
+  return CONFIDENCES.find((x) => x.key === c) ?? null
 }
 
 // ── item status ──

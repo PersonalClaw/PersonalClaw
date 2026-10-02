@@ -139,7 +139,7 @@ describe('the triage, pinned per site', () => {
     }
   })
 
-  it('the census is reproducible — 27 disabled Toggle sites, not vacuously zero', () => {
+  it('the census is reproducible — 28 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
     const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
@@ -189,7 +189,10 @@ describe('the triage, pinned per site', () => {
     // 🔺 26 → 27 (#3725): a callback an agent registers gained an allow switch on its Triggers
     // detail page. It is disabled only while its own toggle POST is in flight, so it is the
     // IN-FLIGHT class, stays native and is listed with the others above. Reasoned count holds at 9.
-    expect(sites.length).toBe(27)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'nine carry a reason; eighteen stay native').toBe(9)
+    // 🔺 27 → 28: Settings → Inbox gained "Sort new messages", disabled only until the config read
+    // that holds its value resolves: the PRECONDITION class, beside the two triage switches, so it
+    // names what unlocks it (`cfgUnread`). Reasoned 9 → 10.
+    expect(sites.length).toBe(28)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'ten carry a reason; eighteen stay native').toBe(10)
   })
 })

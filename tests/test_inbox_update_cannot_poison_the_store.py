@@ -342,7 +342,7 @@ def test_an_already_poisoned_store_loads_and_reads_again(tmp_path: Path):
     store.load()
 
     item = store.items[ITEM_ID]
-    assert item.draft == "" and item.confidence == Confidence.NEEDS_REVIEW
+    assert item.draft == "" and item.confidence == ""
     assert item.favorited is False
     # Only the unusable fields are dropped — the record is repaired, not discarded.
     assert item.message == "the message must survive"

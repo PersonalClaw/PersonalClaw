@@ -27,7 +27,6 @@ from personalclaw import attachments
 from personalclaw.attachments import Attachment
 from personalclaw.inbox import (
     Classification,
-    Confidence,
     InboxItem,
     InboxState,
     InboxStore,
@@ -163,8 +162,6 @@ def hold_from_someone_new(
         message=f"{subject}\n\n{text}" if subject else text,
         sender_id=sender_id,
         sender_name=sender_name or sender_id,
-        classification=Classification.NEEDS_REPLY.value,
-        confidence=Confidence.NEEDS_REVIEW.value,
         status=ItemStatus.PENDING.value,
         created_at=stamp,
         source=f"{CHANNEL_SOURCE_PREFIX}{provider}",
@@ -182,6 +179,12 @@ def hold_from_someone_new(
         state.broadcast_ws("inbox_new_item", redact_item(item.to_dict()))
     except Exception:
         logger.debug("hold_from_someone_new: broadcast failed", exc_info=True)
+    # It arrives unsorted, like any message: the running Inbox sorts it.
+    from personalclaw.inbox_sorting import InboxSorter
+
+    sorter = getattr(getattr(state, "_inbox_svc", None), "sorter", None)
+    if isinstance(sorter, InboxSorter):
+        sorter.wake()
     return item
 
 
@@ -221,6 +224,8 @@ def post_to_inbox(
     ``kind`` is ``notification`` / ``question`` / ``fyi``: a ``question`` is
     classified ``needs_reply`` and is replyable (the reply routes to
     ``reply_target`` — the posting agent's session); the others are FYI heads-ups.
+    That verdict is the posting agent's own word, so it carries no confidence and no
+    maker to rate, and the sorter never reads the post (``inbox_sorting.wants_sorting``).
     Returns the created item, or None if no dashboard state is wired.
     """
     st = state or _dashboard_state
@@ -241,7 +246,6 @@ def post_to_inbox(
         sender_id=sender_name,
         sender_name=sender_name,
         classification=classification,
-        confidence=Confidence.HIGH.value,
         status=ItemStatus.PENDING.value,
         created_at=now,
         context_summary=context or "",

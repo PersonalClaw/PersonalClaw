@@ -17,7 +17,10 @@ records get ``source_app`` stamped server-side from ``request["app"]``; the
 app-boundary that identity implies — producer namespaced to
 ``("app", "<app>:<producer>")`` and the target forced to ``app_judgment`` — is
 enforced in :func:`personalclaw.feedback.record_feedback`, which is the one write
-API BOTH this route and ``sdk.feedback`` go through (#2784).
+API BOTH this route and ``sdk.feedback`` go through (#2784). A verdict on an Inbox judgment
+(``inbox_classification`` / ``inbox_draft`` / ``inbox_digest``) records the producer the row
+names (:func:`personalclaw.inbox.judgment_producers`), whatever the body claims, and is
+refused (``409 feedback_no_judgment``) where no prompt made what the row shows.
 """
 
 from __future__ import annotations
@@ -27,9 +30,26 @@ import logging
 from aiohttp import web
 
 from personalclaw import feedback as fb
+from personalclaw.http_errors import json_error
+from personalclaw.inbox import (
+    FEEDBACK_TARGETS,
+    InboxItem,
+    InboxStore,
+    judgment_producers,
+    live_store,
+)
 from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
+
+
+def _inbox_row(state, item_id: str) -> InboxItem | None:
+    """The Inbox row a verdict names: the running Inbox's, else the stored one."""
+    store = live_store(state) if state is not None else None
+    if store is None:
+        store = InboxStore()
+        store.load()
+    return store.items.get(item_id)
 
 
 def _enabled() -> bool:
@@ -98,6 +118,16 @@ async def api_feedback_record(request: web.Request) -> web.Response:
     # (#2784). The copy that used to live here forced the producer and, through a
     # conditional that could never be false, never the target.
     source_app = str(request.get("app") or "")
+    # A verdict on an Inbox judgment is rated against the prompt the ROW says made it, never the
+    # one the caller names, and refused where no prompt made it. An app's record is forced to
+    # `app_judgment` below, so this is the owner's door only.
+    if not source_app and target_kind in FEEDBACK_TARGETS:
+        if not (found := _inbox_row(request.app.get("state"), target_id)):
+            return json_error("not_found", message="No Inbox item has that id.", status=404)
+        producer = judgment_producers(found.to_dict()).get(FEEDBACK_TARGETS[target_kind])
+        if producer is None:
+            return json_error("feedback_no_judgment", status=409)
+        producer_kind, producer_id = producer["producer_kind"], producer["producer_id"]
 
     snapshot = body.get("snapshot")
     rec = fb.record_feedback(

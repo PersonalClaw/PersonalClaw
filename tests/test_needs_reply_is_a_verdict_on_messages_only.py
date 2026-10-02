@@ -1,8 +1,9 @@
 """The triage verdict "needs reply" belongs to channel messages; nothing else is filed under it.
 
 Measured on a live install: the Inbox's "Needs reply" listed the user's own captured note, three
-"Update available for …" notices and a stopped loop's row. Every row is stored with the verdict
-``needs_reply`` (high confidence) until something triages it, and only a channel message is ever
+"Update available for …" notices and a stopped loop's row. Every row was stored with the verdict
+``needs_reply`` (high confidence) whether or not anything had triaged it (no row carries one it was
+not given now: ``test_inbox_verdicts_name_their_maker.py``), and only a channel message is ever
 triaged. The app-update notices were worse off than the rest: raised with no row kind, they took
 the notification's own kind (``update``), which no surface knows, and so read as messages
 everywhere — reply machinery included.
@@ -92,7 +93,8 @@ def test_investigate_hands_the_chat_a_verdict_only_for_a_message(kind, classifie
     from personalclaw.investigate import _resolve_inbox_item
 
     store = InboxStore()
-    item = _row("i", kind, message="Buy stamps on the way home")
+    # The same stored verdict on every row: only a message's is the triage verdict to quote.
+    item = _row("i", kind, message="Buy stamps on the way home", classification="needs_reply")
     store.add(item)
     state = SimpleNamespace(_inbox_svc=SimpleNamespace(inbox=store))
 

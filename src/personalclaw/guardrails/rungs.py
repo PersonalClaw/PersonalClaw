@@ -453,7 +453,7 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
     ),
 )
 
-# The AI affordances (`inbox_service.draft_reply` / `.classify`,
+# The AI affordances (`inbox_service.draft_reply`, the inbox sorter in `inbox_sorting`,
 # `dashboard.chat_title._apply_auto_tags`). No `providers`: nothing dispatches these
 # through the action-provider registry, so they are named directly.
 #

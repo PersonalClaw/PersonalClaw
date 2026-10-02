@@ -55,13 +55,25 @@ BODY = {
 }
 
 
+#: A verdict on a judgment whose producer the caller names. (An Inbox judgment's producer is the
+#: one its row names instead: `test_inbox_verdicts_name_their_maker.py`.)
+LOOP_BODY = {
+    "target_kind": "loop_finding",
+    "target_id": "finding-1",
+    "verdict": "down",
+    "reason": "wrong",
+    "producer_kind": "loop_judge",
+    "producer_id": "code",
+}
+
+
 class TestRecordRoute:
     @pytest.mark.asyncio
     async def test_record_and_hydrate(self):
         async with TestClient(TestServer(_make_app())) as c:
-            resp = await c.post("/api/feedback", json=BODY)
+            resp = await c.post("/api/feedback", json=LOOP_BODY)
             assert resp.status == 200
-            got = await (await c.get("/api/feedback/target/inbox_classification/item-1")).json()
+            got = await (await c.get("/api/feedback/target/loop_finding/finding-1")).json()
             assert got["verdict"] == "down" and got["reason"] == "wrong"
 
     @pytest.mark.asyncio

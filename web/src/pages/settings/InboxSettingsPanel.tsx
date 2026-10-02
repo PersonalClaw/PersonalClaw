@@ -24,6 +24,8 @@ export function InboxSettingsPanel() {
   // them at all.)
   const [engagementOn, setEngagementOn] = useState<boolean | null>(null)
   const [sourcesOn, setSourcesOn] = useState<boolean | null>(null)
+  // `inbox.sort_messages`: whether each new message goes to the background model to be sorted.
+  const [sortOn, setSortOn] = useState<boolean | null>(null)
   // `ProactiveConfig` was wired end to end by PA-1 —
   // dataclass, loader, `to_dict`, the `_EDITABLE_CONFIG` PATCH allowlist — and had NO frontend
   // control, so the round-trip contract's fourth point was open and `triage_enabled` was
@@ -64,6 +66,7 @@ export function InboxSettingsPanel() {
     .then((c) => {
       setEngagementOn(Boolean(c?.inbox?.engagement_ranking_enabled))
       setSourcesOn(Boolean(c?.inbox?.enabled))
+      setSortOn(Boolean(c?.inbox?.sort_messages))
       setTriageOn(Boolean(c?.proactive?.triage_enabled))
       setAutoExecOn(Boolean(c?.proactive?.auto_execute_enabled))
       setChannels(storedChannels(c?.inbox?.watched_channels))
@@ -134,6 +137,14 @@ export function InboxSettingsPanel() {
       .catch((e) => { setAutoExecOn(!v); notify(`Couldn't change that: ${String((e as Error)?.message || e)}`, 'error') })
   }
 
+  // Read before every sorting call, so the next one follows it. A refused save reverts and says why.
+  const setSort = (v: boolean) => {
+    setSortOn(v)
+    api.patchConfig('inbox.sort_messages', v)
+      .then(flash)
+      .catch((e) => { setSortOn(!v); notify(`Couldn't change that: ${String((e as Error)?.message || e)}`, 'error') })
+  }
+
   const setEngagement = (v: boolean) => {
     setEngagementOn(v)
     api.patchConfig('inbox.engagement_ranking_enabled', v)
@@ -180,6 +191,10 @@ export function InboxSettingsPanel() {
         <Row label="Poll the drop folder"
           hint="Collect the messages a program on this machine drops as JSON files in the inbox's incoming folder. Off unless you use one: anything that can write to this machine can drop a file there. Inbox apps you install (Mail Inbox, Slack) are collected while they are enabled, and agents can always post here directly.">
           <Toggle on={!!sourcesOn} onChange={setSources} label="Poll the drop folder" disabled={sourcesOn === null} />
+        </Row>
+        <Row label="Sort new messages"
+          hint="The background model reads each new message and sorts it into Needs reply, FYI or Noise, a few messages per call, inside your daily budget. Off: messages arrive unsorted, nothing is sent to a model for them, and you sort them yourself.">
+          <Toggle on={!!sortOn} onChange={setSort} label="Sort new messages" disabled={sortOn === null} disabledReason={cfgUnread} />
         </Row>
         <Row label="Engagement ranking"
           hint="Rank the inbox by how much you engage with each channel/sender (favorites, opens, replies boost; dismisses lower) on top of recency. Off = pure newest-first.">
