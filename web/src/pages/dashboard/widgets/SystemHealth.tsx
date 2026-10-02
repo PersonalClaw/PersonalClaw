@@ -5,6 +5,7 @@ import { api } from '../../../lib/api'
 import { confirm } from '../../../ui/dialog'
 import { useDashboardLive } from '../DashboardLive'
 import { RowAction } from './kit'
+import { NO_READING, fixedReading, isReading, percentReading } from '../../../lib/readings'
 import type { RouteProps } from '../../../app/useQueryState'
 
 /** One rail metric — icon + value + word-label, always all three.
@@ -59,10 +60,11 @@ function capLabel(key: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-/** Format a kb/s rate compactly: MB/s over 1024, else KB/s (integer). */
+/** Format a kb/s rate compactly: MB/s over 1024, else KB/s (integer); the placeholder when the
+ *  poll is missing it, never a made-up 0. */
 function fmtRate(kbs: number | undefined): string {
-  const v = kbs ?? 0
-  return v >= 1024 ? `${(v / 1024).toFixed(1)}MB/s` : `${Math.round(v)}KB/s`
+  if (!isReading(kbs)) return NO_READING
+  return kbs >= 1024 ? `${(kbs / 1024).toFixed(1)}MB/s` : `${Math.round(kbs)}KB/s`
 }
 
 /** System & Capability Health — a wide strip of LIVE health metrics: CPU%, memory
@@ -101,8 +103,8 @@ export function SystemHealth({ navigate }: RouteProps) {
     })
   }
 
-  const cpuTone = system && system.cpu_pct >= 85 ? 'var(--color-warn)' : 'var(--color-primary)'
-  const memPct = system && system.mem_total_gb ? (system.mem_used_gb / system.mem_total_gb) * 100 : 0
+  const cpuTone = system && isReading(system.cpu_pct) && system.cpu_pct >= 85 ? 'var(--color-warn)' : 'var(--color-primary)'
+  const memPct = system ? percentReading(system.mem_used_gb, system.mem_total_gb) ?? 0 : 0
   const memTone = memPct >= 90 ? 'var(--color-warn)' : 'var(--color-info)'
 
   return (
@@ -116,26 +118,28 @@ export function SystemHealth({ navigate }: RouteProps) {
     <div className="flex h-full w-full flex-wrap items-center gap-x-l gap-y-s @6xl:gap-x-xl">
       <Metric icon={Clock} value={status.uptime ?? '—'} label="uptime" />
       <Metric icon={Tag} value={`v${status.version ?? '?'}`} label={status.platform ?? ''} />
-      {/* Live metrics from /api/system (P27) — render only when present. */}
+      {/* Live metrics from /api/system (P27). The gateway leaves out a reading its probe could not
+          take on this poll (`lib/readings`): cpu and mem then show the placeholder rather than
+          throwing, which blanked Home; net, disk and load show only on a host that reports them. */}
       {system && (
         <>
           <div className="flex shrink-0 items-center gap-s">
-            <Metric icon={Activity} value={`${Math.round(system.cpu_pct)}%`} label="cpu" tone={cpuTone} />
+            <Metric icon={Activity} value={isReading(system.cpu_pct) ? `${Math.round(system.cpu_pct)}%` : NO_READING} label="cpu" tone={cpuTone} />
             {/* Sparkline is decorative — first to go when the rail is tight. */}
             <span className="hidden @3xl:inline-flex"><Spark samples={cpuHist.current} tone={cpuTone} /></span>
           </div>
-          {system.mem_total_gb > 0 && (
-            <Metric icon={MemoryStick} value={`${system.mem_used_gb.toFixed(1)}/${system.mem_total_gb}GB`} label="mem" tone={memTone} />
+          {isReading(system.mem_total_gb) && system.mem_total_gb > 0 && (
+            <Metric icon={MemoryStick} value={`${fixedReading(system.mem_used_gb, 1)}/${system.mem_total_gb}GB`} label="mem" tone={memTone} />
           )}
           {(system.net_rx_kbs != null || system.net_tx_kbs != null) && (
             <Metric icon={Network} value={`↓${fmtRate(system.net_rx_kbs)} ↑${fmtRate(system.net_tx_kbs)}`} label="net" />
           )}
-          {system.disk_total_gb != null && system.disk_free_gb != null && system.disk_total_gb > 0 && (
+          {isReading(system.disk_total_gb) && isReading(system.disk_free_gb) && system.disk_total_gb > 0 && (
             <Metric icon={HardDrive}
               value={`${(system.disk_total_gb - system.disk_free_gb).toFixed(0)}/${system.disk_total_gb.toFixed(0)}GB`}
               label="disk" />
           )}
-          {system.load_1m != null && <Metric icon={Cpu} value={system.load_1m.toFixed(2)} label={`load · ${system.cpu_count}cpu`} />}
+          {isReading(system.load_1m) && <Metric icon={Cpu} value={system.load_1m.toFixed(2)} label={`load · ${system.cpu_count}cpu`} />}
         </>
       )}
       {/* The unified trigger count (issue 773) — schedules + store-only kinds + lifecycle hooks +

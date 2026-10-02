@@ -1,9 +1,10 @@
-import { Component, type ReactNode } from 'react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { fvs } from '../design/fontWeight'
 import { AlertTriangle, RotateCcw } from 'lucide-react'
 import { treatmentPaint } from '../design/errorTreatments'
 import { useErrorTreatment } from './personality'
 import { readableErrText } from '../lib/errText'
+import { InlineError } from '../ui/InlineError'
 
 interface Props { children: ReactNode; resetKey?: string }
 interface State { error: Error | null }
@@ -103,5 +104,55 @@ export class ErrorBoundary extends Component<Props, State> {
       )
     }
     return this.props.children
+  }
+}
+
+interface WidgetBoundaryProps {
+  /** What this part of the screen shows, in words that finish "Couldn't show …" ("the system
+   *  status", "the Tasks section"). It names the notice and the console line. */
+  what: string
+  children: ReactNode
+  /** For a slot in a row of icon controls (the shell corner): the notice shows only its glyph and
+   *  Retry, and the sentence is read to assistive tech. */
+  compact?: boolean
+  /** Where the notice sits in the slot it replaces (margins, `self-start`). */
+  className?: string
+}
+
+/** One widget's boundary: when the widget throws while rendering, a one-line notice with Retry takes
+ *  its place and the rest of the screen keeps working.
+ *
+ *  Without one, a throw in a shell widget unwinds the whole tree. Opening System status on a poll
+ *  that was missing a reading threw from the popover, nothing above the shell corner caught it, and
+ *  React unmounted the app to an empty body until a reload. The page boundary above only ever
+ *  covered the routed page, never the shell around it.
+ *
+ *  Retry re-renders the widget from scratch. A stale-bundle failure is not the widget's fault, and
+ *  Retry here would fetch the same missing chunk again, so it goes on to the page boundary, which
+ *  reloads the app for exactly that. */
+export class WidgetBoundary extends Component<WidgetBoundaryProps, State> {
+  state: State = { error: null }
+  static getDerivedStateFromError(error: Error): State { return { error } }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    if (isChunkLoadError(error)) return
+    // Logged, not swallowed: a widget that fails quietly is a widget nobody fixes.
+    console.error(`[ui] ${this.props.what} failed to render`, error, info.componentStack)
+  }
+
+  render() {
+    const { error } = this.state
+    if (!error) return this.props.children
+    if (isChunkLoadError(error)) throw error
+    const { what, compact, className } = this.props
+    const sentence = `Couldn't show ${what}.`
+    const notice = (
+      <InlineError icon onRetry={() => this.setState({ error: null })} className={className}>
+        {compact ? <span className="sr-only">{sentence}</span> : sentence}
+      </InlineError>
+    )
+    // Compact shows only the glyph and Retry, so the sentence is also its hover title. The wrapper
+    // has no box (`contents`), so the notice sits in the slot exactly as it would alone.
+    return compact ? <span className="contents" title={sentence}>{notice}</span> : notice
   }
 }

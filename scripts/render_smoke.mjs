@@ -12,9 +12,9 @@
 //   2. load a set of key routes in headless Chromium — each one exercises a
 //      different lazy chunk;
 //   3. per route, assert: #root mounted non-trivial content, no uncaught page
-//      error fired, and the per-page ErrorBoundary fallback is not showing
-//      (a boundary catch never surfaces as an uncaught error, so it needs its
-//      own check).
+//      error fired, and neither the per-page ErrorBoundary fallback nor a
+//      WidgetBoundary notice is showing (a boundary catch never surfaces as an
+//      uncaught error, so each needs its own check).
 //
 // Run it against the freshly built web/dist (`npm run build` first):
 //     npm run smoke:render
@@ -138,6 +138,11 @@ async function main() {
         // uncaught error — detect its fallback card directly.
         const boundaryText = await page.getByText('This page hit an error').count()
         if (boundaryText > 0) problems.push('ErrorBoundary fallback is showing (page render crashed)')
+        // Nor does one a widget's own boundary caught (a shell control, a popover section, a Home
+        // band): it shows "Couldn't show …" in that widget's place, and the rest of the page renders
+        // around it, so the size check above cannot see it either.
+        const widgetNotices = await page.getByText(/^Couldn't show /).allTextContents()
+        if (widgetNotices.length > 0) problems.push(`WidgetBoundary notice is showing (a widget render crashed): ${widgetNotices.join(' | ')}`)
       } catch (err) {
         problems.push(`navigation/mount failed: ${err.message.split('\n')[0]}`)
       }

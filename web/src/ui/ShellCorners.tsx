@@ -8,6 +8,7 @@ import { NotificationBell } from './NotificationBell'
 import { SystemWidget } from './SystemWidget'
 import { DegradedChip } from './DegradedChip'
 import { useIsMobile } from '../app/useIsMobile'
+import { WidgetBoundary } from '../app/ErrorBoundary'
 import { accentChip } from '../design/accent'
 
 /** The app shell's two persistent CORNER regions — not a full header row, just
@@ -70,20 +71,23 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
             : { color: 'var(--color-on-surface-low)' }}>
           <SquareTerminal size={16} />
         </button>
+        {/* Each control renders inside its own boundary: one that throws leaves a glyph and Retry
+            in its slot, and its neighbours and the rest of the app keep working. With none, the
+            System status popover throwing on one poll unmounted the whole app. */}
         {!isMobile && (
           <>
             <span className="h-4 w-px bg-outline-variant/40" aria-hidden />
-            <WidthPill />
+            <WidgetBoundary what="the content width control" compact><WidthPill /></WidgetBoundary>
           </>
         )}
-        <NotificationBell navigate={navigate} />
-        <ThemeControl />
+        <WidgetBoundary what="notifications" compact><NotificationBell navigate={navigate} /></WidgetBoundary>
+        <WidgetBoundary what="the theme control" compact><ThemeControl /></WidgetBoundary>
         {/* No-model degraded-mode chip — self-polling;
             renders nothing unless a model-dependent surface is on its LLM-free floor. */}
-        <DegradedChip />
+        <WidgetBoundary what="the model status" compact><DegradedChip /></WidgetBoundary>
         {/* Gateway connectivity dot (live) → click opens the full system widget. */}
         <span className="h-4 w-px bg-outline-variant/40" aria-hidden />
-        <SystemWidget />
+        <WidgetBoundary what="the system status" compact><SystemWidget /></WidgetBoundary>
       </div>
     </div>
   )

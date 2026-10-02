@@ -8,6 +8,8 @@ import { spring, stagger, listItemEnter } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { Meter } from './Meter'
 import { reportingWrite } from '../app/reportingWrite'
+import { WidgetBoundary } from '../app/ErrorBoundary'
+import { NO_READING, fixedReading, isReading, percentReading } from '../lib/readings'
 
 /** Live system + auth health — the app shell's top-right corner dot.
  *  - Collapsed (resting): a single connectivity dot. GREEN + pulsing = gateway
@@ -63,9 +65,6 @@ export function SystemWidget() {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [])
 
-  const cpu = sys?.cpu_pct ?? 0
-  const memPct = sys ? (sys.mem_used_gb / sys.mem_total_gb) * 100 : 0
-
   // Dot color = gateway CONNECTIVITY (not CPU/mem pressure). Green pulses outward
   // while live; orange while first connecting / unknown; red when the poll fails.
   const dotColor = status === 'connected'
@@ -104,41 +103,23 @@ export function SystemWidget() {
               // the top-right shell corner, right-aligned to the dot.
               className="fixed z-[var(--z-modal)] w-72 rounded-2xl border border-outline/40 bg-surface-container p-4"
               style={{ top: pos.top, right: pos.right, borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-lift)' }}>
-            {sys ? (
-              // Connected: the full system card — unchanged (identical expanded view).
-              <>
-                <div className="mb-3 flex items-center gap-2">
-                  <Server size={14} className="text-on-surface-low" />
-                  <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(600)}>{sys.hostname}</span>
-                  {/* Gateway version lives here (not on the dashboard) — the shell's
-                      connectivity card is the single home for gateway identity. */}
-                  <span data-type="caption" className="text-on-surface-low">{sys.os.split(' ')[0]} · {sys.arch?.split(' ')[0]}{sys.version ? ` · v${sys.version}` : ''}</span>
+            {/* Each polled section has its own boundary, so a section that cannot render shows
+                "Couldn't show …" with Retry in its place while the rest of the card, and the dot,
+                keep working. Restart in particular must stay reachable when the readings break. */}
+            <WidgetBoundary what="the system readings">
+              {sys ? <SystemReadings sys={sys} /> : (
+                // No system data yet (connecting) or the gateway dropped (disconnected):
+                // still give the click a useful result — the connectivity status itself.
+                <div className="flex items-center gap-2">
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: dotColor }} />
+                  <span data-type="label-s" className="text-on-surface" style={fvs(600)}>{statusLabel}</span>
                 </div>
+              )}
+            </WidgetBoundary>
 
-                <Bar icon={Cpu} label="CPU" pct={cpu} detail={`${sys.cpu_count} cores · load ${sys.load_1m.toFixed(1)}`} />
-                <Bar icon={MemoryStick} label="Memory" pct={memPct} detail={`${sys.mem_used_gb.toFixed(1)} / ${sys.mem_total_gb.toFixed(0)} GB`} />
-                {sys.disk_total_gb != null && sys.disk_free_gb != null && (
-                  <Bar icon={HardDrive} label="Disk" pct={((sys.disk_total_gb - sys.disk_free_gb) / sys.disk_total_gb) * 100} detail={`${sys.disk_free_gb.toFixed(0)} GB free`} />
-                )}
-
-                <div data-type="caption" className="mt-3 flex flex-col gap-1.5">
-                  {sys.gpu_present && sys.gpu_model && <Kv icon={Zap} label="GPU" value={sys.gpu_model} />}
-                  {(sys.net_rx_kbs != null || sys.net_tx_kbs != null) && <Kv icon={Network} label="Network" value={`↓${fmtKbs(sys.net_rx_kbs)}  ↑${fmtKbs(sys.net_tx_kbs)}`} />}
-                  <Kv icon={Boxes} label="Processes" value={`${sys.child_processes ?? 0} child · ${sys.mcp_total ?? 0} MCP`} />
-                  <Kv icon={Activity} label="This process"
-                    value={`${sys.proc_mem_mb.toFixed(0)} MB${sys.proc_cpu_pct != null ? ` · ${sys.proc_cpu_pct.toFixed(1)}% CPU` : ''}${sys.thread_count != null ? ` · ${sys.thread_count} thr` : ''}`} />
-                </div>
-              </>
-            ) : (
-              // No system data yet (connecting) or the gateway dropped (disconnected):
-              // still give the click a useful result — the connectivity status itself.
-              <div className="flex items-center gap-2">
-                <span className="size-2 shrink-0 rounded-full" style={{ background: dotColor }} />
-                <span data-type="label-s" className="text-on-surface" style={fvs(600)}>{statusLabel}</span>
-              </div>
-            )}
-
-            <RunningAgents open={open} />
+            <WidgetBoundary what="the background agents" className="mt-m">
+              <RunningAgents open={open} />
+            </WidgetBoundary>
 
             <RestartControls onFired={() => setOpen(false)} />
 
@@ -158,6 +139,39 @@ export function SystemWidget() {
   )
 }
 
+/** The card's host readings. The gateway leaves a reading out of a poll when its probe could not take
+ *  it (`lib/readings`), so every figure here prints the placeholder for a missing one and a meter
+ *  with no reading reports none: the card opens on any poll, including the one that blanked the app. */
+function SystemReadings({ sys }: { sys: SystemInfo }) {
+  return (
+    <>
+      <div className="mb-3 flex items-center gap-2">
+        <Server size={14} className="text-on-surface-low" />
+        <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(600)}>{sys.hostname}</span>
+        {/* Gateway version lives here (not on the dashboard) — the shell's
+            connectivity card is the single home for gateway identity. */}
+        <span data-type="caption" className="text-on-surface-low">{sys.os.split(' ')[0]} · {sys.arch?.split(' ')[0]}{sys.version ? ` · v${sys.version}` : ''}</span>
+      </div>
+
+      <Bar icon={Cpu} label="CPU" pct={isReading(sys.cpu_pct) ? sys.cpu_pct : null} detail={`${sys.cpu_count} cores · load ${fixedReading(sys.load_1m, 1)}`} />
+      <Bar icon={MemoryStick} label="Memory" pct={percentReading(sys.mem_used_gb, sys.mem_total_gb)}
+        detail={isReading(sys.mem_total_gb) ? `${fixedReading(sys.mem_used_gb, 1)} / ${sys.mem_total_gb.toFixed(0)} GB` : 'not measured'} />
+      {/* Disk shows only on a host that reports it, as before, and never divides by a zero total. */}
+      {isReading(sys.disk_total_gb) && isReading(sys.disk_free_gb) && sys.disk_total_gb > 0 && (
+        <Bar icon={HardDrive} label="Disk" pct={percentReading(sys.disk_total_gb - sys.disk_free_gb, sys.disk_total_gb)} detail={`${sys.disk_free_gb.toFixed(0)} GB free`} />
+      )}
+
+      <div data-type="caption" className="mt-3 flex flex-col gap-1.5">
+        {sys.gpu_present && sys.gpu_model && <Kv icon={Zap} label="GPU" value={sys.gpu_model} />}
+        {(sys.net_rx_kbs != null || sys.net_tx_kbs != null) && <Kv icon={Network} label="Network" value={`↓${fmtKbs(sys.net_rx_kbs)}  ↑${fmtKbs(sys.net_tx_kbs)}`} />}
+        <Kv icon={Boxes} label="Processes" value={`${fixedReading(sys.child_processes, 0)} child · ${fixedReading(sys.mcp_total, 0)} MCP`} />
+        <Kv icon={Activity} label="This process"
+          value={`${fixedReading(sys.proc_mem_mb, 0)} MB${isReading(sys.proc_cpu_pct) ? ` · ${sys.proc_cpu_pct.toFixed(1)}% CPU` : ''}${sys.thread_count != null ? ` · ${sys.thread_count} thr` : ''}`} />
+      </div>
+    </>
+  )
+}
+
 /** Background subagents monitor — the fleet of agents spawned by crons, goal
  *  loops, Slack, or an agent's own subagent_run (distinct from the per-chat
  *  subagent cards). Lazily loads /api/spawn when the card opens + polls while it's
@@ -174,9 +188,9 @@ function RunningAgents({ open }: { open: boolean }) {
   //
   // Two things change. The catch no longer CLOBBERS a known-good list, so a transient failure keeps
   // showing the last one it read instead of blanking it; and the failure is now its own state, so the
-  // render can say so. This is the rule this very file already states for the system read 115 lines
-  // above — a failed `api.system()` sets `disconnected` and the card still renders, because "still
-  // give the click a useful result". The fleet section was the one read that gave none.
+  // render can say so. This is the rule this very file already states for the system read at the
+  // top of `SystemWidget` — a failed `api.system()` sets `disconnected` and the card still renders,
+  // because "still give the click a useful result". The fleet section was the one read that gave none.
   const load = () => {
     api.spawnedAgents()
       .then((a) => { setAgents(a); setFailed(false) })
@@ -377,15 +391,17 @@ function firstLine(task: string): string {
   return line.length > 60 ? line.slice(0, 60) + '…' : line
 }
 
-function Bar({ icon: Icon, label, pct, detail }: { icon: typeof Cpu; label: string; pct: number; detail: string }) {
-  const p = Math.min(100, Math.max(0, pct))
-  const tone = p > 90 ? 'var(--color-error)' : p > 70 ? 'var(--color-warning)' : 'var(--color-primary)'
+/** One reading as a labelled bar. `pct` is `null` when the reading is missing from this poll: the
+ *  figure is the placeholder and the meter reports no level. */
+function Bar({ icon: Icon, label, pct, detail }: { icon: typeof Cpu; label: string; pct: number | null; detail: string }) {
+  const p = pct === null ? null : Math.min(100, Math.max(0, pct))
+  const tone = p !== null && p > 90 ? 'var(--color-error)' : p !== null && p > 70 ? 'var(--color-warning)' : 'var(--color-primary)'
   return (
     <div className="mb-2">
       <div data-type="caption" className="flex items-center gap-1.5">
         <Icon size={11} className="text-on-surface-low" />
         <span className="text-on-surface-var">{label}</span>
-        <span className="ml-auto text-on-surface-low tabular-nums">{Math.round(p)}%</span>
+        <span className="ml-auto text-on-surface-low tabular-nums">{p === null ? NO_READING : `${Math.round(p)}%`}</span>
       </div>
       {/* Through the Meter primitive: the hand-rolled track this replaced had no role,
           so a tile that reads "CPU 42%" to the eye read as nothing at all to a screen
@@ -410,7 +426,7 @@ function Kv({ icon: Icon, label, value }: { icon: typeof Cpu; label: string; val
 }
 
 function fmtKbs(kbs?: number): string {
-  if (kbs == null) return '0'
+  if (!isReading(kbs)) return NO_READING
   if (kbs >= 1024) return `${(kbs / 1024).toFixed(1)}MB/s`
   return `${Math.round(kbs)}KB/s`
 }

@@ -178,6 +178,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Opening System status on a busy machine no longer blanks the app: a reading the gateway could not take shows “—”, and a header control, popover section or Home band that fails to render shows “Couldn't show …” with Retry in its place while the rest of the app keeps working.**
+- **System status reads the machine once however many pages ask at the same moment, and a CPU reading that timed out shows “—” instead of 0%.**
 - **A Verifiable loop runs its check in the folder its worker writes to, so a check that passes finishes the loop with one notification; every cycle's check, and its judge's answer, is shown on the loop's page, and a check or judge that cannot run says why.**
 - **The dashboard no longer stalls while the background model is busy: a chat's organize suggestion, the prompt suggestions and an attachment's reading answer at once and arrive when the model has answered, each chat keeps one such read open at a time, and a read that ran out of time no longer says the server did not respond.**
 - **A loop's ending says why it stopped — the judge's own reason when it could not decide, how long an ask had really waited when a step's time limit ran out, or the budget it was given — and what to do about it; "Change the workflow" is offered only when a step is the cause, and the Loops list's status, stop reason and error agree.**

@@ -423,6 +423,8 @@ def _collect_system_metrics() -> dict[str, object]:
         data["load_15m"] = round(load15, 2)
     except Exception:
         pass
+    # Left out when `ps` fails or times out (a loaded host): 0% is a different claim, the same
+    # rule as memory above, and the page shows its placeholder for a missing reading.
     try:
         ps_cpu = subprocess.check_output(
             ["ps", "-A", "-o", "%cpu"], timeout=2, stderr=subprocess.DEVNULL
@@ -430,7 +432,7 @@ def _collect_system_metrics() -> dict[str, object]:
         total_cpu = sum(float(x) for x in ps_cpu.strip().splitlines()[1:] if x.strip())
         data["cpu_pct"] = min(100.0, round(total_cpu / cores, 1))
     except Exception:
-        data["cpu_pct"] = 0
+        pass
 
     # Local IP address
     try:
@@ -621,26 +623,48 @@ def _collect_system_metrics() -> dict[str, object]:
     return data
 
 
-# Cached system metrics (avoid subprocess spawning on every 1s poll)
+# Cached system metrics (avoid subprocess spawning on every poll)
 _metrics_cache: dict[str, object] = {}
 _metrics_cache_ts: float = 0.0
-_METRICS_CACHE_TTL = 2.0  # seconds
+_METRICS_CACHE_TTL = 2.0  # seconds, counted from when a collection FINISHED
+#: The collection in flight, which every request arriving while it runs waits on.
+_metrics_inflight: asyncio.Task[dict[str, object]] | None = None
+
+
+async def _refresh_metrics() -> dict[str, object]:
+    """Run one collection, cache it, and stop being the collection in flight."""
+    global _metrics_cache, _metrics_cache_ts, _metrics_inflight
+    try:
+        data = await asyncio.get_running_loop().run_in_executor(None, _collect_system_metrics)
+        _metrics_cache = data
+        # Stamped on arrival: stamped at the start, a collection slower than the TTL (a loaded
+        # host) was stale the moment it was stored, so every request started another.
+        _metrics_cache_ts = time.monotonic()
+        return data
+    finally:
+        if _metrics_inflight is asyncio.current_task():
+            _metrics_inflight = None
 
 
 async def api_system(request: web.Request) -> web.Response:
     """System information endpoint with live CPU, memory, network metrics.
 
     Caches results for 2 seconds to avoid spawning subprocesses on every
-    poll when multiple dashboard tabs are open.
+    poll when multiple dashboard tabs are open, and runs ONE collection at a
+    time: requests that arrive while it runs share its answer, so concurrent
+    pollers never multiply the subprocess probes on a host that is already slow.
     """
-    global _metrics_cache, _metrics_cache_ts
-    now = time.monotonic()
-    if now - _metrics_cache_ts < _METRICS_CACHE_TTL and _metrics_cache:
+    global _metrics_inflight
+    if _metrics_cache and time.monotonic() - _metrics_cache_ts < _METRICS_CACHE_TTL:
         return web.json_response(_metrics_cache)
-    loop = asyncio.get_running_loop()
-    data = await loop.run_in_executor(None, _collect_system_metrics)
-    _metrics_cache = data
-    _metrics_cache_ts = now
+    task = _metrics_inflight
+    # A task from a loop that has since closed (a test's, a restarted server's) is not shared.
+    if task is None or task.done() or task.get_loop() is not asyncio.get_running_loop():
+        task = asyncio.ensure_future(_refresh_metrics())
+        _metrics_inflight = task
+    # Shielded: one waiter's request being cancelled (its client went away) must not cancel
+    # the collection everyone else is waiting on.
+    data = await asyncio.shield(task)
     return web.json_response(data)
 
 

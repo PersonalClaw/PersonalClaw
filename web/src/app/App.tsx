@@ -19,7 +19,7 @@ import { ProductTour } from './onboarding/ProductTour'
 import { useHashRoute } from './useHashRoute'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
-import { ErrorBoundary } from './ErrorBoundary'
+import { ErrorBoundary, WidgetBoundary } from './ErrorBoundary'
 import { syncAppGenUiComponents } from './appGenUiLayer'
 import { api } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
@@ -552,7 +552,11 @@ function AppInner() {
   if (route === 'onboarding' || !onboarded) {
     return (
       <>
-        <Onboarding sub={sub} navigate={navigate} deferred={peekOnboardingExit()} onFinished={() => setSetupRerun(false)} />
+        {/* The first screen of the product gets the same route boundary as every other page: a
+            step that throws shows "This page hit an error" with Retry, never an empty body. */}
+        <ErrorBoundary resetKey={sub}>
+          <Onboarding sub={sub} navigate={navigate} deferred={peekOnboardingExit()} onFinished={() => setSetupRerun(false)} />
+        </ErrorBoundary>
         <Toaster />
       </>
     )
@@ -682,13 +686,17 @@ function AppInner() {
   ]
   return (
     <div className="flex h-full" style={{ background: 'var(--color-canvas)' }}>
-      <NavRail items={railItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
-        overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)}
-        disclosure={{
-          expanded: navMode === 'expert',
-          moreCount,
-          onToggle: () => setNavMode(navMode === 'expert' ? 'starter' : 'expert'),
-        }} />
+      {/* The rail sits in a boundary, as each corner control does in ShellCorners: one that throws
+          leaves a notice in its place, and the page beside it and ⌘K keep working. */}
+      <WidgetBoundary what="the navigation" compact className="m-s self-start">
+        <NavRail items={railItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
+          overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)}
+          disclosure={{
+            expanded: navMode === 'expert',
+            moreCount,
+            onToggle: () => setNavMode(navMode === 'expert' ? 'starter' : 'expert'),
+          }} />
+      </WidgetBoundary>
       <main className="relative flex-1 min-w-0">
         {/* App-shell corner regions — float above page content, not a header row */}
         <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} />

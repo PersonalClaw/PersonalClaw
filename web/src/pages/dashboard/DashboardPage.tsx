@@ -33,6 +33,7 @@ import { spring, expr } from '../../design/motion'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import { ComposerStage } from '../../ui/ComposerStage'
 import { useComposerData } from '../../lib/useComposerData'
+import { WidgetBoundary } from '../../app/ErrorBoundary'
 import type { ComposerValue } from '../../ui/composer/types'
 import type { RouteProps } from '../../app/useQueryState'
 
@@ -64,7 +65,7 @@ export function DashboardPage(route: RouteProps) {
           )}
           right={(
             <div className="hidden lg:block">
-              <HeroPulse variant="header" {...route} />
+              <WidgetBoundary what="the status strip"><HeroPulse variant="header" {...route} /></WidgetBoundary>
             </div>
           )}
         />
@@ -82,11 +83,15 @@ export function DashboardPage(route: RouteProps) {
               `ui/motion/Entrance` — so a widget's data landing re-renders inside a
               mounted group instead of remounting it and re-running the cascade. */}
           <EntranceGroup className="mx-auto flex w-full flex-col gap-2xl px-l py-xl" style={{ maxWidth: 'var(--content-width)' }}>
-            <EntranceRegion><Launcher {...route} /></EntranceRegion>
+            {/* Every band on Home renders inside a boundary (here, in `Section` and around the
+                system rail), so a widget that throws shows "Couldn't show …" with Retry in its
+                place and the other bands keep working — it used to swap the WHOLE page for the
+                page-level error. */}
+            <EntranceRegion><WidgetBoundary what="the launcher"><Launcher {...route} /></WidgetBoundary></EntranceRegion>
 
             {/* Live signal strip — the header's Hero Pulse, relocated below the
                 launcher when even the minimized header row won't fit (< lg). */}
-            <EntranceRegion className="min-h-9 lg:hidden"><HeroPulse {...route} /></EntranceRegion>
+            <EntranceRegion className="min-h-9 lg:hidden"><WidgetBoundary what="the status strip"><HeroPulse {...route} /></WidgetBoundary></EntranceRegion>
 
             {/* Pinned tiles band — the ADDITIVE half of the
                 dashboard-as-views registry. Renders the Overview view's artifact
@@ -97,7 +102,7 @@ export function DashboardPage(route: RouteProps) {
                 empty registry, and a region wrapper around nothing is still a flex item,
                 so it would spend a `gap-2xl` of blank vertical space on every install
                 that has pinned no tiles. */}
-            <PinnedTiles />
+            <WidgetBoundary what="your pinned tiles"><PinnedTiles /></WidgetBoundary>
 
             {/* The L2 user/agent overlay band — the call site
                 that makes the L2 layer a producer rather than a declared-and-empty layer.
@@ -268,7 +273,7 @@ function SystemRailIsland(route: RouteProps) {
       className="@container mx-auto flex w-full items-center rounded-lg border border-outline-variant/50 bg-surface-low/70 px-l py-s shadow-rest backdrop-blur-md"
       style={{ maxWidth: 'var(--content-width)' }}
     >
-      <SystemHealth {...route} />
+      <WidgetBoundary what="the system rail"><SystemHealth {...route} /></WidgetBoundary>
     </div>
   )
 }
@@ -420,7 +425,8 @@ function Section({ label, icon: Icon, children, tour }: {
         <h2 data-type="label-l" className="text-on-surface-var">{label}</h2>
         <span className="h-px flex-1 bg-outline-variant/40" />
       </div>
-      {children}
+      {/* Under the band's heading, so a band that throws keeps its label and says it could not show. */}
+      <WidgetBoundary what={`the ${label} section`}>{children}</WidgetBoundary>
     </section>
   )
 }

@@ -278,7 +278,8 @@ across React 18 and React-DOM 19, and the bundle crashed at first render in a
 way only a real browser exposes. So every frontend-affecting push must also
 prove the **built artifact mounts**: `npm run smoke:render` serves `web/dist`
 and loads the key routes in headless Chromium, asserting `#root` renders real
-content with no uncaught errors and no ErrorBoundary fallback. The
+content with no uncaught errors, no ErrorBoundary fallback and no widget's
+"Couldn't show …" notice. The
 repository-owned pre-push hook (`npm run hooks:install`, one-time) runs the
 whole chain — clean `npm ci` (this is what catches declared-vs-resolved
 lockfile skew), typecheck, vitest, build, render smoke — automatically whenever
