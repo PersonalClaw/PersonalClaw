@@ -926,8 +926,10 @@ class Dependencies:
     ``npmPackages`` are the npm packages core may install for the app into
     ``<home>/acp-adapters`` when it is installed or switched on — an agent app's ACP adapter
     (``acp.cli_resolve.provision_acp_adapter``), and the package a runtime would otherwise fetch
-    with ``npx``. Core installs and registers no other package for the app, so the install review
-    that names these is the whole of what npm does for it.
+    with ``npx``. Core installs and registers no other package for the app. A package the app's own
+    code runs with ``npx`` is not one of these: core never installs it, and the ``launches`` entry
+    for that ``npx`` names it (``LaunchedProgram.npmPackage``). So the install review that names
+    both is the whole of what npm does for the app.
     """
 
     managedBy: str = "gateway"  # noqa: N815
@@ -1086,6 +1088,17 @@ LAUNCH_INHERITS = ("sign-in", "settings", "auto-approve-rules", "folder-settings
 
 #: A program as an app starts it by name: no path, no argument, nothing a shell would read.
 _PROGRAM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+#: The ``program`` of a launch whose program the owner chooses rather than the app — an action in
+#: a file they write — so no name can be given ahead of time. Consent says "the programs you name
+#: for it", and the entry names no program core may start for the app (``apps.declared``).
+PROGRAM_YOU_NAME = "*"
+#: The one program that downloads an npm package and runs it, which ``npmPackage`` names.
+NPX = "npx"
+#: A host a program reaches, as consent names it: a lowercase DNS name of two labels or more, with
+#: no scheme, user, port or path, and a last label that starts with a letter (so no IP address).
+_HOST_RE = re.compile(
+    r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?"
+)
 _LAUNCH_LIMITS = {"program": 80, "why": 300}
 _WRITE_LIMITS = {"path": 200, "why": 300}
 
@@ -1112,17 +1125,22 @@ class LaunchedProgram:
     """A program on this machine, outside PersonalClaw, that the app starts — an agent's own CLI
     that core starts for the app's runtime, or a tool its code runs.
 
-    ``program`` is its name as it is found on this machine, ``why`` what the app uses it for, and
-    ``inherits`` what of the owner's own, and of the folder it works in, it runs with
-    (:data:`LAUNCH_INHERITS`). When an app setting decides that, ``inheritsWhile`` names it and
-    the value under which it holds. Install consent shows all of it, and core registers no agent
-    CLI the app does not declare here.
+    ``program`` is its name as it is found on this machine, or ``*`` (:data:`PROGRAM_YOU_NAME`)
+    when the owner chooses it, ``why`` what the app uses it for, and ``inherits`` what of the
+    owner's own, and of the folder it works in, it runs with (:data:`LAUNCH_INHERITS`). When an
+    app setting decides that, ``inheritsWhile`` names it and the value under which it holds.
+    ``npmPackage`` is the npm package an ``npx`` entry downloads and runs, which every ``npx``
+    entry names, and ``hosts`` are the hosts the program reaches. Install consent shows all of
+    it, and core registers no agent CLI the app does not declare here.
     """
 
     program: str = ""
     why: str = ""
     inherits: list[str] = field(default_factory=list)
     inheritsWhile: SettingCondition | None = None  # noqa: N815
+    # Last, so no published field moves position (``sdk/signatures.json``).
+    npmPackage: str = ""  # noqa: N815
+    hosts: list[str] = field(default_factory=list)
 
     def validate(self, boolean_settings: set[str]) -> list[str]:
         errors: list[str] = []
@@ -1136,11 +1154,18 @@ class LaunchedProgram:
                     f"launches entry {label!r}: {key!r} is {len(value)} characters; "
                     f"at most {limit} are shown"
                 )
-        if self.program.strip() and not _PROGRAM_RE.fullmatch(self.program):
+        if (
+            self.program.strip()
+            and self.program != PROGRAM_YOU_NAME
+            and not _PROGRAM_RE.fullmatch(self.program)
+        ):
             errors.append(
                 f"launches entry {label!r}: 'program' must be a program's name as it is found on "
-                "this machine (letters, digits, '.', '_', '+', '-'), not a path or a command line"
+                "this machine (letters, digits, '.', '_', '+', '-'), not a path or a command line, "
+                f"or {PROGRAM_YOU_NAME!r} for the programs you name for it"
             )
+        errors.extend(self._package_errors(label))
+        errors.extend(self._host_errors(label))
         unknown = [w for w in self.inherits if w not in LAUNCH_INHERITS]
         if unknown:
             errors.append(
@@ -1163,12 +1188,59 @@ class LaunchedProgram:
                 )
         return errors
 
+    def _package_errors(self, label: str) -> list[str]:
+        """An ``npx`` entry names the package npx downloads and runs, and only ``npx`` names one:
+        an entry that leaves it out hides what actually runs, and consent would say nothing of it.
+        """
+        if not self.npmPackage:
+            return (
+                [
+                    f"launches entry {label!r}: npx downloads a package and runs it, so name "
+                    "that package in npmPackage"
+                ]
+                if self.program == NPX
+                else []
+            )
+        errors: list[str] = []
+        if self.program != NPX:
+            errors.append(
+                f"launches entry {label!r}: npmPackage names what npx downloads and runs, so "
+                f"'program' must be {NPX!r}"
+            )
+        if not _NPM_PACKAGE_RE.fullmatch(self.npmPackage) or len(self.npmPackage) > _MAX_NPM_NAME:
+            errors.append(
+                f"launches entry {label!r}: npmPackage {self.npmPackage[:80]!r} is not an npm "
+                "package name (a lowercase name, optionally @scope/name, with no version or option)"
+            )
+        return errors
+
+    def _host_errors(self, label: str) -> list[str]:
+        errors: list[str] = []
+        if len(self.hosts) > _MAX_DECLARATIONS:
+            errors.append(
+                f"launches entry {label!r} lists {len(self.hosts)} hosts; at most "
+                f"{_MAX_DECLARATIONS} are shown"
+            )
+        for host in self.hosts:
+            if not _HOST_RE.fullmatch(host):
+                errors.append(
+                    f"launches entry {label!r}: host {host[:80]!r} is not a host name (lowercase, "
+                    "such as example.com, with no scheme, port or path)"
+                )
+        if len(set(self.hosts)) != len(self.hosts):
+            errors.append(f"launches entry {label!r} lists a host more than once")
+        return errors
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"program": self.program, "why": self.why}
         if self.inherits:
             d["inherits"] = list(self.inherits)
         if self.inheritsWhile is not None:
             d["inheritsWhile"] = self.inheritsWhile.to_dict()
+        if self.npmPackage:
+            d["npmPackage"] = self.npmPackage
+        if self.hosts:
+            d["hosts"] = list(self.hosts)
         return d
 
     @classmethod
@@ -1179,6 +1251,8 @@ class LaunchedProgram:
             why=str(data.get("why", "")),
             inherits=[str(w) for w in _as_list(data.get("inherits"))],
             inheritsWhile=SettingCondition.from_dict(cond) if isinstance(cond, dict) else None,
+            npmPackage=str(data.get("npmPackage", "")),
+            hosts=[str(h) for h in _as_list(data.get("hosts"))],
         )
 
 

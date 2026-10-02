@@ -37,12 +37,16 @@ const CLAUDE: AppLaunchedProgram = {
   why: 'Claude Code does the work of each chat. Its ACP adapter starts it.',
   inherits: ['sign-in', 'settings', 'auto-approve-rules'],
   inheritsWhile: { setting: 'isolated_config', label: 'Isolated Claude settings', value: false, default: true },
+  npmPackage: '',
+  hosts: [],
 }
 const KIRO: AppLaunchedProgram = {
   program: 'kiro-cli',
   why: 'kiro-cli does the work of each chat, over ACP.',
   inherits: ['sign-in', 'settings', 'auto-approve-rules'],
   inheritsWhile: null,
+  npmPackage: '',
+  hosts: [],
 }
 /** Claude Code with Isolated Claude settings off: yours, and the settings of the folder it works in. */
 const CLAUDE_AS_IT_IS: AppLaunchedProgram = {

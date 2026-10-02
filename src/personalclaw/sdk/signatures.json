@@ -5685,7 +5685,9 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "program"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "why"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "inherits"},
-    {"annotation": "SettingCondition | None", "default": "None", "kind": "positional_or_keyword", "name": "inheritsWhile"}
+    {"annotation": "SettingCondition | None", "default": "None", "kind": "positional_or_keyword", "name": "inheritsWhile"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "npmPackage"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "hosts"}
    ],
    "returns": "None"
   },

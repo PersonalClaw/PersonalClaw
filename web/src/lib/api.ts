@@ -1072,7 +1072,8 @@ export interface AppDisclosure {
   /** Each program on this machine it starts, outside PersonalClaw, and what of yours it runs with. */
   launches: AppLaunchedProgram[]
   /** The npm packages installed for it into the PersonalClaw folder when it is installed or switched
-   *  on — and fetched with npx until they are. Core installs no other for it. */
+   *  on — and fetched with npx until they are. Core installs no other for it; a package its own code
+   *  runs with npx is that launch's `npmPackage`. */
   npmPackages: string[]
   /** Each place outside its own folder it writes. */
   writes: AppExternalWrite[]
@@ -1124,14 +1125,19 @@ export interface AppPrerequisite { name: string; why: string; how: string }
  *  (`manifest.LAUNCH_INHERITS`): three of yours, and the settings of the folder it works in. */
 export type AppLaunchInherit = 'sign-in' | 'settings' | 'auto-approve-rules' | 'folder-settings'
 /** One program on this machine an app starts (an agent's own CLI, a tool), what the app uses it for,
- *  and what of yours it runs with — the manifest's `launches`. `inheritsWhile` is the app setting
- *  that decides that, with the label and starting value its Configure page shows (`default` is
- *  `null` when the schema gives none); `null` when it always does. */
+ *  and what of yours it runs with — the manifest's `launches`. `program` is `'*'` for the programs
+ *  you name for it (a runbook action you wrote: `manifest.PROGRAM_YOU_NAME`). `inheritsWhile` is the
+ *  app setting that decides what it runs with, with the label and starting value its Configure page
+ *  shows (`default` is `null` when the schema gives none); `null` when it always does. */
 export interface AppLaunchedProgram {
   program: string
   why: string
   inherits: AppLaunchInherit[]
   inheritsWhile: { setting: string; label: string; value: boolean; default: boolean | null } | null
+  /** The npm package an `npx` entry downloads and runs each time it starts; `''` for any other. */
+  npmPackage: string
+  /** The hosts the program reaches, as the manifest names them. */
+  hosts: string[]
 }
 /** A place outside the app's own folder it writes: relative to the PersonalClaw folder, or `~/…`
  *  under your home folder — the manifest's `writes`. */

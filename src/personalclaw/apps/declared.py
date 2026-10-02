@@ -19,7 +19,7 @@ app that declares nothing: refused.
 from __future__ import annotations
 
 from personalclaw import app_code
-from personalclaw.apps.manifest import AppManifest
+from personalclaw.apps.manifest import PROGRAM_YOU_NAME, AppManifest
 
 #: How every refusal ends: why it matters, in the words the provider's card shows.
 UNNAMED = "so its install review never named it"
@@ -53,11 +53,14 @@ def declares_npm_package(package: str) -> bool:
 
 def declared_programs() -> set[str] | None:
     """The programs the calling app lists under ``launches``, or ``None`` when core itself is the
-    caller (and so no manifest applies)."""
+    caller (and so no manifest applies). An entry for the programs the owner names for the app
+    (``*``) names none, so it is not among them: it lets core start nothing."""
     is_app, manifest = _calling_manifest()
     if not is_app:
         return None
-    return {p.program for p in manifest.launches} if manifest is not None else set()
+    if manifest is None:
+        return set()
+    return {p.program for p in manifest.launches if p.program != PROGRAM_YOU_NAME}
 
 
 __all__ = ["UNNAMED", "NotDeclared", "declared_programs", "declares_npm_package"]

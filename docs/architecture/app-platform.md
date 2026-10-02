@@ -119,6 +119,11 @@ backend**.
     from whoever wrote the folder. `inheritsWhile: {setting, value}` names a boolean setting of
     the app's provider when that decides it (Claude Code runs with all four only while *Isolated
     Claude settings* is off); consent words it with the setting's label and where it starts.
+    `hosts` are the hosts the program reaches. An `npx` entry must name, in `npmPackage`, the npm
+    package npx downloads and runs (no version: consent says each start fetches its newest
+    version, runs it as the owner, and runs npm's install scripts). A program the owner chooses,
+    such as a runbook action they wrote, is `program: "*"`: consent says "the programs you name
+    for it", and the entry names no program core may start for the app.
   - An agent app passes its CLI per-session options with `register_acp_cli_entry(session_meta=…)`:
     a JSON object core adds as the `_meta` of every `session/new` and `session/load` it sends
     from the app's entry (the runtime, a resumed session, the readiness probe and a pooled
@@ -126,7 +131,8 @@ backend**.
     settings are not loaded either.
   - `dependencies.npmPackages` — the npm packages core may install for the app into
     `<home>/acp-adapters` as it is installed or switched on (an agent app's ACP adapter), and
-    that a runtime may otherwise fetch with `npx`. Consent says npm runs their install scripts.
+    that a runtime may otherwise fetch with `npx`. Consent says npm runs their install scripts. A
+    package the app's own code runs with `npx` is not one of these; its `launches` entry names it.
   - `writes: [{path, why}]` (`manifest.ExternalWrite`) — each place outside the app's own folder
     its code writes: a path inside the PersonalClaw folder, or `~/…` in the home folder.
 

@@ -366,6 +366,10 @@ const INHERIT_WORDS: Record<AppLaunchedProgram['inherits'][number], string> = {
 /** The one word that is not the owner's own: a folder's settings come from whoever wrote it. */
 const FOLDER: AppLaunchedProgram['inherits'][number] = 'folder-settings'
 
+/** The `program` of a launch whose program you name for the app, such as a runbook action you wrote
+ *  (`manifest.PROGRAM_YOU_NAME`): no name can be given ahead of time, so the row says you choose it. */
+const YOU_NAME = '*'
+
 const onOff = (v: boolean) => (v ? 'on' : 'off')
 
 const andList = (words: string[]) =>
@@ -374,9 +378,11 @@ const andList = (words: string[]) =>
 /** "It runs with your own claude sign-in, settings and auto-approve rules", then the folder's own
  *  settings named apart, since they are not yours — and, when an app setting decides it, while
  *  which setting is on or off, and where that setting starts — so the row says exactly what the
- *  program runs with. Nothing when it runs with nothing of either. */
+ *  program runs with. For the programs you name, each one does, with yours for that program.
+ *  Nothing when it runs with nothing of either. */
 function InheritsSentence({ launch: l }: { launch: AppLaunchedProgram }) {
   if (!l.inherits.length) return null
+  const yours = l.program === YOU_NAME
   const own = andList(l.inherits.filter((w) => w !== FOLDER).map((w) => INHERIT_WORDS[w]))
   const folder = l.inherits.includes(FOLDER)
   const rules = l.inherits.includes('auto-approve-rules') || folder
@@ -384,18 +390,19 @@ function InheritsSentence({ launch: l }: { launch: AppLaunchedProgram }) {
     : ''
   const what = (
     <>
-      {own ? <>your own {cmd(l.program)} {own}</> : null}
+      {own ? (yours ? <>your own {own} for that program</> : <>your own {cmd(l.program)} {own}</>) : null}
       {own && folder ? ', and with ' : null}
-      {folder ? <>the {cmd(l.program)} settings of the folder it works in, which can add rules of their own and
-        commands for it to run</> : null}.{rules}
+      {folder ? <>the {yours ? null : <>{cmd(l.program)} </>}settings of the folder it works in, which can add rules
+        of their own and commands for it to run</> : null}.{rules}
     </>
   )
   const w = l.inheritsWhile
-  if (!w) return <> It runs with {what}</>
+  const runs = yours ? 'each program it starts runs' : 'it runs'
+  if (!w) return <> {runs[0].toUpperCase()}{runs.slice(1)} with {what}</>
   const start = w.default === null ? ''
     : w.default === w.value ? ` ${w.label} starts out ${onOff(w.value)}.`
       : ` ${w.label} is ${onOff(w.default)} until you turn it ${onOff(!w.default)}.`
-  return <> While {w.label} is {onOff(w.value)}, it runs with {what}{start}</>
+  return <> While {w.label} is {onOff(w.value)}, {runs} with {what}{start}</>
 }
 
 /** The update list's short form of the same: "with your own sign-in, settings and the settings of
@@ -408,12 +415,37 @@ function inheritsLabel(l: AppLaunchedProgram): string {
   return `, with ${own ? `your own ${own}` : ''}${own && folder ? ' and ' : ''}${folder}${when}`
 }
 
-/** One program the app starts outside PersonalClaw: what it is for, and what of yours it runs with. */
+/** The update list's line for a launch: the program, the package it fetches, and the hosts it reaches,
+ *  then what of yours it runs with — so an update that changes any of them reads as one gone and one new. */
+function launchLabel(l: AppLaunchedProgram): string {
+  const pkg = l.npmPackage ? `, which fetches and runs the npm package ${l.npmPackage}` : ''
+  const hosts = l.hosts.length ? `, reaching ${l.hosts.join(', ')}` : ''
+  return `Starts ${l.program === YOU_NAME ? 'programs you name' : l.program}${pkg}${hosts}${inheritsLabel(l)}`
+}
+
+/** One program the app starts outside PersonalClaw: what it is for, the npm package it downloads and
+ *  runs (an `npx` entry), the hosts it reaches, and what of yours it runs with. */
 function LaunchItem({ launch: l }: { launch: AppLaunchedProgram }) {
   return (
     <span data-testid="consent-launch">
-      Starts the {cmd(l.program)} program installed on this machine, as you and outside PersonalClaw.{' '}
-      {sentence(l.why)}<InheritsSentence launch={l} />
+      {l.program === YOU_NAME
+        ? 'Starts the programs you name for it, as you and outside PersonalClaw.'
+        : <>Starts the {cmd(l.program)} program installed on this machine, as you and outside PersonalClaw.</>}{' '}
+      {sentence(l.why)}
+      {/* npx resolves an unversioned package against the registry each time it runs, so a version
+          published after this review is the one that runs next: the row says so, rather than letting
+          "starts npx" read as one fixed program. */}
+      {l.npmPackage && (
+        <> Each time, npx fetches the newest version of the npm package {cmd(l.npmPackage)} from the npm
+          registry, unless npm already holds it, and runs it as you. npm runs the install scripts of that
+          package and of every package it depends on.</>
+      )}
+      {l.hosts.length > 0 && (
+        <> It reaches {l.hosts.map((h, i) => (
+          <span key={h}>{i === 0 ? '' : i === l.hosts.length - 1 ? ' and ' : ', '}{cmd(h)}</span>
+        ))}.</>
+      )}
+      <InheritsSentence launch={l} />
     </span>
   )
 }
@@ -497,8 +529,8 @@ function disclosureFacts(d: AppDisclosure): { key: string; label: string }[] {
     ...d.sidecarDependencies.map((s) => ({ key: `engine:${s}`, label: `Engine package ${s}` })),
     ...d.requires.map((r) => ({ key: `requires:${JSON.stringify([r.name, r.why, r.how])}`, label: `Needs ${r.name}` })),
     ...d.launches.map((l) => ({
-      key: `launch:${JSON.stringify([l.program, l.inherits, l.inheritsWhile?.setting ?? '', l.inheritsWhile?.value ?? null])}`,
-      label: `Starts ${l.program}${inheritsLabel(l)}`,
+      key: `launch:${JSON.stringify([l.program, l.inherits, l.inheritsWhile?.setting ?? '', l.inheritsWhile?.value ?? null, l.npmPackage, l.hosts])}`,
+      label: launchLabel(l),
     })),
     ...d.npmPackages.map((p) => ({ key: `npm:${p}`, label: `npm package ${p}` })),
     ...d.writes.map((w) => ({ key: `writes:${w.path}`, label: `Writes ${w.path}` })),

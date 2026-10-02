@@ -25,7 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from personalclaw.apps.app_crons import schedules
-from personalclaw.apps.manifest import AppManifest
+from personalclaw.apps.manifest import PROGRAM_YOU_NAME, AppManifest
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,18 @@ def describe(m: AppManifest) -> dict[str, Any]:
     * ``requires`` — what the app needs that PersonalClaw does not install, each
       ``{name, why, how}`` (``manifest.Prerequisite``). Not something it gets or runs, and on
       this list because consent is where the owner has to learn it.
-    * ``launches`` — each program on this machine it starts, outside PersonalClaw: ``program``,
-      ``why``, ``inherits`` (what of the owner's own it runs with, ``manifest.LAUNCH_INHERITS``)
-      and ``inheritsWhile`` — ``None``, or the app setting that decides that inheritance, as
-      ``{setting, label, value, default}`` with the label and default its Configure page shows.
-      Core registers no agent CLI an app does not declare here (``acp_bundles._register``).
+    * ``launches`` — each program on this machine it starts, outside PersonalClaw: ``program``
+      (``*`` for the programs the owner names for it, ``manifest.PROGRAM_YOU_NAME``), ``why``,
+      ``inherits`` (what of the owner's own it runs with, ``manifest.LAUNCH_INHERITS``),
+      ``inheritsWhile`` — ``None``, or the app setting that decides that inheritance, as
+      ``{setting, label, value, default}`` with the label and default its Configure page shows —
+      ``npmPackage`` (the package an ``npx`` entry downloads and runs, ``""`` for any other) and
+      ``hosts`` (the hosts the program reaches). Core registers no agent CLI an app does not
+      declare here (``acp_bundles._register``).
     * ``npmPackages`` — what npm installs for it into ``<home>/acp-adapters`` when it is
       installed or switched on, and what a runtime would otherwise fetch with ``npx``. Core
-      installs and starts no other npm package for it (``apps.declared``).
+      installs and starts no other npm package for it (``apps.declared``); one its own code runs
+      with ``npx`` is that launch's ``npmPackage``.
     * ``writes`` — each place outside its own folder it writes, ``{path, why}``: relative to the
       PersonalClaw folder, or ``~/…`` under the owner's home folder.
     * ``hasUI`` / ``uiComponents`` — browser code loaded into the dashboard page.
@@ -216,6 +220,8 @@ def _launches(m: AppManifest) -> list[dict[str, Any]]:
                     "why": launch.why,
                     "inherits": list(launch.inherits),
                     "inheritsWhile": condition,
+                    "npmPackage": launch.npmPackage,
+                    "hosts": list(launch.hosts),
                 }
             )
         return out
@@ -298,11 +304,19 @@ def _runs_as_you(d: dict[str, Any]) -> str:
         parts.append(("its server", False))
     if d["providers"]:
         parts.append(_counted(len(d["providers"]), "its provider module", "provider modules"))
-    if d["launches"]:
-        n = len(d["launches"])
+    named = [launch for launch in d["launches"] if launch["program"] != PROGRAM_YOU_NAME]
+    if named:
+        n = len(named)
         parts.append(
             ("the program it starts", False) if n == 1 else (f"the {n} programs it starts", True)
         )
+    # A ``*`` entry is however many programs the owner names, never one fixed program.
+    if len(named) < len(d["launches"]):
+        parts.append(("the programs you name for it", True))
+    # What npx downloads runs as you as well, and it is no program on this machine: named apart.
+    # A manifest lists ``npx`` once, so there is at most one.
+    if any(launch.get("npmPackage") for launch in d["launches"]):
+        parts.append(("the npm package npx fetches for it", False))
     if d["mcpServers"]:
         parts.append(_counted(len(d["mcpServers"]), "its MCP server", "MCP servers"))
     hooks = [when for when, key in _HOOKS if d[key]]

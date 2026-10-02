@@ -176,6 +176,9 @@ def test_the_install_review_names_the_program_it_starts_and_the_package_it_insta
                 "value": False,
                 "default": True,
             },
+            # Not an npx entry, and it names no host.
+            "npmPackage": "",
+            "hosts": [],
         }
     ]
     assert review.disclosure["npmPackages"] == [NPM]
