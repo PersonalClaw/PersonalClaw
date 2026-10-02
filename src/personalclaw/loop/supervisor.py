@@ -294,6 +294,20 @@ def has_done_check(loop: Loop, policy: SupervisorPolicy) -> bool:
     return True
 
 
+def refused_check(loop: Loop, policy: SupervisorPolicy) -> str:
+    """Why the shell denylist refuses the command this loop's done-check runs, or "".
+
+    A refused check is the one ``None`` from :func:`done_signal` that no later cycle changes: the
+    same command is refused every time until the command or the pattern changes, so the watchdog
+    pauses the loop with this reason rather than cycling on toward its budget."""
+    spec = policy.convergence
+    if spec.signal != DONE_VERIFY_COMMAND:
+        return ""
+    from personalclaw.loop.gates import refusal
+
+    return refusal(_command(loop, spec))
+
+
 def budget_stop_is_genuine(policy: SupervisorPolicy) -> bool:
     """Whether reaching the cycle budget is a CLEAN completion rather than the error-flavoured
     "stopped before the goal was met". True where the budget IS the intended stopping condition

@@ -2886,7 +2886,9 @@ export interface ImportableMcpList {
   servers: ImportableMcpServer[]
   unreadable: (UnreadableToolFile & { backend: string })[]
 }
-export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
+/** `not_run: 'refused_by_tool'` marks a call the tool refused before anything ran; `dry_run`
+ *  marks the answer to a check (`api.checkTool`). */
+export interface ToolInvokeResult { ok: boolean; output?: string; error?: string; not_run?: string; dry_run?: boolean }
 // `blocking` / `enforcement`: whether this hook's EVENT can short-circuit the loop, and
 // whether THIS hook actually does. Both are the server's verdict, not re-derived here: the backend
 // computes `enforcement` from the same `AgentProfile.triggers` binding the firing path reads, so a
@@ -9089,6 +9091,11 @@ export const api = {
     post<ToolInvokeResult>('/api/tools/invoke', {
       tool, arguments: args, provider, ...(confirmRisk ? { confirm_risk: confirmRisk } : {}),
     }),
+  // The same route with `dry_run`: every refusal no confirmation changes (the tool switched off,
+  // the deny-list, the tool's own refusal, such as a command the shell denylist refuses), asked
+  // without running anything. Try it asks it before it shows its confirmation.
+  checkTool: (tool: string, args: Record<string, unknown>, provider?: string) =>
+    post<ToolInvokeResult>('/api/tools/invoke', { tool, arguments: args, provider, dry_run: true }),
   mcpServers: () => get<McpServer[]>('/api/mcp'),
   toggleMcpServer: (name: string, enabled: boolean) => post('/api/mcp/toggle', { name, enabled }),
   toggleMcpTool: (server: string, tool: string, enabled: boolean) => post('/api/mcp/toggle-tool', { server, tool, enabled }),

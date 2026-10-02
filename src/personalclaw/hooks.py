@@ -18,7 +18,12 @@ from pathlib import Path
 from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.safety_flags import strict_bool
-from personalclaw.security import is_denied, is_sensitive_bash_command, is_sensitive_path
+from personalclaw.security import (
+    denied_command,
+    is_denied,
+    is_sensitive_bash_command,
+    is_sensitive_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +270,19 @@ class HookResult:
 class ToolHookResult:
     action: str  # TOOL_ALLOW, TOOL_AUTO_APPROVE, TOOL_DENY
     reason: str = ""
+    #: For a denial one of the shell's own controls made (``shell_denylist``, ``sensitive_path``):
+    #: the control, and the rule it applied, which the call's one audit row names (:meth:`audit`).
+    control: str = ""
+    rule: str = ""
+
+    def audit(self) -> dict[str, str]:
+        """What a control's denial adds to the call's audit row: the control and its rule, masked
+        as any text a person reads is. Empty for any other verdict."""
+        from personalclaw.security import redact_for_display
+
+        if not self.control:
+            return {}
+        return {"control": self.control, "rule": redact_for_display(self.rule)[:300]}
 
     @staticmethod
     def allow() -> "ToolHookResult":
@@ -277,6 +295,13 @@ class ToolHookResult:
     @staticmethod
     def deny(reason: str) -> "ToolHookResult":
         return ToolHookResult(action=TOOL_DENY, reason=reason)
+
+    @staticmethod
+    def refuse(reason: str, *, control: str, rule: str) -> "ToolHookResult":
+        """A denial by one of the shell's own controls, with one WARNING line naming it."""
+        refused = ToolHookResult(action=TOOL_DENY, reason=reason, control=control, rule=rule)
+        logger.warning("refused by %s before it ran: %s", control, refused.audit()["rule"])
+        return refused
 
 
 # ── Config Types ──
@@ -469,12 +494,25 @@ class HookManager:
         if tool_name.startswith("Reading "):
             # fs_read / ReadFile — check the path
             if is_sensitive_path(normalized):
-                return ToolHookResult.deny(f"Blocked: access to sensitive path: {normalized}")
+                return ToolHookResult.refuse(
+                    f"Blocked: access to sensitive path: {normalized}",
+                    control="sensitive_path",
+                    rule=normalized,
+                )
         elif tool_name.startswith("Running: "):
             # execute_bash — check for reads of sensitive paths
             reason = is_sensitive_bash_command(normalized, cwd=cwd)
             if reason:
-                return ToolHookResult.deny(reason)
+                return ToolHookResult.refuse(reason, control="sensitive_path", rule=reason)
+            # The shell denylist, the check the native bash tool and every other command path
+            # ask (`security.denied_command`): a command an agent CLI asks the host to run is
+            # refused here, before any auto-approve pattern or card can offer it.
+            if (denied := denied_command(normalized)) is not None:
+                return ToolHookResult.refuse(
+                    denied.refusal(),
+                    control="shell_denylist",
+                    rule=denied.pattern or denied.why(),
+                )
             # A SYSTEM-SCHEDULER write is offered the substrate instead (§7 crit 12). The
             # ACP path gets the same gate as the native bash tool: a control on one of two dispatch
             # seams is a control the other silently skips, which is how the `web_watch` screen gap

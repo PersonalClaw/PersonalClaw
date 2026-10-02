@@ -102,19 +102,23 @@ async def _observe_ground_truth(
     parts: list[str] = []
     cmd = (verify_command or "").strip()
     if cmd:
-        from personalclaw.loop.gates import run_verify_command
+        from personalclaw.loop.gates import refusal, run_verify_command
 
-        try:
-            ok = await run_verify_command(cmd, workspace or None, label="judge-verify")
-        except Exception:
-            ok = None
-        if ok is True:
-            state = "PASSED (exit 0)"
-        elif ok is False:
-            state = "FAILED (non-zero exit)"
+        if refused := refusal(cmd):
+            # Refused, not "could not run": the judge is told no check result exists and why.
+            parts.append(f"Did not run `{cmd}`: {refused}")
         else:
-            state = "could not run (tool missing / blocked / timed out)"
-        parts.append(f"Ran `{cmd}` → {state}.")
+            try:
+                ok = await run_verify_command(cmd, workspace or None, label="judge-verify")
+            except Exception:
+                ok = None
+            if ok is True:
+                state = "PASSED (exit 0)"
+            elif ok is False:
+                state = "FAILED (non-zero exit)"
+            else:
+                state = "could not run (tool missing / blocked / timed out)"
+            parts.append(f"Ran `{cmd}` → {state}.")
     search_dirs = [
         d for d in [(workspace or "").strip(), *(fallback_dirs or [])] if d and os.path.isdir(d)
     ]

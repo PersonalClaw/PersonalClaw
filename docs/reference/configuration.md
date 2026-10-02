@@ -232,7 +232,7 @@ cap, so removing it changes no run-start behaviour; a stored value is ignored.
 
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
-| `security.denied_commands` | list of regexes (≤100) | `[]` | Settings → Security | User-added regexes for shell commands the agent must never run, appended to the always-on built-in denylist. Matched case-insensitively against the full command string. |
+| `security.denied_commands` | list of regexes (≤100) | `[]` | Settings → Security | User-added regexes for commands PersonalClaw must never run for the agent or an automation, appended to the always-on built-in denylist. Every path that runs a command asks them before it runs (the bash tool, an agent CLI's request, loop and workflow checks, workflow steps, bash actions, app setup hooks). Matched case-insensitively against the full command string. |
 | `security.egress.allow_hosts` | list of strings | `[]` | Settings → Security | Hosts (bare domain covers subdomains) permitted even when they resolve to a private/LAN address — for homelab webhooks/services. Applies to all egress surfaces. |
 | `security.egress.deny_hosts` | list of strings | `[]` | Settings → Security | Hosts the agent must never reach, even if public. A deny always overrides an allow. |
 | `security.egress.allow_private` | boolean | `false` | Settings → Security | Permit egress to private/LAN addresses globally. Only enable on a fully trusted network — it removes SSRF protection for the whole LAN. |

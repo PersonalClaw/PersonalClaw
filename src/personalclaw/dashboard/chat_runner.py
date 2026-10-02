@@ -120,6 +120,7 @@ from personalclaw.llm.events import (
     TOOL_META_AUTO_DENIED,
     is_length_stop,
     is_refusal_stop,
+    refusal_audit,
     unasked_outcome,
     unasked_reason,
 )
@@ -3965,7 +3966,10 @@ async def run_chat(
                 # and an ACP call the CLI never asked about is the ungated check's, below.
                 _called_as = _call_inputs.pop(event.tool_call_id, None)
                 if not _acp_cli and event.tool_call_id not in _gated_tool_calls:
-                    _waived = bool(_tmeta.get(TOOL_META_APPROVAL_WAIVED))
+                    # A call a control of its tool refused names the control and its rule, and
+                    # is never one the policy approved, whatever answered its ask.
+                    _control_refused = refusal_audit(_tmeta)
+                    _waived = bool(_tmeta.get(TOOL_META_APPROVAL_WAIVED)) and not _control_refused
                     _decided_by = (
                         auto_approval_reason(not _app_chat and state.is_yolo_active())
                         if _waived
@@ -3983,6 +3987,7 @@ async def run_chat(
                             "reason": _decided_by,
                             "decided_by": _decided_by,
                             "risk": _risk_of_call,
+                            **_control_refused,
                         },
                     )
                     if _waived and _called_as is not None:
@@ -4194,16 +4199,23 @@ async def run_chat(
                                 f"{event.title} (blocked: {_cmd_reason})",
                                 "msg msg-tool",
                             )
+                            # A control of the shell's own (its denylist, a credential path) is a
+                            # `refused` row naming the control and its rule.
+                            _control = _cmd_verdict.audit()
                             sel().log_tool_invocation(
                                 session_key=session_key,
                                 agent=_agent_label(session),
                                 source="dashboard",
                                 tool_name=event.title,
                                 tool_kind=event.tool_kind,
-                                outcome="denied",
+                                outcome="refused" if _control else "denied",
                                 request_id=event.request_id,
                                 error="denylist_command",
-                                metadata={"reason": _cmd_reason, "decided_by": "deny_list"},
+                                metadata={
+                                    "reason": _cmd_reason,
+                                    "decided_by": _control.get("control", "deny_list"),
+                                    **_control,
+                                },
                             )
                             continue
                 if state.context_builder:
@@ -4219,16 +4231,20 @@ async def run_chat(
                         session.append(
                             "tool", f"{event.title} (blocked: {_deny_reason})", "msg msg-tool"
                         )
+                        _control = tool_result.audit()
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
                             source="dashboard",
                             tool_name=event.title,
                             tool_kind=event.tool_kind,
-                            outcome="denied",
+                            outcome="refused" if _control else "denied",
                             request_id=event.request_id,
                             error="hook_deny",
-                            metadata={"decided_by": "hook_deny"},
+                            metadata={
+                                "decided_by": _control.get("control", "hook_deny"),
+                                **_control,
+                            },
                         )
                         continue
                     # An operator's auto-approve pattern is a grant at the `hook_based` level:

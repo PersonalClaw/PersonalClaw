@@ -3,7 +3,7 @@ from all registered tool providers (the Tool entity)."""
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -13,7 +13,7 @@ from personalclaw.request_validation import require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 if TYPE_CHECKING:
-    from personalclaw.tool_providers.base import ToolProvider
+    from personalclaw.tool_providers.base import ToolProvider, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +380,26 @@ def _platform_provider_for_invoke() -> "tuple[ToolProvider | None, str]":
         return None, f"The filesystem and shell tools could not be prepared: {exc}"
 
 
+async def _preflight_refusal(
+    provider: "ToolProvider", tool_name: str, arguments: dict
+) -> "ToolResult | None":
+    """The refusal *provider* gives this call before it runs (``ToolProvider.preflight``), or None
+    when it would run, or when the check could not be made."""
+    try:
+        refused = await provider.preflight(tool_name, arguments)
+    except Exception:  # noqa: BLE001 - a check that cannot be made refuses nothing
+        logger.warning("tool invoke: %s's pre-flight failed; checked as it runs", tool_name)
+        return None
+    return None if refused is None or refused.success else refused
+
+
+def _shown(text: str) -> str:
+    """*text* masked as a result is on its way to the page."""
+    masked, _ = redact_exfiltration_urls(text or "")
+    masked, _ = redact_credentials(masked)
+    return masked
+
+
 async def api_tool_invoke(request: web.Request) -> web.Response:
     """POST /api/tools/invoke — execute one tool through the Tool entity.
 
@@ -415,6 +435,16 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     "destructive"``. ``safe`` and ``caution`` are unchanged, and the per-invocation reading keeps
     a read-only ``bash`` in the free tier — see the gate itself for why the scope stops exactly
     there.
+
+    Before that tier is asked about, the tool's own refusal is (``ToolProvider.preflight``): a
+    ``bash`` command the shell denylist refuses, a path the file tools do not reach, an argument a
+    tool does not take. It answers ``{"ok": false, "error": <the tool's reason>, "not_run":
+    "refused_by_tool"}`` and nothing runs, so no confirmation is asked for a call that cannot run.
+
+    ``"dry_run": true`` asks every refusal no confirmation changes (the tool switched off, the
+    deny-list, the tool's own refusal) without running anything: each refusal answers as it would,
+    with ``"dry_run": true`` added, and a call that would go on answers ``{"ok": true, "dry_run":
+    true}``. Tools → Try it asks it before it shows its confirmation.
     """
     from personalclaw.agents.native.builtin_tools import PLATFORM_TOOL_NAMES
     from personalclaw.tool_providers.registry import resolve, tool_surface
@@ -431,6 +461,9 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     arguments = body.get("arguments") or {}
     if not isinstance(arguments, dict):
         return web.json_response({"ok": False, "error": "arguments must be an object"}, status=400)
+    # A check (`dry_run`) says so in every refusal it gets, so whoever asked can tell the route's
+    # answer to the check from a request that never reached it.
+    checked: dict[str, Any] = {"dry_run": True} if body.get("dry_run") is True else {}
 
     # Untrusted-app sandbox (P3): an app-identified caller may invoke a tool only if
     # it declares it in permissions.mcpTools. Owner/internal callers (no app identity)
@@ -457,6 +490,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
                 {
                     "ok": False,
                     "error": f"app {app_name!r} not permitted to invoke {tool_name!r} — declare it in permissions.mcpTools",  # noqa: E501
+                    **checked,
                 },
                 status=403,
             )
@@ -475,8 +509,12 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     if resolved is None:
         # A tool the platform bundle owns is missing because the workspace is: say so.
         if platform_refusal and tool_name in PLATFORM_TOOL_NAMES:
-            return json_error("workspace_unresolved", message=platform_refusal, status=503)
-        return web.json_response({"ok": False, "error": f"tool not found: {tool_name}"}, status=404)
+            return json_error(
+                "workspace_unresolved", message=platform_refusal, status=503, **checked
+            )
+        return web.json_response(
+            {"ok": False, "error": f"tool not found: {tool_name}", **checked}, status=404
+        )
     provider, _tool_def = resolved
 
     # The user-disabled gate. This route executes a tool, so the Tools page toggle has to
@@ -516,6 +554,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             "tool_disabled",
             message=(f"{tool_name!r} is disabled — re-enable it on the Tools page to invoke it"),
             status=403,
+            **checked,
         )
 
     # The agent's hard deny-list, by tool NAME, the check `NativeAgentRuntime._guard_and_invoke`
@@ -542,6 +581,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             "tool_denied_by_policy",
             message=f"{denied}. No agent may run {tool_name!r}, and neither may this request.",
             status=403,
+            **checked,
         )
 
     # Effective risk of this direct invocation, for the SEL — so this path (cron
@@ -554,6 +594,38 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     _risk = resolve_effective_risk(_declared, tool_name, "", arguments)
 
     caller = request.headers.get("X-Session-Key", "") or "internal"
+
+    # What the tool itself refuses whatever anyone answers (`ToolProvider.preflight`: the shell
+    # denylist, a path out of reach, an argument it does not take), asked BEFORE the risk gate
+    # below, so nobody is asked to confirm a call that cannot run. A check that cannot be made
+    # refuses nothing: the tool screens the call again when it runs.
+    # A refusal by one of the tool's own controls (the shell denylist, a credential path, where the
+    # file tools reach) is audited `refused` with the control and its rule (`llm.events`).
+    from personalclaw.llm.events import refusal_audit
+
+    if (refused := await _preflight_refusal(provider, tool_name, arguments)) is not None:
+        why = _shown(refused.error) or f"{tool_name} refused this call before it ran"
+        control = refusal_audit(refused.metadata or {})
+        try:
+            _sel().log_tool_invocation(
+                session_key=caller,
+                agent="",
+                source="tool_invoke",
+                tool_name=tool_name,
+                tool_kind=provider.name,
+                outcome="refused" if control else "denied",
+                error=why[:200],
+                metadata={"risk": _risk, "not_run": "refused_by_tool", **control, **checked},
+            )
+        except Exception:  # noqa: BLE001 — an unaudited refusal is still a refusal
+            pass
+        return web.json_response(
+            {"ok": False, "output": "", "error": why, "not_run": "refused_by_tool", **checked}
+        )
+    if checked:
+        # The check ends here: every refusal no confirmation changes has been asked, and nothing
+        # ran. Whether the tier needs a confirmation is the run's question, not the check's.
+        return web.json_response({"ok": True, **checked})
 
     # The risk GATE (#506). Until this existed, `_risk` was resolved here and spent
     # entirely on the SEL rows below — `provider.invoke` ran one line later whatever it
@@ -635,19 +707,20 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
         return web.json_response({"ok": False, "error": relayed_failure_copy(exc)}, status=500)
 
+    out, err = _shown(result.output), _shown(result.error)
+    # A control of the tool can still refuse as the call starts (a pattern added since the check):
+    # the same one row, `refused`, never an `error` with no reason.
+    control = refusal_audit(result.metadata or {})
     _sel().log_tool_invocation(
         session_key=caller,
         agent="",
         source="tool_invoke",
         tool_name=tool_name,
         tool_kind=provider.name,
-        outcome="completed" if result.success else "error",
-        metadata={"risk": _risk},
+        outcome="refused" if control else ("completed" if result.success else "error"),
+        error="" if result.success else err[:200],
+        metadata={"risk": _risk, **control},
     )
-    out, _ = redact_exfiltration_urls(result.output or "")
-    out, _ = redact_credentials(out)
-    err, _ = redact_exfiltration_urls(result.error or "")
-    err, _ = redact_credentials(err)
     return web.json_response({"ok": bool(result.success), "output": out, "error": err})
 
 

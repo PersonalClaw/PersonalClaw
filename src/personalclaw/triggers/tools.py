@@ -438,6 +438,27 @@ def unsendable_message_refusal(
     return AutomationToolResult(False, f"Error: {problem}") if problem else None
 
 
+def _refused_command(workflow: Any) -> str:
+    """Why every run of *workflow* would be refused before its `bash` command ran: the shell
+    denylist refuses its text (`bash_provider.config_problem`). "" for any other action."""
+    action = _inline_action_of(workflow)
+    if str(action.get("provider") or "") != "bash":
+        return ""
+    from personalclaw.action_providers.bash_provider import config_problem
+
+    config = action.get("config")
+    return config_problem(config if isinstance(config, dict) else {})
+
+
+def denied_command_refusal(workflow: Any) -> AutomationToolResult | None:
+    """Refuse a `bash` action whose command the shell denylist refuses (:func:`_refused_command`):
+    every run would refuse it. The Triggers page asks the same question where it saves
+    (`dashboard/handlers/triggers._action_problem`); this is the chat's and the CLI's door, for
+    `create` and `update` alike."""
+    problem = _refused_command(workflow)
+    return AutomationToolResult(False, f"Error: {problem}") if problem else None
+
+
 def write_scope_refusal(workflow: Any) -> AutomationToolResult | None:
     """Refuse an agent-starting action whose ``writes`` names a file no automation may change
     (`write_scope.problem`): PersonalClaw's own files, a credential location, a secret file, a
@@ -1024,6 +1045,7 @@ def create(
         spec_error_refusal(resolved_kind, resolved_spec),
         unregistered_action_provider_refusal(workflow),
         unsendable_message_refusal(workflow, chat_channels=chat_channels),
+        denied_command_refusal(workflow),
         write_scope_refusal(workflow),
         None if owner_consented else posture_refusal(workflow, stored={}, creating=True),
         catch_up_refusal(resolved_kind, catch_up),
@@ -1323,6 +1345,7 @@ def update(
             unattended_action_refusal(applied["workflow"]),
             unregistered_action_provider_refusal(applied["workflow"]),
             unsendable_message_refusal(applied["workflow"], chat_channels=chat_channels),
+            denied_command_refusal(applied["workflow"]),
             write_scope_refusal(applied["workflow"]),
             (
                 None
@@ -1721,6 +1744,9 @@ def run(
     if dry_run:
         if missing:
             lines.append(f"  note: a real run is refused: {grants.refusal(trigger, missing)}")
+        # An automation saved before its command matched a pattern (one added since, or an import).
+        if refused := _refused_command(trigger.workflow):
+            lines.append(f"  note: a real run is refused. {refused}")
         lines.append("  nothing was executed.")
         # The trigger as a read shows it, masked: a dry run is a read of the automation, and its
         # answer reaches the page and the chat that asked.

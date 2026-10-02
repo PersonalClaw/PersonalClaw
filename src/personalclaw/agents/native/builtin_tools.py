@@ -457,16 +457,25 @@ def _ok_capped(
     )
 
 
-def _denied_bash_reason(command: str) -> str | None:
-    """Return the denied pattern a command matches, or None.
+def _refused_by(
+    tool_name: str, control: str, error: str, rule: str, hints: list[str] | None = None
+) -> ToolResult:
+    """A call one of the tool's own controls refused: its sentence, and the *control* and the
+    *rule* it applied for the call's one audit row (``llm.events.TOOL_META_REFUSED_RULE``),
+    with one WARNING line. A tool refuses a call once, before it runs or as it starts: the
+    runtime's pre-flight and the handler never both refuse the same call. *rule* is masked as
+    any text a person reads is."""
+    from personalclaw.llm.events import TOOL_META_REFUSED_BY, TOOL_META_REFUSED_RULE
+    from personalclaw.security import redact_for_display
 
-    Delegates to :func:`personalclaw.security.denied_command_reason` — the single
-    source of truth for the credential-exfiltration / destructive-command denylist
-    (always-on built-in patterns + any user additions from ``AppConfig.security``).
-    """
-    from personalclaw import security
-
-    return security.denied_command_reason(command)
+    shown = redact_for_display(rule)[:300]
+    logger.warning("%s: refused by %s before it ran: %s", tool_name, control, shown)
+    return ToolResult(
+        success=False,
+        error=error,
+        recovery_hints=list(hints or []),
+        metadata={TOOL_META_REFUSED_BY: control, TOOL_META_REFUSED_RULE: shown},
+    )
 
 
 class NativeBuiltinToolProvider(ToolProvider):
@@ -899,11 +908,16 @@ class NativeBuiltinToolProvider(ToolProvider):
 
     @staticmethod
     def _failure(tool_name: str, exc: Exception) -> ToolResult:
-        """The answer to a call whose check or handler raised: what was wrong, and what to do."""
+        """The answer to a call whose check or handler raised: what was wrong, and what to do. A
+        path the file tools do not reach is their scope's refusal, audited as one (`_refused_by`).
+        """
+        if isinstance(exc, OutOfScope):
+            return _refused_by(
+                tool_name, "file_scope", str(exc), str(exc), [exc.hint] if exc.hint else []
+            )
         error, hints = f"{type(exc).__name__}: {exc}", []
-        if isinstance(exc, ValueError):  # confinement / arg errors → surface to model
+        if isinstance(exc, ValueError):  # an argument error → surface to model
             error = str(exc)
-            hints = [exc.hint] if isinstance(exc, OutOfScope) and exc.hint else []
         elif isinstance(exc, KeyError):  # a required argument was omitted
             error = f"missing required argument: {exc}"
             hints = [
@@ -1277,7 +1291,7 @@ class NativeBuiltinToolProvider(ToolProvider):
     async def _t_glob(self, a: dict) -> ToolResult:
         pattern = str(a["pattern"])
         if refused := pattern_refusal("pattern", pattern):
-            return ToolResult(success=False, error=str(refused), recovery_hints=[refused.hint])
+            return self._failure("glob", refused)
         scope = self.file_scope()
         base = self._folder(a, scope)
 
@@ -1309,7 +1323,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         query = str(a["query"])
         glob_pat = str(a.get("glob") or "**/*")
         if refused := pattern_refusal("glob", glob_pat):
-            return ToolResult(success=False, error=str(refused), recovery_hints=[refused.hint])
+            return self._failure("grep", refused)
         scope = self.file_scope()
         base = self._folder(a, scope)
         max_results = int(a.get("max_results") or 200)
@@ -1524,27 +1538,39 @@ class NativeBuiltinToolProvider(ToolProvider):
         # reference fills in cannot carry a sensitive path or a denied pattern past them:
         # 1. sensitive credential-path access (is_sensitive_bash_command), with a relative path
         #    read from the folder the command runs in — the workspace, inside the home;
-        # 2. the configured execute_bash denied-command regexes (credential
-        #    exfiltration — aws s3 cp, echo $AWS_SECRET, IMDS 169.254.169.254, …).
+        # 2. the shell denylist (`security.denied_command`, the check every command path asks):
+        #    its built-in patterns and the ones added under Settings → Security.
+        # Each refusal names its control and rule for the call's audit row (`_refused_by`).
         sens = security.is_sensitive_bash_command(command, cwd=self._cwd)
         if sens:
-            return ToolResult(
-                success=False,
-                error=security.redact_known_values(sens, handed),
-                recovery_hints=[
+            said = security.redact_known_values(sens, handed)
+            return _refused_by(
+                "bash",
+                "sensitive_path",
+                said,
+                said,
+                [
                     "This command touches a sensitive credential path. Use a non-credential path or a different approach."  # noqa: E501
                 ],
             )
         # PersonalClaw's own stores are read through their own tools (`file_scope.store_named_in`).
         if stored := store_named_in(command, cwd=self._cwd):
-            return ToolResult(success=False, error=security.redact_known_values(stored, handed))
-        deny = _denied_bash_reason(command)
-        if deny:
-            return ToolResult(
-                success=False,
-                error=f"Blocked: command matches denied pattern {deny!r}",
-                recovery_hints=[
-                    "This command matches a credential-exfiltration denylist. Use a read-only alternative or a different approach."  # noqa: E501
+            said = security.redact_known_values(stored, handed)
+            return _refused_by("bash", "own_store", said, said)
+        if (denied := security.denied_command(command)) is not None:
+            return _refused_by(
+                "bash",
+                "shell_denylist",
+                security.redact_known_values(denied.refusal(), handed),
+                denied.pattern or denied.why(),
+                [
+                    (
+                        "The owner chose this rule. Do not rephrase the command to get around it: "
+                        "take a different approach, or tell them what you need to run and why."
+                        if denied.added
+                        else "This pattern guards credentials and destructive operations. Take a "
+                        "different approach that does not need this command."
+                    )
                 ],
             )
         # What runs as the owner, and what they allowed (`owner_only`): refused here in words, and
@@ -1555,10 +1581,12 @@ class NativeBuiltinToolProvider(ToolProvider):
 
         named = owner_only.named_in(command, cwd=self._cwd)
         if named and not is_read_only_bash(command):
-            return ToolResult(
-                success=False,
-                error=security.redact_known_values(owner_only.refusal(named), handed),
-                recovery_hints=[
+            return _refused_by(
+                "bash",
+                "owner_only",
+                security.redact_known_values(owner_only.refusal(named), handed),
+                security.redact_known_values(named, handed),
+                [
                     "Leave PersonalClaw's own config, hooks, agent files and grants to the owner. Tell them what you would change and why."  # noqa: E501
                 ],
             )
@@ -1566,7 +1594,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         # 3. a SYSTEM-SCHEDULER write — offer the substrate instead (§7 criterion 12).
         #
         # 🔴 Measured before writing: `is_sensitive_bash_command("crontab -e")` and
-        # `denied_command_reason("crontab -e")` both returned None, as did the `| crontab -` idiom,
+        # `denied_command("crontab -e")` both returned None, as did the `| crontab -` idiom,
         # `launchctl load` and `systemctl --user enable …timer`. So an agent could install a cron in
         # the user's real crontab and nothing said a word — and such a job is invisible to every
         # surface this program built: no ledger row, no autopause, no quiet window, no capability
@@ -1580,11 +1608,8 @@ class NativeBuiltinToolProvider(ToolProvider):
 
         offer = trigger_handoff.detect(command)
         if offer is not None:
-            return ToolResult(
-                success=False,
-                error=security.redact_known_values(offer.reason, handed),
-                recovery_hints=[trigger_handoff.HANDOFF_HINT],
-            )
+            said = security.redact_known_values(offer.reason, handed)
+            return _refused_by("bash", "scheduler", said, said, [trigger_handoff.HANDOFF_HINT])
         return None
 
     def _p_bash(self, a: dict) -> ToolResult | None:

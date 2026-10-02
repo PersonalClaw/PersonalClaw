@@ -7,7 +7,7 @@ scheduled jobs, memory-event triggers), so an app-contributed provider inherits 
 denylist without knowing it exists.
 
 This is defense-in-depth, not a sandbox: it composes with the always-on built-ins
-(``security.is_sensitive_path``, ``baseline_denied_command_patterns``) and the OS
+(``security.is_sensitive_path``, the shell denylist ``security.denied_command``) and the OS
 child sandbox, which remains the containment story. What it adds is a *path-level*
 denylist for autonomous action-provider runs — the machine-readable analog of the
 loop-constraints, configurable via ``security.autonomy_denylist``.
@@ -16,7 +16,6 @@ loop-constraints, configurable via ``security.autonomy_denylist``.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 
 from personalclaw import notification_kinds
@@ -99,15 +98,15 @@ def _glob_match(path: str, pattern: str) -> bool:
     return path_glob(path, pattern)
 
 
-def _load_config_rules() -> tuple[list[DenyRule], list[str]] | None:
-    """(rules, denied_command_patterns) from ``security`` config, or ``None`` on a failed read.
+def _load_config_rules() -> list[DenyRule] | None:
+    """The operator's path rules from ``security`` config, or ``None`` on a failed read.
 
     TWO outcomes, deliberately distinguishable — the same three-way discipline
     ``providers/entity_routes._load_entity_settings`` and ``AppConfig.load`` now carry, with
     "absent" folded into the empty-tuple case because an operator who declared no rules and one
     who has no config file are asking for the same thing:
 
-    * a pair — the operator's rules, as stored (possibly empty, which means "I denied nothing").
+    * a list — the operator's rules, as stored (possibly empty, which means "I denied nothing").
     * ``None`` — the config could not be read, so nothing is known about what they denied.
 
     It used to return ``([], [])`` for the second, described as "fail-open to empty ... the
@@ -134,7 +133,7 @@ def _load_config_rules() -> tuple[list[DenyRule], list[str]] | None:
             for r in (getattr(sec, "autonomy_denylist", []) or [])
             if isinstance(r, dict)
         ]
-        return rules, list(getattr(sec, "denied_commands", []) or [])
+        return rules
     except Exception:
         logger.warning("denylist config read failed — refusing the action", exc_info=True)
         return None
@@ -163,10 +162,10 @@ def check_action(
     built-in happened to match. Only reachable on an unexpected raise — since #3424 a corrupt
     ``config.json`` resolves fail-closed by value instead of raising.
     """
-    from personalclaw.security import baseline_denied_command_patterns, is_sensitive_path
+    from personalclaw.security import denied_command, is_sensitive_path
 
-    loaded = _load_config_rules()
-    if loaded is None:
+    config_rules = _load_config_rules()
+    if config_rules is None:
         return DenyDecision(
             blocked=True,
             verdict="block",
@@ -176,7 +175,6 @@ def check_action(
             ),
             matched="config:unreadable",
         )
-    config_rules, denied_cmd_patterns = loaded
     paths = _config_paths(action_config)
 
     # The session's SafetyProfile can layer extra path globs (§3 ``denylist_extra``) and
@@ -265,25 +263,17 @@ def check_action(
                 matched=f"self_destruct:{effect.kind}",
             )
 
-    # 4. Command patterns (built-in self-tamper/destructive + operator regexes).
-    if commands:
-        # Same packaged baseline the native bash screen enforces, re-asserted on read —
-        # action-provider dispatch and `execute_bash` can never drift apart.
-        baseline = baseline_denied_command_patterns()
-        all_patterns = list(baseline) + [p for p in denied_cmd_patterns if p not in set(baseline)]
-        for cmd in commands:
-            low = cmd.lower()
-            for pat in all_patterns:
-                try:
-                    if re.search(pat, low):
-                        return DenyDecision(
-                            blocked=True,
-                            verdict="block",
-                            reason=f"action command matches denied pattern {pat!r}",
-                            matched=f"cmd:{pat}",
-                        )
-                except re.error:
-                    continue
+    # 4. The shell denylist, through the one check every command path asks
+    # (`security.denied_command`), so action dispatch and the bash tool cannot drift apart. The
+    # reason is a clause, like every reason above: each seam words the refusal around it.
+    for cmd in commands:
+        if (denied := denied_command(cmd)) is not None:
+            return DenyDecision(
+                blocked=True,
+                verdict="block",
+                reason=denied.why(),
+                matched=f"cmd:{denied.pattern}",
+            )
 
     return DenyDecision()
 

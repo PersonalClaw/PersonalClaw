@@ -179,8 +179,30 @@ grants, is refused before its message is sent, and the owner is told why.
 
 - **Deny list** — `BUILTIN_DENIED_COMMAND_PATTERNS` (112 shell patterns) is
   merged with user-configured `security.denied_commands` **at read time**
-  (`denied_command_patterns()`), so config edits apply immediately. This one
-  source feeds both the native bash tool and the Security panel.
+  (`denied_command_patterns()`), so config edits apply immediately, and the
+  Security panel shows the same list. `denied_command` is the one check every
+  path that runs a command someone wrote asks before it runs it, matched
+  case-insensitively: the native bash tool (which Tools → Try it and a script's
+  `call_tool` reach through `/api/tools/invoke`, asking the tool's pre-flight
+  before any confirmation), a command an agent CLI asks the host to run
+  (`hooks.on_tool_call`, probed on the command behind a title that does not carry
+  it, in chat, subagents and background calls), a loop's or a workflow's check
+  (`loop.gates.run_verify_command`), a workflow step or effect teardown, a bash
+  action however it started (and a payload value its command runs as a command,
+  `sh -c "$CMD"`), an app's setup hook, and the action dispatch denylist
+  (`guardrails.denylist.check_action`). Refused before anyone is asked; an
+  unattended run records it on the run (a loop pauses with the rule as its
+  question, a workflow gate fails with it, a trigger fire's history names it).
+  A loop plan or an automation whose command it refuses is refused when it is
+  saved, and a dry run of an automation saved before says a real run is refused.
+  Each refusal, by the denylist, the credential-path check or the file tools'
+  reach, is one `refused` row in the audit log naming the control and its rule
+  (`llm.events.TOOL_META_REFUSED_RULE` for a tool call, `command_refused` for a
+  command path), whatever answered the call's ask, and one WARNING line in the
+  gateway log.
+  `tests/test_every_command_path_asks_the_denylist.py` fails a spawn site that
+  runs a written command without asking. What a text pattern cannot see is
+  [limitations §15](../security/limitations.md#15-the-shell-denylist-reads-a-commands-text).
 - **Suspicious-pattern watchers** — `SUSPICIOUS_BASH_PATTERNS` (52 patterns)
   flag rather than block.
 - **Tool-name denies** — `BUILTIN_DENY_PATTERNS` (fnmatch over tool names)

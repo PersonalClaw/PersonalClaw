@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.security import mask_child_output
@@ -22,6 +23,45 @@ logger = logging.getLogger(__name__)
 VERIFY_TIMEOUT_SECS = 180
 
 
+class CheckRefused(Exception):
+    """A check the shell denylist refuses, raised where the caller's run records a failure
+    (a workflow's verify gate, its guard, a ladder rung) so it fails with the rule's words
+    rather than as a check that "could not be determined". The message names the rule."""
+
+
+def refusal(cmd: str) -> str:
+    """Why the shell denylist refuses *cmd* as a check (``security.denied_command``), or "".
+
+    :func:`run_verify_command` asks it before running anything; a caller that records how a
+    check went (a loop's pause, a stage's gate row, a workflow node's failure) asks it too, so
+    the run says the check was refused and by which rule, not that it "could not run"."""
+    from personalclaw.security import denied_command
+
+    denied = denied_command((cmd or "").strip()) if (cmd or "").strip() else None
+    return denied.refusal() if denied is not None else ""
+
+
+def pause_for_refusal(loop_id: str, refused: str, publish: Callable[..., None]) -> None:
+    """Pause a loop whose check the shell denylist refuses (*refused*, :func:`refusal`'s words),
+    saying so on the loop for its owner, attended or not.
+
+    A refusal is the one can't-run no later cycle changes, so cycling on would only spend toward
+    the budget. Asked as the scheduler's question: asked again while the refusal holds, so a
+    resumed loop whose check is still refused pauses again with the same words."""
+    from personalclaw.loop import files as loop_files
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import LoopStatus
+
+    loop_files.write_question(
+        loop_id,
+        f"Paused: this loop's check was refused before it ran. {refused} Change the check "
+        "command, or a pattern you added, then resume.",
+        asked_by=loop_files.SCHEDULER_QUESTION,
+    )
+    store.update_status(loop_id, LoopStatus.NEEDS_INPUT)
+    publish(loop_id, "needs_input", {"loop_id": loop_id})
+
+
 async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify") -> bool | None:
     """Run a verification command and read its exit code — the deterministic
     done-ness signal the supervisor owns.
@@ -29,21 +69,25 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
     Returns a TRISTATE so a missing tool isn't misread as a real failure:
       * ``True``  — exit 0 (the check passed → the gate is met),
       * ``False`` — a genuine non-zero exit (the check ran + failed),
-      * ``None``  — the command could NOT run (blocked by the safety screen, timed
-        out, or the binary is missing / exit 127). ``None`` means "can't tell" —
-        the caller should NOT treat it as a pass, and the watchdog defers (it does
-        not complete on an un-runnable gate, but logs it so the spin is diagnosable).
+      * ``None``  — the command could NOT run (refused by the shell denylist or the
+        safety screen, timed out, or the binary is missing / exit 127). ``None`` means
+        "can't tell" — the caller should NOT treat it as a pass. A caller that records
+        the outcome on its run asks :func:`refusal` for the words of a refusal.
 
     Best-effort + bounded; never raises. The loop is an auto-approved unattended run
     within its trust TTL, so the command executes under the host trust boundary —
-    but we still screen it defensively (a command persisted before validation, or a
-    bypass path) and refuse anything destructive.
+    but it is still screened here, whoever persisted it: the shell denylist every
+    command path asks, then the destructive-command screen.
     """
     cmd = (cmd or "").strip()
     if not cmd:
         return None
-    from personalclaw.security import audit_bash_command
+    from personalclaw.command_audit import audit_command_refusal
+    from personalclaw.security import audit_bash_command, denied_command
 
+    if (denied := denied_command(cmd)) is not None:
+        audit_command_refusal(cmd, denied, source="loop_gate", operation=label)
+        return None
     danger = audit_bash_command(cmd)
     if danger:
         logger.warning("loop gate: refusing to run %s command — %s", label, danger)

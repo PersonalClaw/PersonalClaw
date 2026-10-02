@@ -86,7 +86,7 @@ export function renderToolOutput(seg: ToolSegment): ReactNode {
   //    sniff. This is the fix for "old sessions render worse than live".
   const ct = (shown.contentType && shown.contentType !== 'generic')
     ? shown.contentType
-    : sniffContentType(output)
+    : sniffedShape(output, shown.ok === false)
   if (ct && ct !== 'generic') {
     const eff: ToolSegment = ct === shown.contentType ? shown : { ...shown, contentType: ct }
     const node = safe(() => <ContentTypeOutput seg={eff} />)
@@ -97,6 +97,14 @@ export function renderToolOutput(seg: ToolSegment): ReactNode {
   if (node !== undefined) return node
   // 4. absolute fallback
   return <RawBlock label="Result">{output}</RawBlock>
+}
+
+/** The sniffed shape of an output no backend declared a type for. A FAILED call's output is its
+ *  failure message (the runtime's `Error:` and `Hint:` lines), never a table: two sentences with a
+ *  comma each read as a two-column CSV, and the refusal was shown cut apart at its commas. */
+function sniffedShape(output: string, failed: boolean): string {
+  const ct = sniffContentType(output)
+  return failed && ct === 'csv' ? 'generic' : ct
 }
 
 /** Client-side content-type sniff — a faithful mirror of the backend

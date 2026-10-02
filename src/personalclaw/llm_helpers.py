@@ -27,6 +27,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.events import (
     EVENT_MODEL_SUBSTITUTION,
     EVENT_SPENT,
+    refusal_audit,
     unasked_outcome,
     unasked_reason,
 )
@@ -163,7 +164,11 @@ async def stream_and_collect(
                         tool_kind=event.tool_kind,
                         outcome=unasked_outcome(meta),
                         request_id=str(event.tool_call_id or ""),
-                        metadata={"reason": decided_by, "decided_by": decided_by},
+                        metadata={
+                            "reason": decided_by,
+                            "decided_by": decided_by,
+                            **refusal_audit(meta),
+                        },
                     )
                 elif event.kind in (EVENT_COMPLETE, EVENT_SPENT):
                     if on_complete is not None:
@@ -297,8 +302,10 @@ async def _resolve_permission(
     call with nobody to ask is declined, whatever policy the caller passed.
     """
     from personalclaw import approval_grants
+    from personalclaw.acp.permission_authority import command_probe
     from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY
     from personalclaw.sel import sel
+    from personalclaw.task_modes import extract_bash_command
 
     def _log(outcome: str, **extra):
         sel().log_tool_invocation(
@@ -321,10 +328,21 @@ async def _resolve_permission(
         return False
 
     if policy == ToolApprovalPolicy.HOOK_BASED and hooks:
-        tool_result = hooks.on_tool_call(event.title)
+        # The hook's shell checks are made on the command that would RUN, which a CLI's title may
+        # not carry (`command_probe`); the probe is deny-only, so only the title can auto-approve.
+        probe = command_probe(str(event.title or ""), extract_bash_command(event.tool_input))
+        for name in (probe, event.title) if probe else (event.title,):
+            tool_result = hooks.on_tool_call(name)
+            if tool_result.action == TOOL_DENY:
+                break
         if tool_result.action == TOOL_DENY:
             await provider.reject_tool(event.request_id)
-            _log("denied", error=tool_result.reason, metadata={"decided_by": "hook_deny"})
+            control = tool_result.audit()
+            _log(
+                "refused" if control else "denied",
+                error=tool_result.reason,
+                metadata={"decided_by": control.get("control", "hook_deny"), **control},
+            )
             return False
         if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands(
             approval_grants.HOOK_PATTERN,

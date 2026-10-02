@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 
 from personalclaw.loop import files as loop_files
-from personalclaw.loop import posture
+from personalclaw.loop import gates, posture
 from personalclaw.loop.kinds import (
     LoopKindStrategy,
     attendedness_lines,
@@ -426,6 +426,14 @@ def _stage_commands(loop: Loop, stage: str) -> list[tuple[str, str]]:
     return checks
 
 
+def _refused_stage_check(loop: Loop, phase: dict, stage: str) -> str:
+    """Why the shell denylist refuses a check this stage's gate runs, or "". Only a stage that
+    declares exit criteria runs its checks (`_stage_gate_passed`), so only one can be refused."""
+    if not any(str(c).strip() for c in (phase.get("exit_criteria") or [])):
+        return ""
+    return next((why for _, cmd in _stage_commands(loop, stage) if (why := gates.refusal(cmd))), "")
+
+
 class CodeKind(LoopKindStrategy):
     kind = "code"
     label = "Code"
@@ -502,7 +510,7 @@ class CodeKind(LoopKindStrategy):
         workspace, and screening the unattended verify/test commands. Returns
         (errors, warnings) folded into the shared validator's result."""
         from personalclaw.loop.sdlc_meta import ENTRY_STAGES, PROJECT_KINDS
-        from personalclaw.security import audit_bash_command
+        from personalclaw.security import audit_bash_command, denied_command
 
         errors: list[str] = []
         warnings: list[str] = []
@@ -519,7 +527,9 @@ class CodeKind(LoopKindStrategy):
             cmd = str(cfg.get(key) or "").strip()
             if cmd:
                 danger = audit_bash_command(cmd)
-                if danger:
+                if (denied := denied_command(cmd)) is not None:
+                    errors.append(f"{label} command rejected — {denied.why()}.")
+                elif danger:
                     errors.append(f"{label} command rejected — {danger}.")
         # Stages collide when they share an effective key (stage id, or title for a
         # stageless row) — the store keys one TaskList + status entry per key at launch,
@@ -1839,7 +1849,7 @@ class CodeKind(LoopKindStrategy):
         if self.active_stage_index(loop) < 0:
             # No stage plan: complete once a finding lands AND any verify/test passes
             # (the project-level "prove it" gate). Otherwise keep going.
-            return await self._no_stage_done(loop, findings)
+            return await self._no_stage_done(loop, findings, ctx)
         return await self._judge_from(loop, findings, ctx)
 
     async def _judge_from(self, loop: Loop, findings: list[dict], ctx) -> bool:
@@ -1870,6 +1880,11 @@ class CodeKind(LoopKindStrategy):
         if idx < 0:
             return False
         stage = self.phase_key(plan[idx])
+        # A check this stage's gate runs that the shell denylist refuses can never pass it: say so
+        # and pause now, rather than judge the stage without it or cycle on toward the budget.
+        if refused := _refused_stage_check(loop, plan[idx], stage):
+            gates.pause_for_refusal(loop.id, refused, ctx.publish)
+            return False  # paused NEEDS_INPUT — watchdog stops the cycle
         # Don't let a lenient gate advance a stage while it still has READY QUEUED
         # tasks the worker hasn't run — that would skip the user's other queued work.
         # (Only bites when work is actually queued; an empty queue = the old free-run.)
@@ -2316,10 +2331,11 @@ class CodeKind(LoopKindStrategy):
         ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
         return True
 
-    async def _no_stage_done(self, loop: Loop, findings: list[dict]) -> bool:
+    async def _no_stage_done(self, loop: Loop, findings: list[dict], ctx) -> bool:
         """Completion for a code loop with NO stage plan (free-running off its brief):
         ≥1 finding AND any configured verify/test command passes. The project-level
-        'prove it' gate; no judge (no stage criteria to judge against)."""
+        'prove it' gate; no judge (no stage criteria to judge against). A command the shell
+        denylist refuses proves nothing, so it pauses the loop with the rule instead."""
         if not findings:
             return False
         from personalclaw.loop.gates import run_verify_command
@@ -2329,6 +2345,9 @@ class CodeKind(LoopKindStrategy):
             str(cfg.get("verify_command", "")).strip(),
             str(cfg.get("test_command", "")).strip(),
         ):
+            if refused := gates.refusal(cmd):
+                gates.pause_for_refusal(loop.id, refused, ctx.publish)
+                return False
             if cmd:
                 ok = await run_verify_command(cmd, loop.workspace_dir or None)
                 if ok is False:

@@ -289,7 +289,9 @@ def requires_fresh_judge(node_config: dict[str, Any]) -> bool:
 
 
 async def run_verify_block(block: dict[str, Any], *, default_cwd: str = "") -> bool | None:
-    """Run ONE verification block's command and report the tristate.
+    """Run ONE verification block's command and report the tristate, or raise
+    `loop.gates.CheckRefused` for a command the shell denylist refuses (the engine records the
+    node's failure in the rule's words).
 
     🔴 This is the callable `dispatch_gate` needs for every `verify_command` /
     `verify_script` gate — and until WF2LOO-10 the gateway wired NOTHING into
@@ -309,13 +311,18 @@ async def run_verify_block(block: dict[str, Any], *, default_cwd: str = "") -> b
     the run's own workspace, so a gate never silently verifies a different directory than
     the one the work happened in.
     """
-    from personalclaw.loop.gates import run_verify_command
+    from personalclaw.loop.gates import CheckRefused, run_verify_command
+    from personalclaw.security import denied_command
 
     command = str(block.get("command") or block.get("script") or "").strip()
     if not command:
         # No command is NOT a pass: a gate whose verification is blank has verified
         # nothing, and the caller turns this into an explicit "could not determine".
         return None
+    if (denied := denied_command(command)) is not None:
+        # Refused by the shell denylist: the node fails with the rule, never as a check that
+        # "could not be determined" and certainly never as a pass.
+        raise CheckRefused(f"refused before it ran: {denied.why()}")
     cwd = str(block.get("cwd") or default_cwd or "").strip()
     label = str(block.get("label") or "verify").strip() or "verify"
     return await run_verify_command(command, cwd or None, label=label)

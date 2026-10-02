@@ -31,7 +31,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_RESULT,
     ModelProvider,
 )
-from personalclaw.llm.events import EVENT_SPENT, unasked_outcome, unasked_reason
+from personalclaw.llm.events import EVENT_SPENT, refusal_audit, unasked_outcome, unasked_reason
 from personalclaw.memory import MemoryStore
 from personalclaw.sel import sel
 
@@ -535,7 +535,11 @@ class EvalRunner:
                     tool_kind=event.tool_kind,
                     outcome=unasked_outcome(meta),
                     request_id=str(event.tool_call_id or ""),
-                    metadata={"reason": decided_by, "decided_by": decided_by},
+                    metadata={
+                        "reason": decided_by,
+                        "decided_by": decided_by,
+                        **refusal_audit(meta),
+                    },
                 )
             elif event.kind == EVENT_SPENT:
                 record(event)

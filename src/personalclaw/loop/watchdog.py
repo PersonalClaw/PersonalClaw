@@ -28,7 +28,7 @@ from personalclaw import concurrency, notification_kinds, shutdown_event
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import files as loop_files
-from personalclaw.loop import instrument, kinds, manager, spend_cap, store, supervisor
+from personalclaw.loop import gates, instrument, kinds, manager, spend_cap, store, supervisor
 from personalclaw.loop.loop import ENDED_STATUSES, Loop, LoopStatus, LoopStopReason
 from personalclaw.workflows.supervisor_policy import policy_for_kind
 
@@ -1309,13 +1309,17 @@ class LoopWatchdog:
                             # BLIND judge (the canary proved it can't tell good from empty).
                             # A blind judge won't recover by retrying, so halt the loop to
                             # NEEDS_INPUT with judge_blind rather than spinning on judge_error.
+                            # A check the shell denylist refuses won't either: paused with
+                            # the rule, for the owner to change the command or the pattern.
                             fresh = store.get(cid)
                             blind = (
                                 bool((fresh.kind_config or {}).get("judge_calibrated") is False)
                                 if fresh
                                 else False
                             )
-                            if blind:
+                            if refused := supervisor.refused_check(loop, policy):
+                                gates.pause_for_refusal(cid, refused, self._publish)
+                            elif blind:
                                 store.update_status(cid, LoopStatus.NEEDS_INPUT)
                                 self._publish(cid, "judge_blind", {"loop_id": cid, "cycle": count})
                             else:

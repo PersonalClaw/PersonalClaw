@@ -88,6 +88,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
     )
     from personalclaw.llm.registry import CredentialMissing
     from personalclaw.llm.registry import ProviderResolutionError as RegistryResolutionError
+    from personalclaw.loop.gates import CheckRefused
     from personalclaw.providers.provider_bridge import ProviderResolutionError
     from personalclaw.visualize import GenUiDisabled
 
@@ -98,6 +99,16 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
             failure_class=FailureClass.USER,
             cause_plain=str(exc)[:500],
             remediation="turn on Generative UI, or drop this node",
+        )
+    if isinstance(exc, CheckRefused):
+        # The shell denylist's rule, which no retry changes. Its message names the rule.
+        return Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=str(exc)[:500],
+            remediation=(
+                "change the check command, or a pattern you added under Settings → Security → "
+                "Shell denylist, then re-run this node"
+            ),
         )
     if isinstance(exc, CircuitOpenError):
         wait = max(0.0, float(exc.retry_after))

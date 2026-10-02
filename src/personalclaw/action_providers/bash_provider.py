@@ -11,7 +11,7 @@ import logging
 import os
 import re
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.action_providers.base import (
     ActionContext,
@@ -20,6 +20,9 @@ from personalclaw.action_providers.base import (
 )
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.env import PROGRAM_RESOLUTION_NAMES
+
+if TYPE_CHECKING:
+    from personalclaw.security import DeniedCommand
 
 logger = logging.getLogger(__name__)
 
@@ -92,40 +95,53 @@ def _payload_env(ctx: ActionContext) -> dict[str, str]:
     return out
 
 
-def _sel_refusal(command: str, reason: str, ctx: "ActionContext") -> None:
-    """Audit a refused bash action, using the same SEL shape `security.py` writes.
+#: A `$NAME` the command RUNS as a command, not one it hands to a program as data: the script of a
+#: shell's `-c` (`sh -c "$CMD"`), what `eval` evaluates, or a word in command position (the start,
+#: or after `;` `&` `|` `(` or a backtick). A workflow passes its check command in this way, so the
+#: value never has to be quoted into the command line; `echo "$last_result"` stays data.
+_RUN_VARIABLE = re.compile(
+    r"""(?:\b(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c\w*\s+|\beval\s+|(?:^|[;&|(`])\s*)"""
+    r"""["']?\$\{?([A-Za-z_][A-Za-z0-9_]*)"""
+)
 
-    Best-effort on purpose: an audit fault must never turn a refusal into a run. It is logged at
-    WARNING rather than swallowed, so a control that stopped being recorded is visible.
-    """
-    try:
-        import uuid
-        from datetime import datetime, timezone
 
-        from personalclaw.sel import SecurityEvent, SecurityEventLog
+def _run_values(command: str, env: dict[str, str]) -> list[str]:
+    """The payload values *command* runs as commands (:data:`_RUN_VARIABLE`), so they are
+    screened as what will RUN, as the command itself is."""
+    return [env[name] for name in _RUN_VARIABLE.findall(command) if env.get(name)]
 
-        SecurityEventLog().log(
-            SecurityEvent(
-                event_id=uuid.uuid4().hex[:16],
-                timestamp=datetime.now(tz=timezone.utc).isoformat(),
-                event_type="action_refused",
-                caller_identity="",
-                agent="personalclaw",
-                source="action_provider",
-                operation="bash_action_screened",
-                tool_kind="execute_bash",
-                outcome="denied",
-                resources=reason,
-                # The command is the evidence, and the SEL is local-only.
-                metadata={
-                    "provider": "bash",
-                    "event": getattr(ctx, "event", ""),
-                    "command": command[:400],
-                },
-            )
-        )
-    except Exception:  # noqa: BLE001 - never let auditing decide whether a refusal holds
-        logger.warning("bash action refused (%s) but the SEL row failed", reason, exc_info=True)
+
+def config_problem(config: dict[str, Any]) -> str:
+    """Why a bash action's command could never run, asked when it is SAVED (the Triggers page and
+    the chat's and the CLI's door alike); "" when it may. The shell denylist refuses its text, so
+    every run would refuse it, and the owner would be asked to allow an automation that never runs.
+    What a run is handed (a secret it names, a payload value it runs) is judged as it runs."""
+    from personalclaw.security import denied_command
+
+    command = str((config or {}).get("command") or "").strip()
+    denied = denied_command(command) if command else None
+    return f"Its command would never run: {denied.why()}." if denied is not None else ""
+
+
+def _refused(
+    command: str, refused: "DeniedCommand | str", ctx: "ActionContext", *, control: str = ""
+) -> ActionResult:
+    """A refused bash action: audited with the control that refused it (the shell denylist's
+    answer, or *control*'s sentence), and answered with the reason. Nothing ran, and a retry would
+    be refused the same way, so it is the owner's to change (``failure_class="user"``)."""
+    from personalclaw.command_audit import audit_command_refusal
+    from personalclaw.security import DeniedCommand
+
+    audit_command_refusal(
+        command,
+        refused,
+        source="action_provider",
+        operation="bash_action",
+        control=control,
+        metadata={"provider": "bash", "event": getattr(ctx, "event", "")},
+    )
+    reason = refused.refusal() if isinstance(refused, DeniedCommand) else refused
+    return ActionResult(success=False, error=reason, failure_class="user")
 
 
 class BashActionProvider(ActionProvider):
@@ -164,12 +180,20 @@ class BashActionProvider(ActionProvider):
         #
         # Refused, not sanitised: there is no safe rewrite of a command that names a credential.
         # A relative path is read from where the command runs: the gateway's own folder.
+        #
+        # Then the shell denylist every command path asks (`security.denied_command`), here
+        # whoever started the action: a schedule, a hook, Run now, a webhook, a workflow node, an
+        # approved proposal. Both judge what will RUN: the command, and a payload value it runs
+        # as a command (`_run_values`).
         from personalclaw import security
 
-        refusal = security.is_sensitive_bash_command(command, cwd=os.getcwd())
-        if refusal:
-            _sel_refusal(command, refusal, ctx)
-            return ActionResult(success=False, error=refusal)
+        payload_env = _payload_env(ctx)
+        for text in (command, *_run_values(command, payload_env)):
+            refusal = security.is_sensitive_bash_command(text, cwd=os.getcwd())
+            if refusal:
+                return _refused(command, refusal, ctx, control="sensitive_path")
+            if (denied := security.denied_command(text)) is not None:
+                return _refused(command, denied, ctx)
 
         # 🔴 The action's OWN bound wins over the caller's default, matching `run-script`
         # (which has always read `action_config["timeout"]` and preferred it). Measured on the
@@ -201,7 +225,7 @@ class BashActionProvider(ActionProvider):
         env = build_child_env(
             site="bash-action",
             extra={
-                **_payload_env(ctx),
+                **payload_env,
                 "PERSONALCLAW_HOOK_EVENT": ctx.event,
                 "PERSONALCLAW_HOOK_CONTEXT": ctx.context,
             },

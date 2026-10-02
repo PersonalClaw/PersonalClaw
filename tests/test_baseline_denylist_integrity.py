@@ -179,7 +179,7 @@ class TestSelfHealing:
         assert victim in security.BUILTIN_DENIED_COMMAND_PATTERNS
         security.BUILTIN_DENIED_COMMAND_PATTERNS.remove(victim)
 
-        assert security.denied_command_reason("rm -rf /") is not None
+        assert security.denied_command("rm -rf /") is not None
 
         events = _sel_events(tmp_path, "baseline_denylist_reasserted")
         assert len(events) == 1
@@ -223,7 +223,7 @@ class TestSelfHealing:
 
         assert survivor in effective
         assert "aws s3 cp .* s3://.*" in effective
-        assert security.denied_command_reason("rm -rf /") is not None
+        assert security.denied_command("rm -rf /") is not None
         events = _sel_events(tmp_path, "baseline_denylist_tamper_attempt")
         assert events[0]["outcome"] == "rejected"
         assert events[0]["metadata"]["reason"] == "snapshot_and_packaged_file_both_unverified"
@@ -286,7 +286,7 @@ class TestPeriodicReverify:
 
         assert report["file_verified"] is False
         assert report["count"] == 112
-        assert security.denied_command_reason("rm -rf /") is not None
+        assert security.denied_command("rm -rf /") is not None
         assert len(_sel_events(tmp_path, "baseline_denylist_tamper_attempt")) == 1
 
     def test_a_missing_file_does_not_shrink_what_is_enforced(self, tmp_path, monkeypatch):
@@ -401,7 +401,7 @@ class TestStrictlyAdditiveUserConfig:
 
         assert effective[-2:] == ["my-secret-tool .*", "another .*"]
         assert len(effective) == 114
-        assert security.denied_command_reason("my-secret-tool --dump") is not None
+        assert security.denied_command("my-secret-tool --dump") is not None
 
     def test_a_shadow_key_cannot_remove_a_baseline_entry(self, tmp_path):
         """``security.denied_commands`` is the only write surface, and it is additive by
@@ -420,7 +420,7 @@ class TestStrictlyAdditiveUserConfig:
 
         assert "rm -rf /.*" in effective
         assert len(effective) == 112
-        assert security.denied_command_reason("rm -rf /") is not None
+        assert security.denied_command("rm -rf /") is not None
 
 
 def _code_strings(source: str) -> list[str]:
@@ -514,7 +514,7 @@ class TestExistingBehaviourUnchanged:
         ],
     )
     def test_denied_commands_are_still_denied(self, command):
-        assert security.denied_command_reason(command) is not None
+        assert security.denied_command(command) is not None
 
     @pytest.mark.parametrize(
         "command",
@@ -529,7 +529,7 @@ class TestExistingBehaviourUnchanged:
         ],
     )
     def test_benign_commands_are_still_allowed(self, command):
-        assert security.denied_command_reason(command) is None
+        assert security.denied_command(command) is None
 
 
 class TestSecurityPanelPayload:

@@ -251,14 +251,14 @@ class TestSelfTamperDenylist:
     The agent must not kill/restart/update its own gateway, while ordinary
     commands that merely mention ``personalclaw`` (e.g. listing the skills dir,
     reading the config) must NOT be falsely blocked. Uses the live native
-    screener :func:`personalclaw.security.denied_command_reason`.
+    screener :func:`personalclaw.security.denied_command`.
     """
 
     @staticmethod
     def _is_denied(cmd: str) -> bool:
-        from personalclaw.security import denied_command_reason
+        from personalclaw.security import denied_command
 
-        return denied_command_reason(cmd) is not None
+        return denied_command(cmd) is not None
 
     # --- real kill attempts: blocked ---
 

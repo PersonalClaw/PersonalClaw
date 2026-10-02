@@ -767,6 +767,10 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
         from personalclaw.action_providers import send_message_provider
 
         return send_message_provider.config_problem(config if isinstance(config, dict) else {})
+    if provider == "bash":
+        from personalclaw.action_providers import bash_provider
+
+        return bash_provider.config_problem(config if isinstance(config, dict) else {})
     return ""
 
 

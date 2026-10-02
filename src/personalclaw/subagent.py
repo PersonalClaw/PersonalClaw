@@ -23,6 +23,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from personalclaw import approval_grants, memory_writes
+from personalclaw.acp.permission_authority import command_probe
 from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
@@ -40,6 +41,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.events import (
     TOOL_META_APPROVAL_WAIVED,
     TOOL_META_AUTO_DENIED,
+    refusal_audit,
     unasked_outcome,
     unasked_reason,
 )
@@ -66,7 +68,7 @@ from personalclaw.subagent_tier import (
     run_agent,
     tier_for,
 )
-from personalclaw.task_modes import declared_level
+from personalclaw.task_modes import declared_level, extract_bash_command
 from personalclaw.textfmt import extract_options
 from personalclaw.usage_ledger import spent_rows
 from personalclaw.validation import _AGENT_NAME_RE
@@ -831,9 +833,11 @@ class SubagentManager:
         unanswered: str = "",
         error: str | None = None,
         metadata: dict | None = None,
+        refused: bool = False,
     ) -> None:
-        """Refuse and audit what happened: a policy's ``denied``, a person's ``rejected``, or
-        nobody's answer — ``unanswered`` is ``expired`` or ``cancelled`` — never one as another."""
+        """Refuse and audit what happened: a policy's ``denied``, a control's ``refused`` (one of
+        the shell's own, named in *metadata*), a person's ``rejected``, or nobody's answer —
+        ``unanswered`` is ``expired`` or ``cancelled`` — never one as another."""
         await client.reject_tool(request_id)
         sel().log_tool_invocation(
             session_key=session_key,
@@ -848,7 +852,7 @@ class SubagentManager:
                 else (
                     "cancelled"
                     if unanswered == "cancelled"
-                    else ("denied" if error else "rejected")
+                    else ("refused" if refused else ("denied" if error else "rejected"))
                 )
             ),
             request_id=request_id,
@@ -2332,19 +2336,28 @@ class SubagentManager:
                         },
                     )
                     continue
-                tool_result = self._ctx_builder.hooks.on_tool_call(
-                    event.title, cwd=info.cwd or None
-                )
+                # Every shell check the hook makes is made on the command that would RUN, as the
+                # chat's own gate makes it: a CLI's title may not carry it ("unknown", a bare tool
+                # name). The probe is deny-only; only the title's verdict can auto-approve.
+                probe = command_probe(event.title or "", extract_bash_command(event.tool_input))
+                for name in (probe, event.title) if probe else (event.title,):
+                    tool_result = self._ctx_builder.hooks.on_tool_call(name, cwd=info.cwd or None)
+                    if tool_result.action == TOOL_DENY:
+                        break
                 if tool_result.action == TOOL_DENY:
-                    tier.refused(call_id, event.title or "", "a hook blocked it")
+                    tier.refused(
+                        call_id, event.title or "", tool_result.reason or "a hook blocked it"
+                    )
+                    control = tool_result.audit()
                     await self._reject_and_log(
                         client,
                         event.request_id,
                         session_key,
                         event,
-                        decided_by="hook_deny",
+                        decided_by=control.get("control", "hook_deny"),
                         error="hook_deny",
-                        metadata={"subagent_id": info.id},
+                        metadata={"subagent_id": info.id, **control},
+                        refused=bool(control),
                     )
                     continue
                 # The operator's own hook pattern is a grant too, and "a hook decides" is a level
@@ -2473,7 +2486,8 @@ class SubagentManager:
                     # from the live policy source (the grant standing at that moment, named), or
                     # a tool that asks nobody. An ACP CLI stamps nothing: a call it never asked
                     # the host about ran on the CLI's own say.
-                    waived = bool(meta.get(TOOL_META_APPROVAL_WAIVED))
+                    refusal = refusal_audit(meta)
+                    waived = bool(meta.get(TOOL_META_APPROVAL_WAIVED)) and not refusal
                     decided_by = (
                         self._waived_by.get(info.id) or approval_grants.SESSION_POLICY
                         if waived
@@ -2490,6 +2504,7 @@ class SubagentManager:
                             "subagent_id": info.id,
                             "reason": decided_by,
                             "decided_by": decided_by,
+                            **refusal,
                         },
                     )
                     if waived:

@@ -463,22 +463,22 @@ def test_prompt_placeholders_follow_codexs_rule(body, hint, content, variables) 
 
 def test_a_command_codex_refuses_is_one_personalclaw_refuses(noor: Path) -> None:
     from personalclaw.config.loader import AppConfig
-    from personalclaw.security import denied_command_reason
+    from personalclaw.security import denied_command
 
     result = scan_source("codex")
     denied = result.by_category(ImportCategory.DENIED_COMMANDS)
     assert [(i.title, i.payload, i.note) for i in denied] == [
         ("rm -rf", {"pattern": r"\brm\s+-rf\b"}, "Codex's reason: Delete specific paths instead.")
     ]
-    assert denied_command_reason("rm -rf build") is None, "precondition: not refused yet"
+    assert denied_command("rm -rf build") is None, "precondition: not refused yet"
 
     report = run_import([result], fingerprints=[denied[0].fingerprint])
     assert [r.outcome for r in report.results] == [WriteOutcome.IMPORTED]
     assert AppConfig.load().security.denied_commands == [r"\brm\s+-rf\b"]
     for refused in ("rm -rf build", "bash -lc 'rm -rf build'", "cd x && rm -rf ."):
-        assert denied_command_reason(refused) == r"\brm\s+-rf\b", refused
+        assert getattr(denied_command(refused), "pattern", None) == r"\brm\s+-rf\b", refused
     for allowed in ("rm -rfv build", "farm -rf", "git push origin main"):
-        assert denied_command_reason(allowed) != r"\brm\s+-rf\b", allowed
+        assert getattr(denied_command(allowed), "pattern", None) != r"\brm\s+-rf\b", allowed
 
     again = run_import([scan_source("codex")], fingerprints=[denied[0].fingerprint])
     assert [r.outcome for r in again.results] == [WriteOutcome.EXISTING]

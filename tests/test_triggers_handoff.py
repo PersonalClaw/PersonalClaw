@@ -6,7 +6,7 @@ Criterion 12: *"An agent attempting `crontab -e` is prompted and offered the sub
 🔴 **The second clause shipped; the first was UNMET.** Measured before writing a line::
 
     is_sensitive_bash_command("crontab -e")                      -> None
-    denied_command_reason("crontab -e")                          -> None
+    denied_command("crontab -e")                                 -> None
     is_sensitive_bash_command("echo '* * * * * x' | crontab -")  -> None
     is_sensitive_bash_command("launchctl load …LaunchAgents/x.plist") -> None
     is_sensitive_bash_command("systemctl --user enable t.timer") -> None

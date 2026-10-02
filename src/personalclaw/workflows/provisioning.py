@@ -394,6 +394,14 @@ async def run_step(
 
     import asyncio
 
+    from personalclaw.command_audit import audit_command_refusal
+    from personalclaw.security import denied_command
+
+    # The shell denylist every command path asks, before either way of running the step (bare or
+    # in the run's durable session): a step is workflow-authored text, an agent's included.
+    if (denied := denied_command(command or "")) is not None:
+        audit_command_refusal(command, denied, source="workflow", operation="step")
+        return False, denied.refusal()
     argv = shlex.split(command or "")
     if not argv:
         return False, "empty command"

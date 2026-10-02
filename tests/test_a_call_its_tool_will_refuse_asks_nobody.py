@@ -126,13 +126,14 @@ def _results(seen: list[AgentEvent]) -> list[AgentEvent]:
     return [e for e in seen if e.kind == EVENT_TOOL_RESULT]
 
 
-def _refused_unasked(result: AgentEvent) -> None:
-    """The marks of a call its tool refused before anyone was asked."""
+def _refused_unasked(result: AgentEvent, control: str = "") -> None:
+    """The marks of a call its tool refused before anyone was asked. Audited never as an approved
+    one: refused by *control* when one of the tool's own controls refused it (the file tools'
+    reach, the shell's checks), else as a call that could not be run, decided by its tool."""
     assert result.tool_meta.get("ok") is False
     assert result.tool_meta.get(TOOL_META_NOT_RUN) == "refused_by_tool"
-    # Audited as a call that could not be run, decided by its tool, never as an approved one.
-    assert unasked_outcome(result.tool_meta) == "failed"
-    assert unasked_reason(result.tool_meta) == "refused_by_tool"
+    expected = ("refused", control) if control else ("failed", "refused_by_tool")
+    assert (unasked_outcome(result.tool_meta), unasked_reason(result.tool_meta)) == expected
 
 
 @pytest.fixture
@@ -165,7 +166,7 @@ async def test_a_write_outside_the_workspace_is_refused_without_asking(workspace
     text = str(result.tool_output)
     assert "is outside every folder the file tools may change" in text
     assert "Hint: To change files in another folder, the user adds it in Settings" in text
-    _refused_unasked(result)
+    _refused_unasked(result, "file_scope")
     assert not target.exists()
 
 
@@ -202,7 +203,7 @@ async def test_a_write_into_a_knowledge_source_is_refused_without_asking(tmp_pat
     assert "in the knowledge source 'Notes'" in text
     assert "which the file tools read and never change" in text
     assert "Hint: To change files there, the user adds the folder in" in text
-    _refused_unasked(result)
+    _refused_unasked(result, "file_scope")
     assert (notes / "today.md").read_text(encoding="utf-8") == "- pickup at 15:30\n"
 
 
@@ -362,7 +363,7 @@ async def test_a_command_installing_a_system_schedule_is_offered_automations_wit
     assert _asks(seen) == []
     [result] = _results(seen)
     assert "automation_create" in str(result.tool_output)
-    _refused_unasked(result)
+    _refused_unasked(result, "scheduler")
 
 
 @pytest.mark.asyncio
@@ -381,7 +382,7 @@ async def test_a_command_changing_what_only_the_owner_may_change_is_refused_with
     assert _asks(seen) == []
     [result] = _results(seen)
     assert "Only the owner changes it, outside the chat." in str(result.tool_output)
-    _refused_unasked(result)
+    _refused_unasked(result, "owner_only")
 
 
 @pytest.mark.asyncio

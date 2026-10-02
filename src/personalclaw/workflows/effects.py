@@ -255,6 +255,14 @@ async def run_teardown(
     import os
     import shutil
 
+    from personalclaw.command_audit import audit_command_refusal
+    from personalclaw.security import denied_command
+
+    # The shell denylist every command path asks. A refused teardown is a failed one: the redo
+    # it guards stays blocked (`effect_boundary`), so no second resource lands on a live first.
+    if (denied := denied_command(command)) is not None:
+        audit_command_refusal(command, denied, source="workflow", operation="teardown")
+        return False, denied.refusal()
     argv = shlex.split(command)
     if not argv:
         return False, "empty teardown command"

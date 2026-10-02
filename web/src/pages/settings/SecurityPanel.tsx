@@ -1157,7 +1157,7 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
   }
 
   return (
-    <Section title="Shell denylist" hint="Regexes matched against every command the agent runs. The packaged baseline is always enforced and read-only; your patterns are added to it, never subtracted from it.">
+    <Section title="Shell denylist" hint="Regexes matched against every command PersonalClaw runs for an agent or an automation, and every command an agent CLI asks it to run, before anyone is asked to approve one. The packaged baseline is always enforced and read-only; your patterns are added to it, never subtracted from it.">
       <div className="flex flex-col gap-4">
         <div>
           <div data-type="body-s" className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-on-surface-low">

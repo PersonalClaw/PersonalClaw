@@ -169,9 +169,31 @@ function RunPanel({ tool }: { tool: ToolItem }) {
     await invoke('destructive')
   }
 
+  /** What the route refuses for these arguments whatever anyone confirms (the tool switched off,
+   *  the deny-list, the tool's own refusal: a command the shell denylist refuses), asked BEFORE
+   *  any confirmation, so nobody is asked to confirm a run that cannot happen. True when refused,
+   *  with the reason shown. A check that cannot be made refuses nothing: the run is refused the
+   *  same way when it reaches the route. */
+  async function refusedBeforeAsking(): Promise<boolean> {
+    const { args: built, error } = buildArgs(tool.parameters, args)
+    if (error) { setFormErr(error); return true }
+    setFormErr(''); setResult(null); setRunning(true)
+    try {
+      const checked = await api.checkTool(tool.name, built, tool.provider)
+      if (checked.ok) return false
+      setResult({ ok: false, error: checked.error || `${tool.name} refused these arguments, so nothing ran.` })
+      return true
+    } catch (e) {
+      if (!hasApiCode(e, 'tool_disabled') && !hasApiCode(e, 'tool_denied_by_policy')) return false
+      setResult({ ok: false, error: e instanceof Error ? e.message : `${tool.name} was refused, so nothing ran.` })
+      return true
+    } finally { setRunning(false) }
+  }
+
   /** The entry control at every tier — "Run tool" always means the same thing, only what it
-   *  costs to get past it changes. */
+   *  costs to get past it changes. Every tier first asks what the route would refuse. */
   async function onRunPressed() {
+    if (await refusedBeforeAsking()) return
     if (rung === 'inline') { setConfirming(true); return }
     if (rung === 'typed') {
       if (!(await typedConfirm())) return

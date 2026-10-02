@@ -24,9 +24,18 @@ import { ToolInspector } from './ToolInspector'
 // this component renders (name inference, an unscreenable shell command).
 
 const invokeTool = vi.fn()
+// The check every tier asks first (`dry_run`): it passes here, so these tests see the ladder.
+const checkTool = vi.fn()
 vi.mock('../../lib/api', async (orig) => {
   const real = await orig<typeof import('../../lib/api')>()
-  return { ...real, api: { ...real.api, invokeTool: (...a: unknown[]) => invokeTool(...a) } }
+  return {
+    ...real,
+    api: {
+      ...real.api,
+      invokeTool: (...a: unknown[]) => invokeTool(...a),
+      checkTool: (...a: unknown[]) => checkTool(...a),
+    },
+  }
 })
 
 const confirmDialog = vi.fn()
@@ -55,6 +64,8 @@ function pressRun(t: ToolItem) {
 beforeEach(() => {
   invokeTool.mockReset()
   invokeTool.mockResolvedValue({ ok: true, output: '[]' })
+  checkTool.mockReset()
+  checkTool.mockResolvedValue({ ok: true, dry_run: true })
   confirmDialog.mockReset()
   confirmDialog.mockResolvedValue(true)
   promptInput.mockReset()
@@ -67,8 +78,8 @@ describe('#506 — a destructive tool cannot be invoked through the low-friction
 
     // The safe tier's inline "Confirm & run" must not be reachable for a destructive tool —
     // if it were, the same two clicks that run `artifact_list` would run this.
-    expect(screen.queryByRole('button', { name: /Confirm & run/i })).toBeNull()
     await waitFor(() => expect(promptInput).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: /Confirm & run/i })).toBeNull()
     expect(invokeTool).not.toHaveBeenCalled()
   })
 
@@ -107,9 +118,9 @@ describe('#506 — the ladder is proportional, not uniform', () => {
 
     // No dialog at all for a read: the cheap path stays cheap, which is the property that
     // keeps this a gate rather than an outage.
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm & run/i }))
     expect(promptInput).not.toHaveBeenCalled()
     expect(confirmDialog).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: /Confirm & run/i }))
     await waitFor(() => expect(invokeTool).toHaveBeenCalled())
     expect(invokeTool).toHaveBeenCalledWith('artifact_list', {}, 'core', undefined)
   })
@@ -156,7 +167,7 @@ describe('#506 — a server refusal escalates instead of dead-ending', () => {
     promptInput.mockResolvedValue('sneaky_delete')
 
     pressRun(tool({ name: 'sneaky_delete', risk_level: 'safe' }))
-    fireEvent.click(screen.getByRole('button', { name: /Confirm & run/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm & run/i }))
 
     await waitFor(() => expect(invokeTool).toHaveBeenCalledTimes(2))
     expect(invokeTool.mock.calls[0]).toEqual(['sneaky_delete', {}, 'core', undefined])
@@ -169,7 +180,7 @@ describe('#506 — a server refusal escalates instead of dead-ending', () => {
     promptInput.mockResolvedValue(null)
 
     pressRun(tool({ name: 'sneaky_delete', risk_level: 'safe' }))
-    fireEvent.click(screen.getByRole('button', { name: /Confirm & run/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm & run/i }))
 
     await waitFor(() => expect(promptInput).toHaveBeenCalled())
     expect(invokeTool).toHaveBeenCalledTimes(1)

@@ -6,7 +6,7 @@ shipped (`calendar.diagnose` + `GET /api/triggers/doctor`). The first was **unme
 not inferred**::
 
     is_sensitive_bash_command("crontab -e")                     -> None
-    denied_command_reason("crontab -e")                         -> None
+    denied_command("crontab -e")                                -> None
     is_sensitive_bash_command("echo '* * * * *' | crontab -")   -> None
     ... launchctl load / systemctl --user enable                 -> None, None
 

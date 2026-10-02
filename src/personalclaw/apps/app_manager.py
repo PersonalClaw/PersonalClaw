@@ -300,7 +300,14 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     if not cmd.strip():
         return
     from personalclaw.apps import app_python
+    from personalclaw.command_audit import audit_command_refusal
+    from personalclaw.security import denied_command
 
+    # The shell denylist every command path asks: a hook is a command the app's author wrote, and
+    # one the owner's rules refuse fails the operation with the rule, before anything runs.
+    if (denied := denied_command(cmd)) is not None:
+        audit_command_refusal(cmd, denied, source="apps", operation=f"{env_name} hook")
+        raise AppLifecycleError(f"{env_name} hook refused. {denied.refusal()}")
     try:
         proc = subprocess.run(  # noqa: S602 — intentional: vetted third-party setup hook
             cmd,

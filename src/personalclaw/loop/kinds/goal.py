@@ -150,7 +150,7 @@ class GoalKind(LoopKindStrategy):
         """Goal-kind pre-flight: goal_type/granularity validity, a verifiable goal's
         done-ness signal, and screening the unattended verify_command. Returns
         (errors, warnings) folded into the shared validator's result."""
-        from personalclaw.security import audit_bash_command
+        from personalclaw.security import audit_bash_command, denied_command
 
         errors: list[str] = []
         warnings: list[str] = []
@@ -173,7 +173,9 @@ class GoalKind(LoopKindStrategy):
             )
         if verify_command:
             danger = audit_bash_command(verify_command)
-            if danger:
+            if (denied := denied_command(verify_command)) is not None:
+                errors.append(f"Verify command rejected — {denied.why()}.")
+            elif danger:
                 errors.append(f"Verify command rejected — {danger}.")
         # P6: validate any optional tick-engine keys (min_dwell_secs / min_findings /
         # metric_pass / metric_hold) on the execution_plan phases, so a malformed dwell

@@ -778,6 +778,27 @@ What the reading does not see:
 **What this means for you:** Trust reads is for reading your own files and repositories. Turn it
 off for a chat that works in a folder or a repository you did not create.
 
+## 15. The shell denylist reads a command's text
+
+Settings → Security → Shell denylist refuses a command whose text matches one of its patterns,
+on every path PersonalClaw runs a command for the agent or an automation: the agent's shell (and
+Tools → Try it and a script's tool call, which reach it), a command an agent CLI asks to run, a
+loop's or a workflow's check, a workflow step or teardown, a bash action however it started, and an
+app's setup hook. A refused command is refused before anyone is asked to approve it, and a run
+nobody watches says so where you look: a loop pauses with the rule as its question, a workflow's
+gate fails with it, and a trigger's run history records it.
+
+What the patterns do not see:
+
+- **What a command runs without naming it.** A script file (`python3 probe.py`), a library an
+  interpreter imports, or a command a script builds as it runs is not in the text a pattern reads.
+- **An agent CLI's own tools when the CLI does not ask first.** The host screens what a CLI asks
+  it to run; a command the CLI runs without asking stays inside the CLI (§1, §11).
+
+**What this means for you:** a pattern keeps the commands it names from running. To keep a tool
+away from the agent entirely, do not install it or give it credentials where PersonalClaw runs,
+and keep approvals on for work that might reach for it.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -792,7 +813,8 @@ agent's shell cannot read, for #10; masking an agent CLI's requests in the captu
 model calls can already be pointed at (`inbound/capture_proxy.py`), for #11; running the git of a
 repository an agent can write under that agent's own sandbox, for #12; hiding the credential store
 from the agent's shell at every sandbox level, for #13; running a command Trust reads approves
-inside a read-only sandbox with the program's own configuration ignored, for #14). This page will
-shrink as those land.
+inside a read-only sandbox with the program's own configuration ignored, for #14; a list of the
+programs a run may start, enforced by its sandbox rather than read from the command's text, for
+#15). This page will shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

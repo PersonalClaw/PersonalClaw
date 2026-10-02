@@ -10,6 +10,7 @@ import re
 import stat
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
@@ -1862,8 +1863,8 @@ _RM_RF_RE = re.compile(
 
 
 # ── Bash denied-command regexes ──
-# Credential-exfiltration and destructive-command regexes applied to every shell
-# command the agent runs (native bash tool + command-screening sites). Distinct
+# Credential-exfiltration and destructive-command regexes applied to every command
+# PersonalClaw runs for an agent or an automation (``denied_command``). Distinct
 # from BUILTIN_DENY_PATTERNS (fnmatch over TOOL NAMES) and SUSPICIOUS_BASH_PATTERNS
 # (substring audit signals): these are full regexes matched against the command
 # string, case-insensitively. This is the single source of truth — surfaced
@@ -2036,7 +2037,7 @@ def denied_command_patterns() -> list[str]:
     baseline — built-ins cannot be removed by config *or* by mutating the in-memory list.
     User patterns are appended and deduped against the baseline, so a user entry equal to
     a built-in is a no-op rather than a way to shorten the set. This is the single source
-    the native bash tool, the action-provider denylist and the Security panel all read.
+    :func:`denied_command` (every path that runs a command) and the Security panel read.
     """
     from personalclaw.config.loader import AppConfig
 
@@ -2091,16 +2092,62 @@ def verify_baseline_denylist() -> dict:
     }
 
 
-def denied_command_reason(command: str) -> str | None:
-    """Return the denied pattern a command matches, or None.
+@dataclass(frozen=True)
+class DeniedCommand:
+    """The shell denylist's refusal of one command: the pattern it matched, and whose it is.
 
-    Matches ``command`` against :func:`denied_command_patterns` (built-in +
-    user) case-insensitively. The native bash tool calls this before execution.
+    ``added`` is a pattern added under Settings → Security → Shell denylist ("Your patterns", by
+    the owner or an import); otherwise ``pattern`` is one of the packaged built-in patterns. An
+    empty ``pattern`` means the added patterns could not be read at all, which refuses every
+    command.
     """
-    for pat in denied_command_patterns():
+
+    pattern: str
+    added: bool
+
+    def why(self) -> str:
+        """What the command matched, in the words every surface shows."""
+        if not self.pattern:
+            return (
+                "the shell denylist under Settings → Security could not be read, so no command "
+                "runs until it can"
+            )
+        whose = (
+            "a pattern added to the shell denylist under Settings → Security"
+            if self.added
+            else "one of the shell denylist's built-in patterns"
+        )
+        return f"the command matches `{self.pattern}`, {whose}"
+
+    def refusal(self) -> str:
+        """The refusal as one sentence: the reason, and that nothing ran."""
+        return f"Blocked: {self.why()}. It was not run."
+
+
+def denied_command(command: str) -> DeniedCommand | None:
+    """The shell denylist's answer for *command*: the rule it matches, or None to let it run.
+
+    The one check every path that runs a command someone wrote asks before running it: the
+    native bash tool, a command an agent CLI asks the host to run, a loop's or a workflow's
+    check, a workflow step or teardown, a bash action however it started, an app's setup hook,
+    and a tool run from Tools → Try it. ``tests/test_every_command_path_asks_the_denylist.py``
+    fails a spawn site that runs such a command without asking.
+
+    Matched case-insensitively against :func:`denied_command_patterns` (the verified baseline,
+    then the added patterns), first match wins; a pattern that does not compile matches
+    nothing. Fail-closed: when the added patterns cannot be read, every command is refused
+    with that reason, rather than judged by the baseline alone as though nothing were added.
+    """
+    try:
+        patterns = denied_command_patterns()
+    except Exception:
+        logger.warning("the shell denylist could not be read; refusing the command", exc_info=True)
+        return DeniedCommand(pattern="", added=True)
+    baseline = set(baseline_denied_command_patterns())
+    for pat in patterns:
         try:
             if re.search(pat, command, re.IGNORECASE):
-                return pat
+                return DeniedCommand(pattern=pat, added=pat not in baseline)
         except re.error:
             continue
     return None

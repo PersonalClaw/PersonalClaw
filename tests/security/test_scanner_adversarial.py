@@ -490,11 +490,11 @@ def _still_enforcing(case: dict[str, Any]) -> None:
     stopped refusing the commands is the outcome that matters, so every case names the
     probe commands that must STILL be denied — and one that must still not be."""
     for command in case["variants"]:
-        assert security.denied_command_reason(command) is not None, (
+        assert security.denied_command(command) is not None, (
             f"{case['id']}: {command!r} is no longer refused after the tamper — the "
             f"baseline shrank"
         )
-    assert security.denied_command_reason("echo sh7-corpus-negative-control") is None, (
+    assert security.denied_command("echo sh7-corpus-negative-control") is None, (
         f"{case['id']}: the post-tamper denylist refuses a benign command, so 'still "
         f"enforcing' above proves nothing"
     )

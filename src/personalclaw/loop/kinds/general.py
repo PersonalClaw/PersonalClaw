@@ -35,11 +35,13 @@ class GeneralKind(LoopKindStrategy):
         never screened a
         general loop's command (run_verify_command's exec-time screen is only the
         defensive backstop; the create/edit gate is the intended one)."""
-        from personalclaw.security import audit_bash_command
+        from personalclaw.security import audit_bash_command, denied_command
 
         cfg = _kc if isinstance((_kc := config.get("kind_config")), dict) else config
         cmd = str(cfg.get("verify_command") or "").strip()
         if cmd:
+            if (denied := denied_command(cmd)) is not None:
+                return [f"Verify command rejected — {denied.why()}."], []
             danger = audit_bash_command(cmd)
             if danger:
                 return [f"Verify command rejected — {danger}."], []

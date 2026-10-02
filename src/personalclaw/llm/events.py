@@ -116,8 +116,17 @@ TOOL_META_AUTO_DENIED = "auto_denied"
 #: anyone could be asked, naming the gate: ``deny_list``, ``task_mode``, ``tool_grants`` (the host's
 #: grants for this run, ``NativeAgentRuntime.set_tool_grants``), ``hook``, ``loop_breaker``,
 #: ``unknown_tool``, ``withdrawn`` (the tool's app was removed, or the tool switched off, after the
-#: turn's catalog was built), or ``dry_run`` (observe mode, which runs nothing that writes).
+#: turn's catalog was built), or ``dry_run`` (observe mode, which runs nothing that writes). Or a
+#: control the tool itself enforces, which then names its rule in :data:`TOOL_META_REFUSED_RULE`.
 TOOL_META_REFUSED_BY = "refused_by"
+
+#: The ``tool_meta`` key a TOOL_RESULT carries when a control the TOOL enforces refused the call,
+#: before or as it ran, with :data:`TOOL_META_REFUSED_BY` naming the control: ``shell_denylist``,
+#: ``sensitive_path``, ``own_store``, ``owner_only`` or ``scheduler`` (the bash tool's), and
+#: ``file_scope`` (the file tools'). Its value is the rule the control applied, in words fit for
+#: the audit log: the pattern, or the sentence naming the place it guards, never a value the call
+#: was handed. Such a call is audited ``refused`` by that control, whatever policy waived its ask.
+TOOL_META_REFUSED_RULE = "refused_rule"
 
 #: The ``tool_meta`` key a TOOL_RESULT carries when the call was answered without running, for a
 #: reason that is not a gate's refusal: ``stopped`` (a stop reached it first),
@@ -143,13 +152,17 @@ def unasked_outcome(meta: dict[str, Any]) -> str:
     """The outcome of the one audit row of a call nobody was asked about, from its result's meta.
 
     ``denied`` when the runtime refused it (its own gate, or an unattended run with nobody to
-    ask); ``cancelled`` when a stop reached it before it ran; ``failed`` when it could not be run
-    at all; ``auto_approved`` when the session's approval policy answered its ask; ``invoked`` for
-    a tool that asks nobody by its own definition — it ran, and no approval decided anything.
+    ask); ``refused`` when a control its tool enforces refused it (:data:`TOOL_META_REFUSED_RULE`:
+    the shell denylist, a credential path, where the file tools reach), whatever answered its ask;
+    ``cancelled`` when a stop reached it before it ran; ``failed`` when it could not be run at
+    all; ``auto_approved`` when the session's approval policy answered its ask; ``invoked`` for a
+    tool that asks nobody by its own definition — it ran, and no approval decided anything.
     """
     not_run = str(meta.get(TOOL_META_NOT_RUN) or "")
     if not_run == "stopped":
         return "cancelled"
+    if meta.get(TOOL_META_REFUSED_RULE):
+        return "refused"
     if not_run:
         return "failed"
     if meta.get(TOOL_META_AUTO_DENIED) or meta.get(TOOL_META_REFUSED_BY):
@@ -161,6 +174,8 @@ def unasked_outcome(meta: dict[str, Any]) -> str:
 
 def unasked_reason(meta: dict[str, Any]) -> str:
     """Why :func:`unasked_outcome` says what it says: the refusing gate, or what decided."""
+    if meta.get(TOOL_META_REFUSED_RULE):
+        return str(meta.get(TOOL_META_REFUSED_BY) or "refused_by_tool")
     not_run = str(meta.get(TOOL_META_NOT_RUN) or "")
     if not_run:
         return not_run
@@ -172,6 +187,16 @@ def unasked_reason(meta: dict[str, Any]) -> str:
     if meta.get(TOOL_META_APPROVAL_WAIVED):
         return "session_policy"
     return "no_approval_needed"
+
+
+def refusal_audit(meta: dict[str, Any]) -> dict[str, str]:
+    """What the one audit row of a call a control of its tool refused adds to its metadata: the
+    ``control`` and the ``rule`` it applied (:data:`TOOL_META_REFUSED_RULE`). Empty for any other
+    call, so every host merges it into the row it already writes."""
+    rule = str(meta.get(TOOL_META_REFUSED_RULE) or "")
+    if not rule:
+        return {}
+    return {"control": str(meta.get(TOOL_META_REFUSED_BY) or ""), "rule": rule[:300]}
 
 
 @dataclass

@@ -236,7 +236,7 @@ def test_a_command_claude_code_refuses_is_one_personalclaw_refuses(noor: Path) -
     """``permissions.deny`` → ``Bash(rm -rf:*)`` is a command Claude Code refuses. It comes over
     as one the shell denylist refuses, as Codex's ``forbidden`` rules do."""
     from personalclaw.config.loader import AppConfig
-    from personalclaw.security import denied_command_patterns, denied_command_reason
+    from personalclaw.security import denied_command, denied_command_patterns
 
     force, rm = r"\bgit\s+push\s+--force\b", r"\brm\s+-rf\b"
     result = scan_source("claude_code")
@@ -245,16 +245,16 @@ def test_a_command_claude_code_refuses_is_one_personalclaw_refuses(noor: Path) -
         "git push --force": force,
         "rm -rf": rm,
     }
-    assert denied_command_reason("rm -rf build") is None, "precondition: not refused yet"
+    assert denied_command("rm -rf build") is None, "precondition: not refused yet"
 
     report = run_import([result], fingerprints=[i.fingerprint for i in denied.values()])
     assert {r.outcome for r in report.results} == {WriteOutcome.IMPORTED}
     assert AppConfig.load().security.denied_commands == [force, rm]
     assert {force, rm} <= set(denied_command_patterns())
     for command in ("rm -rf build", "bash -lc 'rm -rf build'", "cd x && rm -rf ."):
-        assert denied_command_reason(command) == rm, command
+        assert getattr(denied_command(command), "pattern", None) == rm, command
     for command in ("rm -rfv build", "farm -rf", "git status"):
-        assert denied_command_reason(command) is None, command
+        assert denied_command(command) is None, command
 
 
 def _deny(noor: Path, *rules: str) -> None:

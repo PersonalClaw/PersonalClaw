@@ -353,9 +353,10 @@ class SecurityConfig:
         default_factory=list,
         metadata=_meta(
             "Denied Commands",
-            "User-added regexes for shell commands the agent must never run, "
-            "appended to the always-on built-in denylist. Matched case-insensitively "
-            "against the full command string.",
+            "User-added regexes for commands PersonalClaw must never run for the agent or an "
+            "automation, appended to the always-on built-in denylist. Every path that runs a "
+            "command asks them before it runs. Matched case-insensitively against the full "
+            "command string.",
         ),
     )
     egress: EgressConfig = field(
