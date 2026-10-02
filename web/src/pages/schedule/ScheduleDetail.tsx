@@ -15,6 +15,7 @@ import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
 import { HeldBackNote } from '../triggers/HeldBackNote'
+import { RestoreHoldNote } from '../triggers/RestoreHold'
 import { HeartbeatQueue } from '../triggers/HeartbeatQueue'
 import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, type ScheduleDraft,
@@ -373,6 +374,11 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           panel shows, with the folder to trust when a folder in Preview is why. */}
       {job.held_back && (
         <HeldBackNote heldBack={job.held_back} onTrusted={onChanged} readOnly={job.read_only === true} busy={busy} />
+      )}
+      {/* Switched off by a restore until it is resumed. Resume is the switch sent on, so a schedule
+          whose action needs your yes asks first. */}
+      {!job.enabled && job.restore_hold && (
+        <RestoreHoldNote hold={job.restore_hold} busy={busy} onResume={allow} />
       )}
 
       {/* what runs — provider-aware: show the action's defining field(s) */}

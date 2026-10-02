@@ -331,6 +331,7 @@ async def api_proactive_install(request: web.Request) -> web.Response:
         from personalclaw.triggers import screen as _screen
         from personalclaw.triggers.arm import arm
         from personalclaw.triggers.models import Trigger
+        from personalclaw.triggers.restore_hold import switch_from_config
 
         store = _trigger_store()
         trigger = _find_schedule(store)
@@ -363,12 +364,13 @@ async def api_proactive_install(request: web.Request) -> web.Response:
             "inline": {"provider": "run-workflow", "config": {"workflow": TRIAGE_WORKFLOW}}
         }
         # The config switch is the single source of truth for whether the digest fires. Writing it
-        # from config rather than from the body keeps one switch, not two that can disagree.
-        trigger.enabled = enabled
+        # from config rather than from the body keeps one switch, not two that can disagree. A
+        # restore's hold outlasts it (`restore_hold`).
+        switch_from_config(trigger, enabled)
         # The digest spends and delivers unattended, so the fence needs decision 7's frozen grant.
         # A system-created trigger's opt-in is the code path that created it.
         trigger.capabilities = _screen.capabilities_for_action(trigger)
-        if enabled:
+        if trigger.enabled:
             # Without this the row sits enabled with an empty `next_fire_at`, and `due_ids` only
             # surfaces rows that HAVE one — enabled and inert until the next boot sweep.
             when = arm(trigger)

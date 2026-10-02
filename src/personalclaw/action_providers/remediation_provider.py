@@ -194,6 +194,7 @@ def reconcile_remediation_trigger(store: Any) -> None:
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.restore_hold import switch_from_config
     from personalclaw.triggers.system_singleton import converge_system_singleton
 
     try:
@@ -242,7 +243,8 @@ def reconcile_remediation_trigger(store: Any) -> None:
         )
         spec.setdefault("health_state", "healthy")
         trigger.spec = spec
-        trigger.enabled = bool(cfg.enabled)
+        # The setting is the switch, and a restore's hold outlasts it (`restore_hold`).
+        switch_from_config(trigger, bool(cfg.enabled))
         trigger.workflow = {"inline": {"provider": PROVIDER_NAME, "config": {}}}
         # The engine prunes, re-indexes and (in the judgment lane) spends, unattended, forever. The
         # frozen grant is decision 7's requirement; a system-created trigger's opt-in is the code

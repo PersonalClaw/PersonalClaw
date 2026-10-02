@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **904 registrations** over **732 distinct paths** — 897 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **905 registrations** over **733 distinct paths** — 898 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -33,9 +33,9 @@ The 128 families the surface divides into, largest first.
 | `/api/artifacts` | 25 | 16 |
 | `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
+| `/api/triggers` | 20 | 17 |
 | `/api/mcp` | 19 | 15 |
 | `/api/skills` | 19 | 15 |
-| `/api/triggers` | 19 | 16 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
 | `/api/projects` | 14 | 10 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 897 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 898 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -963,6 +963,7 @@ The 897 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/triggers` | create a schedule, lifecycle or data-event trigger. |
 | `GET` | `/api/triggers/doctor` | structural problems across every trigger (§7 criterion 12). |
 | `GET` | `/api/triggers/history` | the run feed across every kind (AUTO crit 4). |
+| `POST` | `/api/triggers/restore-hold/resume` | Resume all: every automation a restore holds. |
 | `GET` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide (§3.4). |
 | `POST` | `/api/triggers/review` | POST /api/triggers/review — what a restart left for you to decide (§3.4). |
 | `GET` | `/api/triggers/variables` | the ``$variables`` each trigger kind exposes. |

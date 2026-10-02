@@ -1741,6 +1741,8 @@ export interface ScheduleJob {
   report_id?: string | null
   // Why its agent may do less than its step asks, now — see `Trigger`.
   held_back?: HeldBack | null
+  // Switched off by a restore until it is resumed — see `Trigger`.
+  restore_hold?: RestoreHold
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
@@ -2940,6 +2942,11 @@ export interface CallbackRow {
  *  task without one does not run. `deliver` is where its result goes when it is done. */
 export interface HeartbeatTask { text: string; deliver: string; allowed: boolean }
 
+/** Where the snapshot came from, for an automation a replace restore holds (`Trigger.restore_hold`):
+ *  another PersonalClaw home, which may still run it; this home's own snapshot, so nothing else
+ *  does; or a snapshot that does not say. `''` when no restore holds it. */
+export type RestoreHold = '' | 'another_home' | 'this_home' | 'unknown'
+
 export interface Trigger {
   // `GET /api/triggers` serves THREE namespaces (handlers/triggers.py `api_triggers`). A data-event
   // trigger is a row in the one trigger store, so it arrives as `store` with `store_kind: 'event'`
@@ -2975,6 +2982,10 @@ export interface Trigger {
   // Why its agent may do less than its step asks, now, and the folder to trust for it (`HeldBack`);
   // null when nothing holds it back.
   held_back?: HeldBack | null
+  // A replace restore switched it off until it is resumed here, because it ran on its own where
+  // the snapshot was taken (`triggers/restore_hold.py`): where that was, as the restore could tell.
+  // `''` (or absent) when no restore holds it, and always on a row that is switched on.
+  restore_hold?: RestoreHold
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -4019,8 +4030,9 @@ export interface ResearchReport {
   watermark_ts: number
   /** Its schedule as the Triggers page words it ("At 8:00 AM EDT, only on Monday"), the zone it
    *  runs in, and its next run (ISO, UTC). `words` is '' for a report with no schedule, and
-   *  `next_run_at` is '' while it is paused. */
-  schedule_shown: { words: string; timezone: string; next_run_at: string }
+   *  `next_run_at` is '' while it is paused, or while a restore holds the automation that runs it
+   *  (`restore_hold`, where the snapshot came from; '' when none does). */
+  schedule_shown: { words: string; timezone: string; next_run_at: string; restore_hold?: RestoreHold }
   /** What it reads, in the sentence its card shows: which part of your knowledge, over which
    *  window, what it may look at while writing, and that it does not search the web. Worded by
    *  the server from the same scope a run reads. */
@@ -9259,6 +9271,15 @@ export const api = {
   toggleStoreTrigger: (rawId: string, enabled: boolean) =>
     withSecurityConsent((c) => post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`,
       c ? { enabled, confirm: true } : { enabled })),
+  /** Resume all: switch on every automation a restore holds (`triggers/restore_hold.py`), each the
+   *  way its own switch would. One that refuses — its action needs your yes, which its own switch
+   *  asks for — stays held, with why. */
+  resumeRestoredTriggers: () =>
+    post<{
+      ok: boolean
+      resumed: Array<{ id: string; name: string }>
+      still_held: Array<{ id: string; name: string; reason: string }>
+    }>('/api/triggers/restore-hold/resume'),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
   // Callbacks the agent registered (`hook_register`). Switching one ON is the owner's Allow: the
   // gateway asks first, and `seal` names the context this page showed, so a callback registered

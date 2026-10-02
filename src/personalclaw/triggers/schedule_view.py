@@ -233,6 +233,8 @@ def to_schedule_row(
         # Additive, so the "the shape `_serialize_schedule` produced" contract holds for every
         # existing reader: nothing that ignores the key changes behaviour.
         "state": str(getattr(trigger, "state", "") or ""),
+        # Where the snapshot came from, when a restore holds it (`triggers.restore_hold`).
+        "restore_hold": str(getattr(trigger, "restore_hold", "") or ""),
         "agent": str(config.get("agent") or "") or None,
         "model": str(config.get("model") or "") or None,
         # The folder the agent works in, as the owner wrote it. Published so the trigger's panel

@@ -11,6 +11,7 @@ import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMet
 import { DryRunResult } from './DryRunResult'
 import { ConfigReadout, GrantNote, ReviewNote } from './ReviewNote'
 import { HeldBackNote } from './HeldBackNote'
+import { RestoreHoldNote } from './RestoreHold'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -116,11 +117,16 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
   // Not allowed to run what its action uses — Run now and every fire are refused until the owner
   // allows it (the server's verdict). An imported row says so in its own note.
   const needsGrant = !needsReview ? (trigger.needs_grant ?? []) : []
+  // Switched off by a restore, and where its snapshot came from (the server's verdict). Ahead of the
+  // lifecycle states: a row the snapshot had parked does not resume on its own here.
+  const restoreHold = trigger.enabled ? '' : (trigger.restore_hold ?? '')
   const statusLine = needsReview
     ? 'Waiting for your review — it does not run until you switch it on'
     : needsGrant.length > 0 && trigger.enabled
       ? 'Not allowed to run — it does nothing until you allow it'
-      : trigger.state === 'autopaused'
+      : restoreHold
+        ? 'Paused by the restore — it does not run until you resume it'
+        : trigger.state === 'autopaused'
         ? 'Stopped by the system after repeated failures'
         : trigger.state === 'quarantined'
           ? 'Quarantined — a payload matched an injection pattern; re-author it to resume'
@@ -212,6 +218,8 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
       {trigger.held_back && (
         <HeldBackNote heldBack={trigger.held_back} onTrusted={onChanged} readOnly={readOnly} busy={busy} />
       )}
+      {/* Resume is the switch sent on, so a row whose action needs your yes asks first. */}
+      {restoreHold && !readOnly && <RestoreHoldNote hold={restoreHold} busy={busy} onResume={allow} />}
 
       <div className="flex items-center justify-between">
         <div>

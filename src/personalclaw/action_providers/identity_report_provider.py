@@ -188,6 +188,7 @@ def reconcile_identity_report_trigger(store: Any) -> None:
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.restore_hold import switch_from_config
     from personalclaw.triggers.system_singleton import converge_system_singleton
 
     cadence = configured_cadence()
@@ -232,7 +233,8 @@ def reconcile_identity_report_trigger(store: Any) -> None:
             {"kind": "cron", "expr": _CADENCE_CRON.get(cadence, _CADENCE_CRON[DEFAULT_CADENCE])}
         )
         trigger.spec = spec
-        trigger.enabled = cadence != CADENCE_OFF
+        # The cadence is the switch, and a restore's hold outlasts it (`restore_hold`).
+        switch_from_config(trigger, cadence != CADENCE_OFF)
         trigger.workflow = {"inline": {"provider": PROVIDER_NAME, "config": {}}}
         # The run writes a durable artifact, raises an inbox row and spends one background model
         # call, unattended, forever. The frozen grant is decision 7's requirement; a

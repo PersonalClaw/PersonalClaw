@@ -21,15 +21,17 @@ history called the skip a success. Saving the report then wrote its old time bac
 So an edit moves both, from either side:
 
 * **The report's side** (the Reports page, the reports API): ``save_report`` re-derives the mirror
-  (``sync``). Only what the report owns is written — the cadence and zone in ``spec``, the switch,
-  the action, the name and the grant (:func:`to_trigger`). What the automation holds of its own —
+  (``sync``). Only what the report owns is written — the cadence and zone in ``spec``, the switch
+  (which a restore's hold outlasts: ``triggers.restore_hold``), the action, the name and the grant
+  (:func:`to_trigger`). What the automation holds of its own —
   where its result and its failures go, whether a missed time runs late, its skip dates — and what
   the clock wrote on it (its next fire, its runs, its health) stay as they are, so a report edit
   cannot undo a Triggers-page setting.
 * **The automation's side** (the Triggers page, the chat's automation tools, the CLI): every
   edit goes through ``triggers.tools``, which asks :func:`edit_refusal` first — an edit the report
   cannot hold is refused in words — and hands the saved row to :func:`adopt`, which writes its
-  cadence, zone and switch into the report. The clock's own autopause hands its paused row to
+  cadence, zone and switch into the report (not a restore's hold, which is not the report's
+  switch). The clock's own autopause hands its paused row to
   :func:`adopt` too, so a report whose runs keep failing reads paused, as its automation is.
   Deleting the automation leaves the report unscheduled (:func:`adopt_removal`): it stays, with its
   findings, and runs when you press Run now.
@@ -223,10 +225,13 @@ def to_trigger(
             failure_delivery="inbox",
         )
     else:
+        from personalclaw.triggers.restore_hold import switch_from_config
+
         trigger = copy.deepcopy(stored)
         trigger.name = _title(defn, report_id)
         trigger.kind = "clock"
-        trigger.enabled = enabled
+        # The report's switch, unless a restore holds the row: a save says nothing about that.
+        switch_from_config(trigger, enabled)
         trigger.created_by = CREATED_BY
         trigger.workflow = _action(report_id)
         trigger.overlap, trigger.session, trigger.model_tier = "skip", "fresh", "background"
@@ -272,22 +277,27 @@ def _stored(report_id: str) -> Trigger | None:
 
 def shown(defn: ReportDefinition, *, now: float = 0.0) -> dict[str, Any]:
     """How the Reports page states this report's schedule: ``{"words", "timezone",
-    "next_run_at"}``.
+    "next_run_at", "restore_hold"}``.
 
     ``words`` is the sentence the Triggers page shows for the same schedule ("At 8:00 AM EDT, only
     on Monday", `schedule_view.describe_cadence`), ``timezone`` the zone it runs in, and
     ``next_run_at`` its next run (ISO, UTC), ``""`` while the report is paused or has none. Read off
     the trigger row this report's schedule is mirrored in — the stored one, when there is one — so
-    the page and the fire cannot disagree about when that is."""
+    the page and the fire cannot disagree about when that is.
+
+    ``restore_hold`` is where the snapshot came from while a restore holds that row
+    (`triggers.restore_hold`), ``""`` otherwise. Held, the report has no next run: the report still
+    says it is on, and the row that fires it waits for a Resume on the Triggers page."""
     from personalclaw.triggers.schedule_view import describe_cadence
 
     trigger = to_trigger(defn, stored=_stored(str(getattr(defn, "id", "") or "")), now=now)
     if trigger is None:
-        return {"words": "", "timezone": "", "next_run_at": ""}
+        return {"words": "", "timezone": "", "next_run_at": "", "restore_hold": ""}
     return {
         "words": describe_cadence(trigger),
         "timezone": str(trigger.spec.get("timezone") or ""),
         "next_run_at": str(trigger.next_fire_at or "") if trigger.enabled else "",
+        "restore_hold": "" if trigger.enabled else str(trigger.restore_hold or ""),
     }
 
 
@@ -447,7 +457,8 @@ def adopt(trigger: Any) -> str:
         if "timezone" in spec and zone != str(mine.get("timezone") or "") and zone != defn.tz:
             defn.tz = zone
             changed = True
-        if bool(trigger.enabled) != bool(defn.enabled):
+        # A row a restore holds is off by the restore, not by anyone here: the report keeps its own.
+        if not getattr(trigger, "restore_hold", "") and bool(trigger.enabled) != bool(defn.enabled):
             defn.enabled = bool(trigger.enabled)
             changed = True
         if changed:

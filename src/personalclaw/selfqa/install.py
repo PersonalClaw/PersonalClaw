@@ -81,6 +81,7 @@ def reconcile(store: Any, *, crons_dir: Path | None = None) -> None:
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.file_watch import vcs_patterns
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.restore_hold import switch_from_config
 
     try:
         cfg = AppConfig.load().agent.self_qa
@@ -123,7 +124,9 @@ def reconcile(store: Any, *, crons_dir: Path | None = None) -> None:
                 delivery="none",
             )
         )
-        trigger.enabled = active
+        # The companion's setting is the switch, and a restore's hold outlasts it
+        # (`restore_hold`).
+        switch_from_config(trigger, active)
         # An upgraded Wave-2 row arrives as `clock`; the swap happens HERE, on the same id,
         # so the user's trigger list shows one watcher whose kind changed — not two.
         trigger.kind = "file"

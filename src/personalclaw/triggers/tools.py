@@ -1405,6 +1405,9 @@ def update(
     refused = report_schedules.edit_refusal(before, trigger)
     if refused:
         return AutomationToolResult(False, f"Error: {refused}")
+    if "enabled" in applied:
+        # A switch the patch sets is a decision, as `set_paused`'s is: it ends a restore's hold.
+        trigger.restore_hold = ""
     if "spec" in applied and "expires_at" not in applied:
         _expiry_after_its_time(trigger)
     # What the edit changed keeps no grant (`grants.narrow`), so `missing` below asks about it the

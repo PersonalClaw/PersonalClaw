@@ -455,6 +455,32 @@ so its recorded process is never signalled. Resume takes each on from where
 the snapshot left it. This holds whichever machine took the snapshot, since
 this machine's own run went on after its snapshot too.
 
+**A replace restore holds what runs on its own.** A replace writes the trigger
+store back whole, so every automation used to come back switched on and armed,
+and a copy restored onto a second machine ran each one beside the original,
+which still ran it: every brief and digest went out twice. So each automation
+that would run on its own here (switched on, not one that runs only when it is
+run, and the owner's) comes back switched off with no armed next fire, and the
+row says where the snapshot came from (`Trigger.restore_hold`,
+`triggers.restore_hold.hold`): another home, this one, or `unknown` for a
+snapshot that names no home. A snapshot's manifest and an export archive's name
+the home that took them (`machine_id`), and the restore compares that with this
+home's. The rest of the row is the snapshot's, its grant included: a replace is
+this home becoming that one, not another home's automation arriving. The
+restore names how many it paused and why; at the terminal, a restore of this
+home's own snapshot asks whether to resume them now. Resume all on the Triggers
+page (`POST /api/triggers/restore-hold/resume`) and each one's own switch take
+them on, armed from now (`arm.next_fire_after_edit`), so the time one waited is
+not a missed run. Switching one off by hand ends its hold too, making it the
+owner's own pause. A system automation whose switch is a setting (the
+remediation engine, the identity report, the Self-QA watch, the morning triage)
+is switched from that setting on every start, and keeps the hold through it
+(`restore_hold.switch_from_config`). A research report's automation keeps it the
+same way: a save of the report is not a Resume, and the hold is not copied into
+the report's own switch (`report_schedules.to_trigger`, `adopt`). A merge is
+unchanged: what it brings in arrives switched off by the rule above and holds
+nothing.
+
 **Every file of a synced folder is carried.** The hourly export and a sync
 read every file of a folder store, not its JSON files alone
 (`durability.shards.read_entity_dir`): a JSON file as its data, any other file

@@ -54,6 +54,7 @@ def test_a_report_with_no_schedule_says_none():
         "words": "",
         "timezone": "",
         "next_run_at": "",
+        "restore_hold": "",
     }
 
 

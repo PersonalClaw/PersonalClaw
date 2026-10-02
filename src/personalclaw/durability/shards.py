@@ -118,6 +118,16 @@ def machine_id(home: Path) -> str:
     return fresh
 
 
+def recorded_machine_id(home: Path) -> str:
+    """The id :func:`machine_id` gave *home*, or ``""`` when it has none yet — without making one,
+    for a read that must write nothing (a restore's dry run). A home without one cannot be the home
+    a snapshot or an export names."""
+    try:
+        return (home / _MACHINE_ID_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 # ── row extraction per entry kind ───────────────────────────────────────────
 
 

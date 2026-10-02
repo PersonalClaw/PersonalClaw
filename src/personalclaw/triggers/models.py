@@ -64,6 +64,21 @@ class TriggerState(str, Enum):
     RETIRED = "retired"
 
 
+class RestoreHold(str, Enum):
+    """Where the snapshot came from, for an automation a replace restore holds.
+
+    The value of `Trigger.restore_hold`: what the restore could tell by comparing the home the
+    snapshot names with this one (`triggers.restore_hold.origin`), and so what the page may say
+    about why it waits. Another home may still be running every automation the snapshot holds; this
+    home's own snapshot has no other copy running; and a snapshot taken before snapshots named
+    their home says nothing either way, so it is read the cautious way.
+    """
+
+    ANOTHER_HOME = "another_home"
+    THIS_HOME = "this_home"
+    UNKNOWN = "unknown"
+
+
 class TriggerHealth(str, Enum):
     """The rollup a list renders without scanning run history.
 
@@ -975,9 +990,23 @@ class Trigger:
     #: `last_run_ts` reads the newest of the three — that is what clears a Run button
     #: (`schedule_view._last_run_ts`).
     #:
-    #: The LAST field, so no positional constructor call shifts: `Trigger` is on the SDK surface
-    #: (`personalclaw.sdk.channel`).
+    #: Declared after every field above it, so no positional constructor call shifts: `Trigger` is
+    #: on the SDK surface (`personalclaw.sdk.channel`).
     last_waiting_at: str = ""
+    #: Why a replace restore switched this automation off until someone here resumes it: where the
+    #: snapshot it wrote this home back from was taken, as the restore could tell
+    #: (:class:`RestoreHold`). ``""`` when no restore holds it.
+    #:
+    #: A restore writes a home back from a snapshot whole, and an automation that ran on its own
+    #: where the snapshot was taken would run on its own here too, so a copy running beside an
+    #: original that still runs would do everything twice (`triggers.restore_hold`). Held, it says
+    #: so on the Triggers page, and Resume all or its own switch takes it on.
+    #:
+    #: Kept only on a row that is switched off: whoever switches it on, or off by hand, has decided,
+    #: so the row stops saying the restore paused it (`to_dict`, `parse_trigger`).
+    #:
+    #: The last field, for the reason `last_waiting_at` gives.
+    restore_hold: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1017,6 +1046,8 @@ class Trigger:
             "health_status": self.health_status,
             "last_error_summary": self.last_error_summary,
             "state": self.state,
+            # A row switched on holds nothing, whichever writer switched it on.
+            "restore_hold": "" if self.enabled else self.restore_hold,
         }
 
     @property
@@ -1376,8 +1407,19 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         health_status=str(data.get("health_status", TriggerHealth.OK.value) or "ok"),
         last_error_summary=str(data.get("last_error_summary", "") or ""),
         state=state,
+        restore_hold="" if data.get("enabled", True) else _restore_hold(data.get("restore_hold")),
     )
     return trigger, issues
+
+
+def _restore_hold(value: Any) -> str:
+    """A stored ``restore_hold``: one of :class:`RestoreHold`, ``""`` for none, and any other word
+    — one a later version wrote — as :attr:`RestoreHold.UNKNOWN`. Still a hold, and the cautious
+    one: the row waits for a Resume, and the page does not claim to know where it came from."""
+    if not isinstance(value, str) or not value:
+        return ""
+    known = {hold.value for hold in RestoreHold}
+    return value if value in known else RestoreHold.UNKNOWN.value
 
 
 def _int(value: Any, default: int) -> int:

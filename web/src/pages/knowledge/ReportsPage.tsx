@@ -54,10 +54,12 @@ function editable(r: ResearchReport): ResearchReportInput {
  *  in, and its next run in that zone. The server words it (`schedule_shown`), off the same trigger
  *  row that fires it, so this page and the Triggers page cannot tell two different times. */
 function when(r: ResearchReport): string {
-  const { words, timezone, next_run_at: next } = r.schedule_shown
+  const { words, timezone, next_run_at: next, restore_hold: held } = r.schedule_shown
   if (!words) return 'No schedule: it runs when you press Run now'
   const zone = timezone ? ` (${timezone})` : ''
   if (!r.enabled) return `${words}${zone} · paused, so it does not run`
+  // A restore holds the automation that runs it: it waits for a Resume on the Triggers page.
+  if (held) return `${words}${zone} · paused by the restore: resume it on the Triggers page`
   return next ? `${words}${zone} · next run ${nextRun(next, timezone)}` : `${words}${zone}`
 }
 

@@ -204,6 +204,15 @@ describe('a report row says when it runs', () => {
     expect(screen.queryByText(/next run/)).toBeNull()
   })
 
+  it('a report a restore holds says it waits for a Resume, not when it would run', () => {
+    render(<ReportRow report={report({ schedule_shown: { ...TORONTO, next_run_at: '', restore_hold: 'another_home' } })}
+      onChanged={() => {}} />)
+    expect(screen.getByText(
+      /At 8:00 AM EDT, only on Monday \(America\/Toronto\) · paused by the restore: resume it on the Triggers page/,
+    )).toBeTruthy()
+    expect(screen.queryByText(/next run/)).toBeNull()
+  })
+
   it('a report with no schedule says how it runs', () => {
     render(<ReportRow report={report({ schedule_shown: { words: '', timezone: '', next_run_at: '' } })}
       onChanged={() => {}} />)

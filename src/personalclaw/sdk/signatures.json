@@ -3475,7 +3475,8 @@
     {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "park_retry_after"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "last_alert_hash"},
     {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "last_alert_at"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "last_waiting_at"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "last_waiting_at"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "restore_hold"}
    ],
    "returns": "None"
   },

@@ -533,6 +533,27 @@ def _pc_dir() -> Path:
     return config_dir()
 
 
+def _home_id(pc: Path) -> str:
+    """The id of the home at *pc* (`durability.shards.machine_id`), or ``""`` for a home that is
+    not there: what a snapshot's manifest names, and what a restore compares it with."""
+    if not pc.is_dir():
+        return ""
+    from personalclaw.durability.shards import machine_id
+
+    return machine_id(pc)
+
+
+def _snapshot_home(snap: Path) -> str:
+    """The home an unpacked snapshot or export archive names in its manifest, or ``""`` when it
+    names none (one taken before manifests did) or the manifest cannot be read."""
+    try:
+        manifest = json.loads((snap / "MANIFEST.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    value = manifest.get("machine_id") if isinstance(manifest, dict) else None
+    return value if isinstance(value, str) else ""
+
+
 def _fsize(p: Path) -> int:
     try:
         return p.stat().st_size
@@ -812,6 +833,9 @@ def snapshot_main(
             "hostname": socket.gethostname(),
             "user": os.environ.get("USER", "unknown"),
             "personalclaw_dir": str(pc),
+            # The home that took it, so a replace restore can tell this home's own snapshot from
+            # another's, whose automations may still be running there (`triggers.restore_hold`).
+            "machine_id": _home_id(pc),
             "contents": {
                 "memory_db": _fsize(stage / "memory.db"),
                 "memory_index_db": _fsize(stage / "memory_index.db"),
@@ -1639,7 +1663,14 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
     """Replace the home's state with the snapshot's, moving what it displaces into
     ``pre-restore-<ts>/``. Returns what the restore did with app engines, for its result:
     ``engines_kept`` (display names of the apps that kept theirs, :func:`_keep_app_engines`) and
-    ``engines_set_aside`` (``{app, bytes}`` of each left in the backup with its app)."""
+    ``engines_set_aside`` (``{app, bytes}`` of each left in the backup with its app); what it held
+    that the snapshot had working (:func:`_hold_what_was_in_flight`); and the automations it held
+    that the snapshot ran on their own, ``automations_held``, with ``held_from``, where the
+    snapshot came from (`triggers.restore_hold`)."""
+    from personalclaw.triggers import restore_hold
+
+    # Asked before anything is written: whose snapshot this is, by the home it names.
+    held_from = restore_hold.origin(_snapshot_home(snap), pc)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = pc / f"pre-restore-{ts}"
     backup.mkdir(exist_ok=True)
@@ -1729,6 +1760,14 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
             "loop(s) that were working when the snapshot was taken: each waits for you to "
             "resume it."
         )
+    # 🔴 Every automation the snapshot ran on its own came back switched on and armed, so a copy
+    # restored onto a second machine ran them beside the original, which still did: each brief and
+    # digest went out twice. Each waits for a Resume here instead (`triggers.restore_hold`).
+    automations_held: list[str] = []
+    if _want(components, "crons") and (snap / "triggers.json").is_file():
+        automations_held = restore_hold.hold(pc, held_from)
+    if automations_held:
+        print(f"  ⏸  {restore_hold.paused_line(len(automations_held), held_from)}")
     try:
         backup.rmdir()
     except OSError:
@@ -1740,7 +1779,49 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
             {"app": _app_display_name(folder), "bytes": size} for folder, size in aside
         ],
         **held,
+        "automations_held": automations_held,
+        "held_from": held_from if automations_held else "",
     }
+
+
+def _say_what_would_pause(snap: Path, pc: Path, components: list[str] | None) -> None:
+    """A replace's dry run: how many automations the restore would hold, and why — the line the
+    restore itself prints (`_do_replace`), read off the snapshot and nothing written."""
+    from personalclaw.triggers import restore_hold
+
+    if not (_want(components, "crons") and (snap / "triggers.json").is_file()):
+        return
+    count = restore_hold.would_hold(snap / "triggers.json")
+    if count:
+        held_from = restore_hold.origin(_snapshot_home(snap), pc)
+        print(f"  {restore_hold.paused_line(count, held_from, would=True)}")
+
+
+def _offer_to_resume(pc: Path, done: dict) -> None:
+    """After a replace at the terminal, what to do about the automations it held (``done`` is what
+    :func:`_do_replace` returned): ask whether to resume them now, when the snapshot is this home's
+    own and someone is there to answer; otherwise say where and when to resume them. A snapshot
+    from another home, or one that does not say, is never resumed from here: whether that home is
+    retired is the owner's to know, and the Triggers page says why each one waits."""
+    from personalclaw.triggers import restore_hold
+    from personalclaw.triggers.store import TriggerStore
+
+    count = len(done.get("automations_held") or [])
+    held_from = str(done.get("held_from") or "")
+    if not count:
+        return
+    if held_from == restore_hold.THIS_HOME and sys.stdin.isatty():
+        try:
+            answer = input(f"⏸  {restore_hold.resume_question(count)}").strip().lower()
+        except EOFError:
+            answer = "n"
+        if answer in ("", "y", "yes"):
+            resumed, kept = restore_hold.resume_all(TriggerStore(base_dir=pc))
+            print(f"▶  {restore_hold.resumed_line(len(resumed))}")
+            for trigger, why in kept:
+                print(f"⚠️  {trigger.name or trigger.id} stays paused: {why}")
+            return
+    print(f"⏸  {restore_hold.where_to_resume(count, held_from)}")
 
 
 def _hold_what_was_in_flight(pc: Path, restored: list[str]) -> dict[str, list[str]]:
@@ -2354,8 +2435,14 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
     pc.mkdir(parents=True, exist_ok=True)
     # A replace says where it set the previous state aside as it does it (`_do_replace`).
     summary = apply_import_zip(archive, mode)
-    _audit("state_restored", f"mode={mode} components=all from={archive.name}")
+    held = len(summary.get("automations_held") or [])
+    _audit(
+        "state_restored",
+        f"mode={mode} components=all from={archive.name}"
+        + (f" automations_held={held} held_from={summary.get('held_from')}" if held else ""),
+    )
     print(f"✅ Imported ({mode}): {', '.join(summary.get('items', [])) or 'nothing to add'}")
+    _offer_to_resume(pc, summary)
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
     return 0
 
@@ -2452,14 +2539,16 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                         print(f"  {f.relative_to(snap)}")
                 print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
                 print("  An app the snapshot brings back keeps the engine it has here.")
+                _say_what_would_pause(snap, pc, components)
             return 0
         if _replace_refused(args, mode, "restore"):
             return 1
 
         pc.mkdir(parents=True, exist_ok=True)
         left: list[str] = []
+        done: dict = {}
         if mode == "replace":
-            _do_replace(snap, pc, components)
+            done = _do_replace(snap, pc, components)
         else:
             left = _do_merge(snap, pc, components)
         engines = _engines_not_here(snap, components)
@@ -2486,9 +2575,11 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             )
 
     comp_str = ",".join(components) if components else "all"
+    held = len(done.get("automations_held") or [])
     _audit(
         "state_restored",
-        f"mode={mode} components={comp_str} from={snap_path.name} left_unchanged={len(left)}",
+        f"mode={mode} components={comp_str} from={snap_path.name} left_unchanged={len(left)}"
+        + (f" automations_held={held} held_from={done.get('held_from')}" if held else ""),
     )
 
     for name, has_one in engines:
@@ -2503,6 +2594,7 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             "built for the machine it runs on. Install it with Install engine, on the app's card "
             "in Settings → Providers."
         )
+    _offer_to_resume(pc, done)
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
     # A merge that left a part unchanged did not do what it was asked: the failed status, as the
     # integrity check above answers a damaged memory.db, so a script sees it too.

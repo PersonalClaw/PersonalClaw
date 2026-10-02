@@ -31,9 +31,10 @@ from personalclaw.stale_write import revision_of, stale_write_refusal
 #: health state maintenance flips — the form edits `cron_expr`/`every_secs`, never the sentence),
 #: the parse issues, the session flag, the attribution verdict, which follows the owner's
 #: configured username, why the results cannot reach the channel named — which follows the
-#: channel's own setup, not anything the form sends — and the two grant verdicts (`needs_review`,
+#: channel's own setup, not anything the form sends — the two grant verdicts (`needs_review`,
 #: `needs_grant`), which follow the capability block the owner's switch writes and the form never
-#: sends: an Allow in another tab must not make an open editor's save stale.
+#: sends: an Allow in another tab must not make an open editor's save stale — and a restore's hold
+#: (`restore_hold`), which the restore and the switch write.
 #:
 #: The EXCLUSION is the list, not the inclusion — the reason `arm.NON_CADENCE_SPEC_KEYS` gives: a
 #: field the row gains later is covered by default, so a new editable field cannot ride a
@@ -62,6 +63,7 @@ SCHEDULE_RUN_STATE: frozenset[str] = frozenset(
         "channel_problem",
         "needs_review",
         "needs_grant",
+        "restore_hold",
     }
 )
 

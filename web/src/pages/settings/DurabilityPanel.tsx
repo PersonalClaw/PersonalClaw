@@ -784,6 +784,9 @@ function ArchiveSection({ snaps, onChanged }: {
           command-line action, because it has to overwrite live state while the gateway is
           stopped: stop it, then run{' '}
           <code>personalclaw restore {snaps.directory}/&lt;archive&gt; --mode replace</code>.
+          It brings each automation that runs on its own back paused, so a copy on another
+          machine does not repeat what the original still runs: Resume all, on the Triggers page,
+          switches them back on.
         </p>
       </div>
     </Section>

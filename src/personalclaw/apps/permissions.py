@@ -1064,6 +1064,8 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "DELETE /api/triggers/{id}": OwnerOnly("deleting your automations"),
     # Arming is the owner's: a pack stages its automations switched off so that only you arm them.
     "POST /api/triggers/{id}/toggle": OwnerOnly("switching your automations on and off"),
+    # Resume all: every automation a restore switched off goes back on, so it is the owner's too.
+    "POST /api/triggers/restore-hold/resume": OwnerOnly("switching your automations on and off"),
     "POST /api/triggers/{id}/run": OwnerOnly(_FIRES_AUTOMATION),
     # Answering the question an automation stopped on (`triggers/parks.py`): Approve runs its
     # action again, now, through the Run button's own path — the same firing by hand.

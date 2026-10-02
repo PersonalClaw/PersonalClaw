@@ -422,7 +422,9 @@ defaults flipped, and some routes refuse input they used to accept. Run
   `personalclaw restore` brings it back. The archive never contains a credential: API keys
   and app tokens stay in this machine's credential store (the OS keychain, or
   `~/.personalclaw/.env` at mode 0600), and settings carry only references to them — so a
-  restore onto a new machine asks you to enter the keys again.
+  restore onto a new machine asks you to enter the keys again. A replace restore also brings your
+  automations back paused, so a new machine does not send the same briefs and digests as the one
+  it replaces: resume them on the Triggers page (**Resume all**) once the old one is retired.
 
 ## Reference docs
 

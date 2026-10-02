@@ -24,6 +24,7 @@ import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { CallbackDetail } from './CallbackDetail'
 import { TriggerReview } from './TriggerReview'
+import { RestoreHoldNotice } from './RestoreHold'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
@@ -127,12 +128,24 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
     if (refreshKinds(m).includes('crons')) loadAll()
   }, loadAll)
 
+  // What a restore holds, whatever the filter shows: the notice is about this home, and Resume all
+  // resumes every one of them. Only a schedule or a store row can be held.
+  const restoreHolds = useMemo(
+    () => [...(schedules ?? []).map(scheduleToTrigger), ...(stores ?? []).map(storeToTrigger)]
+      .map((t) => t.restoreHold ?? '')
+      .filter((hold) => hold !== ''),
+    [schedules, stores],
+  )
+
   // Above the list AND the week grid: the "Missed scheduled runs" notice sends you to this page,
-  // whichever view you last left it in.
+  // whichever view you last left it in. So does the restore's "Resume them on the Triggers page".
   const reviewPanel = (
-    <TriggerReview cards={review} error={reviewErr} onRetry={loadReview}
-      onDecided={() => { loadReview(); loadSchedules(); loadStores() }}
-      onOpen={(openId) => setQuery({ open: openId, edit: null, view: 'list' })} />
+    <>
+      <RestoreHoldNotice holds={restoreHolds} onResumed={() => { loadSchedules(); loadStores() }} />
+      <TriggerReview cards={review} error={reviewErr} onRetry={loadReview}
+        onDecided={() => { loadReview(); loadSchedules(); loadStores() }}
+        onOpen={(openId) => setQuery({ open: openId, edit: null, view: 'list' })} />
+    </>
   )
 
   const triggers = useMemo<Trigger[] | null>(() => {
@@ -227,7 +240,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
     >
       {view === 'week' ? (
         <>
-          {(review.length > 0 || reviewErr != null) && (
+          {(review.length > 0 || reviewErr != null || restoreHolds.length > 0) && (
             <div className="mx-auto px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>{reviewPanel}</div>
           )}
           {/* Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell
@@ -323,8 +336,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                         <div className="flex items-center gap-s">
                           <span className={`truncate text-[0.9375rem] ${t.enabled ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{t.name}</span>
                           {/* A callback's switch is the owner's yes, so an off one says "not allowed to
-                              run" below rather than "disabled" as well. */}
-                          {!t.enabled && t.kind !== 'callback' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
+                              run" below rather than "disabled" as well. One a restore switched off
+                              says so: it waits for a Resume, not for a switch the owner flipped. */}
+                          {t.restoreHold
+                            ? <span data-type="caption" className="shrink-0 text-warn">· paused by the restore</span>
+                            : !t.enabled && t.kind !== 'callback' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
                           {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
                           {/* A BLOCKING hook that no agent binds still fires — on the
                               informational path, whose results are discarded — so its run count

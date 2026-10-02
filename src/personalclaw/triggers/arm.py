@@ -365,8 +365,13 @@ def next_fire_after_edit(before: Any, after: Any) -> str | None:
       never fires, gets none (``""``): `arm` answers that.
     * Otherwise a trigger left ON with no next fire (:func:`needs_arming`) — switched on, or on and
       never armed — is armed, or it sits on and inert until the next boot sweep.
+    * A trigger a restore held (`Trigger.restore_hold`), switched on, is armed from now whatever
+      instant it carries: that one is the snapshot's, or one a start armed while it was held, and
+      the time it waited for its Resume is not a fire it missed.
     * Anything else keeps the instant it has.
     """
+    if getattr(before, "restore_hold", "") and getattr(after, "enabled", False):
+        return arm(after)
     before_spec = getattr(before, "spec", None)
     after_spec = getattr(after, "spec", None)
     if getattr(after, "kind", "") != getattr(before, "kind", "") or cadence_fingerprint(

@@ -325,6 +325,9 @@ class TriggerStore(TriggerStoreProvider):
         cannot dispatch it, and flipping the flag would put a trigger the machine cannot run
         into the
         active set — pretending to work is worse than being visibly broken.
+
+        Ends a restore's hold either way (`Trigger.restore_hold`): switched on it is resumed, and
+        switched off by hand it is the owner's own pause, which Resume all leaves alone.
         """
         with self._file_lock():
             rows = self._read_rows()
@@ -336,6 +339,7 @@ class TriggerStore(TriggerStoreProvider):
                     logger.info("refusing to enable %s: it has parse errors", trigger_id)
                     return None
                 trigger.enabled = enabled
+                trigger.restore_hold = ""
                 rows[index] = trigger.to_dict()
                 self._write(rows)
                 return trigger
@@ -487,6 +491,8 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     # is asked about here when it is switched on, as the Triggers page's switch asks of any row
     # that holds no grant.
     "capabilities",
+    # A restore here switched it off until it is resumed here (`triggers.restore_hold`).
+    "restore_hold",
 )
 
 

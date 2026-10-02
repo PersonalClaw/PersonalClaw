@@ -396,6 +396,8 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "needs_review": _needs_review(trigger),
         "needs_grant": _needs_grant(trigger),
         "held_back": _held_back(trigger),
+        # Where the snapshot came from, when a restore holds it (`triggers.restore_hold`).
+        "restore_hold": trigger.restore_hold,
         **_attribution(trigger, owner=owner),
     }
 
@@ -1860,6 +1862,38 @@ def _switch_on_grant(
     return None
 
 
+async def api_triggers_resume_restored(request: web.Request) -> web.Response:
+    """POST /api/triggers/restore-hold/resume — Resume all: every automation a restore holds.
+
+    A replace restore switches off each automation that ran on its own where its snapshot was taken
+    (`triggers.restore_hold`), and the Triggers page says why. This switches each back on the way
+    its own switch would (`tools.set_paused`), and answers ``{resumed: [{id, name}], still_held:
+    [{id, name, reason}]}``: one that refuses — it no longer parses, or its action needs your yes,
+    which its own switch asks for — stays held, with why. One automation's switch resumes it alone.
+    """
+    from personalclaw.triggers import restore_hold
+
+    state: DashboardState = request.app["state"]
+    # In the loop, as the switch writes: a few store writes under its lock, nothing awaited.
+    resumed, kept = restore_hold.resume_all(_trigger_store())
+    if resumed:
+        state.push_refresh("crons")
+    _sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="trigger.resume_restored",
+        outcome="success",
+        source="dashboard",
+        resources=f"resumed={len(resumed)} still_held={len(kept)}",
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "resumed": [{"id": t.id, "name": _redact(t.name)} for t in resumed],
+            "still_held": [{"id": t.id, "name": _redact(t.name), "reason": why} for t, why in kept],
+        }
+    )
+
+
 def _audit_grant(caller: str, outcome: str, resources: str) -> None:
     """The security-audit row for one grant decision: asked and refused, or given."""
     _sel().log_api_access(
@@ -2456,6 +2490,8 @@ def register_trigger_routes(app: web.Application) -> None:
     # The restart review. Literal path, registered BEFORE `/{id}` for the same reason.
     app.router.add_get("/api/triggers/review", api_trigger_review)
     app.router.add_post("/api/triggers/review", api_trigger_review)
+    # Resume all, after a restore. Literal path, registered BEFORE `/{id}` for the same reason.
+    app.router.add_post("/api/triggers/restore-hold/resume", api_triggers_resume_restored)
     app.router.add_put("/api/triggers/{id}", api_trigger_detail)
     app.router.add_delete("/api/triggers/{id}", api_trigger_detail)
     app.router.add_post("/api/triggers/{id}/toggle", api_trigger_toggle)

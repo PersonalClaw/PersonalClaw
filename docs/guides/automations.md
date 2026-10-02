@@ -187,6 +187,34 @@ same thing with the automation tools' `catch_up` field (`true` runs a missed tim
   (`tick`) do with missed times.
 - `src/personalclaw/triggers/review.py` — the cards, and the notice's wording for each cause.
 
+## After a restore
+
+**In your words:** *"I restored my laptop's snapshot onto the new machine. I don't want both of
+them sending me the morning brief."*
+
+A replace restore (`personalclaw restore <snapshot> --mode replace`, or an export archive restored
+the same way) brings each automation that runs on its own back **paused**: switched off, with no
+time armed. It says how many and why. If the snapshot came from another PersonalClaw home, that
+home may still be running the same automations, so resume them once it is retired. If the snapshot
+is this home's own, nothing else runs them, and at the terminal the restore asks whether to resume
+them now. An automation you had switched off, one that runs only when you run it, and one somebody
+else wrote are left as they were. A merge restore never needs this: what it brings in arrives
+switched off already. Chat channels do not come back connected either: a snapshot never carries a
+channel's token, so on a new machine each channel connects only once you enter its token there.
+
+The **Triggers** page shows **Paused by the restore** above the list with **Resume all**, badges
+each paused row *paused by the restore*, and gives each one's panel its own **Resume**. Once
+resumed, an automation runs at its next scheduled time; the time it waited is never counted as a
+missed time.
+
+| | |
+|---|---|
+| **Checked on** | the restore's own output, the notice and the badges on the **Triggers** page, and the automation's panel |
+| **The setting** | none: `restore_hold` on the trigger says where the snapshot came from until it is resumed |
+
+- `src/personalclaw/triggers/restore_hold.py` — what is paused, Resume all, and what the restore
+  says.
+
 ---
 
 ## Falsify all three, in one automation

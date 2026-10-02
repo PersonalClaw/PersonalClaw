@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug, Play, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow, type ActionProviderName } from '../../lib/api'
+import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow, type ActionProviderName, type RestoreHold } from '../../lib/api'
 import { dispatchedProvider } from '../../lib/rungs'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
@@ -291,6 +291,10 @@ export interface Trigger {
   /** The actions it is not allowed to use (`needs_grant`), by display name — nothing runs it until
    *  the owner allows it. The server's verdict, passed through. */
   needsGrant?: string[]
+  /** Switched off by a restore until it is resumed, and where the snapshot came from
+   *  (`restore_hold`): the server's verdict, passed through. Only a schedule or a store row can
+   *  carry one, and never one that is switched on. */
+  restoreHold?: RestoreHold
   broken?: string[]          // parse ERRORS (S87 lenient load) — shown, not hidden
   /** WARNING-severity issues from the same load — advisory, not a fault (issue 531). Kept apart
    *  from `broken` because the row RUNS as authored: a sub-floor interval is a choice the backend
@@ -367,6 +371,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     author: j.author, readOnly: j.read_only === true,
     needsReview: j.needs_review === true,
     needsGrant: j.needs_grant ?? [],
+    restoreHold: j.enabled ? '' : (j.restore_hold ?? ''),
   }
 }
 /** Humanize an event name for a list label without needing the fetched catalog
@@ -438,6 +443,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     author: t.author, readOnly: t.read_only === true,
     needsReview: t.needs_review === true,
     needsGrant: t.needs_grant ?? [],
+    restoreHold: t.enabled ? '' : (t.restore_hold ?? ''),
   }
 }
 
