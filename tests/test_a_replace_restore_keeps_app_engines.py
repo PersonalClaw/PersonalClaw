@@ -39,7 +39,7 @@ NEWER_ENGINE = "pclaw-fixture-engine==2.0"
 
 @pytest.fixture(autouse=True)
 def _no_gateway(monkeypatch):
-    monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: False)
+    monkeypatch.setattr("personalclaw.snapshot._running_gateway", lambda: None)
 
 
 def _backup(home: Path) -> Path:

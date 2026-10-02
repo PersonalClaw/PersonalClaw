@@ -29,7 +29,7 @@ from personalclaw.snapshot import restore_main, snapshot_main
 
 @pytest.fixture(autouse=True)
 def _no_gateway(monkeypatch):
-    monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: False)
+    monkeypatch.setattr("personalclaw.snapshot._running_gateway", lambda: None)
 
 
 @pytest.fixture

@@ -111,11 +111,14 @@ def _replace_refused(request: web.Request, operation: str, *, what: str, path: s
     got it wrong on any non-default port). ``personalclaw restore`` takes a snapshot or an export
     archive, with the gateway stopped, and there is no ``force`` over HTTP: overriding the guard
     is a local operator decision at a terminal. *path* is quoted for a shell, or a placeholder.
+    The gateway it names is this one, by the live record it published when it bound.
     """
+    from personalclaw import gateway_base
     from personalclaw.snapshot import replace_refusal
 
     _audit_api(request, operation, "denied", "gateway_running")
-    return json_error("gateway_running", message=replace_refusal(what, path), status=409)
+    message = replace_refusal(what, path, gateway_base.live_gateway())
+    return json_error("gateway_running", message=message, status=409)
 
 
 def _reject_app(request: web.Request) -> web.Response | None:

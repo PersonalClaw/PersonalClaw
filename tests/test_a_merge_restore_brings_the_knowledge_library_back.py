@@ -30,7 +30,7 @@ LIBRARY = "workspace/knowledge/knowledge.db"
 
 @pytest.fixture(autouse=True)
 def _no_gateway(monkeypatch):
-    monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: False)
+    monkeypatch.setattr("personalclaw.snapshot._running_gateway", lambda: None)
 
 
 def _blob(*values: float) -> bytes:

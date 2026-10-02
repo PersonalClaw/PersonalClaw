@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from personalclaw.durability import inventory as inv
+from personalclaw.gateway_base import LiveGateway
 from personalclaw.snapshot import restore_main, snapshot_main
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -18,7 +19,7 @@ from personalclaw.snapshot import restore_main, snapshot_main
 @pytest.fixture(autouse=True)
 def _no_gateway(monkeypatch):
     """Prevent gateway-running check from blocking restore in tests."""
-    monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: False)
+    monkeypatch.setattr("personalclaw.snapshot._running_gateway", lambda: None)
 
 
 def _setup_fake_personalclaw(d: Path) -> None:
@@ -824,7 +825,9 @@ class TestGatewayRunningRefusal:
         fresh = tmp_path / "fresh_gw"
         fresh.mkdir()
         monkeypatch.setenv("PERSONALCLAW_HOME", str(fresh))
-        monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: True)
+        monkeypatch.setattr(
+            "personalclaw.snapshot._running_gateway", lambda: LiveGateway(19999, 4242)
+        )
         ret = restore_main([str(tarball), "--mode", "replace"])
         assert ret == 1
         assert f"`personalclaw restore {tarball} --mode replace`" in capsys.readouterr().err
@@ -835,7 +838,9 @@ class TestGatewayRunningRefusal:
         fresh = tmp_path / "fresh_gw_force"
         fresh.mkdir()
         monkeypatch.setenv("PERSONALCLAW_HOME", str(fresh))
-        monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: True)
+        monkeypatch.setattr(
+            "personalclaw.snapshot._running_gateway", lambda: LiveGateway(19999, 4242)
+        )
         ret = restore_main([str(tarball), "--mode", "replace", "--force"])
         assert ret == 0
 
@@ -2616,7 +2621,7 @@ def test_the_dashboards_MERGE_RESTORE_runs_under_the_gateway_it_is_served_by(
     archive = sorted(out.glob("*.tar.gz"))[0]
     (home / "tasks" / "from-snap.json").unlink()
 
-    monkeypatch.setattr(snap_mod, "_is_gateway_running", lambda: True)
+    monkeypatch.setattr(snap_mod, "_running_gateway", lambda: LiveGateway(19999, 4242))
     result = snap_mod.restore_merge(archive, None)
 
     assert result["ok"] is True, result

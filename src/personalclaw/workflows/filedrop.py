@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import bounded_log
 from personalclaw.workflows import store
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,8 @@ def record_drop(run_id: str, entry: dict[str, Any]) -> None:
     rows.append(entry)
     path = _manifest_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(rows[-MAX_DROPPED_FILES:], indent=2))
+    kept = bounded_log.newest(rows, MAX_DROPPED_FILES, at="accepted_at")
+    atomic_write(path, json.dumps(kept, indent=2))
 
 
 def store_dropped_bytes(run_id: str, filename: str, data: bytes) -> dict[str, Any]:

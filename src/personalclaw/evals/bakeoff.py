@@ -41,6 +41,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
 
+from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
 from personalclaw.evals import pinning, store
 from personalclaw.evals.matrix import (
@@ -201,9 +202,9 @@ def capture_input(use_case: str, prompt: str, *, config: object | None = None) -
     path = _capture_path(use_case)
     existing = _read_records(path)
     existing.append(record)
-    # Keep the most recent window; drop the oldest beyond the cap.
+    # Keep the most recent window by each capture's own time; drop the oldest beyond the cap.
     if len(existing) > CAPTURE_MAX_PER_USE_CASE:
-        existing = existing[-CAPTURE_MAX_PER_USE_CASE:]
+        existing = bounded_log.newest(existing, CAPTURE_MAX_PER_USE_CASE, at="ts")
     body = "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in existing)
     atomic_write(path, body)
     path.chmod(0o600)

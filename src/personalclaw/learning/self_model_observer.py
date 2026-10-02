@@ -31,6 +31,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from personalclaw import bounded_log
 from personalclaw.learning.self_model import (
     CAPS,
     FACETS,
@@ -223,7 +224,12 @@ def _save_candidate(service, record: Reinforcement) -> None:
             "score": round(record.score, 4),
             # Retain only the recent window — the value has a hard 4KB ceiling and the counters
             # above already carry the durable evidence the thresholds test.
-            "observations": [o.to_dict() for o in record.observations[-_KEEP_OBSERVATIONS:]],
+            "observations": [
+                o.to_dict()
+                for o in bounded_log.newest(
+                    record.observations, _KEEP_OBSERVATIONS, at=lambda o: o.at
+                )
+            ],
         },
     )
 

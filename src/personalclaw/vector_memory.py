@@ -27,7 +27,7 @@ from uuid import uuid4
 
 from snowballstemmer import stemmer as _snowball_stemmer
 
-from personalclaw import memory_holder, memory_slots, memory_writes
+from personalclaw import bounded_log, memory_holder, memory_slots, memory_writes
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.identity import contributor_label as _contributor_label
@@ -2556,18 +2556,16 @@ class VectorMemoryStore(MemoryProvider):
         return texts
 
     def rotate_events(self, max_rows: int = _MAX_EVENTS) -> int:
-        """Delete oldest events if over limit. Returns count deleted."""
+        """Delete the oldest events by ``created_at`` if over limit (``bounded_log``). Returns
+        count deleted."""
         count = self.db.execute("SELECT COUNT(*) FROM memory_events").fetchone()[0]
         if count <= max_rows:
             return 0
-        to_delete = count - max_rows
-        self.db.execute(
-            "DELETE FROM memory_events WHERE id IN "
-            "(SELECT id FROM memory_events ORDER BY id ASC LIMIT ?)",
-            (to_delete,),
+        deleted = bounded_log.prune_table(
+            self.db.cursor(), "memory_events", max_rows, at="created_at"
         )
         self.db.commit()
-        return to_delete
+        return deleted
 
     # ── FAISS Index ──
 

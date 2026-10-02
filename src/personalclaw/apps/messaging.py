@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from personalclaw import bounded_log
 from personalclaw.apps.manager import _validate_app_name
 from personalclaw.apps.permissions import checker_for
 from personalclaw.atomic_write import atomic_write
@@ -123,9 +124,9 @@ def _append_to_queue(target: str, msg: AppMessage) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     queue = read_queue(target)
     queue.append(msg.to_dict())
-    # Retain the newest N so a target's inbox can't grow without bound.
+    # Retain the newest N by each message's own time, so a target's inbox can't grow without bound.
     if len(queue) > _MAX_QUEUE:
-        queue = queue[-_MAX_QUEUE:]
+        queue = bounded_log.newest(queue, _MAX_QUEUE, at="ts")
     atomic_write(path, json.dumps(queue, indent=2))
 
 

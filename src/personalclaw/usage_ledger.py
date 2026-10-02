@@ -27,8 +27,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from personalclaw import spend_day
-from personalclaw.atomic_write import atomic_write
+from personalclaw import bounded_log, spend_day
 
 logger = logging.getLogger(__name__)
 
@@ -244,12 +243,10 @@ def record_from_event(
 
 
 def _maybe_trim(p: Path) -> None:
-    """Trim to the newest ``_CAP`` lines when the file exceeds 2× (atomic rewrite)."""
+    """Trim to the newest ``_CAP`` turns by each one's ``ts`` when the file exceeds 2×
+    (``bounded_log``: an atomic rewrite, in time order)."""
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()
-        if len(lines) <= 2 * _CAP:
-            return
-        atomic_write(p, "\n".join(lines[-_CAP:]) + "\n")
+        bounded_log.trim_jsonl(p, _CAP, at="ts")
     except OSError:
         logger.debug("usage ledger trim failed", exc_info=True)
 

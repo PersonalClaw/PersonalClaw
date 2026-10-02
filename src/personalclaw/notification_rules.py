@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from personalclaw import notification_addressing
+from personalclaw import bounded_log, notification_addressing
 from personalclaw import notification_kinds as nk
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
@@ -604,16 +604,13 @@ def queue_for_digest(note: dict[str, Any]) -> None:
 
 
 def _trim_digest_queue(path: Path) -> None:
-    """Keep the newest ``DIGEST_QUEUE_CAP`` entries once the file exceeds 2x that.
+    """Keep the newest ``DIGEST_QUEUE_CAP`` entries by each note's ``ts`` once the file exceeds
+    2x that (``bounded_log``).
 
     Trimming at 2x rather than every append keeps the common path one write.
     """
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        if len(lines) <= DIGEST_QUEUE_CAP * 2:
-            return
-        keep = lines[-DIGEST_QUEUE_CAP:]
-        atomic_write(path, "\n".join(keep) + "\n")
+        bounded_log.trim_jsonl(path, DIGEST_QUEUE_CAP, at="ts")
     except OSError:
         logger.warning("digest queue trim failed", exc_info=True)
 

@@ -50,7 +50,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw import bounded_log
+from personalclaw.atomic_write import atomic_write, open_streamed
 from personalclaw.config import loader as config_loader
 
 
@@ -702,8 +703,7 @@ def run_remediation(
 
 
 def _write_ledger(result: RunResult, *, now: float) -> None:
-    """Append one ledger row (trim at 2× cap, atomic-write rewrite — the audit.jsonl
-    pattern)."""
+    """Append one ledger row; past 2× cap, keep the newest by ``ts`` (``bounded_log``)."""
     try:
         d = _doctor_dir()
         d.mkdir(parents=True, exist_ok=True)
@@ -715,11 +715,9 @@ def _write_ledger(result: RunResult, *, now: float) -> None:
             "jobs": result.jobs,
             "stopped_reason": result.stopped_reason,
         }
-        existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-        existing.append(json.dumps(row))
-        if len(existing) > _LEDGER_CAP * 2:
-            existing = existing[-_LEDGER_CAP:]
-        atomic_write(path, "\n".join(existing) + "\n")
+        with open_streamed(path, "ab") as fh:
+            fh.write((json.dumps(row) + "\n").encode("utf-8"))
+        bounded_log.trim_jsonl(path, _LEDGER_CAP, at="ts")
     except Exception:
         logger.debug("remediation ledger write failed", exc_info=True)
 

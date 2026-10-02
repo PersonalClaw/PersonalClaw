@@ -246,9 +246,9 @@ class TestEveryChildBaseGoesThroughTheOwner:
         while the very process asking was serving the request."""
         from personalclaw import snapshot
 
-        assert snapshot._is_gateway_running() is False
+        assert snapshot._running_gateway() is None
         gateway_base.publish(10771, pid=_DEAD_PID)
-        assert snapshot._is_gateway_running() is False
+        assert snapshot._running_gateway() is None
 
 
 # ── the rail: nobody else may resolve the base ─────────────────────────────

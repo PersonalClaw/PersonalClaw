@@ -58,6 +58,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw import bounded_log
+
 logger = logging.getLogger(__name__)
 
 # The skill's confirmation gate caps N at 5; the core enforces
@@ -305,12 +307,10 @@ def _outcomes_path() -> Path:
 
 
 def _trim_outcomes(path: Path) -> None:
-    """Bound the log: rewrite to the last ``_MAX_OUTCOME_LINES`` once it doubles."""
+    """Bound the log: rewrite to the newest ``_MAX_OUTCOME_LINES`` by ``ts`` once it doubles
+    (``bounded_log``)."""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        if len(lines) <= _MAX_OUTCOME_LINES * 2:
-            return
-        path.write_text("\n".join(lines[-_MAX_OUTCOME_LINES:]) + "\n", encoding="utf-8")
+        bounded_log.trim_jsonl(path, _MAX_OUTCOME_LINES, at="ts")
     except Exception:  # noqa: BLE001
         logger.debug("best_of_n: outcome trim failed", exc_info=True)
 

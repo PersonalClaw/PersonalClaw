@@ -33,6 +33,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from personalclaw import bounded_log
 from personalclaw.durability import inventory
 from personalclaw.sqlite_compat import sqlite3
 
@@ -288,7 +289,7 @@ def record(home: Path, *, now: float | None = None) -> Sample:
     state = load_state(home)
     series = [s.to_dict() for s in load_samples(home)]
     series.append(sample.to_dict())
-    state["samples"] = series[-SAMPLE_KEEP:]
+    state["samples"] = bounded_log.newest(series, SAMPLE_KEEP, at="at")
     _save_state(home, state)
     return sample
 

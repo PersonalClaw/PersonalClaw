@@ -38,6 +38,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
 from personalclaw.evals import benchmark_binding
 from personalclaw.evals import overlay as overlay_lib
@@ -723,7 +724,7 @@ def _run_cadence(
             "proposal": filed,
         }
     )
-    state["history"] = history[-100:]
+    state["history"] = bounded_log.newest(history, 100, at="ts")
     save_state(state)
     return {
         "ran": True,

@@ -17,6 +17,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw.gateway_base import LiveGateway
+
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
@@ -220,7 +222,9 @@ async def test_the_archive_merge_restore_runs_while_the_gateway_is_up(home, tmp_
     assert snap_mod.snapshot_main([str(snaps)]) == 0
     (archive,) = snaps.glob("*.tar.gz")
     (home / "tasks" / "from-snap.json").unlink()
-    monkeypatch.setattr(snap_mod, "_is_gateway_running", lambda: True)  # as it is, serving this
+    monkeypatch.setattr(
+        snap_mod, "_running_gateway", lambda: LiveGateway(19999, 4242)
+    )  # as it is, serving this
 
     async with TestClient(TestServer(_app())) as client:
         resp = await client.post(
@@ -292,7 +296,7 @@ async def test_archive_restore_refuses_replace_over_http_always(home):
 
     Driven, not reasoned: a `mode=replace&confirm=true` request to a gateway on --port
     10188 returned 200 and PERFORMED the replace over the live home. Cause —
-    `snapshot._is_gateway_running()` probes the CONFIGURED port, so on any non-default
+    the gateway check probed the CONFIGURED port, so on any non-default
     port it probed a dead socket and reported "not running". Serving this request is
     proof the gateway is up, so the handler answers from that instead of the network.
     """

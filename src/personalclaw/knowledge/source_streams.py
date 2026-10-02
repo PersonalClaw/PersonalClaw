@@ -34,6 +34,8 @@ import logging
 from pathlib import Path
 from typing import Any, Iterable
 
+from personalclaw import bounded_log
+
 logger = logging.getLogger(__name__)
 
 #: One item the engine (re-)indexed. Payload: ``{source_id, item_id, guid, title, url, change}``.
@@ -172,7 +174,8 @@ class SourceEventSpool:
             records = self._read_raw()
             if len(records) <= MAX_SPOOL_RECORDS:
                 return
-            kept = records[-TRIM_KEEP_RECORDS:]
+            # The highest `seq`, which a reader's cursor counts by (`bounded_log`).
+            kept = bounded_log.newest(records, TRIM_KEEP_RECORDS, at="seq")
             # Rewritten through the ONE durable-write helper so a crash mid-trim cannot leave a
             # half-written spool: the reader sees either the old file or the new one. A local
             # mkstemp+os.replace here would be a second implementation of that guarantee.

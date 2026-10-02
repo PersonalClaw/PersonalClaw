@@ -18,6 +18,7 @@ does it once the gateway is stopped. ``--force`` stays the terminal's own overri
 from __future__ import annotations
 
 import json
+import os
 import re
 import zipfile
 from pathlib import Path
@@ -35,7 +36,12 @@ def home(tmp_path, monkeypatch) -> Path:
     (h / "tags.json").write_text(json.dumps([{"id": "t-here", "name": "Mine"}]), encoding="utf-8")
     monkeypatch.setenv("PERSONALCLAW_HOME", str(h))
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: h)
-    monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: True)
+    from personalclaw import gateway_base
+
+    # This process, as a gateway of this home records itself once it has bound its port.
+    monkeypatch.setenv(gateway_base.PORT_ENV, "19999")
+    gateway_base.publish(19999)
+    monkeypatch.setattr("personalclaw.snapshot._running_gateway", gateway_base.live_gateway)
     return h
 
 
@@ -119,5 +125,6 @@ async def test_a_replace_is_refused_at_the_terminal_in_the_dashboards_words(home
 
     said_here = capsys.readouterr().err.strip()
     assert re.sub(r"^\W+", "", said_here) == said_there, (said_here, said_there)
+    assert f"the running gateway (pid {os.getpid()}, port 19999) holds open" in said_there
     assert _tags(home) == {"t-here"}, "nothing was replaced"
     assert not list(home.glob("pre-restore-*"))

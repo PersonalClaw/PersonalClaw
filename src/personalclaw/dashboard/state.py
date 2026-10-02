@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
-from personalclaw import record_files, restart_request, trust_mode
+from personalclaw import bounded_log, record_files, restart_request, trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
@@ -969,6 +969,9 @@ class _ChatSession:
 class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     """Shared state injected into all handlers via ``app["state"]``."""
 
+    #: The notification file as this process last read or wrote it (None: it has not).
+    _notifications_seen: tuple[int, int, int] | None = None
+
     def __init__(
         self,
         sessions: "SessionManager",
@@ -1037,7 +1040,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # after completion so a re-attaching client sees the terminal state.
         self._retag_job: Any = None  # RetagJob | None
         self._retag_task: asyncio.Task | None = None  # type: ignore[type-arg]
-        self._notification_log: list[dict[str, Any]] = _load_notifications()
+        self._notifications_seen = bounded_log.signature(_notifications_path())
+        self._notification_rows: list[dict[str, Any]] = _load_notifications()
         self._sessions: dict[str, _ChatSession] = {}
         self._channel_to_session: dict[str, str] = {}  # channel session_key → session name
         self._session_counter = 0
@@ -2001,7 +2005,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             return False
         self.broadcast_ws("notification_removed", {"ts": ts})
         self._notification_log = [n for n in self._notification_log if n.get("ts") != ts]
-        _rewrite_notifications(self._notification_log)
+        self._write_notifications()
         return True
 
     def delete_notifications_for_loop(self, loop_id: str) -> int:
@@ -2019,8 +2023,29 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # Announced first, like `delete_notification`: each app hears only its own notes' ts.
         self.broadcast_ws("notification_removed", {"ts": removed_ts})
         self._notification_log = [n for n in self._notification_log if n.get("loop_id") != loop_id]
-        _rewrite_notifications(self._notification_log)
+        self._write_notifications()
         return len(removed_ts)
+
+    @property
+    def _notification_log(self) -> list[dict[str, Any]]:
+        """The log as the file holds it now: read again once another writer changed the file (a
+        merge restore, an import, a sync), or the bell missed their rows and the next ack, writing
+        the log back whole, deleted them. A file that is gone is not an empty log: what this
+        process holds stays, and its next write puts the file back."""
+        seen = bounded_log.signature(_notifications_path())
+        if seen is not None and seen != self._notifications_seen:
+            self._notifications_seen = seen
+            self._notification_rows = _load_notifications()
+        return self._notification_rows
+
+    @_notification_log.setter
+    def _notification_log(self, rows: list[dict[str, Any]]) -> None:
+        self._notification_rows = rows
+
+    def _write_notifications(self) -> None:
+        """Write the log back whole, and remember the file as written, not as changed elsewhere."""
+        _rewrite_notifications(self._notification_rows)
+        self._notifications_seen = bounded_log.signature(_notifications_path())
 
     def _append_notification(self, note: dict[str, Any]) -> None:
         """Append to the log — the ONE seam that enforces the size cap.
@@ -2030,13 +2055,16 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         step. Keeping memory the exact mirror of the file is what makes every
         `_rewrite_notifications` call lossless (Issue 420 — a load that capped
         below the file's row count let one ack silently destroy the rest).
+        Newest by each note's own ``ts`` (``bounded_log``), never by its place in the file.
         """
-        self._notification_log.append(note)
-        if len(self._notification_log) > _MAX_PERSISTED_NOTIFICATIONS * 2:
-            self._notification_log = self._notification_log[-_MAX_PERSISTED_NOTIFICATIONS:]
-            _rewrite_notifications(self._notification_log)
+        log = self._notification_log
+        log.append(note)
+        if len(log) > _MAX_PERSISTED_NOTIFICATIONS * 2:
+            self._notification_rows = bounded_log.newest(log, _MAX_PERSISTED_NOTIFICATIONS, at="ts")
+            self._write_notifications()
         else:
             _persist_notification(note)
+            self._notifications_seen = bounded_log.signature(_notifications_path())
 
     def notification(self, ts: str) -> dict[str, Any] | None:
         """The notification written at ``ts``, or None when the log holds none."""
@@ -2050,7 +2078,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             return False
         note["trust_answer"] = answer
         note["acked"] = True
-        _rewrite_notifications(self._notification_log)
+        self._write_notifications()
         self.broadcast_ws("notification_ack", {"ts": ts})
         return True
 
@@ -2059,7 +2087,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         for n in self._notification_log:
             if n.get("ts") == ts:
                 n["acked"] = True
-                _rewrite_notifications(self._notification_log)
+                self._write_notifications()
                 self.broadcast_ws("notification_ack", {"ts": ts})
                 return True
         return False
@@ -2081,7 +2109,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                 n["acked"] = True
                 read.append(str(n.get("ts") or ""))
         if read:
-            _rewrite_notifications(self._notification_log)
+            self._write_notifications()
             self.broadcast_ws("notification_ack", {"ts": read})
         return read
 
@@ -2090,7 +2118,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         for n in self._notification_log:
             if n.get("ts") == ts:
                 n["acked"] = False
-                _rewrite_notifications(self._notification_log)
+                self._write_notifications()
                 self.broadcast_ws("notification_unack", {"ts": ts})
                 return True
         return False
@@ -2108,6 +2136,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                 path.write_text("", encoding="utf-8")
         except Exception:
             logger.debug("Failed to clear notifications file", exc_info=True)
+        self._notifications_seen = bounded_log.signature(_notifications_path())
 
     def get_session(self, name: str) -> _ChatSession | None:
         """Look up a session by name without creating it. Returns None if absent."""
@@ -2603,7 +2632,8 @@ def _notifications_path() -> Path:
 
 
 def _load_notifications() -> list[dict[str, Any]]:
-    """Load persisted notifications from disk (newest last).
+    """Load persisted notifications from disk, oldest first by each note's own ``ts`` whatever
+    order the file holds them in: the bell reads the log's end as its newest notes.
 
     EVERY valid row loads — no cap slice. The in-memory log is the write
     authority for `_rewrite_notifications`, so a load that silently truncated
@@ -2625,7 +2655,7 @@ def _load_notifications() -> list[dict[str, Any]]:
                 entries.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-        return entries
+        return bounded_log.in_time_order(entries, at="ts")
     except Exception:
         logger.debug("Failed to load notifications", exc_info=True)
         return []

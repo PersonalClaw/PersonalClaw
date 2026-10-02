@@ -54,6 +54,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
 from personalclaw.guardrails import trust_record
 from personalclaw.guardrails.incident import incident_active
@@ -316,7 +317,7 @@ def _parse_grant(key: str, raw: object) -> RungGrant | None:
         rung=rung,
         granted_at=str(raw.get("granted_at", "") or ""),
         evidence_window=str(raw.get("evidence_window", "") or ""),
-        demotions=tuple(demotions[-_MAX_DEMOTIONS:]),
+        demotions=tuple(bounded_log.newest(demotions, _MAX_DEMOTIONS, at=lambda d: d.at)),
     )
 
 
@@ -872,7 +873,13 @@ def demote(key: str, cause: str) -> Demotion:
         rung=floor,
         granted_at="",
         evidence_window="",
-        demotions=((existing.demotions if existing else ()) + (record,))[-_MAX_DEMOTIONS:],
+        demotions=tuple(
+            bounded_log.newest(
+                (*(existing.demotions if existing else ()), record),
+                _MAX_DEMOTIONS,
+                at=lambda d: d.at,
+            )
+        ),
     )
     _save_store(store)
     trust_record.record_demotion(key, floor=floor, cause=record.cause, at=record.at)

@@ -55,6 +55,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
 from personalclaw.guardrails.autonomy import (
     RUNGS,
@@ -218,7 +219,7 @@ def _save_records(records: list[ReversalRecord]) -> None:
                 "created_at": r.created_at,
                 "reversed_at": r.reversed_at,
             }
-            for r in records[-_MAX_RECORDS:]
+            for r in bounded_log.newest(records, _MAX_RECORDS, at=lambda r: r.created_at)
         ]
     }
     path = _store_path()

@@ -17,11 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, TextIO
 
+from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes, private_file
 from personalclaw.sqlite_compat import sqlite3
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.durability.inventory import StateEntry
+    from personalclaw.gateway_base import LiveGateway
 
 VALID_COMPONENTS = (
     "memory",
@@ -1228,26 +1230,15 @@ def _merge_event_triggers(src_path: Path, dst_path: Path) -> None:
     print(f"  Event triggers imported: {imported} (skipped {total - imported} duplicates)")
 
 
-def _merge_notifications(src_path: Path, dst_path: Path) -> None:
-    existing: set[str] = set()
-    with open(dst_path) as f:
-        for line in f:
-            try:
-                existing.add(json.loads(line).get("ts") or line.strip())
-            except (ValueError, TypeError):
-                pass
-    imported = 0
-    with open(dst_path, "a") as out, open(src_path) as f:
-        for line in f:
-            try:
-                key = json.loads(line).get("ts") or line.strip()
-                if key not in existing:
-                    out.write(line)
-                    existing.add(key)
-                    imported += 1
-            except (ValueError, TypeError):
-                pass
-    print(f"  Notifications imported: {imported}")
+def _merge_notifications(
+    src_path: Path, dst_path: Path, *, left_unchanged: list[str] | None = None
+) -> None:
+    """Merge the archive's notifications into the home's, deduped on ``ts`` (each note's id) and
+    written in time order: the bell reads the log's end as its newest notes, and the trim at the
+    next notification keeps the newest by time (``bounded_log``)."""
+    _merge_keyed_jsonl(
+        src_path, dst_path, "ts", "Notifications", at="ts", left_unchanged=left_unchanged
+    )
 
 
 def _entry_at(rel: str) -> "StateEntry | None":
@@ -1475,13 +1466,27 @@ def _merge_sqlite_attach(
     return imported
 
 
-def _merge_keyed_jsonl(src: Path, dst: Path, key_field: str, label: str) -> int:
-    """Append rows from `src` that `dst` lacks, deduping on `key_field` (S179).
+def _merge_keyed_jsonl(
+    src: Path,
+    dst: Path,
+    key_field: str,
+    label: str,
+    *,
+    at: str,
+    left_unchanged: list[str] | None = None,
+) -> int:
+    """Bring in the rows of `src` that `dst` lacks, deduping on `key_field` (S179), and write the
+    log in time order by each row's `at` field (``bounded_log.merge_jsonl``).
 
     Extracted after a THIRD near-identical copy was needed (`model_calls.jsonl`, whose declared
     `append_dedup` the S178 ratchet demanded an executor for). Three hand-written loops differing
     only in a key name is how two of them start disagreeing — the duplication S175 deleted from the
     run store after finding one copy had silently reverted another.
+
+    In time order, never after the home's own rows: an archive's rows are older, and every reader
+    of these logs takes the file's end for its newest — the bell, the model-health tail, "the last
+    verdict wins" — while each log's trim kept the last lines and deleted the newest. A log that
+    went on changing under the merge is left as it was and named in *left_unchanged*.
 
     Deliberately NOT used for `security_events.jsonl`: that one carries an HMAC-key precondition,
     and folding a security gate into a generic helper is how the gate gets dropped by a later caller
@@ -1489,30 +1494,18 @@ def _merge_keyed_jsonl(src: Path, dst: Path, key_field: str, label: str) -> int:
     """
     if not src.is_file() or not dst.is_file():
         return 0
-    existing: set[str] = set()
-    with open(dst, encoding="utf-8") as f:
-        for line in f:
-            try:
-                existing.add(json.loads(line).get(key_field) or line.strip())
-            except (ValueError, TypeError):
-                pass
-    imported = 0
-    with open(dst, "a", encoding="utf-8") as out, open(src, encoding="utf-8") as f:
-        for line in f:
-            try:
-                key = json.loads(line).get(key_field) or line.strip()
-            except (ValueError, TypeError):
-                continue
-            if key not in existing:
-                out.write(line if line.endswith("\n") else line + "\n")
-                existing.add(key)
-                imported += 1
-    if imported:
-        print(f"  {label} imported: {imported}")
+    try:
+        imported = bounded_log.merge_jsonl(src, dst, key=key_field, at=at)
+    except OSError as exc:
+        print(f"  ⚠️  {label}: {exc}")
+        if left_unchanged is not None:
+            left_unchanged.append(dst.name)
+        return 0
+    print(f"  {label} imported: {imported}")
     return imported
 
 
-def _merge_feedback(src: Path, dst: Path) -> None:
+def _merge_feedback(src: Path, dst: Path, *, left_unchanged: list[str] | None = None) -> None:
     """Merge `feedback.jsonl`, deduping on the record's own `id` (S178).
 
     The third `append_dedup` entry with no executor. Unlike the SEL log this carries no HMAC, so
@@ -1524,10 +1517,12 @@ def _merge_feedback(src: Path, dst: Path) -> None:
     at 2x cap") and re-implementing the bound here is the duplication S175 deleted from the run
     store after finding one copy had silently reverted the other.
     """
-    _merge_keyed_jsonl(src, dst, "id", "Feedback")
+    _merge_keyed_jsonl(src, dst, "id", "Feedback", at="created_at", left_unchanged=left_unchanged)
 
 
-def _merge_security_events(snap: Path, pc: Path) -> None:
+def _merge_security_events(
+    snap: Path, pc: Path, *, left_unchanged: list[str] | None = None
+) -> None:
     """Merge the SEL audit log — but ONLY when the HMAC key that will verify it is the same (S178).
 
     🔴 WHY THE GUARD. `inventory.py` declares `security_events.jsonl` with `merge=append_dedup`, and
@@ -1549,6 +1544,11 @@ def _merge_security_events(snap: Path, pc: Path) -> None:
     are skipped and the reason is printed. The alternative failure — a silently importable row that
     reads as tampering — is strictly worse than a missing row, because an audit trail's value is
     that a mismatch means something.
+
+    In time order, deduped on ``event_id`` (``bounded_log.merge_jsonl``): the log rotates whole,
+    so no row is lost, but its recent-events read and the audit page take the file's end for the
+    newest events, and an archive's rows written after the home's own read as what just happened.
+    Every record keeps its bytes, so each one's HMAC verifies as it did.
     """
     src, dst = snap / "security_events.jsonl", pc / "security_events.jsonl"
     if not src.is_file():
@@ -1569,28 +1569,19 @@ def _merge_security_events(snap: Path, pc: Path) -> None:
         print("  Security events: skipped (HMAC key differs — imported rows could not verify)")
         return
 
-    existing: set[str] = set()
-    with open(dst, encoding="utf-8") as f:
-        for line in f:
-            try:
-                existing.add(json.loads(line).get("event_id") or line.strip())
-            except (ValueError, TypeError):
-                pass
-    imported = 0
-    with open(dst, "a", encoding="utf-8") as out, open(src, encoding="utf-8") as f:
-        for line in f:
-            try:
-                key = json.loads(line).get("event_id") or line.strip()
-            except (ValueError, TypeError):
-                continue
-            if key not in existing:
-                out.write(line if line.endswith("\n") else line + "\n")
-                existing.add(key)
-                imported += 1
+    try:
+        imported = bounded_log.merge_jsonl(src, dst, key="event_id", at="timestamp")
+    except OSError as exc:
+        print(f"  ⚠️  Security events: {exc}")
+        if left_unchanged is not None:
+            left_unchanged.append(dst.name)
+        return
     print(f"  Security events imported: {imported}")
 
 
-def _merge_run_history(src_dir: Path, dst_dir: Path) -> None:
+def _merge_run_history(
+    src_dir: Path, dst_dir: Path, *, left_unchanged: list[str] | None = None
+) -> None:
     """Merge `cron-history/` shard-by-shard, deduping on `run_id` (S176).
 
     🔴 WHY THIS EXISTS. `inventory.py` declares `cron_history` with `merge=append_dedup`, and
@@ -1604,8 +1595,9 @@ def _merge_run_history(src_dir: Path, dst_dir: Path) -> None:
     double it. Mirrors `_merge_notifications`, which dedupes on `ts` for the same reason.
 
     Per-shard, because the store is one file per job (`clock:backup.jsonl`) plus a cross-job
-    `_index.jsonl`. A shard present only in the snapshot is copied whole; one present in both is
-    appended-and-deduped, so the live home never loses a row it already had.
+    `_index.jsonl`: a shard only the snapshot has is copied whole, and one both have gets the runs
+    it lacks, in time order, under the lock the store's own writes take
+    (`ScheduleRunStore.merge_in`). *dst_dir* is the home's `cron-history`.
 
     Deliberately does NOT rotate afterwards. `ScheduleRunStore.rotate_all()` runs at gateway boot
     (S175) and owns that policy; trimming here would apply retention twice with a second copy of the
@@ -1613,32 +1605,15 @@ def _merge_run_history(src_dir: Path, dst_dir: Path) -> None:
     """
     if not src_dir.is_dir():
         return
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    shards = imported = 0
-    for src in sorted(src_dir.glob("*.jsonl")):
-        dst = dst_dir / src.name
-        if not dst.is_file():
-            shutil.copy2(str(src), str(dst))
-            shards += 1
-            continue
-        existing: set[str] = set()
-        with open(dst) as f:
-            for line in f:
-                try:
-                    existing.add(str(json.loads(line).get("run_id") or line.strip()))
-                except (ValueError, TypeError):
-                    pass
-        with open(dst, "a") as out, open(src) as f:
-            for line in f:
-                try:
-                    key = str(json.loads(line).get("run_id") or line.strip())
-                except (ValueError, TypeError):
-                    continue
-                if key not in existing:
-                    out.write(line)
-                    existing.add(key)
-                    imported += 1
-        shards += 1
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    try:
+        shards, imported = ScheduleRunStore(dst_dir.parent).merge_in(src_dir)
+    except OSError as exc:
+        print(f"  ⚠️  Run history: {exc}")
+        if left_unchanged is not None:
+            left_unchanged.append(dst_dir.name)
+        return
     print(f"  Run history: {shards} shard(s), {imported} row(s) imported")
 
 
@@ -2058,24 +2033,29 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     # `crons` because it IS the crons' history: a merge restore that recovered the triggers but not
     # their runs leaves a user with automations and no record of what they ever did.
     if _want(components, "crons"):
-        _merge_run_history(snap / "cron-history", pc / "cron-history")
+        _merge_run_history(snap / "cron-history", pc / "cron-history", left_unchanged=left)
 
     if _want(components, "notifications"):
         sn, dn = snap / "notifications.jsonl", pc / "notifications.jsonl"
         if sn.is_file():
             if dn.is_file():
-                _merge_notifications(sn, dn)
+                _merge_notifications(sn, dn, left_unchanged=left)
             else:
                 shutil.copy2(str(sn), str(dn))
                 print("  Notifications: copied")
         # `feedback.jsonl`, the third declared `append_dedup` with no executor. Grouped here rather
         # than given its own component: both are platform-domain append logs, and a new component
         # name is a CLI surface a user then has to know about.
-        _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
+        _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl", left_unchanged=left)
         # `model_calls.jsonl`, the fourth declared `append_dedup` — demanded by its own ratchet
         # the moment S179 declared the entry. Keyed on `AttemptRecord.audit_id`.
         _merge_keyed_jsonl(
-            snap / "model_calls.jsonl", pc / "model_calls.jsonl", "audit_id", "Model calls"
+            snap / "model_calls.jsonl",
+            pc / "model_calls.jsonl",
+            "audit_id",
+            "Model calls",
+            at="ts",
+            left_unchanged=left,
         )
         print("  ✅ notifications")
 
@@ -2088,7 +2068,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
                 print(f"  {f}: restored (was missing)")
         # The SEL audit log, whose declared `append_dedup` had no executor. Placed AFTER the key
         # copy above, because whether the imported rows can verify depends on which key won.
-        _merge_security_events(snap, pc)
+        _merge_security_events(snap, pc, left_unchanged=left)
         print("  ✅ security")
 
     if _want(components, "workspace"):
@@ -2201,8 +2181,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     return left
 
 
-def _is_gateway_running() -> bool:
-    """Whether a gateway of THIS home is up, on the socket it actually bound.
+def _running_gateway() -> "LiveGateway | None":
+    """The gateway of THIS home that is up, on the socket it actually bound — its port and pid,
+    which a refusal names — or ``None``.
 
     Asks ``gateway_base.live_port()`` — the port a live gateway of this home published
     after binding — instead of ``config.loader.DASHBOARD_PORT``. That constant is the
@@ -2213,20 +2194,20 @@ def _is_gateway_running() -> bool:
     host it could equally report "running" because a DIFFERENT instance answered on 10000,
     refusing a legitimate restore.
 
-    No live record ⇒ no gateway of this home ⇒ ``False``. The record is written after bind
+    No live record ⇒ no gateway of this home ⇒ ``None``. The record is written after bind
     and removed on shutdown, and one naming a dead pid is ignored, so this cannot be
     satisfied by a stale file or by a stranger occupying a shared port.
     """
     from personalclaw import gateway_base
 
-    port = gateway_base.live_port()
-    if not port:
-        return False
+    gateway = gateway_base.live_gateway()
+    if gateway is None:
+        return None
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=1):
-            return True
+        with socket.create_connection(("127.0.0.1", gateway.port), timeout=1):
+            return gateway
     except OSError:
-        return False
+        return None
 
 
 def restore_plan(archive: Path, components: list[str] | None) -> dict:
@@ -2260,7 +2241,7 @@ def restore_plan(archive: Path, components: list[str] | None) -> dict:
 MERGE_RESTART_NOTE = "Restart the gateway to pick up everything the merge brought in."
 
 
-def replace_refusal(what: str, path: str) -> str:
+def replace_refusal(what: str, path: str, gateway: "LiveGateway | None") -> str:
     """Why a replace is refused while the gateway runs, and the command that does it: the one
     answer the dashboard (``409 gateway_running``) and ``personalclaw restore`` both give.
 
@@ -2269,9 +2250,18 @@ def replace_refusal(what: str, path: str) -> str:
     replace moves the live home aside under a gateway that holds that state open — databases,
     caches, stores it writes back — so it runs with the gateway stopped. *what* names the restore
     (``restore``, ``import``); *path* is the archive, quoted for a shell, or a placeholder.
+
+    *gateway* is the running gateway as this home's live record names it, so the refusal says
+    which process holds the state open: a gateway started outside the service is one that
+    ``personalclaw stop`` may not be the way to stop. ``None`` when no record names one.
     """
+    running = (
+        f"the running gateway (pid {gateway.pid}, port {gateway.port})"
+        if gateway is not None
+        else "the running gateway"
+    )
     return (
-        f"A replace {what} rewrites state the running gateway holds open. Stop the gateway "
+        f"A replace {what} rewrites state {running} holds open. Stop the gateway "
         f"(`personalclaw stop`), then run `personalclaw restore {path} --mode replace`."
     )
 
@@ -2281,10 +2271,13 @@ def _replace_refused(args: argparse.Namespace, mode: str, what: str) -> bool:
     gateway runs, without ``--force`` — a local operator's decision, taken at the terminal. Says
     why on stderr, in the words the dashboard refuses one in (:func:`replace_refusal`). A merge is
     never refused for a running gateway."""
-    if mode != "replace" or getattr(args, "force", False) or not _is_gateway_running():
+    if mode != "replace" or getattr(args, "force", False):
+        return False
+    gateway = _running_gateway()
+    if gateway is None:
         return False
     _audit("state_restore_rejected", "reason=gateway_running")
-    print(f"❌ {replace_refusal(what, shlex.quote(str(args.snapshot)))}", file=sys.stderr)
+    print(f"❌ {replace_refusal(what, shlex.quote(str(args.snapshot)), gateway)}", file=sys.stderr)
     return True
 
 

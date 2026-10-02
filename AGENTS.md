@@ -258,10 +258,13 @@ re-invents a shape another touches:
   `uses_default_home()` for a "not against the real home" rail — and it is asked
   when the home is used, never at import);
   writes via `atomic_write`/`atomic_write_bytes`; reads tolerate missing/corrupt;
-  secrets `mode=0o600`; append-only JSONL trims at 2× cap; new durable state that
-  external tools may read is a stable surface. A stored or served time is a UTC
-  instant with its offset (`personalclaw.instants`), never a bare local wall-clock
-  reading: a reader in another zone cannot tell which instant that names.
+  secrets `mode=0o600`; append-only JSONL trims at 2× cap, keeping the newest rows by
+  each row's own time and never by their place in the file, and a merge writes a log in
+  time order (`bounded_log`; `test_bounded_log_rail_trims_by_time.py` fails a trim by
+  position); new durable state that external tools may read is a stable surface. A
+  stored or served time is a UTC instant with its offset (`personalclaw.instants`), never
+  a bare local wall-clock reading: a reader in another zone cannot tell which instant
+  that names.
 - **Fail-open vs fail-closed** — user-facing availability surfaces (notification
   rules, settings) fail **open**: corrupt file → permissive default + warn.
   Inbound/security surfaces (tokens, inbound `enabled` flags, capability probes)

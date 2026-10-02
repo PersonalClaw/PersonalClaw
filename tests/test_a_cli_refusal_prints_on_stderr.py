@@ -212,7 +212,7 @@ def test_a_refused_restore_names_the_components_on_stderr(tmp_path, monkeypatch,
 
     archive = tmp_path / "snap.tar.gz"
     archive.write_bytes(b"")
-    monkeypatch.setattr(snapshot, "_is_gateway_running", lambda: False)
+    monkeypatch.setattr(snapshot, "_running_gateway", lambda: None)
 
     assert snapshot.restore_main([str(archive), "--components", "bogus"]) == 1
     out, err = capsys.readouterr()

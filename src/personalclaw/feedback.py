@@ -33,7 +33,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from personalclaw import notification_kinds
+from personalclaw import bounded_log, notification_kinds
 
 logger = logging.getLogger(__name__)
 
@@ -119,12 +119,15 @@ def _invalidate() -> None:
 
 
 def _load_index() -> dict[tuple[str, str], FeedbackRecord]:
-    """Current verdict per (target_kind, target_id): last record wins (supersede).
-    Tolerant reads — a corrupt line is skipped with a warning (fail OPEN)."""
+    """Current verdict per (target_kind, target_id): the latest record wins (supersede).
+    Tolerant reads — a corrupt line is skipped with a warning (fail OPEN).
+
+    Latest by ``created_at``, not by place in the file: a merge restore or a sync adds older
+    verdicts after the home's own, and the last LINE then overruled the user's newer verdict."""
     global _INDEX
     if _INDEX is not None:
         return _INDEX
-    index: dict[tuple[str, str], FeedbackRecord] = {}
+    records: list[FeedbackRecord] = []
     p = _path()
     if p.is_file():
         try:
@@ -150,9 +153,13 @@ def _load_index() -> dict[tuple[str, str], FeedbackRecord]:
                     logger.warning("feedback.jsonl: skipping corrupt line")
                     continue
                 if rec.target_kind and rec.target_id and rec.verdict in ("up", "down"):
-                    index[(rec.target_kind, rec.target_id)] = rec
+                    records.append(rec)
         except OSError:
             logger.warning("feedback.jsonl unreadable — starting empty", exc_info=True)
+    index = {
+        (rec.target_kind, rec.target_id): rec
+        for rec in bounded_log.in_time_order(records, at=lambda rec: rec.created_at)
+    }
     _INDEX = index
     return index
 
@@ -243,15 +250,11 @@ def _append(rec: FeedbackRecord) -> None:
 
 
 def _maybe_trim(p: Path) -> None:
-    """Trim to the newest _CAP lines when the file exceeds 2× (atomic rewrite)."""
+    """Trim to the newest _CAP verdicts by when each was given, once the file exceeds 2×
+    (``bounded_log``: an atomic rewrite, in time order)."""
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()
-        if len(lines) <= 2 * _CAP:
-            return
-        from personalclaw.atomic_write import atomic_write
-
-        atomic_write(p, "\n".join(lines[-_CAP:]) + "\n")
-        _invalidate()
+        if bounded_log.trim_jsonl(p, _CAP, at="created_at"):
+            _invalidate()
     except OSError:
         logger.debug("feedback trim failed", exc_info=True)
 

@@ -22,7 +22,7 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw import bounded_log
 from personalclaw.guardrails.failure import FailureMode
 
 logger = logging.getLogger(__name__)
@@ -261,16 +261,10 @@ def record_attempt(rec: AttemptRecord) -> None:
 
 
 def _maybe_trim(path: Path) -> None:
-    """Rewrite ``path`` to its last ``_LINE_CAP`` lines once it exceeds 2× the cap."""
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            lines = fh.readlines()
-    except OSError:
-        return
-    if len(lines) <= 2 * _LINE_CAP:
-        return
-    kept = lines[-_LINE_CAP:]
-    atomic_write(path, "".join(kept))
+    """Rewrite ``path`` to its newest ``_LINE_CAP`` attempts by each one's ``ts``, once it exceeds
+    2× the cap (``bounded_log``): a merge restore adds an archive's older attempts after the home's
+    own, and the last lines were the archive's."""
+    bounded_log.trim_jsonl(path, _LINE_CAP, at="ts")
 
 
 def read_recent(limit: int = 1000) -> list[dict]:

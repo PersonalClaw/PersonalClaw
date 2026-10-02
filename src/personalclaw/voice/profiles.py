@@ -51,6 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 
@@ -613,10 +614,11 @@ def append_history(
             "created_at": _now(),
         }
     )
-    while len(profile.history) > HISTORY_MAX:
-        dropped = profile.history.pop(0)
+    kept = bounded_log.newest(profile.history, HISTORY_MAX, at="created_at")
+    for dropped in [take for take in profile.history if not any(take is k for k in kept)]:
         with contextlib.suppress(OSError, VoiceProfileError):
             artifact_path(profile_id, str(dropped.get("path") or "")).unlink()
+    profile.history = kept
     _write(profile)
     return profile
 

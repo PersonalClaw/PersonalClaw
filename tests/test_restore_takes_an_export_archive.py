@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.gateway_base import LiveGateway
 from personalclaw.snapshot import restore_main
 
 
@@ -38,7 +39,8 @@ def export(home, tmp_path) -> Path:
 
 
 def _gateway(monkeypatch, running: bool) -> None:
-    monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: running)
+    gateway = LiveGateway(19999, 4242) if running else None
+    monkeypatch.setattr("personalclaw.snapshot._running_gateway", lambda: gateway)
 
 
 def test_a_replace_from_an_export_archive_runs_at_the_terminal(home, export, monkeypatch, capsys):

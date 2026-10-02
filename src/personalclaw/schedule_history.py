@@ -21,12 +21,14 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import shutil
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
+from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
@@ -269,6 +271,11 @@ def _settle_row(row: dict[str, Any], ending: dict[str, Any], *, with_trace: bool
         row["trace"] = ending["trace"]
 
 
+def _newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """*rows* newest first by ``started_at``, whatever order the file holds them in."""
+    return bounded_log.in_time_order(rows, at="started_at")[::-1]
+
+
 class ScheduleRunStore:
     """JSONL-per-job store of :class:`ScheduleRun` records, owned by the service.
 
@@ -463,8 +470,7 @@ class ScheduleRunStore:
     def _list_for_job_sync(
         self, job_id: str, offset: int, limit: int
     ) -> tuple[list[dict[str, Any]], int]:
-        rows = self._read_jsonl(self._job_path(job_id))
-        rows.reverse()  # newest-first
+        rows = _newest_first(self._read_jsonl(self._job_path(job_id)))
         total = len(rows)
         page = [{k: v for k, v in r.items() if k != "trace"} for r in rows[offset : offset + limit]]
         return page, total
@@ -534,7 +540,7 @@ class ScheduleRunStore:
         rows = self._read_jsonl(self._index)
         if job_id:
             rows = [r for r in rows if r.get("job_id") == job_id]
-        rows.reverse()  # newest-first
+        rows = _newest_first(rows)
         total = len(rows)
         return rows[offset : offset + limit], total
 
@@ -572,14 +578,17 @@ class ScheduleRunStore:
         computed as the remainder — a job with no skips still keeps its full 100 runs, so nothing
         regresses for a trigger that never suppresses.
 
-        Order is PRESERVED on write: the two classes are partitioned to decide what survives, then
-        re-merged by their original position, because `list_for_job` reverses the file for
-        newest-first and `count_since` walks it — both would misread a file grouped by class.
+        Newest by each run's own `started_at`, never by its place in the file (`bounded_log`): a
+        merge restore brings an archive's older runs in, and a tail that kept the last lines kept
+        those and let the home's newest go. The file is written in time order: the two classes are
+        partitioned to decide what survives, then re-merged by time, because `count_since` walks
+        the file and a file grouped by class would read out of order.
         """
         path = self._job_path(job_id)
         rows = self._read_jsonl(path)
         if len(rows) <= _MAX_RECORDS_PER_JOB:
             return
+        rows = bounded_log.in_time_order(rows, at="started_at")
         from personalclaw.triggers.models import INERT_OUTCOMES
 
         sup_idx = [i for i, r in enumerate(rows) if str(r.get("status") or "") in INERT_OUTCOMES]
@@ -615,15 +624,15 @@ class ScheduleRunStore:
         rows = self._read_jsonl(self._index)
         if len(rows) <= _MAX_INDEX_RECORDS:
             return
-        # Newest-first per job, so each job's own tail is what survives its share.
+        # In time order first (`bounded_log`), so each job's own tail is its newest runs.
+        rows = bounded_log.in_time_order(rows, at="started_at")
         per_job: dict[str, list[int]] = {}
         for i, r in enumerate(rows):
             per_job.setdefault(str(r.get("job_id") or ""), []).append(i)
         keep: set[int] = set()
         for idxs in per_job.values():
             keep.update(idxs[-_MAX_INDEX_PER_JOB:])
-        # Then the global cap, on the fair-shared set. Order preserved: `list_all` reverses the
-        # file for newest-first, so a file regrouped by job would render out of order.
+        # Then the global cap, on the fair-shared set, kept in time order.
         self._write_jsonl(self._index, [rows[i] for i in sorted(keep)[-_MAX_INDEX_RECORDS:]])
 
     def _rotate_all_sync(self) -> None:
@@ -652,6 +661,27 @@ class ScheduleRunStore:
         import asyncio
 
         await asyncio.to_thread(self._rotate_all_sync)
+
+    def merge_in(self, src_dir: Path) -> tuple[int, int]:
+        """Bring another home's run history in — a snapshot's `cron-history/` — and return
+        ``(shards, runs brought in)``.
+
+        A shard this store lacks is copied whole; one it holds gets the runs it lacks, matched on
+        ``run_id``, written in time order by ``started_at`` (``bounded_log.merge_jsonl``): the
+        archive's runs are older, and the page reads the newest first. Under the lock every append
+        takes, so a run the gateway records meanwhile is not written over. Retention stays the
+        boot's (:meth:`rotate_all`).
+        """
+        shards = imported = 0
+        with self._lock():
+            for src in sorted(Path(src_dir).glob("*.jsonl")):
+                dst = self._dir / src.name
+                if dst.is_file():
+                    imported += bounded_log.merge_jsonl(src, dst, key="run_id", at="started_at")
+                else:
+                    shutil.copy2(src, dst)
+                shards += 1
+        return shards, imported
 
     def _delete_for_job_sync(self, job_id: str) -> None:
         with self._lock():

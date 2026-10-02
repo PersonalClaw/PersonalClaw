@@ -17,6 +17,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw import bounded_log
+
 logger = logging.getLogger(__name__)
 
 _FILE = "inbound_audit.jsonl"
@@ -86,11 +88,7 @@ def _maybe_trim(path: Path) -> None:
     try:
         if path.stat().st_size < 512_000:  # cheap guard before counting lines
             return
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        if len(lines) <= _MAX_LINES * 2:
-            return
-        keep = lines[-_MAX_LINES:]
-        path.write_text("\n".join(keep) + "\n", encoding="utf-8")
+        bounded_log.trim_jsonl(path, _MAX_LINES, at="ts")
     except Exception:  # noqa: BLE001
         logger.debug("inbound: audit trim failed", exc_info=True)
 

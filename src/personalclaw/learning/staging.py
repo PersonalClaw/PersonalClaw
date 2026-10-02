@@ -43,6 +43,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator
 
+from personalclaw import bounded_log
 from personalclaw.config import loader as config_loader
 from personalclaw.learning.hygiene import fingerprint
 from personalclaw.sqlite_compat import sqlite3
@@ -507,10 +508,10 @@ class StagingStore:
                 "VALUES (?, ?, ?);",
                 (max(0, int(used_tokens)), int(budget_tokens), ts),
             )
-            cur.execute(
-                "DELETE FROM allocation_samples WHERE id <= "
-                "(SELECT MAX(id) - ? FROM allocation_samples);",
-                (self.ALLOCATION_KEEP,),
+            # The newest by when each was taken (`bounded_log`), never the highest ids: a merge
+            # brings another home's samples in with their own ids, which say nothing about when.
+            bounded_log.prune_table(
+                cur, "allocation_samples", self.ALLOCATION_KEEP, at="created_ts"
             )
         return True
 
