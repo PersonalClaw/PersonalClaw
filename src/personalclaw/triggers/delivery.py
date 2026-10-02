@@ -614,6 +614,52 @@ def channel_route_problem(destination: Any, *, transports: Mapping[str, Any] | N
         return f"{transport.display_name} couldn't check that id."
 
 
+#: What a route may be, said to whoever wrote one that is not.
+ROUTE_RULE = (
+    "A route is 'inbox' (a notification in PersonalClaw), 'none' (nothing is sent), or "
+    "'channel:<name>' (your direct messages on a chat channel set up here; "
+    "'channel:<name>:<chat id>' for a chat on it)."
+)
+
+
+def written_route(value: Any, *, transports: Mapping[str, Any] | None = None) -> tuple[str, str]:
+    """The route *value* is, as ``(route, "")``, or ``("", the sentence saying why it is none)``.
+
+    For every writer that takes a route from a caller (the chat's `automation_update`): the
+    vocabulary the store reads it with (:func:`is_valid_route`), and a channel route's channel set
+    up here and its chat one that channel takes (:func:`channel_route_problem`), over
+    *transports*, the registered channels when omitted. A value is stored as the route it names,
+    never as written: the store would read an unknown one back as ``inbox`` with a warning, so a
+    write it accepted would send results somewhere other than where the caller was told.
+
+    A value that names exactly one route is that route: a route's own word in another case
+    (``Inbox``), and a chat channel set up here by its key or the name it is shown under, bare
+    (``telegram``, ``Telegram``) or in a channel route (``channel:Telegram``), which is how
+    ``automation_create``'s ``via`` names a channel too (`channel_delivery.named_chat_channel`).
+    Anything else is refused with what a route can be.
+    """
+    if not isinstance(value, str):
+        return "", f"A route is text. {ROUTE_RULE}"
+    route = value.strip()
+    if route.casefold() in ROUTE_VALUES:
+        return route.casefold(), ""
+    if is_valid_route(route):
+        channel = parse_channel_route(route)
+    else:
+        channel = None if ":" in route else (route, "")
+    if channel is None:
+        return "", f"{value!r} isn't a route. {ROUTE_RULE}"
+    from personalclaw.channel_delivery import named_chat_channel
+
+    name, target = channel
+    key, problem = named_chat_channel(name, transports=transports)
+    if problem:
+        return "", f"{problem} {ROUTE_RULE}"
+    written = f"{CHANNEL_ROUTE_PREFIX}{key}" + (f":{target}" if target else "")
+    problem = channel_route_problem(written, transports=transports)
+    return ("", problem) if problem else (written, "")
+
+
 def _channel_name(name: str) -> str:
     """The name a channel is shown under: its transport's display name, else its key."""
     transport = _chat_channel(name, None)

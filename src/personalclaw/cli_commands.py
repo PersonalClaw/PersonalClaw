@@ -500,6 +500,10 @@ def _cron(args: argparse.Namespace) -> None:
                 resources=f"name={args.name}",
                 nothing="Nothing was created.",
             )
+        # `--channel` is `<name>` or `<name>:<chat id>`: the channel `create` sends results on, as
+        # the chat's `via` and `to` name it, so the row is saved with its route and the sentence
+        # printed below says where results go.
+        via, _, chat = (channel or "").partition(":")
         result = _tools.create(
             store,
             name=args.name,
@@ -511,6 +515,9 @@ def _cron(args: argparse.Namespace) -> None:
             # and capping their own CLI at the agent limit would be a rule aimed at the wrong party.
             created_by="user",
             owner_consented=yes,
+            via=via,
+            to=chat,
+            chat_channels=_cli_chat_channels() if channel else None,
         )
         if not result.ok:
             sel().log_api_access(
@@ -533,11 +540,6 @@ def _cron(args: argparse.Namespace) -> None:
                 source="cli",
                 resources=f"trigger:{trigger_id}: {', '.join(granted)}",
             )
-        if channel:
-            # Delivery is not a `create` parameter, so it is a follow-up patch through the same
-            # allowlist. Done after the create rather than by building the row here, so the CLI
-            # never becomes a second write path with its own validation.
-            _tools.update(store, trigger_id=trigger_id, patch={"delivery": f"channel:{channel}"})
         sel().log_api_access(
             caller="cli",
             operation="cron.add",
@@ -641,7 +643,7 @@ def _cron(args: argparse.Namespace) -> None:
             trigger_id=args.job_id,
             patch=patch,
             owner_consented=yes,
-            chat_channels=_cli_chat_channels() if "workflow" in patch else None,
+            chat_channels=_cli_chat_channels() if _tools.asks_chat_channels(patch) else None,
         )
         if result.ok and result.data.get("granted"):
             sel().log_api_access(

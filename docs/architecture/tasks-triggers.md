@@ -203,7 +203,22 @@ instead of `say`, `via` (and `to`, a chat on that channel by the channel's own
 id) sets the trigger's `delivery` to `channel:<name>[:<chat>]`: the route the
 Triggers page's Notify channel writes, delivered by the same code. Without `to`
 it is the owner's direct messages there; an id the channel does not take is
-refused in the channel's own words before anything is saved.
+refused in the channel's own words before anything is saved. Without `via`, a
+task's result is a notification (`inbox`), as one made on the Triggers page is;
+only words in `say`, which are their own delivery, are made with `none`.
+
+**A route is checked where it is written.** The chat's and CLI's
+`automation_update` take `delivery` and `failure_delivery` through
+`delivery.written_route`: the vocabulary the store reads a route with
+(`is_valid_route`), and a channel route's channel set up here. A route's own
+word in another case (`Inbox`) is that route, and a chat channel set up here
+named by its name (`telegram`) is its direct-messages route, as `via` reads it.
+Anything else is refused with what a route can be and the channels set up here,
+and nothing is saved. Before, any value was saved and answered "Updated", and
+the store read one outside the vocabulary back as `inbox` with a warning, so
+results went somewhere other than where the chat said. An update's result, like
+a create's, says where results and failures go and whether the automation runs
+now, read from the row as saved.
 
 **"When a run finishes" waits on the work, not its start.** A `run_completed`
 trigger waits on one workflow run (`source_run`), any run of a workflow

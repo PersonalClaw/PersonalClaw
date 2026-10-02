@@ -146,8 +146,10 @@ def _list_tools() -> list[dict[str, Any]]:
                         "one. Only that channel sends it: when it cannot, it goes to the owner's "
                         "Inbox saying why, never to another channel. A name that is not a chat "
                         "channel set up "
-                        "here is refused with the ones that are, so you can ask which. Omit it to "
-                        "reach the owner on the first connected channel that knows them.",
+                        "here is refused with the ones that are, so you can ask which. Omit it: "
+                        "`say` then reaches the owner on the first connected channel that knows "
+                        "them, and a `message` task's result reaches them as a notification in "
+                        "PersonalClaw.",
                     },
                     "to": {
                         "type": "string",
@@ -205,11 +207,18 @@ def _list_tools() -> list[dict[str, Any]]:
             "name": "automation_update",
             "annotations": {"readOnlyHint": False},
             "description": "Patch an automation. Only settable fields apply (name, spec, gates, "
-            "workflow, enabled, delivery, catch_up, …); health/run fields are rejected and "
-            "reported. An edit that changes what its action runs switches it off until the owner "
-            "allows the change on the Triggers page, and letting its agent approve its own tool "
-            "calls is the owner's to change, not yours. `catch_up` (true or false) is what a "
-            "missed time does: " + _catch_up_hint(),
+            "workflow, enabled, delivery, failure_delivery, catch_up, …); health/run fields are "
+            "rejected and reported. `delivery` is where its results go and `failure_delivery` "
+            "where its failures go: 'inbox' (a notification in PersonalClaw), 'none' (nothing is "
+            "sent), or 'channel:<name>' for the owner's direct messages on a chat channel set up "
+            "here ('channel:<name>:<chat id>' for a chat on it); a channel's own name "
+            "('telegram') means its direct messages. Any other value is refused with the "
+            "channels set up here, so you can ask the owner which. An edit that changes what its "
+            "action runs switches it off until the owner allows the change on the Triggers page, "
+            "and letting its agent approve its own tool calls is the owner's to change, not "
+            "yours. The result says where its results go and whether it runs now, as saved: tell "
+            "the owner what it says. `catch_up` (true or false) is what a missed time does: "
+            + _catch_up_hint(),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -517,8 +526,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             store,
             trigger_id=str(args.get("id") or ""),
             patch=patch,
-            # The channels a `send-message` action's chat channel is looked up in.
-            chat_channels=_chat_channels() if "workflow" in patch else None,
+            # The channels a `send-message` action's chat channel, or a route, is looked up in.
+            chat_channels=_chat_channels() if T.asks_chat_channels(patch) else None,
         )
     elif name == "automation_pause":
         result = T.set_paused(store, trigger_id=str(args.get("id") or ""), paused=True)

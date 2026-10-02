@@ -170,6 +170,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Changing where an automation's results go from chat or the CLI is checked when it is saved: a chat channel named by its name is that channel, anything that is not a route is refused with the ones there are, and the reply says where results and failures go and whether the automation runs now; a task made in chat without a channel now sends you its result.**
 - **The Inbox sorts each new message on the background model, a few per call, and shows one it has not sorted as "Not sorted yet" (one it could not sort says why, with Sort again); a notice, a note or an agent's post carries no made-up verdict, Mark accurate / Mark wrong appear only on a verdict or draft a prompt produced, and a verdict is credited to the prompt that made it. Settings → Inbox → Sort new messages turns it off.**
 - **A merge restore no longer deletes your newest notifications: every bounded log keeps its newest entries by when each happened, a merge puts an archive's older entries where they belong in time (notifications, run history, feedback, the model-call audit, the security log), and the bell lists what a merge brought in without a restart.**
 - **A replace restore refused while the gateway runs names that gateway's pid and port.**

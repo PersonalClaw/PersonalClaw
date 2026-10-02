@@ -270,6 +270,16 @@ PATCHABLE: frozenset[str] = frozenset(
     }
 )
 
+#: The patchable fields that hold a route (`delivery.written_route` checks each).
+ROUTE_FIELDS: frozenset[str] = frozenset({"delivery", "failure_delivery"})
+
+
+def asks_chat_channels(patch: Any) -> bool:
+    """Whether checking *patch* asks the chat channels set up here: a `send-message` action's
+    channel, or a route that names one. A caller outside the gateway builds them only then."""
+    return isinstance(patch, dict) and bool(({"workflow"} | ROUTE_FIELDS) & set(patch))
+
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -709,6 +719,91 @@ def _run_source(store: Any, spec: dict[str, Any], run_name: str) -> tuple[dict[s
     )
 
 
+def _channel_shown(key: str, chat_channels: Any) -> str:
+    """The name chat channel *key* is shown under: in *chat_channels*, else among the registered."""
+    from personalclaw.channel_delivery import channel_shown_as
+
+    transport = (chat_channels or {}).get(key) if isinstance(chat_channels, dict) else None
+    return str(getattr(transport, "display_name", "") or channel_shown_as(key))
+
+
+def _route_said(route: str, *, chat_channels: Any) -> str:
+    """Where *route* sends a run's note, in the owner's words: what the fire path does with it
+    (`delivery.deliver`), so the sentence and the delivery cannot disagree."""
+    from personalclaw.triggers.delivery import is_muted, parse_channel_route
+
+    channel = parse_channel_route(route)
+    if channel is not None:
+        key, chat = channel
+        shown = _channel_shown(key, chat_channels)
+        return f"on {shown}" + (f" to {chat}" if chat else "") + ", and on no other channel"
+    if is_muted(route):
+        return ""
+    return "as a notification in PersonalClaw"
+
+
+def _routes_said(trigger: Any, *, chat_channels: Any) -> list[str]:
+    """Where *trigger*'s results go and where its failures go, as stored: the routes the fire path
+    picks for each outcome (`delivery.route_for`, `delivery.files_in_inbox`)."""
+    from personalclaw.triggers.delivery import files_in_inbox, notifies_on_its_own, route_for
+
+    if notifies_on_its_own(trigger):
+        results = "its action is itself a notification in PersonalClaw"
+    else:
+        results = _route_said(route_for(trigger, ok=True), chat_channels=chat_channels) or (
+            "nowhere; nothing is sent to you when it runs"
+        )
+    if files_in_inbox(trigger, ok=False):
+        failures = "filed in your Inbox"
+    else:
+        failures = (
+            _route_said(route_for(trigger, ok=False), chat_channels=chat_channels)
+            or "you are not told"
+        )
+    return [f"Where its results go: {results}.", f"If it fails: {failures}."]
+
+
+def _as_stored(store: Any, trigger: Any) -> tuple[Any, list[Any]]:
+    """*trigger* as the store reads it back, with what is wrong with it: the row every surface
+    shows, so a tool's answer is about that row and not the object it just wrote."""
+    row = store.get(trigger.id)
+    return (trigger, []) if row is None else (row.trigger, list(row.errors))
+
+
+def _standing(trigger: Any, errors: list[Any]) -> str:
+    """Whether *trigger* runs now, as stored (:func:`_as_stored`): in the order the Triggers page's
+    status line decides it, so the chat and the page say the same thing."""
+    from personalclaw.triggers import grants
+    from personalclaw.triggers.legacy_import import needs_review
+    from personalclaw.triggers.models import TriggerState
+
+    if errors:
+        return f"it has a problem and does not run until it is fixed: {errors[0].message}"
+    if needs_review(trigger):
+        return (
+            "it was brought over from an older version and does not run until you switch it on "
+            "on the Triggers page"
+        )
+    if trigger.enabled and grants.labels(trigger):
+        return (
+            "it is on the Triggers page, and it does not run until you allow it there: open "
+            "it and choose Allow, and PersonalClaw asks you first"
+        )
+    state = str(trigger.state or "")
+    if state == TriggerState.AUTOPAUSED.value:
+        return "it was stopped after repeated failures, and runs again once you switch it back on"
+    if state == TriggerState.QUARANTINED.value:
+        return (
+            "it is quarantined: something it was given matched an injection pattern, and it does "
+            "not run until it is re-authored"
+        )
+    if state == TriggerState.PARKED.value:
+        return "it is parked: something it needs is busy, and it resumes on its own"
+    if not trigger.enabled:
+        return "it is switched off until you enable it, and visible on the Triggers page"
+    return "it is active now and visible on the Triggers page"
+
+
 def create(
     store: Any,
     *,
@@ -965,12 +1060,18 @@ def create(
         workflow=dict(workflow),
         catch_up=catch_up is True,
     )
+    from personalclaw.triggers.delivery import CHANNEL_ROUTE_PREFIX, INBOX_ROUTE
+
     if via_key and not words:
         # A task's result goes where the owner named, as a trigger made on the Triggers page with
         # a Notify channel does: the same route, read by the same delivery.
-        from personalclaw.triggers.delivery import CHANNEL_ROUTE_PREFIX
-
         trigger.delivery = f"{CHANNEL_ROUTE_PREFIX}{via_key}" + (f":{chat}" if chat else "")
+    elif not words and resume is None:
+        # A task's result reaches the owner unless something says otherwise, as one made on the
+        # Triggers page does ("It still reaches the dashboard"). The entity's default is silence,
+        # which made "watch this page and tell me when it ships" a watch that told nobody. Words
+        # in `say` are their own delivery, and a resume target's run reports on its own trigger.
+        trigger.delivery = INBOX_ROUTE
     # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3), when the owner said yes to
     # this action. A read-only action gets an empty block either way: the fence permits those
     # without one, and a written-out grant would imply an opt-in nobody had to make.
@@ -1030,15 +1131,18 @@ def create(
             "  it runs only when you run it: Run now on the Triggers page, or the Run now button "
             "shown with this reply in the chat"
         )
-    where = (
-        f"on {shown_via}" + (f" to {chat}" if chat else "") + ", and on no other channel"
-        if via_key
-        else "on the first connected chat channel that knows you, else in PersonalClaw"
-    )
     if words:
+        where = (
+            f"on {shown_via}" + (f" to {chat}" if chat else "") + ", and on no other channel"
+            if via_key
+            else "on the first connected chat channel that knows you, else in PersonalClaw"
+        )
         lines.append(f"  sends you “{redact_for_display(words)}” {where}")
-    elif via_key:
-        lines.append(f"  sends you what it produced {where}")
+    else:
+        # Read off the saved route, the one its runs report on (`delivery.route_for`).
+        produced = _route_said(saved.delivery, chat_channels=chat_channels)
+        if produced:
+            lines.append(f"  sends you what it produced {produced}")
     if saved.catch_up:
         lines.append(f"  {CATCH_UP_ON}")
     reach = grants.what_its_agent_may_do(saved)
@@ -1047,17 +1151,9 @@ def create(
     needs = grants.labels(saved)
     if created_by == "agent":
         # "active now" is a claim about state, so it tracks state — the switch, and whether the
-        # action is allowed to run. This string is UI: it is what the user reads in chat after the
-        # agent creates an automation for them.
-        if not saved.enabled:
-            _state = "it is switched off until you enable it, and visible on the Triggers page"
-        elif needs:
-            _state = (
-                "it is on the Triggers page, and it does not run until you allow it there: open "
-                "it and choose Allow, and PersonalClaw asks you first"
-            )
-        else:
-            _state = "it is active now and visible on the Triggers page"
+        # action is allowed to run — as stored. This string is UI: it is what the user reads in
+        # chat after the agent creates an automation for them.
+        _state = _standing(*_as_stored(store, saved))
         lines.append(
             f"  I created this for you — {_state} "
             f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
@@ -1201,6 +1297,21 @@ def update(
         }
     except MaskConflict:
         return AutomationToolResult(False, f"Error: {MASK_CONFLICT}")
+    # A route is checked where it is written, by the rule the store reads it with, and stored as
+    # the route it names (`delivery.written_route`). Unchecked, `"telegram"` was saved as sent and
+    # answered "Updated", and the store then read it back as `inbox`: results went to a
+    # notification while the chat told the owner they would arrive on Telegram.
+    from personalclaw.triggers.delivery import written_route
+
+    for key in ROUTE_FIELDS & set(applied):
+        route, problem = written_route(applied[key], transports=chat_channels)
+        if problem:
+            return AutomationToolResult(
+                False,
+                f"Error: nothing was changed: {problem} Ask the owner where it should go.",
+                {key: applied[key]},
+            )
+        applied[key] = route
     # The same registration refusals as `create`. Without them the update path is the hole —
     # save a `gateway` browse automation, then patch its `workflow` to `user_browser`, and the
     # create-time check has been walked around. #779/#687 close the same hole for the other two:
@@ -1289,13 +1400,29 @@ def update(
     if rearmed is not None:
         trigger.next_fire_at = rearmed
     saved = store.upsert(trigger)
-    text = f"Updated {saved.id}: {', '.join(sorted(applied))}."
+    # What applies now is read from the row as stored, so the agent repeats the store and not an
+    # earlier answer: the update said only "Updated …: delivery.", and the chat went on telling the
+    # owner a watch still waited for an Allow they had given since it was made.
+    current, errors = _as_stored(store, saved)
+    lines = [f"Updated {current.id}: {', '.join(sorted(applied))}."]
+    if ROUTE_FIELDS & set(applied):
+        lines.extend(f"  {line}" for line in _routes_said(current, chat_channels=chat_channels))
     if note:
-        text += f"\n  {note}"
+        lines.append(f"  {note}")
+    else:
+        standing = _standing(current, errors)
+        lines.append(f"  {standing[:1].upper()}{standing[1:]}.")
     if rejected:
-        text += f"\n  Ignored (not settable via this tool): {', '.join(rejected)}."
+        lines.append(f"  Ignored (not settable via this tool): {', '.join(rejected)}.")
     return AutomationToolResult(
-        True, text, {"trigger": saved.to_dict(), "rejected": rejected, "granted": granted}
+        True,
+        "\n".join(lines),
+        {
+            "trigger": current.to_dict(),
+            "rejected": rejected,
+            "granted": granted,
+            "needs_grant": grants.labels(current),
+        },
     )
 
 
