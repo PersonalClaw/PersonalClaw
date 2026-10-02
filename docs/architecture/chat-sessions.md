@@ -343,6 +343,22 @@ channel hears the same line, and the chat offers Retry on the notice, as on any
 notice a turn ends on. A turn that wrote nothing and ran nothing is resent
 once, silently. A loop's worker is left to its own re-prompt.
 
+A model can also stop at its output cap before it writes or calls anything
+(every provider the native loop drives carries its length stop on the terminal
+event, read by `llm.events.is_length_stop`). The loop then asks once more in
+another form, on every surface, a loop's worker included: a brief answer, and
+the request goes out without the turn's reasoning effort, which on the
+providers whose cap counts reasoning is what spent the room
+(`out_of_room_note` in `agents/native/owed_reply.py`). The cap itself is not
+raised: it is the model instance's own setting, and a hosted model's ceiling
+above it is not declared anywhere core can read. A model still out of room
+ends the turn at the cap, its terminal event naming the tokens it stopped at
+(`AgentEvent.output_cap`); the chat says so and never resends it, a subagent
+ends failed ("Couldn't do its task: the model ran out of output room before it
+answered (8,192 tokens)…"), and its workflow step fails with that cause. The
+model-call log records each such call as `output_cap`, failed when it produced
+no text and no tool call that can run.
+
 **How a turn ended is said by its cause.** The chat runner names one ending per
 turn, and an agent CLI's endings map onto the same ones
 (`acp/session.py`, `AcpSession._dispatch_frames`):
@@ -352,6 +368,7 @@ turn, and an agent CLI's endings map onto the same ones
 | The agent finished (`end_turn`) with an answer | `complete` | the answer |
 | It finished, or stopped itself (`cancelled`), with no answer after you denied one of its calls | `error` / `stopped` | "Codex stopped after you denied Run command." — never resent, which would ask you again |
 | It refused to continue (`refusal`) and wrote nothing | `error` | "Codex refused to continue and wrote no answer." — never resent |
+| Its model ran into its output cap (`max_tokens`) and wrote nothing | `error` | "The model ran out of output room before it answered (8,192 tokens). …" — never resent |
 | It stopped itself (`cancelled`), and nobody denied or stopped anything | `stopped` | "The reply stopped before it finished. …" |
 | You pressed Stop | `stopped` | the stop card; never a timeout or an error |
 | Its process ended, or its connection closed, before it answered | the resent turn's | "⟳ Connection lost — retrying…", and the message is resent (up to three times) |

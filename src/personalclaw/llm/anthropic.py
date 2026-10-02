@@ -700,6 +700,7 @@ class AnthropicProvider(ModelProvider):
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
+            stop_reason=stop_reason,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,
@@ -893,6 +894,7 @@ class AnthropicProvider(ModelProvider):
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
+            stop_reason=stop_reason,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,

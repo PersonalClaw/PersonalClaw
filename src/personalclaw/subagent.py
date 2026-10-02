@@ -19,6 +19,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from personalclaw import approval_grants, memory_writes
@@ -57,7 +58,7 @@ from personalclaw.subagent_persistence import (
     write_result_chunk,
     write_tombstone,
 )
-from personalclaw.subagent_tier import tier_for
+from personalclaw.subagent_tier import CallBudget, ended_without_answering, tier_for
 from personalclaw.task_modes import declared_level
 from personalclaw.textfmt import extract_options
 from personalclaw.usage_ledger import spent_rows
@@ -2201,8 +2202,9 @@ class SubagentManager:
         )
 
         result_text = ""
-        turns = 0
-        turn_limit = info.max_turns or self._default_turn_limit or _TURN_LIMIT
+        info.turns = 0
+        budget = CallBudget(info.max_turns or self._default_turn_limit or _TURN_LIMIT)
+        counted = partial(budget.past_it, fire=self._fire_event, tombstone=self._write_tombstone)
         # Reports inherited agent (not just info.agent) so telemetry shows
         # the actual agent used for this subagent session.
         await self._fire_event(
@@ -2220,10 +2222,16 @@ class SubagentManager:
         except Exception:
             logger.debug("Failed to record PID for %s", info.id, exc_info=True)
 
-        # Record session_id and provider type for session file cleanup
+        # Record session_id for session file cleanup, and the runtime that serves it (`native`, or
+        # the agent CLI's `acp:<cli>`) with the model it sends to, for anyone reading it live.
         try:
             session_id = client.session_id if hasattr(client, "session_id") else ""
-            update_state(info.id, session_id=session_id, provider="acp")
+            update_state(
+                info.id,
+                session_id=session_id,
+                provider=str(getattr(client, "provider_id", "") or "acp"),
+                model=str(getattr(client, "served_model_ref", "") or info.model or ""),
+            )
         except Exception:
             logger.debug("Failed to record session_id for %s", info.id, exc_info=True)
 
@@ -2252,6 +2260,8 @@ class SubagentManager:
         # other call is audited once, at its result (`llm.events.unasked_outcome`).
         asked: set[str] = set()
         spent = functools.partial(self._record_subagent_usage, info, session_key)
+        # The turn's terminal event, which says how it stopped (`ended_without_answering`).
+        ending: LLMEvent | None = None
         async for event in spent_rows(client.stream(full_message), spent):
             if event.kind == EVENT_TEXT_CHUNK:
                 result_text += event.text
@@ -2264,26 +2274,8 @@ class SubagentManager:
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 asked.add(event.tool_call_id or "")
                 call_id = event.tool_call_id or f"ask:{event.request_id}"
-                turns += 1
-                info.turns = turns
-                info.last_tool = event.title or ""
-                # Persist turn state for orphan recovery diagnostics
-                try:
-                    update_state(info.id, turns=turns, last_tool=event.title or "")
-                except Exception:
-                    pass
-                await self._fire_event(
-                    "subagent_tool",
-                    info,
-                    {"tool": _redact(event.title or ""), "tool_kind": event.tool_kind},
-                )
-                if turns > turn_limit:
+                if await counted(info, event, call_id):
                     info.result = result_text or "_Partial output._"
-                    info.error = f"turn_limit:{turn_limit}"
-                    info.done = True
-                    Stats().inc_subagent_failed()
-                    logger.warning("Subagent %s hit turn limit (%d)", info.id, turn_limit)
-                    self._write_tombstone(info, "turn_limit")
                     return
                 # The spawn's TOOL GRANTS decide, and they are enforced HERE, at the
                 # tool-approval layer, BEFORE any auto-approve branch below can admit the call.
@@ -2441,6 +2433,9 @@ class SubagentManager:
                 # `auto_approved` for every call, a refused one and a person's Allow included.
                 if event.tool_call_id:
                     call_inputs[event.tool_call_id] = event.tool_input
+                    if await counted(info, event, event.tool_call_id):
+                        info.result = result_text or "_Partial output._"
+                        return
                 await fire_tool_hooks(
                     self.hook_store,
                     event.title,
@@ -2495,6 +2490,7 @@ class SubagentManager:
 
                 info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
                 info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
+                ending = event
                 # Priced by the entry and model that answered, which a spawn with no model of its
                 # own never named: its child ran on the chain's head and was charged nothing. An
                 # ACP child names neither, and is priced by its runtime and the model it chose.
@@ -2534,9 +2530,10 @@ class SubagentManager:
             if len(info.result) > 3000:
                 info.result = info.result[:3000]
             evict_completed_agents(self._agents)
-        # Every call refused: it did nothing it was asked, so it ends not done, with why, and its
-        # reply stays its result. Set with `done`, so nothing reads it finished without the reason.
-        couldnt = tier.verdict()
+        # Every call refused, or its model out of output room before it answered: it did nothing it
+        # was asked, so it ends not done, with why, and its reply stays its result. Set with
+        # `done`, so nothing reads it finished without the reason.
+        couldnt, cause = ended_without_answering(tier, ending, result_text)
         info.error, info.refused = info.error or couldnt, tier.limited()
         info.done = True
         self._sessions.record_success(session_key)
@@ -2547,8 +2544,8 @@ class SubagentManager:
         self._charge_child_and_check_budget(info)
         if couldnt:
             Stats().inc_subagent_failed()
-            self._write_tombstone(info, "refused")
-            logger.info("Subagent %s could not do its task: every call was refused", info.id)
+            self._write_tombstone(info, cause)
+            logger.info("Subagent %s could not do its task (%s)", info.id, cause)
             return
         Stats().inc_subagent_completed()
         logger.info("Subagent %s completed", info.id)

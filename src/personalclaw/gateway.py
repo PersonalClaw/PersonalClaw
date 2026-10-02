@@ -79,6 +79,7 @@ from personalclaw.heartbeat import (
 from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.hooks import live_hook_manager
 from personalclaw.llm.base import LLMEvent
+from personalclaw.llm.events import is_length_stop, out_of_room_notice
 from personalclaw.llm_helpers import (
     PromptBusyExhaustedError,
     stream_and_collect,
@@ -2922,10 +2923,12 @@ class GatewayOrchestrator:
             from personalclaw.guardrails.policy import approval_policy_for_session
 
             _hb_model = getattr(getattr(client, "client", None), "_model", "") or ""
+            ended: list[object] = []  # the turn's terminal event, which says how it stopped
 
             def _hb_usage(event: object, _m: str = _hb_model) -> None:
                 from personalclaw.usage_ledger import record_from_event
 
+                ended.append(event)
                 record_from_event(
                     event,
                     source="background",
@@ -2944,7 +2947,13 @@ class GatewayOrchestrator:
             )
 
             if not result_text:
-                result_text = "_No response._"
+                # A model out of output room before it answered says so (`llm.events`).
+                last = ended[-1] if ended else None
+                result_text = (
+                    out_of_room_notice(int(getattr(last, "output_cap", 0) or 0))
+                    if is_length_stop(getattr(last, "stop_reason", ""))
+                    else "_No response._"
+                )
         except Exception:
             logger.exception("Heartbeat task failed: %s", task_text[:80])
             raise

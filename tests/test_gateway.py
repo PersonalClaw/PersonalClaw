@@ -1963,6 +1963,32 @@ class TestHeartbeatCallback:
         assert "check the deploy" in message
 
     @pytest.mark.asyncio
+    async def test_a_heartbeat_whose_model_ran_out_of_room_says_so(self):
+        """🔴 Before: "_No response._" was delivered as the task's result."""
+        from personalclaw.llm.events import EVENT_COMPLETE, AgentEvent
+
+        orch = _make_orchestrator()
+        orch.sessions = _mock_sessions()
+        orch.ctx_builder = MagicMock()
+        orch.ctx_builder.build_message = MagicMock(return_value=("msg", None))
+        orch.ctx_builder.hooks = MagicMock()
+        orch.dashboard_state = None
+        orch._deliver_result = AsyncMock()
+
+        async def capped(*_a, on_complete=None, **_kw):
+            on_complete(AgentEvent(kind=EVENT_COMPLETE, stop_reason="max_tokens", output_cap=8192))
+            return ""
+
+        with (
+            patch("personalclaw.gateway.stream_and_collect", new=capped),
+            patch("personalclaw.usage_ledger.record_from_event"),
+        ):
+            result = await orch._run_heartbeat_task("summarize the inbox", "")
+
+        assert result.startswith("The model ran out of output room before it answered (8,192")
+        assert orch._deliver_result.await_args.args[2] == result
+
+    @pytest.mark.asyncio
     async def test_heartbeat_task_failure(self):
         """Heartbeat task exception propagates."""
         orch = _make_orchestrator()

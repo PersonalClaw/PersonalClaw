@@ -42,7 +42,7 @@ from personalclaw.agents.native.failover import (
     resending_cannot_help,
 )
 from personalclaw.agents.native.local_turn import check_held_answer, take_local_turn
-from personalclaw.agents.native.owed_reply import OwedReply, owed_note_message
+from personalclaw.agents.native.owed_reply import OwedReply, answered_row, capped_at
 from personalclaw.agents.native.tool_names import name_census
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
@@ -798,8 +798,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         return "end_turn"
 
     def _audit_inference_attempt(self, mode: FailureMode, **attempt: Any) -> None:
-        """Record one exceptional inference attempt (``attempt_audit.inference_attempt``).
-        Best-effort by contract: an audit failure must never take down the turn it describes."""
+        """Record one exceptional inference attempt (``attempt_audit.inference_attempt``): every
+        failed attempt, the outcome of a retry, and a call that ran into its output cap and no
+        guard recorded. Best-effort by contract: an audit failure must never take down the turn
+        it describes."""
         try:
             record_attempt(
                 inference_attempt(
@@ -1010,8 +1012,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 #   - a model that did not start answering within its timeout
                 #     (FirstTokenTimeout: the same request is as slow the second time).
                 # max_tokens truncation is a SUCCESSFUL stream carrying a
-                # stop_reason, so it never enters this path — the deliberate cost
-                # decision on #2287 (only #2286's attribution note applies there).
+                # stop_reason, so it never enters this path: one that wrote nothing is asked
+                # again in another form below (`owed_reply`), and recorded as `output_cap`.
                 # Deliberately NOT wired to the failure breaker, the structural-
                 # loop detector, or procedural-memory outcomes: an infrastructure
                 # blip is not evidence about the model's behaviour, mirroring the
@@ -1034,7 +1036,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                                 msgs,
                                 tools=tools_kwarg,
                                 model=self._definition.model or None,
-                                reasoning_effort=self._reasoning_effort,
+                                reasoning_effort=owed.effort(self._reasoning_effort),
                             ):
                                 if self._cancelled:
                                     break
@@ -1216,12 +1218,14 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         assistant_text = ""
                         usage = None
                         continue
-                    if inference_retried or fallbacks:
+                    # A capped call is recorded here when no guard did (a turn a person watches).
+                    answered, passed, unrecorded = answered_row(usage, assistant_text, tool_calls)
+                    if inference_retried or fallbacks or unrecorded:
                         self._audit_inference_attempt(
-                            FailureMode.NONE,
+                            answered,
                             attempt=1 + int(inference_retried) + fallbacks,
                             started_ms=attempt_started,
-                            passed=True,
+                            passed=passed,
                             fallback=fallbacks > 0,
                         )
                     break
@@ -1259,9 +1263,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 #    entire promise of steering.
                 if tool_calls == [] and not self._cancelled and self._drain_steers_into_history():
                     continue
-                #    …or when the model ran tools this turn and has written nothing at all. It is
-                #    asked for its reply once, with the results it already has; a second silence
-                #    ends the turn, and the surface says it has no answer.
+                #    …or when the model ran tools this turn and has written nothing at all (or ran
+                #    out of output room first). It is asked once, with the results it already has;
+                #    a second silence ends the turn, and the surface says it has no answer.
                 if not tool_calls and owed.ask(
                     tool_calls_run=agg_tool_calls,
                     usage=usage,
@@ -1272,10 +1276,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     # message in the history the next request replays.
                     self._messages.pop()
                     logger.warning(
-                        "native: the model stopped after %d tool call(s) without a reply — "
-                        "asking it once for the answer (session=%s)",
-                        agg_tool_calls,
-                        self._session_key,
+                        "native: %s (session=%s)", owed.asking(agg_tool_calls), self._session_key
                     )
                     continue
                 if not tool_calls or self._cancelled:
@@ -1293,6 +1294,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         kind=EVENT_COMPLETE,
                         stop_reason=self._final_stop_reason(usage),
                         text=self._stop_note if self._cancelled else "",
+                        output_cap=0 if self._cancelled else capped_at(usage),
                         input_tokens=agg_in,
                         output_tokens=agg_out,
                         cache_read_tokens=agg_cache_read,
@@ -2462,7 +2464,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 )
                 out[idx] = {**target, "content": parts}
         if self._owed.pending:
-            out = [*out, owed_note_message()]
+            out = [*out, self._owed.note_message()]
         return out
 
     def announce_failover(self) -> None:

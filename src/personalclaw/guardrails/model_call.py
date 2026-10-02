@@ -59,12 +59,15 @@ from personalclaw.guardrails.failure import (
     ModelCallTimeout,
     PromptInjectionBlocked,
     SecretLeakBlocked,
+    answered_mode,
 )
 from personalclaw.guardrails.local_queue import Turn, queue_key, take_turn
 from personalclaw.guardrails.scan import scan_outbound
 from personalclaw.guardrails.wire import record_outbound
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
+    EVENT_TEXT_CHUNK,
+    EVENT_TOOL_CALL,
     CancelOutcome,
     LLMEvent,
     ModelProvider,
@@ -90,6 +93,32 @@ _DEFAULT_TIMEOUT_SECS = 300.0
 def new_audit_id() -> str:
     """The id one model-call attempt is recorded under (``model_calls.jsonl``)."""
     return uuid.uuid4().hex[:16]
+
+
+class _WhatItProduced:
+    """What one call's stream has produced so far, as its row is decided (:func:`answered_mode`):
+    any text that is more than whitespace, or a tool call whose arguments read whole. A call cut
+    at its cap mid-call carries a prefix of its arguments, which runs nothing."""
+
+    __slots__ = ("calls", "wrote")
+
+    def __init__(self) -> None:
+        self.wrote = False
+        self.calls: list[Any] = []
+
+    def see(self, event: LLMEvent) -> None:
+        if event.kind == EVENT_TEXT_CHUNK:
+            self.wrote = self.wrote or bool(str(event.text or "").strip())
+        elif event.kind == EVENT_TOOL_CALL:
+            self.calls.append(event.tool_input)
+
+    def anything(self) -> bool:
+        if self.wrote or not self.calls:
+            return self.wrote
+        # Deferred, so a call that made no tool call never loads the native loop's package.
+        from personalclaw.agents.native.tools import ARGUMENTS_UNREADABLE, read_tool_arguments
+
+        return any(read_tool_arguments(raw) is not ARGUMENTS_UNREADABLE for raw in self.calls)
 
 
 def naming_the_call(event: LLMEvent, audit_id: str, price: "CallPrice | None" = None) -> LLMEvent:
@@ -597,12 +626,14 @@ class ModelCallGuard(ModelProvider):
         and the meter, the attempt row and the call's terminal event (``LLMEvent.charged``, which
         the usage row is written from) all take that one figure.
 
-        Success is recorded the moment ``EVENT_COMPLETE`` is observed — BEFORE it is
-        yielded — because the canonical consumer (``stream_and_collect``) ``break``s
-        on ``EVENT_COMPLETE`` rather than draining to ``StopAsyncIteration``: a guard
-        that only recorded after loop-exit would then be suspended at the terminal
-        ``yield`` forever and never audit. A ``_recorded`` flag makes the outcome
-        fire exactly once; a stream that ends via ``StopAsyncIteration`` with no
+        A call that answered is recorded the moment ``EVENT_COMPLETE`` is observed, by how it
+        stopped and what it produced (:func:`answered_mode`): one that ran into its output cap is
+        ``output_cap``, and passed only when it wrote text or made a call that can run. It is
+        recorded BEFORE the event is yielded, because the canonical consumer
+        (``stream_and_collect``) ``break``s on ``EVENT_COMPLETE`` rather than draining to
+        ``StopAsyncIteration``: a guard that only recorded after loop-exit would then be
+        suspended at the terminal ``yield`` forever and never audit. A ``_recorded`` flag makes
+        the outcome fire exactly once; a stream that ends via ``StopAsyncIteration`` with no
         COMPLETE event still records once at loop-exit.
         """
         audit_id = new_audit_id()
@@ -667,6 +698,7 @@ class ModelCallGuard(ModelProvider):
             started = now_ms()
             tokens_in = tokens_out = 0
             recorded = False
+            produced = _WhatItProduced()
             # The call is published to whoever bound a `guardrails.calls` log — the workflow step
             # that is making it, a best-of-N candidate — only now, past every refusal above: a
             # breaker or budget refusal, or a local model too busy to take the call, sent nothing
@@ -701,6 +733,7 @@ class ModelCallGuard(ModelProvider):
                         # The provider is still talking: the workflow stall clock reads this, so a
                         # step whose model is generating slowly is not killed as a silent one.
                         call.last_event_at = time.time()
+                    produced.see(event)
                     if event.kind == EVENT_COMPLETE and not recorded:
                         # Terminal signal: record success NOW (the consumer may break on
                         # this event without draining), then keep yielding any trailing
@@ -717,14 +750,19 @@ class ModelCallGuard(ModelProvider):
                         # built by `provider_bridge` from provider config and has no run identity;
                         # threading one in would touch all 33 call sites reaching the bridge.
                         self._charge(hold, tokens_in, tokens_out, price, called)
+                        # The provider answered, so its breaker closes whatever the answer was;
+                        # the row says what the answer was worth.
+                        mode, passed = answered_mode(
+                            event.stop_reason, produced=produced.anything()
+                        )
                         self._audit(
                             audit_id,
                             1,
-                            FailureMode.NONE,
+                            mode,
                             now_ms() - started,
                             tokens_in,
                             tokens_out,
-                            True,
+                            passed,
                             strategy,
                             price=price,
                             model=called,

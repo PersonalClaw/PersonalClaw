@@ -60,8 +60,34 @@ LENGTH_STOP_REASONS: frozenset[str] = frozenset({STOP_MAX_TOKENS, "length"})
 
 
 def is_length_stop(stop_reason: object) -> bool:
-    """Whether ``stop_reason`` says the reply was cut at the output cap, in any provider's words."""
+    """Whether ``stop_reason`` says the reply was cut at the output cap, in any provider's words.
+
+    Every provider a native turn is served by carries its own spelling on its terminal
+    ``EVENT_COMPLETE`` (Bedrock Converse's ``stopReason``, an OpenAI-compatible ``finish_reason``,
+    Ollama's ``done_reason``, Anthropic's ``stop_reason``), and this is the one reading of it.
+    """
     return str(stop_reason or "").strip().lower() in LENGTH_STOP_REASONS
+
+
+def out_of_room(output_cap: int = 0) -> str:
+    """Why a turn has no answer when its model stopped at its output cap before it wrote a word or
+    made a call: a clause, for the sentence each surface ends that turn on (the chat's notice, a
+    subagent's ending, a workflow step's cause). *output_cap* is the tokens it stopped at
+    (``AgentEvent.output_cap``); 0, when the provider did not say, names no number."""
+    room = f" ({output_cap:,} tokens)" if output_cap > 0 else ""
+    return f"the model ran out of output room before it answered{room}"
+
+
+def out_of_room_notice(output_cap: int = 0) -> str:
+    """What a turn that ran out of output room before it answered ends on where a person reads it
+    (a chat's notice, a background task's result), also after PersonalClaw's own runtime asked its
+    model again for a brief answer. Never resent: the same request meets the same cap, so it says
+    what would change the outcome."""
+    why = out_of_room(output_cap)
+    return (
+        f"{why[:1].upper()}{why[1:]}. Ask for less at a time, or raise the model's output limit "
+        "where its provider's settings have one."
+    )
 
 
 #: The ``stop_reason`` of a turn the agent refused to go on with — the Agent Client Protocol's
@@ -154,8 +180,8 @@ class AgentEvent:
 
     Every ``acp.types.AcpEvent`` field is here under the same name and default,
     so the chat runner consumes either without change. ``risk_level``, ``builds``,
-    ``proposes``, ``tells_owner``, ``served_model_ref`` and ``audit_ids`` have no ACP twin, since
-    an ACP agent reports none of them.
+    ``proposes``, ``tells_owner``, ``served_model_ref``, ``audit_ids`` and ``output_cap`` have no
+    ACP twin, since an ACP agent reports none of them.
     ``tool_input``/``tool_output`` are typed ``Any`` (the native loop may pass
     structured values; ACP passes str).
     """
@@ -248,5 +274,10 @@ class AgentEvent:
     #: :class:`~personalclaw.routing.rates.CallPrice`. The native loop sums its turn's. A usage row
     #: takes it rather than pricing the usage again (``routing.rates.price_event``), so Usage, the
     #: budget meter and the model-call log show one figure for one call. ``None`` when no guard
-    #: priced the usage, or only part of it. Last, so no field moves.
+    #: priced the usage, or only part of it. After the older fields, so none of them moves.
     charged: Any = None
+    #: On the native loop's terminal EVENT_COMPLETE whose stop is a length stop
+    #: (:func:`is_length_stop`), the output tokens its last inference stopped at: the cap its
+    #: model ran into, which the turn's ending names (:func:`out_of_room`). 0 for every other
+    #: ending, and from a backend that does not say. Last, so no field moves.
+    output_cap: int = 0

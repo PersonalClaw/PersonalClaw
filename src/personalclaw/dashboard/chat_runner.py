@@ -232,8 +232,8 @@ UNANSWERED_BLANK = "blank"
 #: again — so the turn ends in the error that says so (`no_answer_notice`), which the chat offers
 #: Retry on, as on any notice a turn ends on.
 UNANSWERED_AFTER_STEPS = "after_steps"
-#: A turn the agent refused to continue (``stopReason: refusal``), writing nothing (never resent).
-UNANSWERED_REFUSED = "refused"
+#: Wrote nothing, and its stop says why: its agent refused to go on, or its model ran out of room.
+UNANSWERED_SAYS_WHY = "says_why"
 
 
 def unanswered_turn(
@@ -252,7 +252,7 @@ def unanswered_turn(
     not a missing answer when the turn was a user cancel, a compaction / clear / agent-switch
     turn (each emits its own status line), a slash command, or a goal loop worker turn (loops own
     a dedicated deliverable-forcing re-prompt loop, so the chat's handling stands aside).
-    Otherwise it is :data:`UNANSWERED_REFUSED` when the agent said it refused to continue,
+    Otherwise it is :data:`UNANSWERED_SAYS_WHY` when it refused to go on or ran out of room,
     :data:`UNANSWERED_BLANK` when the turn ran no tool either, and
     :data:`UNANSWERED_AFTER_STEPS` when it did. The second used to count as finished ("the agent
     did real work, just no closing prose"), so a turn of fifteen commands and no answer ended as
@@ -268,8 +268,8 @@ def unanswered_turn(
         or is_loop
     ):
         return ""
-    if is_refusal_stop(stop_reason):
-        return UNANSWERED_REFUSED
+    if is_refusal_stop(stop_reason) or is_length_stop(stop_reason):
+        return UNANSWERED_SAYS_WHY
     return UNANSWERED_AFTER_STEPS if tool_call_count > 0 else UNANSWERED_BLANK
 
 
@@ -2699,7 +2699,7 @@ async def run_chat(
     # The rest of what the finally reads to say how the turn ended (`terminal_outcome_for_turn`):
     # the provider's stop reason from the terminal complete event, and whether the task itself was
     # cancelled, which a force stop can do before the provider reports any stop reason.
-    _stop_reason = ""
+    _stop_reason, _output_cap = "", 0  # and the output cap a length stop names
     # The runtime's own sentence for a turn IT stopped (the loop breaker's), from the terminal
     # complete event; shown as the turn's error row after the stream ends.
     _runtime_stop_note = ""
@@ -5072,7 +5072,7 @@ async def run_chat(
                     _turn_priced = _turn_price.priced
                     _turn_model = _record_model or ""
                     _turn_provider = _record_provider
-                _stop_reason = event.stop_reason
+                _stop_reason, _output_cap = event.stop_reason, getattr(event, "output_cap", 0)
                 _answered = not is_cancelled_stop(_stop_reason)
                 if is_cancelled_stop(_stop_reason) and event.text:
                     _runtime_stop_note = event.text
@@ -5207,10 +5207,10 @@ async def run_chat(
             # as the turn's reply behind the notice, and a Retry would anchor on it.
             session.discard_stream()
             assistant_text = ""
-        # Ended after her Deny, or refused by its agent: said why, never resent (`turn_endings`).
-        if _unanswered and (_deny_note or _unanswered == UNANSWERED_REFUSED):
+        # Ended after her Deny, or saying why itself: said why, never resent (`turn_endings`).
+        if _unanswered and (_deny_note or _unanswered == UNANSWERED_SAYS_WHY):
             session._empty_response_retries = 0
-            _why = _deny_note or turn_endings.refused_turn_notice(_turn_agent)
+            _why = _deny_note or turn_endings.wrote_nothing(_stop_reason, _turn_agent, _output_cap)
             _say_the_turn_has_no_answer(state, session, _why)
         elif _unanswered == UNANSWERED_BLANK:
             if _prompt_depth == 0 and session._empty_response_retries == 0:

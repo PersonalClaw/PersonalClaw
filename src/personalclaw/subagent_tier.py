@@ -13,11 +13,20 @@ its reply says: a read-only review subagent that could not read the repository i
 answered with an apology, and ended "completed". :class:`CallTally` counts each call once, where it
 was decided (refused when it was asked, or refused or run at its result), and
 :func:`refused_every_call` is the error such a subagent ends with, naming the tools and why.
-:func:`couldnt_do_it` is how a reader of that ending (a workflow step's settlement) tells it apart
-from any other failure. A subagent whose own limits refused SOME of its calls (its tier, or an
-approval nobody was there to give) ran, but may not have done all it was asked:
-:meth:`SubagentTier.limited` names those calls, and its trigger's history records the run as
-``refused`` rather than as a success (``triggers.settle``).
+One whose model ran into its output cap before it wrote its answer did nothing it was asked either:
+two review subagents stopped at 8,192 output tokens on every call, wrote nothing, and ended
+"completed" with "_No response._". :func:`ran_out_of_room` is that ending.
+:func:`couldnt_do_it` is how a reader of either ending (a workflow step's settlement) tells it
+apart from any other failure, and :func:`out_of_room_ending` which of the two it is. A subagent
+whose own limits refused SOME of its calls (its tier, or an approval nobody was there to give)
+ran, but may not have done all it was asked: :meth:`SubagentTier.limited` names those calls, and
+its trigger's history records the run as ``refused`` rather than as a success
+(``triggers.settle``).
+
+**How many calls it made.** :class:`CallBudget` counts each tool call once against the spawn's
+budget (``max_turns``), at the first event that names it. Counted only when a call asked, a native
+run's calls (which its runtime answers itself) counted nowhere: its live state read 0 turns and no
+last tool while it worked, and its budget never held.
 
 **Where it comes from.** :func:`tier_for` builds a subagent's tier from what its spawn was handed:
 its capability class (§4.1), the files it may change and, for an automation's own agent, the
@@ -27,6 +36,8 @@ message it may send its owner. An automation's step is turned into those by
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -37,11 +48,23 @@ from personalclaw.guardrails.policy import (
     granted_call_refusal,
     offer_refusal,
 )
-from personalclaw.llm.events import TOOL_META_AUTO_DENIED, TOOL_META_NOT_RUN, TOOL_META_REFUSED_BY
+from personalclaw.llm.events import (
+    TOOL_META_AUTO_DENIED,
+    TOOL_META_NOT_RUN,
+    TOOL_META_REFUSED_BY,
+    AgentEvent,
+    is_length_stop,
+    out_of_room,
+)
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.stats import Stats
+from personalclaw.subagent_persistence import update_state
 
 if TYPE_CHECKING:
     from personalclaw.agents.native.runtime import NativeAgentRuntime
     from personalclaw.subagent import SubagentInfo
+
+logger = logging.getLogger(__name__)
 
 #: How a subagent ends that did nothing it was asked: every tool call it made was refused. It is
 #: its ERROR, so every reader of how it ended (its workflow step, its completion note, the
@@ -75,9 +98,81 @@ def refused_every_call(refusals: list[tuple[str, str]]) -> str:
     return f"{_COULDNT}: every tool call it made was refused — {named}{rest}"
 
 
+def ran_out_of_room(output_cap: int) -> str:
+    """The error a subagent ends with when its model ran into its output cap (*output_cap*
+    tokens, 0 when unknown) before it wrote its answer: the same task on the same model meets the
+    same cap (on PersonalClaw's own loop, also after it was asked once more for a brief answer)."""
+    return (
+        f"{_COULDNT}: {out_of_room(output_cap)}. Give it a smaller task, or raise the model's "
+        "output limit where its provider's settings have one."
+    )
+
+
 def couldnt_do_it(error: str) -> bool:
-    """Whether *error* is :func:`refused_every_call`'s: the subagent did nothing it was asked."""
+    """Whether *error* is :func:`refused_every_call`'s or :func:`ran_out_of_room`'s: the subagent
+    did nothing it was asked."""
     return str(error or "").startswith(_COULDNT)
+
+
+def out_of_room_ending(error: str) -> bool:
+    """Whether *error* is :func:`ran_out_of_room`'s: its model, not its tools, stopped it."""
+    return str(error or "").startswith(f"{_COULDNT}: {out_of_room()}")
+
+
+def ended_without_answering(
+    tier: SubagentTier, ending: AgentEvent | None, reply: str
+) -> tuple[str, str]:
+    """How a subagent whose turn has ended did nothing it was asked, as ``(error, cause)``, or
+    ``("", "")``: every call refused (``refused``), or its turn stopped at its model's output cap
+    with nothing written (``output_cap``). *ending* is the turn's terminal event and *reply*
+    everything it wrote."""
+    refused = tier.verdict()
+    if refused:
+        return refused, "refused"
+    if ending is not None and is_length_stop(ending.stop_reason) and not reply.strip():
+        return ran_out_of_room(int(getattr(ending, "output_cap", 0) or 0)), "output_cap"
+    return "", ""
+
+
+class CallBudget:
+    """One subagent's tool calls against its spawn's budget (``max_turns``), each counted once, by
+    its id, at the first event that names it: the card PersonalClaw's own loop yields before its
+    gates, or an agent CLI's ask."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self._counted: set[str] = set()
+
+    async def past_it(
+        self,
+        info: Any,
+        event: AgentEvent,
+        call_id: str,
+        *,
+        fire: Callable[[str, Any, dict], Awaitable[None]],
+        tombstone: Callable[[Any, str], None],
+    ) -> bool:
+        """Count *event*'s call, said live (``state.json``, and a ``subagent_tool`` event through
+        *fire*); True when it is past the budget, and *info* has then ended failed for it."""
+        if call_id in self._counted:
+            return False
+        self._counted.add(call_id)
+        info.turns += 1
+        info.last_tool = event.title or ""
+        try:
+            update_state(info.id, turns=info.turns, last_tool=info.last_tool)
+        except Exception:  # noqa: BLE001 - the live state is a view; the count stands
+            logger.debug("Failed to record the call for %s", info.id, exc_info=True)
+        tool, _ = redact_exfiltration_urls(info.last_tool)
+        tool, _ = redact_credentials(tool)
+        await fire("subagent_tool", info, {"tool": tool, "tool_kind": event.tool_kind})
+        if info.turns <= self.limit:
+            return False
+        info.error, info.done = f"turn_limit:{self.limit}", True
+        Stats().inc_subagent_failed()
+        logger.warning("Subagent %s hit turn limit (%d)", info.id, self.limit)
+        tombstone(info, "turn_limit")
+        return True
 
 
 @dataclass

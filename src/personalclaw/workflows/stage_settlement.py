@@ -63,6 +63,41 @@ def awaiting_out_of_band_work(ctl: RunController) -> list[str]:
     ]
 
 
+def _how_the_child_failed(error: str, *, reaped: bool) -> tuple[FailureClass, str]:
+    """The class and the fix of a stage whose subagent ended with *error*.
+
+    The manager reaps on its OWN deadline, so a reaped child is a timeout. A child that did nothing
+    it was asked (`subagent_tier.couldnt_do_it`) failed for want of tools when every call was
+    refused, and retrying it under the same tools reaches the same refusals; or for want of output
+    room when its model ran into its cap before it answered, which the same task on the same model
+    meets again. A spawn whose approval nobody gave never started at all
+    (`subagent_ask.never_started`). Anything else it reports is an execution fault: filing that as
+    TIMEOUT would tell the user to raise a limit that was never the problem.
+    """
+    from personalclaw.subagent_ask import never_started
+    from personalclaw.subagent_tier import couldnt_do_it, out_of_room_ending
+
+    if reaped:
+        return FailureClass.TIMEOUT, (
+            "the subagent was force-killed after exceeding its deadline; raise the subagent "
+            "timeout, or split this stage into smaller steps"
+        )
+    if out_of_room_ending(error):
+        return FailureClass.USER, (
+            "narrow this step's task, or raise its model's output limit where its provider's "
+            "settings have one, then fork this run to try again"
+        )
+    if couldnt_do_it(error):
+        return FailureClass.PERMISSION, (
+            "give this step the tools its task needs (a read-only step runs only what reads), or "
+            "narrow its task to what its tools can do"
+        )
+    if never_started(error):
+        # It never ran a turn, so there is no transcript to point at.
+        return FailureClass.PERMISSION, "run this step again, and answer its approval when it asks"
+    return FailureClass.INTERNAL, "check the subagent's transcript for the failing turn"
+
+
 def reconcile_dispatched_stages(ctl: RunController) -> None:
     """Settle `stage` nodes whose spawned subagent has finished.
 
@@ -156,45 +191,13 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
             settled = True
             continue
         if error:
-            from personalclaw.subagent_ask import never_started
-            from personalclaw.subagent_tier import couldnt_do_it
-
+            failure_class, remediation = _how_the_child_failed(error, reaped=reaped)
             failure = Failure(
-                # The manager reaps on its OWN deadline, so a reaped child is a timeout. A child
-                # whose every tool call was refused did nothing it was asked, for want of tools
-                # (`subagent_tier.couldnt_do_it`): retrying it under the same tools reaches the
-                # same refusals. A spawn whose approval nobody gave never started at all
-                # (`subagent_ask.never_started`). Anything else it reports is an execution fault:
-                # filing that as TIMEOUT would tell the user to raise a limit that was never the
-                # problem.
-                failure_class=(
-                    FailureClass.TIMEOUT
-                    if reaped
-                    else (
-                        FailureClass.PERMISSION
-                        if couldnt_do_it(error) or never_started(error)
-                        else FailureClass.INTERNAL
-                    )
-                ),
+                failure_class=failure_class,
                 # The manager's own sentence, verbatim — it carries the elapsed time and
                 # the deadline that was crossed, which a re-worded message would drop.
                 cause_plain=error,
-                remediation=(
-                    "the subagent was force-killed after exceeding its deadline; raise the "
-                    "subagent timeout, or split this stage into smaller steps"
-                    if reaped
-                    else (
-                        "give this step the tools its task needs (a read-only step runs only "
-                        "what reads), or narrow its task to what its tools can do"
-                        if couldnt_do_it(error)
-                        else (
-                            # It never ran a turn, so there is no transcript to point at.
-                            "run this step again, and answer its approval when it asks"
-                            if never_started(error)
-                            else "check the subagent's transcript for the failing turn"
-                        )
-                    )
-                ),
+                remediation=remediation,
                 recoverable=True,
             )
             inst.state = InstanceState.FAILED

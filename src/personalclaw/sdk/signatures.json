@@ -1349,7 +1349,8 @@
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "audit_ids"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "tells_owner"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"},
-    {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "charged"}
+    {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "charged"},
+    {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "output_cap"}
    ],
    "returns": "None"
   },
@@ -6665,7 +6666,7 @@
  "personalclaw.sdk.model.FailureMode": {
   "bases": ["str", "Enum"],
   "kind": "enum",
-  "members": {"BUDGET_EXCEEDED": "'budget_exceeded'", "CIRCUIT_OPEN": "'circuit_open'", "CONSTRAINT_VIOLATION": "'constraint_violation'", "INJECTION_BLOCKED": "'injection_blocked'", "NONE": "'none'", "PROMPT_TOO_LARGE": "'prompt_too_large'", "PROVIDER_ERROR": "'provider_error'", "SCHEMA_VIOLATION": "'schema_violation'", "SECRET_LEAK": "'secret_leak'", "TIMEOUT": "'timeout'", "TOKEN_OVERFLOW": "'token_overflow'"}
+  "members": {"BUDGET_EXCEEDED": "'budget_exceeded'", "CIRCUIT_OPEN": "'circuit_open'", "CONSTRAINT_VIOLATION": "'constraint_violation'", "INJECTION_BLOCKED": "'injection_blocked'", "NONE": "'none'", "OUTPUT_CAP": "'output_cap'", "PROMPT_TOO_LARGE": "'prompt_too_large'", "PROVIDER_ERROR": "'provider_error'", "SCHEMA_VIOLATION": "'schema_violation'", "SECRET_LEAK": "'secret_leak'", "TIMEOUT": "'timeout'", "TOKEN_OVERFLOW": "'token_overflow'"}
  },
  "personalclaw.sdk.model.FirstTokenTimeout": {
   "bases": ["GuardError"],

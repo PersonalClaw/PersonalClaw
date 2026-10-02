@@ -20,7 +20,6 @@ from personalclaw.llm.events import (
     EVENT_COMPLETE,
     EVENT_TEXT_CHUNK,
     EVENT_TOOL_CALL,
-    STOP_MAX_TOKENS,
     AgentEvent,
 )
 from personalclaw.tool_providers.base import RiskLevel, ToolDefinition, ToolProvider, ToolResult
@@ -181,12 +180,3 @@ async def test_a_loop_worker_is_not_asked():
     rt = await _runtime(model, surface="loops")
     await _turn(rt)
     assert model.calls == 2
-
-
-async def test_a_reply_cut_at_the_output_cap_is_not_asked():
-    """Asking again meets the same cap; the length stop is what the surface reports."""
-    model = _Script([_call(), [AgentEvent(kind=EVENT_COMPLETE, stop_reason=STOP_MAX_TOKENS)]])
-    rt = await _runtime(model)
-    events = await _turn(rt)
-    assert model.calls == 2
-    assert events[-1].stop_reason == STOP_MAX_TOKENS

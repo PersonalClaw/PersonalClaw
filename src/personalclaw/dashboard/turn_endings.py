@@ -13,6 +13,7 @@ import inspect
 from collections.abc import Iterable
 from typing import Any
 
+from personalclaw.llm.events import is_length_stop, out_of_room_notice
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 #: What the model is told of an approval that ended with no answer: nobody declined it.
@@ -73,6 +74,16 @@ def moved_after_answer_notice(to: str) -> str:
     """Said when the change landed after the turn had given its answer: the answer stands and
     *to* answers from her next message."""
     return f"Switched to {to.strip() or 'the new agent'}. It answers your next message."
+
+
+def wrote_nothing(stop_reason: str, agent: str, output_cap: int) -> str:
+    """Said when a turn wrote nothing and its stop says why: the agent refused to continue
+    (``refusal``, :func:`refused_turn_notice`), or its model ran out of output room before it
+    answered (a length stop, ``llm.events.out_of_room_notice``, naming the *output_cap* it ran
+    into). Never resent: it would be asked the same thing again, and meet the same cap."""
+    if is_length_stop(stop_reason):
+        return out_of_room_notice(output_cap)
+    return refused_turn_notice(agent)
 
 
 def serving_agent_name(client: object) -> str:

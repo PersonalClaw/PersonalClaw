@@ -280,6 +280,9 @@ class OpenAIProvider(ModelProvider):
         output_tokens = 0
         cache_creation_tokens = 0
         cache_read_tokens = 0
+        # How the completion ended (`finish_reason`), carried on the terminal event: `length` is
+        # the one a consumer must know, a reply or a turn cut at the output cap.
+        stop_reason = ""
 
         async for chunk in response:
             choices = getattr(chunk, "choices", None) or []
@@ -323,6 +326,8 @@ class OpenAIProvider(ModelProvider):
                             bucket["extra_content"] = extra
 
                 finish_reason = getattr(choice, "finish_reason", None)
+                if finish_reason:
+                    stop_reason = str(finish_reason)
                 # `length` joins the flush set, and the reason RIDES the event. A completion cut at
                 # `max_tokens` used to fall through to the defensive flush below, which emits the
                 # partial call with no indication that it was partial — so the runtime parsed
@@ -408,6 +413,7 @@ class OpenAIProvider(ModelProvider):
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
+            stop_reason=stop_reason,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,
@@ -509,6 +515,9 @@ class OpenAIProvider(ModelProvider):
         output_tokens = 0
         cache_creation_tokens = 0
         cache_read_tokens = 0
+        # How the completion ended (`finish_reason`), carried on the terminal event: `length` is
+        # the one a consumer must know, a reply or a turn cut at the output cap.
+        stop_reason = ""
 
         async for chunk in response:
             choices = getattr(chunk, "choices", None) or []
@@ -555,6 +564,8 @@ class OpenAIProvider(ModelProvider):
                             bucket["extra_content"] = extra
 
                 finish_reason = getattr(choice, "finish_reason", None)
+                if finish_reason:
+                    stop_reason = str(finish_reason)
                 # `length` joins the flush set, and the reason RIDES the event. A completion cut at
                 # `max_tokens` used to fall through to the defensive flush below, which emits the
                 # partial call with no indication that it was partial — so the runtime parsed
@@ -627,6 +638,7 @@ class OpenAIProvider(ModelProvider):
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
+            stop_reason=stop_reason,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,

@@ -1,7 +1,7 @@
 """Failure-mode taxonomy + typed errors for the model-call chokepoint.
 
 Every attempt through :class:`~personalclaw.guardrails.model_call.ModelCallGuard`
-is classified into exactly one :class:`FailureMode` (or ``None`` on success). The
+is classified into exactly one :class:`FailureMode` (``none`` on success). The
 mode drives two decisions: whether the attempt is retried, and what correction
 note is injected into the retry prompt.
 
@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from personalclaw.errors import AgentError
+
+from personalclaw.llm.events import is_length_stop
 
 
 class FailureMode(str, Enum):
@@ -42,6 +44,11 @@ class FailureMode(str, Enum):
     #: transient, and a retry is the same failure a second time (on a memory-capped host, the
     #: second allocation is the one the kernel kills the process for).
     PROMPT_TOO_LARGE = "prompt_too_large"
+    #: The call answered, and stopped at its output cap (a length stop, in any provider's words:
+    #: ``llm.events.is_length_stop``). It PASSED only when it still produced something usable,
+    #: text or a tool call whose arguments read whole (:func:`answered_mode`); one that spent its
+    #: whole cap before it wrote or called anything produced nothing, and reads as failed.
+    OUTPUT_CAP = "output_cap"
 
 
 # Failure modes that must NEVER be auto-retried. Retrying an injection/secret-leak
@@ -82,6 +89,20 @@ _CORRECTION_NOTES: dict[FailureMode, str] = {
         "the answer completes quickly."
     ),
 }
+
+
+def answered_mode(stop_reason: object, *, produced: bool) -> tuple[FailureMode, bool]:
+    """How a call that answered is recorded, as ``(failure_mode, passed)``: by how it stopped, and
+    whether it *produced* any text or a tool call whose arguments read whole.
+
+    A length stop is :attr:`FailureMode.OUTPUT_CAP`, whatever came before it, and it passed only
+    when it produced something: a call that ran into its cap before it wrote or called anything
+    did no work, and recording it ``none``/passed is how a model that answered nothing call after
+    call read as healthy. Every other stop is a plain pass.
+    """
+    if is_length_stop(stop_reason):
+        return FailureMode.OUTPUT_CAP, produced
+    return FailureMode.NONE, True
 
 
 def correction_note(mode: FailureMode) -> str:

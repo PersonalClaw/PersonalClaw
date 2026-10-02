@@ -696,6 +696,7 @@ class OllamaProvider(ModelProvider):
         reasoning = _Reasoning()
         input_tokens = 0
         output_tokens = 0
+        stop_reason = ""
 
         answered = False
         try:
@@ -729,6 +730,8 @@ class OllamaProvider(ModelProvider):
                     if chunk.get("done"):
                         input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
                         output_tokens = int(chunk.get("eval_count", 0) or 0)
+                        # `length` when the answer reached its output cap (`num_predict`).
+                        stop_reason = str(chunk.get("done_reason") or "")
                         break
         except self._httpx_module.ReadTimeout as exc:
             if answered:
@@ -749,6 +752,7 @@ class OllamaProvider(ModelProvider):
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
+            stop_reason=stop_reason,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             context_usage_pct=self._last_context_pct,
@@ -812,6 +816,7 @@ class OllamaProvider(ModelProvider):
 
         input_tokens = 0
         output_tokens = 0
+        stop_reason = ""
         # Accumulate tool calls by index — Ollama may stream them across chunks
         # (name first, then argument fragments) like the OpenAI delta protocol,
         # or deliver a complete list in the final message. Either way we emit
@@ -866,6 +871,8 @@ class OllamaProvider(ModelProvider):
                     if chunk.get("done"):
                         input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
                         output_tokens = int(chunk.get("eval_count", 0) or 0)
+                        # `length` when the answer reached its output cap (`num_predict`).
+                        stop_reason = str(chunk.get("done_reason") or "")
                         break
         except self._httpx_module.ReadTimeout as exc:
             if answered:
@@ -893,6 +900,7 @@ class OllamaProvider(ModelProvider):
 
         yield LLMEvent(
             kind=EVENT_COMPLETE,
+            stop_reason=stop_reason,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             context_usage_pct=self._last_context_pct,

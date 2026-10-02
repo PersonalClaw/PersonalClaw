@@ -542,3 +542,57 @@ async def test_anthropic_complete_model_override(
     assert "system" not in msgs.calls[0]
     # No tools → no tools kwarg sent.
     assert "tools" not in msgs.calls[0]
+
+
+# ── how a completion stopped rides its terminal event ──────────────────────────────────────────
+#
+# The native loop reads a length stop off the terminal EVENT_COMPLETE (`llm.events.is_length_stop`)
+# to tell a model that ran out of output room from one that finished. Both wire clients carried it
+# on a tool call only, so a completion cut at its cap with no tool call read as finished.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["stream", "complete"])
+async def test_openai_says_a_completion_stopped_at_its_cap(
+    fake_openai: types.ModuleType, path: str
+) -> None:
+    from personalclaw.llm.openai import OpenAIProvider
+
+    chunks = [
+        _FakeChunk(
+            choices=[_FakeChoice(delta=_FakeDelta(content=None), finish_reason="length")],
+            usage=_FakeUsage(prompt_tokens=39_311, completion_tokens=8_192),
+        ),
+    ]
+    provider = OpenAIProvider(model="gpt-4o-mini", credential=_cred())
+    provider._client.chat = _FakeChat(_FakeChatCompletions(chunks=chunks))
+    events = (
+        provider.stream("review it")
+        if path == "stream"
+        else provider.complete([{"role": "user", "content": "review it"}])
+    )
+    (done,) = [e async for e in events if e.kind == EVENT_COMPLETE]
+    assert done.stop_reason == "length"
+    assert done.output_tokens == 8_192
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["stream", "complete"])
+async def test_anthropic_says_a_completion_stopped_at_its_cap(
+    fake_anthropic: types.ModuleType, path: str
+) -> None:
+    from personalclaw.llm.anthropic import AnthropicProvider
+
+    capped = _message_delta(output_tokens=8_192)
+    capped.delta.stop_reason = "max_tokens"
+    msgs = _FakeMessages(stream_events=[_ms_event(input_tokens=39_311), capped])
+    provider = AnthropicProvider(model="claude-x", credential=_cred())
+    provider._client.messages = msgs
+    events = (
+        provider.stream("review it")
+        if path == "stream"
+        else provider.complete([{"role": "user", "content": "review it"}])
+    )
+    (done,) = [e async for e in events if e.kind == EVENT_COMPLETE]
+    assert done.stop_reason == "max_tokens"
+    assert done.output_tokens == 8_192
