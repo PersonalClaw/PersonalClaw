@@ -39,6 +39,14 @@ stdout either way, and its exit status says whether it passed.
 Start the PersonalClaw server (dashboard + channels). This is the long-running
 process everything else talks to.
 
+Started at a terminal, it prints a sign-in link for the dashboard, and opens it in the
+default browser unless `--no-open` (or `dashboard.auto_open_browser: false`) says not to.
+When its output goes to a file instead (a service's log, the `gateway-restart.log` a
+detached `personalclaw restart` writes, a container's logs, a pipe), it prints the
+dashboard's address without a sign-in link and says to run `personalclaw token` for one;
+a link it opens in the browser goes to the browser only. Each start ends the startup link
+of the start before it, when no browser opened that link.
+
 | Flag | Effect |
 |---|---|
 | `--headless` | Serve channels only; skip the dashboard web server and SSH tunnel instructions. |
@@ -226,9 +234,9 @@ reads as registered and not tested.
 
 | Command | What it does |
 |---|---|
-| `personalclaw status [--port]` | Show runtime stats from the running gateway. |
-| `personalclaw stop [--port]` | Stop this home's gateway, and return once it has exited. It finds the gateway from the record the gateway keeps in its home (its port and pid), so it needs no other program. `--port` stops it only if it listens on that port. With a service installed, it stops the service. In a container it changes nothing and prints the host command that stops the container. |
-| `personalclaw restart [--port]` | Restart the gateway: the service if installed, else stop this home's gateway and start a fresh one on the port it had. A fresh one starts only once the old one has exited. In a container it changes nothing and prints the host command that restarts the container. |
+| `personalclaw status [--port]` | Show runtime stats from the running gateway, and the service installed for this home, if there is one, with whether it is running. |
+| `personalclaw stop [--port]` | Stop this home's gateway, and return once it has exited. It finds the gateway from the record the gateway keeps in its home (its port and pid), so it needs no other program. `--port` stops it only if it listens on that port. With a service installed for this home and running, it stops the service and leaves it installed: it starts again at your next login (macOS) or the next boot (Linux), or with `personalclaw restart`. In a container it changes nothing and prints the host command that stops the container. |
+| `personalclaw restart [--port]` | Restart the gateway: the service installed for this home, whether or not it is running (a gateway started outside it is stopped first), else stop this home's gateway and start a fresh one on the port it had. A fresh one starts only once the old one has exited. A service installed for another home is left alone. In a container it changes nothing and prints the host command that restarts the container. |
 | `personalclaw logs [-f] [-n LINES]` | Show gateway logs (`-f` live tail; `-n` line count, default 100). Reads the systemd journal (Linux service), the launchd service's log, `~/Library/Logs/PersonalClaw/gateway.err` (macOS), or `gateway.log` in the home (a gateway that is not a service). Each holds the same lines as Settings → Diagnostics → Live logs: the gateway's own, every loaded app's from the moment it loads, and any library's warnings. |
 | `personalclaw token [--port] [--ttl 20h]` | Print a sign-in link for the dashboard. Open it in a browser to sign that browser in, or send the token after `?token=` as an `Authorization: Bearer` header from a script. It lasts 20 hours unless `--ttl` says otherwise (`30m`, `20h`, `7d`; at most `90d`, the limit for a long-lived credential — longer is refused, with a sentence saying why), and it says so on stderr, with the time it stops working. Every sign-in is listed under Settings → Devices, where it can be signed out. |
 | `personalclaw logout [--port]` | Sign every device and token out, everywhere. Each one's next request is told when and from where, and how to sign back in. |
@@ -251,6 +259,11 @@ also says whether the gateway is running.
 | `service install [--env NAME]… [--no-env NAME]…` | Install and start the gateway service, carrying the variables below from this shell. `--env NAME` carries one more, `--no-env NAME` leaves one out. |
 | `service uninstall` | Stop and remove the gateway service, and stop the tmux server its home's persistent terminals and durable workers run in. |
 | `service status` | Show service status (systemctl/launchctl) and the environment the installed service starts the gateway in. |
+
+On macOS, launchd writes the service's output to `~/Library/Logs/PersonalClaw/gateway.log`
+and `gateway.err`. Both, and their folder, are readable only by you, and neither holds a
+sign-in link: run `personalclaw token` for one. On Linux the output goes to the systemd
+journal.
 
 ### The service's environment
 

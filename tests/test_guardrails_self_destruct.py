@@ -11,10 +11,11 @@ it looks at LITERAL TEXT. Counted against it:
 
 And the hazard is reachable, not theoretical: a clock trigger's `bash` action reaches
 `BashActionProvider.execute`, which runs `/bin/sh -c command` and screens nothing itself, while
-`personalclaw restart`/`stop` are SERVICE-FIRST (`cli_server._restart` calls
-`service_controller.restart_service()` first) — so they bounce the installed service, i.e. the
-process hosting the run. The fire's `ScheduleRunStore` row never reaches a terminal state, and
-what the user sees afterwards is a hung run, not a self-inflicted stop.
+`personalclaw restart`/`stop` are SERVICE-FIRST (`cli_server._restart` finds the service
+installed for this home first, `service_controller.this_homes_service()`) — so they bounce the
+installed service, i.e. the process hosting the run. The fire's `ScheduleRunStore` row never
+reaches a terminal state, and what the user sees afterwards is a hung run, not a self-inflicted
+stop.
 
 Two things this file is careful about, because both are ways a guard like this goes wrong:
 

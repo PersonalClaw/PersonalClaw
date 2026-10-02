@@ -236,6 +236,23 @@ class TestFormatDashboardUrls:
         with pytest.raises(ValueError, match="token is required"):
             format_dashboard_urls("http://host:7777", port=7777, local_only="yes")  # type: ignore[arg-type]  # noqa: E501
 
+    @patch.dict("os.environ", {}, clear=True)
+    @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
+    @patch(f"{_MOD}.machine_hostname", return_value="localhost")
+    def test_lines_for_a_log_give_the_address_and_how_to_sign_in(
+        self, _mh: object, _dp: object
+    ) -> None:
+        """For a reader who is not at a terminal: a bare address, even one that is not
+        local-only, and the sentence that says how to get a link."""
+        how = "To sign in, run `personalclaw token` and open the link it prints."
+        lines = format_dashboard_urls("http://host:7777", port=7777, local_only=False, sign_in=how)
+        assert lines[:3] == ["Dashboard:", "   http://host:7777", f"   {how}"]
+        assert not any("token=" in line for line in lines), lines
+
+    def test_lines_for_a_log_refuse_a_sign_in_link(self) -> None:
+        with pytest.raises(ValueError, match="must not carry a sign-in link"):
+            format_dashboard_urls("http://localhost:7777?token=t", port=7777, sign_in="Sign in.")
+
 
 class TestCheckOriginLoopbackTrust:
     """check_origin should trust loopback origins regardless of port (SSH tunnel support)."""

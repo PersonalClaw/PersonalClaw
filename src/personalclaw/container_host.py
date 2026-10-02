@@ -4,7 +4,8 @@ Inside the image nothing can drive the container runtime. The image is replaced 
 and the runtime starts, stops and restarts the gateway, which is the container's own main
 process. So every surface that would act on the gateway here says which command to run on the
 host instead: ``personalclaw update`` and the Updates panel, ``personalclaw stop`` and
-``restart``, and ``personalclaw service``. Each of those commands comes from this module, and
+``restart``, ``personalclaw service``, and the startup banner's way to a sign-in link
+(``personalclaw token``, run in the container). Each of those commands comes from this module, and
 ``tests/test_container_host.py`` holds README.md's ``docker run`` and
 ``docs/guides/containers.md`` to it, so a documented command and the one the product prints
 cannot drift apart again. (They did: the update instructions named Docker Compose while the
@@ -116,6 +117,13 @@ def restart_command() -> str:
     if started_by_compose():
         return f"{COMPOSE} restart {COMPOSE_SERVICE}"
     return f"docker restart {CONTAINER_NAME}"
+
+
+def token_command() -> str:
+    """What the host runs for a sign-in link: ``personalclaw token``, inside the container."""
+    if started_by_compose():
+        return f"{COMPOSE} exec {COMPOSE_SERVICE} personalclaw token"
+    return f"docker exec {CONTAINER_NAME} personalclaw token"
 
 
 def keeps_running() -> str:

@@ -14,7 +14,9 @@ Public entry points used by the CLI:
     uninstall_service()
     service_status()
     is_service_active()
-    stop_service()
+    this_homes_service()
+    stop_service(service)
+    restart_service(service)
 """
 
 from personalclaw.service.common import (
@@ -23,20 +25,26 @@ from personalclaw.service.common import (
     current_platform,
 )
 from personalclaw.service.controller import (
+    InstalledService,
     install_service,
     is_service_active,
+    restart_service,
     service_status,
     stop_service,
+    this_homes_service,
     uninstall_service,
 )
 
 __all__ = [
+    "InstalledService",
     "Platform",
     "SERVICE_NAME",
     "current_platform",
     "install_service",
     "is_service_active",
+    "restart_service",
     "service_status",
     "stop_service",
+    "this_homes_service",
     "uninstall_service",
 ]

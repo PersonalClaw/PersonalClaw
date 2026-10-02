@@ -2,9 +2,19 @@
 
 import enum
 import os
+import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+
+from personalclaw.atomic_write import (
+    PRIVATE_DIR_MODE,
+    PRIVATE_FILE_MODE,
+    make_private_dirs,
+    private_file,
+    write_private_file,
+)
 
 SERVICE_NAME = "personalclaw"  # systemd unit name (without .service)
 LAUNCHD_LABEL = "io.personalclaw.gateway"  # launchd Label
@@ -29,6 +39,39 @@ def command_said(result: "subprocess.CompletedProcess[str]") -> str:
     return mask_child_output(
         result.stderr or result.stdout, limit=COMMAND_SAID_CHARS, tail=True, one_line=False
     )
+
+
+#: A sign-in link's credential, as a line of the gateway's output carried one: the value of a
+#: URL's ``token`` parameter.
+_SIGN_IN_LINK_VALUE = re.compile(rb"([?&]token=)[^\s&#]+")
+_REMOVED = rb"\1[removed]"
+
+
+def private_output_log(path: Path) -> None:
+    """Make *path* ready to take a gateway's console output: the owner's alone, with no sign-in
+    link left in it. Called before the process that writes it starts.
+
+    For the files the gateway's stdout and stderr go to when no terminal shows them: launchd's
+    ``StandardOutPath`` and ``StandardErrorPath``, and a detached ``personalclaw restart``'s log.
+    Their folder is made 0700, and tightened to it when it is looser: it holds nothing but these
+    logs. The file is 0600 before its first byte, and the process that opens it to append keeps
+    that mode. A gateway older than this one printed its sign-in link there, a live owner session:
+    the link's value is taken out, and every other byte of the log is kept.
+    """
+    make_private_dirs(path.parent)
+    os.chmod(path.parent, PRIVATE_DIR_MODE)
+    try:
+        with path.open("rb") as log:
+            holds_a_link = any(_SIGN_IN_LINK_VALUE.search(line) for line in log)
+    except FileNotFoundError:
+        write_private_file(path, b"")
+        return
+    if not holds_a_link:
+        os.chmod(path, PRIVATE_FILE_MODE)
+        return
+    with path.open("rb") as log, private_file(path, fsync=False) as kept:
+        for line in log:
+            kept.write(_SIGN_IN_LINK_VALUE.sub(_REMOVED, line))
 
 
 def personalclaw_bin() -> str:

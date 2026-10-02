@@ -446,11 +446,20 @@ def format_dashboard_urls(
     port: int,
     local_only: bool = True,
     has_custom_host: bool = False,
+    sign_in: str = "",
 ) -> list[str]:
-    """Return startup log lines describing how to reach the dashboard."""
+    """Return startup log lines describing how to reach the dashboard.
+
+    *authed_url* is the sign-in link, for a person reading the lines at a terminal. *sign_in*
+    is for every other reader: the sentence that says how to get a link, shown under a bare
+    address. Those lines are kept in a log, so a credential in *authed_url* is refused there.
+    """
     parsed_query = urlparse(authed_url).query
     _qs = f"?{parsed_query}" if parsed_query else ""
-    if local_only is not True and "token" not in parse_qs(parsed_query):
+    has_token = "token" in parse_qs(parsed_query)
+    if sign_in and has_token:
+        raise ValueError("lines that say how to sign in must not carry a sign-in link")
+    if not sign_in and local_only is not True and not has_token:
         raise ValueError("token is required when dashboard is not local-only")
     _is_remote = bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_CLIENT"))
 
@@ -462,6 +471,8 @@ def format_dashboard_urls(
         ]
     else:
         lines = ["Dashboard:", f"   {authed_url}"]
+    if sign_in:
+        lines.append(f"   {sign_in}")
     note = container_port_note(port)
     if note:
         lines.append(f"   {note}")

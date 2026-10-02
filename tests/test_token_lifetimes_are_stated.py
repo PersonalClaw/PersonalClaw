@@ -139,7 +139,9 @@ def test_the_lifetimes_the_help_and_docs_state_are_the_codes():
     assert "20h" in token_help and "Settings → Devices" in token_help, token_help
     docstring = token_auth.generate_token.__doc__ or ""
     assert "capped at 20 hours" not in docstring and "5 minutes" not in docstring
-    token_row = next(line for line in cli_doc.splitlines() if "`personalclaw token" in line)
+    token_row = next(
+        line for line in cli_doc.splitlines() if line.startswith("| `personalclaw token")
+    )
     assert "20h" in token_row and "Settings → Devices" in token_row, token_row
     assert re.search(r"90d|90 days", token_row), "the ceiling a caller may ask for"
     assert not re.search(r"1 year|a year|8760h", token_row), "a year is no longer on offer"

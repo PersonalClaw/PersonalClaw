@@ -5,11 +5,11 @@ trigger whose action is a `bash` command dispatches through
 :meth:`GatewayOrchestrator._fire_store_trigger` → :func:`personalclaw.guardrails.denylist.
 enforce_action` → :class:`BashActionProvider`, which runs `/bin/sh -c command` and screens
 nothing itself. And `personalclaw stop` / `personalclaw restart` are **SERVICE-FIRST**: see
-`cli_server._restart`, whose first act is `service_controller.restart_service()` — if a
-launchd/systemd service manages the gateway, the CLI bounces *that service*, which is the very
-process hosting the run. The runner dies mid-flight, so the `ScheduleRunStore` row never reaches
-a terminal state and the fire reads afterwards as a HUNG run rather than as a self-inflicted
-stop. The user is left debugging a phantom.
+`cli_server._restart`, whose first act is `service_controller.this_homes_service()` — if a
+launchd/systemd service is installed for the gateway's home, the CLI bounces *that service*,
+which is the very process hosting the run. The runner dies mid-flight, so the
+`ScheduleRunStore` row never reaches a terminal state and the fire reads afterwards as a HUNG
+run rather than as a self-inflicted stop. The user is left debugging a phantom.
 
 **Measured before a line was written.** The packaged baseline
 (`security.baseline_denied_command_patterns`) carries exactly three lifecycle-adjacent regexes —

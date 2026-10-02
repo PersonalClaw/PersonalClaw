@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from personalclaw import __version__, container_host, gateway_base, process_facts, self_update
+from personalclaw.atomic_write import open_streamed
 from personalclaw.auth import lifetimes
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -36,7 +37,12 @@ from personalclaw.sel import sel
 from personalclaw.service import controller as service_controller
 from personalclaw.service import linux as svc_linux
 from personalclaw.service import macos as svc_macos
-from personalclaw.service.common import SERVICE_NAME, Platform, current_platform
+from personalclaw.service.common import (
+    SERVICE_NAME,
+    Platform,
+    current_platform,
+    private_output_log,
+)
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.vector_memory import VectorMemoryStore
@@ -290,10 +296,11 @@ def _this_homes_gateway(port: int | None) -> gateway_base.LiveGateway:
 def _stop(port: int | None) -> None:
     """Stop this home's gateway, and return once it has exited.
 
-    Service first: if systemd or launchd runs the gateway, stopping the PROCESS would only have
-    the service manager start it again, so the service is stopped instead. In a container the
-    container runtime is that manager, and nothing inside the container can drive it, so this
-    says which host command does it and changes nothing.
+    Service first: if systemd or launchd runs this home's gateway, stopping the PROCESS would only
+    have the service manager start it again, so the service is stopped instead, and the message
+    says what starts it again. In a container the container runtime is that manager, and nothing
+    inside the container can drive it, so this says which host command does it and changes
+    nothing.
 
     Otherwise the gateway is the one this home's runtime record names (``gateway_base``): the
     port it bound and its pid, written once it listens and removed as it stops. It used to be
@@ -304,15 +311,23 @@ def _stop(port: int | None) -> None:
 
     *port* is the ``--port`` the user typed, or None.
     """
-    if service_controller.stop_service():
+    service = service_controller.this_homes_service()
+    if service is not None and service_controller.is_service_active():
+        failed = service_controller.stop_service(service)
         sel().log_api_access(
             caller="cli",
             operation="gateway_stop",
-            outcome="allowed",
+            outcome="error" if failed else "allowed",
             source="cli",
             resources="via=service",
         )
-        print("✅ Stopped personalclaw service. To remove it: personalclaw service uninstall")
+        if failed:
+            print(f"❌ Could not stop {service.name}: {failed}", file=sys.stderr)
+            sys.exit(1)
+        print(
+            f"✅ Stopped the PersonalClaw service ({service.name}). {service.comes_back}, or "
+            "now with `personalclaw restart`. To remove it: personalclaw service uninstall"
+        )
         return
     if current_platform() is Platform.CONTAINER:
         sel().log_api_access(
@@ -390,17 +405,19 @@ def _stop(port: int | None) -> None:
 def _spawn_detached_gateway(port: int) -> None:
     """Start a fresh foreground gateway, detached from this CLI process.
 
-    Used by ``personalclaw restart`` when no platform service manages the
-    gateway. ``start_new_session=True`` puts the child in its own session so it
-    survives the CLI exiting (the POSIX ``setsid`` equivalent); stdio is
-    redirected to a log file so the detached process has no controlling TTY.
+    Used by ``personalclaw restart`` when no platform service is installed for this home.
+    ``start_new_session=True`` puts the child in its own session so it survives the CLI exiting
+    (the POSIX ``setsid`` equivalent); stdio is redirected to a log file so the detached process
+    has no controlling TTY, and so prints no sign-in link. The log is the owner's alone, and a
+    link an older gateway printed there is taken out first (``private_output_log``).
     """
     log_path = config_dir() / "gateway-restart.log"
     args = [sys.executable, "-m", "personalclaw", "gateway", "--port", str(port)]
     try:
-        log_fh = open(log_path, "ab")
+        private_output_log(log_path)
+        log_fh = open_streamed(log_path, "ab")
     except OSError:
-        log_fh = subprocess.DEVNULL  # type: ignore[assignment]
+        log_fh = subprocess.DEVNULL
     subprocess.Popen(
         args,
         stdout=log_fh,
@@ -422,25 +439,39 @@ def _spawn_detached_gateway(port: int) -> None:
 def _restart(port: int | None) -> None:
     """Restart the gateway, service-aware.
 
-    If a platform service (systemd/launchd) manages the gateway, restart it through the service
-    manager and stop there: it owns the process lifecycle. In a container the container runtime
-    owns it, so this says which host command restarts it and changes nothing. Otherwise stop
-    this home's gateway, if one runs, and start a fresh detached one on the port it had (with
-    none running, on the ``--port`` typed or the configured one).
+    If a platform service (systemd/launchd) is installed for this home, the service manager owns
+    the process lifecycle, so the restart goes through it, whether or not it runs the service
+    now: a service ``stop`` stopped is started again, rather than replaced by a gateway with no
+    restart on a crash and no start at login. A gateway started outside the service is stopped
+    first, since it holds the home and the port the service's gateway needs. In a container the
+    container runtime owns the lifecycle, so this says which host command restarts it and changes
+    nothing. Otherwise stop this home's gateway, if one runs, and start a fresh detached one on
+    the port it had (with none running, on the ``--port`` typed or the configured one).
 
     The fresh gateway starts only once this home has none. A stop that could not stop the
     running gateway ends the restart there, with its reason: the restart used to start one
     anyway, which put a second gateway beside the first on the same home.
     """
-    if service_controller.restart_service():
+    service = service_controller.this_homes_service()
+    if service is not None:
+        was_running = service_controller.is_service_active()
+        if not was_running and gateway_base.live_gateway() is not None:
+            _stop(port)  # returns only once it has exited; exits 1 when it cannot stop it
+        failed = service_controller.restart_service(service)
         sel().log_api_access(
             caller="cli",
             operation="gateway_restart",
-            outcome="allowed",
+            outcome="error" if failed else "allowed",
             source="cli",
             resources="via=service",
         )
-        print("✅ Restarted personalclaw service.")
+        if failed:
+            print(f"❌ Could not start {service.name}: {failed}", file=sys.stderr)
+            sys.exit(1)
+        print(
+            f"✅ {'Restarted' if was_running else 'Started'} the PersonalClaw service "
+            f"({service.name})."
+        )
         return
     if current_platform() is Platform.CONTAINER:
         sel().log_api_access(
@@ -947,9 +978,11 @@ def _status_value(data: object, path: tuple[str, ...]) -> str:
 
 
 def _status(args: argparse.Namespace) -> None:
-    """Query the running gateway for stats, or print offline message."""
+    """Query the running gateway for stats, or print offline message. Each names the service
+    installed for this home, when there is one."""
     port = resolve_client_port(getattr(args, "port", None))
     url = f"http://127.0.0.1:{port}/api/status"
+    service = service_controller.this_homes_service()
     try:
         with urllib.request.urlopen(url, timeout=3) as resp:
             data = json.loads(resp.read())
@@ -959,18 +992,35 @@ def _status(args: argparse.Namespace) -> None:
             print("  For detailed stats, see the Overview page in the dashboard.")
         else:
             print(f"PersonalClaw gateway is running but returned HTTP {e.code}.")
+        _print_service(service)
         return
     except (urllib.error.URLError, OSError):
         print("PersonalClaw gateway is not running.")
-        print("  Start it with: personalclaw gateway")
+        print(f"  Start it with: personalclaw {'restart' if service else 'gateway'}")
+        _print_service(service)
         return
     except Exception:
         print("PersonalClaw gateway is running but returned an unexpected response.")
+        _print_service(service)
         return
 
     print(f"PersonalClaw v{__version__}\n")
     for label, path in _STATUS_LINES:
         print(f"  {label + ':':<12} {_status_value(data, path)}")
+    _print_service(service)
+
+
+def _print_service(service: service_controller.InstalledService | None) -> None:
+    """``status``'s line for the service installed for this home: which it is, and whether its
+    service manager runs it now."""
+    if service is None:
+        return
+    state = (
+        "running"
+        if service_controller.is_service_active()
+        else "installed, not running (`personalclaw restart` starts it)"
+    )
+    print(f"  {'Service:':<12} {service.name}, {state}")
 
 
 def _boot_config() -> AppConfig:

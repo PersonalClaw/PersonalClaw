@@ -260,14 +260,18 @@ def is_active() -> bool:
     return res.returncode == 0 and res.stdout.strip() == "active"
 
 
-def stop() -> None:
-    """Stop the running service without disabling it."""
-    _systemctl("stop", f"{SERVICE_NAME}.service")
+def stop() -> str:
+    """Stop the running service without disabling it, so it starts again at the next boot.
+    Returns what sudo or systemctl said when it could not, else ``""``."""
+    stopped = _systemctl("stop", f"{SERVICE_NAME}.service")
+    return command_said(stopped) if stopped.returncode != 0 else ""
 
 
-def restart() -> None:
-    """Restart the running service. systemd starts it if stopped."""
-    _systemctl("restart", f"{SERVICE_NAME}.service")
+def restart() -> str:
+    """Restart the service; systemd starts it if it is stopped. Returns what sudo or systemctl
+    said when it could not, else ``""``."""
+    restarted = _systemctl("restart", f"{SERVICE_NAME}.service")
+    return command_said(restarted) if restarted.returncode != 0 else ""
 
 
 def status() -> str:

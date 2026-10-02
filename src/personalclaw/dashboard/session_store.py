@@ -171,6 +171,7 @@ END_SIGNED_OUT_OTHERS = "signed_out_others"  # "Sign out all other devices" on a
 END_SIGNED_OUT_EVERYWHERE = "signed_out_everywhere"  # `personalclaw logout` / `auth revoke --all`
 END_LIMIT = "limit"  # more of its kind were signed in than the limit, and it was the idlest
 END_REPLACED = "replaced"  # the same browser signed in again with a newer link
+END_SUPERSEDED = "superseded"  # a startup link no browser opened, and the gateway started again
 END_KEY_REPLACED = "key_replaced"  # the owner replaced the key every sign-in is signed with
 END_EXPIRED = "expired"  # it ran its whole lifetime (recorded by the store, never passed in)
 END_REASONS: tuple[str, ...] = (
@@ -180,6 +181,7 @@ END_REASONS: tuple[str, ...] = (
     END_SIGNED_OUT_EVERYWHERE,
     END_LIMIT,
     END_REPLACED,
+    END_SUPERSEDED,
     END_KEY_REPLACED,
     END_EXPIRED,
 )
@@ -863,6 +865,16 @@ def signed_in_sessions() -> dict[str, SessionRecord]:
     permissions, lasts an hour, and is re-minted as the app needs it.
     """
     return {n: r for n, r in load_session_records().items() if r.issuer != ISSUER_APP}
+
+
+def unopened_links(issuer: str) -> list[str]:
+    """Every live session that came through *issuer*'s door and that no browser has opened:
+    a link still counted against the token limit (:func:`pool_of`)."""
+    return [
+        nonce
+        for nonce, record in load_session_records().items()
+        if record.issuer == issuer and pool_of(record) == POOL_TOKEN
+    ]
 
 
 def paired_sessions() -> dict[str, SessionRecord]:

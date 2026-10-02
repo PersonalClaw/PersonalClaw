@@ -306,74 +306,76 @@ class TestControllerDispatch:
         ):
             assert controller.is_service_active() is False
 
-    def test_stop_service_returns_false_when_inactive(self):
+    @staticmethod
+    def _service(platform):
+        from pathlib import Path
+
+        from personalclaw.service.controller import InstalledService
+
+        return InstalledService(platform, "the service", Path("/x/service"), "It comes back")
+
+    def test_stop_service_routes_to_systemd(self):
         from personalclaw.service import controller
         from personalclaw.service import linux as svc_linux
+        from personalclaw.service import macos as svc_macos
 
         with (
-            patch(
-                "personalclaw.service.controller.current_platform",
-                return_value=Platform.SYSTEMD,
-            ),
-            patch.object(svc_linux, "is_active", return_value=False),
-            patch.object(svc_linux, "stop") as mock_stop,
+            patch.object(svc_linux, "stop", return_value="") as linux_stop,
+            patch.object(svc_macos, "stop") as macos_stop,
         ):
-            assert controller.stop_service() is False
-        mock_stop.assert_not_called()
-
-    def test_stop_service_returns_true_when_active_systemd(self):
-        from personalclaw.service import controller
-        from personalclaw.service import linux as svc_linux
-
-        with (
-            patch(
-                "personalclaw.service.controller.current_platform",
-                return_value=Platform.SYSTEMD,
-            ),
-            patch.object(svc_linux, "is_active", return_value=True),
-            patch.object(svc_linux, "stop") as mock_stop,
-        ):
-            assert controller.stop_service() is True
-        mock_stop.assert_called_once()
+            assert controller.stop_service(self._service(Platform.SYSTEMD)) == ""
+        linux_stop.assert_called_once()
+        macos_stop.assert_not_called()
 
     def test_stop_service_routes_to_macos(self):
         from personalclaw.service import controller
+        from personalclaw.service import linux as svc_linux
         from personalclaw.service import macos as svc_macos
 
         with (
-            patch(
-                "personalclaw.service.controller.current_platform",
-                return_value=Platform.LAUNCHD,
-            ),
-            patch.object(svc_macos, "is_active", return_value=True),
-            patch.object(svc_macos, "stop") as mock_stop,
+            patch.object(svc_macos, "stop", return_value="") as macos_stop,
+            patch.object(svc_linux, "stop") as linux_stop,
         ):
-            assert controller.stop_service() is True
-        mock_stop.assert_called_once()
+            assert controller.stop_service(self._service(Platform.LAUNCHD)) == ""
+        macos_stop.assert_called_once()
+        linux_stop.assert_not_called()
 
-    def test_stop_service_returns_false_when_macos_inactive(self):
+    def test_stop_service_says_what_the_service_manager_said(self):
+        """A stop sudo refused is not reported as done: the caller gets the reason."""
+        from personalclaw.service import controller
+        from personalclaw.service import linux as svc_linux
+
+        refused = "sudo: a terminal is required to read the password"
+        with patch.object(svc_linux, "stop", return_value=refused):
+            assert controller.stop_service(self._service(Platform.SYSTEMD)) == refused
+
+    def test_this_homes_service_is_none_where_there_is_no_service_manager(self):
+        from personalclaw.service import controller
+
+        for platform in (Platform.UNSUPPORTED, Platform.CONTAINER):
+            with patch("personalclaw.service.controller.current_platform", return_value=platform):
+                assert controller.this_homes_service() is None
+
+    def test_this_homes_service_is_the_installed_file_for_this_home(self, tmp_path, monkeypatch):
+        """Installed and for this home: the service, whether or not launchd runs it. A plist
+        that runs another home is not this home's; with no plist there is none."""
+        from personalclaw.config import loader as config_loader
         from personalclaw.service import controller
         from personalclaw.service import macos as svc_macos
 
-        with (
-            patch(
-                "personalclaw.service.controller.current_platform",
-                return_value=Platform.LAUNCHD,
-            ),
-            patch.object(svc_macos, "is_active", return_value=False),
-            patch.object(svc_macos, "stop") as mock_stop,
-        ):
-            assert controller.stop_service() is False
-        mock_stop.assert_not_called()
-
-    def test_stop_service_unsupported_returns_false(self):
-        from personalclaw.service import controller
-
+        plist = tmp_path / "io.personalclaw.gateway.plist"
+        monkeypatch.setattr(svc_macos, "PLIST_PATH", plist)
+        here = str(config_loader.resolve_config_dir())
         with patch(
-            "personalclaw.service.controller.current_platform",
-            return_value=Platform.UNSUPPORTED,
+            "personalclaw.service.controller.current_platform", return_value=Platform.LAUNCHD
         ):
-            assert controller.stop_service() is False
+            assert controller.this_homes_service() is None
+            plist.write_text(svc_macos.render_plist({"PERSONALCLAW_HOME": here}))
+            service = controller.this_homes_service()
+            assert service is not None and service.path == plist
+            assert service.name == f"the launchd job {LAUNCHD_LABEL}"
+            plist.write_text(svc_macos.render_plist({"PERSONALCLAW_HOME": str(tmp_path / "b")}))
+            assert controller.this_homes_service() is None
 
     def test_install_systemd_handles_install_error(self, capsys):
         """If linux.install raises ServiceInstallError, controller catches it,

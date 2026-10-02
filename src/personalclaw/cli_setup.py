@@ -278,7 +278,7 @@ def _setup_noninteractive(
             "  Deployment mode: docker\n"
             "  Quick-start, on the host:\n"
             f"    {container_host.run_command()}\n"
-            f"    docker exec {container_host.CONTAINER_NAME} personalclaw token\n"
+            f"    {container_host.token_command()}\n"
         )
     elif mode == "service":
         print(

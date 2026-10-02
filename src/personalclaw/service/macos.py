@@ -4,7 +4,9 @@ The plist lives at ``~/Library/LaunchAgents/io.personalclaw.gateway.plist``
 and is loaded via ``launchctl load -w``. The service starts on user login
 and is restarted on crash by ``KeepAlive``. Its environment is ``HOME``, the
 PATH ``service_path`` builds, and what :mod:`personalclaw.service.environment`
-carries from the shell that installed it.
+carries from the shell that installed it. launchd appends the gateway's stdout and
+stderr to two files in ``~/Library/Logs/PersonalClaw``, which this module makes before
+each load, the owner's alone (``common.private_output_log``).
 """
 
 import os
@@ -19,6 +21,7 @@ from personalclaw.service.common import (
     LAUNCHD_LABEL,
     command_said,
     personalclaw_bin,
+    private_output_log,
     service_path,
 )
 from personalclaw.service.environment import Capture, capture
@@ -96,6 +99,22 @@ def _launchctl(*args: str, check: bool = False) -> subprocess.CompletedProcess[s
     )
 
 
+def _loaded() -> bool:
+    """Whether launchd has the agent loaded, running or not."""
+    return _launchctl("list", LAUNCHD_LABEL).returncode == 0
+
+
+def _prepare_logs() -> str:
+    """Make the two files launchd sends the agent's output to, before it opens them. Returns why
+    they could not be made, else ``""``."""
+    try:
+        for log in (STDOUT_LOG, STDERR_LOG):
+            private_output_log(log)
+    except OSError as exc:
+        return f"could not make the service's logs in {LOG_DIR} the owner's alone: {exc}"
+    return ""
+
+
 def install(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> Capture:
     """Write the plist and load+start the agent; return what its environment carries.
 
@@ -109,9 +128,11 @@ def install(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> Captur
     """
     carried = capture(os.environ, extra=extra, without=without)
     PLIST_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
     if PLIST_PATH.exists():
         _launchctl("unload", "-w", str(PLIST_PATH))
+    unprepared = _prepare_logs()
+    if unprepared:
+        raise ServiceInstallError(unprepared)
     _write_plist_atomic(render_plist(carried.env))
     load_res = _launchctl("load", "-w", str(PLIST_PATH))
     if load_res.returncode != 0:
@@ -156,31 +177,39 @@ def is_active() -> bool:
     return True  # `list <label>` succeeded; treat as active even if PID line absent
 
 
-def stop() -> None:
-    """Stop the running agent.
+def stop() -> str:
+    """Stop the running agent. Returns what launchctl said when it could not, else ``""``.
 
     ``launchctl stop`` only sends SIGTERM, which the plist's
     ``KeepAlive={SuccessfulExit: false}`` treats as an unsuccessful exit
     and immediately restarts — so a plain ``stop`` is effectively a
     no-op. Use ``unload`` (without ``-w``) so the agent stops and stays
-    stopped for the current session, but reloads automatically on next
-    login. This mirrors ``systemctl stop`` semantics on Linux.
-    """
-    if PLIST_PATH.exists():
-        _launchctl("unload", str(PLIST_PATH))
-
-
-def restart() -> None:
-    """Restart the agent by reloading the plist.
-
-    ``unload`` then ``load`` (both ``-w``) so the agent stops cleanly and
-    starts fresh, mirroring ``systemctl restart`` semantics. A no-op if the
-    plist isn't installed.
+    stopped for the current session; launchd loads it again at the next
+    login, and :func:`restart` loads it now. This mirrors ``systemctl stop``
+    semantics on Linux.
     """
     if not PLIST_PATH.exists():
-        return
-    _launchctl("unload", "-w", str(PLIST_PATH))
-    _launchctl("load", "-w", str(PLIST_PATH))
+        return ""
+    unloaded = _launchctl("unload", str(PLIST_PATH))
+    return command_said(unloaded) if unloaded.returncode != 0 else ""
+
+
+def restart() -> str:
+    """Start the agent fresh from its plist, whether or not launchd has it loaded now.
+
+    A loaded agent is unloaded first, so it stops cleanly; then ``load -w`` starts it, the way
+    ``systemctl restart`` starts a stopped unit, so the restart that follows a :func:`stop`
+    starts the service again. Returns what launchctl said when the load failed, else ``""``.
+    """
+    if not PLIST_PATH.exists():
+        return f"there is no LaunchAgent at {PLIST_PATH}"
+    if _loaded():
+        _launchctl("unload", "-w", str(PLIST_PATH))
+    unprepared = _prepare_logs()
+    if unprepared:
+        return unprepared
+    loaded = _launchctl("load", "-w", str(PLIST_PATH))
+    return command_said(loaded) if loaded.returncode != 0 else ""
 
 
 def status() -> str:

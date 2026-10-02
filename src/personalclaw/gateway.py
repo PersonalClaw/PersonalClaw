@@ -67,6 +67,7 @@ from personalclaw.dashboard.token_auth import (
     browser_session_ttl,
     duration_words,
     mint_session,
+    retire_startup_links,
 )
 from personalclaw.env import _is_wsl, browser_available
 from personalclaw.frontend import build_frontend_async
@@ -5490,35 +5491,7 @@ class GatewayOrchestrator:
                 logger.warning("Background session start failed", exc_info=True)
 
             if not self._no_dashboard:
-                host = resolve_dashboard_host(self._local_only, self._configured_host)
-                base_url = f"http://{host}:{self._dashboard_port}"
-                startup = mint_startup_token(ISSUER_STARTUP, self._cfg.auth)
-                dashboard_url = build_dashboard_url(
-                    base_url, startup.token, local_only=self._local_only
-                )
-                for line in format_dashboard_urls(
-                    dashboard_url,
-                    port=self._dashboard_port,
-                    local_only=self._local_only,
-                    has_custom_host=bool(self._configured_host),
-                ):
-                    print(line)
-                print(
-                    f"   (a sign-in link: open it within {duration_words(startup.open_within_secs)}"
-                    f"; a browser that opens it stays signed in for "
-                    f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
-                    "sign-in.)"
-                )
-
-                # Auto-open dashboard — skip on headless remote sessions. The predicate
-                # lives in `env.browser_available()` because `personalclaw setup` asks the
-                # same question to decide whether to point at this dashboard flow.
-                if self._no_open or not self._cfg.dashboard.auto_open_browser:
-                    pass  # suppressed via --no-open flag or config
-                elif not browser_available():
-                    print("Headless remote session — skipping browser auto-open")
-                else:
-                    _open_dashboard(dashboard_url)
+                self._announce_dashboard()
             for _ch_name in _connected_channels:
                 print(f"PersonalClaw gateway connected to {_ch_name}")
 
@@ -5533,6 +5506,57 @@ class GatewayOrchestrator:
         await shutdown_event.wait()
         print("Shutting down…")
         await self._finish()
+
+    def _announce_dashboard(self) -> None:
+        """Print where the dashboard is, and make this start's sign-in link for whoever gets it.
+
+        The link is a live owner session, so it goes only where a person receives it as it is
+        made: printed when a person reads this gateway's stdout at a terminal, and opened in the
+        default browser when this start opens one (``--no-open`` and
+        ``dashboard.auto_open_browser`` decide; ``env.browser_available()`` is the predicate
+        ``personalclaw setup`` shares). Anywhere else stdout is a log file or the journal, kept
+        on disk and read later, so the banner there gives the address with no credential in it
+        and says how to get a link; with neither a terminal nor a browser, no link is made. The
+        startup links of earlier starts that no browser opened end first: this one replaces them.
+        """
+        retire_startup_links()
+        host = resolve_dashboard_host(self._local_only, self._configured_host)
+        base_url = f"http://{host}:{self._dashboard_port}"
+        shown = _shown_at_a_terminal()
+        opens = not self._no_open and self._cfg.dashboard.auto_open_browser
+        headless = opens and not browser_available()
+        opens = opens and not headless
+        startup = mint_startup_token(ISSUER_STARTUP, self._cfg.auth) if shown or opens else None
+        link = (
+            build_dashboard_url(base_url, startup.token, local_only=self._local_only)
+            if startup is not None
+            else ""
+        )
+        for line in format_dashboard_urls(
+            link if shown else base_url,
+            port=self._dashboard_port,
+            local_only=self._local_only,
+            has_custom_host=bool(self._configured_host),
+            sign_in="" if shown else _how_to_get_a_sign_in_link(),
+        ):
+            print(line)
+        if startup is not None and shown:
+            print(
+                f"   (a sign-in link: open it within {duration_words(startup.open_within_secs)}"
+                f"; a browser that opens it stays signed in for "
+                f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
+                "sign-in.)"
+            )
+        elif startup is not None:
+            print(
+                "   (Opening it in the default browser, which stays signed in for "
+                f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
+                "sign-in.)"
+            )
+        if headless:
+            print("Headless remote session — skipping browser auto-open")
+        elif opens:
+            _open_dashboard(link)
 
     async def _finish(self) -> None:
         """Stop every service, then exit — or, when a restart was asked for, start a fresh image.
@@ -5591,12 +5615,36 @@ def _exit_now(code: int) -> NoReturn:
     os._exit(code)
 
 
-def _open_dashboard(url: str) -> None:
-    """Open the dashboard in a browser, best-effort, and always print the URL.
+def _shown_at_a_terminal() -> bool:
+    """Whether a person reads this gateway's stdout at a terminal, as it is printed.
 
-    The URL is printed prominently first so a user whose browser does not
-    auto-launch (headless-ish, WSL, a misconfigured ``$BROWSER``) can still
-    click or copy it — a no-op improvement on every platform.
+    A foreground start in a shell is. A start by launchd (a log file), systemd (the journal), a
+    detached ``personalclaw restart`` (``gateway-restart.log``), a container runtime or a pipe
+    is not: what it prints is kept, and read later by whoever can read that file.
+    """
+    try:
+        return sys.stdout.isatty()
+    except (AttributeError, ValueError):  # no stdout, or a closed one
+        return False
+
+
+def _how_to_get_a_sign_in_link() -> str:
+    """The banner's sentence for a start that shows no link: the command that prints one."""
+    from personalclaw import container_host
+
+    if container_host.in_container():
+        where = f"`{container_host.token_command()}` on the host"
+    else:
+        where = "`personalclaw token` on the computer running PersonalClaw"
+    return f"To sign in, run {where} and open the link it prints."
+
+
+def _open_dashboard(url: str) -> None:
+    """Open the dashboard in a browser, best-effort.
+
+    *url* is a sign-in link, so it goes to the browser and is not printed here: the banner
+    printed the address already, with the link itself only for a person at a terminal
+    (:meth:`GatewayOrchestrator._announce_dashboard`).
 
     Under WSL, ``webbrowser.open`` has no Linux browser to launch, so we go
     straight to ``wslview`` (from wslu), which hands the URL to the Windows
@@ -5607,8 +5655,6 @@ def _open_dashboard(url: str) -> None:
     never crash the gateway boot.
     """
     import webbrowser
-
-    print(f"Open PersonalClaw: {url}", flush=True)
 
     if _is_wsl():
         _wslview_open(url)

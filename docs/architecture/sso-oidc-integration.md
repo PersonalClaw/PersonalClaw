@@ -25,7 +25,7 @@ through one function, `src/personalclaw/dashboard/token_auth.py::mint_session`, 
 
 | Door (`issuer`) | Who opens it | Where it mints |
 |---|---|---|
-| `startup`, `ready` | the link the gateway prints and opens when it starts; the `--json-ready` token a test harness opens | `src/personalclaw/gateway.py::mint_startup_token` |
+| `startup`, `ready` | the link the gateway prints (at a terminal) and opens when it starts, which replaces the unopened one of the start before; the `--json-ready` token a test harness opens | `src/personalclaw/gateway.py::mint_startup_token` |
 | `token` | `personalclaw token`, `personalclaw run` and scripts, through `GET /api/token/local` | `src/personalclaw/dashboard/handlers/core.py::api_token_local` |
 | `token` | a channel app's "open the dashboard" link, for its owner alone — `personalclaw.sdk.channel.owner_sign_in_token` | `src/personalclaw/dashboard/token_auth.py::owner_sign_in_token` |
 | `app` | the one app-scoped token an app's page, its proxy and an agent's call to it share | `src/personalclaw/dashboard/token_auth.py::app_session_token` |

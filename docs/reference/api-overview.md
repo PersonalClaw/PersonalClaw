@@ -60,7 +60,7 @@ why and how to sign in, with `detail.reason` and `detail.at`, and `X-Auth-Requir
 
 | Code | `detail.reason` | When |
 |---|---|---|
-| `session_signed_out` | `signed_out`, `signed_out_elsewhere`, `signed_out_others`, `signed_out_everywhere`, `limit`, `replaced`, `key_replaced` | Its session was ended — the message says by what, and when. `key_replaced`: the owner replaced the key every sign-in is signed with (Settings → Security, or `personalclaw auth rotate-key`), which ends them all. |
+| `session_signed_out` | `signed_out`, `signed_out_elsewhere`, `signed_out_others`, `signed_out_everywhere`, `limit`, `replaced`, `superseded`, `key_replaced` | Its session was ended — the message says by what, and when. `superseded`: a startup sign-in link no browser opened, replaced when the gateway started again. `key_replaced`: the owner replaced the key every sign-in is signed with (Settings → Security, or `personalclaw auth rotate-key`), which ends them all. |
 | `session_signed_out` | `ended` | A genuine session nobody remembers ending (more than a week ago, or the store was cleared). |
 | `session_expired` | `expired` | Its session ran its lifetime. |
 | `session_expired` | `link_expired` | A `?token=` link past the 24 hours it can be opened in. |

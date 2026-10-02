@@ -33,8 +33,7 @@ _GATEWAY_ARGV = ["/opt/venv/bin/python", "/opt/venv/bin/personalclaw", "gateway"
 def _no_service_no_container_no_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
-    monkeypatch.setattr(cli_server.service_controller, "stop_service", lambda: False)
-    monkeypatch.setattr(cli_server.service_controller, "restart_service", lambda: False)
+    monkeypatch.setattr(cli_server.service_controller, "this_homes_service", lambda: None)
 
     def no_lookup(*args: object, **_kwargs: object) -> str:
         raise AssertionError(f"ran a lookup program: {args[0] if args else '?'}")

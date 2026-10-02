@@ -55,6 +55,7 @@ from personalclaw.dashboard.session_store import (  # noqa: F401 — re-exported
     END_SIGNED_OUT_ELSEWHERE,
     END_SIGNED_OUT_EVERYWHERE,
     END_SIGNED_OUT_OTHERS,
+    END_SUPERSEDED,
     ISSUER_APP,
     ISSUER_ENROLL,
     ISSUER_LOGIN,
@@ -1121,6 +1122,10 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
                 f"This browser signed in again {when} with a newer link, which ended this "
                 "earlier sign-in."
             ),
+            END_SUPERSEDED: (
+                f"This sign-in link was replaced {when}, when PersonalClaw started again and "
+                "made a new one."
+            ),
             END_LIMIT: (
                 f"{device} was signed out {when} because more than {POOL_CAPS.get(pool, 0)} "
                 f"{_POOL_NOUNS.get(pool, 'sessions')} were signed in, and it was the one used "
@@ -1558,11 +1563,12 @@ def sign_out(nonces: list[str], reason: str, *, actor: str) -> int:
     many were live.
 
     THE one way a session ends early — a device signing itself out, the owner signing one out
-    (or all the others) from Settings → Devices, ``personalclaw logout``, the per-kind limit
-    and a browser that signed in again. Each is dropped from memory **and** from the durable
-    store: memory alone lets the session return at the next restart, the store alone lets it
-    keep working until then. And each is remembered with its reason, which is what lets the
-    device that held it be told why on its next request instead of reading a bare 403.
+    (or all the others) from Settings → Devices, ``personalclaw logout``, the per-kind limit,
+    a browser that signed in again, and a startup link the next start replaced. Each is dropped
+    from memory **and** from the durable store: memory alone lets the session return at the
+    next restart, the store alone lets it keep working until then. And each is remembered with
+    its reason, which is what lets the device that held it be told why on its next request
+    instead of reading a bare 403.
     """
     if reason not in END_REASONS:
         raise ValueError(f"unknown end reason {reason!r}")
@@ -1577,6 +1583,26 @@ def sign_out(nonces: list[str], reason: str, *, actor: str) -> int:
             _state.revoke_nonce(nonce)
         return 0
     return _signed_out(ended, reason, actor=actor)
+
+
+def retire_startup_links() -> int:
+    """End every startup link no browser has opened. Returns how many. Called at each start.
+
+    A start makes its own link (when it has a terminal to show it or a browser to open it in),
+    so the link of the start before it no longer leads anywhere new. Left live, each start of a
+    service that keeps being restarted added one more 30-day owner session that nobody held,
+    each listed in Settings → Devices. A link a browser opened is that browser's sign-in, and
+    stays: the browser that opens the next link swaps its sign-in for that one by itself
+    (``END_REPLACED``).
+    """
+    from personalclaw.dashboard.session_store import unopened_links
+
+    try:
+        earlier = unopened_links(ISSUER_STARTUP)
+    except Exception:  # noqa: BLE001 — a start must not fail on its predecessor's link
+        logger.warning("could not read the earlier startup links", exc_info=True)
+        return 0
+    return sign_out(earlier, END_SUPERSEDED, actor="local-startup") if earlier else 0
 
 
 def revoke_all_sessions() -> None:

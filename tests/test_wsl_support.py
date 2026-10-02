@@ -65,8 +65,8 @@ def test_normal_linux_open_does_not_call_wslview(monkeypatch, capsys):
     gateway._open_dashboard(URL)
 
     assert calls == {"web": 1, "wsl": 0}
-    # URL is always printed prominently.
-    assert URL in capsys.readouterr().out
+    # The URL is a sign-in link: the opener hands it to the browser and prints none of it.
+    assert URL not in capsys.readouterr().out
 
 
 def test_wsl_goes_straight_to_wslview(monkeypatch, capsys):
@@ -88,7 +88,7 @@ def test_wsl_goes_straight_to_wslview(monkeypatch, capsys):
     gateway._open_dashboard(URL)
 
     assert calls == {"web": 0, "wsl": 1}
-    assert URL in capsys.readouterr().out
+    assert URL not in capsys.readouterr().out
 
 
 def test_webbrowser_returns_false_falls_back_to_wslview(monkeypatch):
@@ -139,10 +139,11 @@ def test_missing_wslview_does_not_raise(monkeypatch, capsys):
     monkeypatch.setattr("subprocess.run", fake_run)
 
     gateway._open_dashboard(URL)  # must not raise
-    assert URL in capsys.readouterr().out
+    assert URL not in capsys.readouterr().out
 
 
-def test_url_always_printed_even_when_everything_fails(monkeypatch, capsys):
+def test_an_open_that_fails_everywhere_does_not_raise(monkeypatch, capsys):
+    """The banner printed the address already; a browser that will not open costs nothing."""
     monkeypatch.setattr(gateway, "_is_wsl", lambda: False)
     monkeypatch.setattr("webbrowser.open", lambda url: False)
 
@@ -152,7 +153,7 @@ def test_url_always_printed_even_when_everything_fails(monkeypatch, capsys):
     monkeypatch.setattr("subprocess.run", fake_run)
 
     gateway._open_dashboard(URL)
-    assert URL in capsys.readouterr().out
+    assert URL not in capsys.readouterr().out
 
 
 def test_wslview_open_returns_true_on_success(monkeypatch):

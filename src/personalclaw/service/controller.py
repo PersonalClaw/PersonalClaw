@@ -8,11 +8,18 @@ directly. This keeps the dispatch logic in one place and makes the
 
 import sys
 from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
 
 from personalclaw import container_host, gateway_base, tmux_substrate
 from personalclaw.config import loader as config_loader
 from personalclaw.service import linux, macos
-from personalclaw.service.common import Platform, current_platform
+from personalclaw.service.common import (
+    LAUNCHD_LABEL,
+    SERVICE_NAME,
+    Platform,
+    current_platform,
+)
 from personalclaw.service.environment import Capture, describe, summary
 
 
@@ -163,34 +170,55 @@ def is_service_active() -> bool:
     return False
 
 
-def stop_service() -> bool:
-    """Stop the platform service if active. Returns True if a service was stopped."""
-    plat = current_platform()
-    if plat == Platform.SYSTEMD:
-        if linux.is_active():
-            linux.stop()
-            return True
-        return False
-    if plat == Platform.LAUNCHD:
-        if macos.is_active():
-            macos.stop()
-            return True
-        return False
-    return False
+@dataclass(frozen=True)
+class InstalledService:
+    """The service installed for this home, whether or not its service manager runs it now."""
+
+    platform: Platform
+    #: How the user reads it: ``the launchd job io.personalclaw.gateway``.
+    name: str
+    #: Its file: the plist or the unit.
+    path: Path
+    #: When its service manager starts it again by itself, once ``stop`` has stopped it.
+    comes_back: str
 
 
-def restart_service() -> bool:
-    """Restart the platform service if installed. Returns True if a service was
-    restarted (so the caller knows not to spawn a foreground gateway itself)."""
+def this_homes_service() -> InstalledService | None:
+    """The service installed for this home, running or not; ``None`` when there is none here.
+
+    The installed FILE decides, not whether its service manager runs it now: ``stop`` leaves the
+    launchd plist and the systemd unit in place, and both start the service again by themselves,
+    so a stopped service is still how this home's gateway runs. ``restart`` starts it, and
+    ``status`` names it. The home it runs is read from the file's environment, as
+    ``service uninstall`` reads it: a service of another home is that home's to stop and restart,
+    not a command run with this one.
+    """
     plat = current_platform()
     if plat == Platform.SYSTEMD:
-        if linux.is_active():
-            linux.restart()
-            return True
-        return False
-    if plat == Platform.LAUNCHD:
-        if macos.is_active():
-            macos.restart()
-            return True
-        return False
-    return False
+        path, env = linux.UNIT_PATH, linux.installed_environment
+        name = f"the systemd unit {SERVICE_NAME}.service"
+        comes_back = "It starts again when this computer next starts"
+    elif plat == Platform.LAUNCHD:
+        path, env = macos.PLIST_PATH, macos.installed_environment
+        name = f"the launchd job {LAUNCHD_LABEL}"
+        comes_back = "It starts again when you next log in"
+    else:
+        return None
+    if not path.exists():
+        return None
+    runs = config_loader.resolve_config_dir(env())
+    if runs.resolve() != config_loader.resolve_config_dir().resolve():
+        return None
+    return InstalledService(plat, name, path, comes_back)
+
+
+def stop_service(service: InstalledService) -> str:
+    """Stop *service*, leaving it installed. Returns what its service manager said when it could
+    not, else ``""``."""
+    return (linux if service.platform == Platform.SYSTEMD else macos).stop()
+
+
+def restart_service(service: InstalledService) -> str:
+    """Start *service* fresh, whether or not its service manager runs it now. Returns what the
+    service manager said when it could not, else ``""``."""
+    return (linux if service.platform == Platform.SYSTEMD else macos).restart()
