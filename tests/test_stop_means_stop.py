@@ -65,7 +65,7 @@ DELIBERATELY OUT OF SCOPE (recorded, not silently omitted)
   against. What the ACP path DOES satisfy already: ``cancel()`` returns "no_turn" when
   no turn is active (``acp_session_provider.py:152-153``), the in-flight turn is aborted
   by ``session/cancel`` rather than awaited, and ``stop_turn``'s hard-kill path reaches
-  the agent's whole process group via ``_sigkill_session``. It cannot register the
+  the agent's whole process group via ``subagent_kill.sigkill_session``. It cannot register the
   external agent's own tool subprocesses, and no in-process mechanism could.
 
 Two further defects the same reading turned up, both closed here:

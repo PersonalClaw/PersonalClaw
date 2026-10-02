@@ -725,12 +725,12 @@ class TestSubagentReaper:
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch.object(manager, "_sigkill_session") as mock_kill,
+            patch("personalclaw.subagent.sigkill_session") as mock_kill,
         ):
             await manager._force_reap("hang0001", info, _TIMEOUT_SECS + 60)
 
         assert info.done is True
-        mock_kill.assert_called_once_with("subagent:hang0001")
+        mock_kill.assert_called_once_with(manager._sessions, "subagent:hang0001")
 
     @pytest.mark.asyncio
     async def test_run_finally_timeout_on_reset(self) -> None:
@@ -758,7 +758,7 @@ class TestSubagentReaper:
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch.object(manager, "_sigkill_session"),
+            patch("personalclaw.subagent.sigkill_session"),
         ):
             await manager._run(info)
 

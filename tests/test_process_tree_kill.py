@@ -1,4 +1,4 @@
-"""Tests for process tree killing in session.reset() and subagent._sigkill_session().
+"""Tests for process tree killing in session.reset() and subagent_kill.sigkill_session().
 
 Covers the killpg + escaped-child sweep that terminates the whole process group
 so no orphaned personalclaw-cli sessions survive a reset.
@@ -12,6 +12,7 @@ import pytest
 from personalclaw.config import AppConfig
 from personalclaw.session import SessionManager
 from personalclaw.subagent import SubagentManager
+from personalclaw.subagent_kill import sigkill_session
 
 # ── Helpers ──
 
@@ -171,11 +172,11 @@ class TestResetProcessTreeKill:
         provider.shutdown.assert_awaited_once()
 
 
-# ── subagent._sigkill_session() tests ──
+# ── subagent_kill.sigkill_session() tests ──
 
 
 class TestSigkillSessionProcessTree:
-    """Tests for SubagentManager._sigkill_session() process tree cleanup."""
+    """Tests for subagent_kill.sigkill_session() process tree cleanup."""
 
     def _make_manager(
         self,
@@ -185,7 +186,7 @@ class TestSigkillSessionProcessTree:
     ):
         provider = _make_provider(pid, child_pids, start_time=start_time)
         sessions = _mock_sessions_with_provider(provider)
-        # Put a session in the internal dict so _sigkill_session can find it
+        # Put a session in the internal dict so sigkill_session can find it
         mock_session = MagicMock()
         mock_session.provider = provider
         sessions._sessions = {"subagent:test1": mock_session}
@@ -199,7 +200,7 @@ class TestSigkillSessionProcessTree:
         return mgr
 
     def test_sigkill_uses_killpg(self):
-        """_sigkill_session uses killpg to kill the process group."""
+        """sigkill_session uses killpg to kill the process group."""
         mgr = self._make_manager(pid=54321, child_pids={54322: 100})
 
         with (
@@ -210,13 +211,13 @@ class TestSigkillSessionProcessTree:
             patch("personalclaw.acp.client._get_start_time", return_value=100),
             patch("personalclaw.acp.client._is_our_child", return_value=True),
         ):
-            mgr._sigkill_session("subagent:test1")
+            sigkill_session(mgr._sessions, "subagent:test1")
 
         mock_killpg.assert_called_once_with(54321, signal.SIGKILL)
         mock_sweep.assert_called_once()
 
     def test_sigkill_fallback_on_killpg_failure(self):
-        """_sigkill_session falls back to os.kill when killpg fails."""
+        """sigkill_session falls back to os.kill when killpg fails."""
         mgr = self._make_manager(pid=54321)
 
         with (
@@ -228,12 +229,12 @@ class TestSigkillSessionProcessTree:
             patch("personalclaw.acp.client._get_start_time", return_value=100),
             patch("personalclaw.acp.client._is_our_child", return_value=True),
         ):
-            mgr._sigkill_session("subagent:test1")
+            sigkill_session(mgr._sessions, "subagent:test1")
 
         mock_kill.assert_called_once_with(54321, signal.SIGKILL)
 
     def test_sigkill_merges_child_pids(self):
-        """_sigkill_session merges stored and fresh child PIDs."""
+        """sigkill_session merges stored and fresh child PIDs."""
         mgr = self._make_manager(pid=54321, child_pids={54322: 100})
 
         with (
@@ -244,7 +245,7 @@ class TestSigkillSessionProcessTree:
             patch("personalclaw.acp.client._is_our_child", return_value=True),
             patch("personalclaw.acp.client._kill_escaped_children") as mock_sweep,
         ):
-            mgr._sigkill_session("subagent:test1")
+            sigkill_session(mgr._sessions, "subagent:test1")
 
         # Sweep should receive merged dict: stored 54322 + fresh 54323
         swept = mock_sweep.call_args[0][0]
@@ -252,7 +253,7 @@ class TestSigkillSessionProcessTree:
         assert 54323 in swept
 
     def test_sigkill_skips_killpg_on_recycled_pid(self):
-        """_sigkill_session skips killpg but sweeps stored children when PID recycled."""
+        """sigkill_session skips killpg but sweeps stored children when PID recycled."""
         mgr = self._make_manager(pid=54321, child_pids={54322: 100})
 
         with (
@@ -262,14 +263,14 @@ class TestSigkillSessionProcessTree:
             patch("personalclaw.acp.client._is_our_child", return_value=False),
             patch("personalclaw.acp.client._kill_escaped_children") as mock_sweep,
         ):
-            mgr._sigkill_session("subagent:test1")
+            sigkill_session(mgr._sessions, "subagent:test1")
 
         mock_killpg.assert_not_called()
         mock_sweep.assert_called_once()
         assert 54322 in mock_sweep.call_args[0][0]  # stored children swept
 
     def test_sigkill_sweeps_children_when_pid_already_dead(self):
-        """_sigkill_session skips killpg but sweeps children when PID is dead."""
+        """sigkill_session skips killpg but sweeps children when PID is dead."""
         mgr = self._make_manager(pid=54321, child_pids={54322: 100}, start_time=None)
 
         with (
@@ -278,13 +279,13 @@ class TestSigkillSessionProcessTree:
             patch("personalclaw.acp.client._get_start_time", return_value=None),
             patch("personalclaw.acp.client._kill_escaped_children") as mock_sweep,
         ):
-            mgr._sigkill_session("subagent:test1")
+            sigkill_session(mgr._sessions, "subagent:test1")
 
         mock_killpg.assert_not_called()
         mock_sweep.assert_called_once()
 
     def test_sigkill_noop_when_no_session(self):
-        """_sigkill_session returns early when session not found."""
+        """sigkill_session returns early when session not found."""
         sessions = MagicMock()
         sessions._sessions = {}
         mgr = SubagentManager(
@@ -296,12 +297,12 @@ class TestSigkillSessionProcessTree:
         )
 
         with patch("personalclaw.subagent.os.killpg") as mock_killpg:
-            mgr._sigkill_session("subagent:nonexistent")
+            sigkill_session(mgr._sessions, "subagent:nonexistent")
 
         mock_killpg.assert_not_called()
 
     def test_sigkill_noop_when_no_pid(self):
-        """_sigkill_session returns early when client has no PID."""
+        """sigkill_session returns early when client has no PID."""
         provider = AsyncMock()
         provider._client = MagicMock()
         provider._client._pid = None
@@ -318,6 +319,6 @@ class TestSigkillSessionProcessTree:
         )
 
         with patch("personalclaw.subagent.os.killpg") as mock_killpg:
-            mgr._sigkill_session("subagent:test1")
+            sigkill_session(mgr._sessions, "subagent:test1")
 
         mock_killpg.assert_not_called()

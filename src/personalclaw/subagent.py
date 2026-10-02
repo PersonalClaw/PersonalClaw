@@ -12,7 +12,6 @@ import contextlib
 import functools
 import logging
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -51,6 +50,7 @@ from personalclaw.session import SessionManager
 from personalclaw.session_workspace import result_path as _ws_result_path
 from personalclaw.stats import Stats
 from personalclaw.subagent_ask import spawn_ask, spawn_refusal
+from personalclaw.subagent_kill import sigkill_session
 from personalclaw.subagent_persistence import (
     _agent_dir,
     create_agent_folder,
@@ -921,7 +921,7 @@ class SubagentManager:
             await asyncio.wait_for(self._sessions.reset(session_key), timeout=self._reset_timeout)
         except asyncio.TimeoutError:
             logger.warning("Reaper: reset hung for %s, attempting SIGKILL", agent_id)
-            self._sigkill_session(session_key)
+            sigkill_session(self._sessions, session_key)
         except Exception:
             logger.exception("Reaper: reset failed for %s", agent_id)
 
@@ -997,67 +997,6 @@ class SubagentManager:
         # Truncate retained text AFTER _on_done to preserve full output for result injection
         if len(info.streaming_text) > 10_000:
             info.streaming_text = info.streaming_text[:10_000] + "\n…(truncated)"
-
-    def _sigkill_session(self, session_key: str) -> None:
-        """Best-effort SIGKILL when graceful reset hangs.
-
-        Uses killpg to kill the entire process group, then sweeps
-        escaped children in different PGIDs (MCP servers).
-        """
-        try:
-            from personalclaw.acp.client import (
-                _get_child_pids,
-                _get_start_time,
-                _is_our_child,
-                _kill_escaped_children,
-            )
-
-            session = self._sessions._sessions.get(session_key)
-            if not session:
-                return
-            client = getattr(session.provider, "_client", None)
-            raw_pid = getattr(client, "_pid", None) if client else None
-            pid = raw_pid if isinstance(raw_pid, int) else None
-            if not pid:
-                return
-            # Snapshot child tree before killing — children in different
-            # PGIDs survive killpg.
-            raw_children = getattr(client, "_child_pids", None)
-            child_pids: dict[int, int | None] = (
-                dict(raw_children) if isinstance(raw_children, dict) else {}
-            )
-            for p in _get_child_pids(pid):
-                if p not in child_pids:
-                    child_pids[p] = _get_start_time(p)
-            # Validate PID hasn't been recycled before killing.
-            original_start = getattr(client, "_start_time", None)
-            if original_start is None:
-                logger.debug("Reaper: PID %d already dead for %s", pid, session_key)
-                _kill_escaped_children(child_pids)
-                return
-            if not _is_our_child(pid, expected_start=original_start):
-                logger.warning("Reaper: PID %d recycled for %s, skipping killpg", pid, session_key)
-                stored = dict(raw_children) if isinstance(raw_children, dict) else {}
-                _kill_escaped_children(stored)
-                return
-            # Kill the entire process group first
-            logger.warning(
-                "Reaper: killpg for PID %d (%d children) for %s",
-                pid,
-                len(child_pids),
-                session_key,
-            )
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, OSError):
-                    pass
-            # Sweep children that escaped to different PGIDs
-            _kill_escaped_children(child_pids)
-        except Exception:
-            logger.exception("Reaper: SIGKILL failed for %s", session_key)
 
     def notify_injection_failed(
         self, info: SubagentInfo, reason: str = "delivery timed out"
@@ -1966,7 +1905,7 @@ class SubagentManager:
                     )
                 except asyncio.TimeoutError:
                     logger.warning("Subagent %s: reset timed out, force-killing", info.id)
-                    self._sigkill_session(session_key)
+                    sigkill_session(self._sessions, session_key)
                     try:
                         sel().log_tool_invocation(
                             session_key=session_key,
