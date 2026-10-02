@@ -1056,28 +1056,70 @@ def test_a_workflow_stage_gets_the_name_and_an_action_step_the_value(tmp_path, m
 # ── PersonalClaw's own chores ────────────────────────────────────────────────────────────────
 
 
-def test_the_background_session_masks_every_prompt_it_is_handed():
-    """A title, follow-ups, suggestions and memory consolidation run in the background session.
-    No person types into it: each prompt is composed from stored text, so it is masked there,
-    and a person's own chat is sent as typed."""
-    from personalclaw.session import BACKGROUND_KEY
+def test_a_chore_masks_every_prompt_it_is_handed(monkeypatch):
+    """A title, follow-ups, suggestions and memory consolidation are chores (``chores.run_chore``).
+    No person types one: each prompt is composed from stored text, so it is masked before a model
+    reads it, and a person's own chat is sent as typed."""
+    from personalclaw import chores
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
 
-    for key, masked in ((BACKGROUND_KEY, True), ("dashboard:t1", False)):
-        model = _ScriptedModel(
-            [[AgentEvent(kind=EVENT_TEXT_CHUNK, text="ok"), AgentEvent(kind=EVENT_COMPLETE)]]
-        )
-        runtime = NativeAgentRuntime(
-            definition=_defn(), model_provider=model, tool_providers=[], session_key=key
-        )
+    prompt = f"Current memory: user.github_token = {TOKEN}"
+    sent: list[str] = []
 
-        async def turn() -> None:
-            await runtime.start()
-            [ev async for ev in runtime.stream(f"Current memory: user.github_token = {TOKEN}")]
+    class _Model:
+        supports_tools = False
 
-        asyncio.run(turn())
-        sent = json.dumps(model.seen_messages[0])
-        assert (TOKEN in sent) is not masked, key
-        assert (MASK in sent) is masked, key
+        async def start(self) -> None:
+            return None
+
+        async def shutdown(self) -> None:
+            return None
+
+        async def stream(self, message: str):
+            sent.append(message)
+            yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="ok")
+            yield AgentEvent(kind=EVENT_COMPLETE)
+
+    registry = ProviderRegistry()
+    registry.register_type(
+        ProviderCapability(
+            type="scripted",
+            capabilities=frozenset({Capability.CHAT}),
+            supports_streaming=True,
+            supports_tools=False,
+            supports_embeddings=False,
+            supports_vision=False,
+            max_context_tokens=32_768,
+        ),
+        lambda **_kw: _Model(),
+    )
+    registry.register_entry(ProviderEntry(name="scripted", type="scripted", model="m"))
+    monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: registry)
+    monkeypatch.setattr(
+        "personalclaw.providers.use_cases.load_active_models",
+        lambda: {"background": ["scripted:m"]},
+    )
+
+    answer = asyncio.run(chores.run_chore(prompt, usage=chores.chore_usage("dashboard:t1")))
+    assert answer == "ok"
+    assert len(sent) == 1, sent
+    assert not _leaks(sent[0], TOKEN) and MASK in sent[0]
+
+    model = _ScriptedModel(
+        [[AgentEvent(kind=EVENT_TEXT_CHUNK, text="ok"), AgentEvent(kind=EVENT_COMPLETE)]]
+    )
+    runtime = NativeAgentRuntime(
+        definition=_defn(), model_provider=model, tool_providers=[], session_key="dashboard:t1"
+    )
+
+    async def turn() -> None:
+        await runtime.start()
+        [ev async for ev in runtime.stream(prompt)]
+
+    asyncio.run(turn())
+    typed = json.dumps(model.seen_messages[0])
+    assert TOKEN in typed and MASK not in typed, "a person's own chat is sent as typed"
 
 
 @pytest.fixture

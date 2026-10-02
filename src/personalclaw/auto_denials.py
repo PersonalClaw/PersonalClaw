@@ -78,7 +78,7 @@ def answerable_chat(session_key: str) -> str:
     """``session_key`` when it names a chat a person can answer in, else ``""``.
 
     A workflow stage is not a chat, and an unattended session (a trigger's, a loop worker's, a
-    channel's, the background session) is by definition one nobody is watching — asking either
+    channel's, a heartbeat task's) is by definition one nobody is watching — asking either
     to "try again" would be asking nobody.
     """
     from personalclaw.guardrails.policy import is_unattended_session
@@ -104,8 +104,6 @@ def unattended_origin(session_key: str) -> str:
         return "A scheduled automation"
     if key.startswith("subagent:"):
         return "A subagent"
-    if key == "_bg":
-        return "The background session"
     if key.startswith("loop"):
         return "A loop"
     if is_unattended_session(key):

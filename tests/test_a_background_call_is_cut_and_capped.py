@@ -5,8 +5,8 @@ over 1,224 s and ended with no answer. Nothing cut it, because a provider that k
 Timeout was held to that alone and a Request Timeout bounds only how long an answer takes to start,
 and the local model was held the whole time while a chat's reply waited behind it.
 
-These tests drive the real guard, the real chain walk and the real background runtime over fake
-models; no real model is called.
+These tests drive the real guard, the real chain walk and the real chores over fake models; no
+real model is called.
 """
 
 from __future__ import annotations
@@ -116,33 +116,6 @@ def built(monkeypatch) -> list[tuple[str, Any]]:
     return builds
 
 
-class _BackgroundSessions:
-    def __init__(self) -> None:
-        self.runtime: Any = None
-
-    async def get_or_create(self, key: str, agent: str | None = None, **_kw: Any):
-        from personalclaw.agents.defaults import LITE_AGENT_NAME
-        from personalclaw.providers import provider_bridge
-
-        if self.runtime is None:
-            self.runtime = provider_bridge._build_native_runtime(
-                use_case="chat",
-                session_key=key,
-                agent=agent or LITE_AGENT_NAME,
-                model_override=None,
-                cwd=None,
-                model_axis="background",
-            )
-            await self.runtime.start()
-        return self.runtime, False, True
-
-    def release(self, key: str) -> None:
-        return None
-
-    async def recycle_background(self) -> None:
-        return None
-
-
 def test_a_one_shot_background_call_is_cut_at_its_ceiling_and_the_next_model_answers(
     built, monkeypatch
 ):
@@ -163,18 +136,14 @@ def test_a_one_shot_background_call_is_cut_at_its_ceiling_and_the_next_model_ans
     assert took < 2.0, took
 
 
-def test_a_consolidation_on_the_background_session_is_cut_and_handed_on(
-    built, monkeypatch, tmp_path
-):
+def test_a_consolidation_is_cut_at_its_ceiling_and_handed_on(built, monkeypatch, tmp_path):
     """🔴 The measured consolidation: 1,224 s on the local model, uncut, and no answer."""
     from personalclaw.history import ConversationLog, HistoryConsolidator
 
     _time_limit(monkeypatch, 0.3)
 
     async def scenario():
-        consolidator = HistoryConsolidator(
-            ConversationLog(tmp_path / "log"), memory=None, sessions=_BackgroundSessions()
-        )
+        consolidator = HistoryConsolidator(ConversationLog(tmp_path / "log"), memory=None)
         return await asyncio.wait_for(
             consolidator._call_llm("Consolidate chat-3.", "dashboard:chat-3"), timeout=3.0
         )
@@ -183,17 +152,39 @@ def test_a_consolidation_on_the_background_session_is_cut_and_handed_on(
     assert ASKED == ["here", "relay"], "a call cut at its ceiling is not sent again"
 
 
-def test_every_model_of_the_background_session_is_built_with_an_output_cap(built):
-    """🔴 The measured consolidation was sent with no output cap at all. It is the Background
-    output limit, 4,096 tokens unless the owner changes it."""
+def _own_budget(monkeypatch, tokens: int) -> None:
+    """Every model's own output budget, as the local-model catalog would give it."""
+
+    async def _budget(_ref: str) -> int:
+        return tokens
+
+    monkeypatch.setattr("personalclaw.local_models.budgets.output_budget", _budget)
+
+
+def test_every_model_a_chore_walks_is_built_with_the_chores_output_cap(built, monkeypatch):
+    """🔴 The measured consolidation was sent with no output cap at all. A chore's answer is held
+    to the Background output limit (4,096 tokens unless the owner changes it) on each model its
+    chain walks, though each model would allow more."""
+    from personalclaw.chores import chore_usage, run_chore
     from personalclaw.config.loader import BackgroundConfig
 
-    async def scenario() -> None:
-        sessions = _BackgroundSessions()
-        runtime, _new, _resumed = await sessions.get_or_create("_bg")
-        runtime.failover.build(RELAY_REF)
+    _time_limit(monkeypatch, 0.3)
+    _own_budget(monkeypatch, 30_000)
 
-    asyncio.run(scenario())
+    answer = asyncio.run(run_chore("Consolidate chat-3.", usage=chore_usage("dashboard:chat-3")))
 
     cap = BackgroundConfig().max_output_tokens
+    assert answer == '{"history_entry": "Relay."}'
     assert built == [("here", cap), ("relay", cap)]
+
+
+def test_a_one_shot_call_that_is_no_chore_keeps_its_models_own_budget(built, monkeypatch):
+    """The cap is a chore's: another background call is given what each model allows."""
+    from personalclaw.llm_helpers import one_shot_completion
+
+    _time_limit(monkeypatch, 0.3)
+    _own_budget(monkeypatch, 30_000)
+
+    asyncio.run(one_shot_completion("Sort these messages.", use_case="background"))
+
+    assert built == [("here", 30_000), ("relay", 30_000)]

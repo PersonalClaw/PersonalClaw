@@ -600,7 +600,6 @@ async def start_dashboard(
             consolidator = _hist_mod.HistoryConsolidator(
                 log=conversation_log,
                 memory=memory,
-                sessions=sessions,
             )
             logger.info("Auto-created HistoryConsolidator for dashboard")
         except Exception:

@@ -344,7 +344,7 @@ class ModelCallGuard(ModelProvider):
             timeout_secs = 0.0 if self.request_timeout_secs else _DEFAULT_TIMEOUT_SECS
         # Where the three settings above are read from at EACH call (`guardrails.budgets` and
         # `guardrails.scan_mode`), when the resolution seam hands them: a guard lives as long as
-        # the runtime holding it (the background session, a loop worker), so values read when it
+        # the runtime holding it (a heartbeat task's, a loop worker's), so values read when it
         # was built kept a lowered ceiling or a tightened scan from binding until a restart
         # (`approval_grants`, rule 1). The values above are the starting point, and what a read
         # that fails keeps.

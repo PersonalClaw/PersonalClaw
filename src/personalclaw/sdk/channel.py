@@ -79,6 +79,12 @@ from personalclaw.channel_trust import (
     untrack,
 )
 
+# ── A chore a channel asks a model for itself (a thread's title) ──
+# One fresh call on the Background chain, sent its own prompt and nothing else, metered and
+# recorded for whose spend it is (`chore_usage`, an `Attribution`): the way every chore reaches
+# a model.
+from personalclaw.chores import chore_usage, run_chore
+
 # ── Config + credentials ──
 # (Channel activation modes are the channel APP's own concept now —
 # slack_runtime.settings owns ACTIVATION_* for the Slack app.)
@@ -228,7 +234,6 @@ from personalclaw.sel import SecurityEvent, SecurityEventLog, sel
 
 # ── Session + conversation runtime ──
 from personalclaw.session import (
-    BACKGROUND_KEY,
     SessionManager,
     SessionMap,
 )
@@ -273,6 +278,7 @@ from personalclaw.triggers.tools import delete as delete_automation
 from personalclaw.triggers.tools import delete_all as delete_all_automations
 from personalclaw.triggers.tools import set_paused as set_automation_paused
 from personalclaw.tts.registry import active_voice_params
+from personalclaw.usage_ledger import Attribution
 from personalclaw.voice_reply import voice_reply
 
 # The published surface, declared in ONE place. This module is the only `sdk/` module that
@@ -286,11 +292,11 @@ __all__ = [
     "AcpTimeoutError",
     "AppConfig",
     "Attachment",
+    "Attribution",
     "AuthConfig",
     "AuthMode",
     "AutoSkillProvenance",
     "AutomationToolResult",
-    "BACKGROUND_KEY",
     "CANNED_PAIRING_REPLY",
     "COMPACTION_AUTOMATIC",
     "CRED_OWNER_ID",
@@ -357,6 +363,7 @@ __all__ = [
     "assert_channel_contract",
     "atomic_write",
     "build_cancelled_turn_preamble",
+    "chore_usage",
     "compress_thread_history",
     "compute_next_run_ts",
     "config_dir",
@@ -397,6 +404,7 @@ __all__ = [
     "render_use_case_prompt",
     "resolve_bind_host",
     "resolve_dashboard_host",
+    "run_chore",
     "safe_read_file",
     "save_conversation_turn",
     "save_credential",

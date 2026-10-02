@@ -383,7 +383,7 @@ def test_a_room_member_cannot_be_the_approver_for_its_own_room(enabled):
 
 @pytest.mark.parametrize(
     "identity",
-    ["room:r:executor", "subagent:abc", "cron:nightly", "loop:goal:1", "inbound:cli:x", "_bg", ""],
+    ["room:r:executor", "subagent:abc", "cron:nightly", "loop:goal:1", "inbound:cli:x", ""],
 )
 def test_an_agent_shaped_identity_is_rejected_as_an_approver(identity):
     """Every agent-shaped identity, refused. See the positive control below for why the list

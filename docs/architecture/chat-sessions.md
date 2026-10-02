@@ -118,6 +118,12 @@ chat, channel thread, loop worker, webhook, subagent).
     (`context.compress_thread_history`); the suggestions built from recent chats
     leave it out (`suggestions.py`). The batch re-tag, organize proposals and
     background compression already leave restricted chats out of what they list.
+    The one way a chore reaches a model (`chores.run_chore`) keeps the rule
+    itself, so a caller that did not ask first still hands the chat to no model:
+    a chore for such a chat (read by the key its spend is recorded under and the
+    mode its caller holds) or made in its work runs on the chat's own model only
+    in the chat's own turn, once the turn has named it, and is refused
+    (`OtherModelRefused`) anywhere else, before anything is sent.
 - **`chat_traces.py` / `dashboard/chat_forget.py` — what a chat keeps on disk,
   and forgetting it.** A chat leaves its transcript, its working folder
   (`sessions/<key>/`), its turn checkpoints and the files attached to it
@@ -313,19 +319,18 @@ chat, channel thread, loop worker, webhook, subagent).
    made, and the writer of the turn's row writes it from that. The next
    turn starts on X again. When every model fails, the error names each one and why (`NoModelAnswered`, in a
    room's words on a room). Only a caller that says so asks for this
-   (`NativeAgentRuntime.announce_failover`: the chat runner, a room through
-   `stream_and_collect(on_substitution=…)`, and every chore of the background
-   session, which writes the substitute to the log through
-   `llm_helpers.say_background_substitution` — history consolidation, thread
-   compression, the chat title, suggestions, follow-up chips and a folder's icon,
-   each through `llm_helpers.let_fail_over`, a census in
-   `tests/test_an_open_breaker_moves_the_chain_on.py`): a loop keeps the
-   failure rather than another model's reply presented as the chosen one's. A
-   chore also names what it reads the answer as
-   (`NativeAgentRuntime.expect_answer`): its text is held until each inference is
-   complete, so an empty answer or one in the wrong shape is that model failing and
-   the next one answers, the same four failures a one-shot call's chain walk moves
-   on from. A title or a consolidation that no model could answer is owed
+   (`NativeAgentRuntime.announce_failover`: the chat runner, and a room through
+   `stream_and_collect(on_substitution=…)`): a loop keeps the failure rather than
+   another model's reply presented as the chosen one's. A background chore
+   (history consolidation, thread compression, the chat title, its organize
+   proposal, suggestions, follow-up chips and a folder's icon) is a call of its
+   own (`chores.run_chore`): it is sent its own prompt and nothing of any chore
+   before it, whichever chat that one was for, and it walks its chain as every
+   one-shot call does, each step said in the log (a census in
+   `tests/test_an_open_breaker_moves_the_chain_on.py`). A chore names what it
+   reads the answer as (`validate`), so an empty answer or one in the wrong shape
+   is that model failing and the next one answers, as a failure, a timeout and an
+   open breaker do. A title or a consolidation that no model could answer is owed
    (`owed_chores`): the heartbeat tries it again, at once after a provider whose
    breaker opened answers again, and an ended chat is sealed only after its
    consolidation ran. A

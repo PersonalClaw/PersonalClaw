@@ -7,10 +7,11 @@ consolidation, all through the one persistent background session, and the second
 opened before the rebind that has no model of its own. A new chat and a one-shot call followed.
 
 The cause: ``SessionManager`` caches one runtime per session and a native runtime fixes its model
-when it is built, and the background session is built when the gateway starts. A runtime now
-records what its model was resolved from (``provider_bridge.ResolutionBasis``: the chains it read,
-and the provider entry it serves from), and a session whose basis moved is rebuilt at its next
-acquire — the way an edited agent's already was.
+when it is built, and the chores ran on one background session built when the gateway started. A
+chore is a call of its own now (``chores.run_chore``), which resolves its model as it is made. A
+runtime records what its model was resolved from (``provider_bridge.ResolutionBasis``: the chains
+it read, and the provider entry it serves from), and a session whose basis moved is rebuilt at its
+next acquire — the way an edited agent's already was.
 
 Two more holders of an old resolution are covered here: the knowledge handlers' embedder, built
 once at boot, and a restored chat whose saved model no longer fits, which was pinned to the first
@@ -131,14 +132,13 @@ def _sessions():
     return SessionManager(cfg, provider_factory=create_provider_factory("chat"))
 
 
-async def _title(sessions) -> str:
-    """One chat-title chore, through the real path: the shared background session."""
-    from personalclaw.dashboard.chat_title import _stream_background_prompt
-    from personalclaw.session import chore_usage
+async def _title() -> str:
+    """One chat-title chore, through the real path: a call of its own on the Background chain."""
+    from personalclaw.chores import chore_usage
+    from personalclaw.dashboard.chat_title import _generate_title_via_provider
 
-    state = types.SimpleNamespace(sessions=sessions)
-    return await _stream_background_prompt(
-        state, "Generate a short title (3-6 words) for: hi", usage=chore_usage()
+    return await _generate_title_via_provider(
+        [{"role": "user", "content": "hi"}], usage=chore_usage()
     )
 
 
@@ -157,33 +157,32 @@ def _chat_models(calls: list[tuple[str, str]]) -> list[str]:
     return [model for kind, model in calls if kind == "chat"]
 
 
-# ── the background session follows a rebind ───────────────────────────────────────────────────
+# ── the chores follow a rebind ─────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_a_rebind_reaches_the_background_chores(recorded):
-    """🔴 Red on main: the background session was built for the model chat was bound to first,
-    and every chore after the rebind went on naming it."""
+    """🔴 Red when the chores shared one background session: it was built for the model chat was
+    bound to first, and every chore after the rebind went on naming it."""
     _bind(chat=[A])
-    sessions = _sessions()
-    assert await _title(sessions) == "Fake Chat Title"
+    assert await _title() == "Fake Chat Title"
 
     _bind(chat=[B])
-    await _title(sessions)
-    await _title(sessions)
+    await _title()
+    await _title()
 
     assert _chat_models(recorded) == [A, B, B]
 
 
 @pytest.mark.asyncio
 async def test_binding_the_background_axis_itself_reaches_the_background_chores(recorded):
-    """🔴 Red on main: binding a cheap model to Background left the chores on the chat model."""
+    """🔴 Red when the chores shared one background session: binding a cheap model to Background
+    left them on the chat model."""
     _bind(chat=[A])
-    sessions = _sessions()
-    await _title(sessions)
+    await _title()
 
     _bind(chat=[A], background=[C])
-    await _title(sessions)
+    await _title()
 
     assert _chat_models(recorded) == [A, C]
 
@@ -251,8 +250,8 @@ async def test_a_binding_no_session_reads_leaves_open_sessions_alone(recorded):
 
 @pytest.mark.asyncio
 async def test_an_edit_of_the_instance_a_session_serves_from_reaches_its_next_call(recorded):
-    """🔴 Red on main: with nothing bound, the background session kept the instance it was built
-    from, so a model changed on that instance in Settings → Providers reached no chore."""
+    """🔴 Red on main: with nothing bound, a session kept the instance it was built from, so a
+    model changed on that instance in Settings → Providers reached none of its turns."""
     import dataclasses
 
     from personalclaw.llm.registry import get_default_registry
@@ -263,13 +262,36 @@ async def test_an_edit_of_the_instance_a_session_serves_from_reaches_its_next_ca
     registry.register_entry(configured)
     _bind()
     sessions = _sessions()
-    await _title(sessions)
+    before = await _turn(sessions, "dashboard:edited")
 
     # The edit, as ``PUT /api/model-providers/{name}`` makes it: the entry is replaced.
     edited = dataclasses.replace(registry.get_entry(ENTRY), model=B)
     registry.unregister_entry(ENTRY)
     registry.register_entry(edited)
-    await _title(sessions)
+    after = await _turn(sessions, "dashboard:edited")
+
+    assert _chat_models(recorded) == [A, B]
+    assert after is not before, "the runtime was rebuilt, at the chat's next turn"
+
+
+@pytest.mark.asyncio
+async def test_an_edit_of_the_instance_a_chore_serves_from_reaches_the_next_chore(recorded):
+    """A chore resolves its model as it is made, so an edit of the instance reaches the next."""
+    import dataclasses
+
+    from personalclaw.llm.registry import get_default_registry
+
+    registry = get_default_registry()
+    configured = dataclasses.replace(registry.get_entry(ENTRY), model=A)
+    registry.unregister_entry(ENTRY)
+    registry.register_entry(configured)
+    _bind()
+    await _title()
+
+    edited = dataclasses.replace(registry.get_entry(ENTRY), model=B)
+    registry.unregister_entry(ENTRY)
+    registry.register_entry(edited)
+    await _title()
 
     assert _chat_models(recorded) == [A, B]
 

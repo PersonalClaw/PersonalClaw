@@ -1565,6 +1565,7 @@ def _forbid_model_calls(monkeypatch):
     A comment claiming "zero LLM" proves nothing and an assertion that a poll SUCCEEDED would
     pass with a model running, so the proof is that the seams are unreachable.
     """
+    import personalclaw.chores as chores
     import personalclaw.llm_helpers as llm
 
     calls: list[str] = []
@@ -1576,8 +1577,12 @@ def _forbid_model_calls(monkeypatch):
 
         return _seam
 
-    for seam in ("one_shot_completion", "stream_and_collect", "stream_and_collect_json"):
-        monkeypatch.setattr(llm, seam, _boom(seam))
+    for module, seam in (
+        (llm, "one_shot_completion"),
+        (llm, "stream_and_collect"),
+        (chores, "run_chore"),
+    ):
+        monkeypatch.setattr(module, seam, _boom(seam))
     return calls
 
 
@@ -1608,13 +1613,16 @@ async def test_the_whole_detection_path_makes_zero_model_calls(store, monkeypatc
 async def test_the_model_seams_really_do_raise_when_patched(store, monkeypatch):
     """The vacuity counterpart. Without it, a typo'd patch target (or a seam that moved)
     would make the zero-token test above a test of nothing at all."""
+    import personalclaw.chores as chores
     import personalclaw.llm_helpers as llm
 
     _forbid_model_calls(monkeypatch)
     with pytest.raises(AssertionError):
         await llm.one_shot_completion("hello")
     with pytest.raises(AssertionError):
-        await llm.stream_and_collect_json("hello")
+        await llm.stream_and_collect(None, "hello")
+    with pytest.raises(AssertionError):
+        await chores.run_chore("hello", usage=chores.chore_usage())
 
 
 def test_the_provider_imports_no_model_and_owns_no_socket():

@@ -68,6 +68,14 @@ _CALL_SITE_SURFACES = {
     # and nothing else.
     "learning_report.py": "assistant_reasoning",
     "context.py": "assistant_reasoning",
+    # Every background chore (`chores.run_chore`): a chat's title and tags, its organize
+    # proposal, its follow-up chips, history compression, memory consolidation, the home
+    # suggestions, a folder's icon, a channel thread's title. Its no-model floor is each chore's
+    # own and BUILT IN: a title keeps the chat's first line and a consolidation keeps its turns,
+    # each owed until a model answers (`owed_chores`); no follow-ups or organize proposal is
+    # offered; a history is cut to fit rather than condensed; the suggestions are the fallback
+    # list.
+    "chores.py": "assistant_reasoning",
     # visualize(data, hint) — the agency-free data→genui primitive (AMBIENT-SURFACES
     # §5.3). Reasoning-axis one-shot; no-model floor: no visualization produced and
     # the caller keeps the raw data (the MCP tool + WF2 node both say so honestly).

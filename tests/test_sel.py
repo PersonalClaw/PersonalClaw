@@ -415,7 +415,6 @@ class TestInferSource:
             ("dashboard:slot5", "dashboard"),
             ("cron:job123", "cron"),
             ("subagent:abc", "subagent"),
-            ("_bg", "background"),
             ("cli_chat", "cli"),
             ("C0EXAMPLE04:thread123", "channel"),
             ("random_key", "channel"),
@@ -774,7 +773,7 @@ class TestCallerScopeAttribution:
         ctx = caller_scope("skill_ladder") if ladder_ran else contextlib.nullcontext()
         with ctx:
             log.log_tool_invocation(
-                session_key="_bg",
+                session_key="dashboard:slot0",
                 tool_name="one_shot_completion",
                 tool_kind="model_call",
                 outcome="completed",
@@ -801,7 +800,7 @@ class TestCallerScopeAttribution:
             "outcome",
         ):
             assert a[shared] == b[shared], shared
-        assert a["caller_identity"] == "_bg"
+        assert a["caller_identity"] == "dashboard:slot0"
 
         # THE CLAIM. With everything else equal, the two rows are still distinguishable.
         # On origin/main the two projections are identical (==) and this FAILS; after

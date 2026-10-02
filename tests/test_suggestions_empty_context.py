@@ -55,21 +55,14 @@ def empty_state(tmp_path, monkeypatch):
         read_recent_history=lambda days=2: "",
     )
 
-    def _must_not_take_a_session(*a, **k):
-        raise AssertionError(
-            "an empty instance took the background agent session — the guard let it through"
-        )
+    async def _must_not_ask_a_model(*a, **k):
+        raise AssertionError("an empty instance asked a model — the guard let it through")
 
-    # A named failure, not an AttributeError. Mutation-testing this file showed the difference:
-    # with a bare namespace, restoring the bug made the end-to-end test die on a missing attribute,
-    # which reads like a broken test rather than a caught regression.
+    # A named failure: a regression reads as the guard letting an empty instance through, not as
+    # an unrelated error a broken test would raise.
+    monkeypatch.setattr("personalclaw.chores.run_chore", _must_not_ask_a_model)
     with patch("personalclaw.context.ContextBuilder.get_memory_for", return_value=memory):
-        yield SimpleNamespace(
-            conversation_log=None,
-            sessions=SimpleNamespace(
-                get_or_create=_must_not_take_a_session, release=lambda *a, **k: None
-            ),
-        )
+        yield SimpleNamespace(conversation_log=None)
 
 
 @pytest.mark.parametrize("label,when", _STRADDLE_DATES, ids=[d[0] for d in _STRADDLE_DATES])
@@ -100,7 +93,7 @@ def test_the_timestamp_never_reaches_the_guard(empty_state, label, when):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("label,when", _STRADDLE_DATES, ids=[d[0] for d in _STRADDLE_DATES])
 async def test_empty_instance_returns_the_fallback_without_an_llm_turn(empty_state, label, when):
-    """End to end: no prompt is rendered and no session is taken, on any date."""
+    """End to end: no prompt is rendered and no model is asked, on any date."""
     with (
         patch("personalclaw.suggestions.datetime") as dt,
         patch("personalclaw.prompt_providers.runtime.render_use_case_prompt") as render,
@@ -109,11 +102,11 @@ async def test_empty_instance_returns_the_fallback_without_an_llm_turn(empty_sta
         got = await suggestions.generate_suggestions(empty_state)
 
     assert got == suggestions._FALLBACK_SUGGESTIONS, f"{label}: expected the canned list"
-    # The real assertion. Reaching the prompt means reaching `sessions.get_or_create` and a 45s
-    # await on the very first /api/suggestions call.
+    # The real assertion. Reaching the prompt means asking a model, and a wait of up to a minute
+    # on the very first /api/suggestions call.
     assert not render.called, (
-        f"{label}: an empty instance rendered the suggestions prompt, which means it took the "
-        f"background session and blocked the first request for up to 45s."
+        f"{label}: an empty instance rendered the suggestions prompt, which means it asked a "
+        f"model and blocked the first request while it answered."
     )
 
 

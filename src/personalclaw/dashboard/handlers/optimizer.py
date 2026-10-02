@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import uuid
 
 from aiohttp import web
 
@@ -94,9 +95,10 @@ async def handle_optimize(request: web.Request) -> web.Response:
     parts.append(f"<original_prompt>\n{prompt}\n</original_prompt>")
     user_msg = "\n".join(parts)
 
-    # Use a dedicated optimizer session to avoid semaphore contention
-    # with title generation and folder categorization on BACKGROUND_KEY.
-    optimizer_session_key = "_optimizer"
+    # A session of this request's own, ended with its answer: the rewrite is sent this draft and
+    # its context and nothing else. One kept for every request carried each earlier draft and its
+    # rewrite into the next, whichever chat it came from.
+    optimizer_session_key = f"_optimizer:{uuid.uuid4().hex}"
     # The optimizer system prompt lives in the prompt system (bundled
     # ``task-prompt-optimizer``, bindable in Settings → Prompts).
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
@@ -110,18 +112,20 @@ async def handle_optimize(request: web.Request) -> web.Response:
     try:
 
         async def _optimize() -> str:
-            """Acquire session, stream, release — all under one timeout."""
-            logger.debug("Optimizer: acquiring dedicated session")
-            client, _is_new, _resumed = await state.sessions.get_or_create(
-                optimizer_session_key, agent=LITE_AGENT_NAME
-            )
-            logger.debug("Optimizer: session acquired, streaming")
-            # You asked for it and read the answer in your composer: your spend, not a chore's.
-            who = Attribution(
-                source="chat", session_key=optimizer_session_key, agent=LITE_AGENT_NAME
-            )
-            record = recorder(client, who)
+            """Acquire this request's session, stream, end it — all under one timeout. It ends
+            however the request does, a timeout while it was being acquired included."""
+            acquired = False
             try:
+                logger.debug("Optimizer: acquiring the request's session")
+                client, _is_new, _resumed = await state.sessions.get_or_create(
+                    optimizer_session_key, agent=LITE_AGENT_NAME
+                )
+                acquired = True
+                logger.debug("Optimizer: session acquired, streaming")
+                # You asked for it and read the answer in your composer: your spend, not a
+                # chore's.
+                who = Attribution(source="chat", session_key="_optimizer", agent=LITE_AGENT_NAME)
+                record = recorder(client, who)
                 text = ""
                 async for event in client.stream(full_prompt):
                     if event.kind == EVENT_TEXT_CHUNK:
@@ -135,8 +139,10 @@ async def handle_optimize(request: web.Request) -> web.Response:
                         break
                 return text
             finally:
-                logger.debug("Optimizer: releasing dedicated session")
-                state.sessions.release(optimizer_session_key)
+                logger.debug("Optimizer: ending the request's session")
+                if acquired:
+                    state.sessions.release(optimizer_session_key)
+                await state.sessions.reset(optimizer_session_key)
 
         text = await asyncio.wait_for(_optimize(), timeout=30.0)
     except asyncio.TimeoutError:

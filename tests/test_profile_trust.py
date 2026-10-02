@@ -270,7 +270,7 @@ def test_injection_policy_unattended_resolves_through_profile():
     from personalclaw.guardrails.policy import approval_policy_for_session
     from personalclaw.llm_helpers import ToolApprovalPolicy
 
-    for key in ("cron:nightly", "subagent:x", "loop-abc", "_bg"):
+    for key in ("cron:nightly", "subagent:x", "loop-abc"):
         got = injection_approval_policy(key)
         assert got is approval_policy_for_session(key)
         assert got is ToolApprovalPolicy.HOOK_BASED  # HEADLESS.approval == "hook_based"

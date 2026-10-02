@@ -172,7 +172,6 @@ def _gateway_with_subagents() -> tuple[Any, Any]:
     orch = _gateway()
     orch.sessions = MagicMock()
     orch.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), True, False))
-    orch.sessions.recycle_background = AsyncMock()
     orch.sessions.get_channel = MagicMock(return_value=None)
     orch.ctx_builder = MagicMock()
     orch.ctx_builder.build_message = MagicMock(return_value=("msg", None))

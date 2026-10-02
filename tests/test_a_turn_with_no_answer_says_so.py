@@ -38,7 +38,7 @@ from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.history import ConversationLog
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, AgentEvent
 from personalclaw.memory import MemoryStore
-from personalclaw.session import BACKGROUND_KEY, SessionManager
+from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.tool_providers.base import RiskLevel, ToolDefinition, ToolProvider, ToolResult
 from tests.chat_test_helpers import _api_app
@@ -133,17 +133,6 @@ def channel():
     reset_admissions()
 
 
-class _TitleModel:
-    """The background chores' model (a chat's title): tool-less, as the lite agent is."""
-
-    supports_tools = False
-    _model = "scripted"
-
-    async def complete(self, messages, *, tools=None, model=None, reasoning_effort=""):
-        yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="Change review")
-        yield AgentEvent(kind=EVENT_COMPLETE)
-
-
 async def _gateway(tmp_path: Path, model: _Model) -> tuple[GatewayOrchestrator, SessionManager]:
     runtime = NativeAgentRuntime(
         definition=AgentRuntimeDefinition(name="PersonalClaw", provider="native", model="scripted"),
@@ -152,15 +141,7 @@ async def _gateway(tmp_path: Path, model: _Model) -> tuple[GatewayOrchestrator, 
         cwd=tmp_path,
     )
     runtime.set_approval_policy("auto")
-    chores = NativeAgentRuntime(
-        definition=AgentRuntimeDefinition(name="lite", provider="native", model="scripted"),
-        model_provider=_TitleModel(),
-        tool_providers=[],
-    )
-    sessions = SessionManager(
-        AppConfig(),
-        provider_factory=lambda key, *_a, **_kw: chores if key == BACKGROUND_KEY else runtime,
-    )
+    sessions = SessionManager(AppConfig(), provider_factory=lambda *_a, **_kw: runtime)
     log = ConversationLog(base_dir=tmp_path / "sessions")
     state = DashboardState(sessions=sessions, start_time=0.0, conversation_log=log)
     (tmp_path / "ws").mkdir()

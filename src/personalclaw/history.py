@@ -47,7 +47,6 @@ from personalclaw.security import (
     redact_exfiltration_urls,
 )
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY
 from personalclaw.skills import AutoSkillProvenance
 
 
@@ -63,7 +62,6 @@ def config_dir() -> Path:
 if TYPE_CHECKING:
     from personalclaw.memory import MemoryStore
     from personalclaw.memory_service import MemoryService
-    from personalclaw.session import SessionManager
     from personalclaw.skills import SkillsLoader
     from personalclaw.vector_memory import VectorMemoryStore
 
@@ -1369,7 +1367,7 @@ class HistoryConsolidator:
         self,
         log: ConversationLog,
         memory: "MemoryStore",
-        sessions: "SessionManager | None" = None,
+        *,
         history_idle_secs: float = 3 * 3600,
         vector_store: "VectorMemoryStore | None" = None,
         migrated: bool = False,
@@ -1383,7 +1381,6 @@ class HistoryConsolidator:
     ) -> None:
         self._log = log
         self._memory = memory
-        self._sessions = sessions
         self._history_idle_secs = history_idle_secs
         self._vector_store = vector_store
         self._memory_service: "MemoryService | None" = None  # lazily built over the store
@@ -1804,8 +1801,9 @@ class HistoryConsolidator:
                 self._write_episodic_memory(result, key)
 
             # Markdown writes (skipped when migrated to structured memory). The model read both
-            # files masked (the background session masks its prompts), so a rewrite keeps each
-            # hidden value on the line it kept, and one that moves or rewrites one is not applied.
+            # files masked (a chore's prompt is masked, ``chores.run_chore``), so a rewrite keeps
+            # each hidden value on the line it kept, and one that moves or rewrites one is not
+            # applied.
             if not self._migrated:
                 if prefs := _kept_lines(result.get("preferences_update"), current_prefs):
                     if prefs.strip() != current_prefs.strip():
@@ -2518,51 +2516,28 @@ class HistoryConsolidator:
                 )
 
     async def _call_llm(self, prompt: str, chat_key: str) -> dict | None:
-        """Call LLM for consolidation via the persistent background session.
+        """The consolidation's answer as a JSON object, None on failure.
 
-        Uses the shared background ACP agent process (no spawn/teardown cost).
-        Returns parsed JSON dict or None on failure. The call's usage row is the consolidated
-        chat's (*chat_key*), as its compression's is. A failure no model answered is kept for
-        *chat_key* (``_unanswered``), so the consolidation it was for is owed rather than lost.
+        Asked as a chore of its own (``chores.run_chore``): a call that is sent this chat's
+        consolidation prompt and nothing else, so what it keeps is read from this chat alone. A
+        first model of the Background chain that fails, is paused or answers no JSON object hands
+        the call to the next one. The call's usage row is the consolidated chat's (*chat_key*), as
+        its compression's is. A failure no model answered is kept for *chat_key*
+        (``_unanswered``), so the consolidation it was for is owed rather than lost; any other
+        outcome settles it.
         """
-        if not self._sessions:
-            logger.warning("LLM consolidation skipped — no session manager")
-            return None
-
+        from personalclaw import chores, owed_chores
         from personalclaw.llm_helpers import (
             failure_clause,
             is_model_call_failure,
-            say_background_substitution,
-            stream_and_collect_json,
+            json_object_problem,
+            parse_llm_json,
         )
-        from personalclaw.session import chore_usage
-        from personalclaw.usage_ledger import recorder
 
-        session_key = BACKGROUND_KEY
-        # 🔴 Release only a session we actually took. `get_or_create` can return without
-        # acquiring — cancelled while blocked on the semaphore of a mid-turn session, or a
-        # raise between registering the session and acquiring it. `release()` is a no-op only
-        # when the key is ABSENT; on the warm `BACKGROUND_KEY` it releases an unbounded
-        # `Semaphore(1)`, so the permit count rises instead of raising and two turns interleave
-        # on one background ACP process (#3256). `recycle_background()` is inside the guard for
-        # the same reason: without a permit it can shut down a session another task is using.
-        acquired = False
         try:
-            client, _is_new, _resumed = await self._sessions.get_or_create(
-                session_key, agent="personalclaw-lite"
+            text = await chores.run_chore(
+                prompt, usage=chores.chore_usage(chat_key), validate=json_object_problem
             )
-            acquired = True
-            # A first model of the background chain that fails, is paused or answers no JSON
-            # falls back to the next one rather than ending the consolidation, and the
-            # substitute is said.
-            result = await stream_and_collect_json(
-                client,
-                prompt,
-                on_complete=recorder(client, chore_usage(chat_key)),
-                on_substitution=say_background_substitution("History consolidation"),
-            )
-            self._unanswered.pop(chat_key, None)
-            return result
         except Exception as exc:
             # A model that did not answer is said in one line, with what happened; its
             # traceback holds only the HTTP client's frames. A defect keeps its traceback.
@@ -2571,12 +2546,10 @@ class HistoryConsolidator:
                 logger.debug("LLM consolidation failure", exc_info=exc)
             else:
                 logger.warning("LLM consolidation call failed", exc_info=True)
-            from personalclaw import owed_chores
-
             if owed_chores.no_model_answered(exc):
                 self._unanswered[chat_key] = exc
+            else:
+                self._unanswered.pop(chat_key, None)
             return None
-        finally:
-            if acquired:
-                self._sessions.release(session_key)
-                await self._sessions.recycle_background()
+        self._unanswered.pop(chat_key, None)
+        return parse_llm_json(text)

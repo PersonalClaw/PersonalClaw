@@ -283,15 +283,15 @@ def offerable(group: ToolGroup) -> bool:
 # Which groups start active for a given SURFACE — keyed by the session's model
 # axis, the classifier already threaded through provider resolution
 # (MODEL-USE-CASES-V2): "chat"/"code_tools"/"reasoning" for human-watched chat,
-# "background" for the lite background session, "loops" for loop workers,
+# "background" for a heartbeat task, "loops" for loop workers,
 # "orchestration" for subagent spawns.
 #
 # A surface with NO entry (chat and friends) keeps EVERY group active — today's
 # behavior exactly, so enabling the feature is a no-op for interactive chat.
 # ``["*"]`` is an explicit spelling of "all groups".
 DEFAULT_GROUP_DEFAULTS: dict[str, list[str]] = {
-    # The lite background session (titles, tags, digests, consolidation) barely
-    # touches tools; it does read/write memory.
+    # A heartbeat task on the Background chain starts with the core tools and memory
+    # active.
     "background": [CORE_GROUP, "memory"],
     # Subagent spawns: focused, short-lived work under a parent's supervision.
     "orchestration": [CORE_GROUP, "memory"],

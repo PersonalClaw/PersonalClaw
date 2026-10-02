@@ -18,7 +18,6 @@ from personalclaw.guardrails.policy import (
 )
 from personalclaw.llm_helpers import ToolApprovalPolicy
 from personalclaw.net.policy import REGISTRY, egress_policy_for_tier, get_policy
-from personalclaw.session import BACKGROUND_KEY
 
 # ── §3 SafetyProfile ─────────────────────────────────────────────────────────
 
@@ -64,19 +63,10 @@ def test_profile_for_session_by_construction():
     assert profile_for_session("chat:main").name == "interactive"
 
 
-def test_background_key_is_headless():
-    # AG-5 edit 1: `_bg` (the shared background/heartbeat/cron/lessons key) matches no
-    # unattended prefix, so it must be classified explicitly — it is genuinely
-    # unattended and must resolve through HEADLESS, not INTERACTIVE.
-    assert is_unattended_session(BACKGROUND_KEY) is True
-    assert profile_for_session(BACKGROUND_KEY).name == "headless"
-
-
 def test_approval_policy_for_session_maps_from_profile():
     # The helper MUST derive from `profile_for_session(...).approval`, not a constant.
     # Unattended keys resolve to HEADLESS (approval == "hook_based") → HOOK_BASED.
-    assert profile_for_session(BACKGROUND_KEY).approval == "hook_based"
-    assert approval_policy_for_session(BACKGROUND_KEY) is ToolApprovalPolicy.HOOK_BASED
+    assert profile_for_session("cron:x").approval == "hook_based"
     assert approval_policy_for_session("cron:x") is ToolApprovalPolicy.HOOK_BASED
     assert approval_policy_for_session("subagent:x") is ToolApprovalPolicy.HOOK_BASED
 

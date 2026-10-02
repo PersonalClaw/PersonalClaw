@@ -51,13 +51,12 @@
       ]
     },
     "src/personalclaw/sdk/channel.py": {
-      "inert": 85,
+      "inert": 84,
       "surfaces": [
         "sdk_export:AcpError",
         "sdk_export:AcpProcessDied",
         "sdk_export:AcpTimeoutError",
         "sdk_export:AppConfig",
-        "sdk_export:BACKGROUND_KEY",
         "sdk_export:CANCELLED_STOP_REASONS",
         "sdk_export:CANNED_PAIRING_REPLY",
         "sdk_export:CRED_OWNER_ID",
@@ -335,9 +334,9 @@
       "config_reader": 6,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 138,
+      "sdk_export": 137,
       "trigger_kind": 0
     },
-    "inert": 152
+    "inert": 151
   }
 }

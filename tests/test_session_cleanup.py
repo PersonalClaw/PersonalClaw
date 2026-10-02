@@ -232,7 +232,6 @@ class TestCleanupRestriction:
         st.just("dashboard:chat-1"),
         st.just("slack:T123:C456:ts789"),
         st.just("cron:heartbeat"),
-        st.just("_bg"),
         st.just("channel:ch1"),
         st.from_regex(r"(dashboard|slack|cron|channel):[a-z0-9]+", fullmatch=True),
     )

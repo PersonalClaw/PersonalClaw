@@ -303,11 +303,11 @@ def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
     """Tool-approval policy for a subagent RESULT-INJECTION turn (AUTONOMY-GUARDRAILS §3, AG-11).
 
     The injection turn runs IN the parent session (announcing a child's result). For an UNATTENDED
-    parent — a cron/channel/inbox/side/loop announce, or the ``_bg`` background key: no human is
-    watching — the approval resolves through the session's SafetyProfile via
-    ``approval_policy_for_session`` (which reads ``profile_for_session``): the one profile path,
-    replacing the blanket AUTO_APPROVE default a cron parent used to get. An INTERACTIVE parent (a
-    dashboard chat) keeps AUTO_APPROVE — a human is present and chose to auto-approve.
+    parent — a cron/channel/inbox/side/loop announce: no human is watching — the approval resolves
+    through the session's SafetyProfile via ``approval_policy_for_session`` (which reads
+    ``profile_for_session``): the one profile path, replacing the blanket AUTO_APPROVE default a
+    cron parent used to get. An INTERACTIVE parent (a dashboard chat) keeps AUTO_APPROVE — a human
+    is present and chose to auto-approve.
 
     Behaviour-preserving where it matters: an announce that calls no tool is unaffected, and under
     HOOK_BASED the security hooks still auto-approve hook-neutral tools; only the dangerous tools
@@ -1084,7 +1084,6 @@ class GatewayOrchestrator:
         self.consolidator = HistoryConsolidator(
             log=self.conv_log,
             memory=memory,
-            sessions=self.sessions,
             history_idle_secs=self._cfg.memory.history_idle_hours * 3600,
             vector_store=self.vector_memory,
             migrated=self._cfg.memory.migrated,
@@ -5491,7 +5490,7 @@ class GatewayOrchestrator:
         except asyncio.TimeoutError:
             print("MCP probe timed out — continuing without full probe")
 
-        # ── Start background session and print URLs ──
+        # ── Start the session pool and print URLs ──
         # Report every connected external channel transport (the in-app webui
         # one is always present and not news) — no hardcoded transport name.
         from personalclaw.channel_transports import WEBUI_TRANSPORT
@@ -5504,20 +5503,20 @@ class GatewayOrchestrator:
             if _tp and _tp.name != WEBUI_TRANSPORT and _tp.connected
         ]
 
-        async def _start_bg_session() -> None:
+        async def _start_session_pool() -> None:
             try:
                 assert self.sessions is not None
-                await self.sessions.start_pool(blocking=False)
-                logger.info("Background session starting")
+                await self.sessions.start_pool()
+                logger.info("Session pool starting")
             except Exception:
-                logger.warning("Background session start failed", exc_info=True)
+                logger.warning("Session pool start failed", exc_info=True)
 
             if not self._no_dashboard:
                 self._announce_dashboard()
             for _ch_name in _connected_channels:
                 print(f"PersonalClaw gateway connected to {_ch_name}")
 
-        asyncio.create_task(_start_bg_session())
+        asyncio.create_task(_start_session_pool())
         print("PersonalClaw gateway starting…")
         print(f"\n{DATA_WARNING}\n")
 

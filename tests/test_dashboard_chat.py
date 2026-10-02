@@ -1346,91 +1346,6 @@ class TestBlockedSlashCommands:
 # ── Background session leak regression ──
 
 
-class TestTitleGenerationSessionLeak:
-    """_generate_title_via_provider must release BACKGROUND_KEY even when stream() raises."""
-
-    @pytest.mark.asyncio
-    async def test_background_session_released_on_stream_error(self, tmp_path):
-        from personalclaw.dashboard.chat import _generate_title_via_provider
-        from personalclaw.session import BACKGROUND_KEY, chore_usage
-
-        state = _make_state(tmp_path)
-
-        # Mock client whose stream() raises mid-iteration
-        mock_client = MagicMock()
-
-        async def _exploding_stream(prompt):
-            raise RuntimeError("throttle / ACP error")
-            yield  # noqa: unreachable — makes this an async generator
-
-        mock_client.stream = _exploding_stream
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
-
-        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
-
-        with pytest.raises(RuntimeError, match="throttle"):
-            await _generate_title_via_provider(state, messages, usage=chore_usage())
-
-        # The critical assertion: release MUST be called even though stream() raised
-        state.sessions.release.assert_called_once_with(BACKGROUND_KEY)
-
-    @pytest.mark.asyncio
-    async def test_permission_request_rejected_during_title_gen(self, tmp_path):
-        from personalclaw.dashboard.chat import _generate_title_via_provider
-        from personalclaw.llm.base import (
-            EVENT_COMPLETE,
-            EVENT_PERMISSION_REQUEST,
-            EVENT_TEXT_CHUNK,
-            LLMEvent,
-        )
-        from personalclaw.session import BACKGROUND_KEY, chore_usage
-
-        state = _make_state(tmp_path)
-        mock_client = MagicMock()
-        mock_client.reject_tool = AsyncMock()
-
-        async def _stream(prompt):
-            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="My Title")
-            yield LLMEvent(kind=EVENT_PERMISSION_REQUEST, request_id="req-1")
-            yield LLMEvent(kind=EVENT_COMPLETE)
-
-        mock_client.stream = _stream
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
-
-        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
-        title = await _generate_title_via_provider(state, messages, usage=chore_usage())
-
-        mock_client.reject_tool.assert_called_once_with("req-1")
-        assert title == "My Title"
-        state.sessions.release.assert_called_once_with(BACKGROUND_KEY)
-
-    @pytest.mark.asyncio
-    async def test_complete_event_breaks_stream(self, tmp_path):
-        from personalclaw.dashboard.chat import _generate_title_via_provider
-        from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
-        from personalclaw.session import BACKGROUND_KEY, chore_usage
-
-        state = _make_state(tmp_path)
-        mock_client = MagicMock()
-
-        async def _stream(prompt):
-            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="Good")
-            yield LLMEvent(kind=EVENT_COMPLETE)
-            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=" SHOULD NOT APPEAR")
-
-        mock_client.stream = _stream
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
-
-        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
-        title = await _generate_title_via_provider(state, messages, usage=chore_usage())
-
-        assert title == "Good"
-        state.sessions.release.assert_called_once_with(BACKGROUND_KEY)
-
-
 # ── Inline tool cards: _flush_segment and segment flush in run_chat ──
 
 
@@ -3804,31 +3719,31 @@ class TestFolderPersistence:
 
 
 class TestGenerateFolderIcon:
-    @pytest.mark.asyncio
-    async def test_valid_emoji_stored(self, tmp_path, monkeypatch):
-        from unittest.mock import AsyncMock, MagicMock
+    @staticmethod
+    def _model_answers(monkeypatch, text: str):
+        """The chore helper answering *text*, as the folder's icon chore is answered."""
+        from unittest.mock import AsyncMock
 
-        from personalclaw.dashboard.chat_folders import _generate_folder_icon
+        asked = AsyncMock(return_value=text)
+        monkeypatch.setattr("personalclaw.chores.run_chore", asked)
+        return asked
+
+    @staticmethod
+    def _state(tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
 
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
-
-        # Mock LLM session
-        mock_event = MagicMock()
-        mock_event.kind = "text_chunk"
-        mock_event.text = "🚀"
-        done_event = MagicMock()
-        done_event.kind = "complete"
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_TEXT_CHUNK", "text_chunk")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_COMPLETE", "complete")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_PERMISSION_REQUEST", "permission")
-
-        mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=AsyncIterator([mock_event, done_event]))
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
         state.save_folders = MagicMock()
         state.push_sessions_update = MagicMock()
+        return state
+
+    @pytest.mark.asyncio
+    async def test_valid_emoji_stored(self, tmp_path, monkeypatch):
+        from personalclaw.dashboard.chat_folders import _generate_folder_icon
+
+        state = self._state(tmp_path, monkeypatch)
+        self._model_answers(monkeypatch, "🚀")
 
         folder = {"id": "f1", "name": "Deploy"}
         state._folders = [folder]
@@ -3840,91 +3755,43 @@ class TestGenerateFolderIcon:
 
     @pytest.mark.asyncio
     async def test_long_output_rejected(self, tmp_path, monkeypatch):
-        from unittest.mock import AsyncMock, MagicMock
-
         from personalclaw.dashboard.chat_folders import _generate_folder_icon
 
-        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        state = _make_state(tmp_path)
-
-        mock_event = MagicMock()
-        mock_event.kind = "text_chunk"
-        mock_event.text = "This is not an emoji"
-        done_event = MagicMock()
-        done_event.kind = "complete"
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_TEXT_CHUNK", "text_chunk")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_COMPLETE", "complete")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_PERMISSION_REQUEST", "permission")
-
-        mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=AsyncIterator([mock_event, done_event]))
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
-        state.save_folders = MagicMock()
+        state = self._state(tmp_path, monkeypatch)
+        asked = self._model_answers(monkeypatch, "This is not an emoji")
 
         folder = {"id": "f1", "name": "Deploy"}
         state._folders = [folder]
         await _generate_folder_icon(state, folder)
 
+        asked.assert_awaited_once()
         assert "icon" not in folder
         state.save_folders.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_ascii_two_char_rejected(self, tmp_path, monkeypatch):
         """Two ASCII chars like '<>' should be rejected by emoji validation."""
-        from unittest.mock import AsyncMock, MagicMock
-
         from personalclaw.dashboard.chat_folders import _generate_folder_icon
 
-        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        state = _make_state(tmp_path)
-
-        mock_event = MagicMock()
-        mock_event.kind = "text_chunk"
-        mock_event.text = "<>"
-        done_event = MagicMock()
-        done_event.kind = "complete"
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_TEXT_CHUNK", "text_chunk")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_COMPLETE", "complete")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_PERMISSION_REQUEST", "permission")
-
-        mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=AsyncIterator([mock_event, done_event]))
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
-        state.save_folders = MagicMock()
+        state = self._state(tmp_path, monkeypatch)
+        asked = self._model_answers(monkeypatch, "<>")
 
         folder = {"id": "f1", "name": "Test"}
         state._folders = [folder]
         await _generate_folder_icon(state, folder)
 
+        asked.assert_awaited_once()
         assert "icon" not in folder
         state.save_folders.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_redaction_applied(self, tmp_path, monkeypatch):
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import patch
 
         from personalclaw.dashboard.chat_folders import _generate_folder_icon
 
-        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        state = _make_state(tmp_path)
-
-        mock_event = MagicMock()
-        mock_event.kind = "text_chunk"
-        mock_event.text = "🔥"
-        done_event = MagicMock()
-        done_event.kind = "complete"
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_TEXT_CHUNK", "text_chunk")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_COMPLETE", "complete")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_PERMISSION_REQUEST", "permission")
-
-        mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=AsyncIterator([mock_event, done_event]))
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
-        state.save_folders = MagicMock()
-        state.push_sessions_update = MagicMock()
+        state = self._state(tmp_path, monkeypatch)
+        self._model_answers(monkeypatch, "🔥")
 
         with (
             patch(
@@ -3944,28 +3811,10 @@ class TestGenerateFolderIcon:
     @pytest.mark.asyncio
     async def test_variation_selector_emoji_accepted(self, tmp_path, monkeypatch):
         """Emoji with U+FE0F variation selector (e.g. ❤️) should be accepted."""
-        from unittest.mock import AsyncMock, MagicMock
-
         from personalclaw.dashboard.chat_folders import _generate_folder_icon
 
-        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        state = _make_state(tmp_path)
-
-        mock_event = MagicMock()
-        mock_event.kind = "text_chunk"
-        mock_event.text = "\u2764\ufe0f"  # ❤️
-        done_event = MagicMock()
-        done_event.kind = "complete"
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_TEXT_CHUNK", "text_chunk")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_COMPLETE", "complete")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_PERMISSION_REQUEST", "permission")
-
-        mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=AsyncIterator([mock_event, done_event]))
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
-        state.save_folders = MagicMock()
-        state.push_sessions_update = MagicMock()
+        state = self._state(tmp_path, monkeypatch)
+        self._model_answers(monkeypatch, "\u2764\ufe0f")  # ❤️
 
         folder = {"id": "f1", "name": "Love"}
         state._folders = [folder]
@@ -3975,61 +3824,43 @@ class TestGenerateFolderIcon:
         state.save_folders.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_uses_background_session(self, tmp_path, monkeypatch):
-        """Folder icon generation should use the shared background session."""
-        from unittest.mock import AsyncMock, MagicMock
-
+    async def test_asks_a_chore_of_its_own(self, tmp_path, monkeypatch):
+        """The icon is a chore: one call of its own, sent the folder's prompt, and background
+        spend that belongs to no chat."""
         from personalclaw.dashboard.chat_folders import _generate_folder_icon
-        from personalclaw.session import BACKGROUND_KEY
 
-        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        state = _make_state(tmp_path)
+        state = self._state(tmp_path, monkeypatch)
+        asked = self._model_answers(monkeypatch, "🔥")
 
-        mock_event = MagicMock()
-        mock_event.kind = "text_chunk"
-        mock_event.text = "🔥"
-        done_event = MagicMock()
-        done_event.kind = "complete"
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_TEXT_CHUNK", "text_chunk")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_COMPLETE", "complete")
-        monkeypatch.setattr("personalclaw.llm.base.EVENT_PERMISSION_REQUEST", "permission")
-
-        mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=AsyncIterator([mock_event, done_event]))
-        state.sessions.get_or_create = AsyncMock(return_value=(mock_client, False, False))
-        state.sessions.release = MagicMock()
-        state.save_folders = MagicMock()
-        state.push_sessions_update = MagicMock()
-
-        folder = {"id": "abc123", "name": "Test"}
+        folder = {"id": "abc123", "name": "Garden plans"}
         state._folders = [folder]
         await _generate_folder_icon(state, folder)
 
-        state.sessions.get_or_create.assert_called_once_with(BACKGROUND_KEY)
-        state.sessions.release.assert_called_once_with(BACKGROUND_KEY)
+        asked.assert_awaited_once()
+        assert "Garden plans" in asked.call_args.args[0]
+        usage = asked.call_args.kwargs["usage"]
+        assert (usage.source, usage.session_key) == ("background", "")
 
     @pytest.mark.asyncio
     async def test_provider_less_install_is_silent(self, tmp_path, monkeypatch):
         """#2978 — a provider-less install takes the silent no-icon path.
 
-        `get_or_create` resolves the `background` use case, so with no provider bound it
-        raises. It used to be called OUTSIDE the "best-effort background task" guard, so the
-        error escaped the fire-and-forget task and asyncio logged 37 unretrieved lines per
-        folder created. The request itself returned 201, so only the log showed it.
+        Asking resolves the `background` use case, so with no provider bound it raises. It used
+        to be called OUTSIDE the "best-effort background task" guard, so the error escaped the
+        fire-and-forget task and asyncio logged 37 unretrieved lines per folder created. The
+        request itself returned 201, so only the log showed it.
         """
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import AsyncMock
 
         from personalclaw.dashboard.chat_folders import _generate_folder_icon
 
-        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        state = _make_state(tmp_path)
-
-        state.sessions.get_or_create = AsyncMock(
-            side_effect=RuntimeError("no model provider resolves for use case 'background'")
+        state = self._state(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            "personalclaw.chores.run_chore",
+            AsyncMock(
+                side_effect=RuntimeError("no model provider resolves for use case 'background'")
+            ),
         )
-        state.sessions.release = MagicMock()
-        state.save_folders = MagicMock()
-        state.push_sessions_update = MagicMock()
 
         folder = {"id": "f1", "name": "icon-repro"}
         state._folders = [folder]
@@ -4039,18 +3870,13 @@ class TestGenerateFolderIcon:
 
         assert "icon" not in folder
         state.save_folders.assert_not_called()
-        # A session we never acquired must not be released — the `finally` used to run
-        # unconditionally, so pairing the guard with an `acquired` flag is the other half.
-        state.sessions.release.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_acquisition_is_inside_the_best_effort_guard(self, tmp_path, monkeypatch):
-        """#2978 mechanism control: the guard must OPEN before the session is acquired.
+    async def test_the_call_is_inside_the_best_effort_guard(self, tmp_path, monkeypatch):
+        """#2978 mechanism control: the guard must OPEN before the model is asked.
 
         Pins the source shape, not just the outcome — an outcome-only test also passes if a
-        caller-side `try` is added, which would leave every other background acquisition
-        uncovered. `_maybe_followups` (chat_followups.py) is the sibling that already has the
-        correct shape.
+        caller-side `try` is added, which would leave every other background chore uncovered.
         """
         import inspect
 
@@ -4058,9 +3884,8 @@ class TestGenerateFolderIcon:
 
         src = inspect.getsource(chat_folders._generate_folder_icon)
         guard = src.index("except Exception:")
-        acquire = src.index("sessions.get_or_create(")
-        assert acquire < guard, "get_or_create must sit inside the best-effort try, not above it"
-        assert src.index("try:", src.index("_folder_icon_lock")) < acquire
+        asked = src.index("chores.run_chore(")
+        assert src.index("try:") < asked < guard, "the call must sit inside the best-effort try"
 
 
 class TestFolderAssignmentPersistence:

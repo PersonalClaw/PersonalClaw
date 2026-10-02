@@ -74,7 +74,6 @@ def _mock_sessions():
     s.set_channel = AsyncMock()
     s.start_pool = AsyncMock()
     s.close_all = AsyncMock()
-    s.recycle_background = AsyncMock()
     return s
 
 
@@ -2716,12 +2715,12 @@ class TestRetriggerRecovery:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestBgSessionDashboardBranch:
-    """run() -> _start_bg_session dashboard URL printing path."""
+class TestSessionPoolDashboardBranch:
+    """run() -> _start_session_pool dashboard URL printing path."""
 
     @pytest.mark.asyncio
-    async def test_bg_session_prints_dashboard_url(self):
-        """_start_bg_session prints dashboard URLs when not _no_dashboard."""
+    async def test_session_pool_start_prints_dashboard_url(self):
+        """_start_session_pool prints dashboard URLs when not _no_dashboard."""
         orch = _make_orchestrator(no_dashboard=False, no_open=True)
 
         orch._init_services = MagicMock()
@@ -2735,11 +2734,11 @@ class TestBgSessionDashboardBranch:
         orch._check_for_updates = AsyncMock()
         orch._shutdown = AsyncMock()
 
-        # Real-ish sessions stub so _start_bg_session passes the assert
+        # Real-ish sessions stub so _start_session_pool passes the assert
         orch.sessions = MagicMock()
         orch.sessions.start_pool = AsyncMock()
 
-        # Stub _init_dashboard to set the attributes _start_bg_session reads
+        # Stub _init_dashboard to set the attributes _start_session_pool reads
         async def _init_dash():
             orch._local_only = True
             orch._configured_host = None
@@ -2776,11 +2775,11 @@ class TestBgSessionDashboardBranch:
                                             ):
                                                 with patch("resource.setrlimit"):
                                                     await orch.run()
-                                                    # Let bg_session task drain
+                                                    # Let the pool's start task drain
                                                     await asyncio.sleep(0)
                                                     await asyncio.sleep(0)
 
-        orch.sessions.start_pool.assert_awaited_once_with(blocking=False)
+        orch.sessions.start_pool.assert_awaited_once_with()
 
 
 class TestCheckMissingDepsPip:

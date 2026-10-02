@@ -37,7 +37,7 @@ def _consolidator(msg_count: int = _CONSOLIDATION_THRESHOLD) -> HistoryConsolida
     log._read_messages = MagicMock(return_value=[{}] * msg_count)
     log.unconsolidated_count = MagicMock(return_value=msg_count)
     log.recorded_memory_mode = MagicMock(return_value=None)  # a transcript that records no mode
-    return HistoryConsolidator(log=log, memory=MagicMock(), sessions=None, history_idle_secs=0)
+    return HistoryConsolidator(log=log, memory=MagicMock(), history_idle_secs=0)
 
 
 def test_the_after_turn_pass_is_skipped_and_its_offset_kept() -> None:
@@ -123,9 +123,7 @@ def test_the_consolidate_command_says_incident_mode_is_why(capsys: pytest.Captur
     conv_log.has_log.return_value = True
     incident.activate("a drill")
     with (
-        patch.object(
-            cli_server, "_build_consolidator", return_value=(None, consolidator, conv_log)
-        ),
+        patch.object(cli_server, "_build_consolidator", return_value=(consolidator, conv_log)),
         pytest.raises(SystemExit) as exit_,
     ):
         asyncio.run(cli_server._consolidate_cmd(argparse.Namespace(all=False, key="chat-1")))

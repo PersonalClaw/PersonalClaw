@@ -76,9 +76,9 @@ CAPABILITIES: tuple[str, ...] = (
 #   reasoning     — explicit one-shot judgment calls (web-extract, guarded one-shots)
 #                   and, by default, every LOOP JUDGE (loops.judge_use_case) — the
 #                   judge must not ride the binding of the work it grades
-#   background    — the _bg/personalclaw-lite session factory + one_shot_completion's
-#                   informal-label collapse (titles, tags, suggestions, digests,
-#                   consolidation)
+#   background    — every chore (chores.run_chore: titles, tags, suggestions,
+#                   consolidation), heartbeat tasks, and one_shot_completion's
+#                   informal-label collapse (digests)
 #   orchestration — supervising turns (a scheduled job reading its subagent's result among
 #                   them), webhook agent turns, and EVERY subagent spawn: one that names
 #                   a model keeps it, and is metered on this axis all the same

@@ -36,9 +36,9 @@ Three parts, deliberately separate:
    unverifiable, so it is refused too). "Unattended" is not a caller's self-report:
    :mod:`personalclaw.session` derives it from the session key through
    :func:`personalclaw.guardrails.policy.is_unattended_session`, the same vocabulary the
-   guardrail layer resolves safety profiles with, so cron fires, loop-cycle workers, the
-   background/heartbeat key, inbox/side sweeps, channel deliveries and sessionless
-   trigger dispatches are all covered without each one opting in.
+   guardrail layer resolves safety profiles with, so cron fires, loop-cycle workers,
+   heartbeat tasks, inbox/side sweeps, channel deliveries and sessionless trigger
+   dispatches are all covered without each one opting in.
 
 Probe posture: the health probe runs ``<bin> --version`` (or the row's
 ``version_args``) and nothing else. It never opens a session, never passes a prompt,

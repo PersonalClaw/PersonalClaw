@@ -731,9 +731,7 @@ class TestConsolidationSeam:
         memory = MagicMock()
         memory.read_preferences = MagicMock(return_value="")
         memory.read_projects = MagicMock(return_value="")
-        return HistoryConsolidator(
-            log=log, memory=memory, sessions=None, vector_store=store, migrated=True
-        )
+        return HistoryConsolidator(log=log, memory=memory, vector_store=store, migrated=True)
 
     @pytest.mark.asyncio
     async def test_a_colliding_candidate_costs_exactly_one_extra_call(self, store, tmp_path):

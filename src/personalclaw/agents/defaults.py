@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 # The canonical default agent name. Used by the config bootstrap (loader.py),
-# the chat-runner fallbacks, and the warm-pool/background-session agent.
+# the chat-runner fallbacks, and the warm pool's agent.
 DEFAULT_NATIVE_AGENT_NAME = "PersonalClaw"
 
 # The system prompt the default agent was once SEEDED with. It is not a prompt anything
@@ -339,12 +339,13 @@ def make_code_planner_profile(profile_cls: type) -> Any:
 
 # ---------------------------------------------------------------------------
 # Lite background agent (the cheap, terse worker for non-conversational system
-# chores — chat-title generation, suggestions, memory consolidation, prompt
-# optimization). It carries no model of its own (inherits the
-# chat binding via the fallback resolver), no tools, and no skills: these are
-# short single-shot text turns, not tool-using agent loops. "No tools" is not
-# only this profile's empty list: its native runtime is built with no tool
-# provider at all (`provider_bridge._build_native_runtime`).
+# work). The prompt optimizer runs as it, and each background chore (a chat's
+# title, suggestions, memory consolidation) is its spend, though a chore runs in
+# no agent: it is one call to the model (`chores.run_chore`). It carries no model
+# of its own (inherits the chat binding via the fallback resolver), no tools, and
+# no skills: these are short single-shot text turns, not tool-using agent loops.
+# "No tools" is not only this profile's empty list: its native runtime is built
+# with no tool provider at all (`provider_bridge._build_native_runtime`).
 # ---------------------------------------------------------------------------
 
 LITE_AGENT_NAME = "personalclaw-lite"

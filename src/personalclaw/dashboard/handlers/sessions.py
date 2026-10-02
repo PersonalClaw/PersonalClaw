@@ -565,8 +565,8 @@ async def _reset_all_sessions(request: web.Request) -> int:
             await asyncio.gather(*[_safe_shutdown(p) for p in providers])
 
         sessions._pool_started = False
-        await sessions.start_pool(blocking=False)
-        logger.info("Background session restarted")
+        await sessions.start_pool()
+        logger.info("Session pool restarted")
         state.push_refresh("agents")
         state.push_sessions_update()
         state.broadcast_ws("sessions_restarting", {"status": "ready"})

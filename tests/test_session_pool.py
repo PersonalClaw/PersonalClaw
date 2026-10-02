@@ -571,19 +571,6 @@ class TestModelMatchesPoolDefault:
 
 class TestStatelessSkipsPool:
     @pytest.mark.asyncio
-    async def test_bg_session_skips_pool(self):
-        """get_or_create for _bg must not claim from warm pool."""
-        mgr, factory = _make_manager(pool_agent="personalclaw")
-        pooled = _make_provider()
-        mgr._warm_pool.put_nowait((pooled, time.monotonic()))
-        mgr._drain_and_claim = AsyncMock(return_value=pooled)
-
-        provider, is_new, _ = await mgr.get_or_create("_bg", agent=None)
-
-        mgr._drain_and_claim.assert_not_awaited()
-        factory.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_stateless_prefix_skips_pool(self):
         """Stateless-prefixed keys (cron:, subagent:, etc.) skip pool."""
         for prefix in ("cron:job1", "subagent:abc"):

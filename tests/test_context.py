@@ -528,8 +528,7 @@ class TestCompressThreadHistory:
     async def test_returns_none_when_no_history(self, tmp_path):
         from personalclaw.context import compress_thread_history
 
-        sessions = object()  # unused — no messages to compress
-        result = await compress_thread_history([], "no-thread", "hi", sessions)
+        result = await compress_thread_history([], "no-thread", "hi")
         assert result is None
 
     @pytest.mark.asyncio
@@ -540,8 +539,7 @@ class TestCompressThreadHistory:
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi there"},
         ]
-        sessions = object()  # unused — transcript is short
-        result = await compress_thread_history(transcript, "t1", "hello", sessions)
+        result = await compress_thread_history(transcript, "t1", "hello")
         assert result is not None
         assert "hello" in result
         assert "hi there" in result
@@ -558,56 +556,44 @@ class TestCompressThreadHistory:
             {"role": "system", "content": "SYSTEM-NOTICE-ONLY"},
             {"role": "assistant", "content": "hi there"},
         ]
-        result = await compress_thread_history(transcript, "t1", "hello", object())
+        result = await compress_thread_history(transcript, "t1", "hello")
         assert result is not None
         assert "TOOL-ROW-ONLY" not in result
         assert "SYSTEM-NOTICE-ONLY" not in result
 
     @pytest.mark.asyncio
     async def test_long_transcript_calls_llm(self, tmp_path, monkeypatch):
-        from unittest.mock import AsyncMock, MagicMock
+        """A transcript past the cap is condensed as a chore of the session's own: one call,
+        sent the compression prompt, its spend the session's."""
+        from unittest.mock import AsyncMock
 
         from personalclaw.context import compress_thread_history
 
-        mock_client = MagicMock()
-        mock_sessions = MagicMock()
-        mock_sessions.get_pid = MagicMock(return_value=None)
-        mock_sessions.get_or_create = AsyncMock(return_value=(mock_client, True, False))
-        mock_sessions.release = MagicMock()
-        mock_sessions.recycle_background = AsyncMock()
+        asked = AsyncMock(return_value="compressed summary here")
+        monkeypatch.setattr("personalclaw.chores.run_chore", asked)
 
-        monkeypatch.setattr(
-            "personalclaw.llm_helpers.stream_and_collect",
-            AsyncMock(return_value="compressed summary here"),
-        )
-
-        result = await compress_thread_history(
-            self._turns(50, 1400), "t1", "latest q", mock_sessions
-        )
+        result = await compress_thread_history(self._turns(50, 1400), "t1", "latest q")
         assert result is not None
         assert "compressed summary here" in result
         assert "Thread start (verbatim)" in result
         assert "Compressed history" in result
         assert "Recent exchanges (verbatim)" in result
-        mock_sessions.release.assert_called_once()
-        mock_sessions.recycle_background.assert_awaited_once()
+        asked.assert_awaited_once()
+        assert "latest q" in asked.call_args.args[0]
+        assert asked.call_args.kwargs["usage"].session_key == "t1"
 
     @pytest.mark.asyncio
     async def test_llm_failure_returns_none(self, tmp_path, monkeypatch):
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import AsyncMock
 
         from personalclaw.context import compress_thread_history
 
-        mock_sessions = MagicMock()
-        mock_sessions.get_pid = MagicMock(return_value=None)
-        mock_sessions.get_or_create = AsyncMock(side_effect=RuntimeError("boom"))
-        mock_sessions.release = MagicMock()
-        mock_sessions.recycle_background = AsyncMock()
+        monkeypatch.setattr(
+            "personalclaw.chores.run_chore", AsyncMock(side_effect=RuntimeError("boom"))
+        )
 
-        result = await compress_thread_history(self._turns(50, 1400), "t1", "q", mock_sessions)
+        result = await compress_thread_history(self._turns(50, 1400), "t1", "q")
         assert result is None
-        mock_sessions.release.assert_not_called()
-        mock_sessions.recycle_background.assert_not_awaited()
 
     def test_build_session_context_uses_compressed_history(self, tmp_path):
         """When compressed_history is passed, it replaces naive truncation."""
@@ -631,23 +617,17 @@ class TestCompressThreadHistory:
     @pytest.mark.asyncio
     async def test_compressed_output_redacts_credentials(self, tmp_path, monkeypatch):
         """Credentials in LLM compression output must be scrubbed."""
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import AsyncMock
 
         from personalclaw.context import compress_thread_history
 
-        mock_sessions = MagicMock()
-        mock_sessions.get_pid = MagicMock(return_value=None)
-        mock_sessions.get_or_create = AsyncMock(return_value=(MagicMock(), True, False))
-        mock_sessions.release = MagicMock()
-        mock_sessions.recycle_background = AsyncMock()
-
         fake_key = "AKIAIOSFODNN7EXAMPLE"
         monkeypatch.setattr(
-            "personalclaw.llm_helpers.stream_and_collect",
+            "personalclaw.chores.run_chore",
             AsyncMock(return_value=f"summary with {fake_key} leaked"),
         )
 
-        result = await compress_thread_history(self._turns(50, 500), "t1", "q", mock_sessions)
+        result = await compress_thread_history(self._turns(50, 500), "t1", "q")
         assert result is not None
         assert fake_key not in result
 
@@ -689,7 +669,6 @@ class TestRuntimeDisplayName:
             ("cron:daily", "PersonalClaw cron job"),
             ("cron_076ab486", "PersonalClaw cron job"),
             ("subagent:abc-123", "PersonalClaw subagent"),
-            ("_bg", "PersonalClaw background"),
             ("cli_chat", "CLI terminal"),
             ("1234567890.123456", "messaging channel"),
         ],
@@ -797,8 +776,7 @@ class TestMultibyteSanitization:
             {"role": "user", "content": "what\u2019s the status \u2014 any update?"},
             {"role": "assistant", "content": "All good \u2026 no issues."},
         ]
-        sessions = object()
-        result = await compress_thread_history(transcript, "t1", "hello", sessions)
+        result = await compress_thread_history(transcript, "t1", "hello")
         assert result is not None
         assert "\u2019" not in result
         assert "\u2014" not in result

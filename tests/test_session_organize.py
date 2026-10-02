@@ -23,8 +23,8 @@ from __future__ import annotations
 import pytest
 
 from personalclaw import session_organize as so
+from personalclaw.chores import chore_usage
 from personalclaw.dashboard.chat_utils import _history_key_for
-from personalclaw.session import chore_usage
 
 
 class FakeSession:
@@ -175,11 +175,11 @@ async def test_deterministic_path_never_calls_the_model(home, monkeypatch):
     """The load-bearing efficiency claim: the easy cases must not pay for a model."""
     calls = []
 
-    async def spy(state, prompt, *, usage, validate=None):
+    async def spy(prompt, *, usage, validate=None, memory_mode=None):
         calls.append(prompt)
         return "NONE"
 
-    monkeypatch.setattr("personalclaw.dashboard.chat_title._stream_background_prompt", spy)
+    monkeypatch.setattr("personalclaw.chores.run_chore", spy)
     state = FakeState(FOLDERS, TAGS)
     p = await so.propose_for_session(state, FakeSession(title="Research plan"))
     assert p is not None and p.source == "title"
@@ -188,13 +188,13 @@ async def test_deterministic_path_never_calls_the_model(home, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ambiguous_path_consults_the_model(home, monkeypatch):
-    async def fake(state, prompt, *, usage, validate=None):
+    async def fake(prompt, *, usage, validate=None, memory_mode=None):
         assert "Available folders: Research, Infra" in prompt
         # The consult is the chat's spend, recorded under the key its own turns are.
         assert usage == chore_usage(_history_key_for("s1"))
         return "FOLDER: Research  TAGS: bug"
 
-    monkeypatch.setattr("personalclaw.dashboard.chat_title._stream_background_prompt", fake)
+    monkeypatch.setattr("personalclaw.chores.run_chore", fake)
     state = FakeState(FOLDERS, TAGS)
     p = await so.propose_for_session(state, FakeSession(title="quarterly planning cadence"))
     assert p is not None and p.source == "llm"
@@ -205,10 +205,10 @@ async def test_ambiguous_path_consults_the_model(home, monkeypatch):
 async def test_allow_llm_false_stays_deterministic(home, monkeypatch):
     """The list-view caller must be able to refuse a model roundtrip per row."""
 
-    async def boom(state, prompt, *, usage, validate=None):
+    async def boom(prompt, *, usage, validate=None, memory_mode=None):
         raise AssertionError("model called with allow_llm=False")
 
-    monkeypatch.setattr("personalclaw.dashboard.chat_title._stream_background_prompt", boom)
+    monkeypatch.setattr("personalclaw.chores.run_chore", boom)
     state = FakeState(FOLDERS, TAGS)
     s = FakeSession(title="quarterly planning cadence")
     assert await so.propose_for_session(state, s, allow_llm=False) is None

@@ -269,13 +269,25 @@ class TestConsumerAxes:
         # Both assess_cycle and assess_cycle_skeptic.
         assert judge_src.count("resolve_metered_model(judge_use_case())") == 2
 
-    def test_background_session_factory_passes_axis(self):
-        from pathlib import Path
+    @pytest.mark.asyncio
+    async def test_a_chore_is_asked_of_the_background_axis(self, isolated_store):
+        """Every chore reaches its model through ``chores.run_chore``, so the Background binding
+        is the one a chat's title, organize proposal, follow-ups and consolidation are asked of."""
+        from unittest.mock import AsyncMock, patch
 
-        from personalclaw import session
+        from personalclaw import chores
 
-        src = Path(session.__file__).read_text(encoding="utf-8")
-        assert 'model_axis="background"' in src
+        provider = AsyncMock()
+        with (
+            patch(
+                "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
+                return_value=provider,
+            ) as resolve,
+            patch("personalclaw.llm_helpers.stream_and_collect", AsyncMock(return_value="ok")),
+        ):
+            out = await chores.run_chore("hi", usage=chores.chore_usage("dashboard:c1"))
+        assert out == "ok"
+        assert resolve.call_args.args[0] == "background"
 
     def test_guard_extends_to_all_noninteractive_axes(self, isolated_store, monkeypatch):
         """Resolving each non-interactive axis threads _guard_use_case (breaker +
@@ -339,7 +351,7 @@ class TestInnerModelAxis:
         with pytest.raises(RuntimeError, match="stop after capture"):
             pb._build_native_runtime(
                 use_case="chat",
-                session_key="_bg",
+                session_key="cron:system:heartbeat-tasks:1",
                 agent="personalclaw-lite",
                 model_override=None,
                 cwd=None,

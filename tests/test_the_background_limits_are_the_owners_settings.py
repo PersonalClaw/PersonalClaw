@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-import types
 from pathlib import Path
 from typing import Any
 
@@ -273,50 +272,19 @@ def chain(monkeypatch) -> list[str]:
     return asked
 
 
-class _OneBackgroundSession:
-    """The background session as the gateway keeps it: built once, then every chore reuses it."""
-
-    def __init__(self) -> None:
-        self.runtime: Any = None
-
-    async def get_or_create(self, key: str, agent: str | None = None, **_kw: Any):
-        from personalclaw.agents.defaults import LITE_AGENT_NAME
-        from personalclaw.providers import provider_bridge
-
-        if self.runtime is None:
-            self.runtime = provider_bridge._build_native_runtime(
-                use_case="chat",
-                session_key=key,
-                agent=agent or LITE_AGENT_NAME,
-                model_override=None,
-                cwd=None,
-                model_axis="background",
-            )
-            await self.runtime.start()
-        return self.runtime, False, True
-
-    def release(self, key: str) -> None:
-        return None
-
-    async def recycle_background(self) -> None:
-        return None
-
-
 # ── 2. the time limit binds the next call of a runtime already running ───────────────────────
 
 
-def test_a_changed_time_limit_binds_the_next_chore_of_the_running_background_session(chain, home):
+def test_a_changed_time_limit_binds_the_next_chore(chain, home):
     """🔴 The time limit was a constant (300 s), so a chore that takes 45 s on this machine could
     neither be cut sooner on a fast one nor given longer on a slow one. Now the limit as Settings
     has it binds each call: at 30 s the local model is stopped and the next model answers; raised
-    to 60 s, the same session's next chore is answered by the local model."""
+    to 60 s, the next chore is answered by the local model."""
     from personalclaw.history import ConversationLog, HistoryConsolidator
 
     async def scenario() -> list[tuple[Any, float]]:
         loop = asyncio.get_running_loop()
-        consolidator = HistoryConsolidator(
-            ConversationLog(home / "log"), memory=None, sessions=_OneBackgroundSession()
-        )
+        consolidator = HistoryConsolidator(ConversationLog(home / "log"), memory=None)
         took: list[tuple[Any, float]] = []
         for limit in (30.0, 60.0):
             _write(call_timeout_secs=limit)
@@ -426,57 +394,43 @@ def builds(home) -> list[Any]:
     return built
 
 
-def _sessions():
-    """The gateway's session manager over the real resolution seam (no warm pool)."""
-    from unittest.mock import MagicMock
+@pytest.fixture
+def roomy(monkeypatch) -> None:
+    """Every model allows more than any limit Settings accepts, so the limit is what binds."""
 
-    from personalclaw.providers.provider_bridge import create_provider_factory
-    from personalclaw.session import SessionManager
+    async def _budget(_ref: str) -> int:
+        return 100_000
 
-    cfg = MagicMock()
-    cfg.default_agent = ""
-    cfg.model = "auto"
-    cfg.session.pool_size = 0
-    cfg.session.pool_agent = ""
-    cfg.session.pool_ttl_secs = 0
-    cfg.session.timeout_secs = 3600
-    return SessionManager(cfg, provider_factory=create_provider_factory("chat"))
+    monkeypatch.setattr("personalclaw.local_models.budgets.output_budget", _budget)
 
 
-async def _title(sessions) -> str:
-    """One chat-title chore, through the real path: the shared background session."""
-    from personalclaw.dashboard.chat_title import _stream_background_prompt
-    from personalclaw.session import chore_usage
+async def _title() -> str:
+    """One chat-title chore, through the real path: the chore helper."""
+    from personalclaw.chores import chore_usage, run_chore
 
-    state = types.SimpleNamespace(sessions=sessions)
-    return await _stream_background_prompt(
-        state, "Generate a short title (3-6 words) for: hi", usage=chore_usage()
-    )
+    return await run_chore("Generate a short title (3-6 words) for: hi", usage=chore_usage())
 
 
 @pytest.mark.asyncio
-async def test_a_changed_output_limit_reaches_the_next_chore_of_the_running_background_session(
-    builds,
-):
+async def test_a_changed_output_limit_reaches_the_next_chore(builds, roomy):
     """🔴 The output limit was the constant 4,096, so a model that needed more room for a chore
-    was cut short whatever its machine. The background session is built with the limit as
-    Settings has it, and a change rebuilds it at its next chore."""
+    was cut short whatever its machine. Each chore's model is built with the limit as Settings has
+    it when the chore starts."""
     _write(max_output_tokens=8192)
-    sessions = _sessions()
-    assert await _title(sessions) == "Fake Chat Title"
-    assert await _title(sessions) == "Fake Chat Title"
-    assert builds == [8192], "an unchanged limit keeps the session it built"
+    assert await _title() == "Fake Chat Title"
+    assert await _title() == "Fake Chat Title"
+    assert builds == [8192, 8192]
 
     _write(max_output_tokens=1024)
-    await _title(sessions)
+    await _title()
 
-    assert builds == [8192, 1024]
+    assert builds == [8192, 8192, 1024]
 
 
 @pytest.mark.asyncio
-async def test_the_shipped_output_limit_is_the_one_a_chore_was_written_with_before(builds):
+async def test_the_shipped_output_limit_is_the_one_a_chore_was_written_with_before(builds, roomy):
     """Vacuity control for the test above: with nothing set, the chores keep 4,096."""
-    await _title(_sessions())
+    await _title()
     assert builds == [4096]
 
 
@@ -636,9 +590,11 @@ def test_no_wait_asks_the_next_model_at_once_and_says_so_truly(machine):
 
 def test_the_three_constants_are_gone():
     """Clean break: the code reads the settings and nothing else."""
+    from personalclaw import chores
     from personalclaw.guardrails import local_queue, model_call
     from personalclaw.providers import provider_bridge
 
     assert not hasattr(model_call, "_BACKGROUND_CALL_SECS")
     assert not hasattr(local_queue, "ATTENDED_WAIT_SECS")
-    assert "DEFAULT_OUTPUT_TOKENS" not in Path(provider_bridge.__file__).read_text(encoding="utf-8")
+    for module in (provider_bridge, chores):
+        assert "DEFAULT_OUTPUT_TOKENS" not in Path(module.__file__).read_text(encoding="utf-8")

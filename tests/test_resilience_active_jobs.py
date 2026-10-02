@@ -31,7 +31,6 @@ from personalclaw.resilience.active_jobs import (
         ("cron:job:agent", "cron"),
         ("subagent:xyz", "subagent"),
         ("cron:system:heartbeat-tasks:1a2b3c4d", "heartbeat"),
-        ("_bg", "background"),
     ],
 )
 def test_classify_origin(key, expected):

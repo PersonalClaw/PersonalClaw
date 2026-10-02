@@ -196,36 +196,6 @@ async def test_a_room_summary_writes_one_row_for_the_member_that_summarized(call
 # ── a chat's history compression ──
 
 
-class _BackgroundSessions:
-    """The ``SessionManager`` surface compression uses: the real lite agent on the Background axis,
-    built the way ``SessionManager._ensure_background`` builds it."""
-
-    def __init__(self) -> None:
-        self.runtime: Any = None
-        self.asked: list[tuple[str, str | None]] = []
-
-    async def get_or_create(self, key: str, agent: str | None = None, **_kw: Any):
-        from personalclaw.providers import provider_bridge
-
-        self.asked.append((key, agent))
-        self.runtime = provider_bridge._build_native_runtime(
-            use_case="chat",
-            session_key=key,
-            agent=agent,
-            model_override=None,
-            cwd=None,
-            model_axis="background",
-        )
-        await self.runtime.start()
-        return self.runtime, True, False
-
-    def release(self, key: str) -> None:
-        return None
-
-    async def recycle_background(self) -> None:
-        return None
-
-
 def _long_history(turns: int = 60) -> list[dict]:
     """More than the 45,000 characters compression keeps verbatim, so a model compresses it."""
     return [
@@ -239,18 +209,15 @@ async def test_history_compression_writes_one_row_for_the_chat_it_compressed(cal
     no usage row."""
     from personalclaw.agents.defaults import LITE_AGENT_NAME
     from personalclaw.context import compress_thread_history
-    from personalclaw.guardrails.model_call import ModelCallGuard
-    from personalclaw.session import BACKGROUND_KEY
 
-    sessions = _BackgroundSessions()
     compressed = await compress_thread_history(
-        _long_history(), "dashboard:chat-long", "What did we decide?", sessions
+        _long_history(), "dashboard:chat-long", "What did we decide?"
     )
 
     assert compressed is not None and SUMMARY in compressed
-    assert sessions.asked == [(BACKGROUND_KEY, LITE_AGENT_NAME)]
-    assert isinstance(sessions.runtime._model, ModelCallGuard), "the lite agent's model is guarded"
+    assert calls == ["stream"], "one compression, one model call"
     attempt, row = _the_one_call_and_its_row()
+    assert attempt["use_case"] == "background", "asked of the Background chain, through the guard"
     assert (row["source"], row["session_key"], row["agent"]) == (
         "background",
         "dashboard:chat-long",
@@ -259,7 +226,7 @@ async def test_history_compression_writes_one_row_for_the_chat_it_compressed(cal
     assert (row["provider"], row["model"]) == (ENTRY, MODEL)
     assert (row["input_tokens"], row["output_tokens"]) == (TOKENS_IN, TOKENS_OUT)
     assert (row["cost_usd"], row["priced"]) == (_price(), True)
-    assert row["audit_ids"] == [attempt["audit_id"]], "the lite agent's turn names its inference"
+    assert row["audit_ids"] == [attempt["audit_id"]], "the row names the call it counts"
     assert _census()["calls"] == 0
 
 

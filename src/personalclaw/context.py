@@ -33,7 +33,6 @@ from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 if TYPE_CHECKING:
     from personalclaw.channel_history import ChannelHistory
     from personalclaw.history import ConversationLog
-    from personalclaw.session import SessionManager
     from personalclaw.skills.allocation import SkillDecision
     from personalclaw.vector_memory import VectorMemoryStore
 
@@ -650,7 +649,6 @@ _RUNTIME_DISPLAY = {
     "dashboard": "PersonalClaw dashboard",
     "cron": "PersonalClaw cron job",
     "subagent": "PersonalClaw subagent",
-    "background": "PersonalClaw background",
     "cli": "CLI terminal",
     "channel": "messaging channel",
 }
@@ -682,8 +680,6 @@ def _runtime_display_name(session_key: str) -> str:
         source = "cron"
     elif session_key.startswith("subagent:"):
         source = "subagent"
-    elif session_key == "_bg":
-        source = "background"
     elif session_key == "cli_chat":
         source = "cli"
     else:
@@ -693,7 +689,7 @@ def _runtime_display_name(session_key: str) -> str:
 
 def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
     """The prompt use-case for a session. An explicit non-default value wins;
-    otherwise derive from the session_key prefix (background/subagent/cron/webhook →
+    otherwise derive from the session_key prefix (subagent/cron/webhook/workflow →
     the ``background`` prompt). Defaults to ``chat``.
 
     Loop and Code workers derive nothing here: they run as reserved agents whose own
@@ -703,8 +699,7 @@ def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
         return explicit
     sk = session_key or ""
     if (
-        sk == "_bg"
-        or sk.startswith("cron:")
+        sk.startswith("cron:")
         or sk.startswith("cron_")
         or sk.startswith("subagent:")
         # A webhook-triggered session (`hook:<id>` — `dashboard/handlers/hooks.py`). The
@@ -890,9 +885,9 @@ async def compress_thread_history(
     prior_turns: list[dict],
     session_key: str,
     query: str,
-    sessions: "SessionManager",
 ) -> str | None:
-    """Compress a session's prior turns via background LLM call.
+    """Compress a session's prior turns, asked of the Background model as a chore of its own
+    (``chores.run_chore``): a call that is sent this transcript and nothing else.
 
     ``is_new`` in callers means a new ACP agent process (or dashboard tab)
     attached to an *existing* conversation — not a brand-new conversation.
@@ -905,7 +900,7 @@ async def compress_thread_history(
     Reading the log here instead replayed the in-flight message as history whenever
     the flush loop had already persisted it. ``session_key`` names the session for the
     ``ContextCompact`` lifecycle event and for the compression's usage row (``source:
-    background``, the lite agent), which is written through the seam every turn's row takes.
+    background``, the lite agent, ``chores.chore_usage``).
 
     Returns the compressed summary string, or None on failure or for an Incognito or
     Temporary session, which no background model reads (callers
@@ -923,15 +918,8 @@ async def compress_thread_history(
     in place of its oldest span, which the window below keeps first. Such a chat arrives
     here short — often short enough that this function makes no model call of its own.
     """
-    from personalclaw.agents.defaults import LITE_AGENT_NAME
+    from personalclaw import chores
     from personalclaw.history import MODEL_VIEW_ROLES, model_window  # circular import
-    from personalclaw.llm_helpers import (  # circular import
-        any_answer,
-        say_background_substitution,
-        stream_and_collect,
-    )
-    from personalclaw.session import BACKGROUND_KEY, chore_usage  # circular import
-    from personalclaw.usage_ledger import recorder
 
     # #3599 changed this parameter from a ConversationLog to the turns themselves and kept its
     # place, so an old call still binds and used to fail on the first line below, inside an
@@ -983,24 +971,11 @@ async def compress_thread_history(
         logger.debug("history compression prompt unresolved — skipping compression")
         return None
 
-    acquired = False
     try:
-        client, _is_new, _resumed = await sessions.get_or_create(
-            BACKGROUND_KEY, agent=LITE_AGENT_NAME
-        )
-        acquired = True
         # One usage row for the compression, under the chat it was made for: a background chore
         # on the Background model, so Settings → Usage counts it and the chat's total holds it.
-        # A first model that fails or is too slow falls back down the chain, said in the log.
-        result = await stream_and_collect(
-            client,
-            prompt,
-            on_complete=recorder(client, chore_usage(session_key)),
-            on_substitution=say_background_substitution("Thread history compression"),
-            validate=any_answer,
-        )
-        if not result:
-            return None
+        # A first model that fails or is too slow falls back down the chain.
+        result = await chores.run_chore(prompt, usage=chores.chore_usage(session_key))
 
         parts: list[str] = []
         if head_lines:
@@ -1039,10 +1014,6 @@ async def compress_thread_history(
         else:
             logger.warning("Thread history compression failed", exc_info=True)
         return None
-    finally:
-        if acquired:
-            sessions.release(BACKGROUND_KEY)
-            await sessions.recycle_background()
 
 
 class _Parts:

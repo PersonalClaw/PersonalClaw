@@ -468,7 +468,7 @@ async def propose_for_session(
 
     proposal = deterministic_proposal(session, folders, tags)
     if proposal is None and allow_llm and is_ambiguous(session, folders, tags):
-        proposal = await _llm_proposal(state, session, folders, tags)
+        proposal = await _llm_proposal(session, folders, tags)
     if proposal is None or proposal.is_empty:
         return None
     if is_declined(proposal):
@@ -478,18 +478,18 @@ async def propose_for_session(
 
 
 async def _llm_proposal(
-    state: Any, session: Any, folders: list[dict], tags: list[dict]
+    session: Any, folders: list[dict], tags: list[dict]
 ) -> OrganizeProposal | None:
-    """Ask the background session to classify an ambiguous chat. Failure ⇒ no proposal.
+    """Ask the Background model to classify an ambiguous chat. Failure ⇒ no proposal.
 
-    Reuses ``chat_title._stream_chat_chore``, the same shared background client the auto-titler
-    uses, so this cannot occupy a user-facing session or spawn a second utility-prompt
-    convention; the call is the chat's spend, as its title is.
+    A chore of the chat's, as its title is (``chat_title.chat_chore``): a call of its own that is
+    sent this question and nothing else, so it cannot occupy a user-facing session or read
+    another chore's exchange, and it is the chat's spend.
     """
     try:
-        from personalclaw.dashboard.chat_title import _stream_chat_chore
+        from personalclaw.dashboard.chat_title import chat_chore
 
-        text = await _stream_chat_chore(state, session, build_llm_prompt(session, folders, tags))
+        text = await chat_chore(session, build_llm_prompt(session, folders, tags))
     except Exception:
         logger.debug("session-organize: LLM classification failed", exc_info=True)
         return None

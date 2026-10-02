@@ -10,13 +10,13 @@ judges and others each kept a reading of their own, and they disagreed.
 
 What it reads, by AST, over ``src/personalclaw``:
 
-* **Checks.** Every check handed to a model call: ``expecting(check)``, a ``validate=check``
-  keyword, ``let_fail_over(client, check)``. Each is resolved to its function (module-level,
-  nested, a method through ``self``/``cls``, an import, a lambda). A parameter or a local value
-  passed on is plumbing; any other expression is a failure, because the rail cannot read it.
+* **Checks.** Every check handed to a model call: ``expecting(check)`` and a ``validate=check``
+  keyword. Each is resolved to its function (module-level, nested, a method through
+  ``self``/``cls``, an import, a lambda). A parameter or a local value passed on is plumbing; any
+  other expression is a failure, because the rail cannot read it.
 * **Answers.** In each function, the names a model's answer is bound to: an assignment from a call
-  made under ``expecting``, or from a call that names a check or an ``output_type``; the answer an
-  ``OutputContractError`` carries; and the text a stream that named its check accumulates.
+  made under ``expecting``, or from a call that names a check or an ``output_type``; and the answer
+  an ``OutputContractError`` carries.
 * **Readers no call marks:** the judges (``parse_judge_json``, the eval judge, the loop's
   stage-gate judge), the parsers of the step and artifact files a planner writes, and a workflow
   planner's emissions.
@@ -57,10 +57,7 @@ READING = frozenset(
 
 #: The calls that hand a check to a model call, and which argument the check is. A ``validate=``
 #: keyword is a check on any call.
-CHECK_ARGUMENT = {"expecting": 0, "let_fail_over": 1}
-
-#: The check that takes any text as an answer: a call that names it asks for no structure.
-ANY_ANSWER = "any_answer"
+CHECK_ARGUMENT = {"expecting": 0}
 
 #: Readers of a model's JSON that no call marks (it names no check and no output type), so nothing
 #: above finds them: (module, function, how the answer reaches it). The judges; the planner's step
@@ -79,7 +76,7 @@ UNMARKED_READERS = (
 )
 
 #: A module can hold a check or an answer only when its text names one of these.
-_MARKERS = ("expecting(", "validate=", "let_fail_over(", "output_type=")
+_MARKERS = ("expecting(", "validate=", "output_type=")
 _MOST_HOPS = 8
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -454,13 +451,6 @@ class Scan:
             handlers = self._contract_handlers(fn)
             if seeds or handlers:
                 self._follow(Fn(mod.name, fn, mod.qualname(fn)), seeds, handlers)
-            streamed = self._streamed(mod, fn)
-            if streamed:
-                self._follow(Fn(mod.name, fn, mod.qualname(fn)), streamed)
-                outer = mod.functions_around(fn)
-                carried = streamed & self._nonlocal(fn)
-                if outer and carried and not isinstance(outer[0], ast.Lambda):
-                    self._follow(Fn(mod.name, outer[0], mod.qualname(outer[0])), carried)
 
     def _bound_answers(self, mod: Module, fn: FuncNode) -> set[str]:
         """Names *fn* binds a model's answer to: from a call under ``expecting``, or from a call
@@ -512,8 +502,6 @@ class Scan:
     def _asks_for_structure(self, mod: Module, call: ast.Call) -> bool:
         for keyword in call.keywords:
             if keyword.arg == "validate" and not isinstance(keyword.value, ast.Constant):
-                if isinstance(keyword.value, ast.Name) and keyword.value.id == ANY_ANSWER:
-                    continue
                 if resolve(self.sources, mod, call, keyword.value) != PLUMBING:
                     return True
             if keyword.arg == "output_type":
@@ -559,17 +547,6 @@ class Scan:
             )
         ]
 
-    def _streamed(self, mod: Module, fn: FuncNode) -> set[str]:
-        """The names a stream that named its check accumulates the answer's text into."""
-        names_check = any(
-            isinstance(n, ast.Call)
-            and call_name(n) == "let_fail_over"
-            and len(n.args) > 1
-            and isinstance(resolve(self.sources, mod, n, n.args[1]), Fn)
-            for n in own_nodes(fn)
-        )
-        return self._accumulated(fn) if names_check else set()
-
     @staticmethod
     def _accumulated(fn: FuncNode) -> set[str]:
         def texty(expr: ast.AST) -> bool:
@@ -589,12 +566,6 @@ class Scan:
             ):
                 names.add(node.func.value.id)
         return names
-
-    @staticmethod
-    def _nonlocal(fn: FuncNode) -> set[str]:
-        return {
-            name for node in own_nodes(fn) if isinstance(node, ast.Nonlocal) for name in node.names
-        }
 
     def _unmarked(self) -> None:
         for module, qualname, how in UNMARKED_READERS:
@@ -954,30 +925,6 @@ async def convert(prompt):
 """,
         "convert",
     ),
-    "a stream that named its check, read a second way after it": (
-        """
-import json
-from personalclaw.llm_helpers import let_fail_over, parse_llm_json_list
-
-
-def list_problem(text):
-    return "" if parse_llm_json_list(text) is not None else "no JSON list"
-
-
-async def generate(client, prompt):
-    text = ""
-
-    async def _stream():
-        nonlocal text
-        let_fail_over(client, list_problem)
-        async for event in client.stream(prompt):
-            text += event.text
-
-    await _stream()
-    return json.loads(text)
-""",
-        "generate",
-    ),
 }
 
 
@@ -1013,13 +960,7 @@ def test_the_scan_reads_no_second_reading_into_answers_read_once():
     """The negative control: each shape above, reading only through the one reading."""
     report = scan({"personalclaw.rail_fixture": """
 from personalclaw.guardrails.failure import OutputContractError
-from personalclaw.llm_helpers import (
-    expecting,
-    let_fail_over,
-    one_shot_completion,
-    parse_llm_json,
-    parse_llm_json_list,
-)
+from personalclaw.llm_helpers import expecting, one_shot_completion, parse_llm_json
 
 
 def shape_problem(raw):
@@ -1028,10 +969,6 @@ def shape_problem(raw):
 
 def parse_shape(raw):
     return parse_llm_json(raw)
-
-
-def list_problem(text):
-    return "" if parse_llm_json_list(text) is not None else "no JSON list"
 
 
 async def run(ask):
@@ -1046,24 +983,11 @@ async def run(ask):
 async def convert(prompt):
     raw = await one_shot_completion(prompt, output_type=dict, validate=lambda a: shape_problem(a))
     return parse_llm_json(raw)
-
-
-async def generate(client, prompt):
-    text = ""
-
-    async def _stream():
-        nonlocal text
-        let_fail_over(client, list_problem)
-        async for event in client.stream(prompt):
-            text += event.text
-
-    await _stream()
-    return parse_llm_json_list(text)
 """})
     assert report.findings == []
-    assert {"shape_problem", "list_problem"} <= {name for _m, name in report.checks}
-    assert {"run", "convert", "generate", "parse_shape"} <= {name for _m, name in report.readers}
-    assert report.read_once >= 5
+    assert {"shape_problem"} <= {name for _m, name in report.checks}
+    assert {"run", "convert", "parse_shape"} <= {name for _m, name in report.readers}
+    assert report.read_once >= 3
 
 
 def test_a_check_the_scan_cannot_read_is_a_failure():

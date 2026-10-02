@@ -2845,9 +2845,9 @@ async def run_chat(
         # arms a worker, True for an Unattended loop and False for an Attended one, because a
         # loop's key names a loop and not whether anybody is watching it. Every other session is
         # classified by its key (``is_unattended_session``: cron:/subagent:/channel:/inbox:/side:
-        # prefixes, a loop's, the ``unattended:`` dispatch identity and the ``_bg`` key), the
-        # by-construction classifier that also picks the HEADLESS safety profile. So a cron or
-        # scheduled turn on an ACP provider is unattended without anyone flagging it (it used to
+        # prefixes, a loop's and the ``unattended:`` dispatch identity), the by-construction
+        # classifier that also picks the HEADLESS safety profile. So a cron or scheduled turn
+        # on an ACP provider is unattended without anyone flagging it (it used to
         # park its permission prompts on a human who was asleep), and an Attended loop's worker
         # puts its asks to a person instead of having each one declined unasked.
         #
@@ -3135,12 +3135,7 @@ async def run_chat(
                     compress_thread_history,
                 )
 
-                compressed = await compress_thread_history(
-                    _prior_transcript,
-                    session_key,
-                    message,
-                    state.sessions,
-                )
+                compressed = await compress_thread_history(_prior_transcript, session_key, message)
             # After a soft-cancel, ACP agent drops the cancelled turn from its
             # conversation log — but everything BEFORE the cancel is preserved.
             # Re-inject just the cancelled turn (user prompt + partial assistant)

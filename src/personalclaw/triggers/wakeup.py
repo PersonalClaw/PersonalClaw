@@ -77,7 +77,7 @@ class WakeKind(str, Enum):
 #: Session-key prefixes, centralized here per the "all bus/queue key formats are
 #: centralized in one
 #: auditable module (the `MessageBusKeys` pattern) — extending the session-key conventions table
-#: (`cron:{id}`, `cron-{id}` dashboard pair, `_bg`, `loop-<id>`, …) rather than inventing a
+#: (`cron:{id}`, `cron-{id}` dashboard pair, `loop-<id>`, …) rather than inventing a
 #: parallel one".
 #:
 #: `cron:` is preserved verbatim rather than renamed to `trigger:`: the shipped

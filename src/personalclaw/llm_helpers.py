@@ -83,12 +83,10 @@ async def stream_and_collect(
     on_tool_approval: "Callable[[LLMEvent], Awaitable[bool | ToolDecision]] | None" = None,
     on_complete: Callable[[LLMEvent], None] | None = None,
     on_substitution: Callable[[str], None] | None = None,
-    validate: Callable[[str], str] | None = None,
 ) -> str:
     """Stream a message through an LLM provider and collect the full response.
 
-    This is the core pattern used by cron, heartbeat, subagent, consolidator,
-    and title generation.
+    This is the core pattern used by cron, heartbeat, subagent, room and one-shot calls.
 
     Args:
         provider: The LLM provider to stream through.
@@ -111,10 +109,6 @@ async def stream_and_collect(
             lets the turn fall back at all (``NativeAgentRuntime.announce_failover``): a
             caller with nowhere to show the sentence keeps the failure, since another
             model's reply would read as the chosen one's.
-        validate: With ``on_substitution``, what the caller reads the answer as: ``""`` for an
-            answer it can use, else what is wrong with it. An answer that is empty or misses it
-            is its model failing, and the next model of the chain answers instead
-            (:func:`let_fail_over`).
 
     Returns:
         The complete response text.
@@ -127,7 +121,7 @@ async def stream_and_collect(
         # (`_resolve_permission`), every other call once, at its result.
         asked: set[str] = set()
         if on_substitution is not None:
-            let_fail_over(provider, validate)
+            let_fail_over(provider)
         try:
             async for event in provider.stream(message):
                 if event.kind == EVENT_TEXT_CHUNK:
@@ -209,82 +203,24 @@ async def stream_and_collect(
     return ""  # unreachable, satisfies type checker
 
 
-async def stream_and_collect_json(
-    provider: ModelProvider,
-    message: str,
-    *,
-    approval_policy: ToolApprovalPolicy = ToolApprovalPolicy.AUTO_APPROVE,
-    hooks: "HookManager | None" = None,
-    on_complete: Callable[[LLMEvent], None] | None = None,
-    on_substitution: Callable[[str], None] | None = None,
-) -> dict | None:
-    """Stream a message and parse the response as JSON.
-
-    Combines ``stream_and_collect`` with ``parse_llm_json``; ``on_complete`` and
-    ``on_substitution`` are passed through, so the call's usage row is written and a fallback
-    model is allowed and said exactly as ``stream_and_collect`` does them. With a fallback
-    allowed, an answer that holds no JSON object is its model failing too
-    (:func:`json_object_problem`), and the next model answers.
-    Returns parsed dict or None on failure.
-    """
-    text = await stream_and_collect(
-        provider,
-        message,
-        approval_policy=approval_policy,
-        hooks=hooks,
-        on_complete=on_complete,
-        on_substitution=on_substitution,
-        validate=json_object_problem,
-    )
-    return parse_llm_json(text)
-
-
 def json_object_problem(text: str) -> str:
     """What is wrong with *text* read as a JSON object (``parse_llm_json``), ``""`` when it holds
     one."""
     return "" if parse_llm_json(text) is not None else "no JSON object"
 
 
-def any_answer(_text: str) -> str:
-    """The check of a caller that reads any text as an answer: every answer that says something
-    passes (an empty one is a failure whatever the check)."""
-    return ""
-
-
-def let_fail_over(provider: object, validate: Callable[[str], str] | None = None) -> None:
+def let_fail_over(provider: object) -> None:
     """Let *provider*'s next turn go to the next model of its chain when its model fails before
     it replies, for a caller that says the substitute (it handles ``EVENT_MODEL_SUBSTITUTION``).
 
-    One rule, the one a one-shot call's chain walk follows (:func:`run_over_use_case_chain`): a
-    provider error, a timeout and an open breaker hand the turn on
-    (``NativeAgentRuntime.announce_failover``), and with *validate*, which a caller that reads the
-    whole answer passes, so do an empty answer and one *validate* rejects
-    (``NativeAgentRuntime.expect_answer``). A provider without the seam (an ACP runtime) is left
-    as it is.
+    The rule a one-shot call's chain walk follows (:func:`run_over_use_case_chain`): a provider
+    error, a timeout and an open breaker hand the turn on
+    (``NativeAgentRuntime.announce_failover``). A provider without the seam (an ACP runtime) is
+    left as it is.
     """
     announce = getattr(provider, "announce_failover", None)
     if callable(announce):
         announce()
-    if validate is not None:
-        expect = getattr(provider, "expect_answer", None)
-        if callable(expect):
-            expect(validate)
-
-
-def say_background_substitution(chore: str) -> Callable[[str], None]:
-    """The ``on_substitution`` for a background chore on the background session.
-
-    Passing one is what lets the session's model fall back down its chain when it fails
-    before replying (``NativeAgentRuntime.announce_failover``); a chore that passes none
-    keeps a slow first model's failure as its own, whatever else is bound. A chore has no
-    live line to show the substitute on, so it is said in the log, in the one wording every
-    substitution uses: "Ran on <model> instead of <model>: <why>."
-    """
-
-    def _say(sentence: str) -> None:
-        logger.warning("%s: %s", chore, sentence)
-
-    return _say
 
 
 async def _resolve_permission(
@@ -832,6 +768,7 @@ async def one_shot_completion(
     attempt_timeout: float | None = None,
     attended: "Attended | None" = None,
     validate: Callable[[str], str] | None = None,
+    max_output_tokens: int | None = None,
 ) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
@@ -915,7 +852,9 @@ async def one_shot_completion(
     number as before, now named once in ``local_models/budgets.py``. Because the bridge
     merges build kwargs with ``setdefault``, an operator's configured ``max_tokens`` still
     wins. No compaction logic is involved: this makes the number available, it does not
-    decide what to drop.
+    decide what to drop. ``max_output_tokens`` is a ceiling on that budget for this one call:
+    each model is given the smaller of the two, so a caller that bounds what its answer may
+    run to (a chore, ``chores.run_chore``) bounds it on every model the chain walks.
 
     Every model call it makes writes one usage-ledger row, through the seam every turn's row
     takes (``stream_and_collect(on_complete=…)``), priced by the model the resolved provider was
@@ -960,6 +899,7 @@ async def one_shot_completion(
                 usage=usage,
                 attempt_timeout=attempt_timeout,
                 validate=check,
+                max_output_tokens=max_output_tokens,
             )
     finally:
         _EXPECTED_SHAPE.reset(shape_token)
@@ -975,6 +915,7 @@ async def _one_shot_completion(
     usage: "Attribution | None",
     attempt_timeout: float | None,
     validate: Callable[[str], str] | None,
+    max_output_tokens: int | None,
 ) -> str:
     """:func:`one_shot_completion`, with whoever is waiting for it already bound."""
     from personalclaw.providers.provider_bridge import metered, resolve_metered_model
@@ -1046,6 +987,12 @@ async def _one_shot_completion(
             kw["max_tokens"] = await output_budget(model_ref)
         except Exception:  # noqa: BLE001 — a budget miss degrades, it never blocks
             logger.debug("one_shot_completion: budget derivation failed for %r", model_ref)
+        if max_output_tokens is not None:
+            # The caller's ceiling: the model's own budget when that is smaller, else the ceiling,
+            # and the ceiling alone when no budget could be derived.
+            kw["max_tokens"] = min(
+                int(kw.get("max_tokens") or max_output_tokens), max_output_tokens
+            )
         return kw
 
     expected = (
@@ -1630,6 +1577,11 @@ def failure_clause(exc: BaseException) -> str:
         return exc.reason()
     if isinstance(exc, NoModelAnswered):
         return f"no model of its chain answered: {exc.tried()}"
+    if isinstance(exc, ChainExhausted) and exc.failures:
+        # The reading the native loop gives a chain it walked: what each model did, each failure
+        # in its one clause.
+        walked = NoModelAnswered([(ref, failure_clause(err)) for ref, err in exc.failures])
+        return f"no model of its chain answered: {walked.tried()}"
     text = (_known_failure_sentence(exc) or _own_words(exc)).strip()
     first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].rstrip(".!?")
     if len(first) > _CLAUSE_CAP:

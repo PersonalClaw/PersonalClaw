@@ -112,10 +112,10 @@ class _Session:
 
 
 def _auto_title_failing_with(monkeypatch, caplog, error: BaseException) -> logging.LogRecord:
-    async def _fails(state, session, prompt, **_kw):
+    async def _fails(prompt, **_kw):
         raise error
 
-    monkeypatch.setattr(chat_title, "_stream_chat_chore", _fails)
+    monkeypatch.setattr("personalclaw.chores.run_chore", _fails)
     with caplog.at_level(logging.DEBUG, logger="personalclaw.dashboard.chat_title"):
         asyncio.run(chat_title._maybe_auto_title(MagicMock(conversation_log=None), _Session()))
     failures = [

@@ -43,7 +43,6 @@ from personalclaw.service.common import (
     current_platform,
     private_output_log,
 )
-from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.vector_memory import VectorMemoryStore
 
@@ -1119,7 +1118,7 @@ async def _gateway(
         raise SystemExit(1) from None
 
 
-def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, ConversationLog]:
+def _build_consolidator() -> tuple[HistoryConsolidator, ConversationLog]:
     """Assemble a standalone HistoryConsolidator for one-shot CLI extraction.
 
     Mirrors the gateway wiring: a real memory + vector store (so structured
@@ -1127,8 +1126,6 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
     the active embedding selection.
     """
     cfg = AppConfig.load()
-    factory = cfg.create_provider_factory()
-    sessions = SessionManager(cfg, provider_factory=factory)  # type: ignore[arg-type]
 
     memory = MemoryStore()
     memory.init()
@@ -1150,7 +1147,6 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
     consolidator = HistoryConsolidator(
         log=conv_log,
         memory=memory,
-        sessions=sessions,
         history_idle_secs=cfg.memory.history_idle_hours * 3600,
         vector_store=vector_memory,
         migrated=cfg.memory.migrated,
@@ -1160,7 +1156,7 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
         auto_min_tool_calls=cfg.skills.auto_min_tool_calls,
         auto_similarity_threshold=cfg.skills.auto_similarity_threshold,
     )
-    return sessions, consolidator, conv_log
+    return consolidator, conv_log
 
 
 #: Why `personalclaw consolidate` leaves a session alone.
@@ -1186,7 +1182,7 @@ async def _consolidate_cmd(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    sessions, consolidator, conv_log = _build_consolidator()
+    consolidator, conv_log = _build_consolidator()
 
     if getattr(args, "all", False):
         keys = [s["key"] for s in conv_log.list_sessions()]

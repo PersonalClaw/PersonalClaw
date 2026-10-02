@@ -6,23 +6,14 @@ from functools import partial
 
 from aiohttp import web
 
-from personalclaw import memory_writes, owed_chores
+from personalclaw import chores, memory_writes, owed_chores
 from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
-from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
-from personalclaw.llm_helpers import (
-    any_answer,
-    failure_clause,
-    is_model_call_failure,
-    let_fail_over,
-    say_background_substitution,
-)
+from personalclaw.llm_helpers import failure_clause, is_model_call_failure
 from personalclaw.request_validation import require_string
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY, chore_usage
 from personalclaw.textfmt import TAGS_LINE_RE, parse_title
-from personalclaw.usage_ledger import Attribution, recorder
+from personalclaw.usage_ledger import Attribution
 
 logger = logging.getLogger(__name__)
 
@@ -78,63 +69,18 @@ def _build_title_prompt(messages: list[dict[str, str]]) -> str | None:
     return render_use_case_prompt("title", {"transcript": "\n".join(lines)})
 
 
-async def _stream_background_prompt(
-    state: DashboardState,
-    prompt: str,
-    *,
-    usage: Attribution,
-    validate: Callable[[str], str] = any_answer,
+async def chat_chore(
+    session: _ChatSession, prompt: str, *, validate: Callable[[str], str] | None = None
 ) -> str:
-    """Stream *prompt* through the shared background session and collect the text.
-
-    The call writes its usage row for *usage* (``session.chore_usage``): whose spend it is.
-
-    A first model of the background chain that fails before it says anything (an error, a
-    timeout, an open breaker, an empty answer or one *validate* rejects) falls back to the next
-    one, and the substitute is said in the log
-    (:func:`~personalclaw.llm_helpers.say_background_substitution`): a chore that never
-    announced a fallback kept a slow first model's failure however many were bound behind it.
-    """
-    client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
-    record = recorder(client, usage)
-    say = say_background_substitution("Background chat chore")
-    text = ""
-    try:
-        # Clear accumulated history so prior utility prompts don't confuse the model
-        if hasattr(client, "_history"):
-            client._history.clear()
-        let_fail_over(client, validate)
-        async for event in client.stream(prompt):
-            if event.kind == EVENT_TEXT_CHUNK:
-                text += event.text
-            elif event.kind == EVENT_MODEL_SUBSTITUTION:
-                say(event.text)
-            elif event.kind == EVENT_PERMISSION_REQUEST:
-                await client.reject_tool(event.request_id)
-            elif event.kind == EVENT_SPENT:
-                record(event)
-            elif event.kind == EVENT_COMPLETE:
-                record(event)
-                break
-    finally:
-        # Clear again so the title prompt doesn't pollute future calls
-        if hasattr(client, "_history"):
-            client._history.clear()
-        state.sessions.release(BACKGROUND_KEY)
-    return text
-
-
-async def _stream_chat_chore(
-    state: DashboardState,
-    session: _ChatSession,
-    prompt: str,
-    *,
-    validate: Callable[[str], str] = any_answer,
-) -> str:
-    """:func:`_stream_background_prompt` for a chore made for *session*: the chat's spend, under
-    the key its own turns are recorded by."""
-    return await _stream_background_prompt(
-        state, prompt, usage=chore_usage(_history_key_for(session.key)), validate=validate
+    """The answer to a chore made for the chat *session* (``chores.run_chore``): a call of its
+    own, sent *prompt* and nothing else, and the chat's spend, under the key its own turns are
+    recorded by. A chat that keeps nothing is read so by the mode it holds too, and its chore
+    reaches no model but its own."""
+    return await chores.run_chore(
+        prompt,
+        usage=chores.chore_usage(_history_key_for(session.key)),
+        validate=validate,
+        memory_mode=session.memory_mode,
     )
 
 
@@ -144,9 +90,10 @@ def _title_problem(text: str) -> str:
 
 
 async def _generate_title_via_provider(
-    state: DashboardState, messages: list[dict[str, str]], *, usage: Attribution
+    messages: list[dict[str, str]], *, usage: Attribution, memory_mode: str | None = None
 ) -> str:
-    """Generate a title using the shared background agent session, recorded for *usage*."""
+    """A title for *messages*, asked as a chore of its own and recorded for *usage*, the chat's
+    mode being *memory_mode* (``chores.run_chore``)."""
 
     prompt = _build_title_prompt(messages)
     if not prompt:
@@ -154,7 +101,9 @@ async def _generate_title_via_provider(
         return ""
 
     logger.debug("Title generation prompt (%d chars): %s", len(prompt), prompt[:120])
-    text = await _stream_background_prompt(state, prompt, usage=usage, validate=_title_problem)
+    text = await chores.run_chore(
+        prompt, usage=usage, validate=_title_problem, memory_mode=memory_mode
+    )
     return parse_title(text)
 
 
@@ -359,7 +308,7 @@ async def _title_once(state: DashboardState, session: _ChatSession) -> None:
         return
     if want_tags:
         prompt += _build_tags_suffix(state)
-    text = await _stream_chat_chore(state, session, prompt, validate=_title_problem)
+    text = await chat_chore(session, prompt, validate=_title_problem)
     title = parse_title(text)
     logger.info("Auto-title: agent returned %r for session %s", title, session.key)
     if title:
@@ -385,7 +334,9 @@ async def api_chat_session_generate_title(request: web.Request) -> web.Response:
     logger.info("Manual title generation requested for session %s", name)
     try:
         title = await _generate_title_via_provider(
-            state, session.messages, usage=chore_usage(_history_key_for(session.key))
+            session.messages,
+            usage=chores.chore_usage(_history_key_for(session.key)),
+            memory_mode=session.memory_mode,
         )
     except Exception:
         logger.debug("Title generation failed for session %s", name, exc_info=True)

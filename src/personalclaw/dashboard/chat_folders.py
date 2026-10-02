@@ -7,11 +7,9 @@ import uuid
 
 from aiohttp import web
 
+from personalclaw import chores
 from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
-from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
-from personalclaw.llm_helpers import any_answer, let_fail_over, say_background_substitution
 from personalclaw.request_validation import (
     RequestValidationError,
     json_object_body,
@@ -19,12 +17,8 @@ from personalclaw.request_validation import (
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY, chore_usage
-from personalclaw.usage_ledger import recorder
 
 logger = logging.getLogger(__name__)
-
-_folder_icon_lock = asyncio.Lock()
 
 
 def folder_exists(state, folder_id: str) -> bool:
@@ -41,56 +35,24 @@ def folder_exists(state, folder_id: str) -> bool:
 
 
 async def _generate_folder_icon(state: DashboardState, folder: dict) -> None:
-    """Background task: ask LLM for a single emoji for the folder name.
-
-    Serialized via a module-level lock so concurrent folder creations don't
-    interleave streams on the shared BACKGROUND_KEY session.
-    """
+    """Background task: ask the Background model, as a chore of its own, for a single emoji for
+    the folder name. A first model of the chain that fails, is paused or answers nothing hands
+    the call to the next one."""
 
     # The instruction lives in the prompt system (bundled ``task-folder-icon``).
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     prompt = render_use_case_prompt("folder_icon", {"folder_name": folder["name"]}) or ""
-
-    async def _stream(client) -> str:  # type: ignore[no-untyped-def]
-        t = ""
-        record = recorder(client, chore_usage())
-        say = say_background_substitution("Folder icon")
-        # A first model of the background chain that fails, is paused or answers nothing hands
-        # the call to the next one, said in the log.
-        let_fail_over(client, any_answer)
-        async for event in client.stream(prompt):
-            if event.kind == EVENT_TEXT_CHUNK:
-                t += event.text
-            elif event.kind == EVENT_MODEL_SUBSTITUTION:
-                say(event.text)
-            elif event.kind == EVENT_PERMISSION_REQUEST:
-                await client.reject_tool(event.request_id)
-            elif event.kind == EVENT_SPENT:
-                record(event)
-            elif event.kind == EVENT_COMPLETE:
-                record(event)
-                break
-        return t
-
-    text = ""
-    async with _folder_icon_lock:
-        # 🔴 `get_or_create` is what resolves the `background` use case, so on a provider-less
-        # install — the state every new install starts in — it raises. It used to sit OUTSIDE
-        # this try, so the one failure that is GUARANTEED on a fresh install was the one the
-        # "best-effort" guard did not cover: the error escaped the fire-and-forget task and
-        # asyncio logged 37 unretrieved lines per folder created (#2978). Acquire inside the
-        # guard, and release only a client we actually got.
-        acquired = False
-        try:
-            client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
-            acquired = True
-            text = await asyncio.wait_for(_stream(client), timeout=30)
-        except Exception:  # noqa: BLE001 — best-effort background task
-            text = ""
-        finally:
-            if acquired:
-                state.sessions.release(BACKGROUND_KEY)
+    # 🔴 Asking is what resolves the `background` use case, so on a provider-less install — the
+    # state every new install starts in — it raises. That failure is GUARANTEED on a fresh
+    # install, and when it escaped this fire-and-forget task asyncio logged 37 unretrieved lines
+    # per folder created (#2978): the "best-effort" guard covers the whole call.
+    try:
+        text = await asyncio.wait_for(
+            chores.run_chore(prompt, usage=chores.chore_usage()), timeout=30
+        )
+    except Exception:  # noqa: BLE001 — best-effort background task
+        text = ""
     icon = text.strip()
     icon, _ = redact_exfiltration_urls(icon)
     icon, _ = redact_credentials(icon)

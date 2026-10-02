@@ -51,15 +51,15 @@ def test_the_pre_3599_call_is_refused_and_logged_with_the_calling_app(
         tmp_path,
         monkeypatch,
         "from personalclaw.sdk.channel import compress_thread_history\n"
-        "async def restore(log, key, query, sessions):\n"
+        "async def restore(log, key, query):\n"
         "    try:\n"
-        "        return await compress_thread_history(log, key, query, sessions)\n"
+        "        return await compress_thread_history(log, key, query)\n"
         "    except Exception:\n"
         "        return None  # the swallow that hid it\n",
     )
     log = ConversationLog(base_dir=tmp_path / "history")
     with caplog.at_level(logging.ERROR):
-        result = asyncio.run(module.restore(log, "slack:T1", "hi", MagicMock()))
+        result = asyncio.run(module.restore(log, "slack:T1", "hi"))
     assert result is None  # the app swallowed it, exactly as Slack's handler did …
     refusals = [r for r in caplog.records if "SDK call refused" in r.getMessage()]
     assert refusals, "… and nothing said so"
@@ -70,14 +70,19 @@ def test_the_pre_3599_call_is_refused_and_logged_with_the_calling_app(
 
 def test_the_refusal_names_what_the_parameter_takes(tmp_path):
     with pytest.raises(TypeError, match=r"list of \{role, content\} dicts \(since #3599\)"):
-        asyncio.run(
-            compress_thread_history(ConversationLog(base_dir=tmp_path), "k", "q", MagicMock())
-        )
+        asyncio.run(compress_thread_history(ConversationLog(base_dir=tmp_path), "k", "q"))
 
 
 def test_a_list_of_turns_is_still_accepted(tmp_path):
     """The control: the current call shape reaches the function body (nothing to compress)."""
-    assert asyncio.run(compress_thread_history([], "k", "q", MagicMock())) is None
+    assert asyncio.run(compress_thread_history([], "k", "q")) is None
+
+
+def test_the_call_that_handed_over_a_session_manager_is_refused_as_it_is_made():
+    """The compression is a chore of its own now, asked of no session, so the session manager a
+    channel used to pass fourth is refused before anything runs, not taken for something else."""
+    with pytest.raises(TypeError, match="positional"):
+        compress_thread_history([], "k", "q", MagicMock())
 
 
 def test_build_message_takes_three_positional_arguments_and_no_more():

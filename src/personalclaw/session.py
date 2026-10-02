@@ -7,12 +7,10 @@ Warm session pool: ``start_pool()`` pre-spawns ACP agent processes so
 ``get_or_create()`` returns instantly.  After handing out a warm session,
 a replacement is created in the background to maintain the target count.
 
-Background session: ``BACKGROUND_KEY`` is a persistent shared session for the
-background chores (titles, follow-ups, suggestions, folder icons, history
-compression, memory consolidation).  It is always the lite agent, which has no
-tools, whoever reaches it first.  It stays alive between uses, serialized by the
-per-session semaphore.  Heartbeat tasks do not run here: each runs in a session
-of its own (``heartbeat_tasks_provider.task_session_key``).
+A session keeps every turn it is sent, so PersonalClaw's own chores never run in one: a
+chat's title, follow-ups, suggestions, a folder's icon, history compression and memory
+consolidation are each one fresh call (``chores.run_chore``). A heartbeat task runs in a
+session of its own that ends with it (``heartbeat_tasks_provider.task_session_key``).
 
 At >= 90% context usage, fires a background task that sends /compact
 to the ACP agent (which natively summarizes older turns), then resets the
@@ -49,7 +47,6 @@ Four mechanisms clean up processes. They are complementary — not redundant.
    process tree. Idle counts from the last ``release()``, and a session a turn
    holds is never reaped: the turn ends by its own bounds. Which chats exist is
    asked of the dashboard at each sweep (``register_dashboard_sessions``).
-   Protected keys: ``_PERSISTENT_KEYS`` (``_bg`` only).
 
 """
 
@@ -65,7 +62,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 from personalclaw import shutdown_event
-from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import AppConfig
 from personalclaw.config.loader import default_workspace_dir
@@ -88,26 +84,8 @@ from personalclaw.session_pid import (  # noqa: F401
     cleanup_orphaned_sessions as cleanup_orphaned_sessions,
 )
 from personalclaw.stats import Stats
-from personalclaw.usage_ledger import Attribution
 
 logger = logging.getLogger(__name__)
-
-# "No model configured yet" is signalled by ProviderResolutionError. Two distinct
-# classes carry it (the bridge's and the LLM registry's); catch both so the
-# background-session deferral is robust to whichever resolver raised. Imported at
-# module load (provider_bridge does not import session, so no cycle).
-try:
-    from personalclaw.llm.registry import ProviderResolutionError as _LLMResolutionError
-    from personalclaw.providers.provider_bridge import (
-        ProviderResolutionError as _BridgeResolutionError,
-    )
-
-    _PROVIDER_RESOLUTION_ERRORS: tuple[type[Exception], ...] = (
-        _BridgeResolutionError,
-        _LLMResolutionError,
-    )
-except Exception:  # pragma: no cover - defensive: never block module import
-    _PROVIDER_RESOLUTION_ERRORS = ()
 
 _MAX_POOL = 10
 # Hard ceiling on total live descendant processes across all pool slots.
@@ -129,9 +107,6 @@ _LOOP_WORKER_PREFIX = "dashboard:loop-"
 # Session key prefixes that are stateless (reset after each use) — skip resume
 _STATELESS_PREFIXES = ("cron:", _SUBAGENT_PREFIX, _CHANNEL_PREFIX, "inbox:", "side:")
 
-# Background session key — the chores share this session, as the toolless lite agent
-BACKGROUND_KEY = "_bg"
-
 
 # Context usage at which a turn's log line is a warning. Compaction itself happens at the
 # Settings threshold, `context_compaction.autocompact_pct()`.
@@ -139,34 +114,6 @@ _CONTEXT_WARN_PCT = 70.0
 
 # Circuit breaker: force-reset after this many consecutive failures
 _CIRCUIT_BREAKER_THRESHOLD = 5
-
-# Background session recycle thresholds (more aggressive than chat compaction)
-_BG_RECYCLE_PCT = 70.0  # recycle at 70% — well before overflow
-_BG_BLIND_RECYCLE_PROMPTS = 40  # recycle after 40 prompts if no metadata
-
-# Persistent session keys — never expired by idle cleanup
-_PERSISTENT_KEYS = frozenset({BACKGROUND_KEY})
-
-
-def chore_prompt(session_key: str, message: str) -> str:
-    """*message* as the session named *session_key* is handed it: masked in the background session.
-
-    The background session runs PersonalClaw's own chores (a title, follow-ups, suggestions,
-    memory consolidation). No person types into it, and every prompt it is handed is composed
-    from stored text, so it is masked (``security.redact_for_model``), once for every chore.
-    """
-    if session_key != BACKGROUND_KEY:
-        return message
-    from personalclaw.security import redact_for_model
-
-    return redact_for_model(message)
-
-
-def chore_usage(chat_key: str = "") -> Attribution:
-    """Whose spend a chore on the background session is: background work by the lite agent it
-    runs as, for the chat it was made for (*chat_key*, the key that chat's own turns are recorded
-    under) when there is one, so that chat's total holds it."""
-    return Attribution(source="background", session_key=chat_key, agent=LITE_AGENT_NAME)
 
 
 # Type alias for provider factory — accepts optional session key
@@ -282,7 +229,7 @@ def _built_posture(asked: dict[str, Any]) -> dict[str, bool]:
 def _posture_moved(sess: "_Session", asked: dict[str, Any]) -> bool:
     """Whether *asked* names a posture other than the one *sess*'s runtime was built for. Only what
     the request names is compared, and a runtime with no recorded posture (one ``get_or_create``
-    did not build, the background session's) has none to compare."""
+    did not build) has none to compare."""
     built = sess.built_posture
     return bool(built) and any(k in asked and built[k] != bool(asked[k]) for k in _POSTURE_KEYS)
 
@@ -549,17 +496,16 @@ class SessionManager:
         if self._pool_health_task and not self._pool_health_task.done():
             self._pool_health_task.cancel()
             self._pool_health_task = None
-        await self.start_pool(blocking=False)
+        await self.start_pool()
         logger.info(
             "Provider factory reloaded: provider=%s, cleared %d sessions",
             cfg.agent.provider,
             len(stale),
         )
 
-    # ── Background Session ──
-
-    async def start_pool(self, *, blocking: bool = True) -> None:
-        """Create the background session for cron/heartbeat.
+    async def start_pool(self) -> None:
+        """Start the warm pool: ``session.pool_size`` agent processes kept ready, filled and
+        health-checked in the background.
 
         Chat sessions cold-start on first message via get_or_create().
         """
@@ -570,26 +516,6 @@ class SessionManager:
         self._session_map.prune()
         self._pool_started = True
 
-        if not blocking:
-
-            async def _start_bg_and_pool() -> None:
-                await self._ensure_background()
-                await self._fill_warm_pool()
-                if self._pool_size:
-                    self._pool_health_task = asyncio.create_task(self._pool_health_loop())
-                    self._background_tasks.add(self._pool_health_task)
-                    self._pool_health_task.add_done_callback(self._background_tasks.discard)
-
-            t = asyncio.create_task(_start_bg_and_pool())
-            self._background_tasks.add(t)
-            t.add_done_callback(self._background_tasks.discard)
-            logger.info("Background session starting (non-blocking)")
-            return
-
-        await self._ensure_background()
-        logger.info("Background session ready")
-
-        # Fill warm pool after background session is ready
         if self._pool_size:
             t = asyncio.create_task(self._fill_warm_pool())
             self._background_tasks.add(t)
@@ -597,48 +523,6 @@ class SessionManager:
             self._pool_health_task = asyncio.create_task(self._pool_health_loop())
             self._background_tasks.add(self._pool_health_task)
             self._pool_health_task.add_done_callback(self._background_tasks.discard)
-
-    async def _ensure_background(self) -> None:
-        """Create the persistent background session if it doesn't exist."""
-        async with self._lock:
-            if BACKGROUND_KEY in self._sessions:
-                return
-        # Create outside lock
-        if not self._provider_factory:
-            return
-        try:
-            # The lite background session resolves the ``background`` chain
-            # (MODEL-USE-CASES-V2 T2.1): titles/tags/suggestions/digests/
-            # consolidation stop burning the flagship chat model once the user
-            # binds a cheap model to the axis (unbound → chat chain, unchanged).
-            provider = self._provider_factory(
-                BACKGROUND_KEY, agent=LITE_AGENT_NAME, model_axis="background"
-            )
-            _meter_agent_turns(provider, "background")
-            async with self._start_sem:
-                await provider.start()
-        except _PROVIDER_RESOLUTION_ERRORS:
-            # Expected first-run state: no chat ModelProvider is configured yet, so
-            # the lite background agent can't resolve one. Defer quietly (INFO, not a
-            # WARNING traceback) — the factory itself is the single source of truth
-            # for "is a model resolvable", so we never diverge from it. Self-healing:
-            # reload_provider_factory() (fired when a provider is added in Settings)
-            # re-runs start_pool -> _ensure_background, bringing it up automatically.
-            logger.info(
-                "Background session deferred: no chat model resolves yet "
-                "(add a model in Settings → Providers; it will start on reload)."
-            )
-            return
-        except Exception:
-            logger.warning("Failed to create background session", exc_info=True)
-            return
-        async with self._lock:
-            if BACKGROUND_KEY not in self._sessions:
-                sess = _Session(provider=provider, is_new=False)
-                self._sessions[BACKGROUND_KEY] = sess
-                logger.info("Background session created")
-            else:
-                await provider.shutdown()
 
     # ── Warm Pool ──
 
@@ -998,9 +882,7 @@ class SessionManager:
                     model = self._resolve_agent_model(agent)
                 model = model or "auto"
             # Human-readable name
-            if key == BACKGROUND_KEY:
-                name = "Background chores (titles, suggestions, summaries)"
-            elif key.startswith("dashboard:"):
+            if key.startswith("dashboard:"):
                 name = f"Chat ({key.split(':', 1)[1]})"
             else:
                 name = key
@@ -1044,46 +926,6 @@ class SessionManager:
             pass
         cache[agent] = "auto"
         return "auto"
-
-    async def recycle_background(self) -> None:
-        """Check background session context and recycle if too full.
-
-        Background chores are stateless (titles, summaries, consolidation), so we
-        don't need compaction — just kill the old session and create a fresh
-        one.  Called after each background chore completes.
-
-        Thresholds are more aggressive than chat compaction:
-        - At ≥ 70% context → recycle
-        - After 40 prompts with no metadata → recycle (blind fallback)
-        """
-        session = self._sessions.get(BACKGROUND_KEY)
-        if not session:
-            return
-
-        pct = session.provider.context_usage_pct()
-        needs_recycle = pct is not None and pct >= _BG_RECYCLE_PCT
-        if not needs_recycle and pct is None:
-            # Blind fallback: recycle after N prompts when the provider reports NO
-            # measurement. Keyed on ``is None``, not ``== 0.0``: a session measured at
-            # a genuine 0% is not blind, and used to be recycled as if it were.
-            needs_recycle = session.prompt_count >= _BG_BLIND_RECYCLE_PROMPTS
-
-        if not needs_recycle:
-            return
-
-        reason = (
-            f"blind ({session.prompt_count} prompts)" if pct is None else f"context at {pct:.0f}%"
-        )
-        logger.info("Recycling background session — %s", reason)
-
-        # Kill old session
-        async with self._lock:
-            old = self._sessions.pop(BACKGROUND_KEY, None)
-        if old:
-            await old.provider.shutdown()
-
-        # Create fresh replacement
-        await self._ensure_background()
 
     @staticmethod
     def _guard_unattended_runner(
@@ -1132,14 +974,6 @@ class SessionManager:
                 (:func:`_push_approval_policy`), for a session whose grants follow the settings.
         """
         approval_policy = _bounded_policy(approval_policy, key=key)
-        # A cold-started background session (its _ensure_background creation died,
-        # or a consumer touched it first) must resolve the background axis too —
-        # same governance as the normal creation path.
-        # And it is the lite agent, whoever asks: a chore that named no agent used to
-        # cold-start it as the default agent, with every tool that agent has.
-        if key == BACKGROUND_KEY:
-            agent = LITE_AGENT_NAME
-            extra_factory_kwargs.setdefault("model_axis", "background")
 
         # Fast path: existing session — hold lock only briefly
         stale_provider = None
@@ -1268,7 +1102,7 @@ class SessionManager:
 
         # Check session map for resume — only for long-lived sessions
         resume_sid: str | None = None
-        is_stateless = key == BACKGROUND_KEY or any(key.startswith(p) for p in _STATELESS_PREFIXES)
+        is_stateless = any(key.startswith(p) for p in _STATELESS_PREFIXES)
         if not is_stateless:
             resume_sid = self._session_map.get(key)
 
@@ -1546,7 +1380,7 @@ class SessionManager:
 
         pct = provider.context_usage_pct()
 
-        # Track prompts for background session recycle fallback
+        # Count the session's prompts: its SessionEnd `turns`, its row in the context list
         session = self._sessions.get(key)
         if session:
             session.prompt_count += 1
@@ -1725,11 +1559,7 @@ class SessionManager:
                 )
                 if isinstance(sess.provider, AgentProvider):
                     sid = sess.provider.session_id
-                    if (
-                        sid
-                        and key != BACKGROUND_KEY
-                        and not any(key.startswith(p) for p in _STATELESS_PREFIXES)
-                    ):
+                    if sid and not any(key.startswith(p) for p in _STATELESS_PREFIXES):
                         self._session_map.set(key, sid, cwd=_cwd_str)
 
             sessions = dict(self._sessions)
@@ -2346,8 +2176,6 @@ class SessionManager:
         total_checked = 0
         async with self._lock:
             for key, sess in self._sessions.items():
-                if key in _PERSISTENT_KEYS:
-                    continue
                 if key.startswith(_CHANNEL_PREFIX):
                     continue
                 # Goal loop workers are headless + supervised by the watchdog;

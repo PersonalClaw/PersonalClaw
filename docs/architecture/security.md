@@ -794,21 +794,30 @@ rules are load-bearing controls, not UX:
   CAPTCHA avoidance as a capability; any such effect is an incidental consequence of legitimate
   traffic from the user's own machine, never a feature.
 
-### A background chore runs with no tools (`provider_bridge._build_native_runtime`)
+### A background chore is a call of its own, offered no tools (`chores.run_chore`)
 
-The chores that run behind the chat — a chat's title and tags, its follow-up chips, the home
-suggestions, a folder's icon, history compression, memory consolidation and skill refinement, the
-prompt optimizer, a Slack thread's title — each answer in text from what their prompt carries, and
-that prompt quotes chats, pages and messages nobody vetted. They run as the lite agent
-(`personalclaw-lite`), whose runtime is built with no tool providers at all: its model is offered
-no tools, and a call it makes anyway names a tool that does not exist. The shared background
-session (`_bg`) is the lite agent whoever reaches it first and whatever agent it names
-(`SessionManager.get_or_create`). The one-shot completions (inbox triage, digests, re-tagging,
-schedule parsing) call the model directly and never carried tools.
+The chores that run behind the chat — a chat's title and tags, its organize proposal, its
+follow-up chips, the home suggestions, a folder's icon, history compression, memory consolidation
+and skill refinement, a Slack thread's title — each answer in text from what their prompt carries,
+and that prompt quotes chats, pages and messages nobody vetted. Each is one call of its own to a
+model on the Background chain (`chores.run_chore`, over `llm_helpers.one_shot_completion`): the
+model is built for the call, sent the chore's own prompt, masked, and nothing of any other chore,
+and it is offered no tools. No session is kept for them, so what one chat's chore reads never
+reaches another's: the chores used to share one long-lived session whose conversation carried
+every chore of every chat, and a consolidation stored words read there as the user's own facts.
+`tests/test_session_acquisition_census.py` fails a chore that takes a session. The one-shot
+completions (inbox triage, digests, re-tagging, schedule parsing) are such calls too. A chore of an
+Incognito or Temporary chat reaches no model but the chat's own: it runs on that model only in the
+chat's own turn, and is refused anywhere else before anything is sent
+([chat-sessions.md](chat-sessions.md)).
+
+The prompt optimizer runs as the lite agent (`personalclaw-lite`), whose runtime is built with no
+tool providers at all (`provider_bridge._build_native_runtime`): its model is offered no tools,
+and a call it makes anyway names a tool that does not exist. Its session lasts one rewrite.
 
 A heartbeat task is not a chore: the owner allowed it to run "with your agent's tools"
 (`heartbeat.consent`), so it runs as their agent in a session of its own that ends with the task
-(`cron:system:heartbeat-tasks:<run>`), never in the chores' session.
+(`cron:system:heartbeat-tasks:<run>`).
 
 ## Untrusted-content fencing
 

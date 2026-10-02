@@ -268,9 +268,7 @@ def _consolidator():
     memory = MagicMock()
     memory.read_preferences = MagicMock(return_value="")
     memory.read_projects = MagicMock(return_value="")
-    consolidator = HistoryConsolidator(
-        log=log, memory=memory, sessions=None, vector_store=None, migrated=True
-    )
+    consolidator = HistoryConsolidator(log=log, memory=memory, vector_store=None, migrated=True)
     consolidator._memory_service = _QuietService()  # type: ignore[assignment]
 
     async def _fake_llm(_prompt: str, _chat_key: str):

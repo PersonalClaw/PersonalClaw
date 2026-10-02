@@ -648,13 +648,12 @@ async def test_uncataloged_runtime_fails_closed(monkeypatch, tmp_path):
 
 # Every session-key family :func:`personalclaw.guardrails.policy.is_unattended_session`
 # classifies as unattended. The list is the classifier's own vocabulary — cron fires,
-# loop-cycle workers, the shared ``_bg`` background/heartbeat key, subagents, the inbox
-# and side sweeps, channel deliveries, and a sessionless ``unattended:`` dispatch.
+# loop-cycle workers, subagents, the inbox and side sweeps, channel deliveries, and a
+# sessionless ``unattended:`` dispatch.
 _UNATTENDED_KEYS = [
     "cron:nightly-digest",
     "loop-42",
     "loop:goal-7",
-    "_bg",
     "subagent:abc123",
     "inbox:sweep",
     "side:suggestions",
@@ -670,8 +669,8 @@ async def test_gate_derives_unattendedness_from_the_session_key(monkeypatch, tmp
 
     The flag's promise is "nothing unproven runs while nobody is watching", and the
     help text names cron / scheduled runs / loop workers. But only ONE caller in the
-    tree passes the kwarg (``subagent.py``): the cron parent session, the ``_bg``
-    heartbeat, loop-cycle workers, the inbox/side sweeps, channel deliveries and
+    tree passes the kwarg (``subagent.py``): the cron parent session, loop-cycle
+    workers, the inbox/side sweeps, channel deliveries and
     sessionless trigger dispatches all reach ``get_or_create`` without it. So the gate
     resolves unattendedness from the session KEY through the same classifier the
     guardrail layer already uses — one vocabulary, no per-caller opt-in.

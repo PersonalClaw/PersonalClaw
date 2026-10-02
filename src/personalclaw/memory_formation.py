@@ -462,8 +462,8 @@ def _write(
 def _as_stored(vs, key: str, value: object, replaces: str = "") -> tuple[str, object]:
     """*key* and *value* with each ``[REDACTED: …]`` marker put back from the fact as stored.
 
-    Consolidation reads memory masked (the background session masks every prompt it is
-    handed), so what it extracts can carry a marker for a value it was not shown: in the key
+    Consolidation reads memory masked (a chore's prompt is masked, ``chores.run_chore``), so
+    what it extracts can carry a marker for a value it was not shown: in the key
     of the fact it updates, or in a value it rewrote. Each is restored from the fact at that
     key, or from the fact it *replaces* when the key is new, the way a masked fact written back
     through the Memory page is. Raises :class:`MaskConflict` for a marker that stands for

@@ -44,7 +44,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 #: A model's stream, consumed by ``async for``.
 _STREAMS = {"stream", "complete"}
 #: The helpers that collect a stream; each must be handed ``on_complete``, the row's writer.
-_COLLECTORS = {"stream_and_collect", "stream_and_collect_json"}
+_COLLECTORS = {"stream_and_collect"}
 #: What writes a row: the ledger's own two doors, and the wrappers around them.
 _WRITERS = {
     "recorder",
@@ -191,13 +191,14 @@ def test_the_rail_finds_the_sites_it_exists_for():
     """The floor: a scan that found nothing would pass for free."""
     sites, _unwritten = _census()
     found = {(rel, q) for rel, names in sites.items() for q in names}
-    assert len(found) >= 25, found
+    assert len(found) >= 20, found
     for known in (
-        ("dashboard/chat_title.py", "_stream_background_prompt"),
-        ("suggestions.py", "generate_suggestions._stream"),
+        # The one-shot call every background chore is (``chores.run_chore``).
+        ("llm_helpers.py", "_one_shot_completion._run"),
+        ("dashboard/handlers/optimizer.py", "handle_optimize._optimize"),
         ("loop/judge.py", "_stream"),
         ("eval/judge.py", "LLMJudge.judge_turn"),
-        ("history.py", "HistoryConsolidator._call_llm"),
+        ("gateway.py", "GatewayOrchestrator._run_heartbeat_task"),
     ):
         assert known in found, (known, sorted(found))
 
@@ -397,37 +398,13 @@ def _uncounted() -> int:
     return int(fold_files(home=config_dir())["uncounted"]["calls"])
 
 
-class _BackgroundSessions:
-    """The ``SessionManager`` surface a chore uses: the real lite agent on the Background axis."""
-
-    async def get_or_create(self, key: str, agent: str | None = None, **_kw: Any):
-        from personalclaw.agents.defaults import LITE_AGENT_NAME
-        from personalclaw.providers import provider_bridge
-
-        runtime = provider_bridge._build_native_runtime(
-            use_case="chat",
-            session_key=key,
-            agent=agent or LITE_AGENT_NAME,
-            model_override=None,
-            cwd=None,
-            model_axis="background",
-        )
-        await runtime.start()
-        return runtime, True, False
-
-    def release(self, key: str) -> None:
-        return None
-
-
 @pytest.mark.asyncio
 async def test_a_chats_title_is_the_chats_spend(scripted):
     from personalclaw.agents.defaults import LITE_AGENT_NAME
-    from personalclaw.dashboard.chat_title import _stream_background_prompt
-    from personalclaw.session import chore_usage
+    from personalclaw.dashboard.chat_title import chat_chore
 
-    state = SimpleNamespace(sessions=_BackgroundSessions())
-    text = await _stream_background_prompt(
-        state, "Title this chat.", usage=chore_usage("dashboard:chat-t")
+    text = await chat_chore(
+        SimpleNamespace(key="chat-t", memory_mode="persistent"), "Title this chat."
     )
 
     assert text == "An answer"

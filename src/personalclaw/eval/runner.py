@@ -238,13 +238,10 @@ class EvalRunner:
 
     async def _run_scenario_in(self, ws: Path, scenario: Scenario) -> ScenarioResult:
         """Run scenario inside *ws*, wiring the memory loop between sessions."""
-        from personalclaw.config.loader import AppConfig
         from personalclaw.context import ContextBuilder
         from personalclaw.history import ConversationLog, HistoryConsolidator
-        from personalclaw.session import SessionManager
         from personalclaw.vector_memory import VectorMemoryStore
 
-        config = AppConfig.load()
         memory = MemoryStore(workspace=ws)
         memory.init()
 
@@ -256,7 +253,6 @@ class EvalRunner:
         old_ws = os.environ.get("PERSONALCLAW_WORKSPACE")
         os.environ["PERSONALCLAW_WORKSPACE"] = str(ws)
 
-        session_mgr = None
         vector_store = None
         try:
             # Memory-loop components
@@ -285,15 +281,9 @@ class EvalRunner:
                     )
                 return provider
 
-            # SessionManager uses shared_ws_factory so consolidation sessions
-            # also target the shared workspace.
-            session_mgr = SessionManager(config, shared_ws_factory)
-            await session_mgr.start_pool()
-
             consolidator = HistoryConsolidator(
                 log=conv_log,
                 memory=memory,
-                sessions=session_mgr,
                 vector_store=vector_store,
             )
 
@@ -330,8 +320,6 @@ class EvalRunner:
                     logger.warning("Consolidation failed for %s", log_key, exc_info=True)
                     result.consolidation_failures += 1
         finally:
-            if session_mgr:
-                await session_mgr.close_all()
             if vector_store:
                 vector_store.close()
             if old_ws is None:

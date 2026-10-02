@@ -19,6 +19,7 @@ Routes (all registered in ``dashboard/server.py``):
 """
 
 import logging
+import uuid
 from typing import Any
 
 from aiohttp import web
@@ -270,14 +271,20 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
         from personalclaw.llm_helpers import ToolApprovalPolicy, stream_and_collect
         from personalclaw.usage_ledger import Attribution, recorder
 
-        session_key = f"agent_marketplace_test:{name}"
-        client, _is_new, _resumed = await state.sessions.get_or_create(
-            session_key,
-            agent=defn.provider_entry or None,
-        )
+        # A one-turn chat: a session of this test's own, ended with its reply, so a test is sent
+        # its prompt and nothing of an earlier test of the same agent.
+        session_key = f"agent_marketplace_test:{name}:{uuid.uuid4().hex}"
+        acquired = False
         try:
+            client, _is_new, _resumed = await state.sessions.get_or_create(
+                session_key,
+                agent=defn.provider_entry or None,
+            )
+            acquired = True
             # You asked for it and read the answer: a turn of yours with the agent under test.
-            who = Attribution(source="chat", session_key=session_key, agent=name)
+            who = Attribution(
+                source="chat", session_key=f"agent_marketplace_test:{name}", agent=name
+            )
             response = await stream_and_collect(
                 client,
                 full_prompt,
@@ -285,7 +292,9 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
                 on_complete=recorder(client, who),
             )
         finally:
-            state.sessions.release(session_key)
+            if acquired:
+                state.sessions.release(session_key)
+            await state.sessions.reset(session_key)
     except Exception as exc:
         logger.warning("Agent test failed for %s: %s", name, exc)
         return web.json_response({"error": relayed_failure_copy(exc)}, status=500)

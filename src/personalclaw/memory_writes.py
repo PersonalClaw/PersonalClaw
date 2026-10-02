@@ -22,7 +22,8 @@ That promise is kept at the stores, not by each caller remembering to ask:
 Nothing of such a session is handed to a background model either: its title, tags and suggested
 follow-ups, a condensed copy of its history, the suggestions built from recent chats. Each of those
 chores asks :func:`blocks_background_models`, the same answer, before it reads the session to a
-model.
+model, and the one way a chore reaches a model (``chores.run_chore``) refuses one made for such a
+session, or in its work, anywhere but its own turn.
 
 Nor to any model but the one its turn runs on. :func:`model_may_read` is the one answer to "may
 this work hand what it carries to that model", asked by every seam that does: the embedding

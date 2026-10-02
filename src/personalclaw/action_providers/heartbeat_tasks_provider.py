@@ -40,8 +40,8 @@ PROVIDER_NAME = "heartbeat-tasks"
 INTERVAL_SECS = 60
 
 #: Where a task runs: a session of its own, fresh for every task, named the way a scheduled run's
-#: is (``cron:<trigger>:<run>``). Not the background chores' session: that one is the lite agent,
-#: which has no tools, and an allowed task runs with the owner's agent and its tools, as the
+#: is (``cron:<trigger>:<run>``). A task is not a chore (a call of its own to a model offered no
+#: tools, ``chores.run_chore``): an allowed task runs with the owner's agent and its tools, as the
 #: Allow dialog says (`heartbeat.consent`).
 TASK_SESSION_PREFIX = f"cron:{HEARTBEAT_TASKS_TRIGGER_ID}:"
 

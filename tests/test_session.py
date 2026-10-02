@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from personalclaw.config import AppConfig
-from personalclaw.session import BACKGROUND_KEY, SessionManager
+from personalclaw.session import SessionManager, _Session
 
 
 @pytest.fixture
@@ -99,15 +99,24 @@ class TestSessionManager:
 
 
 class TestWarmPool:
-    """Tests for warm session pool and background session."""
+    """Tests for the warm session pool."""
 
     @pytest.mark.asyncio
-    async def test_start_pool_creates_background(self, cfg):
-        """start_pool() creates background session."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+    async def test_start_pool_builds_no_session(self, cfg):
+        """No session is kept for PersonalClaw's own chores: each chore is a call of its own, and
+        a session keeps every turn it is sent. Starting the pool builds nothing."""
+        built: list[str] = []
+        factory = _mock_provider_factory()
+
+        def counting(session_key=None, **kwargs):
+            built.append(str(session_key))
+            return factory(session_key=session_key, **kwargs)
+
+        mgr = SessionManager(cfg, provider_factory=counting)
         await mgr.start_pool()
 
-        assert BACKGROUND_KEY in mgr._sessions
+        assert mgr._sessions == {}
+        assert built == []
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -123,35 +132,6 @@ class TestWarmPool:
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_background_session_reused(self, cfg):
-        """BACKGROUND_KEY returns the same provider on repeated calls."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-
-        p1, _, _ = await mgr.get_or_create(BACKGROUND_KEY)
-        mgr.release(BACKGROUND_KEY)
-        p2, _, _ = await mgr.get_or_create(BACKGROUND_KEY)
-        mgr.release(BACKGROUND_KEY)
-
-        assert p1 is p2
-        p1.start.assert_awaited_once()
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_background_session_not_expired(self, cfg):
-        """Background session is never expired by idle cleanup."""
-        import time
-
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-
-        mgr._sessions[BACKGROUND_KEY].last_used = time.monotonic() - 9999
-        await mgr._expire_idle(1)
-
-        assert BACKGROUND_KEY in mgr._sessions
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
     async def test_channel_session_not_expired_by_idle(self, cfg):
         """Channel-agent sessions survive idle expiry (managed by channel lifecycle)."""
         import time
@@ -160,10 +140,7 @@ class TestWarmPool:
         await mgr.start_pool()
 
         key = "channel:abc123:agent1"
-        mgr._sessions[key] = mgr._sessions[BACKGROUND_KEY].__class__.__new__(
-            mgr._sessions[BACKGROUND_KEY].__class__
-        )
-        mgr._sessions[key].__dict__.update(mgr._sessions[BACKGROUND_KEY].__dict__)
+        mgr._sessions[key] = _Session(provider=_mock_provider_factory()(), is_new=False)
         mgr._sessions[key].last_used = time.monotonic() - 9999
 
         await mgr._expire_idle(1)
@@ -183,97 +160,17 @@ class TestWarmPool:
 
     @pytest.mark.asyncio
     async def test_start_pool_idempotent(self, cfg):
-        """Calling start_pool() twice is a no-op."""
+        """Calling start_pool() twice fills the pool once."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-
-        await mgr.start_pool()  # should be no-op
-        assert BACKGROUND_KEY in mgr._sessions
-        await mgr.close_all()
-
-
-class TestRecycleBackground:
-    """Tests for background session context overflow recycling."""
-
-    @pytest.mark.asyncio
-    async def test_recycle_on_high_context(self, cfg):
-        """Background session is recycled when context >= 70%."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-
-        old_provider = mgr._sessions[BACKGROUND_KEY].provider
-        # Simulate high context
-        old_provider.context_usage_pct = lambda: 75.0
-
-        await mgr.recycle_background()
-
-        # Old provider should have been shut down
-        old_provider.shutdown.assert_awaited_once()
-        # New session should exist
-        assert BACKGROUND_KEY in mgr._sessions
-        new_provider = mgr._sessions[BACKGROUND_KEY].provider
-        assert new_provider is not old_provider
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_recycle_blind_fallback(self, cfg):
-        """Background session is recycled after 40 prompts with no metadata."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-
-        old_provider = mgr._sessions[BACKGROUND_KEY].provider
-        old_provider.context_usage_pct = lambda: None  # no metadata EVER reported
-        mgr._sessions[BACKGROUND_KEY].prompt_count = 45
-
-        await mgr.recycle_background()
-
-        old_provider.shutdown.assert_awaited_once()
-        assert BACKGROUND_KEY in mgr._sessions
-        assert mgr._sessions[BACKGROUND_KEY].provider is not old_provider
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_measured_zero_is_not_blind(self, cfg):
-        """A MEASURED 0% context is not "no metadata" — it must not recycle blind.
-
-        The inverse of the fabricated-zero bug: folding a legitimate 0 into the
-        absent marker recycles a perfectly fresh session as though it were blind.
-        """
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-
-        old_provider = mgr._sessions[BACKGROUND_KEY].provider
-        old_provider.context_usage_pct = lambda: 0.0  # The context IS empty
-        mgr._sessions[BACKGROUND_KEY].prompt_count = 45
-
-        await mgr.recycle_background()
-
-        old_provider.shutdown.assert_not_awaited()
-        assert mgr._sessions[BACKGROUND_KEY].provider is old_provider
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_no_recycle_when_low_context(self, cfg):
-        """Background session is NOT recycled when context is low."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-
-        old_provider = mgr._sessions[BACKGROUND_KEY].provider
-        old_provider.context_usage_pct = lambda: 30.0
-
-        await mgr.recycle_background()
-
-        # Should NOT have been shut down
-        old_provider.shutdown.assert_not_awaited()
-        assert mgr._sessions[BACKGROUND_KEY].provider is old_provider
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_recycle_no_background_session(self, cfg):
-        """recycle_background() is no-op when no background session exists."""
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        # Don't start pool — no background session
-        await mgr.recycle_background()  # should not raise
+        mgr._pool_size = 1
+        with (
+            patch.object(mgr, "_fill_warm_pool", AsyncMock()) as fill,
+            patch.object(mgr, "_pool_health_loop", AsyncMock()),
+        ):
+            await mgr.start_pool()
+            await mgr.start_pool()  # should be no-op
+            await asyncio.sleep(0)
+        fill.assert_awaited_once()
         await mgr.close_all()
 
 
@@ -1548,15 +1445,6 @@ class TestContextInfo:
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_context_info_background_key_name(self, cfg):
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-        info = mgr.context_info()
-        bg_entry = next(e for e in info if e["key"] == BACKGROUND_KEY)
-        assert "Background" in bg_entry["name"]
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
     async def test_context_info_non_dashboard_key(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("channel:thread123")
@@ -2078,17 +1966,18 @@ class TestRegisterDashboardSessions:
 
 
 class TestStartPoolNonBlocking:
-    """Tests for start_pool non-blocking path."""
+    """Tests for start_pool's fill of the warm pool."""
 
     @pytest.mark.asyncio
-    async def test_start_pool_non_blocking(self, cfg):
+    async def test_start_pool_fills_the_warm_pool(self, cfg):
         cfg.session.pool_size = 1
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         mgr._pool_size = 1
-        await mgr.start_pool(blocking=False)
+        await mgr.start_pool()
         # Let background tasks run
         await asyncio.sleep(0.1)
-        assert BACKGROUND_KEY in mgr._sessions
+        assert mgr._warm_pool.qsize() == 1
+        assert mgr._sessions == {}, "a pooled process is no session until a chat claims it"
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -2096,25 +1985,6 @@ class TestStartPoolNonBlocking:
         mgr = SessionManager(cfg, provider_factory=None)
         await mgr.start_pool()  # should be no-op
         assert mgr.count == 0
-
-    @pytest.mark.asyncio
-    async def test_ensure_background_already_exists(self, cfg):
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr.start_pool()
-        # Call again — should be no-op
-        await mgr._ensure_background()
-        assert mgr.count == 1  # still just the one bg session
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_ensure_background_factory_failure(self, cfg):
-        def failing_factory(session_key=None, **kwargs):
-            raise RuntimeError("spawn failed")
-
-        mgr = SessionManager(cfg, provider_factory=failing_factory)
-        await mgr._ensure_background()
-        # Should not crash, just log warning
-        assert BACKGROUND_KEY not in mgr._sessions
 
 
 class TestScheduleReplenish:
@@ -2504,29 +2374,6 @@ class TestSessionState:
         await mgr.close_all()
 
 
-class TestBackgroundSession:
-    @pytest.mark.asyncio
-    async def test_background_key_constant(self):
-        assert BACKGROUND_KEY == "_bg"
-
-    @pytest.mark.asyncio
-    async def test_ensure_background_creates_session(self, cfg):
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr._ensure_background()
-        async with mgr._lock:
-            assert BACKGROUND_KEY in mgr._sessions
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_ensure_background_idempotent(self, cfg):
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr._ensure_background()
-        await mgr._ensure_background()
-        # Should still only have one background session
-        assert mgr.count == 1
-        await mgr.close_all()
-
-
 class TestContextInfoBasic:
     @pytest.mark.asyncio
     async def test_returns_session_info(self, cfg):
@@ -2539,14 +2386,4 @@ class TestContextInfoBasic:
         assert len(session_info) == 1
         assert session_info[0]["context_pct"] == 0.0
         assert "Chat" in session_info[0]["name"]
-        await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_background_session_name(self, cfg):
-        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        await mgr._ensure_background()
-        info = mgr.context_info()
-        bg_info = [i for i in info if i["key"] == BACKGROUND_KEY]
-        assert len(bg_info) == 1
-        assert "Background" in bg_info[0]["name"]
         await mgr.close_all()

@@ -470,6 +470,18 @@
   },
   "kind": "dataclass"
  },
+ "personalclaw.sdk.channel.Attribution": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "kind": "positional_or_keyword", "name": "source"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "session_key"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "agent"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass"
+ },
  "personalclaw.sdk.channel.AuthConfig": {
   "bases": ["object"],
   "init": {
@@ -539,7 +551,6 @@
    }
   }
  },
- "personalclaw.sdk.channel.BACKGROUND_KEY": {"kind": "value", "type": "str", "value": "'_bg'"},
  "personalclaw.sdk.channel.CANCELLED_STOP_REASONS": {"kind": "value", "type": "tuple", "value": "('cancelled', 'stopped_by_user')"},
  "personalclaw.sdk.channel.CANNED_PAIRING_REPLY": {"kind": "value", "type": "str", "value": "\"I don't recognize you yet. Ask my owner for an 8-digit pairing code, then send it here to start talking.\""},
  "personalclaw.sdk.channel.COMPACTION_AUTOMATIC": {"kind": "value", "type": "str", "value": "'automatic'"},
@@ -1264,15 +1275,14 @@
    "params": [
     {"annotation": "ConversationLog", "kind": "positional_or_keyword", "name": "log"},
     {"annotation": "MemoryStore", "kind": "positional_or_keyword", "name": "memory"},
-    {"annotation": "SessionManager | None", "default": "None", "kind": "positional_or_keyword", "name": "sessions"},
-    {"annotation": "float", "default": "10800", "kind": "positional_or_keyword", "name": "history_idle_secs"},
-    {"annotation": "VectorMemoryStore | None", "default": "None", "kind": "positional_or_keyword", "name": "vector_store"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "migrated"},
-    {"annotation": "SkillsLoader | None", "default": "None", "kind": "positional_or_keyword", "name": "skills_loader"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "auto_skills_enabled"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "auto_refine_enabled"},
-    {"annotation": "int", "default": "5", "kind": "positional_or_keyword", "name": "auto_min_tool_calls"},
-    {"annotation": "float", "default": "0.85", "kind": "positional_or_keyword", "name": "auto_similarity_threshold"}
+    {"annotation": "float", "default": "10800", "kind": "keyword_only", "name": "history_idle_secs"},
+    {"annotation": "VectorMemoryStore | None", "default": "None", "kind": "keyword_only", "name": "vector_store"},
+    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "migrated"},
+    {"annotation": "SkillsLoader | None", "default": "None", "kind": "keyword_only", "name": "skills_loader"},
+    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "auto_skills_enabled"},
+    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "auto_refine_enabled"},
+    {"annotation": "int", "default": "5", "kind": "keyword_only", "name": "auto_min_tool_calls"},
+    {"annotation": "float", "default": "0.85", "kind": "keyword_only", "name": "auto_similarity_threshold"}
    ],
    "returns": "None"
   },
@@ -2696,11 +2706,6 @@
     ],
     "returns": "None"
    },
-   "recycle_background": {
-    "kind": "async method",
-    "params": [],
-    "returns": "None"
-   },
    "register_child_stopper": {
     "kind": "method",
     "params": [
@@ -2814,9 +2819,7 @@
    },
    "start_pool": {
     "kind": "async method",
-    "params": [
-     {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "blocking"}
-    ],
+    "params": [],
     "returns": "None"
    },
    "stop_turn": {
@@ -3658,13 +3661,19 @@
   ],
   "returns": "str"
  },
+ "personalclaw.sdk.channel.chore_usage": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "chat_key"}
+  ],
+  "returns": "Attribution"
+ },
  "personalclaw.sdk.channel.compress_thread_history": {
   "kind": "async function",
   "params": [
    {"annotation": "list[dict]", "kind": "positional_or_keyword", "name": "prior_turns"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "session_key"},
-   {"annotation": "str", "kind": "positional_or_keyword", "name": "query"},
-   {"annotation": "SessionManager", "kind": "positional_or_keyword", "name": "sessions"}
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "query"}
   ],
   "returns": "str | None"
  },
@@ -3976,6 +3985,16 @@
   "params": [
    {"annotation": "bool", "kind": "positional_or_keyword", "name": "local_only"},
    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "configured_host"}
+  ],
+  "returns": "str"
+ },
+ "personalclaw.sdk.channel.run_chore": {
+  "kind": "async function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "prompt"},
+   {"annotation": "Attribution", "kind": "keyword_only", "name": "usage"},
+   {"annotation": "Callable[[str], str] | None", "default": "None", "kind": "keyword_only", "name": "validate"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "memory_mode"}
   ],
   "returns": "str"
  },

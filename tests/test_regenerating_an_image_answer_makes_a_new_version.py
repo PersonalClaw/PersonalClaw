@@ -181,20 +181,18 @@ def test_the_images_an_answer_made_are_read_from_its_tool_rows():
 def _runtime_that_paints(keys: list[str], *, paints: bool):
     """``sessions.get_or_create`` for the turn: its runtime runs the image tool under its key.
 
-    The turn's chores (its title, its follow-ups) get runtimes under their own key too, and
-    those only write text.
+    The turn's chores (its title, its follow-ups) are calls of their own (``chores.run_chore``)
+    and take no runtime from the session manager.
     """
     from personalclaw import mcp_core
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
-    from personalclaw.session import BACKGROUND_KEY
 
     async def _get_or_create(key, **_kw):
-        if key != BACKGROUND_KEY:
-            keys.append(key)
+        keys.append(key)
 
         async def _events():
             text = "Nothing to draw this time."
-            if paints and key != BACKGROUND_KEY:
+            if paints:
                 token = mcp_core.set_current_session_key(key)
                 try:
                     text = await asyncio.to_thread(
@@ -224,6 +222,12 @@ def _answered_with_an_image(home, monkeypatch, *, paints: bool):
 
     monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: home)
     monkeypatch.delenv("PERSONALCLAW_SESSION_KEY", raising=False)
+
+    async def _chore(prompt, *, usage, validate=None, memory_mode=None):
+        return "A flat illustration"
+
+    # The turn's chores answer here, so no model is resolved for them.
+    monkeypatch.setattr("personalclaw.chores.run_chore", _chore)
     state = _make_state(home)
     keys: list[str] = []
     state.sessions.get_or_create = AsyncMock(side_effect=_runtime_that_paints(keys, paints=paints))

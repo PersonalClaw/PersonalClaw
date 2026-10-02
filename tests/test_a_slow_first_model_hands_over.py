@@ -4,8 +4,8 @@ Measured on a home whose background chain was three models (a busy local model f
 knowledge insights gave up when the first model took longer than the pool's 180 s, although
 the chain had already moved to the second, because one timeout wrapped the whole call; and
 history consolidation gave up when the first model's guarded call timed out, because it never
-let its session fall back. Ten library items then read "insights: model unavailable" with
-three models bound.
+let the background session it ran on fall back. Ten library items then read "insights: model
+unavailable" with three models bound.
 
 The model calls are stubbed at the resolution seam (``resolve_provider_for_use_case``) and at
 ``stream_and_collect``, the same seams the chain tests use; times are fractions of a second.
@@ -132,87 +132,53 @@ def test_an_item_whose_models_were_too_slow_does_not_say_model_unavailable(tmp_p
     assert "model unavailable" not in error
 
 
-class _BackgroundRuntime:
-    """The background session's runtime, as far as a chore sees it: its first model times
-    out before replying, and — like ``NativeAgentRuntime`` — it falls back to the next model
-    of its chain only on a turn whose caller announced it could show the substitute."""
+def _timed_out() -> Exception:
+    from personalclaw.guardrails.failure import ModelCallTimeout
 
-    def __init__(self):
-        self.announced = False
-
-    def announce_failover(self):
-        self.announced = True
-
-    async def stream(self, _prompt):
-        from personalclaw.guardrails.failure import ModelCallTimeout
-        from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
-        from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
-
-        if not self.announced:
-            raise ModelCallTimeout(
-                use_case="background", provider="slow", model="model-a", waited_secs=300
-            )
-        self.announced = False
-        yield LLMEvent(
-            kind=EVENT_MODEL_SUBSTITUTION,
-            text="Ran on next:model-b instead of slow:model-a: it did not answer in time.",
-        )
-        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text='{"facts": ["kept"]}')
-        yield LLMEvent(kind=EVENT_COMPLETE)
-
-
-class _Sessions:
-    def __init__(self, client):
-        self.client = client
-
-    async def get_or_create(self, key, agent=None):
-        return self.client, False, False
-
-    def release(self, key):
-        pass
-
-    async def recycle_background(self):
-        pass
-
-
-def test_history_consolidation_falls_back_down_its_chain_and_says_so(tmp_path, caplog):
-    from personalclaw.history import ConversationLog, HistoryConsolidator
-
-    runtime = _BackgroundRuntime()
-    consolidator = HistoryConsolidator(
-        ConversationLog(tmp_path / "log"), memory=None, sessions=_Sessions(runtime)
+    return ModelCallTimeout(
+        use_case="background", provider="slow", model="model-a", waited_secs=300
     )
 
-    with caplog.at_level(logging.WARNING, logger="personalclaw.llm_helpers"):
+
+def test_history_consolidation_falls_back_down_its_chain_and_says_so(
+    isolated_store, monkeypatch, caplog
+):
+    from personalclaw.history import ConversationLog, HistoryConsolidator
+
+    calls, (resolve, stream) = _chain(
+        monkeypatch, {"slow:model-a": _timed_out(), "next:model-b": '{"facts": ["kept"]}'}
+    )
+    consolidator = HistoryConsolidator(ConversationLog(isolated_store / "log"), memory=None)
+
+    with resolve, stream, caplog.at_level(logging.WARNING, logger="personalclaw.llm_helpers"):
         result = asyncio.run(consolidator._call_llm("consolidate this", "dashboard:chat-1"))
 
     assert result == {"facts": ["kept"]}
+    assert calls == ["slow:model-a", "next:model-b"]
     said = [r.getMessage() for r in caplog.records]
-    assert any(
-        m.startswith("History consolidation: Ran on next:model-b instead of slow:model-a")
-        for m in said
-    ), said
+    assert (
+        "one_shot chain advance: background entry 0 (slow:model-a) failed (ModelCallTimeout) "
+        "— trying next"
+    ) in said, said
 
 
-def test_a_consolidation_no_model_answered_is_one_line_with_what_happened(tmp_path, caplog):
+def test_a_consolidation_no_model_answered_is_one_line_with_what_happened(
+    isolated_store, monkeypatch, caplog
+):
     """When nothing in the chain answers, the log says so in a sentence, not a traceback of
     the HTTP client's frames."""
-    from personalclaw.guardrails.failure import ModelCallTimeout
     from personalclaw.history import ConversationLog, HistoryConsolidator
 
-    class _Dead(_BackgroundRuntime):
-        async def stream(self, _prompt):
-            raise ModelCallTimeout(
-                use_case="background", provider="slow", model="model-a", waited_secs=300
-            )
-            yield  # pragma: no cover
-
-    consolidator = HistoryConsolidator(
-        ConversationLog(tmp_path / "log"), memory=None, sessions=_Sessions(_Dead())
+    _calls, (resolve, stream) = _chain(
+        monkeypatch, {"slow:model-a": _timed_out(), "next:model-b": _timed_out()}
     )
-    with caplog.at_level(logging.WARNING, logger="personalclaw.history"):
+    consolidator = HistoryConsolidator(ConversationLog(isolated_store / "log"), memory=None)
+    with resolve, stream, caplog.at_level(logging.WARNING, logger="personalclaw.history"):
         assert asyncio.run(consolidator._call_llm("consolidate this", "k")) is None
 
     (record,) = [r for r in caplog.records if "consolidation call failed" in r.getMessage()]
     assert record.exc_info is None
-    assert record.getMessage().startswith("LLM consolidation call failed: ")
+    assert record.getMessage().startswith(
+        "LLM consolidation call failed: no model of its chain answered: slow:model-a failed "
+        "before it replied"
+    ), record.getMessage()

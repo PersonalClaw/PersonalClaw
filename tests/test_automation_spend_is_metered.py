@@ -15,8 +15,6 @@ by parsing ``src``, never listed. Each one must:
 * or have its axis decided by a named function whose answers are pinned below (:data:`DECIDED`):
   a chat's turn takes the loops axis when it is a loop's; a finished subagent's announcement takes
   orchestration unless its parent is a channel thread's conversation;
-* or acquire the background session (``BACKGROUND_KEY``, which ``get_or_create`` itself puts on
-  the background axis);
 * or be one of the manager's own re-acquisitions, which replay a request someone already made
   (:data:`REACQUIRES`);
 * or be a surface a person is working in, named in :data:`INTERACTIVE` with the reason — the chat
@@ -28,8 +26,9 @@ A model is also reached WITHOUT acquiring a runtime: resolved directly, and call
 every direct call of the resolvers (:data:`RESOLVERS`). Each must resolve a metered axis, resolve
 metered (``resolve_metered_model``; the image reader's ``metered=True``), or be listed in
 :data:`UNMETERED_RESOLUTIONS` with the reason. The chain walk and one-shot calls resolve metered by
-construction. A knowledge node, a loop's judge and a browse step's image reading resolved the chat
-or image axis the way a person's turn does, so none of their calls counted.
+construction, and so does every background chore, each a one-shot call (``chores.run_chore``). A
+knowledge node, a loop's judge and a browse step's image reading resolved the chat or image axis
+the way a person's turn does, so none of their calls counted.
 
 And an agent CLI makes its own model calls, which no guard wraps: acquired on a metered axis, its
 turns are metered themselves (``acp.spend``), so a loop, a subagent or a webhook on one counts too.
@@ -182,24 +181,6 @@ def census(tree: ast.AST, path: str, counted: Callable[[ast.Call], bool] = _acqu
     return visitor.sites
 
 
-def _is_background_key(expr: ast.AST | None, func: ast.AST | None) -> bool:
-    """``BACKGROUND_KEY`` itself, or a local name the enclosing function bound to it."""
-
-    def _names_it(node: ast.AST | None) -> bool:
-        return (isinstance(node, ast.Name) and node.id == "BACKGROUND_KEY") or (
-            isinstance(node, ast.Attribute) and node.attr == "BACKGROUND_KEY"
-        )
-
-    if _names_it(expr):
-        return True
-    if isinstance(expr, ast.Name) and func is not None:
-        for node in ast.walk(func):
-            if isinstance(node, ast.Assign) and _names_it(node.value):
-                if any(isinstance(t, ast.Name) and t.id == expr.id for t in node.targets):
-                    return True
-    return False
-
-
 def _called(expr: ast.AST | None) -> str:
     """The bare name *expr* calls, for ``f(...)`` and ``mod.f(...)``; ``""`` for anything else."""
     if not isinstance(expr, ast.Call):
@@ -209,8 +190,7 @@ def _called(expr: ast.AST | None) -> str:
 
 
 def verdict(site: Site, guarded: frozenset[str]) -> str:
-    """``guarded`` | ``decided`` | ``background`` | ``reacquires`` | ``interactive`` | ``""``
-    (unaccounted)."""
+    """``guarded`` | ``decided`` | ``reacquires`` | ``interactive`` | ``""`` (unaccounted)."""
     keywords = {k.arg: k.value for k in site.call.keywords if k.arg}
     axis = keywords.get("model_axis")
     if isinstance(axis, ast.Constant) and axis.value in guarded:
@@ -218,9 +198,6 @@ def verdict(site: Site, guarded: frozenset[str]) -> str:
     decider = DECIDED.get((site.path, site.qualname))
     if decider and _called(axis) == decider:
         return "decided"
-    first = site.call.args[0] if site.call.args else keywords.get("key")
-    if _is_background_key(first, site.func):
-        return "background"
     where = (site.path, site.qualname)
     if where in REACQUIRES and any(k.arg is None for k in site.call.keywords):
         return "reacquires"
@@ -286,8 +263,8 @@ def test_the_census_is_not_vacuous():
     """A census that parsed nothing would pass the rail above for free."""
     guarded = guarded_axes()
     verdicts = [verdict(s, guarded) for s in src_sites()]
-    assert len(verdicts) >= 15, len(verdicts)
-    for kind in ("guarded", "decided", "background", "reacquires", "interactive"):
+    assert len(verdicts) >= 10, len(verdicts)
+    for kind in ("guarded", "decided", "reacquires", "interactive"):
         assert kind in verdicts, f"no site reads {kind!r}: the classifier or the census drifted"
 
 
@@ -377,9 +354,8 @@ def test_the_resolution_classifier_on_a_planted_call(snippet: str, expected: str
         ('await sessions.get_or_create("cron:digest")', ""),
         ('await sessions.get_or_create("cron:digest", model_axis="chat")', ""),
         ('await sessions.get_or_create("cron:digest", model_axis="orchestration")', "guarded"),
-        ("await sessions.get_or_create(BACKGROUND_KEY)", "background"),
     ],
-    ids=["no axis", "the chat axis", "a guarded axis", "the background session"],
+    ids=["no axis", "the chat axis", "a guarded axis"],
 )
 def test_the_classifier_on_a_planted_call(snippet: str, expected: str):
     """The rail's teeth, on code that is not in the tree: an unnamed axis and the chat axis are

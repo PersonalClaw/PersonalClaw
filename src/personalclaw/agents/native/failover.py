@@ -20,35 +20,29 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.guardrails.failure import (
-    EmptyCompletion,
     FailureMode,
     FirstTokenTimeout,
     LocalModelBusy,
     ModelCallTimeout,
     NoModelAnswered,
-    OutputContractError,
     failed_before_replying,
 )
 from personalclaw.llm.base import ModelSubstitution
 
 logger = logging.getLogger(__name__)
 
-#: The failures a fallback may answer, the same a one-shot call's chain walk moves on from
-#: (``llm_helpers.run_over_use_case_chain``): the model's provider refused or broke (an answer of
-#: nothing, ``EmptyCompletion``, is one), it did not answer in time, its breaker is open, or its
-#: answer missed the shape its caller reads (``OutputContractError``, raised only for a caller
-#: that held the answer to a check, :meth:`NativeAgentRuntime.expect_answer`). An open breaker is
-#: one because a runtime keeps the model it was built on: the background session's was built
-#: while its first model answered, and once that model's breaker opened every chore on it failed
-#: in microseconds while the next model of the chain was never asked. Not a prompt too large to
-#: run (the same prompt is as large for the next model), and not a guard's refusal (a budget, a
-#: secret, an injection: moving to another model defeats it).
+#: The failures a fallback may answer, as a one-shot call's chain walk moves on from them
+#: (``llm_helpers.run_over_use_case_chain``): the model's provider refused or broke, it did not
+#: answer in time, or its breaker is open. An open breaker is one because a runtime keeps the
+#: model it was built on: a session built while its first model answered fails every turn in
+#: microseconds once that model's breaker opens, while the next model of the chain is never asked.
+#: Not a prompt too large to run (the same prompt is as large for the next model), and not a
+#: guard's refusal (a budget, a secret, an injection: moving to another model defeats it).
 FAILOVER_MODES = frozenset(
     {
         FailureMode.PROVIDER_ERROR,
         FailureMode.TIMEOUT,
         FailureMode.CIRCUIT_OPEN,
-        FailureMode.SCHEMA_VIOLATION,
     }
 )
 
@@ -90,42 +84,38 @@ def resending_cannot_help(exc: BaseException, *, can_move_on: bool) -> bool:
     *exc*, so the failure goes straight to the next model (*can_move_on*) or stands.
 
     A model that did not START answering in time reads the identical request again from its first
-    token and takes as long again. An answer that missed its check is raised only when the next
-    model is there to answer instead. A local model that stayed busy for as long as the turn waits
-    is busy still. A call cut at its ceiling runs as long again, while the next model can answer.
+    token and takes as long again. A local model that stayed busy for as long as the turn waits is
+    busy still. A call cut at its ceiling runs as long again, while the next model can answer.
     """
-    if isinstance(exc, (FirstTokenTimeout, EmptyCompletion, OutputContractError, LocalModelBusy)):
+    if isinstance(exc, (FirstTokenTimeout, LocalModelBusy)):
         return True
     return isinstance(exc, ModelCallTimeout) and can_move_on
 
 
 @dataclass
 class TurnFallback:
-    """One runtime's fallback state: what its caller asked of the next turn (``announced`` by
-    ``NativeAgentRuntime.announce_failover``, the ``expect`` check of ``expect_answer``), and for
-    the turn in flight the models still to try, the ``(ref, why)`` of each that failed, and the
-    sentence the model that answers says before its reply (``pending``)."""
+    """One runtime's fallback state: whether its caller asked that the next turn may fall back
+    (``announced`` by ``NativeAgentRuntime.announce_failover``), and for the turn in flight the
+    models still to try, the ``(ref, why)`` of each that failed, and the sentence the model that
+    answers says before its reply (``pending``)."""
 
     announced: bool = False
-    expect: Callable[[str], str] | None = None
     queue: list[str] = field(default_factory=list)
     failures: list[tuple[str, str]] = field(default_factory=list)
     pending: str = ""
 
-    def begin(self, failover: ModelFailover | None) -> Callable[[str], str] | None:
-        """Start a turn and return its check. What the caller asked is taken as the turn starts,
-        so the late cleanup of a turn its caller stopped reading cannot take it away. The models
-        the turn may move to are those the failover admits, so a turn that may move nowhere names
-        no next model either (:meth:`next_ref`)."""
+    def begin(self, failover: ModelFailover | None) -> None:
+        """Start a turn. What the caller asked is taken as the turn starts, so the late cleanup
+        of a turn its caller stopped reading cannot take it away. The models the turn may move to
+        are those the failover admits, so a turn that may move nowhere names no next model either
+        (:meth:`next_ref`)."""
         announced, self.announced = self.announced and failover is not None, False
-        expect, self.expect = self.expect, None
         self.queue = (
             [ref for ref in failover.candidates if failover.admits(ref)]
             if announced and failover is not None
             else []
         )
         self.failures, self.pending = [], ""
-        return expect
 
     def end(self) -> None:
         self.queue, self.pending = [], ""

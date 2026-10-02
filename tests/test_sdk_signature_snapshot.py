@@ -77,12 +77,7 @@ def test_the_snapshot_reaches_the_whole_surface():
     kinds = {rec["kind"] for rec in records.values()}
     assert {"function", "async function", "class", "dataclass", "enum", "value"} <= kinds
     compress = records["personalclaw.sdk.channel.compress_thread_history"]
-    assert [p["name"] for p in compress["params"]] == [
-        "prior_turns",
-        "session_key",
-        "query",
-        "sessions",
-    ]
+    assert [p["name"] for p in compress["params"]] == ["prior_turns", "session_key", "query"]
     assert compress["params"][0]["annotation"] == "list[dict]"
     # A class's public methods are part of its contract, with `self` left out.
     log = records["personalclaw.sdk.channel.ConversationLog"]

@@ -771,7 +771,7 @@ class AgentConfig:
         metadata=_meta(
             "Unattended Requires Verified Adapter",
             "Refuse an UNATTENDED spawn — a cron fire, a loop-cycle worker, a "
-            "subagent, the background/heartbeat session, an inbox or side sweep, a "
+            "subagent, a heartbeat task, an inbox or side sweep, a "
             "channel delivery, or a trigger dispatch — onto an "
             "external agent runner whose ACP adapter has no verified provenance: an "
             "`npx -y` fetch-at-launch, an adapter that changed since it was "
@@ -1138,9 +1138,10 @@ class BackgroundConfig:
 
     A call on the Background chain (a chat's chores, knowledge processing, digests, a schedule
     being read) is stopped after ``call_timeout_secs`` and the chain's next model is asked; the
-    wait for its turn on a local model counts. A turn of an agent on the Background chain (a chat's
-    chores in the background session, a heartbeat task) may write at most ``max_output_tokens`` in
-    one answer; a one-shot call keeps the output budget of its model
+    wait for its turn on a local model counts. A chore (a chat's title, its consolidation, the
+    suggestions: ``chores.run_chore``) and a turn of an agent on the Background chain (a heartbeat
+    task) may write at most ``max_output_tokens`` in one answer, on a model that allows that much;
+    any other one-shot call keeps the output budget of its model
     (``local_models.budgets.output_budget``). ``busy_model_wait_secs`` is the other side of the
     local model's queue (``guardrails.local_queue``): a reply or a step somebody is waiting for
     goes ahead of background work, and when the call already running holds the model it waits this
@@ -1183,9 +1184,9 @@ class BackgroundConfig:
 def background_limits() -> BackgroundConfig:
     """The ``background.*`` limits as ``config.json`` reads now.
 
-    Asked at the moment of each call, never kept: the guard of a long-lived runtime (the
-    background session, a loop worker) outlives a Settings change, and a value it kept would
-    bind only after a restart. A config that cannot be read gives the shipped limits: they are
+    Asked at the moment of each call, never kept: the guard of a long-lived runtime (a heartbeat
+    task's, a loop worker's) outlives a Settings change, and a value it kept would bind only after
+    a restart. A config that cannot be read gives the shipped limits: they are
     availability limits, and a broken file must never wedge a call.
     """
     try:

@@ -9,21 +9,10 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from personalclaw import memory_writes
+from personalclaw import chores, memory_writes
 from personalclaw.context import ContextBuilder
-from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
-from personalclaw.llm_helpers import (
-    failure_clause,
-    is_model_call_failure,
-    let_fail_over,
-    parse_llm_json_list,
-    say_background_substitution,
-)
+from personalclaw.llm_helpers import failure_clause, is_model_call_failure, parse_llm_json_list
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
-from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY, chore_usage
-from personalclaw.usage_ledger import recorder
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState
@@ -213,7 +202,7 @@ def _redact_suggestions(suggestions: list[str]) -> list[str]:
 
 
 async def generate_suggestions(state: "DashboardState") -> list[str]:
-    """Generate suggestions using the background ACP agent session."""
+    """Generate suggestions, asked as a chore of their own (``chores.run_chore``)."""
     context = _build_context(state)
     if not context or len(context) < 50:
         logger.debug("Insufficient context for suggestions — using fallback")
@@ -233,68 +222,33 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
         logger.debug("Suggestions prompt unresolved — using fallback")
         return list(_FALLBACK_SUGGESTIONS)
 
-    # Acquiring the background session RESOLVES a model; a pre-onboarding instance with no
-    # provider bound raises ProviderResolutionError here. That is the SAME "can't generate yet"
-    # state as an empty context, an unresolved prompt, or a stream timeout — a degradation, not a
-    # fault — so it returns the fallback list quietly (a debug line, never a WARNING traceback).
-    # Before this, the acquire sat outside the try below, so the error propagated to
-    # ``refresh_suggestions``' ``except Exception: logger.warning(..., exc_info=True)`` — a full
-    # traceback on every poll — and, because generation always threw before ``cache.generated_at``
-    # was set, ``api_suggestions`` re-ran generation on EVERY poll. Kept OUTSIDE the try/finally
-    # below on purpose: that ``finally`` releases a semaphore this call never acquired when the
-    # acquire itself fails. Two classes carry the signal (the LLM registry's and the bridge's) —
-    # catch both, as ``session.py`` and ``cli.py`` do for the same reason.
+    # Asking RESOLVES a model; a pre-onboarding instance with no provider bound raises
+    # ProviderResolutionError. That is the SAME "can't generate yet" state as an empty context, an
+    # unresolved prompt, a timeout or an answer that cannot be read — a degradation, not a fault —
+    # so each returns the fallback list, the first quietly (a debug line, never a WARNING
+    # traceback). The list is what stamps `cache.generated_at`: an error that propagated to
+    # ``refresh_suggestions`` left it unset, and ``api_suggestions`` re-ran generation on EVERY
+    # poll. Two classes carry the no-model signal (the LLM registry's and the bridge's) — catch
+    # both, as ``session.py`` and ``cli.py`` do for the same reason. A first model of the chain
+    # that fails, is paused or answers no list hands the call to the next one.
+    from personalclaw.guardrails.failure import OutputContractError
     from personalclaw.llm.registry import ProviderResolutionError as _LLMResolveErr
     from personalclaw.providers.provider_bridge import ProviderResolutionError as _BridgeResolveErr
 
     try:
-        client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
+        text = await asyncio.wait_for(
+            chores.run_chore(prompt, usage=chores.chore_usage(), validate=_suggestions_problem),
+            timeout=60,
+        )
     except (_BridgeResolveErr, _LLMResolveErr):
         logger.debug("No model resolves for suggestions yet — using fallback")
         return list(_FALLBACK_SUGGESTIONS)
-
-    text = ""
-    record = recorder(client, chore_usage())
-    say = say_background_substitution("Suggestions")
-    try:
-
-        async def _stream() -> str:
-            nonlocal text
-            # A first model of the background chain that fails, is paused or answers no list
-            # hands the call to the next one, said in the log.
-            let_fail_over(client, _suggestions_problem)
-            async for event in client.stream(prompt):
-                if event.kind == EVENT_TEXT_CHUNK:
-                    text += event.text
-                elif event.kind == EVENT_MODEL_SUBSTITUTION:
-                    say(event.text)
-                elif event.kind == EVENT_PERMISSION_REQUEST:
-                    # Suggestions are text; a call this turn asks for is refused, and the row says
-                    # what refused it, as every decision row does.
-                    await client.reject_tool(event.request_id)
-                    sel().log_tool_invocation(
-                        session_key="_bg",
-                        tool_name=getattr(event, "title", "unknown"),
-                        outcome="denied",
-                        source="suggestions",
-                        metadata={
-                            "reason": "suggestions_use_no_tools",
-                            "decided_by": "suggestions_use_no_tools",
-                        },
-                    )
-                elif event.kind == EVENT_SPENT:
-                    record(event)
-                elif event.kind == EVENT_COMPLETE:
-                    record(event)
-                    break
-            return text
-
-        await asyncio.wait_for(_stream(), timeout=60)
     except asyncio.TimeoutError:
         logger.warning("Suggestions generation timed out")
         return list(_FALLBACK_SUGGESTIONS)
-    finally:
-        state.sessions.release(BACKGROUND_KEY)
+    except OutputContractError as exc:
+        logger.warning("Failed to parse suggestions response: %s", exc.raw[:200])
+        return list(_FALLBACK_SUGGESTIONS)
 
     suggestions = _parse_suggestions(text)
     if suggestions:

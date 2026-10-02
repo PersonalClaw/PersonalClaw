@@ -19,7 +19,7 @@ def _tmp_home(monkeypatch, tmp_path):
 
 
 def _consolidator():
-    return HistoryConsolidator(log=MagicMock(), memory=MagicMock(), sessions=None)
+    return HistoryConsolidator(log=MagicMock(), memory=MagicMock())
 
 
 def _memory_with_promote(promoted=3):

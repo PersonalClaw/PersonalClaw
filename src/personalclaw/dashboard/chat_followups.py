@@ -2,14 +2,13 @@
 suggest 2-3 short next messages via ONE cheap cancellable background call.
 
 Mirrors ``suggestions.py`` / ``chat_title.py``: the instruction lives in the
-bundled ``task-followups`` prompt (bindable in Settings → Prompts), streamed
-through the shared background lite session (``BACKGROUND_KEY``) whose provider
-build is already ``ModelCallGuard``-wrapped (breaker + timeout + budgets), with
-permission requests rejected and the output redacted. It NEVER blocks the turn:
-the task is fire-and-forget, stored on ``session._followups_task``, and the next
-``run_chat`` dispatch cancels it. When no model is bound the background session
-factory raises → caught here → no event fires (the degrade contract), so the turn
-completes normally and the FE simply renders no chips.
+bundled ``task-followups`` prompt (bindable in Settings → Prompts), asked as a
+chore of the chat's (``chat_title.chat_chore``): one call of its own on the
+Background chain, behind the spend guard, with no tools, and the output redacted.
+It NEVER blocks the turn: the task is fire-and-forget, stored on
+``session._followups_task``, and the next ``run_chat`` dispatch cancels it. When no
+model is bound the call raises → caught here → no event fires (the degrade
+contract), so the turn completes normally and the FE simply renders no chips.
 """
 
 from __future__ import annotations
@@ -19,14 +18,12 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from personalclaw.dashboard.chat_title import keeps_to_its_own_model
-from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION, EVENT_SPENT
-from personalclaw.llm_helpers import let_fail_over, parse_llm_json_list, say_background_substitution
+from personalclaw.agents.defaults import LITE_AGENT_NAME
+from personalclaw.dashboard.chat_title import chat_chore, keeps_to_its_own_model
+from personalclaw.dashboard.chat_utils import _history_key_for
+from personalclaw.llm_helpers import parse_llm_json_list
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY, chore_usage
-from personalclaw.usage_ledger import recorder
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -167,11 +164,12 @@ def _redact(items: list[str]) -> list[str]:
     return result
 
 
-async def _generate_followups(state: "DashboardState", session: "_ChatSession") -> list[str]:
-    """Run the background call and return parsed+redacted follow-up strings.
+async def _generate_followups(session: "_ChatSession") -> list[str]:
+    """Ask for *session*'s follow-ups and return them parsed and redacted.
 
-    Raises nothing on a bound-model absence path except what get_or_create raises;
-    the caller catches everything (the degrade contract).
+    A first model of the Background chain that fails, is paused or answers no list hands the
+    call to the next one. No model bound, or none answering, raises; the caller catches
+    everything (the degrade contract).
     """
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
@@ -181,45 +179,9 @@ async def _generate_followups(state: "DashboardState", session: "_ChatSession") 
     prompt = render_use_case_prompt("followups", {"exchange": exchange})
     if not prompt:
         return []
-
-    from personalclaw.dashboard.chat_utils import _history_key_for
-
-    # No model bound → get_or_create raises at the factory; propagate so the caller
-    # emits no event (chips simply don't render).
-    client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
-    record = recorder(client, chore_usage(_history_key_for(session.key)))
-    say = say_background_substitution("Follow-ups")
-    text = ""
-    try:
-
-        async def _stream() -> str:
-            nonlocal text
-            # Clear accumulated background history so prior utility prompts don't bleed in.
-            if hasattr(client, "_history"):
-                client._history.clear()
-            # A first model of the background chain that fails, is paused or answers no list
-            # hands the call to the next one, said in the log.
-            let_fail_over(client, _followups_problem)
-            async for event in client.stream(prompt):
-                if event.kind == EVENT_TEXT_CHUNK:
-                    text += event.text
-                elif event.kind == EVENT_MODEL_SUBSTITUTION:
-                    say(event.text)
-                elif event.kind == EVENT_PERMISSION_REQUEST:
-                    await client.reject_tool(event.request_id)
-                elif event.kind == EVENT_SPENT:
-                    record(event)
-                elif event.kind == EVENT_COMPLETE:
-                    record(event)
-                    break
-            return text
-
-        await asyncio.wait_for(_stream(), timeout=_FOLLOWUPS_TIMEOUT_SECS)
-    finally:
-        if hasattr(client, "_history"):
-            client._history.clear()
-        state.sessions.release(BACKGROUND_KEY)
-
+    text = await asyncio.wait_for(
+        chat_chore(session, prompt, validate=_followups_problem), timeout=_FOLLOWUPS_TIMEOUT_SECS
+    )
     return _redact(_parse_followups(text))
 
 
@@ -247,7 +209,7 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
     if getattr(session, "_last_turn_errored", False):
         return
     try:
-        items = await _generate_followups(state, session)
+        items = await _generate_followups(session)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -256,8 +218,8 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
     if not items:
         return
     sel().log_tool_invocation(
-        session_key=BACKGROUND_KEY,
-        agent="personalclaw-lite",
+        session_key=_history_key_for(session.key),
+        agent=LITE_AGENT_NAME,
         source="chat_followups",
         tool_name="chat_followups",
         tool_kind="command",

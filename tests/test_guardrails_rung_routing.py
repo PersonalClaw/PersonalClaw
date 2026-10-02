@@ -357,7 +357,7 @@ def test_an_unattended_profile_NARROWS_autonomous_to_auto_with_undo(_isolated_ho
 def test_a_profile_can_never_WIDEN_a_declared_ceiling(_isolated_home):
     """The direction that would be a hole. An attended profile does not lift a low ceiling."""
     _install_app_action(floor="draft_only", ceiling="one_tap")
-    for session_key in ("", "subagent:x", "cron:y", "_bg"):
+    for session_key in ("", "subagent:x", "cron:y"):
         route = rg.route_provider_action("acme-do-thing", session_key=session_key)
         assert route.rung in (au.RUNG_DRAFT_ONLY, au.RUNG_ONE_TAP), session_key
         assert route.executes is False, session_key

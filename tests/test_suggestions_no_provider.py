@@ -2,10 +2,9 @@
 "can't generate yet" path in ``generate_suggestions`` — not spam ``gateway.log`` with a
 ``ProviderResolutionError`` traceback on every ``/api/suggestions`` poll.
 
-The bug (issue #2866): ``generate_suggestions`` acquired the background session
-(``state.sessions.get_or_create(BACKGROUND_KEY)``) OUTSIDE the try-block that returns the
-fallback list on its other degradation paths (empty context, unresolved prompt, stream
-timeout). On a fresh install with no model bound that acquire raises
+The bug (issue #2866): asking a model for the suggestions RESOLVES one, and the ask sat OUTSIDE
+the try-block that returns the fallback list on its other degradation paths (empty context,
+unresolved prompt, timeout). On a fresh install with no model bound that ask raises
 ``ProviderResolutionError``, which
 
   1. reached ``refresh_suggestions``' broad ``except Exception`` and logged a full ``exc_info``
@@ -41,9 +40,9 @@ def state_with_context(tmp_path, monkeypatch):
 
     ``_build_context`` returns a non-empty ``## User Preferences`` section (preferences that
     differ from the pristine template), so ``generate_suggestions`` gets past the
-    ``len(context) < 50`` guard and reaches ``state.sessions.get_or_create`` — the line under
+    ``len(context) < 50`` guard and asks the model (``chores.run_chore``) — the line under
     test. ``config_dir`` is pinned at ``tmp_path`` so the automations read cannot touch the real
-    ``~/.personalclaw``. ``get_or_create`` is left unset here; each test installs the raising one.
+    ``~/.personalclaw``. Each test installs the ask that raises.
     """
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     memory = SimpleNamespace(
@@ -55,17 +54,13 @@ def state_with_context(tmp_path, monkeypatch):
         read_recent_history=lambda days=2: "",
     )
     with patch("personalclaw.context.ContextBuilder.get_memory_for", return_value=memory):
-        yield SimpleNamespace(
-            conversation_log=None,
-            sessions=SimpleNamespace(get_or_create=None, release=lambda *a, **k: None),
-            _background_tasks=set(),
-        )
+        yield SimpleNamespace(conversation_log=None, _background_tasks=set())
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exc_cls", _ERROR_CLASSES)
 async def test_context_earns_a_turn_but_no_provider_bound(state_with_context, exc_cls):
-    """Sanity: the context here is long enough to reach ``get_or_create`` (not the empty-context
+    """Sanity: the context here is long enough to reach the model call (not the empty-context
     fast path). If this ever stops holding, the tests below would pass vacuously."""
     with patch("personalclaw.suggestions.datetime") as dt:
         dt.now.return_value = __import__("datetime").datetime(2026, 5, 1, 7, 30)
@@ -77,14 +72,16 @@ async def test_context_earns_a_turn_but_no_provider_bound(state_with_context, ex
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exc_cls", _ERROR_CLASSES)
-async def test_no_provider_returns_fallback_instead_of_raising(state_with_context, exc_cls):
+async def test_no_provider_returns_fallback_instead_of_raising(
+    state_with_context, exc_cls, monkeypatch
+):
     """``generate_suggestions`` must swallow the unbound-provider signal and return the fallback,
     exactly like its empty-context / unresolved-prompt / timeout paths."""
 
     async def _raise(*a, **k):
         raise exc_cls("no chat model configured yet")
 
-    state_with_context.sessions.get_or_create = _raise
+    monkeypatch.setattr("personalclaw.chores.run_chore", _raise)
     with patch(
         "personalclaw.prompt_providers.runtime.render_use_case_prompt", return_value="PROMPT"
     ):
@@ -95,7 +92,7 @@ async def test_no_provider_returns_fallback_instead_of_raising(state_with_contex
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exc_cls", _ERROR_CLASSES)
 async def test_refresh_logs_no_traceback_and_advances_generated_at(
-    state_with_context, exc_cls, caplog
+    state_with_context, exc_cls, caplog, monkeypatch
 ):
     """The two symptoms in one place: no WARNING traceback in the log, and ``generated_at`` is
     advanced off zero so the endpoint stops re-generating on every poll."""
@@ -103,7 +100,7 @@ async def test_refresh_logs_no_traceback_and_advances_generated_at(
     async def _raise(*a, **k):
         raise exc_cls("no chat model configured yet")
 
-    state_with_context.sessions.get_or_create = _raise
+    monkeypatch.setattr("personalclaw.chores.run_chore", _raise)
     cache = suggestions.SuggestionsCache()
     assert cache.generated_at == 0.0
 
@@ -130,16 +127,16 @@ async def test_refresh_logs_no_traceback_and_advances_generated_at(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exc_cls", _ERROR_CLASSES)
-async def test_endpoint_does_not_regenerate_on_every_poll(state_with_context, exc_cls):
+async def test_endpoint_does_not_regenerate_on_every_poll(state_with_context, exc_cls, monkeypatch):
     """End to end through ``api_suggestions``: with no provider bound, generation runs at most
-    once across two consecutive polls — not once per poll. Counted via ``get_or_create``."""
+    once across two consecutive polls — not once per poll. Counted at the model call."""
     calls = {"n": 0}
 
     async def _raise(*a, **k):
         calls["n"] += 1
         raise exc_cls("no chat model configured yet")
 
-    state_with_context.sessions.get_or_create = _raise
+    monkeypatch.setattr("personalclaw.chores.run_chore", _raise)
     request = SimpleNamespace(app={"state": state_with_context}, query={})
 
     with patch(

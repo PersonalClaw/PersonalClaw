@@ -357,10 +357,10 @@ Data leaving the running system:
   (`chat_runner._ahead_of_the_request`), and a webhook callback's saved context. A
   spawned agent's task, a heartbeat task, an attached file's extracted text and a compressed
   thread's summary are masked too; the only text sent as written is what the person typed this
-  turn. PersonalClaw's own chores run in the background session (a title, follow-ups,
-  suggestions, memory consolidation), which no person types into, so every prompt it is handed
-  is masked there (`NativeAgentRuntime.stream`), and consolidation's writes put each hidden value
-  back from the fact it read (`memory_formation._as_stored`, `history._kept_lines`). A one-shot
+  turn. PersonalClaw's own chores (a title, follow-ups, suggestions, memory consolidation) are
+  each a call of their own that no person types into, so every chore's prompt is masked before
+  a model reads it (`chores.run_chore`), and consolidation's writes put each hidden value back
+  from the fact it read (`memory_formation._as_stored`, `history._kept_lines`). A one-shot
   model call with no agent behind it (a workflow's infer, judge and visualize steps, a knowledge
   digest) passes the outbound scan at the model-call guard instead (`guardrails.scan_mode`). The
   mask is idempotent (a value that is already a mask is not taken for a credential), so a read

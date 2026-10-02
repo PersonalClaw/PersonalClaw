@@ -566,10 +566,8 @@ class ResolutionBasis:
 
     A runtime is built once and then cached per session (``SessionManager``), and it fixes its
     model when it is built. So without this, rebinding chat in Settings → Models reached a new
-    chat and nothing already open: the persistent background session kept the model chat was
-    bound to when the gateway started, for every title, follow-up, suggestion, history
-    compression and memory consolidation after it, and an open chat that has no model of its
-    own kept answering on the old binding. ``SessionManager`` asks :meth:`holds` when it reuses
+    chat and nothing already open: an open chat that has no model of its own kept answering on
+    the old binding. ``SessionManager`` asks :meth:`holds` when it reuses
     a runtime, and rebuilds one whose basis moved, at its next acquire.
 
     ``chains`` are the Settings → Models chains the resolution read: the runtime's own axis
@@ -579,8 +577,8 @@ class ResolutionBasis:
     Providers (a new Default Model, endpoint or key) re-registers the entry, and a removal
     drops it, so either reads as moved. ``output_cap`` is the Background output limit its models
     were built with (``background.max_output_tokens``), ``None`` when no such limit was applied:
-    a change in Settings → Models → Background reads as moved too, so the background session's
-    next chore is built with the limit as it reads now.
+    a change in Settings → Models → Background reads as moved too, so a Background runtime (a
+    heartbeat task's) is built at its next acquire with the limit as it reads now.
     """
 
     axis: str
@@ -663,7 +661,7 @@ def _build_native_runtime(
     Its inference ModelProvider is resolved through the SAME active-model
     selection (Settings → Models). ``model_axis`` names the chat sub-category
     whose CHAIN governs the inner model (MODEL-USE-CASES-V2): "background" for
-    the lite factory, "loops" for a loop's worker and planner, "orchestration"
+    a heartbeat task, "loops" for a loop's worker and planner, "orchestration"
     for subagent spawns and the other agent turns nobody typed, else the
     session's own use case — so a sub-category binding governs native agents too
     (previously the inner model hardcoded "chat", making e.g. a code_tools binding
@@ -877,13 +875,12 @@ def _build_native_runtime(
     # providers are registry singletons that resolve this turn via contextvars
     # (runtime._invoke binds them).
     #
-    # Except the lite agent, which gets NONE. It runs the background chores (titles, follow-ups,
-    # suggestions, folder icons, history compression, memory consolidation, the prompt optimizer),
-    # each of which answers in text from what its prompt carries, and that prompt quotes chats,
-    # pages and messages nobody vetted. With a tool surface, text planted in a chat could make a
-    # title turn record a decision, write a file or run a command. With none, there is nothing to
-    # call: the model is offered no tools, and a call it makes anyway names a tool that does not
-    # exist.
+    # Except the lite agent, which gets NONE. It runs the prompt optimizer, which answers in text
+    # from what its prompt carries, and that prompt quotes chats nobody vetted. With a tool
+    # surface, text planted in a chat could make a rewrite record a decision, write a file or run a
+    # command. With none, there is nothing to call: the model is offered no tools, and a call it
+    # makes anyway names a tool that does not exist. (The background chores never run in an agent:
+    # each is a call of its own to the model, ``chores.run_chore``.)
     from personalclaw.agents.defaults import LITE_AGENT_NAME
     from personalclaw.tool_providers.registry import tool_surface
 
@@ -1013,7 +1010,7 @@ def _native_session_cwd(cwd: str | None) -> str:
 
     🔴 With no explicit ``cwd`` the platform tool provider fell back to ``Path.cwd()``: the
     GATEWAY PROCESS's own working directory. Every native session created without one — a
-    workflow stage's subagent on a project-less run, a background session — therefore read and
+    workflow stage's subagent on a project-less run, a heartbeat task — therefore read and
     wrote relative to wherever the gateway happened to be started. Measured on a General loop run
     unattended: its worker wrote ``checklist.md`` into the repository checkout the gateway was
     launched from, while the run page said it had looked in the run's own directory. For a gateway
@@ -1342,7 +1339,7 @@ def resolve_provider_for_use_case(
     # which binds it per-turn so artifact_save can stamp the artifact's project_id.
     _project_id = str(kwargs.pop("project_id", "") or "")
     # The chat sub-category whose CHAIN governs this session's INNER model
-    # (MODEL-USE-CASES-V2 T2.x): the _bg factory passes "background", a loop's worker
+    # (MODEL-USE-CASES-V2 T2.x): a heartbeat task passes "background", a loop's worker
     # and planner "loops", subagent spawns and webhook agent turns "orchestration" (a
     # model the caller names rides beside the axis, never instead). Defaults to the
     # outer use_case itself (chat sessions → the chat chain; code_tools sessions →
@@ -1434,8 +1431,8 @@ def resolve_provider_for_use_case(
     # registered entry (else it's a bare id that happens to contain a colon, e.g.
     # "gpt-oss:20b").
     capability = parent_capability(use_case)
-    # Model-call guard: every NON-INTERACTIVE text axis (:data:`METERED_AXES` — backing the
-    # lite background factory, loop workers and planners, and every subagent spawn and agent
+    # Model-call guard: every NON-INTERACTIVE text axis (:data:`METERED_AXES` — backing
+    # heartbeat tasks, loop workers and planners, and every subagent spawn and agent
     # turn nobody typed), and any axis a call automation makes resolves on
     # (:func:`resolve_metered_model`: one-shot calls, the fallback chain walk, knowledge nodes,
     # loop judges and gates, a browse step's image reading) — the census of those is
@@ -1909,8 +1906,9 @@ def can_resolve_use_case(use_case: str) -> bool:
     """Cheaply report whether a ModelProvider for ``use_case`` is resolvable
     *right now*, without building one.
 
-    This is the single source of truth behind both the onboarding ``needs_model``
-    signal and the background-session spawn guard — so the dashboard's "add a
+    This is the single source of truth behind the onboarding ``needs_model``
+    signal and every surface that checks a model is there before it asks (the
+    degraded registry, a workflow's preflight) — so the dashboard's "add a
     model" nudge and what the bridge can actually resolve never disagree (the
     coarse capability-only probe they used before could diverge from real
     resolution; see F1).

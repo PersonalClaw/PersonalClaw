@@ -221,7 +221,7 @@ def test_the_consolidate_command_says_why_it_skips_an_incognito_chat(home, capsy
     _chat(home["log"], INCOGNITO, "incognito")
     consolidator = home["consolidator"]
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(cli_server, "_build_consolidator", lambda: (None, consolidator, home["log"]))
+        mp.setattr(cli_server, "_build_consolidator", lambda: (consolidator, home["log"]))
         asyncio.run(cli_server._consolidate_cmd(argparse.Namespace(all=False, key=INCOGNITO)))
         asyncio.run(cli_server._consolidate_cmd(argparse.Namespace(all=True, key="")))
     out = capsys.readouterr().out

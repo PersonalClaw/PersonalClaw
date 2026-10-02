@@ -261,22 +261,17 @@ _DASHBOARD_WRAPPER = DASHBOARD_SESSION_PREFIX
 
 def is_unattended_session(session_key: str) -> bool:
     """True when ``session_key`` names an unattended run (cron/subagent/channel/inbox/
-    side/loop worker, an ``inbound:`` access surface, a webhook's ``hook:`` turn, a
-    sessionless ``unattended:`` dispatch, or the ``_bg`` background key) — the keys that
-    resolve through HEADLESS by construction.
+    side/loop worker, an ``inbound:`` access surface, a webhook's ``hook:`` turn, or a
+    sessionless ``unattended:`` dispatch) — the keys that resolve through HEADLESS by
+    construction.
 
     Accepts either the bare session key or the dashboard-wrapped provider form of an
     inbound key (see ``_DASHBOARD_WRAPPER``), so the posture does not depend on which
     layer is asking.
     """
-    from personalclaw.session import _STATELESS_PREFIXES, BACKGROUND_KEY
+    from personalclaw.session import _STATELESS_PREFIXES
 
     key = session_key or ""
-    # ``_bg`` is the background chores' shared session key (see session.py) — genuinely
-    # unattended, so it resolves through HEADLESS even though it matches no prefix. It's an
-    # exact key, not a prefix, hence the equality check.
-    if key == BACKGROUND_KEY:
-        return True
     if key.startswith(_DASHBOARD_WRAPPER + INBOUND_PREFIX):
         key = key[len(_DASHBOARD_WRAPPER) :]
     return any(key.startswith(p) for p in (*_STATELESS_PREFIXES, *_EXTRA_UNATTENDED_PREFIXES))

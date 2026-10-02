@@ -41,7 +41,7 @@ from personalclaw.agents.native.failover import (
     TurnFallback,
     resending_cannot_help,
 )
-from personalclaw.agents.native.local_turn import check_held_answer, take_local_turn
+from personalclaw.agents.native.local_turn import take_local_turn
 from personalclaw.agents.native.owed_reply import OwedReply, answered_row, capped_at
 from personalclaw.agents.native.tool_names import name_census
 from personalclaw.agents.native.tools import (
@@ -872,9 +872,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # a second copy of a steer the user can already see in the queue strip.
         self._steer_pending.clear()
         self._turn_images, self._staged_images = self._staged_images, []
-        from personalclaw.session import chore_prompt  # a chore's prompt is stored text: masked
-
-        message = chore_prompt(self._session_key, message)
         self._messages.append({"role": "user", "content": message})
         self._turn_message = self._messages[-1]
 
@@ -934,8 +931,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         if self._turn_home is not None:
             self._model, self._definition.model = self._turn_home
         home = self._turn_home = (self._model, self._definition.model)
-        # A chore's check (`expect_answer`): each inference's text is held until it is complete.
-        expect = self._fallback.begin(self.failover)
+        self._fallback.begin(self.failover)
         fallbacks = 0  # how many models this turn fell back to
 
         # end_turn() in a finally, not at each return: a stop arriving in the window
@@ -1020,7 +1016,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 # guard's own isolation contract.
                 while True:
                     visible_streamed = False
-                    held: list[AgentEvent] | None = [] if expect is not None else None
                     attempt_started = now_ms()
                     try:
                         # Its place in line on a local model; only a first inference moves on.
@@ -1050,11 +1045,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                                 if ev.kind in (EVENT_TEXT_CHUNK, EVENT_THINKING_CHUNK):
                                     if ev.kind == EVENT_TEXT_CHUNK:
                                         assistant_text += ev.text
-                                    if held is not None:
-                                        held.append(ev)
-                                    else:
-                                        visible_streamed = True
-                                        yield ev
+                                    visible_streamed = True
+                                    yield ev
                                 elif ev.kind == EVENT_TOOL_CALL:
                                     tool_calls.append(ev)
                                 elif ev.kind == EVENT_COMPLETE:
@@ -1062,13 +1054,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         finally:
                             if local_turn is not None:
                                 local_turn.release()
-                        if (
-                            expect is not None
-                            and self._fallback.queue
-                            and not tool_calls
-                            and not self._cancelled
-                        ):
-                            check_held_answer(expect, assistant_text, ref=self.served_model_ref)
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
@@ -1141,8 +1126,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                             # compacting one above, and only when it reclaimed something.
                             and not overflow
                             # Nor a failure the same request fails again (a model that did not
-                            # start answering in time, a missed check, a busy local model, a cut
-                            # call): the next model of the chain may still answer (below).
+                            # start answering in time, a busy local model, a cut call): the next
+                            # model of the chain may still answer (below).
                             and not resending_cannot_help(
                                 exc, can_move_on=bool(self._fallback.queue)
                             )
@@ -1230,9 +1215,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                         )
                     break
 
-                # A held answer that passed its check, or had no next model, reaches the caller.
-                for ev in held or ():
-                    yield ev
                 owed.answered(assistant_text)
 
                 if usage is not None:
@@ -1373,9 +1355,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         finally:
             # A fallback answered THIS turn only: the next one starts on the model it was chosen
             # for. Only while this turn is still the current one: a caller that stops reading at
-            # its last event (a chore, at EVENT_COMPLETE) leaves it to be closed when collected,
-            # after the next turn may have begun (measured: a title's cleanup undid its chat's
-            # follow-ups' fallback).
+            # its last event (``stream_and_collect``, at EVENT_COMPLETE) leaves it to be closed when
+            # collected, after the next turn may have begun (measured: one turn's late cleanup
+            # undid the next turn's fallback).
             if self._turn_seq == turn:
                 self._model, self._definition.model = home
                 self._turn_home = None
@@ -2477,13 +2459,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         reply from another model presented as the chosen one's.
         """
         self._fallback.announced = True
-
-    def expect_answer(self, check: Callable[[str], str]) -> None:
-        """Hold the next turn's answer to *check* (``""`` for a usable answer, else what is wrong),
-        for a caller that reads the whole answer (a chore): an empty or missed answer is its model
-        failing, and with :meth:`announce_failover` the next model answers in its place. With none
-        left the answer reaches the caller as it is. Lasts one turn."""
-        self._fallback.expect = check
 
     async def _fail_over(self, exc: BaseException, *, tools: list | None) -> bool:
         """Move this turn to the next model of its chain that can take it

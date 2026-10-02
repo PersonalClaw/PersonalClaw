@@ -786,8 +786,9 @@ switch or its cadence. Each task still runs as the gateway's heartbeat turn
 (`heartbeat.set_task_runner`), and `HEARTBEAT_KEEP` keeps an unfinished task
 for the next pass. A task runs in a session of its own
 (`cron:system:heartbeat-tasks:<run>`), as the owner's agent with its tools, and
-that session ends with the task; it never shares the background chores'
-session, whose lite agent has no tools. A pass over an empty queue reports `skip`, which the run
+that session ends with the task. The background chores keep no session at all:
+each is a call of its own to a model offered no tools (`chores.run_chore`). A
+pass over an empty queue reports `skip`, which the run
 history records as the inert `skipped_noop` (`schedule_history
 .status_for_result`, the one status rule the fire path and the Run button
 share), so it folds out of the default history. The heartbeat loop itself no

@@ -43,7 +43,6 @@ def classify_origin(session_key: str) -> str:
     * ``cron:system:heartbeat-tasks:<run>``    → ``heartbeat``
     * ``cron:<job>``                           → ``cron``
     * ``subagent:<id>``                        → ``subagent``
-    * ``_bg`` (the background chores)          → ``background``
     * ``dashboard:<session>`` or a bare webui  → ``webui``
     * anything else                            → ``other`` (treated non-interactive)
 
@@ -53,8 +52,6 @@ def classify_origin(session_key: str) -> str:
     from personalclaw.action_providers.heartbeat_tasks_provider import TASK_SESSION_PREFIX
 
     key = session_key or ""
-    if key == "_bg":
-        return "background"
     if key.startswith(TASK_SESSION_PREFIX):
         return "heartbeat"
     if key.startswith("loop-"):

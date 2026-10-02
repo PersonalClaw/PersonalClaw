@@ -304,8 +304,8 @@ async def test_a_server_whose_question_grant_was_taken_back_cannot_ask_you():
 async def test_a_model_call_guard_reads_its_ceiling_and_scan_mode_at_each_call(
     tmp_path, monkeypatch
 ):
-    """A guard lives as long as the runtime holding it (the background session, a loop worker),
-    and it held the spend ceiling and the scan mode it was built with."""
+    """A guard lives as long as the runtime holding it (a heartbeat task's, a loop worker's), and
+    it held the spend ceiling and the scan mode it was built with."""
     from test_guardrails_budgets import FakeProvider, _drain
 
     from personalclaw.guardrails.budgets import Budget, SpendMeter

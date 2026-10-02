@@ -667,8 +667,9 @@ views show, and it has these edges:
   is a provider that names no endpoint, such as the bundled model running inside the gateway.
   Masking these would put a marker
   into answers that are written back, such as a merge you accept. PersonalClaw's own chores (a
-  title, follow-ups, memory consolidation) are masked, because they run in the background
-  session.
+  title, follow-ups, memory consolidation) are one-shot calls too, and they are masked as well as
+  scanned: each prompt is composed from stored text that no person typed this turn
+  (`chores.run_chore`).
 - **Pixels are not masked.** An image you attach, and a screen frame for computer use, go to a
   vision model as they are, and a key visible in them goes with them.
 - **What you type this turn goes as typed.** A key pasted into a message reaches the model; it is
