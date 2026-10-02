@@ -29,8 +29,10 @@ function baseOf(agent: SavedAgent): Revisioned<AgentDraft> {
 
 /** Native agent inspector: view ↔ in-panel edit (full builder), set-as-default,
  *  delete. */
-export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetDefault, editing: editingProp, onEditingChange }: {
+export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetDefault, editing: editingProp, onEditingChange, providerLabel }: {
   agent: SavedAgent; isDefault: boolean; onSaved: () => void; onDeleted: () => void; onSetDefault: () => void; editing: boolean; onEditingChange: (v: boolean) => void
+  /** The name of the agent CLI the profile runs on, as the gateway sends it (`RuntimeGroup.label`). */
+  providerLabel?: string
 }) {
   const reserved = isReservedAgent(agent)
   // Edit mode is owned by the URL (?edit=1), threaded in fully controlled; a
@@ -159,7 +161,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
             never set a provider — so this cannot read WORSE than before for anybody. It is also not
             strictly true: empty means *inherit the global* `agent.provider`, which the frontend has no
             way to resolve here. Naming that honestly needs the global on the wire; out of scope. */}
-        <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={accentChip}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : providerMeta(agent.provider).label}</span>
+        <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={accentChip}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : providerMeta(agent.provider, providerLabel).label}</span>
         {!reserved && agent.model && (
           <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center gap-1 font-mono text-on-surface-var text-[0.75rem]">
             {agent.model}
@@ -492,9 +494,10 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
   )
 }
 
-/** Read-only inspector for an ACP-runtime-discovered agent. */
-export function DiscoveredAgentDetail({ agent, providerId }: { agent: DiscoveredAgent; providerId: string }) {
-  const pm = providerMeta(providerId)
+/** Read-only inspector for an ACP-runtime-discovered agent. *label* is the runtime's name as the
+ *  gateway sends it (`RuntimeGroup.label`). */
+export function DiscoveredAgentDetail({ agent, providerId, label }: { agent: DiscoveredAgent; providerId: string; label?: string }) {
+  const pm = providerMeta(providerId, label)
   return (
     <div className="flex flex-col gap-l">
       <div className="inline-flex items-center gap-1.5 self-start rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-on-surface-low) 14%, transparent)', color: 'var(--color-on-surface-var)' }}>

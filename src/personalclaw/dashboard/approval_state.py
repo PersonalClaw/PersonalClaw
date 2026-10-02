@@ -443,6 +443,7 @@ class DashboardApprovalState:
         blast_radius: dict[str, bool] | None,
         grant_agent: str,
         reach: str = "",
+        deny_effect: str = "",
     ) -> None:
         """Publish the approval a chat's runner is about to wait on, under
         :func:`chat_approval_id`.
@@ -455,6 +456,8 @@ class DashboardApprovalState:
         transcript row persists), and ``is_read_only`` whether the call is established as a
         read and ``blast_radius`` what it can touch, both read off the RAW input — the rule
         `request_approval` states, kept by the one caller that holds the raw object.
+        ``deny_effect`` is what a Deny does when it does more than decline the call
+        (``turn_endings.deny_effect``), "" when it declines it.
         """
         entry = self._approval_entry(
             chat_approval_id(session.key, request_id),
@@ -472,6 +475,7 @@ class DashboardApprovalState:
             risk=risk,
             grant_agent=grant_agent,
             reach=reach,
+            deny_effect=deny_effect,
             asked_by=approval_answer.asker_of_chat(
                 f"{DASHBOARD_SESSION_PREFIX}{session.key}", created_by_app=session.created_by_app
             ).label,
@@ -496,6 +500,7 @@ class DashboardApprovalState:
         grant_agent: str = "",
         trigger: str = "",
         reach: str = "",
+        deny_effect: str = "",
     ) -> dict[str, Any]:
         """The ONE shape a pending approval has, whatever raised it.
 
@@ -514,7 +519,9 @@ class DashboardApprovalState:
         allowed hosts (``run_bounds.ask_note``). ``asked_by`` is the
         principal that raised it, which may never answer it (``approval_answer``, rule 2).
         ``source_label`` is where it came from in words
-        (:func:`~personalclaw.approval_source.approval_source_label`).
+        (:func:`~personalclaw.approval_source.approval_source_label`). ``deny_effect`` is what a
+        Deny does when it does more than decline the call (an agent CLI that can refuse it only
+        by ending its turn), said on every card before it is pressed; "" when it declines it.
         """
         from personalclaw.approval_source import approval_source_label, live_chat_name
         from personalclaw.triggers.store import trigger_name
@@ -538,6 +545,7 @@ class DashboardApprovalState:
             "blast_radius": blast_radius,
             "grant_agent": grant_agent,
             "reach": redact_field(reach),
+            "deny_effect": deny_effect,
             "trigger": trigger,
             "trigger_name": named,
             # Where it came from, in the words every surface shows it by: the dashboard's cards,

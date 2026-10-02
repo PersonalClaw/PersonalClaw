@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import auto_denials, run_bounds, security
+from personalclaw.dashboard import turn_endings
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.task_modes import tool_input_to_str
@@ -70,7 +71,14 @@ async def refuse_unattended(
         tool_kind=event.tool_kind,
         outcome="denied",
         request_id=event.request_id,
-        metadata={"reason": reason, **({"risk": risk} if risk else {}), "decided_by": decided_by},
+        metadata={
+            # The answers the agent offered for the call (`turn_endings.offered`), as on every
+            # other decision row of the approval gate.
+            **turn_endings.offered(event.options),
+            "reason": reason,
+            **({"risk": risk} if risk else {}),
+            "decided_by": decided_by,
+        },
     )
     shown = ""
     if event.tool_input:

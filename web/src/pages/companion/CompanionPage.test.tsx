@@ -133,6 +133,17 @@ describe('the companion approvals queue', () => {
     expect(resolveApproval).toHaveBeenCalledWith('ap-1', 'reject')
   })
 
+  it('says before the Deny that it ends the agent\u2019s turn, when that is what it does', async () => {
+    // An agent CLI that can refuse a call only by ending its turn: the gateway says so on the
+    // approval (`deny_effect`), and the phone card says it beside the verbs, as the chat card does.
+    const effect = 'Demo CLI offers no way to skip only this step: Deny ends its turn, and PersonalClaw then asks it to carry on without it.'
+    approvals.mockResolvedValue([{ ...AP, deny_effect: effect }])
+    render(<CompanionPage {...route} />)
+    const card = await screen.findByRole('group', { name: 'Permission needed to run Bash' })
+    expect(card.textContent).toContain(effect)
+    expect(screen.getByRole('button', { name: `Deny Bash. ${effect}` })).toBeTruthy()
+  })
+
   it('puts a row BACK and announces when the resolve call fails', async () => {
     // A dropped permission prompt is worse than a visible failure: the user would believe
     // they answered it while the run stays blocked until it times out to a denial.

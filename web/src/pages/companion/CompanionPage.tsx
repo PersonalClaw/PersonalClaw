@@ -172,7 +172,8 @@ export function CompanionPage({ navigate, query }: RouteProps) {
                     // The accessible name carries the tool, because a queue paints one card
                     // per approval and four bare "Allow"s announce identically.
                     { key: 'approve', icon: Check, label: 'Allow', tone: 'primary', name: `Allow ${ap.tool}`, busy: busy.has(ap.id), onClick: () => act(ap, 'approve') },
-                    { key: 'reject', icon: Ban, label: 'Deny', tone: 'danger', name: `Deny ${ap.tool}`, busy: busy.has(ap.id), onClick: () => act(ap, 'reject') },
+                    // A Deny that ends the agent's turn says so here too, as the card's line does.
+                    { key: 'reject', icon: Ban, label: 'Deny', tone: 'danger', name: `Deny ${ap.tool}${ap.deny_effect ? `. ${ap.deny_effect}` : ''}`, busy: busy.has(ap.id), onClick: () => act(ap, 'reject') },
                   ]}
                 />
                 </div>
@@ -370,16 +371,22 @@ function ApprovalMeta({ ap }: { ap: PendingApproval }) {
   // means "nothing could be established" and must not render as a reassurance.
   const facets = establishedFacets(blastRadiusOf(ap.blast_radius))
   if (facets.length) rows.push(['Can touch', facets.map((f) => f.label).join(' · ')])
-  if (!rows.length) return null
+  if (!rows.length && !ap.deny_effect) return null
   return (
-    <dl className="mt-s flex flex-col gap-xs">
-      {rows.map(([k, v]) => (
-        <div key={k} className="flex gap-s text-[0.75rem]">
-          <dt className="shrink-0 text-on-surface-low">{k}</dt>
-          <dd className="min-w-0 break-all text-on-surface-var">{v}</dd>
-        </div>
-      ))}
-    </dl>
+    <>
+      {rows.length > 0 && (
+        <dl className="mt-s flex flex-col gap-xs">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex gap-s text-[0.75rem]">
+              <dt className="shrink-0 text-on-surface-low">{k}</dt>
+              <dd className="min-w-0 break-all text-on-surface-var">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {/* What a Deny does when it does more than decline the call (`turn_endings.deny_effect`). */}
+      {ap.deny_effect && <p data-type="body-s" className="mt-s text-on-surface-low">{ap.deny_effect}</p>}
+    </>
   )
 }
 

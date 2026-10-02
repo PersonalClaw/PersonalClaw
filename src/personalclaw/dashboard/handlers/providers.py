@@ -260,6 +260,8 @@ def _runtime_row(entry: Any, readiness: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": entry.name,
         "provider_id": entry.name,
+        # What every surface calls it (`runtime_tests.runtime_label`): its app's name for it.
+        "label": runtime_tests.runtime_label(entry),
         "type": entry.type,
         "extension": dict(entry.options or {}).get("extension"),
         **readiness,
@@ -279,8 +281,9 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
     the UI can show a readiness chip, the Test, and the Sign-in terminal when a
     runtime's last Test reported ``needs_login``.
 
-    Returns ``{agent_providers: [{name, provider_id, type, extension, ready,
-    state, detail, login_command, tested_at, adapter_install}]}`` where
+    Returns ``{agent_providers: [{name, provider_id, label, type, extension, ready,
+    state, detail, login_command, tested_at, adapter_install}]}`` where ``label`` is the
+    runtime's name as every surface says it (its app's name for it in the Store), and
     ``adapter_install`` is ``{error, at}`` when the runtime's ACP adapter is not installed and
     enabling its app again installs it (``error``/``at`` say why the last install failed, or are
     null when none is on record; nothing tries until the app is enabled again), and
@@ -302,6 +305,7 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
         {
             "name": "native",
             "provider_id": "native",
+            "label": "PersonalClaw",
             "type": "native",
             "extension": "native-agents",
             "ready": True,

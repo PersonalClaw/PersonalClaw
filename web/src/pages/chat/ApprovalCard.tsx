@@ -274,6 +274,9 @@ export function ApprovalCard({
       meta={<>
         <BlastRadiusChips radius={seg.blastRadius} />
         {seg.reach && <p data-type="caption" className="mt-xs text-on-surface-var">{seg.reach}</p>}
+        {/* What a Deny does when it is more than declining this call — an agent CLI that can
+            refuse it only by ending its turn — read before either verb, on every surface. */}
+        {seg.denyEffect && <p data-type="caption" className="mt-xs text-on-surface-low">{seg.denyEffect}</p>}
       </>}
       scope={
         answers === 'once' ? undefined : <div className="mt-2 flex flex-col gap-1">
@@ -322,8 +325,10 @@ export function ApprovalCard({
         {
           key: 'rejected', icon: Ban, label: 'Deny', tone: 'danger',
           // Deny is single-shot whatever the scope says: no backend action persists a
-          // refusal, so the name states that rather than letting the picker imply it.
-          name: answers === 'once' ? `Deny ${named}` : `Deny ${named} — nothing is remembered`,
+          // refusal, so the name states that rather than letting the picker imply it. And when
+          // a Deny ends the agent's turn, the name says so too, as the visible line does.
+          name: (answers === 'once' ? `Deny ${named}` : `Deny ${named} — nothing is remembered`)
+            + (seg.denyEffect ? `. ${seg.denyEffect}` : ''),
           busy,
           onClick: () => onAct(seg.id, 'rejected'),
         },

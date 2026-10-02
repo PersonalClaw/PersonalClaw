@@ -25,7 +25,7 @@ from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
-from personalclaw.dashboard import chat_refusals, running_turn, turn_endings
+from personalclaw.dashboard import chat_refusals, running_turn, turn_deadline, turn_endings
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
@@ -118,6 +118,7 @@ from personalclaw.llm.base import (
 )
 from personalclaw.llm.events import (
     COMPACTION_AUTOMATIC,
+    EVENT_CARRIED_ON,
     EVENT_MODEL_SUBSTITUTION,
     TOOL_META_APPROVAL_WAIVED,
     TOOL_META_AUTO_DENIED,
@@ -229,81 +230,6 @@ def _skills_sent(decisions: list, headroom: object) -> list[dict]:
             entry["loaded_tokens"] = after
         sent.append(entry)
     return sent
-
-
-#: A completed turn that wrote nothing and ran nothing: resent once, silently, since nothing ran.
-UNANSWERED_BLANK = "blank"
-#: A completed turn that ran steps and wrote nothing. Never resent — that would run every step
-#: again — so the turn ends in the error that says so (`no_answer_notice`), which the chat offers
-#: Retry on, as on any notice a turn ends on.
-UNANSWERED_AFTER_STEPS = "after_steps"
-#: Wrote nothing, and its stop says why: its agent refused to go on, or its model ran out of room.
-UNANSWERED_SAYS_WHY = "says_why"
-
-
-def unanswered_turn(
-    *,
-    wrote_text: bool,
-    stop_reason: str,
-    saw_compaction: bool,
-    needs_session_reset: bool,
-    is_slash: bool,
-    tool_call_count: int,
-    is_loop: bool,
-) -> str:
-    """How a completed turn that wrote nothing at all is handled, or "" when it needs nothing.
-
-    ``wrote_text`` is whether any of the turn's text was more than whitespace. Writing nothing is
-    not a missing answer when the turn was a user cancel, a compaction / clear / agent-switch
-    turn (each emits its own status line), a slash command, or a goal loop worker turn (loops own
-    a dedicated deliverable-forcing re-prompt loop, so the chat's handling stands aside).
-    Otherwise it is :data:`UNANSWERED_SAYS_WHY` when it refused to go on or ran out of room,
-    :data:`UNANSWERED_BLANK` when the turn ran no tool either, and
-    :data:`UNANSWERED_AFTER_STEPS` when it did. The second used to count as finished ("the agent
-    did real work, just no closing prose"), so a turn of fifteen commands and no answer ended as
-    "Response complete." with nothing on screen, in the transcript or in the log.
-    """
-    if wrote_text:
-        return ""
-    if (
-        is_cancelled_stop(stop_reason)
-        or saw_compaction
-        or needs_session_reset
-        or is_slash
-        or is_loop
-    ):
-        return ""
-    if is_refusal_stop(stop_reason) or is_length_stop(stop_reason):
-        return UNANSWERED_SAYS_WHY
-    return UNANSWERED_AFTER_STEPS if tool_call_count > 0 else UNANSWERED_BLANK
-
-
-def no_answer_notice(steps: int, *, asked_by_person: bool) -> str:
-    """What a turn that wrote nothing says where its answer should have been.
-
-    Product copy, and the same line reaches a linked channel, the OpenAI-compatible endpoint and
-    ``personalclaw run``, none of which has a Retry button, so it says how to retry in words.
-    A turn an automation, a subagent's report or an auto-nudge started has no message of the
-    person's to send again; the chat's Retry runs it again.
-    """
-    ran = "" if steps <= 0 else f" ran {steps} step{'' if steps == 1 else 's'} but"
-    retry = "Send your message again to retry." if asked_by_person else "Retry it from the chat."
-    return f"The agent{ran} did not write an answer. {retry}"
-
-
-def _say_the_turn_has_no_answer(state: DashboardState, session: _ChatSession, note: str) -> None:
-    """End the turn in the error that says why it has no answer (*note*).
-
-    An errored turn, so ``chat_done`` says the turn ended in an error rather than "Response
-    complete.", the chat offers Retry on the notice, and a linked channel hears this sentence
-    (`say_how_an_unanswered_turn_ended`).
-    """
-    session.append("error", note, "msg msg-err")
-    state.broadcast_ws(
-        "chat_message",
-        {"session": session.key, "role": "error", "content": note},
-    )
-    session._last_turn_errored = True
 
 
 #: How a chat turn ended: the ``outcome`` of its final ``chat_done`` and session detail's
@@ -2327,7 +2253,8 @@ async def run_chat(
     _in_flight_text = message
     # Whether a person's own message started this turn, rather than the row an automation, a
     # subagent's report or an auto-nudge dispatched it with: a turn with no answer says how to
-    # retry it (`no_answer_notice`). A turn with no row of its own was asked for directly.
+    # retry it (`turn_endings.no_answer_notice`). A turn with no row of its own was asked for
+    # directly.
     _started_at = in_flight_index(session, _in_flight_text, nested=_prompt_depth > 0)
     # That row itself: what its sender typed is read off it once the turn is done (`own_words`).
     _turn_row = session.messages[_started_at] if _started_at is not None else None
@@ -2478,7 +2405,7 @@ async def run_chat(
     assistant_text = ""
     # Whether any text this turn streamed was more than whitespace. `assistant_text` holds only
     # what followed the last tool call, so it cannot tell a turn that answered and then made one
-    # closing call from a turn that never wrote a word (`unanswered_turn`).
+    # closing call from a turn that never wrote a word (`turn_endings.unanswered_turn`).
     _turn_wrote_text = False
     last_heartbeat = time.time()
     in_tool_group = False
@@ -2497,6 +2424,10 @@ async def run_chat(
     # do the two things we can: notice, and never let the card's ABSENCE read as
     # "nothing dangerous happened".
     _gated_tool_calls: set[str] = set()  # tool_call_ids that reached the host gate
+    # The calls the turn made and the ones it refused: a call made and not refused may have run,
+    # so a turn that loses its connection after one is not sent again on its own.
+    _calls_made: set[str] = set()
+    _calls_refused: set[str] = set()
     # tool_call_id -> (title, declared kind, input) for calls not yet gated
     _ungated_candidates: dict[str, tuple[str, str, str, str]] = {}
     # Loop-breaker bookkeeping for ACP turns (§2.3 gap 5). The native runtime counts
@@ -2734,8 +2665,13 @@ async def run_chat(
     async def _refuse_call(event: Any, ended_as: str = "rejected", **screen: str) -> None:
         """Refuse *event*'s call without running it (``turn_endings.refuse``, with a *screen*'s
         ``why`` and ``kind``), and end its progress line on the channel with how (*ended_as*)."""
+        _calls_refused.add(str(event.tool_call_id or ""))
         await turn_endings.refuse(client, event.request_id, ended_as, **screen)
         await _end_mirror_line(event.tool_call_id or "", ended_as)
+
+    def _steps_made() -> int:
+        """How many of the turn's calls may have run: made, and not refused."""
+        return len(_calls_made - _calls_refused)
 
     # Read by the finally's done-branch (maybe_offer_check_work), which runs on EVERY
     # turn exit — including a turn that raises before the telemetry block inside the try
@@ -2754,6 +2690,8 @@ async def run_chat(
     _turn_cancelled = _answered = False
     # Who serves the turn, and what it says if its agent ends it after her Deny (`turn_endings`).
     _turn_agent = _deny_note = ""
+    # ...and whether she denied a call since the turn was last carried on (`EVENT_CARRIED_ON`).
+    _you_denied = False
     # The app that started this conversation (`started_by_app`), "" for one of yours. Read again by
     # the approval gate below, which must not let YOLO into an app's conversation.
     _app_chat = ""
@@ -3825,6 +3763,7 @@ async def run_chat(
                 _raw = event.title or ""
                 if _raw.startswith("Running: "):
                     _raw = _raw[9:]
+                _calls_made.add(str(event.tool_call_id or f"call-{len(_calls_made)}"))
                 if event.tool_call_id:
                     _pending_tools[event.tool_call_id] = _raw
                     # How the call was made, for the note its result may settle (a call the
@@ -4186,6 +4125,8 @@ async def run_chat(
                 if event.tool_call_id:
                     _gated_tool_calls.add(event.tool_call_id)
                     _ungated_candidates.pop(event.tool_call_id, None)
+                # The answers the agent offered, on every decision row below (`offered`).
+                _offered = turn_endings.offered(event.options)
                 # Permission breaks tool grouping
                 in_tool_group = False
                 # Flush accumulated text as a finalized segment before the
@@ -4229,7 +4170,11 @@ async def run_chat(
                         tool_kind=event.tool_kind,
                         outcome="denied",
                         request_id=event.request_id,
-                        metadata={"reason": f"task_mode:{_task_mode}", "decided_by": "task_mode"},
+                        metadata={
+                            "reason": f"task_mode:{_task_mode}",
+                            "decided_by": "task_mode",
+                            **_offered,
+                        },
                     )
                     continue
                 _pre_tool_hooks_fired = False
@@ -4270,6 +4215,7 @@ async def run_chat(
                                 request_id=event.request_id,
                                 error="denylist_command",
                                 metadata={
+                                    **_offered,
                                     "reason": _cmd_reason,
                                     "decided_by": _control.get("control", "deny_list"),
                                     **_control,
@@ -4305,6 +4251,7 @@ async def run_chat(
                             request_id=event.request_id,
                             error="hook_deny",
                             metadata={
+                                **_offered,
                                 "decided_by": _control.get("control", "hook_deny"),
                                 **_control,
                             },
@@ -4332,7 +4279,7 @@ async def run_chat(
                                 outcome="denied",
                                 request_id=event.request_id,
                                 error=f"validation_failed: {e}",
-                                metadata={"decided_by": "validation"},
+                                metadata={"decided_by": "validation", **_offered},
                             )
                         else:
                             await client.approve_tool(event.request_id)
@@ -4354,6 +4301,7 @@ async def run_chat(
                                 outcome="auto_approved",
                                 request_id=event.request_id,
                                 metadata={
+                                    **_offered,
                                     "reason": approval_grants.HOOK_PATTERN,
                                     "decided_by": approval_grants.HOOK_PATTERN,
                                 },
@@ -4380,7 +4328,7 @@ async def run_chat(
                             outcome="denied",
                             request_id=event.request_id,
                             error=f"validation_failed: {e}",
-                            metadata={"decided_by": "validation"},
+                            metadata={"decided_by": "validation", **_offered},
                         )
                         continue
                     try:
@@ -4405,7 +4353,7 @@ async def run_chat(
                             outcome="hook_error",
                             request_id=event.request_id,
                             error=str(hook_exc),
-                            metadata={"decided_by": "hook"},
+                            metadata={"decided_by": "hook", **_offered},
                         )
                         continue
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
@@ -4422,7 +4370,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="hook_blocked",
                             request_id=event.request_id,
-                            metadata={"decided_by": "hook"},
+                            metadata={"decided_by": "hook", **_offered},
                         )
                         continue
                     _pre_tool_hooks_fired = True
@@ -4501,6 +4449,7 @@ async def run_chat(
                         outcome="auto_approved",
                         request_id=event.request_id,
                         metadata={
+                            **_offered,
                             "reason": _unasked_by,
                             "risk": effective_risk,
                             "decided_by": _unasked_by,
@@ -4535,7 +4484,7 @@ async def run_chat(
                             outcome="denied",
                             request_id=event.request_id,
                             error=f"validation_failed: {e}",
-                            metadata={"decided_by": "validation"},
+                            metadata={"decided_by": "validation", **_offered},
                         )
                         continue
                     if not _pre_tool_hooks_fired:
@@ -4563,7 +4512,7 @@ async def run_chat(
                                 outcome="hook_error",
                                 request_id=event.request_id,
                                 error=str(hook_exc),
-                                metadata={"decided_by": "hook"},
+                                metadata={"decided_by": "hook", **_offered},
                             )
                             continue
                         if any(r.startswith("BLOCKED:") for r in pre_hook_results):
@@ -4578,7 +4527,7 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="hook_blocked",
                                 request_id=event.request_id,
-                                metadata={"decided_by": "hook"},
+                                metadata={"decided_by": "hook", **_offered},
                             )
                             continue
                     await client.approve_tool(event.request_id)
@@ -4596,6 +4545,7 @@ async def run_chat(
                         # YOLO without a human prompt — the highest-value audit signal
                         # under the "risk is an indicator, floor covers everything" model.
                         metadata={
+                            **_offered,
                             "reason": auto_approval_reason(yolo_active),
                             "risk": effective_risk,
                             "decided_by": auto_approval_reason(yolo_active),
@@ -4654,6 +4604,7 @@ async def run_chat(
                         ),
                         request_id=event.request_id,
                         metadata={
+                            **_offered,
                             "reason": "batch_rejection",
                             "decided_by": (
                                 approval_grants.NOBODY
@@ -4740,6 +4691,10 @@ async def run_chat(
                     )
                 except Exception:  # noqa: BLE001 — an unreadable config means "cannot promise"
                     perm_meta["grant_agent"] = ""
+                # What a Deny does when it does more than decline the call, said before it.
+                _deny_effect = turn_endings.deny_effect(client, event.request_id, _turn_agent)
+                if _deny_effect:
+                    perm_meta["deny_effect"] = _deny_effect
                 session.append(
                     "permission",
                     event.title,
@@ -4795,6 +4750,7 @@ async def run_chat(
                         # it is the one that was promising blind (#541).
                         grant_agent=perm_meta.get("grant_agent", ""),
                         reach=_reach_note,
+                        deny_effect=_deny_effect,
                     )
                     # Push via global SSE AFTER registering the future, so the
                     # session dict reflects pending_approval=true and Board cards
@@ -4836,7 +4792,11 @@ async def run_chat(
                             outcome="denied",
                             request_id=event.request_id,
                             error=f"validation_failed: {e}",
-                            metadata={"reason": "interactive", "decided_by": "validation"},
+                            metadata={
+                                "reason": "interactive",
+                                "decided_by": "validation",
+                                **_offered,
+                            },
                         )
                         break
                     try:
@@ -4861,7 +4821,7 @@ async def run_chat(
                             outcome="hook_error",
                             request_id=event.request_id,
                             error=str(hook_exc),
-                            metadata={"reason": "interactive", "decided_by": "hook"},
+                            metadata={"reason": "interactive", "decided_by": "hook", **_offered},
                         )
                         break
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
@@ -4878,7 +4838,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="hook_blocked",
                             request_id=event.request_id,
-                            metadata={"reason": "interactive", "decided_by": "hook"},
+                            metadata={"reason": "interactive", "decided_by": "hook", **_offered},
                         )
                     else:
                         await client.approve_tool(event.request_id)
@@ -4910,6 +4870,7 @@ async def run_chat(
                             outcome="approved",
                             request_id=event.request_id,
                             metadata={
+                                **_offered,
                                 "reason": "interactive",
                                 "risk": effective_risk,
                                 "decided_by": approval_grants.YOU,
@@ -4940,6 +4901,7 @@ async def run_chat(
                         _deny_note = turn_endings.stopped_after_deny_notice(
                             _turn_agent, _redact_text(event.title)
                         )
+                        _you_denied = True
                     sel().log_tool_invocation(
                         session_key=session_key,
                         agent=_agent_label(session),
@@ -4954,6 +4916,7 @@ async def run_chat(
                         ),
                         request_id=event.request_id,
                         metadata={
+                            **_offered,
                             "reason": "interactive",
                             "risk": effective_risk,
                             "decided_by": (
@@ -5015,6 +4978,21 @@ async def run_chat(
                     },
                 )
                 _substitution_note = f"{_substitution_note} {event.text}".strip()
+            elif event.kind == EVENT_CARRIED_ON:
+                # A refusal ended the agent's turn and it was asked to go on without the call:
+                # said where it happened, and what it does next is still this turn. Should it
+                # still end with no answer, the turn says it stopped after her Deny.
+                _carried = turn_endings.carried_on_notice(
+                    _turn_agent, _redact_text(event.title), after_your_deny=_you_denied
+                )
+                _you_denied = False
+                if assistant_text:
+                    _flush_segment(state, session, assistant_text)
+                    assistant_text = ""
+                session.append("notice", _carried, "msg msg-notice")
+                state.broadcast_ws(
+                    "chat_message", {"session": session.key, "role": "notice", "content": _carried}
+                )
             elif event.kind == EVENT_AGENT_SWITCHED:
                 new_agent, _ = redact_credentials(event.text)
                 new_agent, _ = redact_exfiltration_urls(new_agent)
@@ -5162,8 +5140,12 @@ async def run_chat(
                     {"session": session.key, "role": "error", "content": msg},
                 )
 
-            # A re-queued retry is not the end of the turn; the two branches that give up are.
-            if _prompt_depth == 0 and session._acp_pipe_death_retries < 3:
+            # A re-queued retry is not the end of the turn; the branches that give up are. A turn
+            # that made calls is not sent again on its own: that could make them again.
+            if _prompt_depth == 0 and _steps_made():
+                _emit_error(turn_endings.lost_after_steps_notice(_turn_agent, _steps_made()))
+                session._last_turn_errored = True
+            elif _prompt_depth == 0 and session._acp_pipe_death_retries < 3:
                 session._acp_pipe_death_retries += 1
                 _send_again()
                 _emit_error(f"⟳ Connection lost{_rc_suffix} — retrying...")
@@ -5228,7 +5210,7 @@ async def run_chat(
         # A loop's worker and planner own a dedicated re-prompt loop (gateway _fire,
         # the planner's nudge cycles), so this handling stands aside for them — two
         # retry mechanisms on the same turn would compete.
-        _unanswered = unanswered_turn(
+        _unanswered = turn_endings.unanswered_turn(
             wrote_text=_turn_wrote_text,
             stop_reason=_stop_reason,
             saw_compaction=saw_compaction,
@@ -5243,11 +5225,11 @@ async def run_chat(
             session.discard_stream()
             assistant_text = ""
         # Ended after her Deny, or saying why itself: said why, never resent (`turn_endings`).
-        if _unanswered and (_deny_note or _unanswered == UNANSWERED_SAYS_WHY):
+        if _unanswered and (_deny_note or _unanswered == turn_endings.UNANSWERED_SAYS_WHY):
             session._empty_response_retries = 0
             _why = _deny_note or turn_endings.wrote_nothing(_stop_reason, _turn_agent, _output_cap)
-            _say_the_turn_has_no_answer(state, session, _why)
-        elif _unanswered == UNANSWERED_BLANK:
+            turn_endings.say_the_turn_has_no_answer(state, session, _why)
+        elif _unanswered == turn_endings.UNANSWERED_BLANK:
             if _prompt_depth == 0 and session._empty_response_retries == 0:
                 # First empty → silently re-queue the same prompt. The finally
                 # block drains the queue (FIFO re-dispatch), same as the error
@@ -5262,18 +5244,22 @@ async def run_chat(
             elif session._empty_response_retries >= 1:
                 # Second consecutive empty → surface the card and reset the streak.
                 session._empty_response_retries = 0
-                _say_the_turn_has_no_answer(
-                    state, session, no_answer_notice(0, asked_by_person=_asked_by_person)
+                turn_endings.say_the_turn_has_no_answer(
+                    state,
+                    session,
+                    turn_endings.no_answer_notice(0, asked_by_person=_asked_by_person),
                 )
                 return
         else:
             # Any other turn clears the consecutive-blank streak.
             session._empty_response_retries = 0
-        if _unanswered == UNANSWERED_AFTER_STEPS and not _deny_note:
-            _say_the_turn_has_no_answer(
+        if _unanswered == turn_endings.UNANSWERED_AFTER_STEPS and not _deny_note:
+            turn_endings.say_the_turn_has_no_answer(
                 state,
                 session,
-                no_answer_notice(_turn_tool_call_count, asked_by_person=_asked_by_person),
+                turn_endings.no_answer_notice(
+                    _turn_tool_call_count, asked_by_person=_asked_by_person
+                ),
             )
             logger.warning(
                 "Turn for session %s ended with no answer after %d tool call(s)",
@@ -5483,6 +5469,11 @@ async def run_chat(
             _flush_segment(state, session, assistant_text, broadcast=False)
         if session._stop_asked:  # her Stop ended the process: the turn stopped, nothing to retry
             logger.info("ACP process ended by the stop asked of session %s", session.key)
+        elif _prompt_depth == 0 and _steps_made():
+            # It made calls before it was lost: sent again, it could make them again.
+            turn_endings.say_the_turn_has_no_answer(
+                state, session, turn_endings.lost_after_steps_notice(_turn_agent, _steps_made())
+            )
         elif _prompt_depth == 0:
             session._acp_pipe_death_retries += 1
             if session._acp_pipe_death_retries <= 3:
@@ -5534,7 +5525,11 @@ async def run_chat(
             needs_session_reset = True  # checked in finally block
             if assistant_text:
                 _flush_segment(state, session, assistant_text, broadcast=False)
-            if _prompt_depth == 0:
+            if _prompt_depth == 0 and _steps_made():
+                turn_endings.say_the_turn_has_no_answer(
+                    state, session, turn_endings.lost_after_steps_notice(_turn_agent, _steps_made())
+                )
+            elif _prompt_depth == 0:
                 session._prompt_busy_retries += 1
                 if session._prompt_busy_retries <= 3:
                     _send_again()
@@ -5580,13 +5575,16 @@ async def run_chat(
         await _fire(HOOK_EVENT_ERROR, _err_text)
         await state.sessions.record_failure(session_key)
     finally:
+        # Stopped at its time limit (`turn_deadline`): it ends in the error that says so, which no
+        # fault caused and no one pressed.
+        _past_limit = turn_deadline.limit_passed()
         # How this turn ended, decided before anything below clears the stop state it reads.
         _turn_outcome = terminal_outcome_for_turn(
             stop_reason=_stop_reason,
-            cancelled=_turn_cancelled,
+            cancelled=_turn_cancelled and not _past_limit,
             # Asked at all: an acknowledged stop is idle again before the turn's last frame is read.
             stop_requested=session._stop_asked,
-            errored=session._last_turn_errored,
+            errored=session._last_turn_errored or bool(_past_limit),
             # The gateway is stopping (`DashboardState.end_running_turns`) and the owner did not
             # stop this turn herself.
             ended_by_gateway=bool(state.stopping_for) and not session._stop_asked,
@@ -5600,6 +5598,12 @@ async def run_chat(
                 _flush_segment(state, session, _unsettled, broadcast=False)
             except Exception:
                 logger.warning("could not settle the streamed answer for %s", session.key)
+        if _past_limit:
+            turn_endings.say_the_turn_has_no_answer(
+                state,
+                session,
+                turn_endings.past_limit_notice(_past_limit, asked_by_person=_asked_by_person),
+            )
         session._batch_rejected = ""
         # Clear this turn from the active-job tracker — the
         # same turn-exit boundary autonudge re-arms on. Best-effort.
@@ -5755,7 +5759,9 @@ async def run_chat(
                 # with one typed here, the merged text is new to the channel, so it is.
                 from_channel = all(item.get("channel") for item in consumed)
                 next_turn = run_chat(state, session, next_msg, arrived_from_channel=from_channel)
-            task = asyncio.create_task(asyncio.wait_for(next_turn, timeout=CHAT_TURN_TIMEOUT))
+            task = asyncio.create_task(
+                turn_deadline.run_within(state, session, next_turn, CHAT_TURN_TIMEOUT)
+            )
             session.task = task
             state._background_tasks.add(task)
             task.add_done_callback(state._background_tasks.discard)

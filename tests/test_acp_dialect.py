@@ -169,6 +169,32 @@ def test_going_on_comes_before_remembering_and_remembering_before_ending_the_tur
     assert d.select_reject_option_id([plain, goes_on]) == "d"
 
 
+def test_a_deny_is_said_to_end_the_turn_only_when_every_refusal_offered_ends_it():
+    """Said on the card before a Deny: an agent asking for an escalation (or a file change)
+    offers only its turn-ending refusal, and a request with no refusal at all is denied
+    ``cancelled``. Offered a refusal that lets it go on, a Deny is a decline, and so is a plain
+    "No" that says nothing either way."""
+    d = CodexDialect()
+    escalation = d.parse_permission_options(
+        [
+            {"optionId": "allow_once", "name": "Yes, proceed", "kind": "allow_once"},
+            {
+                "optionId": "cancel",
+                "name": "No, and tell me what to do differently",
+                "kind": "reject_once",
+            },
+        ]
+    )
+    assert d.deny_ends_turn(escalation) is True
+    assert d.deny_ends_turn([{"id": "a", "label": "Allow", "kind": "allow_once"}]) is True
+    assert d.deny_ends_turn(d.default_permission_options()) is True
+    with_decline = escalation + [
+        {"id": "decline", "label": "No, continue without running it", "kind": "reject_once"}
+    ]
+    assert d.deny_ends_turn(with_decline) is False
+    assert d.deny_ends_turn([{"id": "no", "label": "No", "kind": "reject_once"}]) is False
+
+
 def test_a_deny_never_sends_an_option_that_allows():
     """Fail closed: an ``allow_*`` kind is never a refusal, whatever its name says, and an
     option with no kind is one only when its id or name refuses and nothing in it allows."""

@@ -971,6 +971,10 @@ class AcpClient:
         was answered ``cancelled`` (see :meth:`AcpSession.refusal_answer`)."""
         return self._session.refusal_answer(request_id) if self._session is not None else None
 
+    def deny_outcome(self, request_id: str | int) -> str:
+        """What a Deny of the pending *request_id* would do (:meth:`AcpSession.deny_outcome`)."""
+        return self._session.deny_outcome(request_id) if self._session is not None else ""
+
     # ── control (delegate to the session) ───────────────────────────────────────
     async def cancel_session(self) -> None:
         """Cancel the current in-flight operation via ACP session/cancel (scoped to

@@ -165,12 +165,14 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
           {openNative && native && (
             <SidePanel key={`n:${openNative.name}`} fillHeight storeKey="agent-panel-w" icon={<Users size={18} className="text-primary" />} title={openNative.name} onClose={() => setOpen(null)}>
               <NativeAgentDetail agent={openNative} isDefault={native.defaultAgent === openNative.name} editing={editing} onEditingChange={setEditing}
+                providerLabel={discovered.find((g) => g.providerId === openNative.provider)?.label}
                 onSaved={reload} onDeleted={() => { setOpen(null); reload() }} onSetDefault={() => setDefault(openNative.name)} />
             </SidePanel>
           )}
           {openDiscovered && open?.kind === 'discovered' && (
             <SidePanel key={`d:${open.id}`} fillHeight storeKey="agent-panel-w" icon={(() => { const pm = providerMeta(open.providerId); return <pm.icon size={18} style={{ color: pm.tone }} /> })()} title={openDiscovered.name} onClose={() => setOpen(null)}>
-              <DiscoveredAgentDetail agent={openDiscovered} providerId={open.providerId} />
+              <DiscoveredAgentDetail agent={openDiscovered} providerId={open.providerId}
+                label={discovered.find((g) => g.providerId === open.providerId)?.label} />
             </SidePanel>
           )}
         </>
@@ -208,7 +210,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
 
                 {/* Discovered per ACP provider */}
                 {discovered.map((g) => {
-                  const pm = providerMeta(g.providerId)
+                  const pm = providerMeta(g.providerId, g.label)
                   const items = g.agents.filter(agentMatch)
                   // Its agents are known only when the runtime is ready and its last Test listed
                   // them. Otherwise the group says what is wrong, and shows no count: "0" would say

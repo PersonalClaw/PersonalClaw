@@ -41,14 +41,14 @@ from personalclaw import (
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.approval_grants import ToolDecision
-from personalclaw.cancellation import cancel_and_wait, kill_timed_out, wait_for_unpaused
+from personalclaw.cancellation import cancel_and_wait, kill_timed_out
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import CRED_OWNER_ID
 from personalclaw.constants import CHAT_TURN_TIMEOUT, DATA_WARNING
 from personalclaw.context import ContextBuilder
-from personalclaw.dashboard import start_dashboard
+from personalclaw.dashboard import start_dashboard, turn_deadline
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.handlers import MAX_PROMPT_BYTES
 from personalclaw.dashboard.handlers.autonudge import render_nudge_message
@@ -3043,36 +3043,13 @@ class GatewayOrchestrator:
                     return 0
 
             async def _run_one(_sess, _msg, turn_timeout: float) -> None:
-                try:
-                    # The bound is on the turn's own work: while one of its calls waits on the
-                    # owner's answer (an Attended loop's worker asks about each), the clock
-                    # stops — the approval's window is what bounds that wait.
-                    await wait_for_unpaused(
-                        run_chat(dstate, _sess, _msg),
-                        turn_timeout,
-                        paused=lambda: dstate.waiting_on_owner(_sess.key),
-                        what=f"autonudge turn {_sess.key}",
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "AutoNudge: turn for %s exceeded %ss — cancelling wedged turn",
-                        _sess.key,
-                        turn_timeout,
-                    )
-                    # The cut turn has ended (`running` reads its task): say why, stop its provider.
-                    _sess._last_turn_errored = True
-                    _said = f"This turn ran past its {int(turn_timeout // 60)}-minute limit"
-                    _sess.append("error", f"{_said} and was stopped.", "msg msg-err")
-                    try:
-                        from personalclaw.dashboard.chat_utils import _history_key_for
-
-                        prov = dstate.sessions.get_provider(_history_key_for(_sess.key))
-                        if prov is not None and hasattr(prov, "cancel"):
-                            await prov.cancel()
-                    except Exception:
-                        logger.debug(
-                            "cancel after turn timeout failed for %s", _sess.key, exc_info=True
-                        )
+                # The bound is on the turn's own work: while one of its calls waits on the
+                # owner's answer (an Attended loop's worker asks about each), the clock stops —
+                # the approval's window is what bounds that wait. Past it, the turn is stopped and
+                # ends saying so (`turn_deadline`).
+                await turn_deadline.run_within(
+                    dstate, _sess, run_chat(dstate, _sess, _msg), turn_timeout
+                )
 
             def _cycle_still_armed(_sess: Any) -> bool:
                 """Is the loop that fired this cycle still armed to run it?
@@ -3743,9 +3720,11 @@ class GatewayOrchestrator:
                     _retrigger_recovery(session, parent_key)
 
             _task = asyncio.create_task(
-                asyncio.wait_for(
+                turn_deadline.run_within(
+                    self.dashboard_state,
+                    session,
                     run_chat(self.dashboard_state, session, msg),
-                    timeout=CHAT_TURN_TIMEOUT,
+                    CHAT_TURN_TIMEOUT,
                 ),
             )
             session.task = _task
@@ -4092,9 +4071,11 @@ class GatewayOrchestrator:
 
                     # Session is idle — start run_chat.
                     _task = asyncio.create_task(
-                        asyncio.wait_for(
+                        turn_deadline.run_within(
+                            self.dashboard_state,
+                            _injection_session,
                             run_chat(self.dashboard_state, _injection_session, announce),
-                            timeout=CHAT_TURN_TIMEOUT,
+                            CHAT_TURN_TIMEOUT,
                         )
                     )
                     _injection_session.task = _task

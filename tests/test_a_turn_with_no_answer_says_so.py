@@ -31,9 +31,10 @@ from personalclaw.channel_transports.base import ChannelMessage
 from personalclaw.config import AppConfig
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard.chat_regenerate import api_chat_session_regenerate
-from personalclaw.dashboard.chat_runner import no_answer_notice, run_chat
+from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_session_map import TURN_TELEMETRY_KEY
 from personalclaw.dashboard.state import CRON_NOTIFY_END, CRON_NOTIFY_PREFIX, DashboardState
+from personalclaw.dashboard.turn_endings import no_answer_notice
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.history import ConversationLog
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, AgentEvent

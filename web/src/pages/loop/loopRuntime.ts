@@ -47,8 +47,8 @@ export function showRuntime(rt: LoopRuntime, groups: RuntimeGroup[] | undefined)
   if (!rt.provider) {
     return { label: 'PersonalClaw', title: 'Runs on PersonalClaw — the loop’s own worker, in this gateway.', unavailable: '' }
   }
-  const cli = providerMeta(rt.provider).label
   const group = groups?.find((g) => g.providerId === rt.provider)
+  const cli = providerMeta(rt.provider, group?.label).label
   const agent = group?.agents.find((a) => a.provider_agent === rt.provider_agent)
   const agentName = agent?.name || rt.provider_agent
   const label = agentName && agentName !== cli ? `${cli} · ${agentName}` : cli

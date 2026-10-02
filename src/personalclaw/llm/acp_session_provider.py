@@ -168,6 +168,10 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         """The agent's option a Deny of *request_id* was answered with (see AcpSession)."""
         return self._session.refusal_answer(request_id)
 
+    def deny_outcome(self, request_id: str | int) -> str:
+        """What a Deny of the pending *request_id* would do (see AcpSession)."""
+        return self._session.deny_outcome(request_id)
+
     # ── mid-turn steering ───────────────────────────────────────────────────────
     # The pooled provider gets the seam for the same reason it gets every other session
     # method: it wraps the SAME AcpSession the N=1 client does, so leaving it out would make

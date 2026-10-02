@@ -7,8 +7,13 @@ real pipe and the record file says what reached the agent.
 * An agent can offer two ways to refuse a call: one that declines it and lets the agent carry on,
   and one that ends the agent's turn. Both are kinded ``reject_once``, so only the id and the name
   tell them apart. Deny means decline, whatever order they arrive in.
-* An agent that still ends its turn after a Deny is said to have stopped after the Deny. The
-  generic "the reply stopped before it finished" notice blames a fault nobody had.
+* An agent can also offer ONLY the refusal that ends its turn (an escalation request does). The
+  card says before the Deny that it ends the agent's turn, and when a refusal ends the turn the
+  turn is carried on: the same session is told what was refused and asked to go on without it, the
+  chat says so, and the agent's answer is the turn's. The audit row of the decision names every
+  answer the agent offered.
+* An agent whose turn cannot be carried on is said to have stopped after the Deny. The generic
+  "the reply stopped before it finished" notice blames a fault nobody had.
 * A Stop pressed while an approval waits ends the turn as stopped: never as a timeout, never as an
   error PersonalClaw doesn't recognize. The runner that served the turn is kept for the next one,
   and no second one is started.
@@ -25,7 +30,7 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
-from scripted_acp_agent import ANSWER_WITHOUT_THE_COMMAND
+from scripted_acp_agent import ANSWER_AFTER_CARRY_ON, ANSWER_WITHOUT_THE_COMMAND
 from test_dashboard_approval import _context_builder, _make_hook_store, _make_session
 
 from personalclaw.approval_answer import YOU
@@ -101,6 +106,27 @@ class _World:
     def outcomes(self) -> list[str]:
         return [d.get("outcome", "") for kind, d in self.frames if kind == "chat_done"]
 
+    def notices(self) -> list[str]:
+        return [m["content"] for m in self.session.messages if m.get("role") == "notice"]
+
+    def prompts(self) -> list[str]:
+        """The text of every prompt the agent received, in order."""
+        return [
+            "".join(block.get("text", "") for block in r["params"].get("prompt", []))
+            for r in self.methods("session/prompt")
+        ]
+
+    def deny_effects(self) -> tuple[list[str], list[str]]:
+        """What the card said a Deny does: on the live ``approval`` frame, and on the persisted
+        permission row a reload draws the card from."""
+        live = [d.get("deny_effect", "") for kind, d in self.frames if kind == "approval"]
+        rows = [
+            json.loads(m["cls"]).get("deny_effect", "")
+            for m in self.session.messages
+            if m.get("role") == "permission" and "resolved" not in json.loads(m["cls"])
+        ]
+        return live, rows
+
     def start(self, message: str = "review the last commit") -> asyncio.Task:
         assert self.session.enqueue_or_run_prompt(message, run_chat, self.state)
         return self.session.task
@@ -173,6 +199,8 @@ async def test_a_deny_declines_the_call_and_the_agent_answers_without_it(make_wo
     try:
         task = w.start()
         await w.asked()
+        # A refusal that lets the agent go on is offered, so a Deny is only a Deny: no warning.
+        assert w.deny_effects() == ([""], [""])
         w.state.decide_session_approval(w.session, ASKED, "rejected", by=YOU)
         await _turn_ends(task)
 
@@ -194,20 +222,123 @@ async def test_a_deny_declines_the_call_and_the_agent_answers_without_it(make_wo
         await w.close()
 
 
+#: What the card says before a Deny of a call the agent can refuse only by ending its turn.
+DENY_ENDS_AND_CARRIES_ON = (
+    "Codex offers no way to skip only this step: Deny ends its turn, and PersonalClaw then asks "
+    "it to carry on without it."
+)
+#: What the chat says where a Deny ended the agent's turn and the turn was carried on.
+CARRIED_ON = (
+    "Codex ended its turn when you denied Run command, so PersonalClaw asked it to carry on "
+    "without it."
+)
+
+
 @pytest.mark.asyncio
-async def test_an_agent_that_ends_its_turn_after_a_deny_is_said_to_have(make_world):
-    """Its one refusal ends its turn. The chat says why the turn ended, in the agent's name and
-    the tool's, and not the notice for a reply cut short by a fault."""
+async def test_a_deny_of_an_escalation_is_said_first_and_the_turn_goes_on(make_world, monkeypatch):
+    """The agent offers only its turn-ending refusal. Red before the fix: the card said nothing
+    about it, the Deny ended the turn with "Codex stopped after you denied Run command." and no
+    review, and nothing recorded what the agent had offered."""
+    from unittest.mock import MagicMock
+
+    audit = MagicMock()
+    monkeypatch.setattr("personalclaw.dashboard.chat_runner.sel", lambda: audit)
+    w = make_world("deny-only-cancel")
+    try:
+        task = w.start()
+        await w.asked()
+        assert w.deny_effects() == ([DENY_ENDS_AND_CARRIES_ON], [DENY_ENDS_AND_CARRIES_ON])
+        w.state.decide_session_approval(w.session, ASKED, "rejected", by=YOU)
+        await _turn_ends(task)
+
+        assert [(a["outcome"], a["option"]) for a in w.wire("permission_answer")] == [
+            ("selected", "cancel")
+        ]
+        # The same session was told what was refused and asked to go on without it.
+        first, carry_on = w.prompts()
+        assert "git show --stat HEAD" in carry_on and "was refused, so it did not run" in carry_on
+        assert len(w.wire("spawn")) == 1 and len(w.methods("session/new")) == 1
+        assert w.notices() == [CARRIED_ON]
+        assert any(ANSWER_AFTER_CARRY_ON in a for a in w.answers()), w.session.messages
+        assert w.errors() == [] and w.outcomes()[-1:] == ["complete"]
+        # The decision's audit row names every answer the agent offered, and the one sent.
+        (decided,) = [
+            c.kwargs
+            for c in audit.log_tool_invocation.call_args_list
+            if c.kwargs.get("outcome") == "rejected"
+        ]
+        assert decided["metadata"]["answered"] == "cancel"
+        assert decided["metadata"]["offered"] == [
+            {"id": "accept", "kind": "allow_once", "name": "Yes, proceed"},
+            {
+                "id": "cancel",
+                "kind": "reject_once",
+                "name": "No, and tell me what to do differently",
+            },
+        ]
+    finally:
+        await w.close()
+
+
+@pytest.mark.asyncio
+async def test_an_agent_that_ends_its_turn_at_a_plain_decline_is_carried_on(make_world):
+    """Its one refusal reads as a decline, so the card warns of nothing, but the agent ends its
+    turn when it gets it. The turn is carried on all the same: a Deny means go on without it."""
     w = make_world("deny-ends")
     try:
         task = w.start()
         await w.asked()
+        assert w.deny_effects() == ([""], [""])
         w.state.decide_session_approval(w.session, ASKED, "rejected", by=YOU)
         await _turn_ends(task)
 
         assert [(a["outcome"], a["option"]) for a in w.wire("permission_answer")] == [
             ("selected", "no")
         ]
+        assert len(w.prompts()) == 2 and w.notices() == [CARRIED_ON]
+        assert any(ANSWER_AFTER_CARRY_ON in a for a in w.answers()), w.session.messages
+        assert w.errors() == [] and w.outcomes()[-1:] == ["complete"]
+    finally:
+        await w.close()
+
+
+@pytest.mark.asyncio
+async def test_an_agent_that_stops_again_when_carried_on_is_said_to_have_stopped(make_world):
+    """Carried on, the agent ends that turn too and says nothing. The turn ends on why: it
+    stopped after her Deny — not the notice for a reply a fault cut short — and is not resent."""
+    w = make_world("deny-and-give-up")
+    try:
+        task = w.start()
+        await w.asked()
+        w.state.decide_session_approval(w.session, ASKED, "rejected", by=YOU)
+        await _turn_ends(task)
+
+        assert len(w.prompts()) == 2 and w.notices() == [CARRIED_ON]
+        assert w.errors() == ["Codex stopped after you denied Run command."]
+        assert TURN_CUT_SHORT_NOTICE not in w.errors()
+        assert not w.session._queue, "the turn was queued to run again"
+    finally:
+        await w.close()
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_may_not_be_carried_on_again_says_it_stopped_after_the_deny(
+    make_world, monkeypatch
+):
+    """Once a turn has been carried on as often as it may, a Deny that ends it ends it: the card
+    says that much and no more, and the chat says why the turn ended, in the agent's name and
+    the tool's, and not the notice for a reply cut short by a fault."""
+    monkeypatch.setattr("personalclaw.acp.session._MAX_CARRY_ONS_PER_TURN", 0)
+    w = make_world("deny-only-cancel")
+    try:
+        task = w.start()
+        await w.asked()
+        ends = "Codex offers no way to skip only this step: Deny ends its turn."
+        assert w.deny_effects() == ([ends], [ends])
+        w.state.decide_session_approval(w.session, ASKED, "rejected", by=YOU)
+        await _turn_ends(task)
+
+        assert len(w.prompts()) == 1 and w.notices() == []
         assert w.errors() == ["Codex stopped after you denied Run command."]
         assert TURN_CUT_SHORT_NOTICE not in w.errors()
         assert w.outcomes()[-1:] == [TURN_STOPPED]

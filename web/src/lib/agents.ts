@@ -44,6 +44,8 @@ export async function loadAcpDiscovered(providers: AgentProvider[]): Promise<Acp
  *  that it offers none. */
 export interface RuntimeGroup {
   providerId: string        // "acp:<cli>"
+  /** Its name, as the gateway names it everywhere (`AgentProvider.label`); "" when not sent. */
+  label: string
   ready: boolean
   /** The runtime's readiness state — `untested` is installed and never started, not broken. */
   state: string
@@ -58,7 +60,7 @@ export async function loadRuntimeGroups(providers: AgentProvider[]): Promise<Run
   const acp = providers.filter((p) => p.type !== 'native')
   const discovered = await loadAcpDiscovered(acp)
   return acp.map((p) => ({
-    providerId: p.provider_id, ready: p.ready, state: p.state, detail: p.detail,
+    providerId: p.provider_id, label: p.label || '', ready: p.ready, state: p.state, detail: p.detail,
     agents: discovered.agents[p.provider_id] ?? [], failure: discovered.failed[p.provider_id] ?? '',
   }))
 }

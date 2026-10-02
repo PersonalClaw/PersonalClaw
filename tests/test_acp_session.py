@@ -613,3 +613,234 @@ def test_client_extract_text_chunk_delegates_to_shared():
     # call the unbound method with a bare instance-free object isn't safe; compare via a real-ish client is heavy.  # noqa: E501
     # Instead assert the client method body delegates (both yield identical output for the same msg).  # noqa: E501
     assert extract_text_chunk(msg) == ("x", True)
+
+
+# ── a turn a refusal ends is carried on ──────────────────────────────────────
+
+#: An escalation request's options: the one refusal offered ends the agent's turn.
+_ONLY_A_TURN_ENDING_REFUSAL = [
+    {"optionId": "accept", "name": "Yes, proceed", "kind": "allow_once"},
+    {"optionId": "cancel", "name": "No, and tell me what to do differently", "kind": "reject_once"},
+]
+
+
+def _asks(request_id, options=None, command=("git", "show", "--stat", "HEAD")):
+    return JsonRpcMessage(
+        id=request_id,
+        method="session/request_permission",
+        params={
+            "sessionId": "A",
+            "toolCall": {
+                "toolCallId": f"call-{request_id}",
+                "title": "Run command",
+                "rawInput": {"command": list(command)},
+            },
+            "options": options or _ONLY_A_TURN_ENDING_REFUSAL,
+        },
+    )
+
+
+async def _sent_count(s, n):
+    for _ in range(500):
+        if len(s._test_sent_futs) >= n:
+            return s._test_sent_futs[n - 1]
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"only {len(s._test_sent_futs)} request(s) were sent, not {n}")
+
+
+def _answer(s, n, stop_reason):
+    rid, fut = s._test_sent_futs[n - 1]
+    fut.set_result(JsonRpcMessage(id=rid, result={"stopReason": stop_reason}))
+
+
+def _prompt_text(params):
+    return "".join(block.get("text", "") for block in params["prompt"])
+
+
+async def _turn(s, q, script):
+    """Run one turn of *s*, calling ``script(event)`` for each event; returns the events."""
+    events = []
+    async for ev in s.stream_events("review the last commit", timeout=5):
+        events.append(ev)
+        await script(ev)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_a_turn_a_refusal_ends_is_carried_on_without_the_refused_step():
+    """The agent ends its turn when its only refusal is sent. The same session is then told what
+    was refused and asked to carry on without it, and what it does next is the same turn."""
+    from personalclaw.acp.dialect import CodexDialect
+    from personalclaw.acp.types import (
+        EVENT_CARRIED_ON,
+        EVENT_COMPLETE,
+        EVENT_PERMISSION_REQUEST,
+        EVENT_TEXT_CHUNK,
+    )
+
+    s, q, sent, _c = _mk(dialect=CodexDialect())
+    q.put_nowait(_asks(900))
+
+    async def script(ev):
+        if ev.kind == EVENT_PERMISSION_REQUEST:
+            assert s.deny_outcome(900) == "carries_on"
+            await s.reject_tool(900)
+            _answer(s, 1, "cancelled")
+        elif ev.kind == EVENT_CARRIED_ON:
+            await _sent_count(s, 2)
+            q.put_nowait(
+                _upd(
+                    "A",
+                    {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": "Without git show: a version bump."},
+                    },
+                )
+            )
+            await asyncio.sleep(0.05)
+            _answer(s, 2, "end_turn")
+
+    events = await _turn(s, q, script)
+
+    assert [e.kind for e in events] == [
+        EVENT_PERMISSION_REQUEST,
+        EVENT_CARRIED_ON,
+        EVENT_TEXT_CHUNK,
+        EVENT_COMPLETE,
+    ]
+    assert events[1].title == "Run command"
+    assert events[-1].stop_reason == "end_turn"
+    # The refusal went out as the agent's own option, and the carry-on as the session's next prompt.
+    assert s._test_responses == [(900, {"outcome": {"outcome": "selected", "optionId": "cancel"}})]
+    assert [m for m, _ in sent] == ["session/prompt", "session/prompt"]
+    carry_on = _prompt_text(sent[1][1])
+    assert sent[1][1]["sessionId"] == "A"
+    assert "Run command `git show --stat HEAD` was refused, so it did not run" in carry_on
+    assert "do not ask to run it again" in carry_on
+    assert s._turn_done.is_set() and s._last_stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_turn_is_never_carried_on():
+    """She pressed Stop after the refusal: the agent's ``cancelled`` is its answer to the Stop."""
+    from personalclaw.acp.dialect import CodexDialect
+    from personalclaw.acp.types import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST
+
+    s, q, sent, cancels = _mk(dialect=CodexDialect())
+    q.put_nowait(_asks(900))
+
+    async def script(ev):
+        if ev.kind == EVENT_PERMISSION_REQUEST:
+            await s.reject_tool(900)
+            await s.cancel()
+            _answer(s, 1, "cancelled")
+
+    events = await _turn(s, q, script)
+
+    assert [e.kind for e in events][-1] == EVENT_COMPLETE
+    assert events[-1].stop_reason == "cancelled"
+    assert len(sent) == 1 and cancels == ["A"]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_the_agent_cancels_itself_with_nothing_refused_is_not_carried_on():
+    from personalclaw.acp.types import EVENT_COMPLETE
+
+    s, q, sent, _c = _mk()
+
+    async def answer_soon():
+        await _sent_count(s, 1)
+        _answer(s, 1, "cancelled")
+
+    asyncio.ensure_future(answer_soon())
+    events = await _turn(s, q, lambda ev: asyncio.sleep(0))
+
+    assert [e.kind for e in events] == [EVENT_COMPLETE]
+    assert events[0].stop_reason == "cancelled" and len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_turn_is_carried_on_only_as_often_as_it_may(monkeypatch):
+    """An agent that asks for the same step after every carry-on, and a refusal nobody presses
+    (a policy's, an unattended run's), would otherwise go round forever. Past the limit the Deny
+    ends the turn, and before it is pressed the session says so."""
+    from personalclaw.acp import session as session_module
+    from personalclaw.acp.dialect import CodexDialect
+    from personalclaw.acp.types import EVENT_CARRIED_ON, EVENT_COMPLETE, EVENT_PERMISSION_REQUEST
+
+    monkeypatch.setattr(session_module, "_MAX_CARRY_ONS_PER_TURN", 1)
+    s, q, sent, _c = _mk(dialect=CodexDialect())
+    q.put_nowait(_asks(900))
+    outcomes = []
+
+    async def script(ev):
+        if ev.kind == EVENT_PERMISSION_REQUEST:
+            outcomes.append(s.deny_outcome(ev.request_id))
+            await s.reject_tool(ev.request_id)
+            _answer(s, len(sent), "cancelled")
+        elif ev.kind == EVENT_CARRIED_ON:
+            await _sent_count(s, 2)
+            q.put_nowait(_asks(901))
+
+    events = await _turn(s, q, script)
+
+    assert [e.kind for e in events] == [
+        EVENT_PERMISSION_REQUEST,
+        EVENT_CARRIED_ON,
+        EVENT_PERMISSION_REQUEST,
+        EVENT_COMPLETE,
+    ]
+    assert outcomes == ["carries_on", "ends"]
+    assert events[-1].stop_reason == "cancelled" and len(sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_what_a_deny_would_do_is_known_before_it_is_pressed():
+    from personalclaw.acp.dialect import CodexDialect
+    from personalclaw.acp.types import EVENT_PERMISSION_REQUEST
+
+    s, q, _sent, _c = _mk(dialect=CodexDialect())
+    q.put_nowait(
+        _asks(
+            900,
+            options=_ONLY_A_TURN_ENDING_REFUSAL
+            + [
+                {
+                    "optionId": "decline",
+                    "name": "No, continue without running it",
+                    "kind": "reject_once",
+                }
+            ],
+        )
+    )
+    seen = []
+
+    async def script(ev):
+        if ev.kind == EVENT_PERMISSION_REQUEST:
+            seen.append((s.deny_outcome(900), s.deny_outcome(12345)))
+            await s.approve_tool(900)
+            _answer(s, 1, "end_turn")
+
+    await _turn(s, q, script)
+
+    assert seen == [("declines", "")]
+
+
+def test_a_refused_step_is_named_by_its_title_and_command_with_secrets_masked():
+    from personalclaw.acp.session import carry_on_prompt, step_words
+
+    assert step_words("Run command", '{"command": ["git", "show", "HEAD"]}') == (
+        "Run command `git show HEAD`"
+    )
+    assert step_words("Run command", '{"command": "ls -la"}') == "Run command `ls -la`"
+    assert step_words("Read File", '{"path": "/tmp/notes.md"}') == "Read File"
+    assert step_words("", "") == "a step"
+    masked = step_words(
+        "Run command", '{"command": "curl -H \'Authorization: Bearer abc123def456ghi789jkl\'"}'
+    )
+    assert "abc123def456ghi789jkl" not in masked
+    assert len(step_words("Run command", '{"command": "' + "x " * 400 + '"}')) <= 200
+    said = carry_on_prompt(["Run command `git show HEAD`", "Read File"])
+    assert "Run command `git show HEAD`; Read File were refused, so they did not run" in said
+    assert "do not ask to run them again" in said
+    assert "Read File was refused, so it did not run" in carry_on_prompt(["Read File"])

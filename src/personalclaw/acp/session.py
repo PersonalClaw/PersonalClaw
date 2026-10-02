@@ -22,6 +22,7 @@ sessions are never blocked by each other.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -32,6 +33,7 @@ from personalclaw.acp.translate import extract_text_chunk  # noqa: F401 — re-e
 from personalclaw.acp.types import (
     CAP_COMMANDS,
     EVENT_AGENT_SWITCHED,
+    EVENT_CARRIED_ON,
     EVENT_CLEAR_STATUS,
     EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
@@ -52,6 +54,8 @@ from personalclaw.acp.types import (
     JsonRpcMessage,
 )
 from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
+from personalclaw.security import redact_credentials
+from personalclaw.textfmt import clip_words
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +110,54 @@ _ENDED_UNACKED = "unacked"  # cancelled, and the agent never answered the cancel
 # equal in tests/test_mid_turn_steer.py, so a change to one is a red, not a drift.
 _MAX_STEERS_PER_TURN = 4
 
+# How many times one turn is carried on after a refusal ended it (`AcpSession._dispatch_frames`).
+# Each carry-on follows a refusal, and a refusal nobody pressed (a policy's, an unattended run's)
+# could otherwise meet an agent that asks for the same step again, forever.
+_MAX_CARRY_ONS_PER_TURN = 4
+# How much of a refused step's command the carry-on names it by.
+_STEP_WORDS_LIMIT = 200
+
 
 #: Yielded by :meth:`AcpSession._turn_events` (never past :meth:`AcpSession._dispatch_frames`)
 #: when the agent declared its turn over without answering the prompt, so no answer is owed.
 _RELEASED = AcpEvent(kind="released")
+#: Yielded by :meth:`AcpSession._turn_events` (never past :meth:`AcpSession._dispatch_frames`)
+#: when a refusal ended the agent's turn and the turn is to be carried on.
+_CARRY_ON = AcpEvent(kind="carry_on")
+
+
+def step_words(title: str, tool_input: str) -> str:
+    """A refused step as the carry-on names it: its title and, when its input carries one, the
+    command it would have run (a string, or an argument list), clipped and with credentials
+    masked."""
+    command = ""
+    try:
+        parsed = json.loads(tool_input) if tool_input else None
+    except (TypeError, ValueError):
+        parsed = None
+    raw = parsed.get("command") if isinstance(parsed, dict) else None
+    if isinstance(raw, list):
+        raw = " ".join(str(part) for part in raw)
+    if isinstance(raw, str):
+        command = raw.strip()
+    title = (title or "").strip() or "a step"
+    words = f"{title} `{command}`" if command and command not in title else title
+    return clip_words(redact_credentials(words)[0], _STEP_WORDS_LIMIT)
+
+
+def carry_on_prompt(steps: list[str]) -> str:
+    """What the agent is told when a refusal of *steps* ended its turn: that they did not run, and
+    to carry on without them. Sent as the next prompt of the same session, so the agent goes on
+    from where it stopped with everything it already has."""
+    named = "; ".join(steps) or "the step you asked to run"
+    was, it = ("were", "they") if len(steps) > 1 else ("was", "it")
+    them = "them" if len(steps) > 1 else "it"
+    return (
+        f"PersonalClaw here, for the user: {named} {was} refused, so {it} did not run, and the "
+        f"refusal ended your turn. Carry on without {them}: finish what the user asked with what "
+        f"you already have, say what you could not do or check without {them}, and do not ask to "
+        f"run {them} again."
+    )
 
 
 def read_when_settled(fut: "asyncio.Future[JsonRpcMessage]") -> None:
@@ -171,6 +219,12 @@ class AcpSession:
         self._unanswered: dict[str, object] = {}
         self._answered: set[str] = set()
         self._refusals: dict[str, dict[str, str]] = {}
+        # This turn's asked-about steps, by request id, as (title, the carry-on's words for it —
+        # `step_words`); the ones refused since the agent was last prompted; and how often the turn
+        # was carried on.
+        self._asked: dict[str, tuple[str, str]] = {}
+        self._declined: list[tuple[str, str]] = []
+        self._carry_ons = 0
         # Why the last drain ended without the agent's answer (one of the `_ENDED_*` values).
         self._drain_end: str = ""
         # A turn that ended before the agent answered its prompt leaves that answer owed: the
@@ -463,7 +517,10 @@ class AcpSession:
         — and remembers it for :meth:`refusal_answer`. READ the offered options before popping
         them: an order that discarded them first had nothing to resolve, and sent every denial
         as ``cancelled``. In a cancelled turn the answer IS ``cancelled``, which is what the
-        protocol asks for there; a request already answered gets no second answer."""
+        protocol asks for there; a request already answered gets no second answer.
+
+        Outside a cancelled turn the step is remembered as refused, so a turn the refusal ends is
+        carried on without it (:meth:`_dispatch_frames`)."""
         rid = str(request_id)
         if not self._mark_answered(rid):
             logger.debug("session %s: request %s was already answered", self.session_id, rid)
@@ -472,12 +529,41 @@ class AcpSession:
         resolved = "" if self._cancelled else self._dialect.select_reject_option_id(offered)
         if resolved:
             self._refusals[rid] = next(o for o in offered if o.get("id") == resolved)
+        if not self._cancelled:
+            self._declined.append(self._asked.get(rid) or ("", step_words("", "")))
         await self._send_response(request_id, self._dialect.reject_outcome(resolved))
 
     def refusal_answer(self, request_id: str | int) -> dict[str, str] | None:
         """The offered option a refusal of *request_id* was answered with (``{id, label,
         kind}``), or ``None`` when it was answered ``cancelled`` or not refused at all."""
         return self._refusals.get(str(request_id))
+
+    def deny_outcome(self, request_id: str | int) -> str:
+        """What a Deny of the pending *request_id* would do, before it is pressed: ``declines``
+        the call and the agent goes on (the agent offered a refusal that lets it), ``carries_on``
+        (every refusal it offered ends its turn, and the turn is then carried on without the
+        call), or ``ends`` (it ends the turn, and this turn has been carried on as often as it
+        may). ``""`` for a request this session is not waiting on."""
+        offered = self._offered_options.get(str(request_id))
+        if offered is None:
+            return ""
+        if not self._dialect.deny_ends_turn(offered):
+            return "declines"
+        return "carries_on" if self._carry_ons < _MAX_CARRY_ONS_PER_TURN else "ends"
+
+    def _carries_on(self, stop_reason: str, method: str) -> bool:
+        """Whether the agent's answer to its prompt (*stop_reason*) ends a turn that a refusal
+        ended and that goes on: it answered ``cancelled`` though nobody stopped it, a refusal was
+        sent since it was last prompted, and the turn has not been carried on as often as it may.
+        Only a prompt's turn is carried on; a command's ends where it ends."""
+        return (
+            method == METHOD_PROMPT
+            and stop_reason == STOP_REASON_CANCELLED
+            and not self._cancelled
+            and bool(self._declined)
+            and self._carry_ons < _MAX_CARRY_ONS_PER_TURN
+            and self._is_process_alive()
+        )
 
     async def _drain_turn(
         self, req_id: int, response_future: "asyncio.Future[JsonRpcMessage]", timeout: float
@@ -647,7 +733,14 @@ class AcpSession:
         marker) and cross-turn ``context_pct`` carry — over the demuxed session
         queue, with NO process-wide lock and no JSONL/SEL/telemetry side-channels (the
         concurrent-capable backend streams tool results via protocol ``tool_call_update``
-        frames, already handled by ``translate.extract_tool_update_events``)."""
+        frames, already handled by ``translate.extract_tool_update_events``).
+
+        A turn a refusal ended is carried on (:meth:`_carries_on`): the agent is prompted again
+        on this session to go on without the refused steps (:func:`carry_on_prompt`), an
+        ``EVENT_CARRIED_ON`` naming them is yielded, and the turn goes on, under the same deadline
+        and stats, until the agent answers that prompt. A refusal is what a Deny sends, and an
+        agent can offer only a refusal that ends its turn (an escalation request, a file
+        change); left there, her Deny would end the work she asked for instead of one call."""
         from personalclaw.acp.errors import AcpProcessDied, AcpTimeoutError
 
         prev_pct = self.last_prompt_stats.context_pct
@@ -658,6 +751,9 @@ class AcpSession:
         self._unanswered.clear()
         self._answered.clear()
         self._refusals.clear()
+        self._asked.clear()
+        self._declined.clear()
+        self._carry_ons = 0
         # Per-turn steer state. Clearing ``_steer_pending`` at the START is deliberate: a
         # steer that could not be delivered belongs to the turn it was aimed at, and letting
         # it survive into the next one is the cross-turn leak S6.1 closed. The dispatcher
@@ -669,18 +765,50 @@ class AcpSession:
         got_complete = False
         # The agent declared the turn over without answering its prompt (the interrupted marker).
         released = False
-        try:
-            async for event in self._turn_events(
-                req_id, response_future, timeout, extract_agent_from_result, method
-            ):
-                if event is _RELEASED:
-                    released = True
-                    continue
-                got_complete = got_complete or event.kind == EVENT_COMPLETE
-                yield event
-        finally:
-            if not response_future.done() and not released:
-                self._owe_answer(response_future)
+        deadline = time.monotonic() + timeout
+        while True:
+            carry_on = False
+            try:
+                async for event in self._turn_events(
+                    req_id,
+                    response_future,
+                    max(deadline - time.monotonic(), 0.0),
+                    extract_agent_from_result,
+                    method,
+                ):
+                    if event is _RELEASED:
+                        released = True
+                        continue
+                    if event is _CARRY_ON:
+                        carry_on = True
+                        continue
+                    got_complete = got_complete or event.kind == EVENT_COMPLETE
+                    yield event
+            finally:
+                if not response_future.done() and not released:
+                    self._owe_answer(response_future)
+            if not carry_on:
+                break
+            # A refusal ended the agent's turn: it answered its prompt `cancelled` with nobody
+            # stopping it. A Deny means "go on without this call", so the same session is asked
+            # to carry on without the refused steps, and what it does next is this turn's.
+            declined, self._declined = self._declined, []
+            self._carry_ons += 1
+            logger.info(
+                "session %s: a refusal ended the agent's turn — carrying it on (%d of %d)",
+                self.session_id,
+                self._carry_ons,
+                _MAX_CARRY_ONS_PER_TURN,
+            )
+            # Plain text, never `encode_prompt_content`: that reads any image a path in the
+            # message names, and a refused command can name one.
+            prompt = carry_on_prompt([words for _title, words in declined])
+            req_id, response_future = await self._send_request(
+                METHOD_PROMPT,
+                {"sessionId": self.session_id, "prompt": [{"type": "text", "text": prompt}]},
+            )
+            titles = dict.fromkeys(title.strip() for title, _words in declined if title.strip())
+            yield AcpEvent(kind=EVENT_CARRIED_ON, title=", ".join(titles))
         if got_complete:
             return
         # Drain ended without the agent's answer to the prompt. How the turn ended, by why:
@@ -751,6 +879,9 @@ class AcpSession:
                             yield AcpEvent(kind=EVENT_AGENT_SWITCHED, text=name)
                 for tr in self._read_new_tool_results():  # flush remaining JSONL results
                     yield tr
+                if self._carries_on(reason, method):
+                    yield _CARRY_ON
+                    return
                 self._last_stop_reason = reason
                 self._turn_done.set()
                 yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=reason)
@@ -782,6 +913,10 @@ class AcpSession:
                 rid = str(permission.request_id)
                 if permission.request_id != "" and rid not in self._answered:
                     self._unanswered[rid] = permission.request_id
+                    self._asked[rid] = (
+                        permission.title,
+                        step_words(permission.title, permission.tool_input),
+                    )
                 if self._cancelled:
                     # Asked after the turn was stopped: nobody is asked any more, and the
                     # protocol's answer for a cancelled turn's request is `cancelled`.

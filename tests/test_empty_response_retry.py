@@ -1,7 +1,7 @@
 """How the chat runner reads a completed turn that wrote nothing (`unanswered_turn`)."""
 
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_END_TURN
-from personalclaw.dashboard.chat_runner import (
+from personalclaw.dashboard.turn_endings import (
     UNANSWERED_AFTER_STEPS,
     UNANSWERED_BLANK,
     no_answer_notice,

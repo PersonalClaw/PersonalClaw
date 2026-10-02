@@ -29,7 +29,7 @@ export function LoopRuntimePill({ value, onChange, chip = false }: {
   const total = groups.reduce((n, g) => n + g.agents.length, 0)
   const nq = q.trim().toLowerCase()
   const match = (g: RuntimeGroup) => (a: { name: string; description: string }) =>
-    !nq || `${a.name} ${a.description} ${providerMeta(g.providerId).label}`.toLowerCase().includes(nq)
+    !nq || `${a.name} ${a.description} ${providerMeta(g.providerId, g.label).label}`.toLowerCase().includes(nq)
   return (
     <Popover portal width={300} placement={chip ? 'bottom' : 'top'} trigger={(open, toggle) => chip ? (
       <RunsOnChip shown={shown} onClick={toggle} expanded={open} />
@@ -51,7 +51,7 @@ export function LoopRuntimePill({ value, onChange, chip = false }: {
             <MenuRow label="PersonalClaw" hint="The loop’s own worker, in this gateway"
               selected={!value.provider} onClick={() => { onChange(ON_PERSONALCLAW); close() }} />
             {groups.map((g) => {
-              const cli = providerMeta(g.providerId).label
+              const cli = providerMeta(g.providerId, g.label).label
               const agents = g.agents.filter(match(g))
               if (nq && g.ready && !g.failure && agents.length === 0) return null
               return (

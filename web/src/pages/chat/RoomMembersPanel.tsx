@@ -296,7 +296,7 @@ function AddMemberForm({ agents, agentsError, onRetryAgents, taken, busy, onAdd,
     if (agents === undefined || !runtimesLoaded) return rows
     const saved = new Set(agents.map((a) => a.name))
     for (const g of runtimes) {
-      const cli = providerMeta(g.providerId).label
+      const cli = providerMeta(g.providerId, g.label).label
       if (!g.ready || g.failure) {
         rows.push({
           value: `unavailable:${g.providerId}`,

@@ -71,7 +71,8 @@ supervisor's judge still runs on the model its use case binds (`loops.judge_use_
 
 - **Choosing.** The loop composer's **Runs on** pill sends both fields with the create. Plan Review
   changes them until launch, and so does the Runs on chip on the page of a loop that
-  has not started. The picker lists every agent CLI set up here (`GET /api/agent-providers`), each
+  has not started. The picker lists every agent CLI set up here (`GET /api/agent-providers`), by
+  the name its row carries (`label`, its app's name in the Store), each
   ready one with the agents its last Test listed; one that is not ready is shown with why and
   cannot be picked, and a page names a loop's runtime as unavailable when it is no longer set up,
   no longer ready, or no longer lists the chosen agent (`web/src/pages/loop/loopRuntime.ts`).

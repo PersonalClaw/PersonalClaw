@@ -32,8 +32,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from personalclaw.llm.base import ModelProvider
@@ -158,12 +159,8 @@ def agent_takes_no_images(label: str) -> ImageInput:
 
 
 def agent_label(runtime_id: str) -> str:
-    """A person's name for the agent runtime ``runtime_id`` (``acp:claude-code``), or ``""``.
-
-    The runtime entry's own ``runtime_label`` when it has one, else the display name of the app
-    that registered it (the Store's name for it, "Claude Code"), else the id after ``acp:`` in
-    title case (``kiro-cli`` → "Kiro Cli") — never the bare id, which is no one's name for it.
-    """
+    """A person's name for the agent runtime ``runtime_id`` (``acp:claude-code``), or ``""``:
+    :func:`runtime_name` over the options its registry entry carries."""
     rid = (runtime_id or "").strip()
     if not rid:
         return ""
@@ -173,6 +170,18 @@ def agent_label(runtime_id: str) -> str:
         options = get_default_registry().get_entry(rid).options
     except Exception:  # noqa: BLE001 — an unregistered runtime is named by its id
         options = {}
+    return runtime_name(rid, options)
+
+
+def runtime_name(runtime_id: str, options: Mapping[str, Any]) -> str:
+    """The one name a runtime is given anywhere it is named: the chat's sentences, the agents it
+    lists, its card and the runtime pickers (``GET /api/agent-providers`` → ``label``).
+
+    Its entry's own ``runtime_label`` when it has one, else the display name of the app that
+    registered it (the Store's name for it, "Kiro CLI"), else the id after ``acp:`` in title case
+    (``demo-cli`` → "Demo Cli") — never the bare id, which is no one's name for it.
+    """
+    rid = (runtime_id or "").strip()
     label = str(options.get("runtime_label") or "").strip()
     if not label and options.get("extension"):
         from personalclaw.providers.registry import get_provider_registry

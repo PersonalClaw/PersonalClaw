@@ -42,6 +42,10 @@ EVENT_COMPACTION_STATUS = "compaction_status"
 COMPACTION_AUTOMATIC = "automatic"
 EVENT_CLEAR_STATUS = "clear_status"
 EVENT_AGENT_SWITCHED = "agent_switched"
+#: An agent CLI ended its turn at a refusal of one of its calls, and the turn goes on: the agent
+#: was asked to carry on without it (``acp/session.py``). ``title`` names the refused steps. Not a
+#: terminal event: what the agent does next streams after it, as the same turn. Only ACP sends it.
+EVENT_CARRIED_ON = "carried_on"
 # The turn's model failed before it said anything and the next model in its chain answers
 # instead. ``text`` is the sentence that says so ("Ran on X instead of Y: …"), and it arrives
 # before anything that model streams. Only the native loop emits it, and only for a caller

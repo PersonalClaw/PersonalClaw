@@ -68,6 +68,7 @@ export function applyApprovalFrame(segs: Segment[], d: Frame): Segment[] {
     blastRadius: blastRadiusOf(d.blast_radius), grantAgent: d.grant_agent ? String(d.grant_agent) : '',
     reach: d.reach ? String(d.reach) : '',
     ...(d.source ? { queued: true } : {}),
+    ...(d.deny_effect ? { denyEffect: String(d.deny_effect) } : {}),
   }]
 }
 

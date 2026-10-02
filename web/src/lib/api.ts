@@ -804,6 +804,9 @@ export interface AgentHook { command: string; matcher?: string; source?: string 
 export interface WaitingAgentHook { event: string; command: string; matcher: string; seal: string }
 export interface AgentProvider {
   name: string; provider_id: string; type: string; ready: boolean; state: string; detail: string
+  /** The runtime's name as every surface says it — its app's name for it in the Store ("Kiro
+   *  CLI"), the one the chat's sentences use (`runtime_tests.runtime_label`). */
+  label?: string
   /** When the user's last Test of this runtime ran (ISO-8601), or `null` when nobody has. */
   tested_at: string | null
 }
@@ -5380,6 +5383,10 @@ export interface PendingApproval {
   /** Why it is asked though a standing grant answers any other call: it reaches a host off the
    *  allowed hosts (`run_bounds.ask_note`); "" for every other call. */
   reach?: string
+  /** What a Deny does when it does more than decline the call — an agent CLI that can refuse it
+   *  only by ending its turn (`turn_endings.deny_effect`) — said on the card before it is pressed;
+   *  "" or absent when a Deny declines the call and the agent goes on. */
+  deny_effect?: string
   /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */

@@ -10,7 +10,8 @@ import type { RoomDetail, SavedAgent } from '../../lib/api'
 // member "its own provider session". Now it offers the chat picker's catalog: a ready CLI's agents
 // are listed, picking one saves the binding the chat's agent defaults use for it (its runtime and
 // the agent it offered), and the member is added as that binding. A CLI that is not ready is
-// listed, off, with why.
+// listed, off, with why. Each CLI is named as the gateway names it (its app's name for it, "Example
+// CLI"), never by its id in title case ("Example Cli").
 
 const created: Record<string, unknown>[] = []
 
@@ -25,8 +26,8 @@ vi.mock('../../lib/api', async (orig) => {
   Object.assign(api, {
     agentProviders: () => Promise.resolve([
       { name: 'native', provider_id: 'native', type: 'native', ready: true, state: 'ready', detail: '', tested_at: null },
-      { name: 'acp:example-cli', provider_id: 'acp:example-cli', type: 'acp_agent', ready: true, state: 'ready', detail: '', tested_at: '2026-09-30T10:00:00Z' },
-      { name: 'acp:other-cli', provider_id: 'acp:other-cli', type: 'acp_agent', ready: false, state: 'needs_login', detail: 'Sign in to Other Cli first.', tested_at: '2026-09-30T10:00:00Z' },
+      { name: 'acp:example-cli', provider_id: 'acp:example-cli', label: 'Example CLI', type: 'acp_agent', ready: true, state: 'ready', detail: '', tested_at: '2026-09-30T10:00:00Z' },
+      { name: 'acp:other-cli', provider_id: 'acp:other-cli', label: 'Other CLI', type: 'acp_agent', ready: false, state: 'needs_login', detail: 'Sign in to Other CLI first.', tested_at: '2026-09-30T10:00:00Z' },
     ]),
     agentProviderAgents: (id: string) => id === 'acp:example-cli'
       ? Promise.resolve({ agents: [
@@ -63,8 +64,8 @@ it('a ready CLI’s agent joins as the binding saved for it; a CLI that is not r
 
   await user.click(screen.getByRole('button', { name: /Add a member/ }))
   const picker = screen.getByRole('combobox', { name: 'Agent' })
-  const cli = await within(picker).findByRole('option', { name: 'Example Cli · Careful coder' })
-  const notReady = within(picker).getByRole('option', { name: 'Other Cli — can’t join now: Sign in to Other Cli first' }) as HTMLOptionElement
+  const cli = await within(picker).findByRole('option', { name: 'Example CLI · Careful coder' })
+  const notReady = within(picker).getByRole('option', { name: 'Other CLI — can’t join now: Sign in to Other CLI first' }) as HTMLOptionElement
   expect(notReady.disabled, 'a CLI that is not ready cannot be picked').toBe(true)
 
   await user.selectOptions(picker, (cli as HTMLOptionElement).value)

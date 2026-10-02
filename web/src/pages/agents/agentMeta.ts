@@ -1,15 +1,18 @@
 import { Bot, Cpu } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-/** Provider id → display label + icon + tone for the Agents list. */
+/** Provider id → display label + icon + tone for the Agents list.
+ *
+ *  An agent CLI's label is the runtime's own name as the gateway sends it (`RuntimeGroup.label`,
+ *  its app's name for it in the Store), so a picker, a card and the chat's sentences name it the
+ *  same way; before that is read, the cli name in title case. */
 export interface ProviderMeta { label: string; icon: LucideIcon; tone: string }
-export function providerMeta(providerId: string): ProviderMeta {
+export function providerMeta(providerId: string, label = ''): ProviderMeta {
   if (providerId === 'native' || !providerId) return { label: 'Native', icon: Bot, tone: 'var(--color-primary)' }
-  if (providerId.includes('claude')) return { label: 'Claude Code', icon: Cpu, tone: 'var(--color-info)' }
-  if (providerId.includes('codex')) return { label: 'Codex', icon: Cpu, tone: 'var(--color-warn)' }
-  // acp:<cli> → Title-case the cli name
-  const cli = providerId.replace(/^acp:/, '')
-  return { label: cli.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()), icon: Cpu, tone: 'var(--color-on-surface-low)' }
+  const named = label || providerId.replace(/^acp:/, '').replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  if (providerId.includes('claude')) return { label: named, icon: Cpu, tone: 'var(--color-info)' }
+  if (providerId.includes('codex')) return { label: named, icon: Cpu, tone: 'var(--color-warn)' }
+  return { label: named, icon: Cpu, tone: 'var(--color-on-surface-low)' }
 }
 
 export const APPROVAL_MODES = [

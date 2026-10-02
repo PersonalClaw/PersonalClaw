@@ -1,16 +1,18 @@
-"""A nudged turn cut at its time limit ends cleanly, and its session says why it stopped.
+"""A nudged turn cut at its time limit ends cleanly, and knows, as it ends, that its limit ended it.
 
 Measured: a loop planner's turn ran past its 600 s bound, and the cut crashed in its own clean-up —
 ``AttributeError: '_ChatSession' object has no attribute '_running'`` ("Task exception was never
 retrieved"). The session is slotted and its ``running`` is read off its turn's task, so there is no
-flag to write: the cut turn has already ended, and only saying so was left to do.
+flag to write: the cut turn has already ended, and only saying so was left to do. The turn says so
+itself (`turn_deadline`), once, so the chat shows one notice and ends in an error, not as a stop;
+`tests/test_a_queued_turn_past_its_limit_says_so.py` drives that through the real chat runner.
 """
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from personalclaw.dashboard.state import _ChatSession
 
@@ -56,17 +58,23 @@ def test_a_planner_turn_past_its_limit_is_stopped_without_a_crash() -> None:
     key = "loop-plan-abcd1234"
     session = _ChatSession(key, agent="planner")
     session._app = "loops"  # the planner's app: a plain chat turn bound, not a loop cycle
-    provider = MagicMock(cancel=AsyncMock())
     dstate = MagicMock()
     dstate._sessions = {key: session}
     dstate._background_tasks = set()
     dstate.waiting_on_owner.return_value = False
-    dstate.sessions.get_provider.return_value = provider
     orch.dashboard_state = dstate
     orch.loop_watchdog = None
 
+    ended_by: list[float] = []
+
     async def _wedged_run_chat(_state: Any, _sess: Any, _msg: str) -> None:
-        await asyncio.sleep(60)
+        from personalclaw.dashboard import turn_deadline
+
+        try:
+            await asyncio.sleep(60)
+        finally:
+            # As the real turn does as it ends: read whether its limit is what stopped it.
+            ended_by.append(turn_deadline.limit_passed())
 
     nudge = MagicMock(
         id="N1", session_name=key, message="draft the step", stop_sentinel_path="", cycle_count=0
@@ -89,7 +97,4 @@ def test_a_planner_turn_past_its_limit_is_stopped_without_a_crash() -> None:
     asyncio.run(_go())
 
     assert session.running is False
-    assert session._last_turn_errored is True
-    provider.cancel.assert_awaited()
-    said = [m["content"] for m in session.messages if m["role"] == "error"]
-    assert any("limit and was stopped" in text for text in said), said
+    assert ended_by == [0.2], "the turn could not tell that its limit stopped it"

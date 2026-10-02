@@ -423,12 +423,14 @@ turn, and an agent CLI's endings map onto the same ones
 | What ended it | Outcome | What the chat says |
 |---|---|---|
 | The agent finished (`end_turn`) with an answer | `complete` | the answer |
-| It finished, or stopped itself (`cancelled`), with no answer after you denied one of its calls | `error` / `stopped` | "Codex stopped after you denied Run command." — never resent, which would ask you again |
+| It stopped itself (`cancelled`) when a refusal of one of its calls ended its turn | the carried-on turn's | "Codex ended its turn when you denied Run command, so PersonalClaw asked it to carry on without it." — the same session is told what was refused and asked to go on without it, and what it does next is this turn (`AcpSession._dispatch_frames`, at most four times a turn) |
+| It finished with no answer after you denied one of its calls, or stopped itself and could not be carried on again | `error` / `stopped` | "Codex stopped after you denied Run command." — never resent, which would ask you again |
 | It refused to continue (`refusal`) and wrote nothing | `error` | "Codex refused to continue and wrote no answer." — never resent |
 | Its model ran into its output cap (`max_tokens`) and wrote nothing | `error` | "The model ran out of output room before it answered (8,192 tokens). …" — never resent |
 | It stopped itself (`cancelled`), and nobody denied or stopped anything | `stopped` | "The reply stopped before it finished. …" |
 | You pressed Stop | `stopped` | the stop card; never a timeout or an error |
-| Its process ended, or its connection closed, before it answered | the resent turn's | "⟳ Connection lost — retrying…", and the message is resent (up to three times) |
+| Its process ended, or its connection closed, before it answered | the resent turn's | "⟳ Connection lost — retrying…", and the message is resent (up to three times) — unless the turn had made calls nobody refused: "The connection to Codex closed after 2 steps of this turn, so your message was not sent again: that could repeat them. Send it again to retry." |
+| A turn that runs on its own (a queued message, a retry, a subagent's report, a loop's nudge) ran past its time limit | `error` | "This turn ran past its 10-minute limit and was stopped. Send your message again to retry." — its clock stops while one of its calls waits on your answer (`dashboard/turn_deadline.py`) |
 | It did not answer within the turn's time limit | `error` | "The agent did not finish within the turn's time limit, so the turn was stopped. …" — its late answer is dropped, never shown in the next turn |
 
 Silence is not one of these endings: while its prompt is unanswered and its
@@ -441,6 +443,13 @@ answers is restarted.
 A **Deny** answers the agent with its own refusal that declines the call and lets
 it continue — an agent can offer another refusal that ends its turn, under the same
 `reject_once` kind — and the refused step's row names the option that was sent.
+An agent can also offer only the refusal that ends its turn (an agent asking for an
+escalation, or for a file change, does), and then the card says before the Deny that
+it ends the agent's turn (`deny_effect` on the approval). Whatever the refusal, a turn
+it ends is carried on: the session tells the agent which step was refused and asks it
+to go on without it, and the chat says so. The audit row of every decision on an agent
+CLI's call names every answer the agent offered (`offered`), beside the one sent
+(`answered`).
 A **Stop** sends `session/cancel`, answers a pending approval `cancelled`, and
 waits for the agent's answer (`agent.soft_stop_budget_secs`). An agent that
 answers keeps its process for the chat's next turn; one that does not is killed,

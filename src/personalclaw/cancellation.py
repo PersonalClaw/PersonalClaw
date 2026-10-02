@@ -394,6 +394,7 @@ async def wait_for_unpaused(
     *,
     paused: Callable[[], bool] | None = None,
     what: str,
+    on_timeout: Callable[[], None] | None = None,
 ) -> Any:
     """``asyncio.wait_for`` on the work's own clock: it runs only while the work could run.
 
@@ -408,7 +409,9 @@ async def wait_for_unpaused(
 
     The clock is read every :data:`PAUSED_CLOCK_TICK_SECS`: a tick that wakes late counts as one
     tick (the rest is the loop's), and a tick *paused* reads paused counts as none. Out of time,
-    the work is cancelled (:func:`cancel_and_wait`, bounded) and :class:`OutOfTime` is raised.
+    *on_timeout* is called, the work is cancelled (:func:`cancel_and_wait`, bounded) and
+    :class:`OutOfTime` is raised. The call comes first, so the work can tell, as it ends, that
+    its bound ended it rather than any other cancel.
 
     Cancelled itself, it cancels the work and waits for it to end (bounded the same way) before
     the cancel goes on, as ``asyncio.wait_for`` does: a caller that cancels a turn and then acts
@@ -430,6 +433,8 @@ async def wait_for_unpaused(
     except asyncio.CancelledError:
         await cancel_and_wait([task], what=what)
         raise
+    if on_timeout is not None:
+        on_timeout()
     await cancel_and_wait([task], what=what)
     raise OutOfTime
 

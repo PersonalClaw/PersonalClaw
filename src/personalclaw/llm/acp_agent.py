@@ -694,6 +694,10 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         """The agent's option a Deny of *request_id* was answered with (see AcpSession)."""
         return self._client.refusal_answer(request_id)
 
+    def deny_outcome(self, request_id: str | int) -> str:
+        """What a Deny of the pending *request_id* would do (see AcpSession)."""
+        return self._client.deny_outcome(request_id)
+
     async def start_fresh_turn_session(self) -> None:
         """Start a fresh agent session on the live process (see AcpClient)."""
         await self._client.start_fresh_turn_session()

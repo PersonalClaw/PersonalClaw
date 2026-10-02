@@ -185,13 +185,12 @@ def discovery_failure(entry: Any) -> str | None:
 
 
 def runtime_label(entry: Any) -> str:
-    """A display label for a runtime ("Claude Code", "Codex"), for the agents it lists.
+    """A person's name for a runtime ("Claude Code", "Kiro CLI"), for the agents it lists, its
+    row and the sentences about it: the one name it has (``providers.image_input.runtime_name``),
+    so no surface names it from its id while another names it as its app does."""
+    from personalclaw.providers.image_input import runtime_name
 
-    Title-cases the ``acp:<cli>`` suffix (``claude-code`` → ``Claude Code``). Display polish
-    lives at this presentation layer; the backend stays neutral."""
-    name = str(entry.name or "")
-    cli = name.split(":", 1)[-1] if ":" in name else name
-    return " ".join(w.capitalize() for w in cli.replace("_", "-").split("-") if w) or cli
+    return runtime_name(str(entry.name or ""), dict(entry.options or {}))
 
 
 def _record(

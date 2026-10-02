@@ -363,11 +363,25 @@ class ACPDialect:
         provides, so it decides what a refusal IS; which refusal is chosen is read off the
         option's own id and name by :func:`refusal_rank`. Returns ``""`` when the agent
         offered no refusal at all, which is the only case where ``cancelled`` is sent.
+
+        When every refusal it offered ends its turn, the one sent ends it; the session then
+        asks the agent to carry on without the call (``AcpSession``'s carry-on), and the
+        approval card says so before the Deny (:meth:`deny_ends_turn`).
         """
         refusals = [o for o in offered if is_refusal_option(o)]
         if not refusals:
             return ""
         return str(min(refusals, key=refusal_rank).get("id") or "")
+
+    def deny_ends_turn(self, offered: list[dict[str, str]]) -> bool:
+        """Whether a Deny of a request offering *offered* ends the agent's turn, said before it
+        is pressed: the refusal :meth:`select_reject_option_id` picks says it ends the turn
+        (:func:`refusal_rank`), or the agent offered no refusal and the answer is ``cancelled``.
+        An agent asking for an escalation can offer only its turn-ending refusal."""
+        chosen = self.select_reject_option_id(offered)
+        if not chosen:
+            return True
+        return refusal_rank(next(o for o in offered if o.get("id") == chosen))[0]
 
     def approve_outcome(self, option_id: str) -> dict:
         """The ``outcome`` payload for an approved tool (selected option)."""

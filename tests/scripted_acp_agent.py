@@ -17,6 +17,15 @@ Scenarios (each turn asks to run one command first):
     go on and answer without the command. Answering ``cancelled`` ends the turn too.
 ``deny-ends``
     Offers one refusal; the agent ends its turn (``stopReason: cancelled``) when it is used.
+``deny-only-cancel``
+    Asks the way an agent asks for an escalation: its ONLY refusal is the turn-ending ``cancel``
+    ("No, and tell me what to do differently"), and using it ends the turn.
+
+In both of those, a prompt that follows a refused one is answered without the command
+(:data:`ANSWER_AFTER_CARRY_ON`), asking nothing.
+``deny-and-give-up``
+    Asks as ``deny-only-cancel`` does, and answers a prompt that follows the refused one by
+    ending that turn too (``stopReason: cancelled``), with nothing said.
 ``wait-for-stop``
     Asks, then waits. A ``session/cancel`` ends the turn with ``stopReason: cancelled``.
 ``ignores-stop``
@@ -74,16 +83,27 @@ _OPTIONS = {
         {"optionId": "allow", "name": "Yes", "kind": "allow_once"},
         {"optionId": "no", "name": "No", "kind": "reject_once"},
     ],
+    "deny-only-cancel": [
+        {"optionId": "accept", "name": "Yes, proceed", "kind": "allow_once"},
+        {
+            "optionId": "cancel",
+            "name": "No, and tell me what to do differently",
+            "kind": "reject_once",
+        },
+    ],
     "wait-for-stop": [
         {"optionId": "allow_once", "name": "Yes", "kind": "allow_once"},
         {"optionId": "reject_once", "name": "No", "kind": "reject_once"},
     ],
 }
 _OPTIONS["ignores-stop"] = _OPTIONS["wait-for-stop"]
+_OPTIONS["deny-and-give-up"] = _OPTIONS["deny-only-cancel"]
 
 ANSWER_WITHOUT_THE_COMMAND = (
     "I did not run the command, so this review reads the commit message only."
 )
+#: What an agent whose turn a refusal ended answers the prompt that follows.
+ANSWER_AFTER_CARRY_ON = "Without git show I read the commit message only: it is a version bump."
 
 
 class Agent:
@@ -93,6 +113,7 @@ class Agent:
         self.record = open(record_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
         self.prompt_id: object = None
         self.prompts_seen = 0
+        self.refused = False
         self.log("spawn")
 
     def log(self, kind: str, **fields: object) -> None:
@@ -184,6 +205,7 @@ class Agent:
             )
             self.end_turn("end_turn")
         else:
+            self.refused = True
             self.end_turn("cancelled")
 
     # ── the protocol loop ──────────────────────────────────────────────────────
@@ -248,6 +270,13 @@ class Agent:
             self.prompt_id = req_id
             self.say(PLAIN_ANSWER)
             self.end_turn("end_turn")
+        elif method == "session/prompt" and self.refused:
+            self.prompt_id = req_id
+            if self.scenario == "deny-and-give-up":
+                self.end_turn("cancelled")
+            else:
+                self.say(ANSWER_AFTER_CARRY_ON)
+                self.end_turn("end_turn")
         elif method == "session/prompt":
             self.start_turn(req_id)
         elif method == "session/load":
