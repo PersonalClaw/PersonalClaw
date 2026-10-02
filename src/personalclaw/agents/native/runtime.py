@@ -509,7 +509,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # THE NAME CENSUS (docs/architecture/tool-name-wire.md): a request names each tool by its
         # model-safe form, and _resolve_name maps that form back. A tool whose form another tool,
         # or one of the runtime's own, already has is left out, with a line naming it.
-        sanitized, unroutable = name_census(index, taken=self._META_TOOLS)
+        sanitized, unroutable = name_census(index, taken=self.META_TOOLS)
         if unroutable:
             defs = [t for t in defs if t.name not in unroutable]
             index = {n: p for n, p in index.items() if n not in unroutable}
