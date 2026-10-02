@@ -15,8 +15,13 @@ Message shapes (native loop):
 Design properties:
 - **Anti-thrashing:** skip if the last 2 compactions each saved <10% (no infinite
   re-compaction).
-- **Tool-pair integrity:** never leave an orphaned tool-result (a tool message
-  whose matching assistant tool_call was dropped) — they break the provider.
+- **Tool-pair integrity:** the protected head and tail hold WHOLE exchanges — a call and
+  every result it got (:func:`_whole_exchanges`). Cut between them, the tail's results were
+  dropped as orphans, a call kept in the head lost its results (a provider then answers it
+  as interrupted), and the account of the folded part said the call had no result: an
+  agent that had cited a release time read that its release lookup never returned, and
+  disowned the time. An orphan already in the history is still dropped — it breaks the
+  provider.
 - **Anchoring:** the latest user + assistant messages always survive in the tail.
 - **Prefix guard:** the summary is fenced "[CONTEXT COMPACTION — REFERENCE ONLY]"
   so only the live tail wins over stale state.
@@ -28,7 +33,7 @@ Design properties:
   history is carried through VERBATIM (its facts came from messages that are already
   gone, so re-deriving it is impossible), and a fresh one is derived for the region this
   pass is about to fold. Both sit immediately before the verbatim tail — beside the live
-  task, never in place of it: ``protect_tail`` is untouched, so the account cannot evict
+  task, never in place of it: the tail is never shortened, so the account cannot evict
   the messages the turn is actually acting on. Two blocks is the ceiling, so the carried
   weight is bounded at ``2 × MAX_ACCOUNT_CHARS``.
 """
@@ -268,6 +273,35 @@ def _derive_account_for(folded: list[dict]) -> str:
         return ""
 
 
+def _whole_exchanges(messages: list[dict], head_end: int, tail_start: int) -> tuple[int, int]:
+    """Where the head ends and the tail starts so neither cuts a call from its results.
+
+    An exchange is an assistant message's tool calls and every result answering them. One the
+    head's edge crosses is kept in the head (its end moves past the exchange's last result), and
+    one the tail's edge crosses is kept in the tail (its start moves back to the call). Both only
+    grow, so the head and the tail keep at least what they protect, and moved edges are checked
+    again until no exchange crosses either one.
+    """
+    call_at: dict[str, int] = {}
+    last_result: dict[int, int] = {}
+    for i, m in enumerate(messages):
+        for call in m.get("tool_calls", []) or []:
+            if call.get("id"):
+                call_at[str(call["id"])] = i
+        at = call_at.get(str(m.get("tool_call_id", ""))) if m.get("role") == "tool" else None
+        if at is not None:
+            last_result[at] = i
+    moved = True
+    while moved:
+        moved = False
+        for at, last in last_result.items():
+            if at < head_end <= last:
+                head_end, moved = last + 1, True
+            if at < tail_start <= last:
+                tail_start, moved = at, True
+    return head_end, tail_start
+
+
 def compact(
     messages: list[dict],
     *,
@@ -281,18 +315,21 @@ def compact(
     no meaningful middle to summarize (short conversation), returns the pruned
     list unchanged. Otherwise: keep the head verbatim, fold the middle into one
     fenced summary message (LLM via ``summarize_fn`` or the deterministic
-    digest), keep the tail verbatim, and drop any orphaned tool results.
+    digest), keep the tail verbatim, and drop any orphaned tool results. The head
+    and the tail are at least ``protect_head`` and ``protect_tail`` messages, and
+    longer where that keeps a call with its results (:func:`_whole_exchanges`).
     """
     pruned = prune_tool_outputs(messages)
     n = len(pruned)
     if n <= protect_head + protect_tail:
         return pruned  # nothing to summarize — the pre-pass is the whole win
 
-    head = pruned[:protect_head]
-    tail = pruned[-protect_tail:]
-    middle = pruned[protect_head : n - protect_tail]
-    if not middle:
-        return pruned
+    head_end, tail_start = _whole_exchanges(pruned, protect_head, n - protect_tail)
+    if head_end >= tail_start:
+        return pruned  # whole exchanges leave no middle to fold
+    head = pruned[:head_end]
+    tail = pruned[tail_start:]
+    middle = pruned[head_end:tail_start]
 
     files = extract_file_refs(pruned)
     body = summarize_fn(middle) if summarize_fn else _structured_digest(middle, files)
@@ -315,7 +352,7 @@ def compact(
     # Both land between the summary and the tail: adjacent to the live task, never displacing it.
     # Sliced to the MIDDLE only: a block already inside head or tail survives verbatim on its own,
     # and re-inserting it would put the same account in the history twice.
-    folding = messages[protect_head : n - protect_tail]
+    folding = messages[head_end:tail_start]
     carried = [m for m in folding if is_resume_account(m)]
     accounts: list[dict] = [carried[-1]] if carried else []
     fresh = _derive_account_for([m for m in folding if not is_resume_account(m)])

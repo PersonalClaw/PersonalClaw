@@ -469,6 +469,18 @@ def _stamp_on_last_assistant(session: Any, key: str, value: Any) -> bool:
     return False
 
 
+def turn_answer(session: Any) -> str:
+    """What the turn at the end of *session*'s buffer answered: its assistant messages since the
+    message that started it, in order, which the chat shows as one reply."""
+    parts: list[str] = []
+    for msg in reversed(getattr(session, "messages", []) or []):
+        if msg.get("role") in _TURN_DISPATCH_ROLES:
+            break
+        if msg.get("role") == "assistant":
+            parts.append(str(msg.get("content") or ""))
+    return "\n\n".join(reversed(parts))
+
+
 def stamp_turn_telemetry(session: Any, telemetry: dict[str, Any] | None) -> bool:
     """Stamp *telemetry* onto the session's last assistant message ``meta`` (``SSM-2``)."""
     return _stamp_on_last_assistant(session, TURN_TELEMETRY_KEY, telemetry)

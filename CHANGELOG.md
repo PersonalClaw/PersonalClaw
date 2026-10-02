@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An answer longer than the word limit its agent's own instructions set is followed by a note giving its word count and quoting the instruction. The answer itself is never cut.**
 - **A chat channel's approval offers what the chat's approval card offers: Allow once, Allow for this chat and Deny, from the answers core hands over in the approval brief (channel contract change, used by `*-channel`).**
 - **`SubagentInfo.held_back` and `SubagentManager.spawn(held_back=…)` say why an agent may do less than the step that started it asks (an SDK addition no app has to change for).**
 - **A working folder that holds an automation back can be trusted from that automation's panel, and from the request it raised in the Inbox, which asked you to trust the folder and offered no way to.**
@@ -183,6 +184,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A Code loop task whose finished work conflicts with your branch keeps that work on its own branch and asks you: redo it on top of your branch, resolve the conflict yourself and Resume, or drop it. It was reset and run again, twice at most, with nobody asked, work you had approved included.**
 - **A Code project that finished or was stopped has nothing queued: its Tasks rail reads the tasks it left unfinished as not done, never queued or waiting for a stage.**
 - **An automation's run history says when each run started and finished and how long it took, every fire moves its run count and last-fired time whatever started it, and a run that did its work without a model it needed, such as a digest with no summary, is recorded as degraded rather than as a success.**
+- **Compacting a conversation keeps every tool call with its results, so an agent no longer disowns a fact it read from a result the compaction dropped, and the record of what was folded no longer says a call that answered never finished.**
 - **A Verifiable loop runs its check in the folder its worker writes to, so a check that passes finishes the loop with one notification; every cycle's check, and its judge's answer, is shown on the loop's page, and a check or judge that cannot run says why.**
 - **The dashboard no longer stalls while the background model is busy: a chat's organize suggestion, the prompt suggestions and an attachment's reading answer at once and arrive when the model has answered, each chat keeps one such read open at a time, and a read that ran out of time no longer says the server did not respond.**
 - **A loop's ending says why it stopped — the judge's own reason when it could not decide, how long an ask had really waited when a step's time limit ran out, or the budget it was given — and what to do about it; "Change the workflow" is offered only when a step is the cause, and the Loops list's status, stop reason and error agree.**

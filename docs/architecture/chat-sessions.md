@@ -254,11 +254,24 @@ chat, channel thread, loop worker, webhook, subagent).
    the conversation is linked to, where its replies go
    (`DashboardState.tell_linked_channel`): a chat that came from a channel on
    that channel, and a channel's own thread on the channel that issued its id.
+   A compaction keeps the first messages and the latest ones verbatim and folds
+   the rest into a summary and an account of the calls it folded; the kept head
+   and tail hold whole exchanges, a call with every result it got
+   (`context_compaction._whole_exchanges`). Cut between them, a kept result was
+   dropped as an orphan and the account said its call had no result, so an agent
+   disowned a fact it had read from that result.
 3. **Agent resolution** — an agent's own `system_prompt` governs when it has one;
    the default agent ships with none, so its prompt is the one bound in Settings →
    Prompts for the turn's context (`chat`, or `background` for unattended runs).
    The agent's voice and the task-mode posture (`system_prompt_suffix`) are layered
    ON TOP of whichever prompt resolved — never a replacement (see `build_message`).
+   The resolved prompt opens the session's first message, verbatim, ahead of
+   memory, history and the request, and a compaction keeps that message. A word
+   limit an agent's own instructions set for its answer ("Keep the answer under 200
+   words") is checked when the turn ends (`answer_rules`): an answer past it is
+   followed by a notice row that gives its word count and quotes the agent's
+   sentence. The answer is never cut, and an answer to a message that sets a word
+   limit of its own is not checked against the agent's.
 4. **Model resolution** — the `chat` use-case binding from
    `active_models.json`, unless the composer picked a model for the session or
    the agent pins one (in that order; the `model` kwarg threads through

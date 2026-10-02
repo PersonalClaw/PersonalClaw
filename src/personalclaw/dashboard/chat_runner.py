@@ -18,6 +18,7 @@ from personalclaw.acp.types import (
     STOP_REASON_END_TURN,
     is_cancelled_stop,
 )
+from personalclaw.answer_rules import over_limit_notice
 from personalclaw.approval_brief import call_blast_radius
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
@@ -40,6 +41,7 @@ from personalclaw.dashboard.chat_session_map import (
     stamp_turn_summary,
     stamp_turn_telemetry,
     summarize_session_turn,
+    turn_answer,
 )
 from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
@@ -5351,6 +5353,17 @@ async def run_chat(
         # transcript say so instead of reading as the model trailing off.
         stamp_finish_reason(session, _stop_reason)
         stamp_model_substitution(session, _substitution_note)
+        # An answer that ran past its agent's own word limit says so under it (`answer_rules`); one
+        # cut at the output cap is not the whole answer, and its own mark says so.
+        if _answered and not (_unanswered or is_slash or session._last_turn_errored):
+            _over = over_limit_notice(
+                session.agent or "", agent_system_prompt, turn_answer(session), own_words(_turn_row)
+            )
+            if _over and not is_length_stop(_stop_reason):
+                session.append("notice", _over, "msg msg-notice")
+                state.broadcast_ws(
+                    "chat_message", {"session": session.key, "role": "notice", "content": _over}
+                )
         # Save to history and trigger memory consolidation
         save_session_to_history(state, session)
         session._prompt_busy_retries = 0
