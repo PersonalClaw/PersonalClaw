@@ -106,40 +106,56 @@ def use_case_binding(use_case: str) -> str:
 class ModelCallTimeout(GuardError):
     """One automated model call ran past the spend guard's ceiling (``ModelCallGuard``).
 
-    Only a provider that keeps no wait of its own is held to that ceiling: one whose instance
-    keeps a Request Timeout is bounded by it, and says so in its own words
-    (:class:`FirstTokenTimeout`). Typed, with the call's use case, provider and model, so the
-    chat names what took too long and what to change instead of reporting a failure nobody
-    recognizes — measured, a loop's worker failed on "model call for use case 'loops' (provider
-    'ollama') exceeded 300s", shown as an unrecognized error.
+    A provider that keeps no wait of its own is held to that ceiling: one whose instance keeps a
+    Request Timeout is bounded by it, and says so in its own words (:class:`FirstTokenTimeout`).
+    A call on the Background chain is held to the Background time limit either way, which the
+    owner sets in Settings → Models (``background.call_timeout_secs``); ``background_limit`` says
+    that limit stopped it, so the sentence says where to raise it. Typed, with the call's use
+    case, provider and model, so the chat names what took too long and what to change instead of
+    reporting a failure nobody recognizes — measured, a loop's worker failed on "model call for
+    use case 'loops' (provider 'ollama') exceeded 300s", shown as an unrecognized error.
     """
 
     mode = FailureMode.TIMEOUT
 
-    def __init__(self, *, use_case: str, provider: str, model: str, waited_secs: float) -> None:
+    def __init__(
+        self,
+        *,
+        use_case: str,
+        provider: str,
+        model: str,
+        waited_secs: float,
+        background_limit: bool = False,
+    ) -> None:
         self.use_case = use_case
         self.provider = provider
         self.model = model
         self.waited_secs = waited_secs
+        self.background_limit = background_limit
         super().__init__(self.sentence())
 
     def sentence(self, *, room_member: str = "") -> str:
         who = f"{self.model} on {self.provider}" if self.model else (self.provider or "The model")
         secs = max(1, int(round(self.waited_secs)))
-        fix = (
-            f"give the {room_member} agent a faster model on the Agents page"
-            if room_member
-            else f"bind a faster model to {use_case_binding(self.use_case)}"
-        )
+        within = f"{who} did not finish answering within {secs} second{'' if secs == 1 else 's'}"
+        if room_member:
+            fix = f"give the {room_member} agent a faster model on the Agents page"
+        else:
+            fix = f"bind a faster model to {use_case_binding(self.use_case)}"
+        if self.background_limit and not room_member:
+            return (
+                f"{within}, the time limit of a background task, so the call was stopped. "
+                f"Try again, {fix}, or raise its time limit there."
+            )
         return (
-            f"{who} did not finish answering within {secs} second{'' if secs == 1 else 's'}, "
-            "the longest one automated model call may run, so the call was stopped. "
+            f"{within}, the longest one automated model call may run, so the call was stopped. "
             f"Try again, or {fix}."
         )
 
 
-#: How a model that was never sent the request because it was busy begins its clause.
-WAITED_BEHIND = "it waited"
+#: How a model that was never sent the request because it was busy begins its clause: it waited
+#: behind the work that held it, or, when its wait was set to none, it was busy with that work.
+WAITED_BEHIND = ("it waited", "it was busy")
 
 
 class LocalModelBusy(GuardError):
@@ -163,30 +179,40 @@ class LocalModelBusy(GuardError):
         self.busy_with = busy_with
         self.waited_secs = waited_secs
         self.moved_on = moved_on
-        secs = max(1, int(round(waited_secs)))
+        # How long it waited is said only when it waited a second or more: the wait for a busy
+        # local model may be set to none (``background.busy_model_wait_secs``), and "for 1
+        # second" of a wait that never was is not true.
+        secs = self._waited()
+        waited = f" for {secs} second{'' if secs == 1 else 's'}" if secs else ""
         then = "so the next model was asked" if moved_on else "so the call was stopped"
         super().__init__(
-            f"{model or provider} on {provider} was busy with {busy_with} for {secs} "
-            f"second{'' if secs == 1 else 's'}, {then}."
+            f"{model or provider} on {provider} was busy with {busy_with}{waited}, {then}."
         )
+
+    def _waited(self) -> int:
+        """The whole seconds it waited, 0 for less than half of one."""
+        return int(round(self.waited_secs))
 
     def reason(self) -> str:
         """Why it did not serve, as the substitution sentence of the model that did reads it: it
         waited, and behind what. Not that it was slow: it was never sent the request."""
-        secs = max(1, int(round(self.waited_secs)))
-        return f"{WAITED_BEHIND} {secs} s behind {self.busy_with} on this machine"
+        secs = self._waited()
+        if not secs:
+            return f"it was busy with {self.busy_with} on this machine"
+        return f"it waited {secs} s behind {self.busy_with} on this machine"
 
     def sentence(self, *, room_member: str = "") -> str:
         """The failure as the chat shows it when no other model could answer instead."""
-        secs = max(1, int(round(self.waited_secs)))
+        secs = self._waited()
+        waited = f" for {secs} s" if secs else ""
         fix = (
             f"give the {room_member} agent a second model on the Agents page"
             if room_member
             else "add a second model after it in Settings → Models"
         )
         return (
-            f"{self.model or self.provider} on this machine was busy with {self.busy_with} for "
-            f"{secs} s, so this was never sent to it. Try again once it is free, or {fix}."
+            f"{self.model or self.provider} on this machine was busy with {self.busy_with}"
+            f"{waited}, so this was never sent to it. Try again once it is free, or {fix}."
         )
 
 

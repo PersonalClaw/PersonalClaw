@@ -234,6 +234,24 @@
     "type": "str"
   },
   {
+    "default": 15.0,
+    "path": "background.busy_model_wait_secs",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 300.0,
+    "path": "background.call_timeout_secs",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 4096,
+    "path": "background.max_output_tokens",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": false,
     "path": "browse.user_browser_enabled",
     "sensitive": false,

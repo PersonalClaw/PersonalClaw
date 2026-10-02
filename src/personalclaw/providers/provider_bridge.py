@@ -20,7 +20,7 @@ a callable matching the factory signature::
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -577,17 +577,22 @@ class ResolutionBasis:
     chat's or an agent's own pick is checked against (``named_model_problem``). ``entry`` is the
     registry entry the model is served from, compared by IDENTITY: an edit in Settings →
     Providers (a new Default Model, endpoint or key) re-registers the entry, and a removal
-    drops it, so either reads as moved.
+    drops it, so either reads as moved. ``output_cap`` is the Background output limit its models
+    were built with (``background.max_output_tokens``), ``None`` when no such limit was applied:
+    a change in Settings → Models → Background reads as moved too, so the background session's
+    next chore is built with the limit as it reads now.
     """
 
     axis: str
     chains: tuple[tuple[str, ...], tuple[str, ...]]
     entry: object | None = None
+    output_cap: int | None = None
 
     @classmethod
-    def read(cls, axis: str) -> "ResolutionBasis":
-        """The chains as they read now, for a runtime about to resolve on ``axis``."""
-        return cls(axis=axis, chains=_basis_chains(axis))
+    def read(cls, axis: str, *, output_cap: int | None = None) -> "ResolutionBasis":
+        """The chains as they read now, for a runtime about to resolve on ``axis`` with the
+        Background output limit ``output_cap`` (``None``: none applied)."""
+        return cls(axis=axis, chains=_basis_chains(axis), output_cap=output_cap)
 
     def served_from(self, served_ref: str) -> "ResolutionBasis":
         """This basis, pinned to the registry entry ``served_ref`` names (``""`` pins none)."""
@@ -601,13 +606,15 @@ class ResolutionBasis:
         except Exception:  # noqa: BLE001 — an unreadable registry pins nothing
             logger.debug("resolution basis: registry unreadable for %r", name, exc_info=True)
             entry = None
-        return ResolutionBasis(axis=self.axis, chains=self.chains, entry=entry)
+        return replace(self, entry=entry)
 
     def holds(self) -> bool:
         """Whether a resolution now would read what this one read. A probe that fails holds:
         a broken read must not rebuild every open session."""
         try:
             if _basis_chains(self.axis) != self.chains:
+                return False
+            if self.output_cap is not None and _background_output_cap() != self.output_cap:
                 return False
             if self.entry is None:
                 return True
@@ -623,6 +630,14 @@ def _basis_chains(axis: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     from personalclaw.providers.use_cases import active_model_refs
 
     return tuple(active_model_refs(axis)), tuple(active_model_refs("chat"))
+
+
+def _background_output_cap() -> int:
+    """The most a Background turn's every inference may write, as Settings → Models → Background
+    reads now (``background.max_output_tokens``)."""
+    from personalclaw.config.loader import background_limits
+
+    return int(background_limits().max_output_tokens)
 
 
 def _build_native_runtime(
@@ -731,14 +746,16 @@ def _build_native_runtime(
     # A Background turn's every inference carries an output cap, as a one-shot call's does
     # (``one_shot_completion``'s per-entry ``max_tokens``): its models are built with it, the one
     # it falls back to included. Measured without one: a memory consolidation on a local model
-    # wrote 26,164 tokens over 1,224 s and answered nothing.
-    if inner_axis == "background":
-        from personalclaw.local_models.budgets import DEFAULT_OUTPUT_TOKENS
-
-        kwargs.setdefault("max_tokens", DEFAULT_OUTPUT_TOKENS)
+    # wrote 26,164 tokens over 1,224 s and answered nothing. The cap is the owner's
+    # (``background.max_output_tokens``), and the basis records it, so a change in Settings
+    # rebuilds the runtime at its next acquire. A caller's own ``max_tokens`` is kept.
+    output_cap: int | None = None
+    if inner_axis == "background" and "max_tokens" not in kwargs:
+        output_cap = _background_output_cap()
+        kwargs["max_tokens"] = output_cap
     # Read BEFORE resolving: a rebind that lands while this builds then reads as moved, and the
     # runtime is rebuilt at its next acquire rather than kept on what it was built from.
-    basis = ResolutionBasis.read(inner_axis)
+    basis = ResolutionBasis.read(inner_axis, output_cap=output_cap)
 
     def _resolve(override: str | None) -> ModelProvider:
         return resolve_provider_for_use_case(

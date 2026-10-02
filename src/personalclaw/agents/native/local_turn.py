@@ -37,8 +37,8 @@ async def take_local_turn(
     and no guard takes the turn for it; ``None`` otherwise.
 
     A turn somebody is waiting for (not *unattended*) goes ahead of every background call, and
-    when *next_ref* names a model to move on to it waits at most ``ATTENDED_WAIT_SECS`` for the
-    call already running, then raises ``LocalModelBusy``, said as what it waited behind. Its
+    when *next_ref* names a model to move on to it waits at most ``background.busy_model_wait_secs``
+    for the call already running, then raises ``LocalModelBusy``, said as what it waited behind. Its
     provider's Request Timeout, which is how long a request may wait to start, bounds the wait.
     """
     if getattr(model, "takes_local_turns", False):

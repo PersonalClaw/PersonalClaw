@@ -20,7 +20,8 @@ a chat's reply, in the native loop, one call at a time per model, in two lanes:
 A wait counts against the call's own limits. The guard's clock starts before the call asks for its
 turn, and a provider's Request Timeout, which is how long a request may wait to start, bounds the
 wait for one. A call somebody is waiting for that has another model to try gives a busy local model
-at most :data:`ATTENDED_WAIT_SECS`, then moves on
+at most the wait set in Settings → Models → Background (``background.busy_model_wait_secs``,
+read as each call asks for its turn), then moves on
 (:class:`~personalclaw.guardrails.failure.LocalModelBusy`).
 
 While somebody waits, the wait is published (:func:`waits`): what is waiting, what holds the
@@ -53,11 +54,6 @@ logger = logging.getLogger(__name__)
 #: anyway, and a call that is already there is a call the next one waits behind, out of reach of
 #: the lanes.
 TURNS_PER_MODEL = 1
-
-#: How long a call somebody is waiting for waits for a busy local model when its chain has another
-#: model to try. Long enough for a call about to finish to hand over, short enough that a person
-#: is not left watching a spinner for minutes of somebody else's work.
-ATTENDED_WAIT_SECS = 15.0
 
 #: What a model is busy with, by the subsystem that holds it (``guardrails.audit.CALLERS``), in
 #: the words the waiting page shows.
@@ -291,14 +287,20 @@ async def take_turn(key: str, *, provider: str, model: str, within: float | None
 
     A call somebody is waiting for (:func:`attending`) goes before every background call, and
     when its chain has another model to try (:func:`next_entry`) it waits at most
-    :data:`ATTENDED_WAIT_SECS`. A wait that runs out, or that the person moves on from, raises
+    ``background.busy_model_wait_secs``, as Settings has it now: long enough for a call about to
+    finish to hand over, short enough that a person is not left watching a spinner for minutes of
+    somebody else's work, and the owner's to change for a machine or a model that needs another
+    balance. A wait that runs out, or that the person moves on from, raises
     :class:`~personalclaw.guardrails.failure.LocalModelBusy`.
     """
     who = current_attended()
     after = moving_on_to()
     next_ref = after if who is not None else ""
     if who is not None and next_ref:
-        within = ATTENDED_WAIT_SECS if within is None else min(within, ATTENDED_WAIT_SECS)
+        from personalclaw.config.loader import background_limits
+
+        wait = max(0.0, float(background_limits().busy_model_wait_secs))
+        within = wait if within is None else min(within, wait)
     holder = _Holder(busy_with=ANOTHER_WAIT if who is not None else busy_with(current_caller()))
     loop = asyncio.get_running_loop()
     with _LOCK:

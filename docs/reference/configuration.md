@@ -318,6 +318,21 @@ Transcription shows the one it found, or where it looked when there is none.
 | `dashboard.auto_open_browser` | boolean | `true` | backend-only | Open the dashboard in a browser on gateway start (`--no-open` overrides per-run). |
 | `dashboard.terminal` | object | `{"enabled": true}` | `enabled`: backend-only; `persist`: Terminal page | `enabled` is the kill switch for the built-in terminal (PTY) feature, read raw with a 30s cache. `persist` (tmux-backed persistence across gateway restarts) is toggled on the Terminal page. |
 
+## Background work (`background.*`)
+
+The limits on work nobody is watching, and how long a reply waits for a local model that is busy
+with it. They are under the Background chain in **Settings → Models** (open Background, then
+Limits). Each is read when a call is made, so a change applies to the next call with no restart.
+None is a security setting: a longer limit only waits longer, and the spend ceilings
+(`guardrails.budgets.*`) still bound what the calls cost. A hand-edited value outside its window
+loads as the nearest end of it; the dashboard and `personalclaw config set` refuse it.
+
+| Key | Type | Default | Where to set | Description |
+|---|---|---|---|---|
+| `background.call_timeout_secs` | number (30–3600) | `300.0` | Settings → Models → Background | How long a background task may run before it is stopped and the next model of the Background chain is asked: a chat's chores, knowledge processing, digests, a schedule being read. Time spent waiting for its turn on a busy local model counts. A provider's own Request Timeout still bounds how long the answer may take to start. A call stopped by it says so, and where to raise it. |
+| `background.max_output_tokens` | integer (512–65536) | `4096` | Settings → Models → Background | Most text a background task may write in one answer: a chat's title, its memory consolidation, suggestions and follow-ups, and heartbeat tasks (every turn of an agent on the Background chain). A one-shot background call keeps its model's own output limit. A change rebuilds the background session at its next chore. |
+| `background.busy_model_wait_secs` | number (0–300) | `15.0` | Settings → Models → Background | How long a reply waits for a busy local model before asking the next one. A reply, a step it runs or a page's answer goes ahead of background work on a model on this machine; when the call already running holds the model and the chain has another model, it waits this long, then that model answers. `0` asks the next model at once. |
+
 ## Top-level keys
 
 | Key | Type | Default | Where to set | Description |

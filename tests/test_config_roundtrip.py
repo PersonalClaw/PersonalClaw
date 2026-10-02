@@ -275,6 +275,7 @@ _SECTIONS = [
     "packs",
     "companion",
     "local_models",
+    "background",
     "proactive",
     "apps",
     "updates",

@@ -35,6 +35,7 @@ import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { ERROR_SURFACE_PAINT } from '../../design/errorTreatments'
 import { DisclosureCard } from '../../ui/DisclosureCard'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { reportingWrite } from '../../app/reportingWrite'
 import { DownloadFailure, InlineModelDownload, isDownloadable, modelLabel, useRowDownload } from './InlineModelDownload'
@@ -1332,6 +1333,56 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
           )}
         </>
       )}
+      {useCase === 'background' && <BackgroundLimits />}
     </DisclosureCard>
+  )
+}
+
+/** The `background.*` limits, under the Background chain they bound: how long a background task may
+ *  run, the most it may write, and how long a reply waits for a busy local model before the next
+ *  model answers.
+ *
+ *  All three were constants in the gateway (300 s, 4096 tokens, 15 s), and PersonalClaw runs on any
+ *  machine with any model: a slow machine can legitimately need longer, a model may need more room
+ *  to write. The bounds are the PATCH allowlist's, so the control never offers a value the save path
+ *  refuses. The gateway reads each one at its next call, so a change needs no restart. */
+function BackgroundLimits() {
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  const { data, error: loadErr, refresh } = useQuery('settings:background-limits', () =>
+    api.personalclawConfig().then((c) => (c.background ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  if (!data && loadErr) return <LoadError what="background limits" error={loadErr} onRetry={refresh} />
+  if (!data || !cfg) return <FormSkeleton sections={1} what="background limits" />
+
+  const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = cfg[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`background.${key}`, value).then(() => {
+      onSaved?.()
+      // The copy this panel paints from on its next open is the one just saved, not the one read
+      // before it.
+      invalidateKeys('settings:background-limits')
+    }).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-xs">
+      <Eyebrow as="h3">Limits</Eyebrow>
+      <p data-type="caption" className="text-on-surface-low">A change applies to the next call; nothing restarts.</p>
+      <div className="rounded-lg bg-surface px-m">
+        <NumberRow label="Time limit (seconds)" cfg={cfg} field="call_timeout_secs" min={30} max={3600} patch={patch}
+          hint="How long a background task may run before it is stopped and the next model in this chain is asked. Time spent waiting for a busy local model counts. Default 300 (5 minutes); 30 to 3600." />
+        <NumberRow label="Output limit (tokens)" cfg={cfg} field="max_output_tokens" min={512} max={65536} step={512} patch={patch}
+          hint="Most text a background task may write in one answer: a chat's title, its memory consolidation, suggestions and follow-ups, and heartbeat tasks. Other background calls keep their model's own limit. Default 4096; 512 to 65536." />
+        <NumberRow label="Wait for a busy local model (seconds)" cfg={cfg} field="busy_model_wait_secs" min={0} max={300} patch={patch}
+          hint="How long a reply waits for a busy local model before asking the next one. When a model on this machine is busy with background work and the chain has another model, a reply, a step it runs or a page's answer waits this long, then that model answers. 0 asks it at once. Default 15; 0 to 300." />
+      </div>
+    </div>
   )
 }

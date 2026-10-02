@@ -52,12 +52,14 @@ WEB_SRC = REPO / "web/src"
 #:
 #: ``auth`` is the tenth, added when its last two keys got a control:
 #: ``auth.lockout_threshold`` and ``auth.lockout_window`` were allowlisted, bounded and read by
-#: every sign-in door, and only a hand edit of ``config.json`` could change them.
+#: every sign-in door, and only a hand edit of ``config.json`` could change them. ``background``
+#: was born in scope: its three limits were constants until they became settings with a control.
 IN_SCOPE_SECTIONS = (
     "workflows",
     "external_access",
     "routing",
     "local_models",
+    "background",
     "sandbox",
     "feedback",
     "loops",

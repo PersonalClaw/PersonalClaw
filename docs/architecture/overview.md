@@ -174,9 +174,15 @@ given the model before any background call, that chat's own title and consolidat
 background work (knowledge processing, skill reviews, digests, chat chores) waits while one is
 waiting, so it never holds the model for more than the call it is already making. The wait for a
 turn counts against the call's own limits: the guard's clock, else the provider's Request Timeout.
-A waited-for call whose chain has another model gives a busy local model `ATTENDED_WAIT_SECS`
-(15 s), then that model answers in its place and the substitution says what the first waited
-behind ("it waited 15 s behind background work on this machine"), not that it was slow.
+A waited-for call whose chain has another model gives a busy local model the wait set under
+Settings → Models → Background (`background.busy_model_wait_secs`, 15 s unless changed, read as
+each call asks for its turn), then that model answers in its place and the substitution says what
+the first waited behind ("it waited 15 s behind background work on this machine", or "it was busy
+with background work on this machine" when the wait is set to none), not that it was slow. A call
+on the Background chain is stopped at the Background time limit (`background.call_timeout_secs`,
+300 s unless changed), and a Background agent's turn writes at most
+`background.max_output_tokens` in one answer; both are read at the call too
+([configuration](../reference/configuration.md#background-work-background)).
 
 While somebody waits, the wait is published: `GET /api/models/waits` lists what is waiting, on
 which model, what the model is busy with, and which model is asked next and when;

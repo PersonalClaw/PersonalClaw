@@ -36,6 +36,17 @@ def _home(tmp_path, monkeypatch):
     rates_mod._overlay_cache = None
 
 
+def _time_limit(monkeypatch, secs: float) -> None:
+    """Hold Background calls to *secs*, below the 30 s Settings allows, so a cut is seen in real
+    time: the limit is read from the one place the code reads it, at each call."""
+    from personalclaw.config.loader import BackgroundConfig
+
+    monkeypatch.setattr(
+        "personalclaw.config.loader.background_limits",
+        lambda: BackgroundConfig(call_timeout_secs=secs),
+    )
+
+
 class _Model:
     """``here`` keeps a Request Timeout, as a local runtime does, and writes without end;
     ``relay`` answers at once. ``built`` records every build's ``max_tokens``."""
@@ -136,10 +147,9 @@ def test_a_one_shot_background_call_is_cut_at_its_ceiling_and_the_next_model_ans
     built, monkeypatch
 ):
     """🔴 A model with a Request Timeout was held to that alone: it wrote until it stopped."""
-    from personalclaw.guardrails import model_call
     from personalclaw.llm_helpers import one_shot_completion
 
-    monkeypatch.setattr(model_call, "_BACKGROUND_CALL_SECS", 0.3, raising=False)
+    _time_limit(monkeypatch, 0.3)
 
     async def scenario() -> tuple[str, float]:
         loop = asyncio.get_running_loop()
@@ -157,10 +167,9 @@ def test_a_consolidation_on_the_background_session_is_cut_and_handed_on(
     built, monkeypatch, tmp_path
 ):
     """🔴 The measured consolidation: 1,224 s on the local model, uncut, and no answer."""
-    from personalclaw.guardrails import model_call
     from personalclaw.history import ConversationLog, HistoryConsolidator
 
-    monkeypatch.setattr(model_call, "_BACKGROUND_CALL_SECS", 0.3, raising=False)
+    _time_limit(monkeypatch, 0.3)
 
     async def scenario():
         consolidator = HistoryConsolidator(
@@ -175,8 +184,9 @@ def test_a_consolidation_on_the_background_session_is_cut_and_handed_on(
 
 
 def test_every_model_of_the_background_session_is_built_with_an_output_cap(built):
-    """🔴 The measured consolidation was sent with no output cap at all."""
-    from personalclaw.local_models.budgets import DEFAULT_OUTPUT_TOKENS
+    """🔴 The measured consolidation was sent with no output cap at all. It is the Background
+    output limit, 4,096 tokens unless the owner changes it."""
+    from personalclaw.config.loader import BackgroundConfig
 
     async def scenario() -> None:
         sessions = _BackgroundSessions()
@@ -185,4 +195,5 @@ def test_every_model_of_the_background_session_is_built_with_an_output_cap(built
 
     asyncio.run(scenario())
 
-    assert built == [("here", DEFAULT_OUTPUT_TOKENS), ("relay", DEFAULT_OUTPUT_TOKENS)]
+    cap = BackgroundConfig().max_output_tokens
+    assert built == [("here", cap), ("relay", cap)]

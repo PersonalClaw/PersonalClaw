@@ -86,13 +86,6 @@ logger = logging.getLogger(__name__)
 # answer, and is deliberately not a cap on the whole answer.
 _DEFAULT_TIMEOUT_SECS = 300.0
 
-#: The whole-call ceiling of a call on the Background axis (a chat's chores, a one-shot call), with
-#: or without a Request Timeout: nobody watches such a call, its chain has a model to ask next, and
-#: a Request Timeout bounds only how long the answer takes to start and between its parts. Measured:
-#: a memory consolidation on a local model streamed for 1,224 s, ended with no answer, and held the
-#: model the whole time.
-_BACKGROUND_CALL_SECS = 300.0
-
 
 def new_audit_id() -> str:
     """The id one model-call attempt is recorded under (``model_calls.jsonl``)."""
@@ -308,11 +301,17 @@ class ModelCallGuard(ModelProvider):
         # which is what lets a stalled local model hand over to the next model quickly). With
         # none, an instance that keeps a Request Timeout is bounded by it alone and raises its own
         # sentence naming the setting (``FirstTokenTimeout``), so the guard adds no second clock;
-        # a provider that keeps none gets the guard's default ceiling. A Background call keeps
-        # its own ceiling either way (:data:`_BACKGROUND_CALL_SECS`). 0 means no clock here.
-        if timeout_secs is None and use_case == "background":
-            timeout_secs = _BACKGROUND_CALL_SECS
-        if timeout_secs is None:
+        # a provider that keeps none gets the guard's default ceiling. 0 means no clock here.
+        #
+        # A Background call with no clock of its caller's is held to the Background time limit
+        # either way (``background.call_timeout_secs``): nobody watches such a call, its chain has
+        # a model to ask next, and a Request Timeout bounds only how long the answer takes to start
+        # and between its parts. Measured: a memory consolidation on a local model streamed for
+        # 1,224 s, ended with no answer, and held the model the whole time. That limit is read as
+        # each call starts (:meth:`_clock_secs`), never here, so this guard keeps ``None`` for it:
+        # the guard lives as long as the runtime holding it, and a change in Settings must bind
+        # its next call.
+        if timeout_secs is None and use_case != "background":
             timeout_secs = 0.0 if self.request_timeout_secs else _DEFAULT_TIMEOUT_SECS
         # Where the three settings above are read from at EACH call (`guardrails.budgets` and
         # `guardrails.scan_mode`), when the resolution seam hands them: a guard lives as long as
@@ -326,7 +325,7 @@ class ModelCallGuard(ModelProvider):
         self._use_case = use_case
         self._provider_name = provider_name
         self._model = model
-        self._timeout_secs = max(0.0, float(timeout_secs))
+        self._timeout_secs = None if timeout_secs is None else max(0.0, float(timeout_secs))
         self._breaker = breaker if breaker is not None else get_breaker(provider_name)
         # Day-scope spend ceiling + the meter that accumulates it. A None budget
         # means "unlimited" (the safe default so nothing is capped unexpectedly).
@@ -648,7 +647,8 @@ class ModelCallGuard(ModelProvider):
         loop = asyncio.get_running_loop()
         # The clock starts before the call waits for its turn on a local model, so the wait is
         # part of the time the call is given, not extra.
-        deadline = loop.time() + self._timeout_secs if self._timeout_secs > 0 else None
+        clock = self._clock_secs()
+        deadline = loop.time() + clock if clock > 0 else None
         turn: Turn | None = None
         try:
             if self._queue_key:
@@ -761,7 +761,8 @@ class ModelCallGuard(ModelProvider):
                     use_case=self._use_case,
                     provider=self._provider_name,
                     model=self._model,
-                    waited_secs=self._timeout_secs,
+                    waited_secs=clock,
+                    background_limit=self._timeout_secs is None,
                 ) from None
             except (asyncio.CancelledError, GeneratorExit):
                 # Cooperative cancellation / caller closed the guard mid-stream: not a
@@ -817,6 +818,15 @@ class ModelCallGuard(ModelProvider):
             # Whatever ended the call, nothing it set aside stays set aside: a settled call's hold
             # is already gone, and a failed or stopped one charged nothing.
             self._meter.release(hold)
+
+    def _clock_secs(self) -> float:
+        """This call's clock in seconds, 0 for none: the caller's or the guard's own, else, on a
+        Background call, the Background time limit as Settings has it at this moment."""
+        if self._timeout_secs is not None:
+            return self._timeout_secs
+        from personalclaw.config.loader import background_limits
+
+        return max(0.0, float(background_limits().call_timeout_secs))
 
     def _turn_wait(self, deadline: float | None, now: float) -> float | None:
         """How long this call may wait for its turn on a local model: the shorter of what is left

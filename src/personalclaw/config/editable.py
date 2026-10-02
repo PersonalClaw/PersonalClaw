@@ -1236,6 +1236,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # typed.
     "local_models.whoami_ttl_s": {"type": "int", "min": 0, "max": 86400},
     "local_models.selftest_timeout_s": {"type": "int", "min": 5, "max": 600},
+    # Background work (Settings → Models → Background): how long a background task may run and
+    # write, and how long a reply waits for a busy local model. The windows are the loader's
+    # clamps, so a write is refused rather than stored as another number. Not security
+    # controls: a longer limit only waits longer, and the spend ceilings still bound the cost.
+    "background.call_timeout_secs": {"type": "float", "min": 30.0, "max": 3600.0},
+    "background.max_output_tokens": {"type": "int", "min": 512, "max": 65536},
+    "background.busy_model_wait_secs": {"type": "float", "min": 0.0, "max": 300.0},
     # Watched sources — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
     # the engine poll a third party abusively. `daily_request_budget` was allowlisted here

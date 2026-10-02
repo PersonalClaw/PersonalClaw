@@ -50,6 +50,14 @@ def _clear_queues() -> None:
         queue._LISTENERS.clear()
 
 
+def _wait_for_a_busy_model(secs: float) -> None:
+    """Set how long a call somebody waits for gives a busy local model (Settings → Models →
+    Background)."""
+    from personalclaw.config.transactions import mutate_config
+
+    mutate_config(lambda doc: doc.setdefault("background", {}).update(busy_model_wait_secs=secs))
+
+
 class _Server:
     """A model server that serves one request at a time, in arrival order. A request whose prompt
     has a gate is held open until the gate is set; ``answers`` overrides what a prompt gets."""
@@ -210,11 +218,10 @@ def test_a_waited_for_call_moves_on_to_the_next_model_within_its_wait(machine, m
     """The schedule waited six minutes behind one 390-second enrichment call while the next model of
     its chain answered other calls in two seconds. Now it gives a busy local model a short wait and
     the next model answers, saying why it stood in."""
-    from personalclaw.guardrails import local_queue
     from personalclaw.guardrails.local_queue import Attended
     from personalclaw.llm_helpers import one_shot_completion
 
-    monkeypatch.setattr(local_queue, "ATTENDED_WAIT_SECS", 0.3)
+    _wait_for_a_busy_model(1.0)
     here, relay = machine["here"], machine["relay"]
     stood_in: list[str] = []
     real_stamp = __import__(
@@ -340,7 +347,7 @@ def test_the_page_can_read_why_it_waits_and_move_on_now(machine, monkeypatch):
     from personalclaw.guardrails.local_queue import Attended
     from personalclaw.llm_helpers import one_shot_completion
 
-    monkeypatch.setattr(local_queue, "ATTENDED_WAIT_SECS", 30.0)
+    _wait_for_a_busy_model(30.0)
     here = machine["here"]
     told: list[str] = []
     local_queue.subscribe(lambda: told.append("changed"))
@@ -404,7 +411,7 @@ def test_a_chat_wait_names_its_chat_by_the_name_the_page_uses(machine, monkeypat
     from personalclaw.guardrails.local_queue import Attended
     from personalclaw.llm_helpers import one_shot_completion
 
-    monkeypatch.setattr(local_queue, "ATTENDED_WAIT_SECS", 30.0)
+    _wait_for_a_busy_model(30.0)
     here = machine["here"]
 
     async def scenario() -> dict:

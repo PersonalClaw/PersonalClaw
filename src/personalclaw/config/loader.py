@@ -1123,6 +1123,70 @@ class LocalModelsConfig:
 
 
 @dataclass
+class BackgroundConfig:
+    """The limits on work nobody is watching, and how long a call somebody is waiting for gives a
+    local model that is busy with it (Settings → Models → Background).
+
+    A call on the Background chain (a chat's chores, knowledge processing, digests, a schedule
+    being read) is stopped after ``call_timeout_secs`` and the chain's next model is asked; the
+    wait for its turn on a local model counts. A turn of an agent on the Background chain (a chat's
+    chores in the background session, a heartbeat task) may write at most ``max_output_tokens`` in
+    one answer; a one-shot call keeps the output budget of its model
+    (``local_models.budgets.output_budget``). ``busy_model_wait_secs`` is the other side of the
+    local model's queue (``guardrails.local_queue``): a reply or a step somebody is waiting for
+    goes ahead of background work, and when the call already running holds the model it waits this
+    long before the next model of its chain answers.
+
+    No machine and no model is the yardstick: a slow machine legitimately needs longer, a model
+    may need more room to write. Each is read when a call is made, so a change applies to the next
+    call without a restart. None of them is a security control: a longer limit only waits longer,
+    and the spend ceilings (``guardrails.budgets``) still bound what the calls cost.
+    """
+
+    call_timeout_secs: float = field(
+        default=300.0,
+        metadata=_meta(
+            "Background task time limit (seconds)",
+            "How long a background task may run before it is stopped and the next model of "
+            "the Background chain is asked. Time spent waiting for a busy local model counts. "
+            "30 to 3600 seconds; 300 unless you change it.",
+        ),
+    )
+    max_output_tokens: int = field(
+        default=4096,
+        metadata=_meta(
+            "Background task output limit (tokens)",
+            "Most text a background task may write in one answer: a chat's title, its memory "
+            "consolidation, suggestions and follow-ups, and a heartbeat task. Other background "
+            "calls keep their model's own limit. 512 to 65536 tokens; 4096 unless you change it.",
+        ),
+    )
+    busy_model_wait_secs: float = field(
+        default=15.0,
+        metadata=_meta(
+            "Wait for a busy local model (seconds)",
+            "How long a reply waits for a busy local model before asking the next one in its "
+            "chain. 0 asks the next model at once. 0 to 300 seconds; 15 unless you change it.",
+        ),
+    )
+
+
+def background_limits() -> BackgroundConfig:
+    """The ``background.*`` limits as ``config.json`` reads now.
+
+    Asked at the moment of each call, never kept: the guard of a long-lived runtime (the
+    background session, a loop worker) outlives a Settings change, and a value it kept would
+    bind only after a restart. A config that cannot be read gives the shipped limits: they are
+    availability limits, and a broken file must never wedge a call.
+    """
+    try:
+        return AppConfig.load().background
+    except Exception:  # noqa: BLE001 — see the docstring
+        logger.warning("background limits unreadable; using the shipped ones", exc_info=True)
+        return BackgroundConfig()
+
+
+@dataclass
 class SourcesConfig:
     """Watched-source engine settings (WATCHED-SOURCES §Plug-in Map, SC#12).
 
@@ -3685,6 +3749,14 @@ class AppConfig:
             "Local models", "Memory-pressure warning threshold + sidecar restart budget."
         ),
     )
+    background: BackgroundConfig = field(
+        default_factory=BackgroundConfig,
+        metadata=_meta(
+            "Background work",
+            "How long a background task may run and write, and how long a reply waits for a "
+            "busy local model.",
+        ),
+    )
     sources: SourcesConfig = field(
         default_factory=SourcesConfig,
         metadata=_meta("Watched sources", "Poll engine for watched feeds, pages and directories."),
@@ -3954,6 +4026,9 @@ class AppConfig:
         local_models_data = data.get("local_models", {})
         if not isinstance(local_models_data, dict):
             local_models_data = {}
+        background_data = data.get("background", {})
+        if not isinstance(background_data, dict):
+            background_data = {}
         sources_data = data.get("sources", {})
         if not isinstance(sources_data, dict):
             sources_data = {}
@@ -4392,6 +4467,23 @@ class AppConfig:
                 # allowlist enforces.
                 selftest_timeout_s=min(
                     600, max(5, _safe_int(local_models_data.get("selftest_timeout_s"), 90))
+                ),
+            ),
+            # Each clamped to the window the PATCH allowlist enforces, so a hand-edited file still
+            # loads as limits that work: a time limit of a few seconds would stop every background
+            # call before a model could answer, and an output limit of a few tokens would cut every
+            # answer short.
+            background=BackgroundConfig(
+                call_timeout_secs=min(
+                    3600.0,
+                    max(30.0, _safe_float(background_data.get("call_timeout_secs"), 300.0)),
+                ),
+                max_output_tokens=min(
+                    65536, max(512, _safe_int(background_data.get("max_output_tokens"), 4096))
+                ),
+                busy_model_wait_secs=min(
+                    300.0,
+                    max(0.0, _safe_float(background_data.get("busy_model_wait_secs"), 15.0)),
                 ),
             ),
             sources=SourcesConfig(
@@ -5045,6 +5137,7 @@ class AppConfig:
             "browse": asdict(self.browse),
             "mobile": asdict(self.mobile),
             "local_models": asdict(self.local_models),
+            "background": asdict(self.background),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),
             "apps": asdict(self.apps),

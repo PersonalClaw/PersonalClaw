@@ -47,6 +47,13 @@ def _clear_queues() -> None:
         queue._LISTENERS.clear()
 
 
+def _wait_for_a_busy_model(secs: float) -> None:
+    """Set how long a reply waits for a busy local model (Settings → Models → Background)."""
+    from personalclaw.config.transactions import mutate_config
+
+    mutate_config(lambda doc: doc.setdefault("background", {}).update(busy_model_wait_secs=secs))
+
+
 class _Server:
     """A model server that serves one request at a time, in arrival order, holding a request whose
     last message has a gate until the gate is set."""
@@ -163,15 +170,11 @@ async def _chore(prompt: str) -> str:
     return await one_shot_completion(prompt, use_case="background")
 
 
-def test_a_reply_with_another_model_moves_on_and_says_it_waited_behind_background_work(
-    machine, monkeypatch
-):
+def test_a_reply_with_another_model_moves_on_and_says_it_waited_behind_background_work(machine):
     """🔴 The measured run: the reply waited its whole first-token limit behind the chat's own
     chores, and the line blamed the model's reading time."""
-    from personalclaw.guardrails import local_queue
-
     servers, _active = machine
-    monkeypatch.setattr(local_queue, "ATTENDED_WAIT_SECS", 0.3)
+    _wait_for_a_busy_model(1.0)
 
     async def scenario() -> list[LLMEvent]:
         gate = servers["here"].hold("Consolidate chat-7")
@@ -222,11 +225,11 @@ def test_a_reply_goes_before_queued_background_work_and_alone(machine):
     assert servers["here"].most_sent_at_once == 1
 
 
-def test_a_waiting_reply_is_shown_in_its_chat(machine, monkeypatch):
+def test_a_waiting_reply_is_shown_in_its_chat(machine):
     from personalclaw.guardrails import local_queue
 
     servers, _active = machine
-    monkeypatch.setattr(local_queue, "ATTENDED_WAIT_SECS", 5.0)
+    _wait_for_a_busy_model(5.0)
 
     async def scenario() -> list[dict]:
         gate = servers["here"].hold("Consolidate chat-7")

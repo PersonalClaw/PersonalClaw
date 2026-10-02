@@ -404,6 +404,7 @@
     {"annotation": "BrowseConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "browse"},
     {"annotation": "MobileConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "mobile"},
     {"annotation": "LocalModelsConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "local_models"},
+    {"annotation": "BackgroundConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "background"},
     {"annotation": "SourcesConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "sources"},
     {"annotation": "PacksConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "packs"},
     {"annotation": "AppsConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "apps"},
