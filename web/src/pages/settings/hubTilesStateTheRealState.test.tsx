@@ -136,7 +136,7 @@ describe('the Updates tile never says "Up to date" without a check that said so'
 
   it('checking switched off is not a verdict about the install', async () => {
     const text = await pill({ checked: true, check_enabled: false })
-    expect(text).toContain('Update checks are off')
+    expect(text).toContain('Automatic update checks are off')
     expect(text).not.toContain('Up to date')
   })
 

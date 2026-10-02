@@ -41,7 +41,10 @@ logger = logging.getLogger(__name__)
 
 # Cached update check result
 _update_info: dict[str, object] = {"available": False, "changes": "", "checked": False}
+#: When an update check last reached out, automatic or asked for. The schedule counts from it.
 _last_update_check: float = 0.0
+#: The scheduled checks running in the background, held so none is collected mid-flight.
+_scheduled_checks: "set[asyncio.Task[None]]" = set()
 
 
 def get_update_info() -> dict[str, object]:
@@ -50,33 +53,91 @@ def get_update_info() -> dict[str, object]:
 
 
 def _scheduled_check_due(cfg: AppConfig, last_check: float, now: float) -> bool:
-    """Whether a background release check is due under the configured cadence.
+    """Whether the next automatic check is due: ``updates.check_interval_hours`` since the last.
 
-    The cadence is CONFIG-DRIVEN — there is no hard-coded interval literal (RUM-3).
-    Returns ``False`` when the check is disabled (``updates.check_enabled=false``,
-    the egress kill switch); otherwise ``True`` once ``updates.check_interval_hours``
-    have elapsed since ``last_check``.
+    Only the schedule, read from config: there is no interval literal. Whether PersonalClaw may
+    reach out on its own at all is the gate's question (:func:`self_update.may_check_for_updates`),
+    asked before this one.
     """
-    if not cfg.updates.check_enabled:
-        return False
     return now - last_check > cfg.updates.check_interval_hours * 3600
 
 
-async def api_update_check(request: web.Request) -> web.Response:
-    """GET /api/update/check — kind-aware update check (contract C2).
+def automatic_check_due() -> bool:
+    """Whether PersonalClaw would check for updates on its own right now: allowed, and due."""
+    return self_update.may_check_for_updates(asked=False) and _scheduled_check_due(
+        AppConfig.load(), _last_update_check, time.time()
+    )
 
-    Returns the tag-driven cross-kind status ({kind, current, latest,
-    update_available, commits_behind, apply_method, instructions}) merged with
-    the legacy git changelog-diff fields (available/changes) for backward
-    compatibility with the existing panel. The git kind still runs the
-    commits-behind probe; every kind gets the release-tag comparison. On the git
-    ``nightly`` channel (branch-tracking) a non-zero ``commits_behind`` also sets
-    ``available``, so the check agrees with what the apply would actually do.
+
+def _claim_update_check(*, asked: bool, at_start: bool) -> bool:
+    """Whether this check may reach out now; when it may, the schedule counts from now.
+
+    The gate answers first (:func:`self_update.may_check_for_updates`). An automatic check then
+    has to be due as well, except the gateway's start-up check, the first of its run. Claimed
+    before any await, so two requests arriving together do not both reach out.
     """
-    await _do_update_check()
+    global _last_update_check
+    if not self_update.may_check_for_updates(asked=asked):
+        return False
+    now = time.time()
+    if not (asked or at_start) and not _scheduled_check_due(
+        AppConfig.load(), _last_update_check, now
+    ):
+        return False
+    _last_update_check = now
+    return True
+
+
+def start_scheduled_check_if_due() -> None:
+    """Start an automatic check in the background when one is due.
+
+    ``GET /api/status`` calls this, so a dashboard's polling is the schedule's clock; there is no
+    timer of its own, and a gateway nobody is looking at checks only when it starts.
+    """
+    if not automatic_check_due():
+        return
+    task = asyncio.create_task(_scheduled_check())
+    _scheduled_checks.add(task)
+    task.add_done_callback(_scheduled_checks.discard)
+
+
+async def _scheduled_check() -> None:
+    try:
+        await update_status(asked=False)
+    except Exception:
+        logger.debug("scheduled update check failed", exc_info=True)
+
+
+async def update_status(*, asked: bool, at_start: bool = False) -> dict[str, object]:
+    """The update status, after the one check this caller may run (contract C2).
+
+    Every update check comes here: the gateway's start (*at_start*), the status poll's schedule,
+    a page showing the status (``GET /api/update/check``) and the owner's Check now (``POST
+    /api/update/check``, *asked*). A check that may run (:func:`_claim_update_check`) reaches
+    out once for each of its two answers: the releases list on every kind, and on a source
+    checkout a ``git fetch`` of its origin for the changelog view. One that may not reads both
+    from what the last check left, and nothing leaves the machine.
+
+    The payload is the tag-driven cross-kind status ({kind, current, latest, update_available,
+    commits_behind, apply_method, instructions}) merged with the git changelog-diff fields
+    (available/changes). On the git ``nightly`` channel (branch-tracking) a non-zero
+    ``commits_behind`` also sets ``available``, so the check agrees with what the apply does.
+
+    ``checked_now`` is there only when this call ran a check: true when GitHub (or the
+    checkout's origin) answered it, false when nothing did. So the Updates screen can show the
+    answer the owner just asked for even with automatic checks off, and say so when none came.
+    """
+    ran = _claim_update_check(asked=asked, at_start=at_start)
+    answered = False
+    answered_before = self_update.releases_checked_at()
+    if ran:
+        answered = await _do_update_check(asked=asked)
+    # The gate is read again for the releases list: a checkout's fetch can take a while, and
+    # automatic checks can be turned off while it runs.
+    fetch = ran and self_update.may_check_for_updates(asked=asked)
     cfg = AppConfig.load()
     try:
-        status = await self_update.build_update_status(_local_version)
+        status = await self_update.build_update_status(_local_version, fetch=fetch)
     except Exception:
         logger.debug("build_update_status failed; returning legacy view", exc_info=True)
         status = {}
@@ -124,16 +185,57 @@ async def api_update_check(request: web.Request) -> web.Response:
     # because "Roll back to v" with nothing after it is worse than no offer.
     merged["last_version"] = cfg.updates.last_version
     merged["version"] = _local_version
-    return web.json_response(merged)
+    if ran:
+        merged["checked_now"] = answered or self_update.releases_checked_at() > answered_before
+    return merged
 
 
-async def _do_update_check() -> None:
+def update_result_line(status: dict[str, object]) -> str:
+    """What the gateway's start says its update check found, from the status it produced."""
+    latest = str(status.get("latest") or "")
+    current = str(status.get("current") or _local_version)
+    pin = str(status.get("pin") or "")
+    if status.get("available"):
+        found = f": v{latest}" if latest else ""
+        return f"Update available{found} — see Settings › Updates"
+    if not status.get("checked_now"):
+        return "Couldn't check for updates — Check now in Settings › Updates tries again"
+    if status.get("pin_miss"):
+        return f"No release matches the version pin {pin}"
+    if not latest:
+        return f"Up to date (v{current})"
+    if status.get("pin_older"):
+        return f"Pinned to v{latest}, older than this build (v{current})"
+    return self_update.up_to_date_sentence(latest, current, pin)
+
+
+async def api_update_check(request: web.Request) -> web.Response:
+    """GET /api/update/check — the update status, checking only when an automatic check is due.
+
+    What the Settings hub tile and Settings › Updates read on every visit. It reaches out only
+    when PersonalClaw would check on its own anyway (automatic checks on, and the check interval
+    passed since the last check); otherwise it reports what the last check found.
+    """
+    return web.json_response(await update_status(asked=False))
+
+
+async def api_update_check_now(request: web.Request) -> web.Response:
+    """POST /api/update/check — check for updates once, now, even with automatic checks off.
+
+    Check now in Settings › Updates. The owner asked for this one check, so it reaches GitHub even
+    with automatic checks off, and turns nothing on: the next check is again theirs to ask for.
+    """
+    return web.json_response(await update_status(asked=True))
+
+
+async def _do_update_check(*, asked: bool) -> bool:
     """Run git fetch and compare HEAD with remote — on a GIT install only.
 
     The changelog-diff half of the check, which only the ``git`` kind can answer. Every
     other kind's "is there a newer version?" is the release-tag comparison
-    :func:`self_update.build_update_status` makes, and ``api_update_check`` merges the two —
-    including ``checked``, which this half sets only for itself.
+    :func:`self_update.build_update_status` makes, and :func:`update_status` merges the two —
+    including ``checked``, which this half sets only for itself. Returns whether this half got
+    an answer: the fetch and the comparison both finished.
 
     **Why the kind gate is here and not a project-dir probe.** ``PERSONALCLAW_PROJECT_DIR``
     is not a proxy for "this is a checkout": the Electron shell sets it to ``…/Resources``
@@ -144,26 +246,24 @@ async def _do_update_check() -> None:
     reached anything useful. The kind is what decides whether git means anything here, and
     ``self_update.detect_install_kind()`` is the one place that answers it — the same
     decision ``POST /api/update`` already dispatches on.
-    """
-    global _last_update_check
 
-    # Egress kill switch: with updates.check_enabled=false the updater
-    # makes ZERO outbound calls — no git fetch, no release probe. Read config
-    # FIRST, before any subprocess/network work, so a checkout cannot
-    # let the check slip through.
-    if not AppConfig.load().updates.check_enabled:
-        logger.debug("update check disabled (updates.check_enabled=false)")
-        return
+    The gate is asked again here, at the fetch itself (:func:`self_update.may_check_for_updates`):
+    this is where the request would leave, so an automatic check with checks off stops before any
+    subprocess, however it got here.
+    """
+    if not self_update.may_check_for_updates(asked=asked):
+        logger.debug("update check: automatic checks are off (updates.check_enabled=false)")
+        return False
 
     kind = self_update.detect_install_kind()
     if kind != "git":
         logger.debug("update check: %s install has no git history to diff; release tags only", kind)
-        return
+        return False
 
     # The checkout the running package comes from, never whatever tree the process started in.
     proj = self_update.source_checkout()
     if not proj:
-        return
+        return False
     try:
         proc = await asyncio.create_subprocess_exec(
             *git_argv(["fetch", "--quiet"]),
@@ -183,14 +283,14 @@ async def _do_update_check() -> None:
         except asyncio.TimeoutError:
             await kill_timed_out(proc)
             logger.warning("git fetch timed out")
-            return
+            return False
         if proc.returncode != 0:
             logger.warning(
                 "git fetch failed (rc=%s): %s",
                 proc.returncode,
                 transport_refusal(fetch_err) or mask_child_output(fetch_err, limit=500, tail=True),
             )
-            return
+            return False
 
         local = await asyncio.create_subprocess_exec(
             *git_argv(["rev-parse", "HEAD"]),
@@ -207,7 +307,7 @@ async def _do_update_check() -> None:
             except ProcessLookupError:
                 pass
             await local.communicate()
-            return
+            return False
         remote = await asyncio.create_subprocess_exec(
             *git_argv(["rev-parse", "@{u}"]),
             cwd=proj,
@@ -223,7 +323,7 @@ async def _do_update_check() -> None:
             except ProcessLookupError:
                 pass
             await remote.communicate()
-            return
+            return False
 
         local_sha = local_out.decode(errors="replace").strip()
         remote_sha = remote_out.decode(errors="replace").strip()
@@ -257,7 +357,7 @@ async def _do_update_check() -> None:
                 except ProcessLookupError:
                     pass
                 await show.communicate()
-                return
+                return False
             m = re.search(
                 r'^version\s*=\s*"(.+?)"', show_out.decode(errors="replace"), re.MULTILINE
             )
@@ -283,7 +383,7 @@ async def _do_update_check() -> None:
                 except ProcessLookupError:
                     pass
                 await diff.communicate()
-                return
+                return False
             # Extract added lines from changelog diff
             lines: list[str] = []
             for line in diff_out.decode(errors="replace").splitlines():
@@ -298,9 +398,10 @@ async def _do_update_check() -> None:
         # as "remote_version", which nothing read.
         _update_info["latest"] = remote_version
         _update_info["checked"] = True
-        _last_update_check = time.time()
+        return True
     except Exception:
         logger.debug("Update check failed", exc_info=True)
+        return False
 
 
 async def api_changelog(request: web.Request) -> web.Response:
@@ -491,7 +592,8 @@ async def api_update_apply(request: web.Request) -> web.Response:
     # slot is claimed because nothing runs here.
     if kind in ("container", "desktop"):
         try:
-            status = await self_update.build_update_status(_local_version)
+            # The owner asked for this update, so its release is looked up now.
+            status = await self_update.build_update_status(_local_version, fetch=True)
         except Exception:
             status = {"kind": kind, "instructions": [], "apply_method": ""}
         return web.json_response(
@@ -574,7 +676,8 @@ async def api_update_apply(request: web.Request) -> web.Response:
     # move — the whole point of retiring pull-from-main).
     advance = False
     if _channel == "nightly":
-        behind = await self_update.commits_behind_upstream(proj)
+        # The owner asked for this update: fetch the branch it would advance, then count.
+        behind = await self_update.commits_behind_upstream(proj, fetch=True)
         if behind is None:
             note = "No upstream configured — restarting…"
         elif behind == 0:

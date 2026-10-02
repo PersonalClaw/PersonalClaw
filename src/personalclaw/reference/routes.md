@@ -823,7 +823,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers/{id}/toggle` — enable/disable.
 - `POST /api/update` — advance the checkout to its release, rebuild, restart.
 - `POST /api/update/cancel` — dismiss a stuck/failed update overlay.
-- `GET /api/update/check` — kind-aware update check (contract C2).
+- `GET /api/update/check` — the update status, checking only when an automatic check is due.
+- `POST /api/update/check` — check for updates once, now, even with automatic checks off.
 - `POST /api/update/simulate` — walk through update steps with delays.
 - `POST /api/upload` — open native file picker and return selected paths.
 - `POST /api/upload/file` — cross-platform multipart file upload.

@@ -23,6 +23,7 @@ import pytest
 from personalclaw import container_host
 from personalclaw import self_update as uk
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.net.git import talks_to_remote
 from personalclaw.self_update import detect_install_kind
 
 
@@ -128,7 +129,7 @@ async def test_build_status_update_available(monkeypatch) -> None:
 
     monkeypatch.setattr(uk, "fetch_releases", _releases)
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["kind"] == "container"
     assert status["current"] == "0.1.0"
     assert status["latest"] == "0.2.0"
@@ -146,7 +147,7 @@ async def test_build_status_up_to_date_pip(monkeypatch) -> None:
     monkeypatch.setattr(uk, "fetch_releases", _releases)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["kind"] == "pip"
     assert status["update_available"] is False
     assert status["apply_method"] == "pip_upgrade"
@@ -161,7 +162,7 @@ async def test_build_status_offline_no_tag(monkeypatch) -> None:
     monkeypatch.setattr(uk, "fetch_releases", _no_releases)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     # No latest known -> never claims an update is available (offline-tolerant).
     assert status["latest"] == ""
     assert status["update_available"] is False
@@ -190,57 +191,81 @@ def _write_updates_config(home, **updates) -> None:
     [("stable", "", "0.2.1"), ("beta", "", "0.3.0-rc.1"), ("stable", "0.2.0", "0.2.0")],
 )
 async def test_the_check_makes_zero_calls_when_checking_is_disabled(
-    monkeypatch, tmp_path, channel: str, pin: str, named: str
+    monkeypatch, tmp_path, package_in_checkout, channel: str, pin: str, named: str
 ) -> None:
-    """`check_enabled=false` promises ZERO outbound calls from the check, on every channel.
+    """`check_enabled=false` promises ZERO calls from every automatic check, on every channel.
 
-    The check resolves over the releases list, and `fetch_releases` carries no guard of its
-    own (a typed `personalclaw update` still reaches GitHub with checking off), so the check
-    has to read the cached list. The rows name three DIFFERENT releases from that cache, which
-    is what stops the fix from being "answer nothing when checking is off".
+    Driven through `update_status`, the one entry every check runs, on a source checkout: the
+    kind with two ways to reach out (the releases list, and a `git fetch` of its origin), and
+    the one whose commits-behind count fetched while the releases list obeyed the switch. The
+    rows name three DIFFERENT releases from the cache, which is what stops the fix from being
+    "answer nothing when checking is off".
     """
+    from personalclaw.dashboard.handlers import updates as dash_updates
+
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     _write_updates_config(tmp_path, check_enabled=False, channel=channel, pin=pin)
     uk.write_releases_cache({"releases": [dict(r) for r in _FAKE_RELEASES], "etag": 'W/"x"'})
+    package_in_checkout(tmp_path / "checkout")
+    monkeypatch.setattr(dash_updates, "_last_update_check", 0.0)  # an eternity since the last
 
     opened: list[str] = []
+    spawned: list[list[str]] = []
 
     class _RecordingSession:
         def __init__(self, *a, **k):
             opened.append("ClientSession")
             raise OSError("network")  # also degrade, in case the guard ever regressed
 
-    monkeypatch.setattr(aiohttp, "ClientSession", _RecordingSession)
+    async def _spawn(*argv, **_k):
+        spawned.append([str(a) for a in argv])
+        return _FakeProc()
 
-    status = await uk.build_update_status("0.1.0")
-    # The immune proof: no session was ever opened. A cached answer alone would come back from
-    # a call made and swallowed too — the empty `opened` is what pins the switch.
+    monkeypatch.setattr(aiohttp, "ClientSession", _RecordingSession)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+
+    status = await dash_updates.update_status(asked=False)
+    # The immune proof: nothing was opened or spawned that talks to a remote. A cached answer
+    # alone would come back from a call made and swallowed too.
     assert opened == [], "the check opened a network session while check_enabled=false"
+    assert [a for a in spawned if talks_to_remote(a[1:])] == [], spawned
     assert status["latest"] == named
     assert status["checked"] is True
 
 
 @pytest.mark.asyncio
 async def test_the_check_reaches_the_releases_list_when_checking_is_enabled(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, package_in_checkout
 ) -> None:
-    # Positive control: with the check ON, the check DOES open a session (so the test above is
-    # a gate, not a constant). The session degrades to the cache to keep it hermetic.
+    # Positive control: with automatic checks ON, the same check DOES reach out, to the
+    # releases list and to the checkout's origin, so the test above is a gate, not a constant.
+    # Both degrade (a refused session, a failed fetch) to keep it hermetic.
+    from personalclaw.dashboard.handlers import updates as dash_updates
+
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     _write_updates_config(tmp_path, check_enabled=True)
     uk.write_releases_cache({"releases": [dict(r) for r in _FAKE_RELEASES], "etag": 'W/"x"'})
+    package_in_checkout(tmp_path / "checkout")
+    monkeypatch.setattr(dash_updates, "_last_update_check", 0.0)
 
     opened: list[str] = []
+    spawned: list[list[str]] = []
 
     class _RecordingSession:
         def __init__(self, *a, **k):
             opened.append("ClientSession")
             raise OSError("network")
 
-    monkeypatch.setattr(aiohttp, "ClientSession", _RecordingSession)
+    async def _spawn(*argv, **_k):
+        spawned.append([str(a) for a in argv])
+        return _FakeProc()
 
-    status = await uk.build_update_status("0.1.0")
+    monkeypatch.setattr(aiohttp, "ClientSession", _RecordingSession)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+
+    status = await dash_updates.update_status(asked=False)
     assert opened == ["ClientSession"], "check_enabled=true must attempt the network"
+    assert [a[-2:] for a in spawned if talks_to_remote(a[1:])] == [["fetch", "--quiet"]], spawned
     assert status["latest"] == "0.2.1"  # degraded to the cached list, no raise
 
 
@@ -274,7 +299,7 @@ async def test_do_update_check_kill_switch_runs_no_subprocess(
     monkeypatch.setattr(dash_updates.asyncio, "create_subprocess_exec", _rec)
     dash_updates._update_info["checked"] = False
 
-    await dash_updates._do_update_check()
+    assert await dash_updates._do_update_check(asked=False) is False
     assert calls == [], "_do_update_check ran a subprocess while check_enabled=false"
 
 
@@ -306,7 +331,7 @@ async def test_do_update_check_runs_git_fetch_when_enabled(
 
     monkeypatch.setattr(dash_updates.asyncio, "create_subprocess_exec", _rec)
 
-    await dash_updates._do_update_check()
+    await dash_updates._do_update_check(asked=False)
     assert calls, "check_enabled=true must run the git fetch subprocess"
     # The settings that keep the checkout's own configuration from running a program come
     # before the subcommand (`net.git.git_argv`), so the fetch is the argv's end, not its start.
@@ -321,7 +346,6 @@ def test_scheduled_check_due_reads_interval_hours() -> None:
 
     now = 1_000_000.0
     cfg = AppConfig()
-    cfg.updates.check_enabled = True
 
     cfg.updates.check_interval_hours = 6
     assert _scheduled_check_due(cfg, now - (6 * 3600 - 1), now) is False  # just under -> not due
@@ -332,16 +356,17 @@ def test_scheduled_check_due_reads_interval_hours() -> None:
     assert _scheduled_check_due(cfg, now - (3600 + 1), now) is True
 
 
-def test_scheduled_check_due_kill_switch() -> None:
-    from personalclaw.config.loader import AppConfig
-    from personalclaw.dashboard.handlers.updates import _scheduled_check_due
+def test_an_automatic_check_is_never_due_with_checking_disabled(monkeypatch, tmp_path) -> None:
+    from personalclaw.dashboard.handlers import updates as dash_updates
 
-    now = 1_000_000.0
-    cfg = AppConfig()
-    cfg.updates.check_enabled = False
-    cfg.updates.check_interval_hours = 1
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setattr(dash_updates, "_last_update_check", 0.0)
+    _write_updates_config(tmp_path, check_enabled=False, check_interval_hours=1)
     # Even with an eternity elapsed, a disabled check is never due.
-    assert _scheduled_check_due(cfg, 0.0, now) is False
+    assert dash_updates.automatic_check_due() is False
+    # Read when asked, not at start: the same eternity with checking turned on is due.
+    _write_updates_config(tmp_path, check_enabled=True, check_interval_hours=1)
+    assert dash_updates.automatic_check_due() is True
 
 
 # ── The opt-in staged auto-update gate: updates.auto decides the APPLY, not the CHECK ──
@@ -421,17 +446,20 @@ def _orchestrator_stub(applied: list[str], *, dashboard_state=None):
 
 async def _drive_check_for_updates(monkeypatch, *, auto: str, dashboard_state=None):
     """Run `GatewayOrchestrator._check_for_updates` against stubs, recording call order."""
-    from personalclaw.dashboard import handlers as dash_handlers
+    from personalclaw.dashboard.handlers import updates as dash_updates
     from personalclaw.gateway import GatewayOrchestrator
 
     order: list[str] = []
     applied: list[str] = []
 
-    async def _fake_check() -> None:
+    async def _fake_check(*, asked: bool, at_start: bool = False) -> dict[str, object]:
         order.append("check")
+        # `available` truthy so the updates.auto branch is actually reached; a falsy value would
+        # short-circuit before the config read and make the ordering assertion vacuous.
+        return {"available": True, "latest": "9.9.9", "checked_now": True}
 
     class _Updates:
-        pass
+        check_enabled = True
 
     _Updates.auto = auto
 
@@ -442,10 +470,7 @@ async def _drive_check_for_updates(monkeypatch, *, auto: str, dashboard_state=No
         order.append("config")
         return _Cfg()
 
-    monkeypatch.setattr(dash_handlers, "_do_update_check", _fake_check)
-    # `available` truthy so the updates.auto branch is actually reached; a falsy value would
-    # short-circuit before the config read and make the ordering assertion vacuous.
-    monkeypatch.setattr(dash_handlers, "_update_info", {"available": True})
+    monkeypatch.setattr(dash_updates, "update_status", _fake_check)
     monkeypatch.setattr("personalclaw.config.AppConfig.load", _load)
 
     stub = _orchestrator_stub(applied, dashboard_state=dashboard_state)
@@ -455,17 +480,17 @@ async def _drive_check_for_updates(monkeypatch, *, auto: str, dashboard_state=No
 
 @pytest.mark.asyncio
 async def test_off_is_notify_only_and_never_applies(monkeypatch) -> None:
-    # RUM-5 criterion: with updates.auto="off" (the default) the boot-path check still runs,
-    # then the available update is NOTIFIED and NEVER applied. The check's own switch is
-    # updates.check_enabled; here the check is stubbed so its config read is absent from
-    # `order`. This isolates the apply gate.
+    # With updates.auto="off" (the default) the boot-path check still runs, then the available
+    # update is NOTIFIED and NEVER applied. The check's own switch is updates.check_enabled: the
+    # first config read is that gate's, the check is stubbed, and the last read is updates.auto.
+    # This isolates the apply gate.
     state = _StubDashboardState()
     order, applied, _stub = await _drive_check_for_updates(
         monkeypatch, auto="off", dashboard_state=state
     )
-    assert order == ["check", "config"], (
-        "the boot-path update check must run BEFORE updates.auto is consulted — got "
-        f"{order}. updates.auto decides only whether the apply follows, never whether the "
+    assert order == ["config", "check", "config"], (
+        "the boot-path check asks its gate, runs, and only THEN is updates.auto consulted — "
+        f"got {order}. updates.auto decides only whether the apply follows, never whether the "
         "check happens (the check's own switch is updates.check_enabled)."
     )
     assert applied == []  # "off" NEVER applies
@@ -485,7 +510,7 @@ async def test_staged_when_idle_reaches_the_apply(
     order, applied, stub = await _drive_check_for_updates(
         monkeypatch, auto="staged", dashboard_state=state
     )
-    assert order == ["check", "config"]
+    assert order == ["config", "check", "config"]
     assert applied == ["apply"]  # staged + idle => applied
     assert state.refreshes == []  # staged applies; it does not notify-and-stop
     assert stub._staged_apply_task is None  # idle => applied inline, no background hold
@@ -520,6 +545,7 @@ async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_ta
     class _Updates:
         channel = "stable"
         pin = ""
+        check_enabled = True  # the staged install asks the automatic-check gate when it runs
 
     class _Cfg:
         updates = _Updates()
@@ -631,7 +657,7 @@ async def test_c2_wire_shape_conformance(monkeypatch) -> None:
 
     # container: apply_method=instructions, commits_behind=null, instructions non-empty
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
-    c = await uk.build_update_status("0.1.0")
+    c = await uk.build_update_status("0.1.0", fetch=True)
     assert required <= set(c)
     assert c["apply_method"] == "instructions"
     assert c["commits_behind"] is None
@@ -639,12 +665,12 @@ async def test_c2_wire_shape_conformance(monkeypatch) -> None:
 
     # desktop: apply_method=desktop_delegate
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "desktop")
-    d = await uk.build_update_status("0.1.0")
+    d = await uk.build_update_status("0.1.0", fetch=True)
     assert d["apply_method"] == "desktop_delegate"
 
     # pip: apply_method=pip_upgrade, commits_behind=null, instructions=[]
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-    p = await uk.build_update_status("0.1.0")
+    p = await uk.build_update_status("0.1.0", fetch=True)
     assert p["apply_method"] == "pip_upgrade"
     assert p["commits_behind"] is None
     assert p["instructions"] == []
@@ -1250,7 +1276,7 @@ async def test_build_update_status_container_carries_the_resolved_tag(
     monkeypatch.setattr(uk, "fetch_releases", _releases)
     _fake_container_config(monkeypatch, channel, pin)
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["kind"] == "container"
     assert status["image_tag"] == tag
     assert status["instructions"] == container_host.update_commands(tag)
@@ -1259,7 +1285,7 @@ async def test_build_update_status_container_carries_the_resolved_tag(
 
     # A compose install is shown its compose commands, on the same tag.
     monkeypatch.setenv(container_host.STARTED_BY_ENV, "compose")
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert f"PERSONALCLAW_IMAGE_TAG={tag} docker compose -f deploy/compose/compose.yaml pull" in (
         status["instructions"]
     )
@@ -1277,7 +1303,7 @@ async def test_build_update_status_container_pin_miss_emits_no_commands(monkeypa
     monkeypatch.setattr(uk, "fetch_releases", _releases)
     _fake_container_config(monkeypatch, "stable", "9.9.9")
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["image_tag"] == ""
     assert status["instructions"] == []
 
@@ -1305,7 +1331,7 @@ async def test_status_release_notes_follow_the_beta_channel(monkeypatch) -> None
     _fake_container_config(monkeypatch, "beta")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["latest"] == "0.3.0-rc.1"
     assert status["release_name"] == "0.3.0-rc.1"
     assert status["release_notes"] == "beta notes"
@@ -1323,7 +1349,7 @@ async def test_status_release_notes_follow_a_pin_over_the_channel(monkeypatch) -
     _fake_container_config(monkeypatch, "stable", "0.3.0-rc.1")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["latest"] == "0.3.0-rc.1"
     assert status["release_notes"] == "beta notes"
 
@@ -1339,7 +1365,7 @@ async def test_status_pin_miss_reports_nothing_available(monkeypatch) -> None:
     _fake_container_config(monkeypatch, "stable", "9.9.9")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["latest"] == ""
     assert status["update_available"] is False
     assert status["release_notes"] == ""
@@ -1356,7 +1382,7 @@ async def test_status_says_it_checked_when_it_compared_against_a_release(monkeyp
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
 
-    status = await uk.build_update_status("0.2.1")
+    status = await uk.build_update_status("0.2.1", fetch=True)
     assert status["kind"] == "pip"
     assert status["checked"] is True
     assert status["update_available"] is False  # compared, and current
@@ -1374,7 +1400,7 @@ async def test_status_with_nothing_fetched_and_nothing_cached_has_not_checked(mo
     _fake_container_config(monkeypatch, "stable")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["checked"] is False
     assert status["pin_miss"] is False
 
@@ -1387,7 +1413,7 @@ async def test_status_reports_a_pin_naming_no_release_as_pin_miss(monkeypatch) -
     _fake_container_config(monkeypatch, "stable", "0.2.2")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["pin_miss"] is True
     assert status["checked"] is True  # the list WAS read; its answer is "no such release"
     assert status["latest"] == ""
@@ -1406,7 +1432,7 @@ async def test_a_pin_with_no_list_to_check_it_against_is_not_a_pin_miss(monkeypa
     _fake_container_config(monkeypatch, "stable", "0.2.2")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["latest"] == ""
     assert status["pin_miss"] is False
     assert status["checked"] is False
@@ -1418,7 +1444,7 @@ async def test_a_pin_that_matches_is_neither_missed_nor_unchecked(monkeypatch) -
     _fake_container_config(monkeypatch, "stable", "0.2.0")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
-    status = await uk.build_update_status("0.1.0")
+    status = await uk.build_update_status("0.1.0", fetch=True)
     assert status["latest"] == "0.2.0"
     assert status["pin_miss"] is False
     assert status["checked"] is True
@@ -1442,7 +1468,7 @@ async def test_the_check_makes_one_call_whatever_the_channel(monkeypatch) -> Non
     for channel, pin in (("stable", ""), ("beta", ""), ("nightly", ""), ("stable", "0.2.0")):
         calls.clear()
         _fake_container_config(monkeypatch, channel, pin)
-        await uk.build_update_status("0.1.0")
+        await uk.build_update_status("0.1.0", fetch=True)
         assert calls == ["releases"], (channel, pin, calls)
 
 

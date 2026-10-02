@@ -4974,24 +4974,34 @@ class GatewayOrchestrator:
     # ------------------------------------------------------------------
 
     async def _check_for_updates(self) -> None:
-        """Blocking update check — then acts on the opt-in ``updates.auto`` mode.
+        """The update check at gateway start, said as it happened — then the ``updates.auto`` mode.
+
+        It is an automatic check, so it runs only while ``updates.check_enabled`` is on
+        (:func:`~personalclaw.self_update.may_check_for_updates`). With it off the start says
+        so, and nothing reaches out. The check is the one every other path runs
+        (``dashboard.handlers.updates.update_status``), and the line after it is what that
+        check found: an update, the release this install is on, or that nothing answered.
 
         ``off`` (the default) is NOTIFY-ONLY: an available update raises the
         ``update_available`` refresh and is never applied unattended. ``staged``
         applies at the next safe point — it HOLDS while any session/subagent is in
         flight (:meth:`DashboardState.active_work_snapshot`) and fires only once that drains,
         landing solely on the resolved channel/pin release tag, never on ``main``
-        (the apply is :meth:`_auto_apply_update`, RUM-4). That is a source checkout's alone
+        (the apply is :meth:`_auto_apply_update`). That is a source checkout's alone
         (:func:`~personalclaw.self_update.applies_updates_unattended`); on every other kind
-        ``staged`` notifies exactly as ``off`` does. The check itself always runs here; its own
-        egress kill switch is ``updates.check_enabled`` (RUM-3).
+        ``staged`` notifies exactly as ``off`` does.
         """
         try:
             from personalclaw import self_update
-            from personalclaw.dashboard.handlers import _do_update_check, _update_info
+            from personalclaw.dashboard.handlers import updates as _updates
 
-            await _do_update_check()
-            if _update_info.get("available"):
+            if not self_update.may_check_for_updates(asked=False):
+                print("Automatic update checks are off")
+                return
+            print("Checking for updates…")
+            status = await _updates.update_status(asked=False, at_start=True)
+            print(_updates.update_result_line(status))
+            if status.get("available"):
                 logger.info("Updates available from remote")
                 from personalclaw.config import AppConfig
 
@@ -5006,8 +5016,6 @@ class GatewayOrchestrator:
                     await self._staged_auto_apply()
                 elif self.dashboard_state:
                     self.dashboard_state.push_refresh("update_available")
-            else:
-                print("Already on latest version")
         except Exception:
             logger.debug("Update check failed", exc_info=True)
 
@@ -5086,6 +5094,13 @@ class GatewayOrchestrator:
             return
 
         try:
+            # Unattended, so this is PersonalClaw reaching out on its own, and it asks the gate
+            # every automatic check asks, when it runs: a staged install can wait for work to
+            # drain, and automatic checks can be turned off while it waits.
+            if not self_update.may_check_for_updates(asked=False):
+                logger.info("Auto-update: automatic update checks are off, so nothing is installed")
+                return
+
             cfg = AppConfig.load()
             channel = cfg.updates.channel
             pin = cfg.updates.pin
@@ -5362,8 +5377,8 @@ class GatewayOrchestrator:
         # inbound). This is the core→channel seam — core imports no vendor code.
         await self._start_channel_inbound()
 
-        # Check for updates before printing URLs
-        print("Checking for updates…")
+        # Check for updates before printing URLs. The check says its own lines, once the setting
+        # has said whether it may run at all.
         await self._check_for_updates()
 
         # ── Signal handlers ──

@@ -46,7 +46,7 @@ def _reset_flight():
 async def test_container_returns_instructions(monkeypatch) -> None:
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
 
-    async def _fake_status(_cur):
+    async def _fake_status(_cur, *, fetch):
         return {
             "kind": "container",
             "apply_method": "instructions",
@@ -68,7 +68,7 @@ async def test_container_returns_instructions(monkeypatch) -> None:
 async def test_desktop_returns_instructions(monkeypatch) -> None:
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "desktop")
 
-    async def _fake_status(_cur):
+    async def _fake_status(_cur, *, fetch):
         return {"kind": "desktop", "apply_method": "desktop_delegate", "instructions": []}
 
     monkeypatch.setattr("personalclaw.self_update.build_update_status", _fake_status)

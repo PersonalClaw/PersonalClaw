@@ -174,7 +174,7 @@ class TestTheUpdateCheckDoesNotShellOutToGit:
         monkeypatch.setenv(
             "PERSONALCLAW_PROJECT_DIR", "/Applications/PersonalClaw.app/Contents/Resources"
         )
-        asyncio.run(updates_mod._do_update_check())
+        asyncio.run(updates_mod._do_update_check(asked=False))
         return spawned
 
     @pytest.mark.parametrize("kind", ["desktop", "pip", "container"])

@@ -498,7 +498,28 @@ def set_version_pin(version: str) -> bool:
     return write_updates_fields({"pin": version})
 
 
-async def build_update_status(current: str) -> dict[str, object]:
+def may_check_for_updates(*, asked: bool) -> bool:
+    """Whether an update check may reach the network now: the one gate every check path asks.
+
+    *asked* is true only for a check the owner starts by hand, Check now in Settings › Updates.
+    That runs whatever the setting says, because it is exactly the request they asked for. Every
+    other check is PersonalClaw reaching out on its own: the check at gateway start, the
+    scheduled one, the one a page showing the update status runs when one is due, and the staged
+    install that follows a check. Those run only while ``updates.check_enabled`` is on.
+
+    Read from config at every call and never cached, so turning automatic checks off stops the
+    next one without a restart. An update or rollback the owner applies (Update, Roll back,
+    ``personalclaw update``) is not a check: it reaches GitHub because they asked it to, and does
+    not ask this.
+    """
+    if asked:
+        return True
+    from personalclaw.config.loader import AppConfig
+
+    return AppConfig.load().updates.check_enabled
+
+
+async def build_update_status(current: str, *, fetch: bool) -> dict[str, object]:
     """Assemble the C2 update-check payload for the running install.
 
     ``current`` is ``importlib.metadata.version("personalclaw")`` (the caller
@@ -508,6 +529,13 @@ async def build_update_status(current: str) -> dict[str, object]:
     ``current`` (:func:`is_newer`, pre-releases in order). The git kind additionally
     surfaces ``commits_behind`` as secondary info; the container kind carries
     ``instructions``, the commands that pull that same release.
+
+    **``fetch`` is the caller's answer to whether this check may reach out.** True asks GitHub for
+    the releases list (and with it the release notes) first; False reads what the last fetch
+    cached, so a pinned install with automatic checks off still sees its pinned release named.
+    Every check decides it through :func:`may_check_for_updates`; nothing here reads the setting.
+    This never fetches git: a source checkout's check fetches its origin once, in the check's git
+    half, and ``commits_behind`` counts against what that fetch brought in.
 
     **One selection rule, for the check and for every apply.** The release is
     :func:`select_target`'s over the releases LIST, on the line :func:`_release_line` names:
@@ -543,15 +571,7 @@ async def build_update_status(current: str) -> dict[str, object]:
     cfg = AppConfig.load()
     channel, pin = cfg.updates.channel, cfg.updates.pin
     pinned = bool((pin or "").strip())
-    # 🔴 THE EGRESS KILL SWITCH. `check_enabled=false` promises ZERO outbound calls from the
-    # check, and `fetch_releases` carries no guard of its own, because a typed `personalclaw
-    # update` still reaches GitHub with checking off. So the check reads what the last fetch
-    # cached instead: a pinned user who disabled checking still sees their pinned release named.
-    releases = (
-        await fetch_releases()
-        if cfg.updates.check_enabled
-        else _releases_from_cache(read_releases_cache())
-    )
+    releases = await fetch_releases() if fetch else _releases_from_cache(read_releases_cache())
     resolved_tag = select_target(releases, _release_line(channel), pin)
     release: dict[str, object] = {}
     if resolved_tag:
@@ -573,7 +593,7 @@ async def build_update_status(current: str) -> dict[str, object]:
         proj = source_checkout()
         if proj:
             try:
-                commits_behind = await commits_behind_upstream(proj)
+                commits_behind = await commits_behind_upstream(proj, fetch=False)
             except Exception:
                 commits_behind = None
 
@@ -649,6 +669,16 @@ def write_releases_cache(data: dict[str, object]) -> None:
         atomic_write(_list_cache_path(), json.dumps(data, indent=2) + "\n", fsync=True)
     except Exception:
         logger.debug("could not persist releases-list cache", exc_info=True)
+
+
+def releases_checked_at() -> float:
+    """When GitHub last answered a fetch of the releases list (a new list or "unchanged"), or 0.0.
+
+    A check compares it before and after its fetch to tell an answer from a fetch that failed
+    and fell back to the cache, which return the same list.
+    """
+    value = read_releases_cache().get("checked_at")
+    return float(value) if isinstance(value, (int, float)) else 0.0
 
 
 def _release_view(item: dict[str, object]) -> dict[str, object]:
@@ -747,7 +777,12 @@ async def fetch_releases() -> list[dict[str, object]]:
 
     The whole list, which the channel/pin resolver needs. Sends ``If-None-Match`` with the cached
     ETag: a 304 (or any network error) returns the cached list unchanged — empty
-    when nothing was ever fetched — a 200 refreshes and re-caches. Never raises.
+    when nothing was ever fetched — a 200 refreshes and re-caches. A 200 and a 304 are both
+    answers, so each records when it came (:func:`releases_checked_at`). Never raises.
+
+    It asks no gate itself. A check decides whether it may reach out
+    (:func:`may_check_for_updates`) before it calls this; the applies that call it through
+    :func:`resolve_target` and its siblings are updates the owner asked for.
     """
     import aiohttp
 
@@ -767,7 +802,9 @@ async def fetch_releases() -> list[dict[str, object]]:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(_RELEASES_LIST_URL, headers=headers) as resp:
                 if resp.status == 304:
-                    return cached_list  # unchanged since last check
+                    # Unchanged since the last fetch, and GitHub said so: the list is current now.
+                    write_releases_cache({**cache, "checked_at": time.time()})
+                    return cached_list
                 if resp.status != 200:
                     logger.debug("releases returned HTTP %s", resp.status)
                     return cached_list
@@ -1094,35 +1131,40 @@ def git_tracked_changes(proj: str) -> list[str]:
 # ── Git primitives (async; the dashboard's pipeline runs on these) ──────────
 
 
-async def commits_behind_upstream(proj: str) -> int | None:
+async def commits_behind_upstream(proj: str, *, fetch: bool) -> int | None:
     """How many commits the configured upstream is ahead of HEAD, or ``None``
     when no upstream exists (or the probe fails) — i.e. a ``git pull`` cannot
-    produce anything. Runs a best-effort ``git fetch`` first (short timeout,
-    failure tolerated — offline, the count then reflects the last-fetched
-    view, which is also what drove the "update available" signal)."""
+    produce anything.
+
+    With *fetch* it runs a best-effort ``git fetch`` first (short timeout, failure tolerated —
+    offline, the count then reflects the last-fetched view). Only the nightly apply, an update
+    the owner asked for, fetches here. The update check counts without fetching
+    (:func:`build_update_status`): its own git half fetched the origin once already, and only
+    if it was allowed to reach out."""
     import asyncio
 
     from personalclaw.net.git import git_argv, git_env
 
-    try:
-        # start_new_session: `git fetch` forks a remote helper (git-remote-https, ssh),
-        # and that helper is what a stalled fetch is actually waiting on — `fetch.kill()`
-        # reached only the `git` wrapper and left the helper running. Only a GROUP signal
-        # reaches it. See kill_timed_out.
-        fetch = await asyncio.create_subprocess_exec(
-            *git_argv(["fetch", "--quiet"]),
-            cwd=proj,
-            env=git_env(site="self-update-git", remote=True),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-            start_new_session=True,
-        )
+    if fetch:
         try:
-            await asyncio.wait_for(fetch.communicate(), timeout=_BEHIND_FETCH_TIMEOUT)
-        except asyncio.TimeoutError:
-            await kill_timed_out(fetch)
-    except Exception:
-        pass  # no git / no remote — the rev-list probe below decides
+            # start_new_session: `git fetch` forks a remote helper (git-remote-https, ssh),
+            # and that helper is what a stalled fetch is actually waiting on — `fetch.kill()`
+            # reached only the `git` wrapper and left the helper running. Only a GROUP signal
+            # reaches it. See kill_timed_out.
+            fetching = await asyncio.create_subprocess_exec(
+                *git_argv(["fetch", "--quiet"]),
+                cwd=proj,
+                env=git_env(site="self-update-git", remote=True),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            try:
+                await asyncio.wait_for(fetching.communicate(), timeout=_BEHIND_FETCH_TIMEOUT)
+            except asyncio.TimeoutError:
+                await kill_timed_out(fetching)
+        except Exception:
+            pass  # no git / no remote — the rev-list probe below decides
     try:
         proc = await asyncio.create_subprocess_exec(
             *git_argv(["rev-list", "--count", "HEAD..@{u}"]),

@@ -311,11 +311,11 @@ Two orthogonal switches, both in `config.json` inside the volume (or Settings �
   is running from, so `staged` notifies exactly as `off` (the default) does, and Settings →
   Updates shows the exact pull/recreate commands when a new version ships. (On a source
   checkout, `staged` applies at the next safe point.)
-- `updates.check_enabled` — `false` makes the updater issue **zero** outbound calls to
-  GitHub: no scheduled release check at all. While it is on,
-  `updates.check_interval_hours` (1–168, default 12) sets the cadence. This is the egress
-  kill switch, and it is independent of `updates.auto`: one governs whether PersonalClaw
-  *looks*, the other whether it *acts*.
+- `updates.check_enabled` — `false` means the update check makes **zero** calls to GitHub on
+  its own: no check when the container starts and none on the schedule. **Check now** in
+  Settings → Updates still checks once when you press it. While it is on,
+  `updates.check_interval_hours` (1–168, default 12) sets the cadence. It is independent of
+  `updates.auto`: one governs whether PersonalClaw *looks*, the other whether it *acts*.
 
 ## Slack channel (optional)
 

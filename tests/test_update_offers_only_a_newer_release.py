@@ -318,7 +318,14 @@ def _status_config(
         monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", kind)
     monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
     cfg = types.SimpleNamespace(
-        updates=types.SimpleNamespace(channel=channel, pin=pin, check_enabled=check_enabled)
+        updates=types.SimpleNamespace(
+            channel=channel,
+            pin=pin,
+            check_enabled=check_enabled,
+            check_interval_hours=12,
+            auto="off",
+            last_version="",
+        )
     )
     monkeypatch.setattr(_loader.AppConfig, "load", classmethod(lambda cls: cfg))
 
@@ -347,7 +354,7 @@ async def test_the_check_offers_a_running_candidate_only_what_is_newer(
     to an older release, and to the one running."""
     _status_config(monkeypatch, kind="pip", channel=channel, releases=releases)
 
-    status = await su.build_update_status("0.3.0rc1")
+    status = await su.build_update_status("0.3.0rc1", fetch=True)
 
     assert status["update_available"] is available, status
 
@@ -375,7 +382,7 @@ async def test_a_container_check_carries_commands_only_for_a_move(
         pin=pin,
     )
 
-    status = await su.build_update_status(running)
+    status = await su.build_update_status(running, fetch=True)
 
     assert bool(status["instructions"]) is commands, status["instructions"]
     assert status["image_tag"] == ("0.1.3" if pin else "0.1")
@@ -387,7 +394,7 @@ async def test_a_container_check_pulls_the_release_it_compared(monkeypatch) -> N
     `:beta` an older candidate still holds."""
     _status_config(monkeypatch, kind="container", channel="beta", releases=_RELEASED)
 
-    status = await su.build_update_status("0.3.0rc2")
+    status = await su.build_update_status("0.3.0rc2", fetch=True)
 
     assert status["latest"] == "0.3.0"
     assert status["update_available"] is True
@@ -397,19 +404,24 @@ async def test_a_container_check_pulls_the_release_it_compared(monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_a_container_check_with_checking_off_makes_no_call(monkeypatch, tmp_path) -> None:
     """`check_enabled=false` promises zero outbound calls. The container's image tag came
-    from a second probe of the releases list that nothing guarded."""
+    from a second probe of the releases list that nothing guarded. Driven through the check
+    every path runs, with an eternity since the last one, so only the switch can stop it."""
+    from personalclaw.dashboard.handlers import updates as dash_updates
+
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     su.write_releases_cache({"releases": [dict(r) for r in _NO_CANDIDATE], "etag": ""})
     _status_config(
         monkeypatch, kind="container", channel="stable", releases=[], check_enabled=False
     )
+    monkeypatch.setattr(dash_updates, "_last_update_check", 0.0)
+    monkeypatch.setattr(dash_updates, "_local_version", "0.2.0")
 
     async def _no_call() -> list[dict[str, object]]:
         raise AssertionError("check_enabled=false must not fetch the releases list")
 
     monkeypatch.setattr(su, "fetch_releases", _no_call)
 
-    status = await su.build_update_status("0.2.0")
+    status = await dash_updates.update_status(asked=False)
 
     # The answer still comes from what the last check cached.
     assert status["latest"] == "0.2.1"

@@ -139,7 +139,7 @@ describe('every Updates control round-trips to its own config field', () => {
 
   it('the Automatic-check toggle writes updates.check_enabled', async () => {
     mountWith()
-    fireEvent.click(screen.getByRole('switch', { name: 'Check for updates' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Automatic update checks' }))
     await waitFor(() => expect(patchConfig).toHaveBeenCalledWith('updates.check_enabled', false))
   })
 
@@ -239,6 +239,6 @@ describe('the panel renders release notes for the resolved channel', () => {
 
   it('says why there are none rather than rendering an empty card', () => {
     expect(mountWith({ release_notes: '' }).container.textContent).toContain('No release notes yet')
-    expect(mountWith({ release_notes: '', check_enabled: false }).container.textContent).toContain('Update checks are off')
+    expect(mountWith({ release_notes: '', check_enabled: false }).container.textContent).toContain('Automatic update checks are off')
   })
 })

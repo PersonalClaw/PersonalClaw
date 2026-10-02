@@ -3314,18 +3314,20 @@ class UpdatesConfig:
     check_enabled: bool = field(
         default=True,
         metadata=_meta(
-            "Check for Updates",
-            "Whether the updater checks for a new release on a schedule. When off, the "
-            "updater makes ZERO outbound calls to GitHub — the privacy/egress kill switch. "
-            "On (the default), it checks every 'Check Interval Hours'.",
+            "Automatic Update Checks",
+            "Whether PersonalClaw asks GitHub for a new release on its own: when it starts, "
+            "then every 'Check Interval Hours'. On is the default. Off, it never checks for "
+            "updates on its own; Check now in Settings › Updates, an Update you press and "
+            "`personalclaw update` still reach GitHub, each only when you start it.",
         ),
     )
     check_interval_hours: int = field(
         default=12,
         metadata=_meta(
             "Check Interval Hours",
-            "How often (in hours) to check for a new release when checking is enabled "
-            "(1-168). Ignored entirely when 'Check for Updates' is off.",
+            "How often (in hours) PersonalClaw checks for a new release on its own while "
+            "automatic checks are on (1-168). Ignored entirely when 'Automatic Update "
+            "Checks' is off.",
         ),
     )
     last_version: str = field(

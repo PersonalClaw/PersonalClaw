@@ -32,7 +32,7 @@ def test_the_update_check_says_whether_this_install_can(kind, monkeypatch):
     monkeypatch.setattr(self_update, "detect_install_kind", lambda: kind)
     monkeypatch.setattr(self_update, "fetch_releases", AsyncMock(return_value=[]))
     monkeypatch.setattr(self_update, "commits_behind_upstream", AsyncMock(return_value=0))
-    status = asyncio.run(self_update.build_update_status("0.2.0"))
+    status = asyncio.run(self_update.build_update_status("0.2.0", fetch=True))
     assert status["kind"] == kind
     assert status["unattended_apply"] is (kind == "git")
 
@@ -62,24 +62,20 @@ def test_first_run_reads_the_install_kind_without_an_update_check(kind, monkeypa
 
 def _available_update(orch, *, auto: str, kind: str) -> tuple[MagicMock, AsyncMock]:
     """Run one update check that finds a newer release, on *kind* with ``updates.auto`` *auto*."""
-    import personalclaw.dashboard.handlers as handlers
+    from personalclaw.dashboard.handlers import updates
 
     orch.dashboard_state = MagicMock()
     orch._staged_auto_apply = AsyncMock()
     cfg = MagicMock()
     cfg.updates.auto = auto
-    saved = handlers._update_info.copy()
-    try:
-        handlers._update_info.update({"available": True, "version": "9.9.9"})
-        with (
-            patch.object(handlers, "_do_update_check", new_callable=AsyncMock),
-            patch("personalclaw.config.AppConfig.load", return_value=cfg),
-            patch.object(self_update, "detect_install_kind", return_value=kind),
-        ):
-            asyncio.run(orch._check_for_updates())
-    finally:
-        handlers._update_info.clear()
-        handlers._update_info.update(saved)
+    cfg.updates.check_enabled = True
+    found = {"available": True, "latest": "9.9.9", "checked_now": True}
+    with (
+        patch.object(updates, "update_status", AsyncMock(return_value=found)),
+        patch("personalclaw.config.AppConfig.load", return_value=cfg),
+        patch.object(self_update, "detect_install_kind", return_value=kind),
+    ):
+        asyncio.run(orch._check_for_updates())
     return orch.dashboard_state, orch._staged_auto_apply
 
 

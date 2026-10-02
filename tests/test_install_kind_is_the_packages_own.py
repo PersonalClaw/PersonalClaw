@@ -161,6 +161,6 @@ async def test_the_update_check_fetches_in_the_packages_checkout(tmp_path, monke
 
     monkeypatch.setattr(dash_updates.asyncio, "create_subprocess_exec", _record)
 
-    await dash_updates._do_update_check()
+    await dash_updates._do_update_check(asked=False)
 
     assert cwds == [str(runs_from)], f"git ran in {cwds}"

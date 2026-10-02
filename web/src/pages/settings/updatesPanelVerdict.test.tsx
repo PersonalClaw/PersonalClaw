@@ -74,7 +74,7 @@ describe('the Version headline is the check’s real answer', () => {
 
   it('checking switched off is said as such, not reported as "Up to date" from an old answer', () => {
     mountWith({ checked: true, check_enabled: false })
-    expect(headline()).toContain('Update checks are off')
+    expect(headline()).toContain('Automatic update checks are off')
   })
 
   it('a pin set back to an older release says so and offers the rollback — it read "Up to date"', async () => {

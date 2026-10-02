@@ -830,7 +830,9 @@ async def test_gateway_auto_update_reaps_the_install_it_timed_out(monkeypatch, t
         AppConfig,
         "load",
         classmethod(
-            lambda cls: SimpleNamespace(updates=SimpleNamespace(channel="nightly", pin=""))
+            lambda cls: SimpleNamespace(
+                updates=SimpleNamespace(channel="nightly", pin="", check_enabled=True)
+            )
         ),
     )
 

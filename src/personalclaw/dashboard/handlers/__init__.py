@@ -391,11 +391,9 @@ from personalclaw.dashboard.handlers.terminal import (  # noqa: E402, F401
 
 # ── Updates & Logs (handlers/updates.py) ──
 from personalclaw.dashboard.handlers.updates import (  # noqa: E402, F401
-    _do_update_check,
     _log_ring,
     _QueueLogHandler,
     _RingLogHandler,
-    _update_info,
     api_changelog,
     api_log_level,
     api_log_level_get,
@@ -404,6 +402,7 @@ from personalclaw.dashboard.handlers.updates import (  # noqa: E402, F401
     api_update_apply,
     api_update_cancel,
     api_update_check,
+    api_update_check_now,
     api_update_simulate,
     get_update_info,
     install_log_ring_handler,

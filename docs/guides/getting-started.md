@@ -326,11 +326,13 @@ running, and only ever lands on the release your channel/pin resolves to, never 
 exactly as `off` does.
 
 **Turning the check off** (`updates.check_enabled`). PersonalClaw asks GitHub for the
-newest release every `updates.check_interval_hours` (default 12, range 1–168). Set
-`updates.check_enabled` to `false` and the updater makes **zero** outbound calls — no
-scheduled check, no release probe. `personalclaw update` still works when you run it by
-hand. This is a separate switch from `updates.auto`: one governs whether PersonalClaw
-*looks*, the other whether it *installs*.
+newest release when it starts, then every `updates.check_interval_hours` (default 12, range
+1–168) while the dashboard is open. Set `updates.check_enabled` to `false` (Settings → Updates
+→ **Automatic update checks**) and the update check makes **zero** calls to GitHub on its own
+— no check at start, none on the schedule, none when a page shows the update status. **Check now** in
+Settings → Updates still checks once when you press it, and `personalclaw update` still works
+when you run it by hand. This is a separate switch from `updates.auto`: one governs whether
+PersonalClaw *looks*, the other whether it *installs*.
 
 ### Upgrading from 0.1.x
 

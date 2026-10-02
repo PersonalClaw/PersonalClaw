@@ -348,15 +348,20 @@ and the Hugging Face library pings the Hub. Every process PersonalClaw starts sw
 with each library's own setting, and keeps their caches in PersonalClaw's home.
 
 **One outbound call you should know about.** PersonalClaw asks GitHub whether a newer release
-exists, on a schedule — by default at most once every 12 hours (`updates.check_interval_hours`,
-`config/loader.py`) — identifying itself with a `personalclaw-update-check` User-Agent. It sends
-no usage data, but it is a network request, so GitHub sees your IP, as it would for any HTTP call.
+exists, on its own: when it starts, then every 12 hours by default while the dashboard is open
+(`updates.check_interval_hours`, `config/loader.py`), identifying itself with a
+`personalclaw-update-check` User-Agent. On a source checkout the same check also runs `git fetch`
+against the checkout's own `origin`. It sends no usage data, but it is a network request, so
+GitHub sees your IP, as it would for any HTTP call.
 
-**You can turn that check off.** Set `updates.check_enabled` to `false` in your config and
-PersonalClaw makes **zero** outbound calls to GitHub: no scheduled release check and no egress
-from the updater at all. While the check is on, `updates.check_interval_hours` (1–168) tunes how
-often it runs. `updates.auto` is a separate, orthogonal control — it gates whether an available
-update is *applied*, not whether the check happens: `off` (the default) only notifies, while
+**You can turn that check off.** Set `updates.check_enabled` to `false` in your config (or turn
+off **Automatic update checks** in Settings → Updates) and the update check makes **zero**
+calls to GitHub on its own: no check at start, none on the schedule, none when a page shows the update
+status, and no staged install. **Check now**, **Update** and `personalclaw update` still reach
+GitHub, each only when you start it. While the check is on, `updates.check_interval_hours`
+(1–168) tunes how often it runs. `updates.auto` is a separate, orthogonal control — it gates
+whether an available update is *applied*, not whether the check happens: `off` (the default)
+only notifies, while
 `staged` applies at the next safe point (held while a session or subagent is running, and only
 ever the resolved release tag, never raw `main`). Only a source checkout applies on its own; a
 pip or uv install, the container and the desktop app are always notify-only.

@@ -812,7 +812,7 @@ class TestGitCheckReadsRemoteVersion:
         monkeypatch.setattr(U, "_local_version", "0.1.3")
         saved = dict(U._update_info)
         try:
-            asyncio.run(U._do_update_check())
+            asyncio.run(U._do_update_check(asked=True))
             assert U._update_info["latest"] == "0.1.4", U._update_info
             assert U._update_info["available"] is True
             assert U._update_info["checked"] is True
@@ -831,7 +831,7 @@ class TestGitCheckReadsRemoteVersion:
         monkeypatch.setattr(U, "_local_version", "0.1.4")  # already at the remote version
         saved = dict(U._update_info)
         try:
-            asyncio.run(U._do_update_check())
+            asyncio.run(U._do_update_check(asked=True))
             assert U._update_info["available"] is False
         finally:
             U._update_info.clear()
@@ -867,7 +867,7 @@ class TestCheckAgreesWithApplyUnderNightly:
             ),
         )
         monkeypatch.setattr(U.AppConfig, "load", staticmethod(lambda: cfg))
-        monkeypatch.setattr(U, "_do_update_check", AsyncMock())
+        monkeypatch.setattr(U, "_do_update_check", AsyncMock(return_value=False))
         monkeypatch.setattr(
             U.self_update,
             "build_update_status",
@@ -949,7 +949,7 @@ class TestEveryKindGetsACheckResult:
         monkeypatch.setattr(U.AppConfig, "load", staticmethod(lambda: cfg))
         monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
         monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
-        monkeypatch.setattr(U, "_do_update_check", AsyncMock())
+        monkeypatch.setattr(U, "_do_update_check", AsyncMock(return_value=False))
         monkeypatch.setattr(U, "_local_version", "0.1.3")
         monkeypatch.setattr(
             U.self_update,
@@ -959,7 +959,8 @@ class TestEveryKindGetsACheckResult:
             ),
         )
         monkeypatch.setitem(U._update_info, "checked", git_checked)
-        resp = asyncio.run(U.api_update_check(MagicMock()))
+        # Check now: the owner's own check, which compares whatever the schedule says.
+        resp = asyncio.run(U.api_update_check_now(MagicMock()))
         return json.loads(resp.body)
 
     def test_a_pip_install_that_was_compared_says_it_was_checked(self, monkeypatch) -> None:

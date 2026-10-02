@@ -407,10 +407,10 @@ governs what the app *tells* you:
   and nothing in it can replace a running app bundle, so `staged` notifies exactly as `off`
   does. The field stays in the config because the same config file follows your
   `~/.personalclaw` to other install kinds.
-- **Check for updates** (`updates.check_enabled` + `updates.check_interval_hours`) — the
-  kill switch works exactly as everywhere else. Off means the app makes **zero** outbound
-  calls to GitHub, so the panel simply stops reporting new releases. On, it asks once every
-  `check_interval_hours` (default 12).
+- **Automatic update checks** (`updates.check_enabled` + `updates.check_interval_hours`) —
+  the same switch as everywhere else. Off, the update check makes **zero** calls to GitHub on
+  its own, so the panel reports a new release only when you press **Check now**. On, it asks when it
+  starts and then once every `check_interval_hours` (default 12).
 
 ## Related
 

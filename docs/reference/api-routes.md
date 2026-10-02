@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **899 registrations** over **728 distinct paths** — 892 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **900 registrations** over **728 distinct paths** — 893 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -73,10 +73,10 @@ The 128 families the surface divides into, largest first.
 | `/api/feedback` | 5 | 5 |
 | `/api/push` | 5 | 5 |
 | `/api/themes` | 5 | 2 |
+| `/api/update` | 5 | 4 |
 | `/api/uploads` | 5 | 5 |
 | `/api/autonomy` | 4 | 4 |
 | `/api/search` | 4 | 4 |
-| `/api/update` | 4 | 4 |
 | `/api/usage` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
 | `/api/agent-providers` | 3 | 3 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 892 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 893 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -976,7 +976,8 @@ The 892 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/triggers/{id}/toggle` | enable/disable. |
 | `POST` | `/api/update` | advance the checkout to its release, rebuild, restart. |
 | `POST` | `/api/update/cancel` | dismiss a stuck/failed update overlay. |
-| `GET` | `/api/update/check` | kind-aware update check (contract C2). |
+| `GET` | `/api/update/check` | the update status, checking only when an automatic check is due. |
+| `POST` | `/api/update/check` | check for updates once, now, even with automatic checks off. |
 | `POST` | `/api/update/simulate` | walk through update steps with delays. |
 | `POST` | `/api/upload` | open native file picker and return selected paths. |
 | `POST` | `/api/upload/file` | cross-platform multipart file upload. |

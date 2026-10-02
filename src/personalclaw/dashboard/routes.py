@@ -1159,6 +1159,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     app.router.add_post("/api/notifications/trust", handlers.api_notification_trust)
     app.router.add_post("/api/notifications/ack-all", handlers.api_notifications_ack_all)
     app.router.add_get("/api/update/check", handlers.api_update_check)
+    app.router.add_post("/api/update/check", handlers.api_update_check_now)
     app.router.add_get("/api/changelog", handlers.api_changelog)
     app.router.add_post("/api/update", handlers.api_update_apply)
     app.router.add_post("/api/update/cancel", handlers.api_update_cancel)

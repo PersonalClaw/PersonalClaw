@@ -4527,9 +4527,9 @@ export interface ProjectImportResult {
   project_id?: string; written?: string[]; error?: string
 }
 // Update + changelog.
-/** `GET /api/update/check`. Carries EVERY `updates.*` field the Settings > Updates screen edits
- *  (RUM-10), so the six controls render from one snapshot rather than a second config read:
- *  `channel`/`pin`/`auto`/`check_enabled`/`check_interval_hours`, plus `last_version` — the
+/** `GET /api/update/check`, and `POST` for Check now. Carries EVERY `updates.*` field the Settings >
+ *  Updates screen edits, so the six controls render from one snapshot rather than a second config
+ *  read: `channel`/`pin`/`auto`/`check_enabled`/`check_interval_hours`, plus `last_version` — the
  *  rollback offer, which has no other source. `release_notes` describe the release the
  *  channel/pin RESOLVES to, not `releases/latest`. */
 /** `checked` — the check has an answer (a release it compared against, fetched or cached). `pin_miss` — a
@@ -4538,8 +4538,10 @@ export interface ProjectImportResult {
  *  than the one running: a rollback not applied yet, whose container commands are in `instructions`.
  *  All three read through `settings/updateVerdict`. `unattended_apply` — whether `auto: 'staged'` can
  *  install an update on this kind at all (`self_update.applies_updates_unattended`: a source checkout
- *  only); `lib/updateRoute` says what every other kind does instead. */
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: InstallKind; unattended_apply?: boolean; current?: string; update_available?: boolean; pin_miss?: boolean; pin_older?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
+ *  only); `lib/updateRoute` says what every other kind does instead. `checked_now` — present only when
+ *  the request ran a check (Check now always does; the status read does when an automatic check is
+ *  due): true when GitHub answered it, false when nothing did. */
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: InstallKind; unattended_apply?: boolean; current?: string; update_available?: boolean; pin_miss?: boolean; pin_older?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string; checked_now?: boolean }
 /** How this PersonalClaw was installed (`self_update.detect_install_kind`). */
 export type InstallKind = 'git' | 'pip' | 'container' | 'desktop'
 
@@ -5803,8 +5805,8 @@ export interface OnboardingState {
   chat_provider_connection?: ChatProviderConnection | null
   /** How this PersonalClaw was installed, and whether that kind installs an update on its own
    *  (`self_update.applies_updates_unattended`) — what the done screen's update pointer is about.
-   *  Here, rather than read from `GET /api/update/check`, because that check fetches the release
-   *  list from GitHub, and a first-run sentence must not reach the network. */
+   *  Here, rather than read from `GET /api/update/check`, because that read can run a due automatic
+   *  check, which reaches GitHub, and a first-run sentence must not reach the network. */
   install_kind?: InstallKind
   unattended_apply?: boolean
   step?: OnboardingStep
@@ -9611,7 +9613,10 @@ export const api = {
     return fetch(`/api/projects/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd }).then(j<ProjectImportResult>)
   },
   // updates + changelog
+  // The status as the last check left it. It reaches GitHub only when an automatic check is due.
   updateCheck: () => get<UpdateCheck>('/api/update/check'),
+  // Check now: one check the owner asked for, which runs even with automatic checks off.
+  checkForUpdatesNow: () => post<UpdateCheck>('/api/update/check'),
   changelog: () => get<{ content: string }>('/api/changelog').then((d) => d.content),
   applyUpdate: () => post<{ ok?: boolean; error?: string }>('/api/update'),
   // Cancel a running update / dismiss a stuck progress overlay (backend clears

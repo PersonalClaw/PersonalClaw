@@ -668,15 +668,25 @@ class TestShutdown:
 
 
 class TestCheckForUpdates:
-    """Update check logic."""
+    """Update check logic at gateway start: it runs the one check, then acts on what it found."""
 
     @pytest.mark.asyncio
     async def test_no_update_available(self):
         orch = _make_orchestrator()
-        orch.dashboard_state = _mock_dashboard_state()
-        with patch("personalclaw.dashboard.handlers._do_update_check", new_callable=AsyncMock):
-            with patch("personalclaw.dashboard.handlers._update_info", {"available": False}):
-                await orch._check_for_updates()
+        ds = _mock_dashboard_state()
+        orch.dashboard_state = ds
+        orch._auto_apply_update = AsyncMock()
+        found = {"available": False, "checked_now": True, "latest": "0.1.0", "current": "0.1.0"}
+        with (
+            patch("personalclaw.self_update.may_check_for_updates", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.updates.update_status",
+                AsyncMock(return_value=found),
+            ),
+        ):
+            await orch._check_for_updates()
+        orch._auto_apply_update.assert_not_awaited()
+        ds.push_refresh.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_available_no_auto(self):
@@ -684,30 +694,32 @@ class TestCheckForUpdates:
         ds = _mock_dashboard_state()
         orch.dashboard_state = ds
         orch._auto_apply_update = AsyncMock()
-        import personalclaw.dashboard.handlers as _h
-
-        orig = _h._update_info.copy()
         # Config with updates.auto="off" (notify-only) — the retired auto_update bool is gone.
         fake_cfg = MagicMock()
         fake_cfg.updates.auto = "off"
-        try:
-            _h._update_info.update({"available": True, "version": "9.9.9"})
-            with patch.object(_h, "_do_update_check", new_callable=AsyncMock):
-                with patch("personalclaw.config.AppConfig.load", return_value=fake_cfg):
-                    await orch._check_for_updates()
-        finally:
-            _h._update_info.clear()
-            _h._update_info.update(orig)
+        found = {"available": True, "checked_now": True, "latest": "9.9.9", "current": "0.1.0"}
+        with (
+            patch("personalclaw.self_update.may_check_for_updates", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.updates.update_status",
+                AsyncMock(return_value=found),
+            ),
+            patch("personalclaw.config.AppConfig.load", return_value=fake_cfg),
+        ):
+            await orch._check_for_updates()
         orch._auto_apply_update.assert_not_awaited()
         ds.push_refresh.assert_called_with("update_available")
 
     @pytest.mark.asyncio
     async def test_update_check_exception_handled(self):
         orch = _make_orchestrator()
-        with patch(
-            "personalclaw.dashboard.handlers._do_update_check",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("network"),
+        with (
+            patch("personalclaw.self_update.may_check_for_updates", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.updates.update_status",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("network"),
+            ),
         ):
             await orch._check_for_updates()  # should not raise
 
@@ -1131,10 +1143,13 @@ class TestInitInbox:
 
 
 def _fake_updates_cfg(channel: str = "stable", pin: str = ""):
-    """A stand-in AppConfig whose only fields _auto_apply_update reads are updates."""
+    """A stand-in AppConfig carrying the `updates` fields _auto_apply_update reads: the release
+    line, and the automatic-check switch the unattended install asks first."""
     import types
 
-    return types.SimpleNamespace(updates=types.SimpleNamespace(channel=channel, pin=pin))
+    return types.SimpleNamespace(
+        updates=types.SimpleNamespace(channel=channel, pin=pin, check_enabled=True)
+    )
 
 
 def _git_ok(rc: int = 0):

@@ -26,10 +26,16 @@ const DOWNGRADE_ADVICE = (
 )
 
 /** Updates — the whole release-tracking surface: which line this install follows, whether it
- *  applies on its own, whether it phones GitHub at all, and how to get back to the version
- *  that was working. Backed by /api/update/check (one snapshot for every control) +
- *  /api/changelog + POST /api/update (apply); every control writes its `updates.*` config
- *  field through PATCH /api/config/personalclaw.
+ *  applies on its own, whether it asks GitHub on its own at all, and how to get back to the version
+ *  that was working. Backed by GET /api/update/check (one snapshot for every control), POST
+ *  /api/update/check (Check now) + /api/changelog + POST /api/update (apply); every control writes
+ *  its `updates.*` config field through PATCH /api/config/personalclaw.
+ *
+ *  🔑 AUTOMATIC CHECKS AND CHECK NOW ARE TWO THINGS, AND THE COPY SAYS WHICH IS WHICH. The switch
+ *  governs only what PersonalClaw does on its own (a check at start, then one every interval);
+ *  Check now is the owner's own request and runs whatever the switch says. The button used to be
+ *  a re-read of the status, so with checking off it could not check, and the switch claimed "ZERO
+ *  outbound calls from the updater" while the Update it offered still reached GitHub.
  *
  *  Six controls, one per field the `updates` block owns. Before this, the panel
  *  rendered exactly TWO boolean switches over six fields: "Auto-update" (off ⇄ staged) and
@@ -131,13 +137,16 @@ export function updateEntries(changes: string): string {
 
 export function UpdatesPanel() {
   const [applying, setApplying] = useState(false)
+  // Check now in flight. The status query's own `loading` is never true while this button shows:
+  // the panel renders a skeleton until the first snapshot lands.
+  const [checking, setChecking] = useState(false)
   const [msg, setMsg] = useState('')
   // WHICH control just saved, not merely "something did": six controls share this panel, and a
   // boolean would flash "Saved ✓" beside all of them for a write the user made to one.
   const [saved, setSaved] = useState('')
 
   // Version + changelog change slowly — one persisted snapshot, instant on revisit.
-  const { data, loading: checking, error: loadErr, refresh } = useQuery('settings:updates', async () => {
+  const { data, error: loadErr, refresh } = useQuery('settings:updates', async () => {
     const [info, changelog] = await Promise.all([
       // 🔴 The version check IS the panel — a substituted null read as "still loading" and left it
       // shimmering forever (measured: 0 controls, one `aria-busy` skeleton, no alert). The changelog
@@ -166,7 +175,20 @@ export function UpdatesPanel() {
   const [pinDraft, setPinDraft] = useSyncedDraft(info?.pin ?? '')
   const changelog = data?.changelog ?? ''
 
-  const check = () => { invalidateKeys('settings:updates'); refresh() }
+  /** Re-read the status, which compares against what the last check found. It reaches GitHub only
+   *  when an automatic check is due — it is not Check now. */
+  const reread = () => { invalidateKeys('settings:updates'); refresh() }
+
+  /** Check now: one check the owner asked for, which runs even with automatic checks off. Its answer
+   *  is shown as it came (`checked_now`), and the hub tile reads the new answer next time it shows. */
+  const checkNow = async () => {
+    setChecking(true)
+    try {
+      setInfo(await api.checkForUpdatesNow())
+      invalidateKeys('settings:update-check')
+    } catch (e) { reportSettingFailure('check for updates')(e) }
+    setChecking(false)
+  }
 
   /** Apply whatever the backend resolves for the current channel/pin, and say what happened. */
   const runApply = async () => {
@@ -217,16 +239,17 @@ export function UpdatesPanel() {
    *  read "pinned to not-a-version!!" beside the toast saying it was refused. The draft keeps what
    *  was typed either way, so nothing the user wrote is lost while they fix it.
    *
-   *  🪤 AND THREE FIELDS RE-RUN THE CHECK ONCE SAVED. The channel, the pin and the check switch each
-   *  change which release the check compares against — or whether it compares at all — so the
-   *  headline computed before the write describes a different question. Re-checking is what makes a
-   *  pin that names no release say so at the moment it is saved, rather than after the next Check. */
+   *  🪤 AND THREE FIELDS RE-READ THE STATUS ONCE SAVED. The channel, the pin and the check switch each
+   *  change which release the status compares against — or whether PersonalClaw looks on its own at
+   *  all — so the headline computed before the write describes a different question. Re-reading is
+   *  what makes a pin that names no release say so at the moment it is saved, rather than after the
+   *  next check: the comparison runs over the releases the last check found, with no new request. */
   const write = (field: keyof UpdateCheck & string, value: unknown, what: string) => {
     if (field !== 'pin') setInfo((p) => p && { ...p, [field]: value })
     api.patchConfig(`updates.${field}`, value)
       .then(() => { setSaved(field); window.setTimeout(() => setSaved((k) => (k === field ? '' : k)), 1600)
         if (field === 'pin') setInfo((p) => p && { ...p, pin: String(value) })
-        if (field === 'channel' || field === 'pin' || field === 'check_enabled') check()
+        if (field === 'channel' || field === 'pin' || field === 'check_enabled') reread()
       })
       .catch(reportSettingFailure(what))
   }
@@ -359,20 +382,26 @@ export function UpdatesPanel() {
                   )}
                   {verdict === 'checks_off' && (
                     <div data-type="caption" className="text-on-surface-low">
-                      Nothing is fetched from GitHub. Turn on Check for updates below to look for new releases.
+                      PersonalClaw doesn’t check for updates on its own while automatic checks are off. Check now looks once, when you press it.
                     </div>
                   )}
                   {verdict === 'not_checked' && (
                     <div data-type="caption" className="text-on-surface-low">
-                      No release information could be fetched — press Check to try again.
+                      No release information could be fetched — press Check now to try again.
                     </div>
                   )}
                 </>
               )}
+              {!checkEnabled && info.checked_now && (
+                <div data-type="caption" className="text-on-surface-low">
+                  Checked once, just now. Automatic checks stay off.
+                </div>
+              )}
               <div data-type="caption" className="text-on-surface-low mt-0.5">Install type: {kindLabel}{info.current ? ` · v${info.current}` : ''}{info.pin ? ` · pinned to ${info.pin}` : ` · ${channelName} channel`}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Button variant="secondary" size="sm" loading={checking} onClick={check}><RefreshCw size={14} /> Check</Button>
+              <Button variant="secondary" size="sm" loading={checking} onClick={checkNow}
+                ariaLabel="Check now: ask GitHub once, now, whether a newer release exists"><RefreshCw size={14} /> Check now</Button>
               {info.available && canApplyInApp && <Button size="sm" loading={applying} onClick={apply}><DownloadCloud size={14} /> Update</Button>}
               {verdict === 'pin_older' && canApplyInApp && (
                 <Button size="sm" loading={applying} onClick={applyPinnedRollback}><Undo2 size={14} /> Roll back to v{pinnedTo}</Button>
@@ -478,20 +507,20 @@ export function UpdatesPanel() {
       </Section>
 
       <Section title="Automatic updates" hint={info.unattended_apply
-        ? 'Whether PersonalClaw looks for new releases, and whether it installs them for you.'
-        : 'Whether PersonalClaw looks for new releases. Installing one is yours to do on this install.'}>
+        ? 'Whether PersonalClaw looks for new releases on its own, and whether it installs them for you.'
+        : 'Whether PersonalClaw looks for new releases on its own. Installing one is yours to do on this install.'}>
         <RowGroup>
-          <Row label="Check for updates" hint="Ask GitHub whether a newer release exists, on a schedule. Off means ZERO outbound calls from the updater — this is the egress kill switch the README describes.">
+          <Row label="Automatic update checks" hint={`On: PersonalClaw asks GitHub whether a newer release exists when it starts, then every ${info.check_interval_hours ?? 12} hours. Off: it never checks for updates on its own. Check now and Update still reach GitHub, each time you press one.`}>
             <div className="flex items-center gap-2">
               <SavedToast show={saved === 'check_enabled'} />
-              <Toggle on={checkEnabled} onChange={(v) => write('check_enabled', v, `${v ? 'enable' : 'disable'} the update check`)} label="Check for updates" />
+              <Toggle on={checkEnabled} onChange={(v) => write('check_enabled', v, `turn automatic update checks ${v ? 'on' : 'off'}`)} label="Automatic update checks" />
             </div>
           </Row>
           {/* Hidden while the check is off rather than shown disabled: the interval is ignored
               entirely then, and an inert number invites the reader to tune something that has no
               effect. `NumberField` carries no disabled state, so this is also the honest rendering. */}
           {checkEnabled && (
-            <Field label="Check every" hint="Hours between release checks (1–168). The default is 12.">
+            <Field label="Check every" hint="Hours between automatic checks (1–168). The default is 12.">
               <div className="flex items-center gap-2">
                 <NumberField value={info.check_interval_hours ?? 12} min={1} max={168} ariaLabel="Check every"
                   onChange={(n) => write('check_interval_hours', n, 'save the check interval')} />
@@ -531,7 +560,7 @@ export function UpdatesPanel() {
           : <p data-type="body-s" className="text-on-surface-low italic">
               {/* "run a check" would send a pinned user to a button that cannot help them. */}
               {verdict === 'pin_miss' ? 'Fix or clear the version pin to read a release’s notes.'
-                : checkEnabled ? 'No release notes yet — run a check.' : 'Update checks are off, so no release notes have been fetched.'}
+                : checkEnabled ? 'No release notes yet — press Check now.' : 'Automatic update checks are off — press Check now to fetch the newest release’s notes.'}
             </p>}
       </Section>
 

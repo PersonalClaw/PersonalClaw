@@ -78,7 +78,7 @@ def github(monkeypatch: pytest.MonkeyPatch, tmp_path) -> _GitHub:
 
 @pytest.mark.asyncio
 async def test_a_back_patch_cannot_split_the_check_from_the_apply(github: _GitHub) -> None:
-    status = await su.build_update_status("0.2.0")
+    status = await su.build_update_status("0.2.0", fetch=True)
 
     # The check names the release every apply installs...
     assert status["latest"] == "0.2.1", status
@@ -110,7 +110,7 @@ async def test_a_pin_set_back_is_said_as_such(
 
     (tmp_path / "config.json").write_text(json.dumps({"updates": {"pin": pin}}), encoding="utf-8")
 
-    status = await su.build_update_status(running)
+    status = await su.build_update_status(running, fetch=True)
 
     assert status["update_available"] is available, status
     assert status["pin_older"] is older, status

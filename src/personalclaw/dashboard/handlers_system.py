@@ -160,21 +160,13 @@ def _safe_surfaces_flag() -> bool:
 async def api_status(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     uptime = time.time() - state.start_time
-    # Background auto-recheck on the CONFIG-DRIVEN cadence (updates.check_interval_hours),
-    # skipped entirely when the egress kill switch (updates.check_enabled=false) is set.
-    from personalclaw.config.loader import AppConfig
-    from personalclaw.dashboard.handlers import (
-        _do_update_check,
-        _update_info,
-    )
+    # The update check's schedule: an automatic check starts in the background once one is due
+    # (`updates.check_interval_hours` since the last), and never while automatic checks are off.
     from personalclaw.dashboard.handlers import updates as _updates_mod
 
-    if _updates_mod._scheduled_check_due(
-        AppConfig.load(), _updates_mod._last_update_check, time.time()
-    ):
-        asyncio.create_task(_do_update_check())
+    _updates_mod.start_scheduled_check_if_due()
 
-    data = state.status_snapshot(update_available=bool(_update_info.get("available")))
+    data = state.status_snapshot(update_available=bool(_updates_mod._update_info.get("available")))
     # Imported lazily (handler → handler): the triggers handler owns the union that defines
     # what a "trigger" is, and importing it here rather than at module scope keeps the status
     # handler's import graph flat.
@@ -819,8 +811,8 @@ async def api_onboarding(request: web.Request) -> web.Response:
 
     # ``install_kind`` / ``unattended_apply`` — how a new version reaches THIS install, which the
     # done screen's update pointer is about: only a source checkout installs one on its own. Read
-    # here rather than from ``GET /api/update/check``, which fetches the release list from GitHub —
-    # a first-run screen must not reach the network to decide a sentence.
+    # here rather than from ``GET /api/update/check``, which can run a due automatic check and so
+    # reach GitHub — a first-run screen must not reach the network to decide a sentence.
     from personalclaw import self_update
     from personalclaw.onboarding import load_onboarding_state
 
