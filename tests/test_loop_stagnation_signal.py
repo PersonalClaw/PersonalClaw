@@ -185,7 +185,7 @@ class TestWorkerCannotAuthorProgress:
                 evidence="handlers.py:88",
             )
         assert d.status == LoopStatus.STAGNANT.value
-        assert "byte-identical" in d.reason()
+        assert "came back unchanged" in d.reason()
         # ONE row for one stall, keyed per (loop, event, OCCURRENCE). The cycle suffix arrived
         # with #335: `loop:<id>:<event>` was permanent per pair, so a loop's SECOND stall was
         # swallowed for the lifetime of the home. What this test cares about is unchanged — one
@@ -298,14 +298,14 @@ class TestSelfReportIsKeptButNotSufficient:
         recent = [{"cycle": i, "summary": f"s{i}", "new_findings_count": "many"} for i in range(5)]
         assert W.check_stagnation(recent) == ""
         claimed = [{**f, "new_findings_count": "many", "summary": "same"} for f in recent]
-        assert "byte-identical" in W.check_stagnation(claimed)
+        assert "came back unchanged" in W.check_stagnation(claimed)
 
     def test_a_claimed_count_cannot_veto_the_content_signal(self):
         """The old rule let ANY nonzero count end the check. The worker's claim is now
         consulted last and only when the two observed signals found nothing."""
         for claim in (1, 5, 999):
             recent = _findings(5, new_findings_count=claim, summary="identical", evidence="e")
-            assert "byte-identical" in W.check_stagnation(recent), claim
+            assert "came back unchanged" in W.check_stagnation(recent), claim
 
     def test_the_counter_is_excluded_from_the_content_hash(self):
         """A worker cannot buy immunity by incrementing a counter beside unchanged output —
@@ -314,7 +314,7 @@ class TestSelfReportIsKeptButNotSufficient:
             {"cycle": i, "new_findings_count": i, "summary": "identical", "evidence": "e"}
             for i in range(1, 6)
         ]
-        assert "byte-identical" in W.check_stagnation(recent)
+        assert "came back unchanged" in W.check_stagnation(recent)
 
 
 # ── reuse, not re-implementation ─────────────────────────────────────────────
@@ -335,7 +335,7 @@ class TestReusesTheEngineRules:
             return real(node, state)
 
         monkeypatch.setattr(resilience, "check_breaker", _spy)
-        assert "byte-identical" in W.check_stagnation(_findings(5, summary="same"))
+        assert "came back unchanged" in W.check_stagnation(_findings(5, summary="same"))
         assert seen == ["loop:content"], seen
 
     def test_call_identity_uses_the_engine_fingerprint(self, monkeypatch):
@@ -380,7 +380,7 @@ class TestWindowIsConfigurable:
         assert d.status == LoopStatus.RUNNING.value, "stalled BEFORE the configured window"
         d.cycle(new_findings_count=4, summary="same")
         assert d.status == LoopStatus.STAGNANT.value
-        assert "3x" in d.reason()
+        assert "3 times in a row" in d.reason()
 
     def test_a_longer_window_buys_more_cycles(self, loop_home, cfg_file, attention):
         _path, write = cfg_file
@@ -461,4 +461,4 @@ class TestPatchRail:
         assert d.status == LoopStatus.RUNNING.value
         await d.acycle(new_findings_count=9, summary="same")
         assert d.status == LoopStatus.STAGNANT.value
-        assert "2x" in d.reason()
+        assert "2 times in a row" in d.reason()

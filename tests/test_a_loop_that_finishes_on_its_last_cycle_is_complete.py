@@ -167,7 +167,10 @@ def test_a_one_cycle_loop_whose_judge_did_not_accept_it_escalates_naming_its_bud
     )
     [row] = inbox.rows
     assert row["title"] == "Loop stopped at its budget", row
-    assert row["body"].endswith(run.attention["detail"]), row
+    # Why it stopped, then what to do about it: the escalation's own sentence and remedy.
+    assert run.attention["detail"] in row["body"], row
+    assert row["body"].endswith(run.attention["remedy"]), row
+    assert "Max cycles" in run.attention["remedy"], run.attention
     assert "workflow_node" not in row["refs"], "the row is not a gate an answer can reach"
 
 

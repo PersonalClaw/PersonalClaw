@@ -92,8 +92,11 @@ function happy() {
   // the tests below can assert it is NOT reached.
   createULoop.mockResolvedValue({ run_id: 'run-1', status: 'running', blocking: false, kind: 'general' })
   uLoopAction.mockResolvedValue({ id: 'lp-1', status: 'running', task: LOOP_SEED.task, max_cycles: 1 })
-  // What `GET /api/loops/<run_id>` answers for the run: the budget the run really has.
-  uLoop.mockResolvedValue({ id: 'run-1', run_id: 'run-1', status: 'running', max_cycles: 1 })
+  // What `GET /api/loops/<run_id>` answers for the run: the budget it really has, and the file it
+  // was started to produce.
+  uLoop.mockResolvedValue({
+    id: 'run-1', run_id: 'run-1', status: 'running', max_cycles: 1, document: LOOP_SEED.document,
+  })
 }
 
 beforeEach(() => {
@@ -213,6 +216,8 @@ describe('loop card — creates a general loop, which STARTS A RUN', () => {
     expect(createULoop).toHaveBeenCalledWith({
       kind: 'general',
       task: LOOP_SEED.task,
+      success_criteria: LOOP_SEED.success_criteria,
+      document: LOOP_SEED.document,
       max_cycles: 1,
     })
     // The load-bearing half. `general` is PORTED: the create already STARTED the run, so
@@ -233,8 +238,35 @@ describe('loop card — creates a general loop, which STARTS A RUN', () => {
     expect(screen.getByText(/stops on its own/)).toBeTruthy()
   })
 
+  it('🔴 the note is a named file in the folder the loop works in, and the run shows it', async () => {
+    // Its note was only in the worker's reply, on no surface of the run, and the task sent the
+    // worker around the home folder, which the file tools do not reach on a fresh install. The task
+    // now names the file and where it goes, the judge is held to that file, and the run is started
+    // to produce it, so its page shows the note.
+    expect(LOOP_SEED.task).toContain(LOOP_SEED.document)
+    expect(LOOP_SEED.task).toMatch(/the folder you work in/)
+    expect(LOOP_SEED.task).not.toMatch(/~|\bhome\b/i)
+    expect(LOOP_SEED.success_criteria).toContain(LOOP_SEED.document)
+    mount()
+    fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
+    // Read back from the run, like the budget: the run proves the file was kept as its document.
+    const note = (await screen.findByText('Its note')).nextElementSibling
+    expect(note?.textContent).toContain(LOOP_SEED.document)
+    expect(note?.textContent).toMatch(/on the run's page/)
+  })
+
+  it('🔴 a run that does not name the note is reported, not rendered as one that does', async () => {
+    uLoop.mockResolvedValue({ id: 'run-1', run_id: 'run-1', status: 'running', max_cycles: 1, document: '' })
+    mount()
+    fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByText(/without its note's file: it names none/)).toBeTruthy()
+  })
+
   it('a run that kept a different budget is reported, not rendered as one cycle', async () => {
-    uLoop.mockResolvedValue({ id: 'run-1', run_id: 'run-1', status: 'running', max_cycles: 6 })
+    uLoop.mockResolvedValue({
+      id: 'run-1', run_id: 'run-1', status: 'running', max_cycles: 6, document: LOOP_SEED.document,
+    })
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
     expect(await screen.findByRole('alert')).toBeTruthy()

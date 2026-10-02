@@ -530,12 +530,24 @@ class TestOnARealLongHorizonTemplate:
         store.write_spec(run.id, spec)
         return run
 
+    #: One answer that carries every key a node of this template declares (the finders'
+    #: `findings`, the refuter's `refuted`/`reason`/`severity`, the critic's `new_findings` and
+    #: `uncovered`), so every step is in its schema: a step whose answer ignores its schema fails.
+    #: The refuter's values are the ones its bindings default to, and an empty findings list is
+    #: what makes the loop go dry.
+    ANSWER = {
+        "findings": [],
+        "new_findings": [],
+        "uncovered": [],
+        "refuted": False,
+        "reason": "",
+        "severity": "",
+    }
+
     def _fn(self, sent: list[str]):
         async def fn(prompt, *, use_case="background", output_type=None, model=""):
             sent.append(prompt)
-            # The finders and the critic all want JSON; one shape satisfies every schema
-            # in this template, and an empty findings list is what makes the loop go dry.
-            return json.dumps({"findings": [], "new_findings": [], "uncovered": []})
+            return json.dumps(self.ANSWER)
 
         return fn
 
@@ -604,7 +616,7 @@ class TestOnARealLongHorizonTemplate:
             if not rejected:
                 rejected.append(1)
                 raise RuntimeError("context_length_exceeded: prompt is too long")
-            return json.dumps({"findings": [], "new_findings": [], "uncovered": []})
+            return json.dumps(self.ANSWER)
 
         target = "\n\n".join(f"module {i}: " + ("y" * 900) for i in range(30))
         run = self._run(spec, target)

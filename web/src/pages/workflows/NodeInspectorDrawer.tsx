@@ -7,6 +7,7 @@ import { Button } from '../../ui/Button'
 import { api, ApiError, type NodeInspect } from '../../lib/api'
 import { accentChip } from '../../design/accent'
 import { ledgerRowDetail, ledgerRowKey } from './ledgerRowDetail'
+import { isNodeTerminal } from './workflowMeta'
 
 /** The per-node inspector drawer.
  *
@@ -22,15 +23,16 @@ import { ledgerRowDetail, ledgerRowKey } from './ledgerRowDetail'
  *  as a monospace label, NOT dereferenced: fetching the raw blob would be the reconstructability
  *  path the redaction deliberately closed.
  *
- *  A non-terminal node has nothing to reconstruct yet — the endpoint 409s. A row's Inspect is gated
- *  on `isNodeTerminal`, but a chat card deep-links its ACTIVE node (`?node=`), so the drawer opens on
- *  a running node as a matter of course. 🔑 IT FOLLOWS THE NODE: `nodeVersion` is what the run view
- *  last saw of it (its latest instance and that instance's state), and the drawer reads again
- *  whenever it changes. It read once, on open, so a drawer opened on a running node said "not
- *  finished yet" for good, after the node and the run were done, until a reload. A re-read keeps the
- *  content it has on screen until the new one lands. A 404 and any other failure render an inline
- *  message, never a crash or a blank panel, and a failure that is not the node's state offers a
- *  retry: a terminal run changes no more, so nothing else would read again. */
+ *  A node still at work answers with its LIVE state — what it was given and has recorded so far, and
+ *  no output yet — and one the run has not reached reads `pending`. The endpoint used to 409 for
+ *  both, so the step a person was watching could not be opened while the run was live. A chat card
+ *  deep-links its ACTIVE node (`?node=`), so the drawer opens on a running node as a matter of
+ *  course. 🔑 IT FOLLOWS THE NODE: `nodeVersion` is what the run view last saw of it (its latest
+ *  instance and that instance's state), and the drawer reads again whenever it changes, so it
+ *  follows a running node to its final state. A re-read keeps the content it has on screen until
+ *  the new one lands. A 404 and any other failure render an inline message, never a crash or a
+ *  blank panel, and a failure that is not a missing node offers a retry: a terminal run changes no
+ *  more, so nothing else would read again. */
 export function NodeInspectorDrawer({ runId, nodeId, name = '', nodeVersion = '', onClose }: {
   runId: string
   nodeId: string
@@ -53,12 +55,9 @@ export function NodeInspectorDrawer({ runId, nodeId, name = '', nodeVersion = ''
       .catch((e) => {
         if (!live) return
         setData(null)
-        // 409 = the node is not terminal yet; the drawer reads again when it is. 404 = the run or
-        // node is gone. Both are expected states — surfaced as a calm inline note rather than a
-        // thrown error that would blank the drawer — and neither is helped by a retry.
-        if (e instanceof ApiError && e.status === 409) {
-          setError({ text: 'This node has not finished yet. Its prompt, inputs and output show here when it does.', retry: false })
-        } else if (e instanceof ApiError && e.status === 404) {
+        // 404 = the run or node is gone: an expected state, surfaced as a calm inline note rather
+        // than a thrown error that would blank the drawer, and not helped by a retry.
+        if (e instanceof ApiError && e.status === 404) {
           setError({ text: 'This node could not be found. The run may have been deleted.', retry: false })
         } else {
           setError({ text: e instanceof Error ? e.message : 'Could not load this node.', retry: true })
@@ -168,6 +167,8 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
   // string is safe to render; naming the classes is what makes the badge actionable ("a phone
   // number was substituted" is a different problem from "a credential was").
   const scanSummary = (data.resolved_prompt_scan ?? []).join(', ')
+  // A step still at work has produced nothing yet, so it has no output and no cache origin to show.
+  const live = !isNodeTerminal(data.state)
 
   return (
     <>
@@ -175,17 +176,26 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
       <div data-type="caption" className="flex items-center gap-m">
         <span data-type="label-m" className="text-on-surface-low">state</span>
         <span className="text-on-surface">{data.state}</span>
-        <span
-          data-testid="cached-badge"
-          data-type="caption" className="inline-flex items-center rounded-pill px-2 py-0.5"
-          style={data.cached
-            ? accentChip
-            : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}
-          title={data.cached ? 'Output served from the resume cache' : 'Freshly produced this run'}
-        >
-          {data.cached ? 'cached' : 'fresh'}
-        </span>
+        {!live && (
+          <span
+            data-testid="cached-badge"
+            data-type="caption" className="inline-flex items-center rounded-pill px-2 py-0.5"
+            style={data.cached
+              ? accentChip
+              : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}
+            title={data.cached ? 'Output served from the resume cache' : 'Freshly produced this run'}
+          >
+            {data.cached ? 'cached' : 'fresh'}
+          </span>
+        )}
       </div>
+      {live && (
+        <p data-testid="node-live-note" data-type="caption" className="text-on-surface-var">
+          {data.state === 'pending'
+            ? 'The run has not reached this step yet.'
+            : 'This step is still at work: what it has been given and recorded so far is below, and its output shows here when it finishes.'}
+        </p>
+      )}
 
       <FieldBlock label="Resolved prompt">
         {/* The prompt the PROVIDER received (issue 3166). When the outbound scan substituted
@@ -208,8 +218,12 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
         ) : null}
         {promptRef !== null ? (
           <RefChip icon={Link2} label="prompt ref" value={promptRef} />
+        ) : String(data.resolved_prompt ?? '') ? (
+          <CodeBlock testid="resolved-prompt" text={String(data.resolved_prompt)} />
         ) : (
-          <CodeBlock testid="resolved-prompt" text={String(data.resolved_prompt ?? '')} />
+          // A step that keeps no prompt of its own (a spawned stage, a transform), or one still at
+          // work that has recorded none yet: said, rather than an empty box under the heading.
+          <p data-testid="no-resolved-prompt" data-type="caption" className="text-on-surface-low">No prompt recorded for this step.</p>
         )}
       </FieldBlock>
 
@@ -222,7 +236,9 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
       </FieldBlock>
 
       <FieldBlock label="Output">
-        {outputRef !== null ? (
+        {live ? (
+          <p data-type="caption" className="text-on-surface-low">No output yet.</p>
+        ) : outputRef !== null ? (
           <RefChip icon={Package} label="artifact ref" value={outputRef} />
         ) : (
           <CodeBlock testid="output" text={typeof data.output === 'string' ? data.output : toJson(data.output)} />

@@ -133,17 +133,40 @@ The loop surfaces do not care which home a loop has:
 - **Ending.** A loop's own exit test is asked before its cycle budget
   (`workflows/tick.py:loop_should_continue`), and the budget stops it only when it would otherwise
   go on: on the cycle the budget ends on, a judge stage that accepted the work is the loop's done
-  (`workflows/loop_iteration.py:advance_loop`). A loop that genuinely runs out escalates with a
-  sentence naming the budget ("It used its budget of 6 cycles, and the judge did not accept the
-  last one."), and its escalation record says it was a budget stop (`budget: true`,
-  `workflows/resilience.py:escalation_artifact`). That sentence is the run's ending, naming no step
-  when the loop is the run's root (`workflows/ending_sentence.py`), and every run surface (the run
-  page, the Workflows list, the chat card) reads the record and says "Stopped at its budget", never
-  "Escalated", without offering a workflow change for a cycle budget the run was given. A run with a
-  `loop_kind` announces its end as a loops-table loop does
-  (`workflows/attention.py:announce_loop_end`): a `loop_complete` / `loop_failed` notification, and
-  an inbox item when it escalates, titled "Loop stopped at its budget" or "Loop stopped before it
-  finished"; a cancel says nothing.
+  (`workflows/loop_iteration.py:advance_loop`). A cycle in which a step failed never counts as dry,
+  so a loop whose steps keep failing goes on to its budget or its breaker instead of finishing.
+  Why a loop that stops is handed to a person is decided once
+  (`workflows/ending_sentence.py:loop_stop`) and carried on its escalation record as a cause, a
+  sentence and a remedy (`workflows/resilience.py:escalation_artifact`), in the order of what is
+  most true: a cycle that FAILED, by its first failed step and that step's own cause ("“judge”
+  stopped: its time limit of 30 minutes ran out while its bash call had been waiting 12 minutes for
+  your answer."); then the judge's own ruling on the cycle the loop ended on — a judge that could
+  not decide ends the loop in its own quoted words, even where the budget ran out beside it, and so
+  does one that would not decide on the cycle a loop met its own exit; then the budget ("It used
+  its budget of 6 cycles, and the judge did not accept the last one.", or, for a PASS the run's
+  judge contract set aside, "The judge passed the last one, but its pass was set aside:" and the
+  contract's reason). That sentence is the run's
+  ending, naming no step when the loop is the run's root, and every run surface (the run page, the
+  Workflows list, the chat card, the Inbox row) reads the record: a budget stop says "Stopped at
+  its budget", and the way forward is the record's remedy — fork with more cycles, answer the asks
+  on the next run, decide what the judge could not (with Allowed working directories named for a
+  folder it could not reach), lift the spend cap that refused a step's call — with "Change the
+  workflow" offered only when a step is the cause or a token budget, which the workflow sets. A
+  run with a `loop_kind` announces its end as a loops-table loop does
+  (`workflows/attention.py:announce_loop_end`): a `loop_complete` / `loop_failed` notification,
+  and an inbox item when it escalates, titled by its cause ("Loop stopped at its budget", "Loop
+  stopped: the judge could not decide", "Loop stopped: an ask ran out of time", "Loop stopped: a
+  spend cap refused its next call", or "Loop stopped before it finished"); a cancel says nothing. The loop list reads a
+  run-backed loop's status, stop reason and error from one mapping
+  (`workflows/loop_view.py:loop_ending`): a budget stop is `complete` with the budget it reached
+  (`cycle_budget`, `cost_budget` for a token budget), any other escalation `failed` with
+  `worker_failed`, and its error is the run's ending.
+- **Its document.** A General loop's template states no document — a general task may produce a
+  diff or a passing check — so a loop whose task asks for a file names it when it is started
+  (`document` on `POST /api/loops`, one plain `.md`/`.markdown`/`.txt` name): the run keeps a copy
+  of what its step wrote there and shows it as its document (`workflows/deliverable.py:
+  run_document`). The onboarding "Start a loop" card's loop saves its note this way, in the folder
+  it works in — the workspace, which the file tools reach on a fresh install.
 
 For a loops-table loop, pause, stop and delete also stop the worker's turn IN FLIGHT
 (`manager.halt_worker_turns`) — disarming the nudge loop only stops the NEXT cycle — and the cycle

@@ -530,6 +530,8 @@ async def _create_ported_kind_as_run(
             or _derive_name(task)
         ),
         policy_overrides=overrides,
+        # The file the loop's work produces, when its task asks for one: the run shows it.
+        document=str(body.get("document") or "").strip(),
         supervisor=_supervisor(request),
         # `API`, matching the sibling route on the same surface (`api_run_start`): this is an HTTP
         # caller either way, and an origin that disagreed between the two doors would make the

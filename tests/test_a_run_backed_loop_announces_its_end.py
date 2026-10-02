@@ -97,13 +97,16 @@ def test_a_loop_that_stopped_at_its_budget_raises_a_standing_row(raised: list) -
         attention=escalation_artifact(
             "project",
             reason="max_iterations",
+            cause="budget",
             detail="It used its budget of 6 cycles before its exit condition was met.",
+            remedy="For more cycles, fork it.",
         ),
     )
     assert attention.announce_run_end(state, run, RunStatus.ESCALATED) == "item-1"
     [call] = raised
     assert call["title"] == "Loop stopped at its budget"
     assert "It used its budget of 6 cycles" in call["body"]
+    assert call["body"].endswith("For more cycles, fork it."), call["body"]
     # `loop` is what every loop surface deep-links by; `workflow` is what a delete resolves by.
     assert call["refs"] == {"loop": "r1", "loop_kind": "general", "workflow": "r1"}
     assert call["dedup_key"] == "loop-run:r1:escalated"
@@ -113,10 +116,35 @@ def test_a_loop_that_stopped_for_another_reason_says_it_stopped_before_it_finish
     raised: list,
 ) -> None:
     run = _run(
-        RunStatus.ESCALATED, attention=escalation_artifact("project", reason="iterations_failed")
+        RunStatus.ESCALATED,
+        attention=escalation_artifact(
+            "project", reason="iterations_failed", cause="step", remedy="", detail="It broke."
+        ),
     )
     attention.announce_run_end(_State(), run, RunStatus.ESCALATED)
     assert [c["title"] for c in raised] == ["Loop stopped before it finished"]
+
+
+@pytest.mark.parametrize(
+    ("cause", "title"),
+    [
+        ("judge", "Loop stopped: the judge could not decide"),
+        ("approval_timeout", "Loop stopped: an ask ran out of time"),
+    ],
+)
+def test_the_row_is_titled_by_why_the_loop_stopped(raised: list, cause: str, title: str) -> None:
+    """The row's title reads the escalation's cause: "stopped before it finished" said nothing of
+    a judge that handed her the decision, or of an ask nobody answered in time."""
+    run = _run(
+        RunStatus.ESCALATED,
+        attention=escalation_artifact(
+            "project", reason="judge_escalated", cause=cause, detail="Why.", remedy="What next."
+        ),
+    )
+    attention.announce_run_end(_State(), run, RunStatus.ESCALATED)
+    [call] = raised
+    assert call["title"] == title
+    assert call["body"].endswith("Why. What next."), call["body"]
 
 
 def test_a_cancel_and_a_template_run_say_nothing(raised: list) -> None:

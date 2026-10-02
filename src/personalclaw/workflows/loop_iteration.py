@@ -14,7 +14,7 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.workflows import iteration_context
+from personalclaw.workflows import ending_sentence, iteration_context
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import longrun, loop_convergence, node_bindings, supervisor_policy
 from personalclaw.workflows.bindings import BindingContext
@@ -213,8 +213,12 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     elif not keep_going and reason == "max_iterations":
         budget = BreakerVerdict(True, "max_iterations")
     if budget is not None:
-        accepted = _judge_accepted(ctl, node, parent_path, iteration)
-        if accepted:
+        # What this iteration's judge ruled, or None when no judge ruled on a whole iteration.
+        # "Accepted" is its validated ``passed``: a PASS the contract upheld
+        # (`judge_contract.JudgeVerdict.passed`), not a PASS that scored none of its rubric. The
+        # ending reads the same ruling, so the two cannot disagree about what the judge said.
+        ruling = ending_sentence.judge_ruling(ctl, node, parent_path, iteration)
+        if isinstance(ruling, dict) and ruling.get("passed") is True:
             # The judge accepted the iteration the budget ended on: the loop's done. One the
             # judge did not accept, or with no judge, genuinely ran out of budget.
             keep_going, reason = False, "judge_done"
@@ -227,7 +231,7 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
                 parent_path,
                 node,
                 reason=budget.reason,
-                detail=_budget_detail(node, budget.reason, breaker, judged=accepted is not None),
+                detail=_budget_detail(node, budget.reason, breaker, ruling=ruling),
             )
             return
     ctl.journal.iteration(
@@ -267,6 +271,13 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         )
         return
 
+    # A loop that met its own exit while its judge would not decide on that last cycle is not
+    # done: the judge handed the decision to a person, and "Completed" would say it had none to
+    # make. The ending reads the judge's ruling (`ending_sentence.loop_stop`).
+    if ending_sentence.judge_stop(ending_sentence.judge_ruling(ctl, node, parent_path, iteration)):
+        loop_convergence.surface_loop(ctl, parent_path, node, reason="judge_escalated", detail="")
+        return
+
     loop_inst = ctl._instance(parent_path)
     loop_inst.state = InstanceState.DONE
     loop_inst.completed_at = now_stamp()
@@ -295,44 +306,15 @@ def _journal_breaker_trip(
     )
 
 
-def _judge_accepted(
-    ctl: RunController, node: Node, parent_path: str, iteration: int
-) -> bool | None:
-    """Did this iteration's judge accept it? ``None`` when no judge ruled on a whole iteration.
-
-    The judge is the body stage that declares ``judge_contract``, and "accepted" is its
-    validated ``passed``: a PASS the contract upheld (`judge_contract.JudgeVerdict.passed`), not
-    a PASS that scored none of its rubric. Read only from a judge whose instance for THIS
-    iteration succeeded, the rule `_progress_value` states for why; the last one in document
-    order wins. An iteration in which any body node FAILED has no ruling here: a judge that
-    passed it was ruling on work that did not finish, and `surface_loop` tells that story.
-    """
-    if node.body is None:
-        return None
-    base = f"{parent_path}.body@{iteration}"
-    if any(
-        inst.state is InstanceState.FAILED
-        for path, inst in ctl.instances.items()
-        if path == base or path.startswith(f"{base}.")
-    ):
-        return None
-    accepted: bool | None = None
-    for sub, child in walk(node.body):
-        if not child.id or not (child.config or {}).get("judge_contract"):
-            continue
-        inst = ctl.instances.get(base if sub == "root" else f"{base}{sub[len('root'):]}")
-        if inst is None or inst.state not in SUCCESS_STATES:
-            continue
-        out = ctl._outputs.get(child.id)
-        accepted = isinstance(out, dict) and out.get("passed") is True
-    return accepted
-
-
-def _budget_detail(node: Node, reason: str, breaker: BreakerState, *, judged: bool) -> str:
+def _budget_detail(node: Node, reason: str, breaker: BreakerState, *, ruling: Any) -> str:
     """The sentence a loop that ran out of budget escalates with: the budget, by name.
 
-    ``judged`` says whether a judge ruled on the iteration the budget ended on, which is what
-    tells "the judge did not accept it" apart from "its own exit test was not met".
+    *ruling* is what the judge ruled on the iteration the budget ended on
+    (`ending_sentence.judge_ruling`), or None when no judge ruled — which is what tells "the judge
+    did not accept it" apart from "its own exit test was not met". A PASS the run's contract set
+    aside (`judge_contract`: below its rubric's targets, a forbidden success mode in its
+    reasoning…) is said as that, with the contract's reason: "the judge did not accept" read over
+    a judge that passed the work sent the reader to fault work the judge had accepted.
     """
     cfg = node.config or {}
     if reason == "token_cap":
@@ -344,9 +326,15 @@ def _budget_detail(node: Node, reason: str, breaker: BreakerState, *, judged: bo
         cap = cfg.get("max_iterations")
         count = cap if isinstance(cap, int) and cap > 0 else breaker.iterations
         budget = f"It used its budget of {count} cycle{'' if count == 1 else 's'}"
-    if judged:
-        return f"{budget}, and the judge did not accept the last one."
-    return f"{budget} before its exit condition was met."
+    if ruling is None:
+        return f"{budget} before its exit condition was met."
+    verdict = str(ruling.get("verdict") or "").upper() if isinstance(ruling, dict) else ""
+    set_aside = ending_sentence.clause(
+        str(ruling.get("invalid_reason") or "") if isinstance(ruling, dict) else ""
+    )
+    if verdict == "PASS" and set_aside:
+        return f"{budget}. The judge passed the last one, but its pass was set aside: {set_aside}."
+    return f"{budget}, and the judge did not accept the last one."
 
 
 def _iteration_complete(ctl: RunController, node: Node, parent_path: str, iteration: int) -> bool:
@@ -387,7 +375,15 @@ def _iteration_is_dry(
     "nothing new" would end the user's loop after `streak` iterations because the body
     forgot a key — silently truncating real work. Paying for one more iteration and
     learning nothing is the cheaper mistake, and it is visible; a truncated run is not.
+
+    An iteration in which a step FAILED is never dry, for the same reason one step further: it
+    produced nothing because it broke, which is not "nothing new". Read as dry, two failed cycles
+    ended a `general-project` loop on its own exit — Done, and the run Completed over four failed
+    steps. Not dry, the loop goes on to its budget or its breaker and is handed to a person with
+    the failure as the reason (`ending_sentence.loop_stop`).
     """
+    if ending_sentence.cycle_failed(ctl, parent_path, iteration):
+        return False
     field = str((node.config or {}).get("progress_field", "") or "")
     if not field:
         return _is_dry(output)

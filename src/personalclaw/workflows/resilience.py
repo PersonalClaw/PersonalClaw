@@ -256,7 +256,7 @@ def check_breaker(node: Node, state: BreakerState) -> BreakerVerdict:
     sigs = [s for s in state.error_signatures if s]
     if len(sigs) >= streak and len(set(sigs[-streak:])) == 1:
         return BreakerVerdict(
-            True, "repeated_error", f"the same error {streak}x in a row ({sigs[-1]})"
+            True, "repeated_error", f"The same error came back {streak} times in a row"
         )
 
     identical = cfg.get("identical_streak", DEFAULT_IDENTICAL_STREAK)
@@ -264,7 +264,9 @@ def check_breaker(node: Node, state: BreakerState) -> BreakerVerdict:
         identical = DEFAULT_IDENTICAL_STREAK
     hashes = state.output_hashes
     if len(hashes) >= identical + 1 and len(set(hashes[-(identical + 1) :])) == 1:
-        return BreakerVerdict(True, "identical_output", f"byte-identical output {identical + 1}x")
+        return BreakerVerdict(
+            True, "identical_output", f"The work came back unchanged {identical + 1} times in a row"
+        )
 
     cap = cfg.get("max_tokens")
     if isinstance(cap, int) and cap > 0 and state.tokens >= cap:
@@ -297,6 +299,8 @@ def escalation_artifact(
     node_id: str,
     *,
     reason: str,
+    cause: str,
+    remedy: str,
     detail: str = "",
     attempts: list[Attempt] | None = None,
 ) -> dict[str, Any]:
@@ -305,17 +309,21 @@ def escalation_artifact(
     Surfaced as a needs-input item, so the run parks on a real decision rather than
     dying silently.
 
-    ``budget`` says the loop stopped at the budget it was given (:data:`BUDGET_TRIPS`) rather
-    than giving up on the work. Classified once, here, so every surface that reads the record
-    (the run page, the runs list, the chat card, the Inbox row) tells the two apart the same way:
-    a stop at a budget someone set is not a step that needs changing.
+    ``cause`` says why — a budget it was given, a judge that would not decide, an ask that timed
+    out, a start nobody approved, refused tools, or a step that failed at its work — with
+    ``detail`` the sentence and ``remedy`` what to do about it. Classified once, where the stop is
+    decided (`ending_sentence.loop_stop` / `ending_sentence.step_stop`), so every surface that
+    reads the record (the run page, the runs list, the chat card, the Inbox row, the loop list)
+    tells them apart the same way: a stop at a budget someone set, or at a decision the judge
+    handed over, is not a step that needs changing.
     """
     return {
         "kind": "escalation",
         "node_id": node_id,
         "reason": reason,
-        "budget": reason in BUDGET_TRIPS,
+        "cause": cause,
         "detail": detail,
+        "remedy": remedy,
         "options": list(ESCALATION_OPTIONS),
         "attempts": [a.to_dict() for a in (attempts or [])],
     }

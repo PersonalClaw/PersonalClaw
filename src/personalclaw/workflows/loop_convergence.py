@@ -13,7 +13,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.loop import tick as convergence
-from personalclaw.workflows import supervisor_policy
+from personalclaw.workflows import ending_sentence, supervisor_policy
 from personalclaw.workflows.loop_middleware import call_fingerprint, classify_failure
 from personalclaw.workflows.models import InstanceState, Node, now_stamp
 from personalclaw.workflows.resilience import BreakerState
@@ -236,7 +236,13 @@ def converge_loop(
         if not result.get("queued"):
             # A replan that could not be queued is not a replan. Surfacing beats looping on
             # a plan the engine has just declared unsound.
-            surface_loop(ctl, parent_path, node, reason=decision.reason, detail=str(result))
+            surface_loop(
+                ctl,
+                parent_path,
+                node,
+                reason=decision.reason,
+                detail="The plan was judged unsound, and the change it needed could not be made",
+            )
             return True
         # Consumed, so the next tick does not re-decide REPLAN against the same critique and
         # spend the whole budget re-deriving one plan.
@@ -269,64 +275,16 @@ def surface_loop(
     must decide" is a different fact from "this broke", and collapsing them loses what the
     user needs to act on.
 
-    **The reason is re-derived when the iterations were not work (#3524).** A budget trip says
-    the loop ran out of room; it does not say whether it spent that room WORKING. Measured on a
-    `general-project` run: the banner read "the loop reached its iteration ceiling at project /
-    reached 6 iterations", which a user reads as "my task was too big" — while five of the six
-    iterations had failed instantly on a binding and never called a model at all. The engine
-    knew both facts and surfaced neither: the wrong one of two possible sentences is worse than
-    a vague one, because it sends the reader to shrink a task that was never the problem.
-
-    So a loop whose iterations FAILED escalates as `iterations_failed`, and the detail carries
-    the count and the first failure's own message. The original budget token is kept in the
-    detail rather than dropped — it is still true, and it is what a reader greps for.
+    *reason* and *detail* are what stopped it as its caller saw it — the budget it reached, the
+    breaker's verdict. Why it stopped is not always that, and `ending_sentence.loop_stop` decides
+    it once, for every surface: a loop whose cycles FAILED stops on its first failed step (#3524 —
+    measured on a `general-project` run whose five of six iterations failed on a binding, the
+    banner blamed its ceiling and the reader shrank a task that was never the problem), and a loop
+    whose judge would not decide stops on the judge's own reason rather than on the budget that ran
+    out beside it.
     """
-    failed, attempted, first_error = _iteration_failures(ctl, parent_path)
-    if failed:
-        detail = (
-            f"{failed} of {attempted} iterations failed instead of finishing their work"
-            + (f", the first with: {first_error}" if first_error else "")
-            + f". The loop then stopped on `{reason}`"
-            + (f" ({detail.rstrip('.')})" if detail else "")
-            + "."
-        )
-        reason = "iterations_failed"
+    reason, stop = ending_sentence.loop_stop(ctl, parent_path, node, reason=reason, detail=detail)
     loop_inst = ctl._instance(parent_path)
     loop_inst.state = InstanceState.ESCALATED
     loop_inst.completed_at = now_stamp()
-    ctl._escalate(parent_path, node.id, reason=reason, detail=detail)
-
-
-def _iteration_failures(ctl: RunController, loop_path: str) -> tuple[int, int, str]:
-    """`(iterations with a failed body node, iterations attempted, the first failure's cause)`.
-
-    The measurement behind `iterations_failed`. Derived from the instances rather than from a
-    counter, because no counter distinguishes the two endings — `ctl._iterations` only says how
-    far the loop got, which is identical for a loop that worked six times and one that failed
-    six times.
-
-    An iteration counts as attempted once any instance exists under its `body@<n>` prefix, so an
-    iteration the scheduler never opened is not counted against the loop.
-    """
-    failed = attempted = 0
-    first_error = ""
-    for index in range(int(ctl._iterations.get(loop_path, 0)) + 1):
-        prefix = f"{loop_path}.body@{index}"
-        members = [
-            inst
-            for path, inst in ctl.instances.items()
-            if path == prefix or path.startswith(f"{prefix}.")
-        ]
-        if not members:
-            continue
-        attempted += 1
-        broken = [i for i in members if i.state is InstanceState.FAILED]
-        if not broken:
-            continue
-        failed += 1
-        if not first_error:
-            first_error = next(
-                (i.failure.cause_plain for i in broken if i.failure and i.failure.cause_plain),
-                "",
-            )
-    return failed, attempted, first_error
+    ctl._escalate(parent_path, node.id, reason=reason, stop=stop)

@@ -1393,10 +1393,6 @@ class RunController:
         # rewind reset sites: every path to a terminal state runs through this dispatch, so a
         # re-run after a rewind cannot leave the previous epoch's `cached` behind.
         inst.cached = False
-        # The declared-schema notice (#3545) is per ATTEMPT for the same reason. A spawned stage
-        # settles out of band through several paths and only its DONE path sets it, so a rewound
-        # stage that then fails must not keep the previous attempt's notice on its row.
-        inst.schema_shortfall = ""
         inst.model_substituted = []
         if item.has_item and not inst.item_label:
             # Stamped once, at first launch. The items list is re-resolved from a binding on
@@ -1689,11 +1685,6 @@ class RunController:
         inst.state = result.state
         inst.completed_at = now_stamp()
         inst.degraded_reason = result.degraded_reason
-        # What this node's declared `schema` asked for and did not get (#3545). Carried onto the
-        # instance beside `degraded_reason` rather than folded into it: a shortfall is not a
-        # degradation — the node did its work and produced an output the run goes on to use — and
-        # reusing that field would flip the row's rendering and lose the distinction.
-        inst.schema_shortfall = result.schema_shortfall
         # A retry cannot run while the provider's breaker is open: record when it can.
         inst.failure = with_breaker_window(result.failure, entry.calls.providers)
         inst.tokens = usage.billable(result.tokens)
@@ -1810,7 +1801,6 @@ class RunController:
                 resolved_prompt_redacted=result.prompt_redacted,
                 resolved_prompt_scan=result.prompt_scan_categories,
                 output_ref=ref,
-                schema_shortfall=result.schema_shortfall,
                 model_substituted=usage.substitutions,
             )
             task_projection.project_task(self, item, inst, result)
@@ -1848,7 +1838,7 @@ class RunController:
                 item.path,
                 item.node.id,
                 reason="retries_exhausted" if inst.attempt > 1 else "not_retried",
-                detail=(result.failure.cause_plain if result.failure else ""),
+                stop=ending_sentence.step_stop(result.failure),
             )
 
         loop_iteration.advance_loop(self, item.path, item.node.id)
@@ -1861,12 +1851,6 @@ class RunController:
                 "node_epoch": inst.epoch,
                 "degraded_reason": result.degraded_reason,
                 "output_preview": _preview(result.output),
-                # Only when there is something to name (#3545), the way `cached` rides only on a
-                # hit: the fold clears the row on an event without it, which is what lets a re-run
-                # that now honours its schema drop yesterday's notice.
-                **(
-                    {"schema_shortfall": result.schema_shortfall} if result.schema_shortfall else {}
-                ),
                 **({"model_substituted": inst.model_substituted} if inst.model_substituted else {}),
             },
         )
@@ -1890,14 +1874,22 @@ class RunController:
             return False
         return inst.attempt < max_attempts
 
-    def _escalate(self, path: str, node_id: str, *, reason: str, detail: str = "") -> None:
+    def _escalate(
+        self, path: str, node_id: str, *, reason: str, stop: ending_sentence.Stop
+    ) -> None:
         """Record the escalation artifact and surface it as run attention.
 
         Journaled AND surfaced: journaling alone leaves an unattended run looking merely
-        failed, and surfacing alone loses the evidence a later reader needs.
+        failed, and surfacing alone loses the evidence a later reader needs. *stop* is why, as
+        `ending_sentence` decided it: its cause, its sentence and its remedy.
         """
         artifact = escalation_artifact(
-            node_id, reason=reason, detail=detail, attempts=self._attempts.get(path, [])
+            node_id,
+            reason=reason,
+            cause=stop.cause,
+            detail=stop.sentence,
+            remedy=stop.remedy,
+            attempts=self._attempts.get(path, []),
         )
         # The artifact already carries `node_id` and `kind`; splatting it alongside
         # explicit kwargs would collide on both.

@@ -181,6 +181,37 @@ class TemplateStatement:
 #: while the legacy monitor LOOP keeps its kind's log in the loop's own directory.
 DOCUMENT_KEY = "document"
 
+#: The key a RUN keeps the document it was started to produce under, in its own ``extra``
+#: (`service.start_kind_run`'s ``document``). It wins over the template's and the kind's for that
+#: run: whoever started it said what it makes. A General loop's template states no document,
+#: because a general task may produce a diff or a passing check — but a task that asks for a note
+#: produces one, and without this the panel said "Nothing is missing here" over a note that was in
+#: the workspace and nowhere on the run.
+RUN_DOCUMENT_KEY = "document"
+
+
+@dataclass(frozen=True)
+class RunStatement:
+    """The document a run's own start named (:data:`RUN_DOCUMENT_KEY`), as its provenance."""
+
+    name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"run": True, "name": self.name}
+
+
+def keepable(name: str) -> bool:
+    """Whether *name* may name a document: one plain file name that reads as one (`_KEEPABLE_RE`).
+    The rule a name from a template meets, and the one a run's start is held to."""
+    return bool(_KEEPABLE_RE.fullmatch(str(name or "")))
+
+
+def run_document(run: Any) -> str:
+    """The document *run* was started to produce (:data:`RUN_DOCUMENT_KEY`), or "" for none."""
+    extra = getattr(run, "extra", None)
+    named = str(extra.get(RUN_DOCUMENT_KEY) or "") if isinstance(extra, dict) else ""
+    return named if keepable(named) else ""
+
 
 def stated_document(spec: Any) -> str | None:
     """The document a spec states for itself (:data:`DOCUMENT_KEY`), or None when it states none.
@@ -269,8 +300,8 @@ class ResolvedName:
     name: str
     #: A member of :data:`ABSENT_REASONS` when ``name`` is "", else "".
     reason: str
-    #: Who declared it, when anyone did: the template itself, or the kind it belongs to.
-    source: NameSource | TemplateStatement | None = None
+    #: Who declared it, when anyone did: the run's own start, the template, or its kind.
+    source: NameSource | TemplateStatement | RunStatement | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -280,13 +311,18 @@ class ResolvedName:
         }
 
 
-def resolve_name(workflow_name: str, spec: Any = None) -> ResolvedName:
+def resolve_name(workflow_name: str, spec: Any = None, run: Any = None) -> ResolvedName:
     """The document name for a run of ``workflow_name``, with its provenance or its reason.
 
-    ``spec`` is the run's own spec. A document it states (:data:`DOCUMENT_KEY`) wins over its
-    kind's: the template is what the run runs, so it is the better witness of what its steps keep.
-    A statement of none is the same declared absence a kind with no document gives.
+    A document the RUN was started to produce (:func:`run_document`) wins over everything: the
+    person who started it named it. Then ``spec``, the run's own spec: a document it states
+    (:data:`DOCUMENT_KEY`) wins over its kind's, because the template is what the run runs, so it
+    is the better witness of what its steps keep. A statement of none is the same declared absence
+    a kind with no document gives.
     """
+    named = run_document(run) if run is not None else ""
+    if named:
+        return ResolvedName(name=named, reason="", source=RunStatement(name=named))
     stated = stated_document(spec)
     if stated is not None:
         statement = TemplateStatement(template=workflow_name, name=stated)
@@ -521,7 +557,7 @@ def document_names(run: Any, spec: Any) -> list[str]:
     """The documents the panel reads for a run: its declared document and its working log."""
     from personalclaw.loop import store as loop_store
 
-    declared = resolve_name(str(getattr(run, "workflow_name", "") or ""), spec).name
+    declared = resolve_name(str(getattr(run, "workflow_name", "") or ""), spec, run).name
     return [n for n in dict.fromkeys((declared, loop_store.LOG_NAME)) if n]
 
 
@@ -646,8 +682,9 @@ def _number(value: Any, fallback: Any, kind: type) -> Any:
 # ── whether the run's own template ever asks for the document ────────────────
 
 
-def instructed_by_spec(spec: Any, name: str) -> bool | None:
-    """Does this run's OWN spec name the document its kind declares?
+def instructed_by_spec(spec: Any, name: str, inputs: Any = None) -> bool | None:
+    """Does this run's OWN spec — or, for a document the run was started to produce, its own
+    inputs (*inputs*, which carry the task that asks for it) — name the document?
 
     The reason this exists: measured across the seven bundled templates the five loop kinds resolve
     to, SIX of them mention none of ``REPORT.md``, ``MONITOR_LOG.md``, ``DESIGN.md`` or
@@ -677,7 +714,7 @@ def instructed_by_spec(spec: Any, name: str) -> bool | None:
 
         if isinstance(spec, dict):
             spec = {k: v for k, v in spec.items() if k != DOCUMENT_KEY}
-        return name in json.dumps(spec, ensure_ascii=False, default=str)
+        return name in json.dumps([spec, inputs or {}], ensure_ascii=False, default=str)
     except (TypeError, ValueError):  # pragma: no cover — an unserializable spec answers "unknown"
         logger.debug("spec not serializable; cannot check for %s", name)
         return None

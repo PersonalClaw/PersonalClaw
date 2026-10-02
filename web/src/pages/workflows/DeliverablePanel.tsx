@@ -148,12 +148,15 @@ export function DeliverablePanel({ runId }: { runId: string }) {
         {declared && (
           <p data-type="caption" className="text-on-surface-low">
             <span className="font-mono">{declared.name || '—'}</span>
-            {' — declared by the '}
-            {'template' in declared ? (
+            {'run' in declared ? (
+              // The run's own start named it: whoever started the run said what it makes.
+              ' — named when this run was started'
+            ) : 'template' in declared ? (
               // The template's own statement, which wins over its kind's for its runs.
-              <><span className="font-mono">{declared.template}</span> template</>
+              <>{' — declared by the '}<span className="font-mono">{declared.template}</span> template</>
             ) : (
               <>
+                {' — declared by the '}
                 <span className="font-mono">{declared.kind}</span>
                 {declared.variant ? <> kind’s <span className="font-mono">{declared.variant}</span> variant</> : ' kind'}
               </>

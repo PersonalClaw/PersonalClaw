@@ -11,7 +11,7 @@ import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
-import { fmtElapsed, isNodeTerminal, isPrelaunch, isTerminal, itemProgress, nodeLabel, nodeLook, runLook, stepName } from './workflowMeta'
+import { fmtElapsed, isPrelaunch, isTerminal, itemProgress, nodeLabel, nodeLook, runLook, stepName } from './workflowMeta'
 import { PolicyOverridesPanel, overlayOf } from './PolicyOverridesPanel'
 import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
@@ -338,7 +338,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   const escalations = useMemo(() => readEscalations(run?.escalations), [run])
   // The instances that stopped at their budget, so their rows read as the run they ended does.
   const budgetStops = useMemo(
-    () => new Set(escalations.filter((e) => e.budget && e.instancePath).map((e) => e.instancePath)),
+    () => new Set(escalations.filter((e) => e.cause === 'budget' && e.instancePath).map((e) => e.instancePath)),
     [escalations],
   )
 
@@ -744,28 +744,12 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                       {n.failure?.remediation && (
                         <div data-type="caption" className="truncate text-on-surface-low">{n.failure.remediation}</div>
                       )}
-                      {/* This step's declared `schema` asked for something its output did not carry
-                          (#3545). `text-warning`, not the dimmed `on-surface-low` the lines above
-                          use, and NOT title-only: the row beside it says "Done", the run really did
-                          complete, and a loop can spend six iterations like this while every step
-                          reports success. Dimming the one line that contradicts the status badge
-                          would reproduce the silence. Deliberately not a failed/degraded badge —
-                          the step is not either of those, and saying it is would break runs that
-                          complete today. `title` carries the untruncated text. */}
-                      {n.schema_shortfall && (
-                        <div
-                          data-type="caption"
-                          data-testid="node-schema-shortfall"
-                          className="truncate text-warning"
-                          title={n.schema_shortfall}
-                        >
-                          {n.schema_shortfall}
-                        </div>
-                      )}
                       {/* A fallback in the user's model chain served this step because the model
                           it asked for could not. The row's `done` and the model it names are both
                           true, which is why this line exists: without it the step read as the model
-                          it asked for. `text-warning` for the reason the schema line is. */}
+                          it asked for. `text-warning`, not the dimmed `on-surface-low` the lines
+                          above use: dimming the one line that qualifies the status badge would
+                          hide it. */}
                       {(n.model_substituted ?? []).map((line) => (
                         <div
                           key={line}
@@ -805,13 +789,13 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                       </span>
                     )}
                     <span data-type="caption" className={`shrink-0 ${nl.tone}`}>{nl.label}</span>
-                    {(canReenter || (isNodeTerminal(n.state) && !!n.node_id)) && (
+                    {(canReenter || !!n.node_id) && (
                       <span className="flex shrink-0 items-center gap-xs opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                        {/* Inspect: the reconstructability drawer. Offered ONLY for a
-                            terminal node — the endpoint 409s otherwise, so a button on a running
-                            node would teach the user the UI lies. Available on a terminal run too,
-                            which is exactly when a user wants to reconstruct what a node did. */}
-                        {isNodeTerminal(n.state) && !!n.node_id && (
+                        {/* Inspect: the reconstructability drawer, on every step. A step still at
+                            work answers with its live state (what it was given, no output yet), so
+                            the step the run is working on can be looked at while it does; a
+                            finished run is exactly when a user wants to reconstruct what one did. */}
+                        {!!n.node_id && (
                           <QuietButton onClick={() => setInspectNodeId(n.node_id)} title="Inspect this node — resolved prompt, inputs, output, attempts and ledger">
                             <ScanSearch size={12} />
                           </QuietButton>

@@ -82,7 +82,20 @@ export const LOOP_SEED = {
   /** `general` has no launch blocker and its only validator screens an optional
    *  verify command, so a fresh home can always start it. Must be >= 12 chars. */
   kind: 'general',
-  task: 'Draft a short note describing what I could use an agent for this week.',
+  /** The note is a FILE in the folder the loop works in, named here and below. Left to the model,
+   *  the note was sometimes only in its reply — on no surface of the run — and the task's own
+   *  wording sent it looking around the home folder, which the file tools do not reach until
+   *  Allowed working directories are set, so its judge could not decide. Everything the task needs
+   *  is in the workspace the loop works in, on a fresh install too. */
+  task:
+    'Draft a short note describing what I could use an agent for this week, and save it as '
+    + 'agent-ideas-this-week.md in the folder you work in.',
+  /** What the judge holds the work to: something it can check where its own tools reach. */
+  success_criteria:
+    'agent-ideas-this-week.md is saved in the folder the loop works in, and it is a short, usable '
+    + 'note on what to hand an agent this week.',
+  /** The run shows this file as its document, so the note is on the run page she opens. */
+  document: 'agent-ideas-this-week.md',
   /** A first run is a demo: one cycle, then the run ends by itself. */
   max_cycles: 1,
 } as const
@@ -376,6 +389,8 @@ export async function runLoopFlow(): Promise<TryOneOutcome> {
   const created = await api.createULoop({
     kind: LOOP_SEED.kind,
     task: LOOP_SEED.task,
+    success_criteria: LOOP_SEED.success_criteria,
+    document: LOOP_SEED.document,
     max_cycles: LOOP_SEED.max_cycles,
   })
   if (!isCreatedLoopRun(created)) {
@@ -390,11 +405,17 @@ export async function runLoopFlow(): Promise<TryOneOutcome> {
   if (created.status !== 'running') {
     throw new Error(`The loop was created but did not start — it is "${created.status}".`)
   }
-  // The budget is a claim the card makes, so it is read back from the run the server shows.
+  // The budget and the note's file are claims the card makes, so both are read back from the run
+  // the server shows.
   const shown = await api.uLoop(created.run_id)
   if (shown.max_cycles !== LOOP_SEED.max_cycles) {
     throw new Error(
       `The loop started with a budget of ${shown.max_cycles} cycles, not ${LOOP_SEED.max_cycles}.`,
+    )
+  }
+  if (shown.document !== LOOP_SEED.document) {
+    throw new Error(
+      `The loop started without its note's file: it names ${shown.document ? `"${shown.document}"` : 'none'}.`,
     )
   }
   return {
@@ -402,6 +423,7 @@ export async function runLoopFlow(): Promise<TryOneOutcome> {
     facts: [
       { label: 'Status', value: created.status },
       { label: 'Cycles', value: String(shown.max_cycles) },
+      { label: 'Its note', value: `${shown.document}, in your workspace and on the run's page` },
       { label: 'Run', value: created.run_id },
     ],
     href: `workflows/runs/${created.run_id}`,

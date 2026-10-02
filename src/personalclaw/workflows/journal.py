@@ -205,7 +205,6 @@ class Journal(LedgerWriter):
         resolved_prompt_redacted: bool = False,
         resolved_prompt_scan: tuple[str, ...] | list[str] = (),
         output_ref: str = "",
-        schema_shortfall: str = "",
         model_calls_open: int = 0,
         model_substituted: tuple[str, ...] | list[str] = (),
     ) -> None:
@@ -221,26 +220,15 @@ class Journal(LedgerWriter):
         CLASSES only — never a matched value, since the substitution's whole purpose is that the
         value is not written down.
 
-        `schema_shortfall` names what this step's declared `schema` asked for that its output did
-        not carry (#3545). On THIS row, beside `state`, for the same reason the two
-        `resolved_prompt_*` flags are: it is a property of the step, and a reader holding the row
-        should not need a second channel to learn that the `done` beside it was reached without the
-        declared shape.
-
-        🔴 WRITTEN ONLY WHEN NON-EMPTY, unlike every other field here. Most steps declare no schema
-        and are never checked, so an always-written `"schema_shortfall": ""` would claim a
-        conformance on rows nothing examined; absent claims nothing. It also keeps every row without
-        a shortfall byte-identical to what this writer wrote before the field existed, which is what
-        lets the ledger golden prove a conforming run is unchanged.
-
         `tokens` / `cost_usd` are ``None`` when the step's model calls did not report them — the
         ledger's own "not recorded" (`ledger.reader.run_totals`), never a zero standing in for one.
         `provider` names the providers the calls went to (`workflows.step_usage`).
 
         `model_calls_open` counts calls the step left unfinished, which makes `tokens` / `cost_usd`
         a floor — the same field and the same reading `step_failed` and `step_cancelled` carry.
-        Written only when non-zero, like `schema_shortfall` and for the same reason: a step whose
-        calls all finished keeps the row it always had.
+        Written only when non-zero, unlike every other field here: a step whose calls all finished
+        keeps the row it always had, byte-identical, which is what lets the ledger golden prove a
+        run that changed nothing is unchanged.
 
         `model_substituted` is every "ran on X instead of Y: why" the step's calls carried: the
         model it asked for could not serve and a later entry of the user's chain did. `model` alone
@@ -265,7 +253,6 @@ class Journal(LedgerWriter):
             resolved_prompt_scan=sorted({str(c) for c in (resolved_prompt_scan or ())}),
             output_ref=output_ref,
             **({"model_calls_open": int(model_calls_open)} if model_calls_open else {}),
-            **({"schema_shortfall": schema_shortfall} if schema_shortfall else {}),
             **({"model_substituted": list(model_substituted)} if model_substituted else {}),
         )
 

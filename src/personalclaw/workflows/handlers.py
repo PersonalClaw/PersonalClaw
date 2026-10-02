@@ -78,6 +78,8 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_DEF_SAVE_FAILED": (500, "save_failed"),
     "WF_DEF_DELETE_FAILED": (500, "delete_failed"),
     "WF_RUN_MISSING_INPUTS": (400, "missing_inputs"),
+    # 400: the request carried a value the loop cannot use as its document.
+    "WF_LOOP_DOCUMENT_INVALID": (400, "invalid_request"),
     # 400 like its sibling above, not 422: the body is well-formed and the definition is valid —
     # it is one value's TYPE that is wrong, which is a malformed request, not a failed validation
     # pass over a document.
@@ -90,10 +92,6 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_RUN_NO_SPEC": (500, "spec_unreadable"),
     "WF_RUN_BAD_SPEC": (500, "spec_unreadable"),
     "WF_NODE_NOT_RUN": (409, "not_produced"),
-    # A node the inspect endpoint was asked about that exists in the spec but has not reached a
-    # terminal state. 409, not 404 (the node IS known) and not 400 (the request is well-formed):
-    # the state is the problem, and it resolves itself as the run advances — a client can retry.
-    "WF_NODE_NOT_TERMINAL": (409, "not_terminal"),
     "WF_MUT_NO_OPS": (400, "invalid_request"),
     "WF_MUT_VERSION_MISMATCH": (409, "version_mismatch"),
     "WF_MUT_CONFIRM_REQUIRED": (409, "confirmation_required"),
@@ -798,11 +796,9 @@ _RUN_TEXT: frozenset[str] = frozenset({"title", "intent", "inputs", "error_messa
 #: The same text as the status read names it (`service.status` sends `error_message` as `error`).
 _STATUS_TEXT: frozenset[str] = frozenset({"title", "error", "attention"})
 
-#: What a status row says about one step in words: why it failed, why it ran degraded, what its
-#: schema asked for and did not get, and the model it ran on instead.
-_NODE_TEXT: frozenset[str] = frozenset(
-    {"failure", "degraded_reason", "schema_shortfall", "model_substituted"}
-)
+#: What a status row says about one step in words: why it failed, why it ran degraded, and the
+#: model it ran on instead.
+_NODE_TEXT: frozenset[str] = frozenset({"failure", "degraded_reason", "model_substituted"})
 
 
 def _shown(value: dict[str, Any], fields: frozenset[str]) -> dict[str, Any]:
@@ -1160,7 +1156,7 @@ async def api_run_output(request: web.Request) -> web.Response:
 
 
 async def api_run_node_inspect(request: web.Request) -> web.Response:
-    """The §5 reconstructability set for one terminal node (WF2-A2).
+    """The §5 reconstructability set for one node (WF2-A2), live while the run is.
 
     A read-only forensics view over data the controller already persisted: the resolved
     prompt (or a ref), the resolved inputs, the output (or an `artifact_ref` when it was

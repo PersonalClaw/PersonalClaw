@@ -44,9 +44,6 @@ export interface WorkflowEventEnvelope {
   status?: string
   degraded_reason?: string
   cached?: boolean
-  /** What a step's declared `schema` asked for that its output did not carry (#3545), on the
-   *  `node_done` that settled it. */
-  schema_shortfall?: string
   /** "ran on X instead of Y: why" for the step's calls a chain fallback served, on its `node_done`. */
   model_substituted?: string[]
   /** Per-item foreach context, present only on an iterated node's events. */
@@ -310,10 +307,6 @@ function patchNode(
     // claiming a cache hit the edit just invalidated, which is the exact question the flag
     // exists to answer.
     cached: env.cached === true,
-    // A declared schema this step's output ignored (#3545). Read from THIS event for the same
-    // reason `cached` is: only the settle knows it, and a re-run after a rewind that now honours
-    // the schema must clear the notice rather than inherit yesterday's.
-    schema_shortfall: (env.schema_shortfall as string) || '',
     // From THIS event as well: a re-run that got the model it asked for must drop the line.
     model_substituted: Array.isArray(env.model_substituted) ? (env.model_substituted as string[]) : undefined,
     failure: existing?.failure ?? null,

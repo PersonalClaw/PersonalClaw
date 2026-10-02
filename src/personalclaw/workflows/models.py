@@ -1410,19 +1410,11 @@ class NodeInstance:
     #: rewind and the re-dispatch the instance is PENDING and this still holds the previous
     #: epoch's answer, which is stale for a node that has not run yet.
     cached: bool = False
-    #: What this node's declared `schema` asked for that its output did not carry (#3545). Empty
-    #: for a node that declared no schema or whose output honoured it, so a non-empty value is
-    #: always an observation.
-    #:
-    #: PERSISTED, for the reason the notice exists: the ledger row is written once as the step
-    #: settles, and a run opened tomorrow reads its node list from this state file. Held only in
-    #: memory, the one surface a user actually looks at would forget by the next page load — which
-    #: is the silence #3545 is about, reintroduced one layer down. Cleared at every dispatch
-    #: (`RunController._launch`), like `cached`, so it always describes the current attempt.
-    schema_shortfall: str = ""
     #: "ran on X instead of Y: why" for each model call of the current attempt that a later entry
-    #: of the user's chain served because the model the step asked for could not. Persisted and
-    #: cleared at every dispatch for the reasons `schema_shortfall` is.
+    #: of the user's chain served because the model the step asked for could not. PERSISTED: the
+    #: ledger row is written once as the step settles, and a run opened tomorrow reads its node
+    #: list from this state file. Cleared at every dispatch (`RunController._launch`), like
+    #: `cached`, so it always describes the current attempt.
     model_substituted: list[str] = field(default_factory=list)
     #: What this step asks the person while it WAITS on one — a gate's prompt, a parked action's
     #: question, an action's clarification (`Ask.to_dict()`). Written each time it begins to wait,
@@ -1453,7 +1445,6 @@ class NodeInstance:
             "approved_request": self.approved_request,
             "approved_at": self.approved_at,
             "cached": self.cached,
-            "schema_shortfall": self.schema_shortfall,
             "model_substituted": list(self.model_substituted),
             "ask": dict(self.ask),
         }
@@ -1487,7 +1478,6 @@ class NodeInstance:
             approved_request=str(d.get("approved_request", "") or ""),
             approved_at=float(d.get("approved_at", 0.0) or 0.0),
             cached=bool(d.get("cached", False)),
-            schema_shortfall=str(d.get("schema_shortfall", "") or ""),
             model_substituted=[str(s) for s in (d.get("model_substituted") or []) if s],
             ask=dict(d.get("ask") or {}) if isinstance(d.get("ask"), dict) else {},
         )

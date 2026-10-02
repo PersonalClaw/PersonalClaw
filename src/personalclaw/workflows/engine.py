@@ -142,18 +142,6 @@ class NodeResult:
     #: runtime and never reach the journal, so the ledger would show a published artifact with no
     #: record of the publish.
     published: dict[str, Any] | None = None
-    #: What this step's declared `schema` asked for that its output did not carry (#3545). Empty
-    #: when the node declared no schema, or when the output honoured it — so a non-empty value is
-    #: always an observation, never a default.
-    #:
-    #: An OBSERVATION, deliberately not a failure and not a retry. Failing the step would break
-    #: runs that complete today, and retrying would spend more money on the same non-conforming
-    #: worker; the producing step is simply the only place that knows both what the schema declared
-    #: and what came back, so it is the only place that can say so. A DECLARED field for the same
-    #: reason as `published`: an attribute set on the instance would work at runtime and never
-    #: reach the journal, so the ledger would show a step that ignored its schema with no record
-    #: that anything noticed.
-    schema_shortfall: str = ""
     #: The no-double-execution claim THIS ATTEMPT holds, and the holder identity it holds it with
     #: (#3533). Set only by `dispatch_stage`, and only on the one result that leaves the claim
     #: taken — the spawn is still live when that result is returned, so the attempt outlives the
@@ -2285,30 +2273,35 @@ def schema_shortfall(schema: Any, value: Any) -> str:
     )
 
 
-def apply_schema_notice(node: Node, result: NodeResult, observed: Any) -> NodeResult:
-    """Name a declared schema the node's work ignored, on the step that produced it (#3545).
+def apply_declared_schema(node: Node, result: NodeResult, observed: Any) -> NodeResult:
+    """Fail a step whose answer ignored its declared `schema`, naming what was asked for and what
+    came (`schema_shortfall`).
+
+    A step that declares a schema has not done its step when its answer is not in it: the run read
+    such a worker as Done, its declared keys resolved to their defaults downstream, and nothing
+    said the values were fallbacks rather than answers. So it FAILS, as PROTOCOL — the class
+    `dispatch_infer` already gives a model whose JSON would not parse — and the retry policy reads
+    it like any other failure: not a retryable class, so it is not retried unless the step's own
+    retry rule says otherwise. Its output is kept on the failure for the inspector, never bound.
 
     `observed` is what the node's own work returned (a dispatcher's output, or a spawned stage's
-    text), taken BEFORE the engine's seams add keys to it. The final output cannot answer the
-    question: `apply_judge_contract` writes every key a judge schema declares whatever the model
-    said, so a judge that answered in prose settles with `verdict="REJECT"`, `reasoning=""`,
-    `scores={}` and the rest. Measured over the bundled library, a check on the settled output is
-    silent on all 7 judge stages whose model answered in prose. The artifact gate adds `artifacts`
-    the same way. A key the engine supplied is not the worker honouring its schema.
+    text), taken BEFORE the engine's seams add keys to it: `apply_judge_contract` writes every key
+    a judge schema declares whatever the model said, and the artifact gate adds `artifacts`. A key
+    the engine supplied is not the worker honouring its schema.
 
-    The gates read the FINAL `result`, because a seam can still fail the node:
+    A JUDGE (`judge_contract`) is held to the contract instead of to every key: an answer that is
+    not an object at all fails here, but a verdict that left out a key the contract defaults (an
+    empty `cannot_judge`, no `proof` on a REJECT) is a verdict, and the contract already reads it.
+
+    The gate applies only where it can be true:
 
     * **A non-empty dict `schema`.** Nothing is declared otherwise, so there is nothing to ignore.
-    * **A SUCCESS state.** A FAILED step already carries a `Failure` saying why, and `infer`'s own
-      unparseable-output branch is that case — a notice there would restate a legible failure. A
-      spawned stage is still RUNNING at the dispatch seam, so it is named at its settle instead
+    * **A SUCCESS state.** A FAILED step already carries a `Failure` saying why. A spawned stage is
+      still RUNNING at the dispatch seam, so it is gated at its settle instead
       (`stage_settlement._settled_stage_output`), through this same helper.
     * **Something observed.** `dispatch_stage`'s two DEGRADED paths (a restricted-origin skip, a
       claim already held) produce `output=None`; why they produced nothing is already in
       `degraded_reason`, and re-reading it as "the schema was ignored" would be false.
-
-    Never changes `state`, `output` or `failure`: the run completes exactly as it would without the
-    notice.
     """
     from personalclaw.workflows.models import SUCCESS_STATES
 
@@ -2318,9 +2311,31 @@ def apply_schema_notice(node: Node, result: NodeResult, observed: Any) -> NodeRe
     if result.state not in SUCCESS_STATES or observed is None:
         return result
     shortfall = schema_shortfall(schema, observed)
-    if shortfall:
-        result.schema_shortfall = shortfall
+    if not shortfall:
+        return result
+    if (node.config or {}).get("judge_contract") and _is_object(observed):
+        return result
+    result.state = InstanceState.FAILED
+    result.failure = Failure(
+        failure_class=FailureClass.PROTOCOL,
+        cause_plain=shortfall,
+        remediation=(
+            "the step's answer must carry what its schema declares; check that its prompt asks "
+            "for exactly those keys, then run it again"
+        ),
+    )
     return result
+
+
+def _is_object(observed: Any) -> bool:
+    """Whether a step's answer is an object, read as `schema_shortfall` reads it."""
+    if isinstance(observed, str):
+        from personalclaw.llm_helpers import parse_llm_json_value
+
+        parsed = parse_llm_json_value(observed)
+        if parsed is not None:
+            observed = parsed
+    return isinstance(observed, dict)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -2446,7 +2461,7 @@ async def dispatch(
         approved_start=approved_start,
     )
     # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
-    # schema notice may compare (#3545). The judge contract writes every key a judge schema
+    # declared-schema gate may compare. The judge contract writes every key a judge schema
     # declares whatever the model said, so the final output cannot tell "the model answered in the
     # declared shape" from "the engine filled it in".
     observed = result.output
@@ -2455,15 +2470,14 @@ async def dispatch(
     # The SAME seam for the judge contract: a node declaring `judge_contract: true`
     # has its output validated against the contract before anything can bind it.
     result = apply_judge_contract(node, result, judge_hints)
+    # The SAME seam for the declared schema: after the gates, so it reads the final state (a gate
+    # can still fail the node), comparing `observed` rather than the output the gates rebuilt.
+    result = apply_declared_schema(node, result, observed)
     # The SAME seam for `publish:`, for the same reason: a new node kind inherits the
-    # publish path instead of quietly dropping a declared output. Ordered after the gate
-    # deliberately — publishing the output of a node that failed its own artifact gate would
-    # store a deliverable the run does not stand behind.
-    result = publish_seam.apply_publish(node, result, run_id=run_id, cwd=cwd or None)
-    # The SAME seam for the declared-schema notice (#3545): after the gates, so it reads the final
-    # state (a gate can still fail the node), but comparing `observed` rather than the output the
-    # gates rebuilt. An observation only: it never changes `state`, `output` or `failure`.
-    return apply_schema_notice(node, result, observed)
+    # publish path instead of quietly dropping a declared output. Ordered after every gate
+    # deliberately — publishing the output of a node that failed one would store a deliverable
+    # the run does not stand behind.
+    return publish_seam.apply_publish(node, result, run_id=run_id, cwd=cwd or None)
 
 
 _LEAF_DISPATCHERS = {

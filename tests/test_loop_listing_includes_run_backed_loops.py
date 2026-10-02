@@ -152,7 +152,7 @@ def test_listing_does_not_create_the_run_store(tmp_path: Path) -> None:
 
 
 def test_every_run_status_projects_onto_the_loop_vocabulary() -> None:
-    assert set(loop_view._STATUS) == set(RunStatus), "a run status reaches the loop list unnamed"
+    assert set(loop_view._ENDING) == set(RunStatus), "a run status reaches the loop list unnamed"
 
 
 @pytest.mark.parametrize(
@@ -162,14 +162,14 @@ def test_every_run_status_projects_onto_the_loop_vocabulary() -> None:
         (RunStatus.CANCELLED, None, "stopped", "user"),
         (
             RunStatus.ESCALATED,
-            {"reason": "max_iterations", "detail": "reached 30"},
+            {"reason": "max_iterations", "cause": "budget", "detail": "reached 30"},
             "complete",
             "cycle_budget",
         ),
         (
             RunStatus.ESCALATED,
-            {"reason": "identical_output", "detail": "byte-identical 3x"},
-            "complete",
+            {"reason": "identical_output", "cause": "step", "detail": "unchanged 3 times"},
+            "failed",
             "worker_failed",
         ),
         (RunStatus.PAUSED, None, "paused", ""),

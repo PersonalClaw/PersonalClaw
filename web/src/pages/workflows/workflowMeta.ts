@@ -95,10 +95,9 @@ export const PRELAUNCH_RUN_STATUSES = new Set<string>(['draft'])
 
 export const isPrelaunch = (status: string) => PRELAUNCH_RUN_STATUSES.has(status)
 
-/** Node-INSTANCE states after which a node will not run again without an explicit mutation —
- *  the exact set the `/inspect` endpoint accepts (mirrors `workflows/models.py:TERMINAL_STATES`).
- *  A node in any other state has nothing to reconstruct yet, so the endpoint 409s; the run view
- *  gates the Inspect affordance on this so the click is offered only where it can succeed. */
+/** Node-INSTANCE states after which a node will not run again without an explicit mutation
+ *  (mirrors `workflows/models.py:TERMINAL_STATES`). The inspector reads a node in any other state
+ *  as still at work: what it has seen so far, and no output yet. */
 export const TERMINAL_NODE_STATES = new Set<string>([
   'done', 'degraded', 'failed', 'skipped', 'no_change', 'scope_violation', 'discarded', 'escalated', 'blocked', 'cancelled',
   'declined',

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from personalclaw import approval_grants, memory_writes, run_bounds
 from personalclaw.approval_grants import ToolDecision, decision_of
+from personalclaw.auth.lifetimes import duration_words
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
@@ -254,7 +255,9 @@ def _fanout_key(info: "SubagentInfo") -> str:
 
 
 def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> str:
-    """Build a human-readable context string for timeout errors."""
+    """The agent's own counters at a time-limit stop, for the log line beside it. Never part of
+    its error: a turn count against a limit of 0 and an elapsed figure counted from the spawn
+    request are this module's bookkeeping, and the error is what a person reads."""
     parts = [f"turn {info.turns}/{info.max_turns}"]
     if info.last_tool:
         parts.append(f"last tool: {_redact(info.last_tool)}")
@@ -264,11 +267,48 @@ def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> s
     return " | ".join(parts)
 
 
-def _waiting_note(tool: str) -> str:
+#: How a time-limit stop the run itself reached opens (:func:`time_limit_stop`).
+_TIME_LIMIT = "Its time limit of "
+#: How the reaper's own kill of an agent past its limit opens (``_force_reap``).
+_REAPED = "Reaped after"
+#: The words a time-limit stop ends with when it ended a wait for the owner's answer
+#: (:func:`_waiting_note`), which :func:`ended_a_wait_for_the_owner` reads.
+_FOR_YOUR_ANSWER = " for your answer"
+
+
+def _waiting_note(asking: tuple[str, float] | None, now: float) -> str:
     """The clause a time-limit stop adds when the agent was waiting for its owner to answer a
-    call: the limit ended the wait, and saying only that it "timed out" read as the agent failing
-    at its work."""
-    return f" while waiting for you to answer {_redact(tool)[:80]}" if tool else ""
+    call: which call, and how long THAT ask had been open (*asking* is the call and when it was
+    asked, on the ``time.monotonic`` clock *now* reads).
+
+    The limit counts the agent's whole run, so naming only the limit blamed the owner for every
+    minute the agent spent working before it asked: a step that worked eighteen minutes and then
+    waited twelve read as thirty minutes of waiting for her."""
+    if not asking:
+        return ""
+    tool, asked_at = asking
+    waited = duration_words(max(0.0, now - asked_at))
+    return f" while its {_redact(tool)[:80]} call had been waiting {waited}{_FOR_YOUR_ANSWER}"
+
+
+def time_limit_stop(limit_secs: float, asking: tuple[str, float] | None, now: float) -> str:
+    """The error an agent ends with when its time limit runs out: the limit, and the ask it ended
+    when it ended one (:func:`_waiting_note`). Worded to read whole on its own (the background
+    agents list) and inside a step's ending ("“check” stopped: its time limit of …")."""
+    return f"{_TIME_LIMIT}{duration_words(limit_secs)} ran out{_waiting_note(asking, now)}"
+
+
+def ran_out_of_time(error: str) -> bool:
+    """Whether *error* is a time-limit stop: the run's own limit (:func:`time_limit_stop`) or the
+    reaper's kill past it."""
+    return str(error or "").startswith((_TIME_LIMIT, _REAPED))
+
+
+def ended_a_wait_for_the_owner(error: str) -> bool:
+    """Whether *error* is a time-limit stop that ended a wait for the owner's answer. What a reader
+    of how the agent ended (a workflow step's settlement) tells apart from a step that ran out of
+    time working, because the remedy differs: answer the ask next time, not raise the limit."""
+    return ran_out_of_time(error) and str(error).endswith(_FOR_YOUR_ANSWER)
 
 
 def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> tuple[bool, float]:
@@ -649,9 +689,10 @@ class SubagentManager:
         # from. A spawn still queued for a slot, or still waiting for its owner to approve its
         # start, has no entry: it is not running, and what it waits on bounds the wait.
         self._run_started: dict[str, float] = {}
-        # The call each running agent is waiting for its owner to answer, while it waits — so a
-        # time limit that ends the wait says that is what it ended.
-        self._asking_owner: dict[str, str] = {}
+        # The call each running agent is waiting for its owner to answer, and when it asked
+        # (`time.monotonic`), while it waits — so a time limit that ends the wait says that is
+        # what it ended, and how long that ask had been open.
+        self._asking_owner: dict[str, tuple[str, float]] = {}
 
     # ── Limits, as they read now ─────────────────────────────────────────
 
@@ -928,17 +969,23 @@ class SubagentManager:
         if task and not task.done():
             task.cancel()
         self._run_started.pop(agent_id, None)
-        asking = self._asking_owner.pop(agent_id, "")
+        asking = self._asking_owner.pop(agent_id, None)
 
         if not info.done:
             info.done = True
             # A cancel names its own reason, and it is the true one: the deadline sentence is for
             # the reaper's own kill, and stamping it over a cancel told the activity view that a
-            # subagent stopped seconds in had "exceeded" its 30-minute cap.
-            context = _timeout_context(info, include_elapsed=False)
+            # subagent stopped seconds in had "exceeded" its 30-minute cap. The agent's counters
+            # go to the log, never into the sentence a person reads.
+            if not reason:
+                logger.warning(
+                    "Reaper: subagent %s stopped [%s]",
+                    agent_id,
+                    _timeout_context(info, include_elapsed=False),
+                )
             info.error = reason or (
-                f"Reaped after {int(elapsed)}s "
-                f"(exceeded {self._default_timeout}s deadline){_waiting_note(asking)} [{context}]"
+                f"{_REAPED} {int(elapsed)}s (exceeded {self._default_timeout}s deadline)"
+                f"{_waiting_note(asking, time.monotonic())}"
             )
             self._dec_running(info)
             Stats().inc_subagent_failed()
@@ -1825,7 +1872,7 @@ class SubagentManager:
         Cleared only when the answer comes, deliberately NOT in a ``finally``: a stop cancels the
         wait before ``_run`` words the stop, and ``_run`` (or the reaper) clears it after.
         """
-        self._asking_owner[info.id] = tool or "a call"
+        self._asking_owner[info.id] = (tool or "a call", time.monotonic())
         yield
         self._asking_owner.pop(info.id, None)
 
@@ -1841,14 +1888,13 @@ class SubagentManager:
             await asyncio.wait_for(self._run_inner(info, session_key), timeout=timeout)
         except asyncio.TimeoutError:
             if not info.reaped:
-                waiting = _waiting_note(self._asking_owner.get(info.id, ""))
-                info.error = (
-                    f"Timed out after {timeout // 60} minutes{waiting} [{_timeout_context(info)}]"
+                info.error = time_limit_stop(
+                    timeout, self._asking_owner.get(info.id), time.monotonic()
                 )
                 info.done = True
                 Stats().inc_subagent_failed()
                 self._write_tombstone(info, "timeout")
-            logger.warning("Subagent %s timed out", info.id)
+            logger.warning("Subagent %s timed out [%s]", info.id, _timeout_context(info))
         except asyncio.CancelledError:
             if not info.reaped:
                 info.done = True

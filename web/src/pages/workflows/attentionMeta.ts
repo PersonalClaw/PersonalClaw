@@ -49,13 +49,19 @@ export interface EscalationRead {
   instancePath: string
   /** The engine's raw reason token, kept so a reader can grep the source for it. */
   reason: string
-  /** The loop stopped at the budget it was given: the record's own classification
-   *  (`resilience.escalation_artifact`), never re-derived here from the reason token. Not a step
-   *  that gave up, so nothing about the workflow needs changing. */
-  budget: boolean
-  /** That token as a sentence. */
+  /** WHY it stopped: the record's own classification (`ending_sentence.CAUSES`, written by
+   *  `resilience.escalation_artifact`), never re-derived here from the reason token — a budget it
+   *  was given, a judge that would not decide, an ask that ran out of time, a start nobody
+   *  approved, refused tools, a spend cap's refusal, or a step that failed at its work. `''` on a
+   *  record written before causes were. */
+  cause: string
+  /** The stop as a headline fragment: by its cause where the cause says more than the token. */
   headline: string
+  /** What happened, as one true sentence. */
   detail: string
+  /** What to do about it, matching the cause — the record's own words. `''` when it carries
+   *  none. */
+  remedy: string
   attempts: EscalationAttempt[]
 }
 
@@ -94,6 +100,8 @@ export const ESCALATION_REASON: Record<string, string> = {
    *  called a model and the banner reported the ceiling (#3524). */
   max_iterations: 'the loop reached its iteration ceiling',
   iterations_failed: 'the loop spent its iterations failing rather than working',
+  /** The judge would not decide on the cycle the loop ended on (`ending_sentence.loop_stop`). */
+  judge_escalated: 'the judge could not decide whether the work is done',
   repeated_error: 'the same error came back on every attempt',
   identical_output: 'the work stopped changing between attempts',
   token_cap: 'the run reached its token budget',
@@ -102,8 +110,25 @@ export const ESCALATION_REASON: Record<string, string> = {
   no_progress: 'no measurable progress between attempts',
 }
 
-export function escalationHeadline(reason: string): string {
-  return ESCALATION_REASON[reason] ?? reason
+/** A cause's headline, for the causes that say more than any reason token: a stop for one of
+ *  these is not a step failing at its work, and "the loop spent its iterations failing rather than
+ *  working" read over a judge that handed over its decision, or an ask that waited too long, sent
+ *  the reader to fix a step that was fine. Every cause the backend writes is here or in
+ *  `REASON_HEADED_CAUSES` (railed by `tests/test_a_loops_ending_reads_why_it_stopped.py`). */
+export const CAUSE_HEADLINE: Record<string, string> = {
+  judge: 'the judge could not decide whether the work is done',
+  approval_timeout: 'a step’s time limit ran out while it waited for your answer',
+  approval: 'a step needed your approval to start, and nobody gave it',
+  refusal: 'every call a step made was refused by the tools it was given',
+  spend_cap: 'a spend cap refused the call a step needed',
+}
+
+/** The causes headed by their reason token, which is the more specific of the two: which budget
+ *  (`max_iterations`, `token_cap`), and how a step gave up (`retries_exhausted`, `repeated_error`…). */
+export const REASON_HEADED_CAUSES: ReadonlySet<string> = new Set(['budget', 'step'])
+
+export function escalationHeadline(reason: string, cause = ''): string {
+  return CAUSE_HEADLINE[cause] ?? ESCALATION_REASON[reason] ?? reason
 }
 
 function str(source: Record<string, unknown>, key: string): string {
@@ -137,15 +162,17 @@ export function readAttention(raw: unknown): AttentionRead {
 
   if (kind === 'escalation') {
     const reason = str(record, 'reason')
+    const cause = str(record, 'cause')
     const attempts = Array.isArray(record.attempts) ? record.attempts : []
     return {
       kind: 'escalation',
       nodeId: str(record, 'node_id'),
       instancePath: str(record, 'instance_path'),
       reason,
-      budget: record.budget === true,
-      headline: escalationHeadline(reason),
+      cause,
+      headline: escalationHeadline(reason, cause),
       detail: str(record, 'detail'),
+      remedy: str(record, 'remedy'),
       attempts: attempts.map(readAttempt),
     }
   }
@@ -165,7 +192,7 @@ export function readAttention(raw: unknown): AttentionRead {
 export function stoppedAtBudget(status: string, attention: unknown): boolean {
   if (status !== 'escalated') return false
   const read = readAttention(attention)
-  return read?.kind === 'escalation' && read.budget
+  return read?.kind === 'escalation' && read.cause === 'budget'
 }
 
 /** Every escalation in a run's `escalations` list (oldest first), skipping anything unreadable.

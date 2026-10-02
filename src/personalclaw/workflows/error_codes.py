@@ -316,15 +316,15 @@ WF_ERROR_CODES: dict[str, str] = {
         "on a draft launch it cannot start at all."
     ),
     "WF_RUN_LAUNCH_FAILED": "Starting the run raised; the message carries the cause.",
+    "WF_LOOP_DOCUMENT_INVALID": (
+        "The document a loop was started with is not one plain file name ending in .md, "
+        ".markdown or .txt."
+    ),
     "WF_RUN_NOT_FOUND": "No run with that id exists.",
     "WF_RUN_NO_SPEC": "The run exists but its stored spec cannot be read.",
     "WF_RUN_BAD_SPEC": "The run's stored spec was read but does not parse.",
     "WF_NODE_NOT_FOUND": "The named node id is not in this run's spec.",
     "WF_NODE_NOT_RUN": "The named node exists but has produced no output yet.",
-    "WF_NODE_NOT_TERMINAL": (
-        "The named node has not reached a terminal state, so there is nothing to reconstruct "
-        "from it yet."
-    ),
     "WF_POLICY_KEY_UNKNOWN": (
         "A policy-override key is not in the overridable set; the message names both."
     ),

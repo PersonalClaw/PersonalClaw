@@ -232,6 +232,24 @@ describe('the filename is shown with its provenance', () => {
     expect(screen.getByText('open_ended')).toBeTruthy()
   })
 
+  it('🔴 a document the run was started to produce is named as the run’s own, not a template’s', async () => {
+    // The onboarding loop names its note when it starts; its template keeps no document, so the
+    // panel said "Nothing is missing here" over a note that was nowhere on the run.
+    payload = () =>
+      Promise.resolve(
+        body({
+          workflow: 'general-project',
+          report: { ...present('agent-ideas-this-week.md', '# This week'), found_in: 'kept', kept_from: '/srv/example/workspace', kept_by: 'work' },
+          derivation: { name: 'agent-ideas-this-week.md', reason: null, declared_by: { run: true, name: 'agent-ideas-this-week.md' } },
+          instructed: true,
+        }),
+      )
+    render(<DeliverablePanel runId="r1" />)
+    await waitFor(() => expect(screen.getByText('This week')).toBeTruthy())
+    expect(screen.getByText(/named when this run was started/)).toBeTruthy()
+    expect(screen.queryByText(/declared by the/)).toBeNull()
+  })
+
   it('shows a dash rather than a blank when a slot has no name', async () => {
     payload = () => Promise.resolve(body({ log: absent(null, 'no_root') }))
     render(<DeliverablePanel runId="r1" />)

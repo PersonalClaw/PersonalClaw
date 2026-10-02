@@ -280,7 +280,7 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
 
     workflow = str(getattr(run, "workflow_name", "") or "")
     spec = store.read_spec(run_id)
-    resolved = deliverable_mod.resolve_name(workflow, spec)
+    resolved = deliverable_mod.resolve_name(workflow, spec, run)
     roots = deliverable_mod.run_roots(run)
     report = deliverable_mod.read_document(roots, resolved.name, reason=resolved.reason)
     # The log's name is the loop store's own declaration, imported rather than re-spelled: one
@@ -299,7 +299,11 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
         roots=roots.to_dict(),
         # Whether this run's OWN spec ever names the document. `false` reframes the absence from
         # "not yet" to "never asked for" — see the docstring.
-        instructed=deliverable_mod.instructed_by_spec(spec, resolved.name),
+        instructed=deliverable_mod.instructed_by_spec(
+            spec,
+            resolved.name,
+            run.inputs if isinstance(resolved.source, deliverable_mod.RunStatement) else None,
+        ),
     )
 
 

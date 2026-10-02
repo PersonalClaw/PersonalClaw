@@ -12,12 +12,13 @@ import { WorkflowRunDetail } from './WorkflowRunDetail'
 //   1. a full payload renders all six fields + the cached badge;
 //   2. a `{ref}` prompt and an `{artifact_ref}` output render as monospace chips, NOT code blocks
 //      (and never trigger a second fetch — the redaction pass spilled them on purpose);
-//   3. a 409 (node not terminal) and a 404 (gone) render a calm inline message, never a crash;
-//   4. a terminal node's row in the run view exposes an Inspect trigger that opens the drawer.
+//   3. a step still at work renders its live state — what it was given, no output yet — and a 404
+//      (gone) renders a calm inline message, never a crash;
+//   4. a node's row in the run view exposes an Inspect trigger that opens the drawer.
 //
 // The api module is mocked at the boundary — the four api methods the two components call are
 // overridden while the REAL ApiError class is kept (the drawer branches on `instanceof ApiError`,
-// so a fake class would make the 409/404 discrimination silently fall through to the generic path).
+// so a fake class would make the 404 discrimination silently fall through to the generic path).
 
 const workflowRunNodeInspect = vi.fn<(runId: string, nodeId: string) => Promise<NodeInspect>>()
 const workflowRun = vi.fn<(id: string) => Promise<WorkflowRunDetailData>>()
@@ -126,13 +127,28 @@ describe('NodeInspectorDrawer', () => {
     expect(workflowRunNodeInspect).toHaveBeenCalledTimes(1)
   })
 
-  it('shows a not-terminal message on a 409 without throwing', async () => {
-    workflowRunNodeInspect.mockRejectedValue(new ApiError('node not terminal', 409))
+  it('🔴 shows a step still at work in its live state: what it was given, and no output yet', async () => {
+    // Before: the endpoint answered 409 and the drawer said only "has not finished yet".
+    workflowRunNodeInspect.mockResolvedValue(inspect({ state: 'running', output: null, cached: false }))
     render(<NodeInspectorDrawer runId="run-1" nodeId="draft" onClose={() => {}} />)
-    expect(await screen.findByText(/has not finished yet/i)).toBeInTheDocument()
-    // graceful: no field blocks rendered, but the panel (and its Close) is intact.
-    expect(screen.queryByTestId('resolved-prompt')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('node-live-note')).toHaveTextContent(/still at work/i)
+    expect(screen.getByTestId('resolved-prompt')).toHaveTextContent('Write the intro section.')
+    expect(screen.getByText('No output yet.')).toBeInTheDocument()
+    // No cache origin for work that has produced nothing.
+    expect(screen.queryByTestId('cached-badge')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Close')).toBeInTheDocument()
+  })
+
+  it('says a step the run has not reached yet is pending', async () => {
+    workflowRunNodeInspect.mockResolvedValue(inspect({
+      state: 'pending', instance_path: '', resolved_prompt: '', resolved_inputs: {}, output: null,
+      attempts: [], ledger_events: [], cached: false,
+    }))
+    render(<NodeInspectorDrawer runId="run-1" nodeId="draft" onClose={() => {}} />)
+    expect(await screen.findByTestId('node-live-note')).toHaveTextContent('The run has not reached this step yet.')
+    // Nothing recorded is said, not shown as an empty box under the heading.
+    expect(screen.getByTestId('no-resolved-prompt')).toHaveTextContent('No prompt recorded for this step.')
+    expect(screen.queryByTestId('resolved-prompt')).not.toBeInTheDocument()
   })
 
   it('shows a not-found message on a 404', async () => {
@@ -282,15 +298,16 @@ describe('WorkflowRunDetail node rows expose the Inspect affordance', () => {
     expect(await screen.findByTestId('resolved-prompt')).toBeInTheDocument()
   })
 
-  it('does NOT offer Inspect on a non-terminal node (the endpoint would 409)', async () => {
+  it('🔴 offers Inspect on a step still at work, which opens on its live state', async () => {
+    // Before: a running row carried no Inspect (the endpoint answered 409), so the step a person
+    // was watching could not be opened until it was over.
     workflowRun.mockResolvedValue(runWith('running'))
+    workflowRunNodeInspect.mockResolvedValue(inspect({ state: 'running', output: null, cached: false }))
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
 
-    // the row rendered…
-    await waitFor(() => expect(workflowRun).toHaveBeenCalled())
-    await screen.findByText('draft')
-    // …but a running node carries no Inspect trigger.
-    expect(screen.queryByTitle(/Inspect this node/i)).not.toBeInTheDocument()
-    expect(workflowRunNodeInspect).not.toHaveBeenCalled()
+    const trigger = await screen.findByTitle(/Inspect this node/i)
+    fireEvent.click(trigger)
+    await waitFor(() => expect(workflowRunNodeInspect).toHaveBeenCalledWith('run-1', 'draft'))
+    expect(await screen.findByTestId('node-live-note')).toBeInTheDocument()
   })
 })

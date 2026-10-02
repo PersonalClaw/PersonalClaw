@@ -1,18 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { ApiError, type NodeInspect, type WorkflowRunDetailData } from '../../lib/api'
+import type { NodeInspect, WorkflowRunDetailData } from '../../lib/api'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 import { WorkflowRunDetail } from './WorkflowRunDetail'
 
 // ── The node inspector follows its node to the end ───────────────────────────────────────────────
 //
 // A chat card deep-links its ACTIVE node into the run view (`?node=`), so the inspector opens on a
-// running node as a matter of course, and the endpoint answers 409 until the node is done. The
-// drawer read once, on open: it said "not finished yet" for good, after the node and the run were
-// done, and only a reload showed what the node had produced. The run view now hands the drawer what
-// it last saw of the node (its latest instance and that instance's state), and the drawer reads
-// again when that changes. A failure that is not the node's state offers a retry, since a finished
-// run changes no more and nothing else would read again.
+// running node as a matter of course. The endpoint answers a node still at work with its live state
+// (what it was given, nothing produced yet), and the run view hands the drawer what it last saw of
+// the node (its latest instance and that instance's state), so the drawer reads again when that
+// changes and follows the node from its live state to its final one, without a reload. A failure
+// that is not a missing node offers a retry, since a finished run changes no more and nothing else
+// would read again.
 
 const workflowRunNodeInspect = vi.fn<(runId: string, nodeId: string) => Promise<NodeInspect>>()
 const workflowRun = vi.fn<(id: string) => Promise<WorkflowRunDetailData>>()
@@ -56,7 +56,8 @@ function run(draft: string, status = 'running'): WorkflowRunDetailData {
   } as WorkflowRunDetailData
 }
 
-const notYet = () => new ApiError('node draft is running, not terminal', 409)
+// What the endpoint answers for the node while it is still at work: its live state, no output.
+const atWork = () => inspect({ state: 'running', output: null })
 
 beforeEach(() => {
   // Reset, not clear: an answer one test queued and never used must not reach the next one.
@@ -66,17 +67,21 @@ beforeEach(() => {
 })
 
 describe('the drawer reads again when its node changes', () => {
-  it('opened on a running node, it shows the node once it is done', async () => {
-    workflowRunNodeInspect.mockRejectedValueOnce(notYet()).mockResolvedValueOnce(inspect())
+  it('opened on a running node, it shows its live state, then its output once it is done', async () => {
+    workflowRunNodeInspect.mockResolvedValueOnce(atWork()).mockResolvedValueOnce(inspect())
     const { rerender } = render(
       <NodeInspectorDrawer runId="run-1" nodeId="draft" nodeVersion="root.draft:running" onClose={() => {}} />,
     )
-    expect(await screen.findByText(/has not finished yet/i)).toBeInTheDocument()
+    // While it works: what it was given, and a plain note that its output comes when it finishes.
+    expect(await screen.findByTestId('node-live-note')).toHaveTextContent(/still at work/i)
+    expect(screen.getByTestId('resolved-prompt')).toHaveTextContent('Write the intro section.')
+    expect(screen.getByText('No output yet.')).toBeInTheDocument()
+    expect(screen.queryByTestId('output')).not.toBeInTheDocument()
 
     rerender(<NodeInspectorDrawer runId="run-1" nodeId="draft" nodeVersion="root.draft:done" onClose={() => {}} />)
 
-    expect(await screen.findByTestId('resolved-prompt')).toHaveTextContent('Write the intro section.')
-    expect(screen.queryByText(/has not finished yet/i)).not.toBeInTheDocument()
+    expect(await screen.findByTestId('output')).toHaveTextContent('The intro, in prose.')
+    expect(screen.queryByTestId('node-live-note')).not.toBeInTheDocument()
     expect(workflowRunNodeInspect).toHaveBeenCalledTimes(2)
   })
 
@@ -107,7 +112,7 @@ describe('the drawer reads again when its node changes', () => {
     expect(workflowRunNodeInspect).toHaveBeenCalledTimes(1)
   })
 
-  it('a failure that is not the node state offers a retry, and the retry reads again', async () => {
+  it('a failure that is not a missing node offers a retry, and the retry reads again', async () => {
     workflowRunNodeInspect.mockRejectedValueOnce(new Error('Failed to fetch')).mockResolvedValueOnce(inspect())
     render(<NodeInspectorDrawer runId="run-1" nodeId="draft" nodeVersion="root.draft:done" onClose={() => {}} />)
 
@@ -117,25 +122,27 @@ describe('the drawer reads again when its node changes', () => {
     expect(workflowRunNodeInspect).toHaveBeenCalledTimes(2)
   })
 
-  it('offers no retry for a node that has not finished — it reads again by itself', async () => {
-    workflowRunNodeInspect.mockRejectedValue(notYet())
+  it('a node still at work is no failure: no retry, it reads again by itself', async () => {
+    workflowRunNodeInspect.mockResolvedValue(atWork())
     render(<NodeInspectorDrawer runId="run-1" nodeId="draft" nodeVersion="root.draft:running" onClose={() => {}} />)
-    await screen.findByText(/has not finished yet/i)
+    await screen.findByTestId('node-live-note')
     expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
 
 describe('the run view hands the drawer what it shows of the node', () => {
-  it('a deep link to a running node shows its output when the run finishes, without a reload', async () => {
+  it('a deep link to a running node shows it at work, then its output when the run finishes, without a reload', async () => {
     workflowRun.mockResolvedValue(run('running'))
-    workflowRunNodeInspect.mockRejectedValueOnce(notYet()).mockResolvedValueOnce(inspect())
+    workflowRunNodeInspect.mockResolvedValueOnce(atWork()).mockResolvedValueOnce(inspect())
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} deepLinkNodeId="draft" />)
-    expect(await screen.findByText(/has not finished yet/i)).toBeInTheDocument()
+    expect(await screen.findByTestId('node-live-note')).toHaveTextContent(/still at work/i)
     await waitFor(() => expect(stream.onSnapshot).toBeTypeOf('function'))
 
     act(() => stream.onSnapshot?.(run('done', 'complete')))
 
-    expect(await screen.findByTestId('resolved-prompt')).toHaveTextContent('Write the intro section.')
+    expect(await screen.findByTestId('output')).toHaveTextContent('The intro, in prose.')
+    expect(screen.queryByTestId('node-live-note')).not.toBeInTheDocument()
     expect(workflowRunNodeInspect).toHaveBeenCalledTimes(2)
   })
 })

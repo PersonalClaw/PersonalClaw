@@ -13,11 +13,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.workflows import effect_boundary, gate_answers, loop_iteration
+from personalclaw.workflows import effect_boundary, ending_sentence, gate_answers, loop_iteration
 from personalclaw.workflows.engine import (
     NodeResult,
+    apply_declared_schema,
     apply_judge_contract,
-    apply_schema_notice,
     release_execution_claim,
 )
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
@@ -60,41 +60,6 @@ def awaiting_out_of_band_work(ctl: RunController) -> list[str]:
         for path, inst in ctl.instances.items()
         if inst.state == InstanceState.RUNNING and inst.subagent_id
     ]
-
-
-def _how_the_child_failed(error: str, *, reaped: bool) -> tuple[FailureClass, str]:
-    """The class and the fix of a stage whose subagent ended with *error*.
-
-    The manager reaps on its OWN deadline, so a reaped child is a timeout. A child that did nothing
-    it was asked (`subagent_tier.couldnt_do_it`) failed for want of tools when every call was
-    refused, and retrying it under the same tools reaches the same refusals; or for want of output
-    room when its model ran into its cap before it answered, which the same task on the same model
-    meets again. A spawn whose approval nobody gave never started at all
-    (`subagent_ask.never_started`). Anything else it reports is an execution fault: filing that as
-    TIMEOUT would tell the user to raise a limit that was never the problem.
-    """
-    from personalclaw.subagent_ask import never_started
-    from personalclaw.subagent_tier import couldnt_do_it, out_of_room_ending
-
-    if reaped:
-        return FailureClass.TIMEOUT, (
-            "the subagent was force-killed after exceeding its deadline; raise the subagent "
-            "timeout, or split this stage into smaller steps"
-        )
-    if out_of_room_ending(error):
-        return FailureClass.USER, (
-            "narrow this step's task, or raise its model's output limit where its provider's "
-            "settings have one, then fork this run to try again"
-        )
-    if couldnt_do_it(error):
-        return FailureClass.PERMISSION, (
-            "give this step the tools its task needs (a read-only step runs only what reads), or "
-            "narrow its task to what its tools can do"
-        )
-    if never_started(error):
-        # It never ran a turn, so there is no transcript to point at.
-        return FailureClass.PERMISSION, "run this step again, and answer its approval when it asks"
-    return FailureClass.INTERNAL, "check the subagent's transcript for the failing turn"
 
 
 def reconcile_dispatched_stages(ctl: RunController) -> None:
@@ -189,23 +154,28 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
             )
             settled = True
             continue
+        failure: Failure | None
+        output: Any = None
         if error:
-            failure_class, remediation = _how_the_child_failed(error, reaped=reaped)
-            failure = Failure(
-                failure_class=failure_class,
-                # The manager's own sentence, verbatim — it carries the elapsed time and
-                # the deadline that was crossed, which a re-worded message would drop.
-                cause_plain=error,
-                remediation=remediation,
-                recoverable=True,
-            )
+            failure = _subagent_failure(error, reaped=reaped)
+        else:
+            stage_result = _settled_stage_output(ctl, node, str(getattr(info, "result", "") or ""))
+            output = stage_result.output
+            # An answer that ignored its declared schema did not do the step (`engine.
+            # apply_declared_schema`): it fails here, naming what was asked for and what came.
+            failure = stage_result.failure if stage_result.state is InstanceState.FAILED else None
+        if failure is not None:
             inst.state = InstanceState.FAILED
             inst.failure = failure
             inst.completed_at = now_stamp()
-            # `retries_exhausted`, and no `_should_retry` consultation, is not a shortcut:
-            # neither TIMEOUT nor INTERNAL is in `RETRYABLE_CLASSES`, so the retry policy
-            # would decline both anyway. Re-deriving that here would be a second copy of
-            # the rule that could drift from the first.
+            if output is not None:
+                # What came back, kept for the inspector rather than bound: a downstream binding
+                # must see this step as having produced nothing.
+                inst.output_ref, _unused = ctl.journal.store_output(path, output)
+            # `retries_exhausted`, and no `_should_retry` consultation, is not a shortcut: none
+            # of TIMEOUT, PERMISSION, PROTOCOL or INTERNAL is in `RETRYABLE_CLASSES`, so the retry
+            # policy would decline every failure this settles. Re-deriving that here would be a
+            # second copy of the rule that could drift from the first.
             ctl.journal.step_failed(
                 path,
                 node_id,
@@ -237,11 +207,6 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         else:
             inst.state = InstanceState.DONE
             inst.completed_at = now_stamp()
-            stage_result = _settled_stage_output(ctl, node, str(getattr(info, "result", "") or ""))
-            output = stage_result.output
-            # What the declared `schema` asked for and the subagent did not return (#3545), on
-            # the instance, the row below and the event, as `_apply` does for a dispatched node.
-            inst.schema_shortfall = stage_result.schema_shortfall
             ref, preview = ctl.journal.store_output(path, output)
             inst.output_ref = ref
             if node_id:
@@ -268,7 +233,6 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
                 model=usage.model,
                 cost_usd=usage.cost_usd,
                 output_ref=ref,
-                schema_shortfall=inst.schema_shortfall,
             )
             if node is not None:
                 effect_boundary.record_terminal_effect(ctl, node, path, inst, inst.state, output)
@@ -306,9 +270,6 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
                 "instance_path": path,
                 "status": inst.state.value,
                 "node_epoch": inst.epoch,
-                # Only when there is something to name (#3545), as `_apply`'s event does. Empty
-                # on every branch but DONE: `_launch` clears it per attempt.
-                **({"schema_shortfall": inst.schema_shortfall} if inst.schema_shortfall else {}),
             },
         )
         settled = True
@@ -321,6 +282,73 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         # watching would report zero for its whole life. `_persist_state` writes instances
         # only, which is why the counter needs its own flush here.
         ctl._save_run()
+
+
+def _subagent_failure(error: str, *, reaped: bool) -> Failure:
+    """How a stage failed whose subagent ended with *error*, and why.
+
+    The subagent's own sentence is the cause, verbatim: it carries the limit that ran out and how
+    long the ask it ended had waited, which a re-worded message would drop. What this adds is the
+    class, the next move, and — where the failure is not the step's own fault — the typed reason
+    the run's ending reads (`ending_sentence.step_cause`):
+
+    * **a time limit that ended a wait for the owner's answer**
+      (`subagent.ended_a_wait_for_the_owner`) is answered on the next run: the step did nothing
+      wrong, and telling her to change it, or to read a transcript, sends her to fix what is not
+      broken;
+    * **a time limit that ended work** (the run's own, or the reaper's kill past it) is a TIMEOUT
+      whose limit, or the step's size, is the remedy;
+    * **a model out of output room** before it answered (`subagent_tier.out_of_room_ending`): the
+      same task on the same model meets the cap again, so the task's size, or the model's output
+      limit, is the remedy;
+    * **every call refused** (`subagent_tier.couldnt_do_it`): retrying under the same tools reaches
+      the same refusals, so the step's tools are the remedy;
+    * **a start nobody approved** (`subagent_ask.never_started`) never ran a turn, so there is no
+      transcript to point at;
+    * anything else it reports is an execution fault. Filing that as TIMEOUT would tell the user to
+      raise a limit that was never the problem.
+    """
+    from personalclaw.subagent import ended_a_wait_for_the_owner, ran_out_of_time
+    from personalclaw.subagent_ask import never_started
+    from personalclaw.subagent_tier import couldnt_do_it, out_of_room_ending
+
+    named = ""
+    if ended_a_wait_for_the_owner(error):
+        cls, named = FailureClass.TIMEOUT, ending_sentence.APPROVAL_TIMEOUT
+        remedy = (
+            "run this step again, and answer its asks while it waits: its time limit counts from "
+            "when the step starts"
+        )
+    elif reaped or ran_out_of_time(error):
+        cls = FailureClass.TIMEOUT
+        remedy = (
+            "its time limit ran out while it worked; raise Subagent timeout in Settings › Agent "
+            "defaults, or split this stage into smaller steps"
+        )
+    elif out_of_room_ending(error):
+        cls = FailureClass.USER
+        remedy = (
+            "narrow this step's task, or raise its model's output limit where its provider's "
+            "settings have one, then fork this run to try again"
+        )
+    elif couldnt_do_it(error):
+        cls, named = FailureClass.PERMISSION, ending_sentence.REFUSAL
+        remedy = (
+            "give this step the tools its task needs (a read-only step runs only what reads), or "
+            "narrow its task to what its tools can do"
+        )
+    elif never_started(error):
+        cls, named = FailureClass.PERMISSION, ending_sentence.APPROVAL
+        remedy = "run this step again, and answer its approval when it asks"
+    else:
+        cls, remedy = FailureClass.INTERNAL, "check the subagent's transcript for the failing turn"
+    return Failure(
+        failure_class=cls,
+        cause_plain=error,
+        remediation=remedy,
+        recoverable=True,
+        terminal_reason=named,
+    )
 
 
 def _remember_allowed_start(inst: Any, info: Any) -> bool:
@@ -388,17 +416,16 @@ def _settled_stage_output(ctl: RunController, node: Node | None, text: str) -> N
       `judge_contract` nodes in the bundled library are stages, so the contract validated
       nothing, ever — the engine's recomputed `overall`, its `valid` flag and its `shortfalls`
       (which three templates bind as `{{last.output.shortfalls}}`) were never produced.
-    * **The declared-schema notice (#3545).** The dispatch seam's own
-      `engine.apply_schema_notice`, observing the subagent's TEXT rather than the output built
-      from it. The `{"result": text}` envelope would be named as a `result` key the worker never
-      wrote, and the judge contract writes every key a judge schema declares whatever the model
-      said, so the settled output of a judge that answered in prose carries all of them.
+    * **The declared schema, as a gate.** The dispatch seam's own `engine.apply_declared_schema`,
+      observing the subagent's TEXT rather than the output built from it. The `{"result": text}`
+      envelope would be named as a `result` key the worker never wrote, and the judge contract
+      writes every key a judge schema declares whatever the model said, so the settled output of a
+      judge that answered in prose carries all of them.
 
     A stage that declares NO schema keeps `{"result": text}` — unstructured output is a real
     thing a stage may return, and that is its shape, not a fallback. A stage that declares one
-    and returns unparseable text also keeps it: the binding then fails naming the key it wanted,
-    which is what happens today, so this cannot turn a run that passes into one that fails. It
-    can only ADD resolvable keys.
+    and answers outside it has not done its step, so it settles FAILED, naming what was asked for
+    and what came (its envelope is kept for the inspector, never bound).
     """
     if node is None:
         return NodeResult(state=InstanceState.DONE, output={"result": text})
@@ -420,7 +447,7 @@ def _settled_stage_output(ctl: RunController, node: Node | None, text: str) -> N
             else None
         ),
     )
-    return apply_schema_notice(node, settled, text)
+    return apply_declared_schema(node, settled, text)
 
 
 def requeue_orphaned_stages(ctl: RunController) -> list[str]:

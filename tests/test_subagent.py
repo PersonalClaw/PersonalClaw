@@ -675,7 +675,8 @@ class TestSubagentReaper:
 
         assert info.done is True and info.reaped is True
         assert info.error.startswith("Reaped after "), info.error
-        assert f"(exceeded {_TIMEOUT_SECS}s deadline) [" in info.error, info.error
+        # The deadline, and none of the agent's own counters: those go to the log.
+        assert info.error.endswith(f"(exceeded {_TIMEOUT_SECS}s deadline)"), info.error
 
     @pytest.mark.asyncio
     async def test_a_reaped_run_that_was_waiting_for_its_owner_says_so(self) -> None:
@@ -688,12 +689,14 @@ class TestSubagentReaper:
         manager._agents["ask00001"] = info
         manager._running_count = 1
         manager._run_started["ask00001"] = time.monotonic() - _TIMEOUT_SECS - 60
-        manager._asking_owner["ask00001"] = "ls"
+        manager._asking_owner["ask00001"] = ("ls", time.monotonic() - 120)
 
         await self._one_sweep(manager)
 
         assert info.reaped is True
-        assert "deadline) while waiting for you to answer ls [" in info.error, info.error
+        assert info.error.endswith(
+            "deadline) while its ls call had been waiting 2 minutes for your answer"
+        ), info.error
         assert manager._asking_owner == {}
 
     @pytest.mark.asyncio
@@ -983,8 +986,9 @@ class TestATimeLimitThatEndsAWaitSaysSo:
         agent had been waiting for you all along."""
         info, client, manager = await self._run([self._asked()], answer_after=2.0)
         assert info.error.startswith(
-            "Timed out after 0 minutes while waiting for you to answer ls ["
+            "Its time limit of 1 second ran out while its ls call had been waiting "
         ), info.error
+        assert info.error.endswith(" for your answer"), info.error
         client.approve_tool.assert_not_awaited()
         assert manager._asking_owner == {} and manager._run_started == {}
 
@@ -992,13 +996,13 @@ class TestATimeLimitThatEndsAWaitSaysSo:
     async def test_the_limit_ending_work_says_nothing_of_waiting(self) -> None:
         """The control: work past the limit is the plain timeout it always was."""
         info, _, _ = await self._run([2.0], answer_after=0.0)
-        assert info.error.startswith("Timed out after 0 minutes ["), info.error
+        assert info.error == "Its time limit of 1 second ran out", info.error
 
     @pytest.mark.asyncio
     async def test_an_answered_wait_is_not_blamed_for_a_later_stop(self) -> None:
         info, client, _ = await self._run([self._asked(), 2.0], answer_after=0.0)
         client.approve_tool.assert_awaited_once_with("req-1")
-        assert info.error.startswith("Timed out after 0 minutes ["), info.error
+        assert info.error == "Its time limit of 1 second ran out", info.error
 
 
 class TestASpawnThatAskedSaysHowItEnded:

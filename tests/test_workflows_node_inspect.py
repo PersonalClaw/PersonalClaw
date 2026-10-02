@@ -11,8 +11,9 @@ The load-bearing claims, each a property this module locks:
   and a credential in a browser. This is the security contract and the reason this test exists;
 * an offloaded output returns `{"artifact_ref": ...}` rather than the raw blob;
 * a cache-served node reports `cached: true`;
-* an unknown run / unknown node is a 404, and a node that has not reached a terminal state is a
-  409 (`not_terminal`) — the node is known, the state is the problem.
+* an unknown run / unknown node is a 404, and a node that has not finished answers with its live
+  state — running with what it has seen and no output yet, or pending when the run has not reached
+  it — so a step can be looked at while the run is live.
 
 State is built with the engine's OWN writers (`store.write_state`, `store.write_output`, the
 real `Journal`) rather than hand-built dicts, so this module cannot drift from the shapes the
@@ -246,7 +247,7 @@ class TestAttempts:
         assert body["attempts"] == []
 
 
-class TestNotFoundAndNotTerminal:
+class TestNotFoundAndLive:
     async def test_an_unknown_run_is_a_404(self) -> None:
         resp = await H.api_run_node_inspect(_req("deadbeef", "target"))
         assert resp.status == 404 and _body(resp)["error"]["code"] == "not_found"
@@ -256,12 +257,34 @@ class TestNotFoundAndNotTerminal:
         resp = await H.api_run_node_inspect(_req(run_id, "ghost"))
         assert resp.status == 404 and _body(resp)["error"]["code"] == "not_found"
 
-    async def test_a_non_terminal_node_is_a_409(self) -> None:
-        """The node is KNOWN and the request is well-formed — only its state is not yet
-        reconstructable, which a client can retry as the run advances."""
-        run_id = _build_run(target_state=InstanceState.RUNNING)
+    async def test_a_running_node_answers_with_its_live_state(self) -> None:
+        """🔴 Before: 409 `not_terminal`, three times on one live run, for the step the run was
+        working on. It answers what it has: its state, what it was given, and no output yet —
+        the stored value is an earlier attempt's, never this one's — with the same redaction."""
+        run_id = _build_run(
+            target_state=InstanceState.RUNNING,
+            prompt=f"use key {SECRET} now",
+            target_output={"answer": "from an earlier attempt"},
+        )
         resp = await H.api_run_node_inspect(_req(run_id, "target"))
-        assert resp.status == 409 and _body(resp)["error"]["code"] == "not_terminal"
+        assert resp.status == 200, _body(resp)
+        body = _body(resp)
+        assert body["state"] == "running"
+        assert body["output"] is None
+        assert "use key" in body["resolved_prompt"] and SECRET not in json.dumps(body)
+        assert body["resolved_inputs"] == {"upstream": {"v": 1}}
+
+    async def test_a_node_the_run_has_not_reached_is_pending(self) -> None:
+        run = store.create(WorkflowRun(id="", workflow_name="inspect-wf"))
+        store.write_spec(run.id, {"name": "inspect-wf", "root": SPEC})
+        store.write_state(
+            run.id,
+            {UP_PATH: NodeInstance(path=UP_PATH, state=InstanceState.RUNNING)},
+        )
+        resp = await H.api_run_node_inspect(_req(run.id, "target"))
+        assert resp.status == 200, _body(resp)
+        body = _body(resp)
+        assert (body["state"], body["output"], body["ledger_events"]) == ("pending", None, [])
 
 
 class TestRouteRegistration:

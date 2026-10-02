@@ -15,9 +15,10 @@ surface decides by the BODY it holds (where the cockpit is, which lifecycle it h
 the kind — which kinds are run-backed is `service.PORTED_LOOP_KINDS` to decide, and it grows.
 
 **Statuses map onto the loop vocabulary, not a copy of it.** The wire union is railed equal to
-`LoopStatus` (`tests/test_loop_status_vocabulary.py`), so a run's status is projected onto the
-nearest loop state that tells the truth about it — see `_STATUS`. What that costs is stated there
-rather than hidden, and the ACTIONS a run supports are a separate, narrower table
+`LoopStatus` (`tests/test_loop_status_vocabulary.py`), so a run's ending is projected onto the
+nearest loop state that tells the truth about it — see :data:`_ENDING`, the ONE table a row's
+``status``, ``stop_reason`` and ``error_message`` all come from, so the three cannot tell three
+different stories about one run. The ACTIONS a run supports are a separate, narrower table
 (:data:`RUN_ACTION_SOURCE_STATES`), because a run resumes only from a pause.
 """
 
@@ -29,42 +30,49 @@ import time
 from typing import Any
 
 from personalclaw.loop.loop import LoopStatus, LoopStopReason, held_reason
-from personalclaw.workflows import introspection
+from personalclaw.workflows import deliverable, ending_sentence, introspection
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import loop_aliases, store, supervisor_policy
 from personalclaw.workflows.models import Node, NodeKind, RunStatus, WorkflowRun
 
 logger = logging.getLogger(__name__)
 
-#: A run's status → the loop status a loop surface reads. EXHAUSTIVE over `RunStatus` (railed), so a
-#: new run state cannot reach the loop list unnamed.
+#: A run's status → the loop status and stop reason a loop surface reads: the ONE mapping a
+#: row's ending fields come from (:func:`loop_ending`). EXHAUSTIVE over `RunStatus` (railed), so a
+#: new run state cannot reach the loop list unnamed. ``None`` while the run has not ended.
 #:
-#: Two rows are projections rather than renames, and say what they cost:
+#: Three rows are projections rather than renames, and say what they cost:
 #:
 #: * ``cancelled`` → ``stopped`` (stop reason ``user``). A run is only ever cancelled by a person.
 #:   ``declined`` → ``stopped`` (``user``) for the same reason: a person said no at an approval, and
 #:   the row's error names the gate and who.
-#: * ``escalated`` → ``complete`` with a non-``done`` stop reason, which every loop surface already
-#:   renders "Ended early": the run stopped before its done condition and a human decides what
-#:   happens next. The loop vocabulary has no terminal "needs a decision" state, and borrowing an
-#:   ATTENTION state (``blocked``/``needs_input``) would offer a Resume a finished run cannot
-#:   honour. The run page, which the row opens, carries the decision itself.
-_STATUS: dict[RunStatus, LoopStatus] = {
-    RunStatus.DRAFT: LoopStatus.READY,
-    RunStatus.RUNNING: LoopStatus.RUNNING,
-    RunStatus.PAUSED: LoopStatus.PAUSED,
-    RunStatus.NEEDS_INPUT: LoopStatus.NEEDS_INPUT,
-    RunStatus.COMPLETE: LoopStatus.COMPLETE,
-    RunStatus.FAILED: LoopStatus.FAILED,
-    RunStatus.CANCELLED: LoopStatus.STOPPED,
-    RunStatus.ESCALATED: LoopStatus.COMPLETE,
-    RunStatus.DECLINED: LoopStatus.STOPPED,
+#: * ``escalated`` → ``failed`` (``worker_failed``): a step, or the judge, handed the run to a
+#:   person before its done condition, and the row's error is the escalation's own sentence. The
+#:   loop vocabulary has no terminal "needs a decision" state, and borrowing an ATTENTION state
+#:   (``blocked``/``needs_input``) would offer a Resume a finished run cannot honour. It used to
+#:   be ``complete`` with ``worker_failed`` beside it and "“Work until done” escalated." as its
+#:   error: three readings of one ending, none of them why it stopped.
+#: * ...except an escalation whose cause is the BUDGET the loop was given (:data:`_BUDGET_ENDING`):
+#:   that loop did not fail, it ran out of room, so it is ``complete`` with the budget it reached —
+#:   "Ended early" on every loop surface.
+_ENDING: dict[RunStatus, tuple[LoopStatus, LoopStopReason | None]] = {
+    RunStatus.DRAFT: (LoopStatus.READY, None),
+    RunStatus.RUNNING: (LoopStatus.RUNNING, None),
+    RunStatus.PAUSED: (LoopStatus.PAUSED, None),
+    RunStatus.NEEDS_INPUT: (LoopStatus.NEEDS_INPUT, None),
+    RunStatus.COMPLETE: (LoopStatus.COMPLETE, LoopStopReason.DONE),
+    RunStatus.FAILED: (LoopStatus.FAILED, LoopStopReason.WORKER_FAILED),
+    RunStatus.CANCELLED: (LoopStatus.STOPPED, LoopStopReason.USER),
+    RunStatus.ESCALATED: (LoopStatus.FAILED, LoopStopReason.WORKER_FAILED),
+    RunStatus.DECLINED: (LoopStatus.STOPPED, LoopStopReason.USER),
 }
 
-#: The escalation reasons that mean the loop spent its cycle budget, as opposed to giving up on the
-#: work (`resilience.BUDGET_TRIPS` — the one token the engine surfaces a satisfied budget
-#: with).
-_BUDGET_REASONS = frozenset({"max_iterations"})
+#: An escalated run whose loop stopped at the budget it was given, by the budget's own token
+#: (`resilience.BUDGET_TRIPS`): a cycle budget, or a token budget — spend, like a cost budget.
+_BUDGET_ENDING: dict[str, tuple[LoopStatus, LoopStopReason]] = {
+    "max_iterations": (LoopStatus.COMPLETE, LoopStopReason.CYCLE_BUDGET),
+    "token_cap": (LoopStatus.COMPLETE, LoopStopReason.COST_BUDGET),
+}
 
 #: What each lifecycle action may be invoked FROM on a RUN-BACKED loop, in the projected loop
 #: statuses. Narrower than `loop.loop:ACTION_SOURCE_STATES`, and it has to be: a run has one
@@ -81,9 +89,29 @@ RUN_ACTION_SOURCE_STATES: dict[str, frozenset[LoopStatus]] = {
 }
 
 
+def loop_ending(run: WorkflowRun) -> tuple[LoopStatus, str, str | None]:
+    """``(status, stop_reason, error_message)`` for ``run`` as a loop row: all three from
+    :data:`_ENDING`, so they agree.
+
+    The error is why it ended in the engine's own words: the run's ending sentence, else its
+    escalation's (`ending_sentence.loop_stop` writes both from one stop). A run that has not ended
+    keeps its error too — a pause at a budget cap says so — but has no stop reason yet.
+    """
+    status, stop = _ENDING[run.status]
+    attention = run.attention or {}
+    if run.status == RunStatus.ESCALATED and attention.get("cause") == ending_sentence.BUDGET:
+        status, stop = _BUDGET_ENDING.get(
+            str(attention.get("reason") or ""), (LoopStatus.COMPLETE, LoopStopReason.CYCLE_BUDGET)
+        )
+    error = run.error_message or ""
+    if not error and run.status == RunStatus.ESCALATED:
+        error = str(attention.get("detail") or "").strip()
+    return status, stop.value if stop is not None else "", error or None
+
+
 def loop_status(run: WorkflowRun) -> LoopStatus:
-    """The loop status a surface reads for ``run`` (see :data:`_STATUS`)."""
-    return _STATUS[run.status]
+    """The loop status a surface reads for ``run`` (:func:`loop_ending`)."""
+    return loop_ending(run)[0]
 
 
 def _redact(text: str | None) -> str | None:
@@ -111,35 +139,6 @@ def _epoch(ts: str | None) -> float | None:
         return float(calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
     except (TypeError, ValueError):
         return None
-
-
-def _stop_reason(run: WorkflowRun) -> str:
-    """The closed `LoopStopReason` a projected ENDED row carries; ``""`` while it has not ended."""
-    if run.status == RunStatus.COMPLETE:
-        return LoopStopReason.DONE.value
-    if run.status in (RunStatus.CANCELLED, RunStatus.DECLINED):
-        return LoopStopReason.USER.value
-    if run.status == RunStatus.ESCALATED:
-        reason = str((run.attention or {}).get("reason") or "")
-        return (
-            LoopStopReason.CYCLE_BUDGET.value
-            if reason in _BUDGET_REASONS
-            else LoopStopReason.WORKER_FAILED.value
-        )
-    if run.status == RunStatus.FAILED:
-        return LoopStopReason.WORKER_FAILED.value
-    return ""
-
-
-def _error_message(run: WorkflowRun) -> str | None:
-    """Why an ended run ended, in the engine's own words: its error, else its escalation detail."""
-    if run.error_message:
-        return run.error_message
-    if run.status == RunStatus.ESCALATED:
-        attention = run.attention or {}
-        detail = str(attention.get("detail") or attention.get("reason") or "").strip()
-        return detail or None
-    return None
 
 
 def _loop_root(spec: dict[str, Any] | None) -> tuple[str, Node] | None:
@@ -197,7 +196,7 @@ def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
         cap = declared if isinstance(declared, int) and declared > 0 else 0
     task = str(run.inputs.get(intake.get("task", ""), "") or "")
     criterion = str(run.inputs.get(intake.get("success_criteria", ""), "") or "")
-    status = loop_status(run)
+    status, stop_reason, error = loop_ending(run)
     return {
         "id": run.id,
         "run_id": run.id,
@@ -209,8 +208,8 @@ def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
         # The loop surfaces' own sentence while incident mode holds the run (`incident_hold`), so a
         # general loop reads "Held" there as every other loop does.
         "held": held_reason(status.value),
-        "stop_reason": _stop_reason(run),
-        "error_message": _redact(_error_message(run)),
+        "stop_reason": stop_reason,
+        "error_message": _redact(error),
         # An explicit `attended: false` is the unattended grant; anything else asks per stage.
         "attended": not supervisor_policy.unattended_grant(run.policy_overrides),
         "max_cycles": cap,
@@ -227,6 +226,9 @@ def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
             0.0 if run.status == RunStatus.RUNNING else introspection.run_elapsed(run, time.time())
         ),
         "project_id": run.project_id,
+        # The file the loop was started to produce, "" for none (`deliverable.run_document`): its
+        # run page shows it as the run's document.
+        "document": deliverable.run_document(run),
         "execution": "solo",
         "agent": "",
         "model": "",

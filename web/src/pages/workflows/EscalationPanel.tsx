@@ -39,10 +39,14 @@ import { capResetTime, type EscalationRead } from './attentionMeta'
  *  its id is a template's internal word (a one-cycle loop read "reached its iteration ceiling at
  *  project").
  *
- *  A run whose loop stopped at the budget it was given (`atBudget`) is not a step that gave up: it
- *  is headed as a budget stop, and it is never told the workflow "fails the same way until the step
- *  changes". A cycle budget is the run's own (Max cycles), so the way forward is a fork with more
- *  of them; a token budget is the workflow's, so that one does offer the editor.
+ *  **The way forward is the record's own remedy** (`ending_sentence.remedy_for`, by the stop's
+ *  cause), so it matches why the run stopped: a cycle budget is the run's own to raise with a fork,
+ *  an ask that ran out of time is answered on the next run, a decision the judge handed over is the
+ *  person's to make (with Allowed working directories named for a folder it could not reach). Only
+ *  a stop whose cause is a step — one that failed at its work, or whose tools refused it — offers
+ *  "Change the workflow", and so does a token budget, which the workflow sets. Retry, when every
+ *  escalated step failed in a way a fresh attempt can clear, says what Retry does instead. A record
+ *  written before causes were carries no remedy, and reads as a step that gave up.
  *
  *  A run a spend cap stopped (`spendCap`) is neither: a daily ceiling refused its next model call
  *  before it was made, so the workflow needs no change and Retry is the way forward, once the cap
@@ -71,13 +75,18 @@ export function EscalationPanel({ reads, runStatus, runError = '', retry, editHr
   spendCap?: { fix: string; room: boolean | null; resetsAt: number }
 }) {
   const capStop = spendCap && stopped(runStatus) ? spendCap : undefined
-  // Only a token budget lives in the workflow; a cycle budget is the run's own to raise.
-  const tokenBudget = atBudget && reads.some((r) => r.budget && r.reason === 'token_cap')
-  const edit = stopped(runStatus) && !capStop && (!atBudget || tokenBudget) ? editHref : undefined
-  const forward = capStop
-    // The fix is said once: an attempt that already shows it as its suggested fix is enough.
-    ? capForward(capStop, !!oneLine(capStop.fix) && reads.some((r) => r.attempts.some((a) => oneLine(a.fixInstruction) === oneLine(capStop.fix))))
-    : atBudget ? budgetForward(tokenBudget) : waysForward(retry, !!edit)
+  // A step that gave up is what to change, and so is a token budget, which lives in the workflow; a
+  // cycle budget is the run's own to raise, a spend cap is lifted in Settings, and no other cause
+  // is the workflow's to fix.
+  const tokenBudget = atBudget && reads.some((r) => r.cause === 'budget' && r.reason === 'token_cap')
+  const stepCause = reads.some((r) => STEP_CAUSES.has(r.cause))
+  const edit = stopped(runStatus) && !capStop && (stepCause || tokenBudget) ? editHref : undefined
+  // A way forward is for a run that stopped; one that finished despite a failed item has none.
+  const forward = !stopped(runStatus) ? ''
+    : capStop
+      // The fix is said once: an attempt that already shows it as its suggested fix is enough.
+      ? capForward(capStop, !!oneLine(capStop.fix) && reads.some((r) => r.attempts.some((a) => oneLine(a.fixInstruction) === oneLine(capStop.fix))))
+      : retry ? retryForward(retry, !!edit) : remedyOf(reads, !!edit)
   const capFull = capStop?.room === false
   return (
     <section
@@ -94,7 +103,7 @@ export function EscalationPanel({ reads, runStatus, runError = '', retry, editHr
         <EscalationEntry key={read.instancePath || `${read.nodeId}-${index}`} read={read} runError={runError} nameOf={nameOf} />
       ))}
 
-      {(retry || edit || atBudget || capStop) && (
+      {(retry || edit || forward || capStop) && (
         <div className="flex flex-wrap items-center gap-s border-outline-variant border-t pt-s">
           {retry && (
             <Button
@@ -119,7 +128,7 @@ export function EscalationPanel({ reads, runStatus, runError = '', retry, editHr
             </TextLink>
           )}
           {capStop && <SpendCapSettingsLink settings="guardrails" size="sm" />}
-          <p data-type="caption" className="text-on-surface-low">{forward}</p>
+          {forward && <p data-type="caption" className="text-on-surface-low">{forward}</p>}
         </div>
       )}
     </section>
@@ -131,24 +140,27 @@ function stopped(runStatus: string): boolean {
   return runStatus === 'failed' || runStatus === 'escalated'
 }
 
-/** What each offered way forward does, for the ways offered. */
-function waysForward(retry: { waitSecs: number } | undefined, edit: boolean): string {
-  const change = 'change the step that gave up, then run the workflow again'
-  if (retry && retry.waitSecs > 0) {
-    return `Retry becomes available in ${retry.waitSecs}s. Calls to this provider are paused after repeated failures, and a retry before then is refused without being tried.${edit ? ` Or ${change}.` : ''}`
+/** The causes whose way forward is changing a step: one that failed at its work, one whose tools
+ *  refused it, and a record written before causes were (`''`), which is how those read then. */
+const STEP_CAUSES: ReadonlySet<string> = new Set(['step', 'refusal', ''])
+
+/** The step-change clause, as a step stop's remedy and Retry's alternative say it. */
+const CHANGE = 'change the step that gave up, then run the workflow again'
+
+/** What Retry does, when it is offered. */
+function retryForward(retry: { waitSecs: number }, edit: boolean): string {
+  if (retry.waitSecs > 0) {
+    return `Retry becomes available in ${retry.waitSecs}s. Calls to this provider are paused after repeated failures, and a retry before then is refused without being tried.${edit ? ` Or ${CHANGE}.` : ''}`
   }
-  if (retry) {
-    return `A new run keeps every finished step and re-runs the rest. Retry once the cause above has cleared${edit ? `, or ${change}` : ''}.`
-  }
-  return `A new run of this workflow fails the same way until the step changes: ${change}.`
+  return `A new run keeps every finished step and re-runs the rest. Retry once the cause above has cleared${edit ? `, or ${CHANGE}` : ''}.`
 }
 
-/** What a run that stopped at its budget can do next: nothing failed, so nothing needs changing,
- *  and more room is the run's to give (a cycle budget) or the workflow's (a token budget). */
-function budgetForward(tokenBudget: boolean): string {
-  return tokenBudget
-    ? 'It stopped at the token budget its workflow sets. To give it more, raise that budget in the workflow, then run it again.'
-    : 'It stopped at the budget it was given, so the workflow needs no change. For more cycles, fork it and set Max cycles before you start the new run.'
+/** The way forward the records name for their causes, each once, in order. A record that names
+ *  none (written before causes were) reads as a step that gave up. */
+function remedyOf(reads: EscalationRead[], edit: boolean): string {
+  const named = [...new Set(reads.map((r) => r.remedy.trim()).filter(Boolean))]
+  if (named.length > 0) return named.join(' ')
+  return edit ? `A new run of this workflow fails the same way until the step changes: ${CHANGE}.` : ''
 }
 
 /** What a run a spend cap stopped can do next: the refusal's own way out (raise or remove the cap,

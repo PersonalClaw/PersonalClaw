@@ -65,8 +65,10 @@ beforeEach(() => {
   // `general` is a PORTED kind, so `POST /api/loops` answers a STARTED RUN and never a
   // `ready` loop row. `uLoopAction` stays wired so a test can assert it is NOT called.
   createULoop.mockResolvedValue({ run_id: 'run-1', status: 'running', blocking: false, kind: 'general' })
-  // The run's own view, which the loop card reads its one-cycle budget back from.
-  uLoop.mockImplementation(async (id: string) => ({ id, run_id: id, status: 'running', max_cycles: 1 }))
+  // The run's own view, which the loop card reads its one-cycle budget and its note's file back from.
+  uLoop.mockImplementation(async (id: string) => ({
+    id, run_id: id, status: 'running', max_cycles: 1, document: LOOP_SEED.document,
+  }))
   uLoopAction.mockResolvedValue({ id: 'lp-1', status: 'running', task: LOOP_SEED.task, max_cycles: 1 })
 })
 

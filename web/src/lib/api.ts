@@ -2138,11 +2138,6 @@ export interface WorkflowNodeState {
   // forward across events (a re-run after a rewind emits `node_done` WITHOUT it, and carrying
   // the old value would keep claiming a cache hit the run just superseded).
   cached?: boolean
-  // What this node's declared `schema` asked for that its output did not carry (#3545). A step
-  // that ignored its schema still reports `done` — the run is not failed and must not read as
-  // failed — so this is the only thing on the row that says the `done` was reached without the
-  // declared shape. Absent (not "") when there was nothing to report, like `cached`.
-  schema_shortfall?: string
   // "ran on X instead of Y: why" for each call a fallback in the user's model chain served
   // because the model this step asked for could not. The row's `done` is true, and so is the
   // model it names — this says it is not the model that was asked for. Absent when there is none.
@@ -2239,11 +2234,12 @@ export interface WorkflowTriageResult {
   calibrated?: number
   auto_apply_candidates?: string[]
 }
-// The reconstructability set for one terminal node (WF2-A2) — what the inspector
-// drawer renders. `resolved_prompt` is the fully-resolved post-binding prompt inline, or a
-// `{ ref }` when it was too large to inline; `output` is the node's value, or an
-// `{ artifact_ref }` when the value was offloaded. Every text field arrives redacted — the
-// backend strips credentials before this leaves the process.
+// The reconstructability set for one node (WF2-A2) — what the inspector drawer renders, live
+// while the node is still at work: `state` is then its live state (`pending` before the run
+// reached it) and `output` is null, since nothing has been produced yet. `resolved_prompt` is the
+// fully-resolved post-binding prompt inline, or a `{ ref }` when it was too large to inline;
+// `output` is the node's value, or an `{ artifact_ref }` when the value was offloaded. Every text
+// field arrives redacted — the backend strips credentials before this leaves the process.
 export interface NodeInspect {
   run_id: string; node_id: string; instance_path: string; state: string
   resolved_prompt: string | { ref: string }
@@ -2592,18 +2588,24 @@ export interface WorkflowRunDeliverable {
   log: WorkflowDeliverableDoc
   // How the filename was decided. `declared_by` names the loop kind and variant whose strategy
   // produced it, so a reader can tell a DERIVED name from a hard-coded one — or the template, when
-  // the template states its own document (`"document"` in its spec; `""` says it keeps none).
+  // the template states its own document (`"document"` in its spec; `""` says it keeps none) — or
+  // the run itself (`run: true`), when it was started to produce a named document.
   derivation: {
     name: string | null
     reason: WorkflowDeliverableAbsence | null
-    declared_by: { kind: string; variant: string; name: string } | { template: string; name: string } | null
+    declared_by:
+      | { kind: string; variant: string; name: string }
+      | { template: string; name: string }
+      | { run: true; name: string }
+      | null
   }
   // Where the backend looked, in order — workspace first, then the run dir, then the copies the run
   // kept (only once it kept any).
   roots: Array<{ kind: 'workspace' | 'run_dir' | 'kept'; path: string; exists: boolean }>
-  // Whether this run's OWN spec ever names the document. `false` reframes an absence from "not yet"
-  // to "never asked for": measured, no bundled template names its kind's document today. `null`
-  // when there was no name to check for.
+  // Whether this run's OWN spec — or, for a document the run was started to produce, its own task —
+  // ever names the document. `false` reframes an absence from "not yet" to "never asked for":
+  // measured, no bundled template names its kind's document today. `null` when there was no name
+  // to check for.
   instructed: boolean | null
 }
 // One dashboard pin. A REFERENCE, never a copy: no name and no content,
@@ -6473,6 +6475,10 @@ export interface Loop {
    *  A run-backed row carries no findings, worker session or kind_config — its work is on the run
    *  page. Equal to `id`. */
   run_id?: string
+  /** A run-backed loop's document: the file its work produces, named when it was started, which
+   *  its run page shows (`workflows/deliverable.run_document`). "" for none; absent on a
+   *  loops-table loop, whose kind declares its own. */
+  document?: string
   /** Detail-only (see `LoopSpend`). Absent on the list and on the SSE snapshot. */
   spend?: LoopSpend
   intake_rigor?: string

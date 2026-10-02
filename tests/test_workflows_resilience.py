@@ -206,14 +206,16 @@ class TestCircuitBreaker:
 class TestEscalation:
     def test_the_artifact_names_five_actionable_options(self) -> None:
         """A bare "it failed" leaves the user to invent the next move; these are the moves."""
-        art = escalation_artifact("n1", reason="retries_exhausted", detail="d")
+        art = escalation_artifact(
+            "n1", reason="retries_exhausted", cause="step", remedy="change it", detail="d"
+        )
         assert art["options"] == list(ESCALATION_OPTIONS)
         assert len(ESCALATION_OPTIONS) == 5
         assert art["node_id"] == "n1"
 
     def test_the_attempts_ride_along_as_evidence(self) -> None:
         attempts = [attempt_from_failure(1, _fail()), attempt_from_failure(2, _fail())]
-        art = escalation_artifact("n", reason="r", attempts=attempts)
+        art = escalation_artifact("n", reason="r", cause="step", remedy="", attempts=attempts)
         assert len(art["attempts"]) == 2
         assert art["attempts"][0]["attempt"] == 1
 

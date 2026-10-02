@@ -141,7 +141,7 @@ async def test_the_reason_vocabulary_is_what_the_frontend_maps():
     from tests.controller_sources import controller_source
 
     controller_src = controller_source()
-    controller = {"retries_exhausted", "not_retried", "iterations_failed"}
+    controller = {"retries_exhausted", "not_retried", "iterations_failed", "judge_escalated"}
     for token in sorted(controller):
         assert f'"{token}"' in controller_src, (
             f"{token!r} is listed here as a controller token but the controller no longer spells "

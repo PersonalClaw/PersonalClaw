@@ -24,11 +24,11 @@ from typing import Any
 
 import pytest
 
-from personalclaw.workflows import service, store
+from personalclaw.workflows import ending_sentence, service, store
 from personalclaw.workflows.bundled_defs import read_template
 from personalclaw.workflows.controller import EngineServices, RunController
-from personalclaw.workflows.models import RunStatus, WorkflowRun
-from personalclaw.workflows.resilience import BUDGET_TRIPS, escalation_artifact
+from personalclaw.workflows.models import Node, NodeKind, RunStatus, WorkflowRun
+from personalclaw.workflows.resilience import BUDGET_TRIPS
 
 TEMPLATE = "general-project"
 TASK = "draft a short note describing what an agent could do this week"
@@ -119,20 +119,30 @@ def test_a_one_cycle_loop_ends_with_the_budget_sentence_and_names_no_step() -> N
 def test_the_record_says_it_was_a_budget_stop_where_it_is_written() -> None:
     run = _drive({"attended": False, "max_cycles": 1})
 
-    assert (run.attention or {}).get("budget") is True, run.attention
+    assert (run.attention or {}).get("cause") == "budget", run.attention
     escalations = service.status(run.id)["escalations"]
     assert escalations, "the run raised no escalation at all"
-    assert escalations[-1]["budget"] is True, escalations[-1]
+    assert escalations[-1]["cause"] == "budget", escalations[-1]
     assert escalations[-1]["reason"] in BUDGET_TRIPS
+    assert "Max cycles" in str(escalations[-1]["remedy"]), escalations[-1]
+
+
+class _Quiet:
+    """A loop's controller with nothing failed and no judge ruling: the budget, alone, decides."""
+
+    instances: dict = {}
+    _iterations: dict = {}
+    _outputs: dict = {}
+    root = Node(kind=NodeKind.LOOP, id="loop")
 
 
 @pytest.mark.parametrize("reason", sorted(BUDGET_TRIPS))
 def test_each_budget_trip_is_a_budget_stop(reason: str) -> None:
-    assert escalation_artifact("loop", reason=reason)["budget"] is True
+    _, stop = ending_sentence.loop_stop(_Quiet(), "root", _Quiet.root, reason=reason, detail="d")
+    assert stop.cause == "budget"
 
 
-@pytest.mark.parametrize(
-    "reason", ["iterations_failed", "retries_exhausted", "repeated_error", "identical_output"]
-)
+@pytest.mark.parametrize("reason", ["repeated_error", "identical_output", "no_progress"])
 def test_an_escalation_for_any_other_reason_is_not_a_budget_stop(reason: str) -> None:
-    assert escalation_artifact("loop", reason=reason)["budget"] is False
+    _, stop = ending_sentence.loop_stop(_Quiet(), "root", _Quiet.root, reason=reason, detail="d")
+    assert stop.cause == "step"

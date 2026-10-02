@@ -1,31 +1,31 @@
-"""#3545 — a step whose output ignored its declared `schema` says so, and nothing else changes.
+"""A step whose answer ignored its declared `schema` is not Done: it fails, saying why.
 
-The defect: a stage/node declares a `schema`, the model returns something else, and NOTHING
-anywhere says so. The first symptom arrives two or three steps later as a *binding* error about a
-field in a different node's prompt — and since #3544 softened the reading side to fall back to its
-declared `default`, not even that. Measured on `general-project` with a worker returning prose, the
-run shows 12 of 12 steps Done and escalates on its iteration ceiling with no hint that the worker
-never honoured its schema on any of the six rounds.
+The defect: a stage/node declares a `schema`, the model returns something else, and the step was
+marked Done. Measured on the first-run loop (`general-project` on a hosted model): the work step
+read Done although its answer "ignored its declared schema: it asked for evidence,
+meaningful_progress, summary and got text, not an object" — the run then judged and bound a step
+that had produced none of what its prompt asked for, and the declared keys resolved to their
+defaults downstream.
 
-The fix is an OBSERVATION and nothing more: the producing step is the only place that knows both
-what the schema declared and what came back, so it names it on its own journal row and status
-detail. It does not fail the step (that would break runs which complete today) and it does not
-retry it (that would spend more money on the same non-conforming worker).
+So a step that ignored its schema FAILS, as PROTOCOL — the class `infer` already gives a model whose
+JSON would not parse — naming what the schema declared and what came instead, and the retry policy
+reads it like any other failure. Its answer is kept for the inspector, never bound.
 
 Two traps this file exists to pin, both measured over the bundled library through the production
 loader (78 nodes declare a `schema`: 47 stages, 31 `infer`):
 
-🔴 **A check must never fire on conforming output.** Before #3531 a stage's output was stored as
+🔴 **A gate must never fire on conforming output.** Before #3531 a stage's output was stored as
 `{"result": "<raw text>"}` whatever its `schema`, so a check at the stage settle fired on 47 of 47
 stages and measured the missing seam rather than the model. #3531 applies the declared schema at
-the settle; a conforming answer now fires on 0 of 47, and
-`test_every_bundled_stage_is_silent_when_it_conforms_and_named_when_it_does_not` keeps it that way.
+the settle; a conforming answer now trips 0 of 47, and
+`test_every_bundled_stage_is_done_when_it_conforms_and_fails_when_it_does_not` keeps it that way.
 
-🔴 **A check must read what the WORKER returned, not what the engine filled in.** The judge contract
+🔴 **A gate must read what the WORKER returned, not what the engine filled in.** The judge contract
 writes every key a judge schema declares whatever the model said, so a judge that answered in prose
-settles carrying all of them (`verdict="REJECT"`, `reasoning=""`, ...). A check on the settled
-output was silent on all 7 bundled judge stages. `apply_schema_notice` therefore compares the
-node's own output taken before the engine's seams, at both the dispatch seam and the stage settle.
+settles carrying all of them (`verdict="REJECT"`, `reasoning=""`, ...). `apply_declared_schema`
+therefore compares the node's own output taken before the engine's seams, at both the dispatch seam
+and the stage settle. A judge is held to its contract rather than to every key: prose fails, a
+verdict that left out a key the contract defaults does not.
 """
 
 from __future__ import annotations
@@ -45,9 +45,8 @@ from personalclaw.workflows.bundled_defs import read_template, template_names
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.engine import (
     NodeResult,
-    apply_schema_notice,
+    apply_declared_schema,
     dispatch,
-    release_execution_claim,
     schema_shortfall,
 )
 from personalclaw.workflows.models import (
@@ -129,8 +128,8 @@ class TestTheComparison:
         assert schema_shortfall(DECLARED, {"tier": "high", "why": "because"}) == ""
 
     def test_extra_keys_are_not_a_shortfall(self) -> None:
-        """A model that answers the question AND adds context honoured the schema. Reporting the
-        extras would make the notice fire on output an author is happy with."""
+        """A model that answers the question AND adds context honoured the schema. Failing on the
+        extras would fail output an author is happy with."""
         assert schema_shortfall(DECLARED, {"tier": "a", "why": "b", "confidence": 0.9}) == ""
 
     def test_a_missing_key_names_what_was_asked_for_and_what_arrived(self) -> None:
@@ -185,78 +184,98 @@ class TestTheComparison:
         assert schema_shortfall("not a dict", {"anything": 1}) == ""
 
     def test_a_pathological_output_does_not_write_a_megabyte_into_a_ledger_row(self) -> None:
-        """The notice reaches a journal row, so its size is bounded by construction."""
+        """The sentence is a failure's cause on a journal row, so its size is bounded by
+        construction."""
         schema = {f"k{i}": "string" for i in range(50)}
         msg = schema_shortfall(schema, {f"j{i}": i for i in range(400)})
         assert "+42 more" in msg and "+392 more" in msg
         assert len(msg) < 400
 
     def test_types_are_deliberately_not_compared(self) -> None:
-        """KEYS ONLY. A declared `"number"` against a string is a judgement call, and a notice
-        that fires on output an author considers conforming is worse than no notice at all."""
+        """KEYS ONLY. A declared `"number"` against a string is a judgement call, and a gate that
+        fails output an author considers conforming is worse than no gate at all."""
         assert schema_shortfall({"n": "number", "o": "object"}, {"n": "7", "o": []}) == ""
 
 
-# ── the seam: an observation, never a verdict ────────────────────────────────
+# ── the seam: a gate ─────────────────────────────────────────────────────────
 
 
-class TestTheSeamOnlyObserves:
-    def test_a_non_conforming_success_is_annotated_without_changing_state(self) -> None:
+class TestTheSeamIsAGate:
+    def test_a_non_conforming_success_fails_naming_what_was_asked_and_what_came(self) -> None:
+        """🔴 Before: annotated, and left Done."""
         result = NodeResult(state=InstanceState.DONE, output={"answer": "x"})
         node = _node(NodeKind.INFER, {"schema": DECLARED})
-        out = apply_schema_notice(node, result, result.output)
-        assert out.schema_shortfall  # named
-        assert out.state is InstanceState.DONE  # and nothing else moved
-        assert out.failure is None
-        assert out.degraded_reason == ""
-        assert out.output == {"answer": "x"}
+        out = apply_declared_schema(node, result, result.output)
+        assert out.state is InstanceState.FAILED
+        assert out.failure is not None and out.failure.failure_class.value == "protocol"
+        assert out.failure.cause_plain == (
+            "the output ignored its declared schema: 2 of 2 declared keys are missing (tier, why); "
+            "got answer"
+        )
+        assert not out.failure.retryable, "a non-conforming answer is not a transient failure"
+        assert out.output == {"answer": "x"}  # kept for the inspector
 
     def test_it_reads_what_the_work_returned_not_what_the_engine_filled_in(self) -> None:
         """🔴 The judge trap, at unit scale. The final output carries every declared key because
         the engine wrote them (the judge contract does exactly this); the worker said something
-        else. Named from `observed`, so the engine's keys cannot pass for the worker's."""
+        else. Read from `observed`, so the engine's keys cannot pass for the worker's."""
         filled = NodeResult(state=InstanceState.DONE, output={"tier": "", "why": ""})
         node = _node(NodeKind.STAGE, {"schema": DECLARED})
         # The premise: read off the final output, the check would call this conforming.
         assert schema_shortfall(DECLARED, filled.output) == ""
-        out = apply_schema_notice(node, filled, "Looks fine to me.")
-        assert "and got text, not an object" in out.schema_shortfall
-        assert out.output == {"tier": "", "why": ""}  # observed, never rewritten
+        out = apply_declared_schema(node, filled, "Looks fine to me.")
+        assert out.state is InstanceState.FAILED
+        assert out.failure is not None
+        assert "and got text, not an object" in out.failure.cause_plain
 
-    def test_a_failed_step_is_not_annotated(self) -> None:
+    def test_a_judge_in_prose_fails_but_a_verdict_missing_a_defaulted_key_does_not(self) -> None:
+        """A judge is held to its contract. Prose is no verdict at all; a verdict object that left
+        out a key the contract defaults (an empty `cannot_judge`) is a verdict, already read."""
+        schema = {"reasoning": "string", "verdict": "string", "cannot_judge": "string"}
+        node = _node(NodeKind.STAGE, {"schema": schema, "judge_contract": True})
+        prose = apply_declared_schema(
+            node, NodeResult(state=InstanceState.DONE, output={}), "Looks good, I would pass it."
+        )
+        assert prose.state is InstanceState.FAILED
+        verdict = {"reasoning": "re-ran it", "verdict": "PASS"}
+        kept = apply_declared_schema(
+            node, NodeResult(state=InstanceState.DONE, output=dict(verdict)), dict(verdict)
+        )
+        assert kept.state is InstanceState.DONE and kept.failure is None
+
+    def test_a_failed_step_is_left_as_it_failed(self) -> None:
         """A FAILED step already carries a `Failure` saying why — `infer`'s own
-        `model output was not valid JSON` is exactly that case, and the issue calls it legible.
-        A notice there would restate a failure in a second vocabulary."""
+        `model output was not valid JSON` is exactly that case."""
         result = NodeResult(state=InstanceState.FAILED, output={"answer": "x"})
         node = _node(NodeKind.INFER, {"schema": DECLARED})
-        assert apply_schema_notice(node, result, result.output).schema_shortfall == ""
+        assert apply_declared_schema(node, result, result.output).failure is None
 
-    def test_a_degraded_step_that_produced_nothing_is_not_annotated(self) -> None:
+    def test_a_degraded_step_that_produced_nothing_is_not_gated(self) -> None:
         """`dispatch_stage`'s two DEGRADED paths (a restricted-origin skip, a claim already held)
         return `output=None`. Why they produced nothing is already in `degraded_reason`, and
         re-reading that as "the schema was ignored" would be false."""
         result = NodeResult(
             state=InstanceState.DEGRADED, output=None, degraded_reason="another worker holds it"
         )
-        out = apply_schema_notice(_node(NodeKind.STAGE, {"schema": DECLARED}), result, None)
-        assert out.schema_shortfall == ""
+        out = apply_declared_schema(_node(NodeKind.STAGE, {"schema": DECLARED}), result, None)
+        assert out.state is InstanceState.DEGRADED
         assert out.degraded_reason == "another worker holds it"
 
-    def test_a_node_declaring_no_schema_is_never_annotated(self) -> None:
+    def test_a_node_declaring_no_schema_is_never_gated(self) -> None:
         result = NodeResult(state=InstanceState.DONE, output={"anything": 1})
-        assert (
-            apply_schema_notice(_node(NodeKind.INFER, {}), result, "prose").schema_shortfall == ""
+        assert apply_declared_schema(_node(NodeKind.INFER, {}), result, "prose").state is (
+            InstanceState.DONE
         )
 
-    def test_a_spawned_stage_is_not_annotated_at_the_spawn(self) -> None:
+    def test_a_spawned_stage_is_not_gated_at_the_spawn(self) -> None:
         """`dispatch_stage` returns RUNNING at the spawn with `{"subagent_id": …}`, and RUNNING is
-        not a success state, so the dispatch seam names nothing. The stage is named at its settle,
-        through this same helper (`TestAStageIsNamedAtItsSettle`). The placeholder lacks every
+        not a success state, so the dispatch seam gates nothing. The stage is gated at its settle,
+        through this same helper (`TestAStageIsGatedAtItsSettle`). The placeholder lacks every
         declared key, so the comparison WOULD fire on it; the state gate is what stops it."""
         spawned = NodeResult(state=InstanceState.RUNNING, output={"subagent_id": "sub-1"})
         node = _node(NodeKind.STAGE, {"schema": DECLARED})
         assert schema_shortfall(DECLARED, spawned.output) != ""
-        assert apply_schema_notice(node, spawned, spawned.output).schema_shortfall == ""
+        assert apply_declared_schema(node, spawned, spawned.output).state is InstanceState.RUNNING
 
 
 # ── the dispatcher arm ───────────────────────────────────────────────────────
@@ -282,27 +301,25 @@ def _judge_schema() -> dict[str, Any]:
 class TestInferThroughTheDispatcher:
     """Through `engine.dispatch`, the real seam, so the capture of `observed` is under test."""
 
-    async def test_a_non_conforming_infer_output_is_named_and_still_done(self) -> None:
+    async def test_a_non_conforming_infer_output_fails(self) -> None:
         node = _node(NodeKind.INFER, {"prompt": "p", "schema": DECLARED})
         out = await dispatch(
             node, BindingContext(), completion=_completion(json.dumps({"answer": "fine"}))
         )
-        assert out.state is InstanceState.DONE
-        assert "tier" in out.schema_shortfall and "answer" in out.schema_shortfall
+        assert out.state is InstanceState.FAILED
+        assert out.failure is not None
+        assert "tier" in out.failure.cause_plain and "answer" in out.failure.cause_plain
 
-    async def test_a_conforming_infer_output_is_silent(self) -> None:
+    async def test_a_conforming_infer_output_is_done(self) -> None:
         good = {"tier": "high", "why": "a real reason"}
         node = _node(NodeKind.INFER, {"prompt": "p", "schema": DECLARED})
         out = await dispatch(node, BindingContext(), completion=_completion(json.dumps(good)))
         assert out.output == good  # the premise, not assumed
-        assert out.schema_shortfall == ""
+        assert out.state is InstanceState.DONE and out.failure is None
 
-    async def test_an_infer_judge_that_ignored_its_schema_is_named_though_the_contract_filled_it(
-        self,
-    ) -> None:
-        """🔴 The judge trap at the dispatch seam. #3578 read the output AFTER the judge contract,
-        which writes every key a judge schema declares, so this was silent. No bundled `infer`
-        node declares `judge_contract`, so the library never showed it; a user's judge would."""
+    async def test_an_infer_judge_answer_is_read_by_its_contract(self) -> None:
+        """An object answer missing the judge's keys is a verdict the contract reads (an unknown
+        verdict, so a protocol REJECT), not a step the schema gate fails on top of it."""
         schema = _judge_schema()
         node = _node(
             NodeKind.INFER, {"prompt": "judge it", "schema": schema, "judge_contract": True}
@@ -313,60 +330,44 @@ class TestInferThroughTheDispatcher:
         # The premise: the contract really did fill in every declared key.
         assert set(schema) <= set(out.output), sorted(out.output)
         assert out.state is InstanceState.DONE
-        assert f"{len(schema)} of {len(schema)} declared keys are missing" in out.schema_shortfall
-        assert "got answer" in out.schema_shortfall
+        assert out.output["contract_valid"] is False
 
 
 # ── both arms, driven through a real run ─────────────────────────────────────
 
 
 class TestBothArmsOfARealRun:
-    async def test_the_non_conforming_arm_reaches_the_journal_row_and_the_rest_row(
+    async def test_the_non_conforming_arm_fails_on_the_journal_row_and_the_rest_row(
         self, tmp_path: Path
     ) -> None:
         got = await _drive(tmp_path / "bad", json.dumps({"answer": "it is fine"}))
-        # Non-vacuity first: the node really ran, so "the notice is present" is about this step
-        # rather than about a run that never reached it.
-        assert len(got["completed"]) == 1, got
-        assert got["failed"] == []
-        row = got["completed"][0]
-        assert row["state"] == "done"
-        notice = str(row["schema_shortfall"])
-        assert "tier" in notice and "why" in notice and "answer" in notice
+        assert got["completed"] == [], "a step that ignored its schema was recorded as done"
+        assert len(got["failed"]) == 1, got
+        cause = str(got["failed"][0]["failure"]["cause_plain"])
+        assert "tier" in cause and "why" in cause and "answer" in cause
+        assert got["failed"][0]["failure"]["class"] == "protocol"
         # …and the surface a user actually looks at.
         rest = [r for r in got["rows"] if r["node_id"] == "triage"]
         assert len(rest) == 1
-        assert rest[0]["schema_shortfall"] == notice
+        assert rest[0]["state"] == "failed"
+        assert rest[0]["failure"]["cause_plain"] == cause
+        assert got["status"] is RunStatus.FAILED
 
-    async def test_the_conforming_arm_says_nothing_on_either_surface(self, tmp_path: Path) -> None:
-        """THE arm that decides whether the check is worth having. A notice that fires on
-        conforming output is a false-alarm generator and worse than nothing."""
+    async def test_the_conforming_arm_is_done(self, tmp_path: Path) -> None:
+        """THE arm that decides whether the gate is worth having: it never fails conforming
+        output."""
         good = json.dumps({"tier": "high", "why": "a real reason"})
         got = await _drive(tmp_path / "good", good)
         assert len(got["completed"]) == 1, got  # the premise: it ran
         assert got["completed"][0]["state"] == "done"
-        # ABSENT, not "", on BOTH surfaces. An always-written empty value would read as "checked,
-        # and conformed" — true here, and false on every row that declares no schema.
-        assert "schema_shortfall" not in got["completed"][0]
-        rest = [r for r in got["rows"] if r["node_id"] == "triage"]
-        assert "schema_shortfall" not in rest[0]
-
-    async def test_neither_arm_changes_the_runs_terminal_status(self, tmp_path: Path) -> None:
-        """The scope ceiling, asserted rather than assumed. The notice may not fail a step, so the
-        two runs must end identically — only the notice differs."""
-        bad = await _drive(tmp_path / "t_bad", json.dumps({"answer": "x"}))
-        good = await _drive(tmp_path / "t_good", json.dumps({"tier": "a", "why": "b"}))
-        assert bad["status"] is RunStatus.COMPLETE
-        assert good["status"] is RunStatus.COMPLETE
-        assert bad["completed"][0]["state"] == good["completed"][0]["state"] == "done"
-        assert bad["failed"] == good["failed"] == []
+        assert got["failed"] == []
+        assert got["status"] is RunStatus.COMPLETE
 
     async def test_bare_prose_is_still_the_legible_protocol_failure_it_already_was(
         self, tmp_path: Path
     ) -> None:
-        """The issue's own boundary: text that does not parse at all already fails with
-        PROTOCOL / `model output was not valid JSON`. This change must not reclassify it into a
-        softer notice — that would turn a legible failure into a run that completes."""
+        """Text that does not parse at all already fails with PROTOCOL / `model output was not
+        valid JSON`, and still does."""
         got = await _drive(tmp_path / "prose", "I had a look and I think this is high tier.")
         assert got["completed"] == []
         assert len(got["failed"]) == 1
@@ -387,9 +388,9 @@ async def _drive_stage(
     """One stage through the REAL `SubagentManager` over the shipped `ScriptedProvider`.
 
     A stage's output is produced out of band, at `stage_settlement.reconcile_dispatched_stages`, so
-    this is the only kind of drive that reaches the settle the stage notice lives on. Returns what
-    that settle wrote to each surface: the instance, the journal row, the REST row and the live
-    event.
+    this is the only kind of drive that reaches the settle the stage gate lives on. Returns what
+    that settle wrote to each surface: the instance, the journal row (`step_completed` or
+    `step_failed`), the REST row and the live event.
     """
     from personalclaw.llm.registry import SCRIPTED_PROVIDER_ENV
     from personalclaw.llm.scripted import ScriptedProvider
@@ -439,7 +440,7 @@ async def _drive_stage(
         rows = [
             r
             for r in read_journal(store, run.id)
-            if r.get("kind") == "step_completed" and r.get("instance_path") == path
+            if r.get("kind") in ("step_completed", "step_failed") and r.get("instance_path") == path
         ]
         assert len(rows) == 1, rows
         rest = [r for r in service._nodes_of(run.id) if r["instance_path"] == path]
@@ -459,54 +460,52 @@ async def _drive_stage(
         }
 
 
-class TestAStageIsNamedAtItsSettle:
-    async def test_a_stage_that_answered_in_prose_is_named_on_every_surface(
+class TestAStageIsGatedAtItsSettle:
+    async def test_a_stage_that_answered_in_prose_fails_on_every_surface(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The issue's opening case: the model returns prose and the output keeps the
-        `{"result": …}` envelope. Named as prose, not as a `result` key the worker never wrote."""
+        """The run's own case: the model returns prose. 🔴 Before: Done, with a notice beside it."""
         prose = "I looked into it and everything seems fine to me."
         got = await _drive_stage(tmp_path, monkeypatch, prose, {"schema": STAGE_DECLARED})
         want = (
             "the output ignored its declared schema: it asked for meaningful_progress, summary "
             "and got text, not an object"
         )
-        assert got["inst"].schema_shortfall == want
-        assert got["row"]["schema_shortfall"] == want
-        assert got["rest"]["schema_shortfall"] == want
-        assert got["event"]["schema_shortfall"] == want
-        # And nothing else moved: the settle stored what it stores without the notice.
+        assert got["inst"].state is InstanceState.FAILED
+        assert got["inst"].failure is not None and got["inst"].failure.cause_plain == want
+        assert got["row"]["kind"] == "step_failed"
+        assert got["row"]["failure"]["cause_plain"] == want
+        assert got["rest"]["state"] == "failed"
+        assert got["event"]["status"] == "failed"
+        # What came back is kept for the inspector.
         assert got["stored"] == {"result": prose}
-        assert got["row"]["state"] == "done"
-        assert got["status"] is RunStatus.COMPLETE
+        assert got["status"] is RunStatus.FAILED
 
-    async def test_a_stage_whose_json_lacks_a_declared_key_is_named(
+    async def test_a_stage_whose_json_lacks_a_declared_key_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         answer = json.dumps({"summary": "did it"})
         got = await _drive_stage(tmp_path, monkeypatch, answer, {"schema": STAGE_DECLARED})
-        assert got["row"]["schema_shortfall"] == (
+        assert got["row"]["failure"]["cause_plain"] == (
             "the output ignored its declared schema: "
             "1 of 2 declared keys is missing (meaningful_progress); got summary"
         )
-        assert got["stored"] == {"summary": "did it"}
-        assert got["status"] is RunStatus.COMPLETE
+        assert got["status"] is RunStatus.FAILED
 
-    async def test_a_conforming_stage_says_nothing_on_any_surface(
+    async def test_a_conforming_stage_is_done(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """THE arm that decides whether the check is worth having."""
+        """THE arm that decides whether the gate is worth having."""
         good = {"summary": "did it", "meaningful_progress": True}
         got = await _drive_stage(
             tmp_path, monkeypatch, json.dumps(good), {"schema": STAGE_DECLARED}
         )
         assert got["stored"] == good  # the premise: #3531 stored the declared shape
-        assert got["inst"].schema_shortfall == ""
-        for surface in ("row", "rest", "event"):
-            assert "schema_shortfall" not in got[surface], (surface, got[surface])
+        assert got["inst"].state is InstanceState.DONE
+        assert got["row"]["kind"] == "step_completed"
         assert got["status"] is RunStatus.COMPLETE
 
-    async def test_a_judge_that_answered_in_prose_is_named_though_the_contract_filled_every_key(
+    async def test_a_judge_that_answered_in_prose_fails_though_the_contract_filled_every_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """🔴 The judge trap, on the real settle. The contract writes all six declared keys onto a
@@ -516,20 +515,19 @@ class TestAStageIsNamedAtItsSettle:
         got = await _drive_stage(tmp_path, monkeypatch, "Looks good to me, I'd pass it.", config)
         # The premise, measured in this run: every declared key IS on the stored output.
         assert set(schema) <= set(got["stored"]), sorted(got["stored"])
-        assert got["stored"]["verdict"] == "REJECT"
         assert schema_shortfall(schema, got["stored"]) == ""
-        notice = got["row"]["schema_shortfall"]
-        assert notice.endswith("and got text, not an object"), notice
-        assert all(key in notice for key in schema), notice
-        assert got["status"] is RunStatus.COMPLETE
+        cause = got["row"]["failure"]["cause_plain"]
+        assert cause.endswith("and got text, not an object"), cause
+        assert all(key in cause for key in schema), cause
+        assert got["status"] is RunStatus.FAILED
 
-    async def test_a_stage_declaring_no_schema_is_never_checked(
+    async def test_a_stage_declaring_no_schema_is_never_gated(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         got = await _drive_stage(tmp_path, monkeypatch, "free-form notes", {})
         assert got["stored"] == {"result": "free-form notes"}
-        for surface in ("row", "rest", "event"):
-            assert "schema_shortfall" not in got[surface], (surface, got[surface])
+        assert got["row"]["kind"] == "step_completed"
+        assert got["status"] is RunStatus.COMPLETE
 
 
 # ── the issue's own run: `general-project`, six rounds of a worker that ignores its schema ──
@@ -637,140 +635,38 @@ async def _drive_general_project(
     }
 
 
-class TestTheIssuesOwnRun:
-    async def test_a_prose_worker_is_named_on_every_round(
+class TestTheRunsOwnLoop:
+    async def test_a_prose_worker_is_not_done_and_the_loop_says_which_step_failed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Before: 12 of 12 steps Done, six rounds, and not one row said the worker never honoured
-        its schema. Every settled step now says it, on its own row."""
+        """🔴 Before: every step Done, six rounds, and the loop escalated on its ceiling. Now the
+        work step fails on the first round, and the loop's ending names it and why."""
         got = await _drive_general_project(tmp_path / "prose", monkeypatch, prose=True)
-        done = got["completed"]
-        work = [r for r in done if r["node_id"] == "work"]
-        judge = [r for r in done if r["node_id"] == "judge"]
-        # Non-vacuity: the loop really ran more than one round of both stages.
-        assert len(work) >= 2 and len(judge) >= 2, [r["node_id"] for r in done]
-        unnamed = [r["node_id"] for r in done if not r.get("schema_shortfall")]
-        assert not unnamed, f"steps that ignored their schema and said nothing: {unnamed}"
-        assert {r["schema_shortfall"] for r in work} == {
+        failed = [r for r in got["records"] if r.get("kind") == "step_failed"]
+        work = [r for r in failed if r["node_id"] == "work"]
+        assert work, [r.get("kind") for r in got["records"]]
+        assert {r["failure"]["cause_plain"] for r in work} == {
             "the output ignored its declared schema: it asked for evidence, meaningful_progress, "
             "summary and got text, not an object"
         }
-        assert all("reasoning" in r["schema_shortfall"] for r in judge)
+        assert not [r for r in got["completed"] if r["node_id"] == "work"], "a prose step was Done"
+        # And the loop did not read its failed cycles as dry and finish: two of them used to end
+        # it on its own exit, Completed over four failed steps.
+        assert got["status"] is RunStatus.ESCALATED, got["status"]
+        escalated = [r for r in got["records"] if r.get("kind") == "step_escalated"]
+        assert escalated, "the loop did not hand the run over"
+        assert escalated[-1]["reason"] == "iterations_failed", escalated[-1]
+        assert escalated[-1]["cause"] == "step", escalated[-1]
+        assert "ignored its declared schema" in escalated[-1]["detail"], escalated[-1]
 
-    async def test_a_conforming_worker_is_named_nowhere(
+    async def test_a_conforming_worker_completes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         got = await _drive_general_project(tmp_path / "good", monkeypatch, prose=False)
         done = got["completed"]
         assert {"work", "judge"} <= {r["node_id"] for r in done}  # the premise: both ran
-        named = [(r["node_id"], r["schema_shortfall"]) for r in done if "schema_shortfall" in r]
-        assert not named, named
+        assert not [r for r in got["records"] if r.get("kind") == "step_failed"]
         assert got["status"] is RunStatus.COMPLETE
-
-    async def test_the_notice_changes_nothing_else_about_the_run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """🔴 The scope ceiling, as a differential. The same prose run twice, once with the
-        comparison switched off: status, every journal row, every stored output and every prompt a
-        later round received must be identical, and the ONLY difference is the notice itself."""
-        on = await _drive_general_project(tmp_path / "on", monkeypatch, prose=True)
-        monkeypatch.setattr("personalclaw.workflows.engine.schema_shortfall", lambda s, v: "")
-        off = await _drive_general_project(tmp_path / "off", monkeypatch, prose=True)
-
-        # Non-vacuity both ways: the notice was really on in one run and really off in the other.
-        assert all(r.get("schema_shortfall") for r in on["completed"])
-        assert not any("schema_shortfall" in r for r in off["completed"])
-
-        assert on["status"] is off["status"]
-        assert on["outputs"] == off["outputs"]
-        assert on["prompts"] == off["prompts"]  # the notice never leaks into a later round
-        without_notice = [
-            {k: v for k, v in r.items() if k != "schema_shortfall"} for r in on["records"]
-        ]
-        assert without_notice == off["records"]
-
-
-# ── a notice is per attempt ──────────────────────────────────────────────────
-
-
-class _Canned:
-    """One canned answer for every spawn, optionally a failed one."""
-
-    def __init__(self, text: str, *, error: str = "") -> None:
-        self.text = text
-        self.error = error
-        self.infos: dict[str, _Info] = {}
-
-    def spawn(self, **kw: Any) -> _Info:
-        info = _Info(f"sub{len(self.infos) + 1}", self.text)
-        self.infos[info.id] = info
-        return info
-
-    def get(self, agent_id: str) -> _Info | None:
-        """The error arrives when the child FINISHES, as a real subagent's failure does. Set at
-        spawn, `dispatch_stage` reads it as a rejected spawn and fails synchronously instead."""
-        info = self.infos.get(agent_id)
-        if info is not None:
-            info.done = True
-            info.error = self.error
-        return info
-
-
-async def test_a_re_run_that_fails_does_not_keep_the_previous_attempts_notice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`_launch` clears the notice per attempt, as it clears `cached`. Only a stage's DONE settle
-    sets it, so without the reset a stage that ignored its schema, was re-run and then failed would
-    keep the first attempt's notice on its failed row, persisted, on every page load."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
-    monkeypatch.setattr("personalclaw.workflows.leases.config_dir", lambda: home)
-    stage = {"kind": "stage", "id": "work", "config": {"prompt": "do it", "schema": STAGE_DECLARED}}
-    spec: dict[str, Any] = {
-        "name": "wf3545-rerun",
-        "root": {"kind": "sequence", "id": "root", "children": [stage]},
-    }
-    path = "root.children[0]"
-    run = store.create(WorkflowRun(id="", workflow_name="wf3545-rerun"))
-    store.write_spec(run.id, spec)
-    first = RunController(run, spec, services=EngineServices(subagents=_Canned("I made progress.")))
-    await first.run_to_completion(timeout=20)
-    assert first.instances[path].schema_shortfall  # the vacuity floor: attempt 1 was named
-    attempts = first.instances[path].attempt
-    # A DONE stage keeps its no-double-execution claim for its TTL (#3531), and a re-run inside it
-    # is refused at dispatch as DEGRADED, a path `_apply` clears on its own. Released here as the
-    # TTL would release it, so attempt 2 spawns and settles out of band: the path only the reset in
-    # `_launch` covers.
-    release_execution_claim(first.instances[path].claim_target, first.instances[path].claim_holder)
-
-    # Attempt 2 of the SAME instance, in the crash-resume shape that
-    # `test_workflow_cached_node_surfacing` uses, and this time the worker fails.
-    resumed = store.get(run.id)
-    assert resumed is not None
-    resumed.status = RunStatus.RUNNING
-    failing = _Canned("", error="the worker crashed")
-    second = RunController(resumed, spec, services=EngineServices(subagents=failing))
-    # Loaded back from the state file, which is what makes the reset load-bearing.
-    assert second.instances[path].schema_shortfall
-    for inst in second.instances.values():
-        inst.state = InstanceState.PENDING
-    await second.run_to_completion(timeout=20)
-
-    inst = second.instances[path]
-    # It really re-ran and failed OUT OF BAND, at the settle: the cause is the manager's sentence
-    # verbatim. A refusal at dispatch ("spawn rejected: …", or a claim still held) goes through
-    # `_apply`, which clears the notice on its own and would leave the reset untested.
-    assert inst.attempt > attempts and inst.state is InstanceState.FAILED, (
-        inst.attempt,
-        inst.state,
-    )
-    assert (
-        inst.failure is not None and inst.failure.cause_plain == "the worker crashed"
-    ), inst.failure
-    assert inst.schema_shortfall == ""
-    rows = [r for r in service._nodes_of(run.id) if r["instance_path"] == path]
-    assert rows and "schema_shortfall" not in rows[0], rows
 
 
 # ── the census the gate rests on ─────────────────────────────────────────────
@@ -868,16 +764,16 @@ def _conforming_answer(schema: dict[str, Any]) -> dict[str, Any]:
     return answer
 
 
-def test_every_bundled_stage_is_silent_when_it_conforms_and_named_when_it_does_not(
+def test_every_bundled_stage_is_done_when_it_conforms_and_fails_when_it_does_not(
     tmp_path: Path,
 ) -> None:
     """🔴 The census the stage half rests on, through the PRODUCTION settle.
 
     Before #3531 a stage's output was `{"result": text}` whatever its schema, and a check at the
     settle fired on every schema-declaring stage, conforming or not. Each bundled stage node, under
-    its own template's `runtime_hints`, is settled twice: with a conforming answer (named by none)
-    and with prose (named by all, the judge stages included although the contract fills in their
-    keys).
+    its own template's `runtime_hints`, is settled twice: with a conforming answer (Done, every one)
+    and with prose (failed, every one, the judge stages included although the contract fills in
+    their keys).
     """
     stages: list[tuple[str, Node]] = []
 
@@ -903,7 +799,7 @@ def test_every_bundled_stage_is_silent_when_it_conforms_and_named_when_it_does_n
     assert len(stages) >= 40 and len(judges) >= 5, (len(stages), len(judges))
 
     false_alarms: list[str] = []
-    silent: list[str] = []
+    passed: list[str] = []
     controllers: dict[str, RunController] = {}
     with _isolated(tmp_path):
         for name, node in stages:
@@ -914,12 +810,12 @@ def test_every_bundled_stage_is_silent_when_it_conforms_and_named_when_it_does_n
             good = stage_settlement._settled_stage_output(
                 controller, node, json.dumps(_conforming_answer(schema))
             )
-            if good.schema_shortfall:
-                false_alarms.append(f"{name}:{node.id}: {good.schema_shortfall}")
+            if good.state is not InstanceState.DONE:
+                false_alarms.append(f"{name}:{node.id}: {good.failure}")
             prose = stage_settlement._settled_stage_output(
                 controller, node, "I did the work and it went well."
             )
-            if not prose.schema_shortfall:
-                silent.append(f"{name}:{node.id}")
+            if prose.state is not InstanceState.FAILED:
+                passed.append(f"{name}:{node.id}")
     assert false_alarms == [], false_alarms
-    assert silent == [], silent
+    assert passed == [], passed

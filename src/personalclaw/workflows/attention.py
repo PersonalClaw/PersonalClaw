@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from personalclaw.workflows import needs_input, ownership
+from personalclaw.workflows import ending_sentence, needs_input, ownership
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +311,17 @@ def _announce_workflow_end(state: Any, run: Any, status: Any) -> str:
     return ""
 
 
+#: How an escalated loop's Inbox row is titled, by its escalation's cause. A cause with no title
+#: of its own — a step that failed at its work, refused tools, a start nobody approved — is a
+#: loop that stopped before it finished, and its body says why.
+_LOOP_STOP_TITLE = {
+    ending_sentence.BUDGET: "Loop stopped at its budget",
+    ending_sentence.JUDGE: "Loop stopped: the judge could not decide",
+    ending_sentence.APPROVAL_TIMEOUT: "Loop stopped: an ask ran out of time",
+    ending_sentence.SPEND_CAP: "Loop stopped: a spend cap refused its next call",
+}
+
+
 def _announce_loop_end(state: Any, run: Any, status: Any, *, refused: bool = False) -> str:
     """Tell the user a run started AS A LOOP has ended, as a loops-table loop always has.
 
@@ -328,9 +339,12 @@ def _announce_loop_end(state: Any, run: Any, status: Any, *, refused: bool = Fal
       cap is its owner's to do;
     * ``escalated`` → a durable inbox row plus its one notification: the loop stopped before its
       done condition, and a human decides what happens next on the run page (Retry, Fork). Its
-      title says what happened — "Loop stopped at its budget", or "Loop stopped before it
-      finished" — and not that it waits on an answer: nothing answers an escalation where the
-      row is;
+      title says what happened, by the escalation's own cause (`ending_sentence.CAUSES`) — "Loop
+      stopped at its budget", "Loop stopped: the judge could not decide", "Loop stopped: an ask
+      ran out of time", "Loop stopped: a spend cap refused its next call", or "Loop stopped
+      before it finished" — and not that it waits on an
+      answer: nothing answers an escalation where the row is. Its body is the loop's name, the
+      escalation's sentence and what to do about it;
     * ``cancelled`` and ``declined`` → nothing: the user did it.
 
     Its refs carry ``loop`` (every loop surface deep-links by it, and ``#/loops/<id>`` lands on
@@ -368,15 +382,18 @@ def _announce_loop_end(state: Any, run: Any, status: Any, *, refused: bool = Fal
             from personalclaw.inbox import ItemKind, emit_attention_item
 
             attention = getattr(run, "attention", None) or {}
-            detail = str(attention.get("detail") or attention.get("reason") or "").strip()
-            budget = attention.get("budget") is True
+            detail = str(attention.get("detail") or "").strip()
+            remedy = str(attention.get("remedy") or "").strip()
+            said = " ".join(part for part in (detail, remedy) if part)
             return emit_attention_item(
                 state,
                 source=SOURCE,
                 kind=KIND,
                 item_kind=ItemKind.NEEDS_INPUT.value,
-                title="Loop stopped at its budget" if budget else "Loop stopped before it finished",
-                body=f"{title} — {detail}" if detail else title,
+                title=_LOOP_STOP_TITLE.get(
+                    str(attention.get("cause") or ""), "Loop stopped before it finished"
+                ),
+                body=f"{title} — {said}" if said else title,
                 refs={"loop": run.id, "loop_kind": run.loop_kind, "workflow": run.id},
                 dedup_key=f"loop-run:{run.id}:escalated",
             )

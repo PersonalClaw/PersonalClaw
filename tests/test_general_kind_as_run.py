@@ -375,35 +375,26 @@ REAPED = "Reaped after 900s (exceeded 900s deadline) [stage]"
 WORK_PROMPT = "Do the next meaningful step"
 
 
-class _ProseWorker(_FakeSubagents):
-    """The work stage answers in PROSE, so its declared schema cannot be parsed.
+class _UnacceptedWorker(_FakeSubagents):
+    """The work stage answers in its declared shape and claims progress every round; its judge
+    never accepts it.
 
-    This was #3524's measured shape and it is now the CONTROL rather than the defect, which is the
-    whole point of keeping it. Iteration 0 renders its documented default; from iteration 1 the
-    output is the unstructured `{"result": "<text>"}` envelope, so `{{last.output.summary}}` reads a
-    field a PRESENT `last` does not carry — and #3544's `_prior_cycle_field_miss` rescues exactly
-    that, because the template already declares `| default(…)` for it. So the iterations no longer
-    fail: the loop runs all six, `meaningful_progress` is never parseable out of prose so
-    `until_dry` cannot fire, and it stops on `max_iterations` HONESTLY.
-
-    `loop_convergence._iteration_failures` reports `(0, 6, '')` and the run journals ZERO
-    `step_failed` rows. That is the negative direction of the test below — the same template, the
-    same ceiling, and the reason must stay `max_iterations` — and it is what stops
-    `iterations_failed` from being a label this suite would hang on any run that ran out of room.
-
-    Its judge does not accept the step. A judge that accepted the last cycle would end the loop
-    COMPLETE at its budget, and then there is no ceiling for this control to discriminate.
+    The CONTROL for the test below: the same template reaching the same six-iteration ceiling with
+    iterations that did NOT fail, so the loop stops on `max_iterations` honestly. A worker answering
+    in PROSE used to be this control, while an unparseable stage output still counted as done; a
+    step that ignores its declared schema now fails, so prose is a failing iteration and the control
+    moved to a worker that honours its schema and does not finish. `meaningful_progress` is true
+    every round, so `until_dry` cannot end it either.
     """
 
     def spawn(self, **kw: Any) -> _Info:
-        prompt = str(kw.get("prompt") or kw.get("task") or "")
-        if WORK_PROMPT in prompt:
-            self.prompts.append(prompt)
-            info = _Info(f"sub{len(self.prompts)}", "I had a look around and things seem fine.")
-            self.infos[info.id] = info
-            return info
         info = super().spawn(**kw)
-        info.result = json.dumps({**json.loads(info.result), "verdict": "REJECT"})
+        payload = json.loads(info.result)
+        if "verdict" in payload:
+            payload["verdict"] = "REJECT"
+        else:
+            payload["meaningful_progress"] = True
+        info.result = json.dumps(payload)
         return info
 
 
@@ -411,7 +402,7 @@ class _ReapedWorker(_FakeSubagents):
     """The work stage's subagent is KILLED on its deadline, every iteration.
 
     The premise the test below needs, re-derived against post-#3544 `main`. The original premise was
-    `_ProseWorker` — iterations failing on `unresolved reference at 'summary'` — and #3544 rescues
+    a prose worker — iterations failing on `unresolved reference at 'summary'` — and #3544 rescues
     that miss, so the loop stopped failing and started reaching its ceiling for real. Re-deriving
     rather than re-pointing the assertion: a reap is a failure mode #3544 has no opinion about, so
     the iterations genuinely fail and the escalation has something to be wrong about.
@@ -462,21 +453,20 @@ def test_a_loop_that_spent_its_budget_failing_does_not_blame_its_ceiling() -> No
     the problem. The engine held both facts and surfaced the wrong one.
 
     Asserted on `run.attention`, the record the panel really renders (`attentionMeta.readAttention`
-    → `EscalationPanel`), rather than on the helper that derives it: a
-    `loop_convergence._iteration_failures` unit test would pass against a
+    → `EscalationPanel`), rather than on the helper that derives it: an
+    `ending_sentence._iteration_failures` unit test would pass against a
     `loop_convergence.surface_loop` that ignored it.
 
     **The PREMISE was re-derived here, and the reason is worth stating rather than absorbing.** The
-    failing iterations used to be produced by `_ProseWorker`, whose unstructured output made every
+    failing iterations used to be produced by a prose worker, whose unstructured output made every
     `{{last.output.summary | default(…)}}` read raise `unresolved reference at 'summary'`. #3544
     rescues precisely that miss, so on current `main` that worker's loop reaches its ceiling with
     **zero** failed iterations — measured `(0, 6, '')` — and the old assertion failed in both
     directions at once: the reason really was `max_iterations`, honestly. Re-pointing the assertion
     at whatever now happens would have deleted the claim; instead the premise moved to a failure
     mode #3544 has no opinion about, a subagent killed on its deadline (`_ReapedWorker`). No binding
-    failure is reachable in this template any more — all three `last` reads carry a default and an
-    unparseable stage output keeps its envelope rather than failing — which is asserted below so the
-    premise cannot drift back onto a rescued miss.
+    failure is reachable in this template any more — all three `last` reads carry a default — which
+    is asserted below so the premise cannot drift back onto a rescued miss.
 
     **Both directions, in one test deliberately.** The claim is comparative — the reason must track
     whether the loop spent its budget WORKING — so the control is the same template hitting the
@@ -514,14 +504,14 @@ def test_a_loop_that_spent_its_budget_failing_does_not_blame_its_ceiling() -> No
     )
 
     # 2. The counts and the first failure's own words, so the detail is falsifiable rather than a
-    #    second adjective. The original budget token stays in it — it is still true, and it is what
-    #    a reader greps for.
+    #    second adjective — and no engine token: it is a sentence a person reads.
     detail = str(attention.get("detail") or "")
-    assert "iterations failed instead of finishing their work" in detail, detail
+    assert "cycles failed instead of finishing their work" in detail, detail
     assert (
-        REAPED in detail
+        REAPED.lower() in detail.lower()
     ), f"the detail does not carry the failure the user cannot otherwise read: {detail}"
-    assert "max_iterations" in detail, f"the budget token was dropped rather than kept: {detail}"
+    assert "max_iterations" not in detail, f"an engine token reached the sentence: {detail}"
+    assert attention.get("cause") == "step", attention
 
     # 3. The vacuity floor: the run really did fail most of its iterations. Without this, a detail
     #    naming failures could be describing a run that had none.
@@ -548,7 +538,7 @@ def test_a_loop_that_spent_its_budget_failing_does_not_blame_its_ceiling() -> No
     #
     # Without this the token above would be satisfied by a `loop_convergence.surface_loop` that had
     # simply stopped reading the budget reason at all and always said `iterations_failed`.
-    ctl_status, ctl_controller, ctl_run_id = _drive(_ProseWorker())
+    ctl_status, ctl_controller, ctl_run_id = _drive(_UnacceptedWorker())
     ctl_attention = ctl_controller.run.attention or {}
 
     assert ctl_status is RunStatus.ESCALATED, (

@@ -73,7 +73,7 @@ describe('a run that gave up', () => {
 
 describe('a run whose loop stopped at its budget', () => {
   const BUDGET = 'It used its budget of 1 cycle, and the judge did not accept the last one.'
-  const STOP = { kind: 'escalation', node_id: 'project', reason: 'max_iterations', budget: true, detail: BUDGET }
+  const STOP = { kind: 'escalation', node_id: 'project', reason: 'max_iterations', cause: 'budget', detail: BUDGET }
 
   it('🔴 says it stopped at its budget, not that it gave up, and raises no alert', async () => {
     await mountCard({ status: 'escalated', error: BUDGET, attention: STOP })
@@ -82,6 +82,17 @@ describe('a run whose loop stopped at its budget', () => {
     expect(screen.queryByText(/Stopped:/)).toBeNull()
     expect(screen.getByText(BUDGET)).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+describe('a run whose judge could not decide', () => {
+  it('🔴 says the judge could not decide, not that the loop failed or ran out of budget', async () => {
+    const JUDGED = 'The judge could not decide whether the work is done, and said why: “It could not list the folder.”'
+    const STOP = { kind: 'escalation', node_id: 'project', reason: 'judge_escalated', cause: 'judge', detail: JUDGED }
+    await mountCard({ status: 'escalated', error: JUDGED, attention: STOP })
+    await waitFor(() => expect(screen.getByText('Stopped: the judge could not decide whether the work is done')).toBeTruthy())
+    expect(screen.queryByText('Stopped at its budget')).toBeNull()
+    expect(screen.queryByText(/failing rather than working/)).toBeNull()
   })
 })
 

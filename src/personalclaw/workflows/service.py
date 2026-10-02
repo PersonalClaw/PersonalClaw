@@ -653,6 +653,7 @@ async def start_run(
     loop_kind: str = "",
     title: str = "",
     policy_overrides: dict[str, Any] | None = None,
+    document: str = "",
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
 
@@ -662,12 +663,13 @@ async def start_run(
     Preflight runs first unless explicitly skipped: a missing credential caught here costs
     nothing, and caught at node 7 has already paid for six nodes of model calls.
 
-    ``loop_kind``/``title``/``policy_overrides`` are what a LOOP start carries that no other start
-    does (:func:`start_kind_run` is their one caller): the kind the user asked for, the loop's
-    name, and the per-instance knobs it was created with. They are written onto the run AT
-    CREATE — before the supervisor launches it — because the overlay is frozen once a run has
-    launched (:func:`set_policy_overrides`) and the first tick must already see it: an unattended
-    grant applied one tick late is one approval prompt too many.
+    ``loop_kind``/``title``/``policy_overrides``/``document`` are what a LOOP start carries that no
+    other start does (:func:`start_kind_run` is their one caller): the kind the user asked for, the
+    loop's name, the per-instance knobs it was created with, and the document its work produces
+    (`deliverable.RUN_DOCUMENT_KEY`, already held to one plain document name by that caller). They
+    are written onto the run AT CREATE — before the supervisor launches it — because the overlay
+    is frozen once a run has launched (:func:`set_policy_overrides`) and the first tick must
+    already see it: an unattended grant applied one tick late is one approval prompt too many.
     """
     from personalclaw.workflows.effects import START_DEDUPE
     from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
@@ -777,6 +779,10 @@ async def start_run(
     run_extra: dict[str, Any] = {}
     if inherited is not ownership.MemoryMode.NORMAL:
         run_extra = ownership.stamp_run_mode({}, inherited)
+    if document:
+        from personalclaw.workflows.deliverable import RUN_DOCUMENT_KEY
+
+        run_extra[RUN_DOCUMENT_KEY] = document
 
     run = store.create(
         WorkflowRun(
@@ -902,6 +908,7 @@ async def start_kind_run(
     has_verify_command: bool = False,
     title: str = "",
     policy_overrides: dict[str, Any] | None = None,
+    document: str = "",
     **start_kw: Any,
 ) -> dict[str, Any]:
     """Start a legacy loop `kind` as a `WorkflowRun` on the template that replaced it.
@@ -933,6 +940,11 @@ async def start_kind_run(
     the same concept ("what done means"), not a new input. Left blank, or unclaimed by any input,
     the template's own declared default applies via `with_declared_defaults`.
 
+    `document` names the file the loop's work produces in the folder it works in, when its task
+    asks for one (a note, a draft): the run then shows it as its document. Held to one plain
+    document name (`deliverable.keepable`) and refused otherwise, before any run exists — the
+    name is copied out of a folder other runs share, so it may not reach outside it.
+
     The template is read HERE as well as inside `start_run`, and deliberately: the alternative is to
     teach the generic door the loop vocabulary, which would put `success_criteria` in the signature
     every non-loop caller uses. One extra provider read per launch is the cheaper asymmetry.
@@ -950,6 +962,17 @@ async def start_kind_run(
             ported=sorted(PORTED_LOOP_KINDS),
         )
     normalized = (kind or "").strip().lower()
+    from personalclaw.workflows.deliverable import keepable
+
+    if document and not keepable(document):
+        return _service_failure(
+            "WF_LOOP_DOCUMENT_INVALID",
+            (
+                f"the document {document!r} is not one plain file name ending in .md, .markdown "
+                "or .txt, so it cannot be the loop's document"
+            ),
+            kind=normalized,
+        )
     if normalized not in PORTED_LOOP_KINDS:
         return _service_failure(
             "WF_LOOP_KIND_NOT_PORTED",
@@ -992,6 +1015,7 @@ async def start_kind_run(
         loop_kind=normalized,
         title=title,
         policy_overrides=policy_overrides,
+        document=document,
         **start_kw,
     )
 
@@ -1137,7 +1161,7 @@ def output(run_id: str, node_id: str) -> dict[str, Any]:
 
 
 def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
-    """The §5 reconstructability set for one terminal node (WF2-A2).
+    """The §5 reconstructability set for one node (WF2-A2), as far as it has got.
 
     Read-only forensics over data the controller already persisted: from this payload alone
     a reader can see what a node *saw* (`resolved_prompt` + `resolved_inputs`), what it
@@ -1147,11 +1171,16 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
     (`cached`). The acceptance bar §5 states is that prompt → tools → output is
     reconstructable from these events alone; this is the surface that exposes it.
 
+    **A node that has not finished answers too, with its live state** (`state`): what it has
+    seen and recorded so far, and no output yet — a step still running has produced nothing, and
+    an earlier attempt's output would be read as this one's. A node the run has not reached yet
+    is ``pending`` with nothing recorded. It used to answer 409 for both, so a step the run was
+    working on, and the one waiting behind it, could not be looked at while the run was live —
+    the moment a person is watching it.
+
     Never raises across the boundary — like every function here it returns
-    `{"ok": bool, ...}`. Three distinct failures, because a caller renders them differently:
-    an unknown run/node is a 404 (nothing to show), a node that exists but has not reached a
-    terminal state is a 409 (`WF_NODE_NOT_TERMINAL` — retry as the run advances), and neither
-    is a server fault.
+    `{"ok": bool, ...}`. An unknown run/node is a 404 (nothing to show), and neither is a
+    server fault.
 
     SECRETS: this returns the persisted values VERBATIM — the resolved prompt is stored by the
     controller through `store.write_output`, which does NOT run the journal's redactor, so this
@@ -1187,19 +1216,27 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
     # Same instance→spec equality as `output()`, for the same reason (#3371).
     matched = [p for p in instances if spec_path(p) in id_paths]
     if not matched:
-        return _service_failure(
-            "WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet"
+        # Not reached yet: nothing seen, nothing produced, nothing recorded.
+        return _ok(
+            run_id=run_id,
+            node_id=node_id,
+            instance_path="",
+            state=InstanceState.PENDING.value,
+            resolved_prompt="",
+            resolved_prompt_redacted=False,
+            resolved_prompt_scan=[],
+            resolved_inputs={},
+            output=None,
+            attempts=[],
+            ledger_events=[],
+            cached=False,
         )
     # The LAST instance for the id — a `foreach` body produces many, and inspecting item 0
     # for the whole fan-out is the same footgun `output()` documents. Last by index, as `output()`
     # reads it: by characters, `body#9` came after `body#10`.
     target = max(matched, key=instance_order)
     inst = instances[target]
-    if inst.state not in TERMINAL_STATES:
-        return _service_failure(
-            "WF_NODE_NOT_TERMINAL",
-            f"node {node_id!r} is {inst.state.value}, not terminal — nothing to reconstruct yet",
-        )
+    finished = inst.state in TERMINAL_STATES
 
     node = node_by_path.get(spec_path(target))
 
@@ -1266,9 +1303,12 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
     # that the blob does not ride in the response, and a 5MB output (or a base64 screenshot)
     # inline would flood whatever renders this.
     output_ref = inst.output_ref or ""
-    raw_output = store.read_output(run_id, target)
-    if output_ref and not output_ref.startswith("outputs/"):
-        output_field: Any = {"artifact_ref": output_ref}
+    raw_output = store.read_output(run_id, target) if finished else None
+    if not finished:
+        # Still at work: nothing produced yet (a stored value is an earlier attempt's).
+        output_field: Any = None
+    elif output_ref and not output_ref.startswith("outputs/"):
+        output_field = {"artifact_ref": output_ref}
     elif journal_mod.is_binary_payload(raw_output) or _serialized_bytes(raw_output) > (
         journal_mod.MAX_INLINE_OUTPUT_BYTES
     ):
@@ -2257,7 +2297,16 @@ def _escalations(run_id: str) -> list[dict[str, Any]]:
     gave up and has since SUCCEEDED (a rewind re-ran it) is left out: its escalation no longer
     says why the run is where it is.
     """
-    fields = ("node_id", "instance_path", "reason", "budget", "detail", "options", "attempts")
+    fields = (
+        "node_id",
+        "instance_path",
+        "reason",
+        "cause",
+        "detail",
+        "remedy",
+        "options",
+        "attempts",
+    )
     instances = store.read_state(run_id)
     rows = journal_mod.ledger(run_id, kinds={journal_mod.STEP_ESCALATED})
     return [
@@ -2320,12 +2369,6 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
         # step without one, which has nothing better than its id.
         if labels.get(base):
             row["label"] = labels[base]
-        # What this node's declared `schema` asked for and did not get (#3545), so the run view can
-        # say it on the row that produced it. Omitted rather than sent as "" for the same reason
-        # `cached` is: absence already means "there was nothing to report", and an empty string on
-        # every row of a normal run is twenty fields carrying no information.
-        if inst.schema_shortfall:
-            row["schema_shortfall"] = inst.schema_shortfall
         if inst.model_substituted:  # "ran on X instead of Y: why", omitted when there is none
             row["model_substituted"] = list(inst.model_substituted)
         # Cache-origin (WF2-A1), so "did my edit actually re-run anything?" is answerable from

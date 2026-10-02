@@ -6,7 +6,8 @@
  * budget of 1 was setup's own. The bell said "Loop stopped at its budget"; the run page said
  * "Escalated", "“project” escalated.", "The loop reached its iteration ceiling at project", and "A
  * new run of this workflow fails the same way until the step changes". The escalation record now
- * says it was a budget stop (`budget: true`), and every part of the page reads that.
+ * says why it stopped (`cause: 'budget'`) and what to do (its `remedy`), and every part of the page
+ * reads that.
  *
  * Driven through the real page with the api mocked at its module boundary.
  */
@@ -38,15 +39,25 @@ vi.mock('./DeliverablePanel', () => ({ DeliverablePanel: () => null }))
 
 const SENTENCE = 'It used its budget of 1 cycle, and the judge did not accept the last one.'
 
-function stop(reason: string, budget: boolean) {
+/** The remedy the engine writes for each stop (`ending_sentence.remedy_for`). */
+const REMEDY: Record<string, string> = {
+  max_iterations:
+    'It stopped at the budget it was given, so the workflow needs no change. For more cycles, fork it and set Max cycles before you start the new run.',
+  token_cap:
+    'It stopped at the token budget its workflow sets. To give it more, raise that budget in the workflow, then run it again.',
+  iterations_failed:
+    'A new run of this workflow fails the same way until the step changes: change the step that gave up, then run the workflow again.',
+}
+
+function stop(reason: string, cause: string) {
   return {
-    kind: 'escalation', node_id: 'project', instance_path: 'root', reason, budget,
-    detail: SENTENCE, attempts: [],
+    kind: 'escalation', node_id: 'project', instance_path: 'root', reason, cause,
+    detail: SENTENCE, remedy: REMEDY[reason], attempts: [],
   }
 }
 
-function run(reason = 'max_iterations', budget = true): WorkflowRunDetailData {
-  const escalation = stop(reason, budget)
+function run(reason = 'max_iterations', cause = 'budget'): WorkflowRunDetailData {
+  const escalation = stop(reason, cause)
   return {
     run_id: 'fb54446b',
     workflow: 'general-project',
@@ -105,7 +116,7 @@ describe('a run whose loop stopped at its budget', () => {
   })
 
   it('a loop that escalated for another reason still reads Escalated (the control)', async () => {
-    workflowRun.mockResolvedValue(run('iterations_failed', false))
+    workflowRun.mockResolvedValue(run('iterations_failed', 'step'))
     mount()
     const panel = await screen.findByTestId('escalation-panel')
     expect(within(panel).getByRole('heading').textContent).toBe('This run stopped')
@@ -119,7 +130,7 @@ describe('the runs list reads the same classification', () => {
     const budget = run()
     expect(runLook(budget.status, '', stoppedAtBudget(budget.status, budget.attention)).label)
       .toBe('Stopped at its budget')
-    const other = run('iterations_failed', false)
+    const other = run('iterations_failed', 'step')
     expect(runLook(other.status, '', stoppedAtBudget(other.status, other.attention)).label).toBe('Escalated')
     // A finished run is never a budget stop, whatever its record says.
     expect(stoppedAtBudget('complete', budget.attention)).toBe(false)
