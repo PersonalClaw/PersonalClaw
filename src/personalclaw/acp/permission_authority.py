@@ -56,6 +56,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,21 @@ def _ceiling_permits_self_approval() -> bool:
     except Exception:  # noqa: BLE001 - a ceiling that cannot be read grants nothing
         logger.warning("could not read the operator ceiling's tools scope; clamping")
         return False
+
+
+def screen_tool_call(hooks: Any, title: str, tool_input: Any, cwd: str | None = None) -> Any:
+    """The hook chain's verdict on a CLI's tool call, made on the command that would RUN as well as
+    on its title, which may not carry it (:func:`command_probe`). The probe is deny-only, so only
+    the title's verdict can auto-approve."""
+    from personalclaw.hooks import TOOL_DENY
+    from personalclaw.task_modes import extract_bash_command
+
+    probe = command_probe(title, extract_bash_command(tool_input))
+    for name in (probe, title) if probe else (title,):
+        result = hooks.on_tool_call(name, cwd=cwd)
+        if result.action == TOOL_DENY:
+            break
+    return result
 
 
 def command_probe(title: str, command: str) -> str:

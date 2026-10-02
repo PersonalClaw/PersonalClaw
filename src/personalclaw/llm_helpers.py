@@ -302,10 +302,9 @@ async def _resolve_permission(
     call with nobody to ask is declined, whatever policy the caller passed.
     """
     from personalclaw import approval_grants
-    from personalclaw.acp.permission_authority import command_probe
+    from personalclaw.acp.permission_authority import screen_tool_call
     from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY
     from personalclaw.sel import sel
-    from personalclaw.task_modes import extract_bash_command
 
     def _log(outcome: str, **extra):
         sel().log_tool_invocation(
@@ -328,13 +327,8 @@ async def _resolve_permission(
         return False
 
     if policy == ToolApprovalPolicy.HOOK_BASED and hooks:
-        # The hook's shell checks are made on the command that would RUN, which a CLI's title may
-        # not carry (`command_probe`); the probe is deny-only, so only the title can auto-approve.
-        probe = command_probe(str(event.title or ""), extract_bash_command(event.tool_input))
-        for name in (probe, event.title) if probe else (event.title,):
-            tool_result = hooks.on_tool_call(name)
-            if tool_result.action == TOOL_DENY:
-                break
+        # The hook's shell checks are made on the command that would RUN (`screen_tool_call`).
+        tool_result = screen_tool_call(hooks, str(event.title or ""), event.tool_input)
         if tool_result.action == TOOL_DENY:
             await provider.reject_tool(event.request_id)
             control = tool_result.audit()

@@ -22,6 +22,7 @@ its declaration against.
 """
 
 from personalclaw.apps.agent_tiers import AGENT_TIERS  # noqa: F401
+from personalclaw.apps.core_version import CoreCompatibility  # noqa: F401
 from personalclaw.apps.manifest import (  # noqa: F401
     AppManifest,
     AppSkill,
@@ -29,7 +30,6 @@ from personalclaw.apps.manifest import (  # noqa: F401
     BackendConfig,
     CliConfig,
     ClientInstallConfig,
-    CoreCompatibility,
     CronEntry,
     Dependencies,
     ExternalWrite,

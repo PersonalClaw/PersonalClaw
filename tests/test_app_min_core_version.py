@@ -26,16 +26,16 @@ import pytest
 
 import personalclaw
 from personalclaw.apps import app_manager, app_runtime, catalog, manager
-from personalclaw.apps.manifest import (
+from personalclaw.apps.core_version import (
     CORE_COMPAT_INCOMPATIBLE,
     CORE_COMPAT_INVALID,
     CORE_COMPAT_OK,
     CORE_COMPAT_UNKNOWN_HOST,
-    AppManifest,
     check_core_version,
     host_core_version,
     strict_version_tuple,
 )
+from personalclaw.apps.manifest import AppManifest
 
 HOST = "1.4.2"  # the pretend running core for every path test below
 

@@ -8,6 +8,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from personalclaw.apps.agent_tiers import AGENT_TIERS
+from personalclaw.apps.core_version import version_tuple
 from personalclaw.apps.manifest import (
     PERMISSION_KEYS,
     AppManifest,
@@ -16,7 +17,6 @@ from personalclaw.apps.manifest import (
     MarketplaceDependencies,
     Permissions,
     SetupConfig,
-    version_tuple,
 )
 
 # ---------------------------------------------------------------------------

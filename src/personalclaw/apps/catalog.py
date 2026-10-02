@@ -32,8 +32,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from personalclaw.apps.core_version import version_tuple
 from personalclaw.apps.disclosure import describe
-from personalclaw.apps.manifest import AppManifest, version_tuple
+from personalclaw.apps.manifest import AppManifest
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.security import mask_child_output
@@ -1808,7 +1809,7 @@ def updates_available() -> list[dict[str, Any]]:
     """Installed apps whose source now offers a NEWER version.
 
     Compares each installed app's on-disk version against the highest version offered for it,
-    using the single app-version comparator (``manifest.version_tuple``): what the configured
+    using the single app-version comparator (``core_version.version_tuple``): what the configured
     local sources declare under its name, and what the Store source it was installed from
     offers now (:func:`_offered_versions`, matched by its recorded install pointer). Returns
     one entry per out-of-date app::

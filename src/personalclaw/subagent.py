@@ -23,7 +23,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from personalclaw import approval_grants, memory_writes
-from personalclaw.acp.permission_authority import command_probe
+from personalclaw.acp.permission_authority import screen_tool_call
 from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
@@ -68,7 +68,7 @@ from personalclaw.subagent_tier import (
     run_agent,
     tier_for,
 )
-from personalclaw.task_modes import declared_level, extract_bash_command
+from personalclaw.task_modes import declared_level
 from personalclaw.textfmt import extract_options
 from personalclaw.usage_ledger import spent_rows
 from personalclaw.validation import _AGENT_NAME_RE
@@ -2336,14 +2336,10 @@ class SubagentManager:
                         },
                     )
                     continue
-                # Every shell check the hook makes is made on the command that would RUN, as the
-                # chat's own gate makes it: a CLI's title may not carry it ("unknown", a bare tool
-                # name). The probe is deny-only; only the title's verdict can auto-approve.
-                probe = command_probe(event.title or "", extract_bash_command(event.tool_input))
-                for name in (probe, event.title) if probe else (event.title,):
-                    tool_result = self._ctx_builder.hooks.on_tool_call(name, cwd=info.cwd or None)
-                    if tool_result.action == TOOL_DENY:
-                        break
+                # Shell checks see the command that would RUN, not only the CLI's title.
+                tool_result = screen_tool_call(
+                    self._ctx_builder.hooks, event.title or "", event.tool_input, info.cwd or None
+                )
                 if tool_result.action == TOOL_DENY:
                     tier.refused(
                         call_id, event.title or "", tool_result.reason or "a hook blocked it"
