@@ -126,9 +126,11 @@ export interface ComposerProps {
   /** Pills a host owns, drawn in the toolbar after the built-in ones — a choice that belongs to
    *  what the host creates rather than to a conversation (the loop composer's "Runs on"). */
   hostPills?: ReactNode
-  /** When true, the send button becomes a "queue" affordance — the host runs the
-   *  message after the in-flight turn finishes instead of dropping it. */
+  /** When true, a draft can be sent while a turn runs instead of being dropped. */
   canQueue?: boolean
+  /** Whether the running turn takes a draft in (Steer) rather than running it after the turn
+   *  ends (Queue). Follows the turn the host is showing, never assumed. */
+  canSteer?: boolean
   /** Why a ready draft cannot be sent yet: a file it carries is still uploading. Non-empty → the
    *  Send button is off and carries this as its reason. Enter still hands the draft to `onSend`,
    *  so the host refuses it with this same sentence where the user is looking — a key that did

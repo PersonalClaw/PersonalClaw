@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowUp, Square, CornerDownLeft, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
+import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { spring, physics, expr } from '../design/motion'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, NaturalVoicePill, effortsForAgent, PlusMenu } from './composer/controls'
@@ -30,7 +30,7 @@ export function Composer({
   value, onChange, onSend, streaming, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
-  onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, contextPct, contextWindow, minChars = 1,
+  onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
   naturalVoice, sendHeldReason, hostPills,
 }: ComposerProps) {
@@ -237,7 +237,7 @@ export function Composer({
       {/* The send/stop/steer/sent/processing choice is a pure state machine
           (resolveSendButton) so it's unit-testable without mounting the composer. */}
       {(() => {
-        switch (resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, justSent, held: !!sendHeldReason })) {
+        switch (resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, canSteer: !!canSteer, justSent, held: !!sendHeldReason })) {
           // one-shot pre-send processing (e.g. the goal analyze pass) → a spinning
           // send button, no stop/queue affordance.
           case 'processing':
@@ -246,6 +246,9 @@ export function Composer({
           // (injected at the next model boundary), not queued to run after.
           case 'steer':
             return <IconButton icon={CornerDownLeft} label="Steer — send into the running turn" filled size={40} onClick={() => onSend()} />
+          // mid-stream with a typed draft, on a turn that cannot take it in → it runs next.
+          case 'queue':
+            return <IconButton icon={ListPlus} label="Queue — sent when this turn ends" filled size={40} onClick={() => onSend()} />
           case 'stop':
             return <IconButton icon={Square} label="Stop" filled size={40} onClick={onStop} />
           // Idle send. On send it briefly morphs arrow→check with a bounce bloom

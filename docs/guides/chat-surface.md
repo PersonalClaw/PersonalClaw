@@ -108,8 +108,13 @@ which is how re-planning halfway through a task works.
 
 **Where:** the stacked cards below the composer while a turn is running.
 
-Sending a message mid-turn queues it — the current answer finishes, then yours runs. Each
-queued card has three controls: **Cancel** (drop it, text comes back to the composer),
+While a turn runs, the composer's button says what a message you type will do. **Steer** sends
+it into the running answer, which reads it at its next step. **Queue** runs it after the answer
+finishes. Steer is offered only while the running turn can take a message in: PersonalClaw's
+own agent can, and an agent CLI that cannot be handed a message mid-turn is offered Queue.
+
+A queued message waits in the stacked cards — the current answer finishes, then yours runs.
+Each queued card has three controls: **Cancel** (drop it, text comes back to the composer),
 **Edit** (same, but reopened for changes), and **Interrupt now**.
 
 **Interrupt now** stops the running turn *cooperatively* and starts that queued message next.
@@ -120,6 +125,15 @@ want instead.
 
 If there is nothing queued there is nothing to promote, and Interrupt is not offered — with an
 empty queue it would just be Stop under another name.
+
+### Changing the agent while it answers
+
+Picking another agent, agent CLI, model or reasoning effort while a turn runs — in the
+composer, with **Route** on the routing chip, or through the API — applies to the message
+being answered. The running turn stops, a permission card it was waiting on ends as not run,
+and your message is answered again by what you picked. The chat says so where the
+conversation is: "Moved to oncall-triage — it is answering your message." If the answer had
+already arrived, it stands, and the change applies from your next message.
 
 ## 5. Find in the conversation
 

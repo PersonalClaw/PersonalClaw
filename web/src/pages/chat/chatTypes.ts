@@ -95,6 +95,11 @@ export interface ActivitySegment {
   ref?: string
 }
 
+/** A line the gateway wrote to say what happened to the conversation (`role: 'notice'`) — a turn
+ *  moved to another agent, which is now answering — shown where it happened, live and on reload,
+ *  as a quiet activity line: it is not the agent's answer and not an error. */
+export const noticeSegment = (text: string): ActivitySegment => ({ kind: 'activity', text, activityKind: 'notice' })
+
 /** A turn-level error (the model/provider rejected the turn, e.g. a Bedrock
  *  ValidationException). Surfaced as a distinct red callout so a failed turn is
  *  never silently blank. Arrives live via the `chat_message` WS frame (role
@@ -640,6 +645,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
       lastAssistant().segments.push({ kind: 'error', text: turnErrorText(m.content) })
+    } else if (m.role === 'notice') {
+      lastAssistant().segments.push(noticeSegment(m.content))
     } else if (m.role === 'streaming') {
       // The answer being written RIGHT NOW — the gateway keeps it as ONE `streaming` entry,
       // grown in place until it settles. Skipping it cut off everything a turn had written
@@ -674,7 +681,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
 }
 
 /** The roles `hydrateTurns` renders — every other row is invisible to the transcript. */
-const TRANSCRIPT_ROLES = new Set(['user', 'assistant', 'streaming', 'tool', 'permission', 'error'])
+const TRANSCRIPT_ROLES = new Set(['user', 'assistant', 'streaming', 'tool', 'permission', 'error', 'notice'])
 
 /** The text of the answer still being written when this history was read — the `streaming`
  *  entry, when it is the last row the transcript renders — or `null`. That entry paints the

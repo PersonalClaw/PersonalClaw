@@ -43,7 +43,8 @@ class TestChatSessionReasoningEffort:
             )
             assert resp.status == 200
             data = await resp.json()
-            assert data == {"ok": True, "reasoning_effort": level}
+            # No turn was running, so none was moved (`running_turn.rebind`).
+            assert data == {"ok": True, "reasoning_effort": level, "moved": False}
             assert session.reasoning_effort == level
             # Mid-session change resets the session so the subprocess
             # respawns with the new --effort flag.

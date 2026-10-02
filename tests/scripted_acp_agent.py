@@ -29,6 +29,8 @@ Scenarios (each turn asks to run one command first):
 ``slow-answer``
     Its first turn runs a step, then thinks for :data:`SLOW_SECONDS` in silence before it
     answers (:data:`LATE_ANSWER`); every later turn answers at once (:data:`NEXT_ANSWER`).
+``answers``
+    Answers every prompt at once (:data:`PLAIN_ANSWER`), asking nothing.
 
 Every scenario advertises ``loadSession`` and answers ``session/load``, so a resume of a session
 it served is recorded like any other request.
@@ -53,6 +55,8 @@ REFUSAL_DATA = "The engine process exited with code 64"
 SLOW_SECONDS = 1.5
 LATE_ANSWER = "The review, after a long think: the change is a version bump."
 NEXT_ANSWER = "This is the answer to the second question."
+#: What ``answers`` says to every prompt.
+PLAIN_ANSWER = "The alerts are the carrier adapter timing out; here is what to check first."
 #: What ``dies-mid-turn`` prints before it exits.
 DYING_STDERR = "engine: the connection to its service was reset"
 
@@ -239,6 +243,10 @@ class Agent:
                 time.sleep(SLOW_SECONDS)
                 self.say(LATE_ANSWER)
             self.prompts_seen += 1
+            self.end_turn("end_turn")
+        elif method == "session/prompt" and self.scenario == "answers":
+            self.prompt_id = req_id
+            self.say(PLAIN_ANSWER)
             self.end_turn("end_turn")
         elif method == "session/prompt":
             self.start_turn(req_id)

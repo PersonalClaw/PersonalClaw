@@ -5,7 +5,6 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,7 +24,7 @@ from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
-from personalclaw.dashboard import turn_endings
+from personalclaw.dashboard import running_turn, turn_endings
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
@@ -2813,7 +2812,8 @@ async def run_chat(
     # The runtime's own sentence for a turn IT stopped (the loop breaker's), from the terminal
     # complete event; shown as the turn's error row after the stream ends.
     _runtime_stop_note = ""
-    _turn_cancelled = False
+    # ...and whether it ended with its answer rather than a cancel (`running_turn.say_moved`).
+    _turn_cancelled = _answered = False
     # Who serves the turn, and what it says if its agent ends it after her Deny (`turn_endings`).
     _turn_agent = _deny_note = ""
     # How a conversation an app started approves (`app_conversation_posture`); None for yours.
@@ -3523,7 +3523,7 @@ async def run_chat(
                 )
             except Exception:
                 logger.debug("steer source wiring skipped", exc_info=True)
-        state.sessions.set_steer_drains(session_key, _steerable)
+        running_turn.set_steer_drains(state, session, session_key, _steerable)
 
         # `PreResponse` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing until
         # now. Fired BEFORE the stream is created — the last moment the catalog's description
@@ -3677,6 +3677,7 @@ async def run_chat(
         if _prov_id.startswith("acp:"):
             _acp_cli = _prov_id[4:]
         _turn_agent = turn_endings.serving_agent_name(client)
+        running_turn.end_if_moved(session)  # nothing awaits from here to the runtime's prompt
         async for event in event_stream:
             # Heartbeat every 5s during long operations
             if time.time() - last_heartbeat > 5:
@@ -5182,6 +5183,7 @@ async def run_chat(
                     _turn_model = _record_model or ""
                     _turn_provider = _record_provider
                 _stop_reason = event.stop_reason
+                _answered = not is_cancelled_stop(_stop_reason)
                 if is_cancelled_stop(_stop_reason) and event.text:
                     _runtime_stop_note = event.text
                 _turn_event_count = event.event_count
@@ -5528,7 +5530,8 @@ async def run_chat(
     # so the partial answer the user was reading is kept, and sits ahead of the error that
     # explains why it stops.
     except asyncio.CancelledError:
-        # A force stop can cancel the task before the provider reports a stop reason.
+        # A force stop can cancel the task before the provider reports a stop reason, and a move
+        # before the prompt went out ends it here too (`running_turn.TurnMoved`).
         _turn_cancelled = True
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)
@@ -5706,63 +5709,20 @@ async def run_chat(
             except Exception:
                 logger.debug("Stream cleanup failed", exc_info=True)
         # Below the channel's progress lines, which the stream just finalized.
-        say_how_an_unanswered_turn_ended(
-            state, session, session_key, _turn_outcome, after_deny=_deny_note
-        )
+        if not running_turn.say_moved(state, session, session_key, _answered, _send_again):
+            say_how_an_unanswered_turn_ended(
+                state, session, session_key, _turn_outcome, after_deny=_deny_note
+            )
         if _acquired:
-            # The turn is over: the runtime is no longer pulling, so a steer sent
-            # from here on must queue rather than buffer. The buffer is emptied
-            # here too — a steer aimed at THIS answer must not surface inside an
-            # unrelated later turn — but what comes back is not discarded.
-            _stranded = list(state.sessions.set_steer_drains(session_key, False))
-            # ...plus anything an ACP turn pulled but could not write to the CLI (a
-            # rejected frame, a dead process, the per-turn cap). Both feeders end up on
-            # ONE visible path, so "undeliverable" has a single meaning for every runtime.
-            _undelivered = getattr(client, "undelivered_steers", None)
-            if callable(_undelivered):
-                try:
-                    _stranded.extend(t for t in (_undelivered() or []) if t)
-                except Exception:
-                    logger.debug("undelivered steer read failed", exc_info=True)
-            # A steer the user was told was accepted must not evaporate. Requeue it, which
-            # is exactly what `mid_turn_policy: steer` already promises on a non-capable
-            # runtime ("fall back to queue — never drop, never cancel"): the drain below
-            # takes it as the very next turn, and the `queue_push` echo puts it in the
-            # composer's queue strip where it can be read and cancelled. No new event kind
-            # — the frontend filters `activity_event {kind:"status"}` as noise, so a status
-            # broadcast here would have been another invisible "fix".
-            for _text in _stranded:
-                try:
-                    _qid = session.queue_append(_text)
-                except Exception:
-                    logger.warning("failed to requeue an undelivered steer", exc_info=True)
-                    continue
-                _c, _ = redact_exfiltration_urls(_text)
-                _c, _ = redact_credentials(_c)
-                state.broadcast_ws(
-                    "queue_push",
-                    {
-                        "session": session.key,
-                        "content": _redact_for_display(_c),
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "queue_id": _qid,
-                    },
-                )
-                # WARNING, not info: the HTTP caller was already told `{"steered": true}`,
-                # so this is a promise the turn did not keep. The default gateway log level
-                # is WARNING (measured: an isolated run recorded zero INFO lines), and a
-                # broken promise nobody can see in the log is the same defect one layer up.
-                logger.warning(
-                    "steer was NOT delivered to the running turn — requeued for the next one "
-                    "(session=%s)",
-                    session_key,
-                )
+            # The turn is over: a steer sent from here on queues, and one it did not take runs next.
+            running_turn.end_steers(state, session, session_key, client)
             if needs_session_reset:
                 try:
                     await state.sessions.reset(session_key)
                 except Exception:
                     logger.warning("Failed to reset session %s after agent switch", session_key)
             state.sessions.release(session_key)
+        await running_turn.apply_pending_move(state, session, session_key)
         # Process queued messages (FIFO) — keep SSE stream alive. Not while the gateway stops: a
         # turn started now would only be cut off in its turn.
         if session._queue and not state.stopping_for:

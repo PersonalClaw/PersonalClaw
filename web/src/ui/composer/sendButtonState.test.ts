@@ -29,7 +29,7 @@ describe('resolveSendButton', () => {
     // An empty draft still asks for text first, upload or not.
     expect(resolveSendButton({ ...base, held: true })).toBe('send-disabled')
     // A steer carries no files, so an upload in flight does not hold it.
-    expect(resolveSendButton({ ...base, streaming: true, canQueue: true, canSend: true, held: true })).toBe('steer')
+    expect(resolveSendButton({ ...base, streaming: true, canQueue: true, canSteer: true, canSend: true, held: true })).toBe('steer')
   })
 
   it('just after send → transient sent bloom, inert (smoke: send→ confirmation)', () => {
@@ -46,11 +46,21 @@ describe('resolveSendButton', () => {
     expect(sendButtonIsActive('stop')).toBe(true)
   })
 
-  it('streaming + queue-able draft → steer into the running turn', () => {
-    expect(resolveSendButton({ ...base, streaming: true, canSend: true, canQueue: true })).toBe('steer')
+  it('streaming + a draft the running turn takes in → steer into it', () => {
+    expect(resolveSendButton({ ...base, streaming: true, canSend: true, canQueue: true, canSteer: true })).toBe('steer')
     // queue-able but empty draft → still stop (nothing to steer).
-    expect(resolveSendButton({ ...base, streaming: true, canQueue: true })).toBe('stop')
+    expect(resolveSendButton({ ...base, streaming: true, canQueue: true, canSteer: true })).toBe('stop')
     expect(sendButtonIsActive('steer')).toBe(true)
+  })
+
+  // A turn whose runtime pulls no message in (an agent CLI without the seam, a turn not yet
+  // wired, a turn that is already over) cannot be steered: the message runs when it ends, and the
+  // button says so instead of offering a Steer the server turns into a queued message.
+  it('streaming + a draft the running turn cannot take in → queue it behind the turn', () => {
+    expect(resolveSendButton({ ...base, streaming: true, canSend: true, canQueue: true })).toBe('queue')
+    expect(resolveSendButton({ ...base, streaming: true, canSend: true, canQueue: true, canSteer: false })).toBe('queue')
+    expect(resolveSendButton({ ...base, streaming: true, canQueue: true, canSteer: false })).toBe('stop')
+    expect(sendButtonIsActive('queue')).toBe(true)
   })
 
   it('processing outranks everything → inert spinner (smoke: one-shot pre-send pass)', () => {

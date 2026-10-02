@@ -84,7 +84,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { approvalRiskOf, blastRadiusOf } from './chat/approvalMeta'
@@ -708,6 +708,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // what send() actually branches on, so a `false` here would reopen the window a layer
   // below the button's label.
   const streamingRef = useRef(streaming)
+  // Whether the running turn takes a message in (Steer) or runs it after it ends (Queue), as the
+  // gateway says it (`running_turn.set_steer_drains`): a turn whose runtime pulls no message in
+  // is never offered a Steer it cannot take. The ref is what send() branches on.
+  const [takesSteers, setTakesSteersState] = useState(false)
+  const takesSteersRef = useRef(false)
+  const setTakesSteers = (v: boolean) => { takesSteersRef.current = v; setTakesSteersState(v) }
   // Set by a Stop in this tab and cleared by that turn's `chat_done`. Stop drops the streaming
   // claim at once, before the turn has sent its last frames, and those frames are not a turn
   // some other tab started (`chat/joinTurn.ts`).
@@ -754,6 +760,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (!outcome) setSrAnnounce('')
     }
     if (!v) sayTurnEnded(outcome)
+    // A settled turn takes no steer; the next turn says whether it does.
+    if (!v) setTakesSteers(false)
     // Release the handoff the moment the run settles. Left set, a later mount of this
     // same session (a revisit) would claim a finished run was live and offer Steer over
     // an idle backend — the mirror image of #3444, and just as dishonest.
@@ -1030,6 +1038,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // restore effect when a new session's binding arrives.
   const sessionBindingRef = useRef<{ agent: string; model: string; acp_provider: string; acp_provider_agent: string; reasoning_effort: string } | null>(null)
   const [bindingNonce, setBindingNonce] = useState(0)
+  // Set when the gateway said the chat now runs on another binding (`session_binding`), so the
+  // composer shows it even when it is the default agent — whoever made the change.
+  const bindingToldRef = useRef(false)
   // Natural voice: the per-conversation scope. `choice` is what this
   // conversation states; `effective`/`source` are the backend's resolution against
   // the bound agent's definition — never recomputed here. `source: ''` means "no
@@ -1147,6 +1158,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const messages = d.messages || []
     const running = !!d.running
     setTurns(hydrateTurns(messages, running))
+    setTakesSteers(running && !!d.steerable)
     adoptedUserTs.current = new Set(messages.flatMap((m) => (m.role === 'user' && m.ts ? [m.ts] : [])))
     // The answer still being written continues IN the segment the snapshot paints for it:
     // ownership is claimed before the coalescer can flush, so the next flush extends the
@@ -1345,6 +1357,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   useEffect(() => {
     const b = sessionBindingRef.current
     if (!b) return
+    const told = bindingToldRef.current
+    bindingToldRef.current = false
     // reasoning_effort is a per-turn session SETTING (no longer an effort-agent),
     // so restore it for BOTH native and ACP sessions.
     const reasoning = (b.reasoning_effort || '') as ReasoningEffort
@@ -1352,7 +1366,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       const list = data.discovered?.[b.acp_provider] ?? []
       const match = list.find((a) => a.provider_agent === b.acp_provider_agent)
       if (match) setSelection((s) => ({ ...s, agent: match.name, model: b.model || 'Auto', reasoning }))
-    } else if (b.agent || b.model || reasoning) {
+    } else if (told || b.agent || b.model || reasoning) {
       setSelection((s) => ({ ...s, agent: b.agent, model: b.model || 'Auto', reasoning }))
     }
   }, [bindingNonce, data.discovered])
@@ -1419,6 +1433,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           patchLastAssistant((segs) => {
             const last = segs[segs.length - 1]
             return last?.kind === 'error' && last.text === text ? segs : [...segs, { kind: 'error', text }]
+          })
+        } else if (d.role === 'notice') {
+          // What happened to the conversation, in the gateway's words (a turn moved to another
+          // agent): neither the agent's answer nor an error. Idempotent like the error above.
+          const text = String(d.content ?? '')
+          if (!text) break
+          endTextRun()
+          patchLastAssistant((segs) => {
+            const last = segs[segs.length - 1]
+            return last?.kind === 'activity' && last.text === text ? segs : [...segs, noticeSegment(text)]
           })
         } else if (d.role === 'assistant') {
           // A line the gateway wrote into the transcript itself — a compaction's outcome, the notice
@@ -1535,6 +1559,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           sg.kind === 'approval' && sg.id === String(d.request_id ?? '') ? { ...sg, resolved: String(d.outcome ?? '') } as ApprovalSegment : sg) })))
         break
       case 'chat_segment': endTextRun(); break
+      // Whether the running turn takes a steer, said when the turn wires its runtime.
+      case 'turn_steerable': setTakesSteers(!!d.steerable); break
+      // What the chat runs on now — changed here, in another tab or by any caller of the API —
+      // so the composer never names an agent the next message will not go to.
+      case 'session_binding':
+        sessionBindingRef.current = {
+          agent: String(d.agent ?? ''), model: String(d.model ?? ''),
+          acp_provider: String(d.acp_provider ?? ''), acp_provider_agent: String(d.acp_provider_agent ?? ''),
+          reasoning_effort: String(d.reasoning_effort ?? ''),
+        }
+        bindingToldRef.current = true
+        setBindingNonce((n) => n + 1)
+        break
       // The agent cleared the conversation: the gateway emptied the transcript and says
       // "Conversation cleared." in it next (a `chat_message`), which is all a reload shows.
       case 'session_clear': dropTextRun(); setTurns([]); break
@@ -2232,10 +2269,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // /optimize), use it; otherwise the Sparkles preview path leaves the optimized
     // text in the input with `preOptimize` holding what the user first typed.
     const original = opts?.original ?? (preOptimize !== null && preOptimize.trim() !== t ? preOptimize.trim() : undefined)
-    // Mid-run send → ask to STEER (inject into the answer being written). The
-    // composer's mid-stream button is labelled "Steer", so it must actually try to
-    // steer; it previously sent `followup`, which always queued, making the label a
-    // lie.
+    // Mid-run send → ask for what the composer's mid-stream button said: STEER (inject into
+    // the answer being written) on a turn that takes one, QUEUE on a turn that does not. The
+    // label follows the gateway's word for the running turn (`takesSteers`), so the request
+    // does too: a button that says Steer and sends `followup` — or says Steer over a turn
+    // that cannot take one — is a lie either way.
     //
     // The server decides and says which it did: `{steered:true}` when the running
     // turn has a live drain path, `{queued:true}` when it does not (an ACP-backed
@@ -2289,7 +2327,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // the ts we send, and Edit & resend locates a message by it.
       const steerTs = new Date().toISOString()
       ensureSession()
-        .then((s) => api.sendChat(t, s, { client_ts: steerTs }, 'steer').then((r) => [s, r] as const))
+        .then((s) => api.sendChat(t, s, { client_ts: steerTs }, takesSteersRef.current ? 'steer' : 'followup').then((r) => [s, r] as const))
         .then(([s, r]) => {
           setInput((cur) => (cur === t ? '' : cur))
           if (r?.steered) { setSteered((prev) => [...prev, t]); return }
@@ -3553,7 +3591,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={promptHistory}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />

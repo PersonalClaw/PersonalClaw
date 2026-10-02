@@ -156,7 +156,7 @@ async function open() {
 }
 
 const primaryAction = () =>
-  ['Stop', 'Steer — send into the running turn', 'Send message']
+  ['Stop', 'Steer — send into the running turn', 'Queue — sent when this turn ends', 'Send message']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no primary action)'
 
 const QUESTION = { role: 'user', content: 'Count, please.', ts: 't-user' }

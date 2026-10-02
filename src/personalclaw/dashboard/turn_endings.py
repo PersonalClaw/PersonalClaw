@@ -1,5 +1,5 @@
-"""The sentences a chat turn ends on when its agent, not a fault, ended it — and the record of
-what a Deny answered the agent with.
+"""The sentences a chat turn ends on when its agent or its owner, not a fault, ended it — and the
+record of what a Deny answered the agent with.
 
 Product copy the chat runner (`chat_runner.run_chat`) puts where the conversation is. An agent
 CLI is named by its runtime (``acp:<cli>``), as the image-input sentence names it
@@ -29,6 +29,19 @@ def refused_turn_notice(agent: str) -> str:
     """Said when the agent refused to continue the turn (``stopReason: refusal``) and wrote
     nothing. Never resent either: it would be asked the same thing again."""
     return f"{_sentence_case(agent)} refused to continue and wrote no answer."
+
+
+def moved_turn_notice(to: str) -> str:
+    """Said when she changed what answers the chat while it was answering (`running_turn`): the
+    turn ended stopped and *to* is answering her message again. Not a fault, so not the cut-short
+    notice, and not an error."""
+    return f"Moved to {to.strip() or 'the new agent'} — it is answering your message."
+
+
+def moved_after_answer_notice(to: str) -> str:
+    """Said when the change landed after the turn had given its answer: the answer stands and
+    *to* answers from her next message."""
+    return f"Switched to {to.strip() or 'the new agent'}. It answers your next message."
 
 
 def serving_agent_name(client: object) -> str:

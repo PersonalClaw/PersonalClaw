@@ -205,9 +205,10 @@ describe('Speak replies aloud', () => {
     let answerTheSend!: (r: unknown) => void
     h.sendChat.mockImplementationOnce(() => new Promise((resolve) => { answerTheSend = resolve }))
     const earlier = [{ role: 'user', content: 'from the other tab', ts: 't1' }]
-    const view = await openWith({ seed: 'And then this.' }, { running: true, messages: earlier, stream_seq: 0 })
+    // The running turn's runtime pulls no message in, so the composer queues this one behind it.
+    const view = await openWith({ seed: 'And then this.' }, { running: true, steerable: false, messages: earlier, stream_seq: 0 })
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'Steer — send into the running turn' }))
+    await user.click(await screen.findByRole('button', { name: 'Queue — sent when this turn ends' }))
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
     const ts = String(h.sendChat.mock.calls[0][2]?.client_ts)
     view.unmount()

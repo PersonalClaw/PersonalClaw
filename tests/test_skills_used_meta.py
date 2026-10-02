@@ -459,7 +459,9 @@ def test_the_three_origins_are_distinct_and_closed():
 #: chat's pending approval onto the one approval registry (``request_approval``), so the chat
 #: runner stopped broadcasting a frame of its own for it. A removal, not a new channel.
 #: ``context_usage`` left the same way: the ring's reading is said through
-#: ``DashboardState.say_context_usage``, which also keeps it for session detail.
+#: ``DashboardState.say_context_usage``, which also keeps it for session detail. ``queue_push``
+#: left too, with the requeue of the steers a finished turn did not take, which moved into
+#: ``running_turn.end_steers``: the turn still sends it, from there.
 _BASELINE_WS_EVENTS = {
     "activity_event",
     "chat_chunk",
@@ -473,7 +475,6 @@ _BASELINE_WS_EVENTS = {
     "heartbeat",
     "question_card",
     "queue_pop",
-    "queue_push",
     "session_agent_switch",
     "session_clear",
     "token_usage",
@@ -481,8 +482,10 @@ _BASELINE_WS_EVENTS = {
     "tool_result",
 }
 
-#: What a turn sends: the runner's own frames, and the ring's reading said through the state.
-_TURN_WS_EVENTS = _BASELINE_WS_EVENTS | {"context_usage"}
+#: What a turn sends: the runner's own frames, the ring's reading said through the state, and
+#: what ``running_turn`` says for it: whether the turn takes a steer (``turn_steerable``) and a
+#: steer it did not take, requeued (``queue_push``). Neither is a skills channel.
+_TURN_WS_EVENTS = _BASELINE_WS_EVENTS | {"context_usage", "queue_push", "turn_steerable"}
 
 _WS_NAME_RE = re.compile(r'broadcast_ws\(\s*"([a-z_]+)"')
 

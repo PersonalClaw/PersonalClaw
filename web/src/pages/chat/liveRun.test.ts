@@ -30,10 +30,12 @@ describe('#3444 — what the composer advertises at the moment of the click', ()
     expect(resolveSendButton({ ...AT_THE_CLICK, streaming })).toBe('send')
   })
 
-  it('a handed-off run advertises Steer, so the click sends INTO the turn', () => {
+  it('a handed-off run advertises a send INTO the turn: Queue, or Steer once the turn takes one', () => {
     const streaming = streamingAtMount('chat-7', 'chat-7')
     expect(streaming).toBe(true)
-    expect(resolveSendButton({ ...AT_THE_CLICK, streaming })).toBe('steer')
+    // Until the gateway says the running turn takes a steer, the message runs after it.
+    expect(resolveSendButton({ ...AT_THE_CLICK, streaming })).toBe('queue')
+    expect(resolveSendButton({ ...AT_THE_CLICK, streaming, canSteer: true })).toBe('steer')
     // and it is clickable — a correct label on an inert control would refuse silently,
     // which is the same absence wearing a different face.
     expect(sendButtonIsActive(resolveSendButton({ ...AT_THE_CLICK, streaming }))).toBe(true)

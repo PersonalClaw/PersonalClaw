@@ -11,7 +11,7 @@ const doc: UiDoc = {
   props: [
     { name: 'value', description: 'The current draft text (controlled).' },
     { name: 'onChange', description: 'Fires with the new draft on every edit.' },
-    { name: 'onSend', description: 'Called to send the draft — also invoked as "steer" mid-stream and "queue" when canQueue.' },
+    { name: 'onSend', description: 'Called to send the draft — also invoked mid-stream, as "steer" when canSteer and "queue" otherwise, when canQueue.' },
     { name: 'streaming', description: 'True while a turn is streaming — flips the send button to Stop (or Steer with a typed draft).' },
     { name: 'processing', description: 'One-shot pre-send processing (e.g. the goal analyze pass) → a spinning send button with no stop/queue affordance.' },
     { name: 'onStop', description: 'Called from the Stop button to abort the running turn.' },
@@ -37,7 +37,8 @@ const doc: UiDoc = {
     { name: 'onHandsFreeSubmit', description: 'Receives the accumulated dictation once a confirmation phrase fires the turn; required for the hands-free toggle to appear.' },
     { name: 'screenShare', description: 'Screen-context sharing state + toggle (MULTIMODAL-IO §5.2), owned by the HOST because the header sharing chip must outlive the composer\u2019s scroll. available:false (the OFF-by-default config flag) renders no control at all; a non-empty disabledReason renders it disabled carrying that reason.' },
     { name: 'naturalVoice', description: 'Natural voice (PT-7) \u2014 the per-conversation plainer-prose scope. `effective`/`source` arrive already RESOLVED by the backend, which owns the single statement of the resolution order (per-conversation over the agent default); the pill displays them and never re-derives it. Absent \u2192 no control, which is what the goal composer (no conversation) gets.' },
-    { name: 'canQueue', description: 'When true, the send button becomes a "queue" affordance — the host runs the message after the in-flight turn instead of dropping it.' },
+    { name: 'canQueue', description: 'When true, a draft can be sent while a turn runs instead of being dropped.' },
+    { name: 'canSteer', description: 'Whether the running turn takes a draft in: true shows "Steer — send into the running turn", false shows "Queue — sent when this turn ends". Follows what the host says of the turn it shows.' },
     { name: 'sendHeldReason', description: 'Why a ready draft cannot be sent yet — a file it carries is still uploading. Non-empty → the Send button is off and carries it as its reason; Enter still hands the draft to onSend so the host refuses it with this sentence where the user is looking. A steer into a running turn is not held.' },
     { name: 'hostPills', description: 'Pills the host owns, drawn in the toolbar after the built-in ones — a choice that belongs to what the host creates rather than to a conversation (the loop composer\'s "Runs on").' },
     { name: 'contextPct', description: '0–100 context-window usage for the bound session → ring on the model pill. Omit it (undefined) when the backend reported no measurement — the pill shows a plain dot whose title says why (see `contextWindow`), never a fabricated 0%. 100 means the context is full (including a provider that silently truncated the prompt); the value never exceeds 100 and never falls as the prompt grows.' },

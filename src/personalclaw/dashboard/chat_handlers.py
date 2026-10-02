@@ -18,6 +18,7 @@ from personalclaw import approval_answer, approval_grants
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
+from personalclaw.dashboard import running_turn
 from personalclaw.dashboard.approval_state import (
     SESSION_APPROVAL_ACTIONS,
     _mark_permission_resolved,
@@ -984,6 +985,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             "title": session.title,
             "running": session.running,
             "stopping": session._stopping,
+            # Whether the running turn takes a steer (`running_turn.set_steer_drains`): the
+            # composer offers Steer only then, and Queue otherwise.
+            "steerable": session.running and session._takes_steers,
             # How the latest turn that left the session idle ended — what that turn's
             # `chat_done` carried — or null when none has. A tab that missed the frame settles
             # from this and says the same thing the frame would have.
@@ -1955,16 +1959,9 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
     agent_name = body.get("agent", "")
     if agent_name and not _AGENT_NAME_RE.match(agent_name):
         return web.json_response({"error": "invalid agent name"}, status=400)
-    session.agent = agent_name
-    # Selecting a saved/native agent clears any ephemeral discovered-ACP override
-    # so the new selection isn't shadowed by a stale runtime binding. The pending
-    # "could not restore your ACP runtime" notice goes with it: the user just chose
-    # this axis by hand, and an explicit choice is not a silent fallback to report.
-    session.acp_provider = ""
-    session.acp_provider_agent = ""
-    session._acp_meta_binding = ""
 
     # Resolve the new agent's default working directory from its bindings.
+    workspace_dir = session.workspace_dir
     try:
         cfg = AppConfig.load()
         # Look up by config key or by provider_agent name
@@ -1978,29 +1975,31 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
             # Honor default_dir's contract: a profile that declared NO directory
             # INHERITS, so it must not displace a workspace the user bound to this
             # session via POST …/workspace-dir.
-            session.workspace_dir = resolve_session_workspace(cfg, matched, session.workspace_dir)
+            workspace_dir = resolve_session_workspace(cfg, matched, session.workspace_dir)
     except Exception:
         logger.warning("Failed to resolve agent bindings for %r", agent_name, exc_info=True)
 
-    # Reset session so next message uses the new agent
-    logger.info(
-        "Session %s agent switched to %r, resetting session", name, agent_name or "personalclaw"
+    logger.info("Session %s agent switched to %r", name, agent_name or "personalclaw")
+    # Selecting a saved/native agent clears any ephemeral discovered-ACP override
+    # so the new selection isn't shadowed by a stale runtime binding. The pending
+    # "could not restore your ACP runtime" notice goes with it: the user just chose
+    # this axis by hand, and an explicit choice is not a silent fallback to report.
+    moved = await running_turn.rebind(
+        state,
+        session,
+        running_turn.Rebinding(
+            fields={
+                "agent": agent_name,
+                "acp_provider": "",
+                "acp_provider_agent": "",
+                "_acp_meta_binding": "",
+                "workspace_dir": workspace_dir,
+            },
+            persisted={"agent": agent_name, "acp_provider": "", "acp_provider_agent": ""},
+        ),
     )
-    await state.sessions.reset(_history_key_for(name))
-    # Persist the new agent so the session resumes under the correct agent
-    # after a gateway restart.  Written after reset succeeds so we never
-    # advertise an agent we couldn't actually switch to.
-    if state.conversation_log:
-        try:
-            state.conversation_log.update_metadata(
-                persisted_history_key(state.conversation_log, name),
-                {"agent": agent_name, "acp_provider": "", "acp_provider_agent": ""},
-            )
-        except Exception:
-            logger.warning("Failed to persist agent for session %s", name, exc_info=True)
-    state.push_sessions_update()
     return web.json_response(
-        {"ok": True, "agent": agent_name, "workspace_dir": session.workspace_dir}
+        {"ok": True, "agent": agent_name, "workspace_dir": workspace_dir, "moved": moved}
     )
 
 
@@ -2092,47 +2091,50 @@ async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
     if _refusal:
         return json_error("reasoning_effort_not_declared", message=_refusal, status=400)
 
-    session.acp_provider = provider
-    session.acp_provider_agent = provider_agent if provider else ""
+    provider_agent = provider_agent if provider else ""
     # An explicit pick (or an explicit clear) settles the runtime axis, so there is no
     # unreported fallback left to announce on the next turn.
-    session._acp_meta_binding = ""
+    fields: dict[str, Any] = {
+        "acp_provider": provider,
+        "acp_provider_agent": provider_agent,
+        "_acp_meta_binding": "",
+        "reasoning_effort": effort,
+    }
     if "model" in body:
-        session.model = str(body.get("model", "") or "")
-    session.reasoning_effort = effort
+        fields["model"] = str(body.get("model", "") or "")
+    model = fields.get("model", session.model)
 
     logger.info(
         "Session %s ACP override → provider=%r agent=%r model=%r effort=%r",
         name,
         provider,
         provider_agent,
-        session.model,
+        model,
         effort,
     )
-    await state.sessions.reset(_history_key_for(name))
-    # Persist so the ephemeral binding survives a gateway restart for THIS
-    # session (still never written to the global agents config).
-    if state.conversation_log:
-        try:
-            state.conversation_log.update_metadata(
-                persisted_history_key(state.conversation_log, name),
-                {
-                    "acp_provider": provider,
-                    "acp_provider_agent": session.acp_provider_agent,
-                    "reasoning_effort": effort,
-                    "model": session.model,
-                },
-            )
-        except Exception:
-            logger.warning("Failed to persist ACP override for session %s", name, exc_info=True)
-    state.push_sessions_update()
+    # Persisted so the ephemeral binding survives a gateway restart for THIS session (still
+    # never written to the global agents config).
+    moved = await running_turn.rebind(
+        state,
+        session,
+        running_turn.Rebinding(
+            fields=fields,
+            persisted={
+                "acp_provider": provider,
+                "acp_provider_agent": provider_agent,
+                "reasoning_effort": effort,
+                "model": model,
+            },
+        ),
+    )
     return web.json_response(
         {
             "ok": True,
             "provider": provider,
-            "provider_agent": session.acp_provider_agent,
-            "model": session.model,
+            "provider_agent": provider_agent,
+            "model": model,
             "reasoning_effort": effort,
+            "moved": moved,
         }
     )
 
@@ -2153,11 +2155,11 @@ async def api_chat_session_model(request: web.Request) -> web.Response:
     model_name = _normalize_model(body.get("model", ""))
     if session.model == model_name:
         return web.json_response({"ok": True, "model": model_name})
-    session.model = model_name
-    logger.info("Session %s model switched to %r, resetting session", name, model_name or "auto")
-    await state.sessions.reset(_history_key_for(name))
-    state.push_sessions_update()
-    return web.json_response({"ok": True, "model": model_name})
+    logger.info("Session %s model switched to %r", name, model_name or "auto")
+    moved = await running_turn.rebind(
+        state, session, running_turn.Rebinding(fields={"model": model_name})
+    )
+    return web.json_response({"ok": True, "model": model_name, "moved": moved})
 
 
 async def api_chat_session_reasoning_effort(request: web.Request) -> web.Response:
@@ -2202,17 +2204,13 @@ async def api_chat_session_reasoning_effort(request: web.Request) -> web.Respons
         return json_error("reasoning_effort_not_declared", message=_refusal, status=400)
     if session.reasoning_effort == effort:
         return web.json_response({"ok": True, "reasoning_effort": effort})
-    session.reasoning_effort = effort
-    logger.info(
-        "Session %s reasoning_effort switched to %r, resetting session",
-        name,
-        effort or "default",
+    logger.info("Session %s reasoning_effort switched to %r", name, effort or "default")
+    # The runtime is rebuilt so the next turn spawns with the new --effort flag. Same rule as a
+    # model switch (`running_turn`).
+    moved = await running_turn.rebind(
+        state, session, running_turn.Rebinding(fields={"reasoning_effort": effort})
     )
-    # Reset so the next message spawns a fresh subprocess with the new --effort
-    # flag. Same UX as model switch.
-    await state.sessions.reset(_history_key_for(name))
-    state.push_sessions_update()
-    return web.json_response({"ok": True, "reasoning_effort": effort})
+    return web.json_response({"ok": True, "reasoning_effort": effort, "moved": moved})
 
 
 async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:

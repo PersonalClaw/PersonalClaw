@@ -54,6 +54,7 @@ if TYPE_CHECKING:
         SessionManager,
         SubagentManager,
     )
+    from personalclaw.dashboard.running_turn import Rebinding
     from personalclaw.dashboard.side_state import SideState
     from personalclaw.engagement_signals import EngagementStore
 
@@ -230,6 +231,8 @@ class _ChatSession:
         "_stop_state_now",
         "_stop_asked",
         "_stop_event_id",
+        "_rebinding",
+        "_takes_steers",
         "_dirty",
         "_recovery_chat_triggered",
         "_stage_titles",
@@ -407,6 +410,11 @@ class _ChatSession:
         self._stop_state_now: str = "idle"  # see `_stop_state`
         self._stop_asked: bool = False  # see `_stop_state`
         self._stop_event_id: str | None = None  # transcript message id for in-flight stop
+        # A change to what answers this chat that waits for the running turn to end
+        # (`running_turn.rebind`), and whether that turn takes a steer
+        # (`running_turn.set_steer_drains`).
+        self._rebinding: "Rebinding | None" = None
+        self._takes_steers: bool = False
         self._dirty: bool = False  # True when messages changed since last flush
         self._recovery_chat_triggered: bool = False  # guard against concurrent failure recovery
         self._stage_titles: list[str] = []  # stage titles extracted from plan

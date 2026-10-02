@@ -155,7 +155,7 @@ const liveRegionText = () =>
  *  and it is the whole difference between Stop and Send. Returns the one that is mounted,
  *  so a failure reads `expected 'Stop' to be 'Send message'` rather than "not found". */
 const primaryAction = () =>
-  ['Stop', 'Steer — send into the running turn', 'Send message']
+  ['Stop', 'Steer — send into the running turn', 'Queue — sent when this turn ends', 'Send message']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no primary action)'
 
 // ── 1. the race: a late `running: true` must not re-arm a turn that already ended ────────────
@@ -228,8 +228,9 @@ describe('a mid-stream send the server ran as a fresh turn', () => {
     const user = userEvent.setup()
     page({ seed: 'did this one survive?' })
     await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
-    // Streaming armed with no terminal event — legitimate, so the composer offers Steer.
-    await answerDetail(0, { running: true })
+    // Streaming armed with no terminal event — legitimate, and its runtime takes a steer, so the
+    // composer offers Steer.
+    await answerDetail(0, { running: true, steerable: true })
     await waitFor(() => expect(primaryAction()).toBe('Steer — send into the running turn'))
 
     // The server gates on ITS OWN `session.running`. When the turn is already over it

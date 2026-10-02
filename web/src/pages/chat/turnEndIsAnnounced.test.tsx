@@ -147,7 +147,7 @@ async function answerDetail(n: number, patch: Record<string, unknown>) {
 
 /** The composer's primary action, by accessible name — Stop while a turn runs, Send otherwise. */
 const primaryAction = () =>
-  ['Stop', 'Steer — send into the running turn', 'Send message']
+  ['Stop', 'Steer — send into the running turn', 'Queue — sent when this turn ends', 'Send message']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no primary action)'
 
 /** Open the chat on a turn that is running. `beforeTheTurn` runs once the page has issued its
