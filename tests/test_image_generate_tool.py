@@ -116,7 +116,9 @@ class TestImageGenerateTool:
         # first generate, then edit that artifact in place
         _call_tool_inner("image_generate", {"prompt": "a plain mug"})
         slug = _wired.list(kind="image")[0].slug
-        out = _call_tool_inner("image_generate", {"prompt": "add steam", "edit_artifact": slug})
+        out = _call_tool_inner(
+            "image_generate", {"prompt": "add steam", "slug": slug, "edit": True}
+        )
         assert "Edited image artifact" in out and "version 2" in out
         # edit result is pinned to v2
         assert f"](/api/artifacts/{slug}/raw?version=2)" in out
@@ -127,15 +129,15 @@ class TestImageGenerateTool:
     def test_edit_nonexistent_artifact_errors(self, _wired):
         from personalclaw.mcp_artifacts import _call_tool_inner
 
-        out = _call_tool_inner("image_generate", {"prompt": "x", "edit_artifact": "nope"})
+        out = _call_tool_inner("image_generate", {"prompt": "x", "slug": "nope", "edit": True})
         assert "not an existing image artifact" in out
 
     def test_edit_refuses_non_image_artifact(self, _wired):
         from personalclaw.mcp_artifacts import _call_tool_inner
 
         _wired.create(name="doc", content="# hi", kind="markdown")
-        out = _call_tool_inner("image_generate", {"prompt": "x", "edit_artifact": "doc"})
-        assert "not an existing image artifact" in out
+        out = _call_tool_inner("image_generate", {"prompt": "x", "slug": "doc", "edit": True})
+        assert "so an image cannot be its next version" in out
 
 
 class TestRegenerateAtSlug:

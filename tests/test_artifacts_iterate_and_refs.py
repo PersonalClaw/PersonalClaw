@@ -13,6 +13,8 @@ event so the artifact's timeline shows where it was used.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from personalclaw import investigate as inv
@@ -58,7 +60,7 @@ def test_the_artifact_resolver_is_registered():
 
 def test_it_resolves_an_artifact_into_an_envelope(provider):
     provider.create(name="Sales dashboard", content="<div>chart</div>", kind="widget")
-    ctx = inv._resolve_artifact("sales-dashboard", _State())
+    ctx = asyncio.run(inv._resolve_artifact("sales-dashboard", _State()))
     assert ctx is not None
     assert ctx.kind == "artifact"
     assert ctx.id == "sales-dashboard"
@@ -68,7 +70,7 @@ def test_it_resolves_an_artifact_into_an_envelope(provider):
 
 def test_the_snapshot_carries_the_current_body(provider):
     provider.create(name="Doc", content="the actual body text", kind="document")
-    ctx = inv._resolve_artifact("doc", _State())
+    ctx = asyncio.run(inv._resolve_artifact("doc", _State()))
     assert "the actual body text" in ctx.snapshot
 
 
@@ -76,7 +78,7 @@ def test_it_suggests_agent_mode(provider):
     """The one resolver that does. Iteration needs the wider toolset —
     web search, knowledge, commands, investigate — not just artifact_update."""
     provider.create(name="Doc", content="x", kind="document")
-    ctx = inv._resolve_artifact("doc", _State())
+    ctx = asyncio.run(inv._resolve_artifact("doc", _State()))
     assert ctx.suggested_task_mode == "agent"
 
 
@@ -93,7 +95,7 @@ def test_the_opening_prompt_names_the_slug_and_the_update_tool(provider):
     """A vaguer prompt produces a near-duplicate artifact instead of a new version —
     the exact failure this wording exists to prevent."""
     provider.create(name="Sales dashboard", content="x", kind="widget")
-    ctx = inv._resolve_artifact("sales-dashboard", _State())
+    ctx = asyncio.run(inv._resolve_artifact("sales-dashboard", _State()))
     assert "sales-dashboard" in ctx.opening_prompt
     assert "artifact_update" in ctx.opening_prompt
 
@@ -101,7 +103,7 @@ def test_the_opening_prompt_names_the_slug_and_the_update_tool(provider):
 def test_it_reports_the_version(provider):
     provider.create(name="Doc", content="v1 body", kind="document")
     provider.update("doc", content="v2 body", actor="agent")
-    ctx = inv._resolve_artifact("doc", _State())
+    ctx = asyncio.run(inv._resolve_artifact("doc", _State()))
     assert "v2" in ctx.snapshot
 
 
@@ -116,7 +118,7 @@ def test_a_file_backed_artifact_names_its_live_source(provider, tmp_path, monkey
     src.parent.mkdir(parents=True)
     src.write_text("body")
     provider.create(name="Doc", content="body", kind="document", source_path=str(src))
-    ctx = inv._resolve_artifact("doc", _State())
+    ctx = asyncio.run(inv._resolve_artifact("doc", _State()))
     assert str(src.resolve()) in ctx.snapshot
 
 
@@ -126,13 +128,13 @@ def test_a_binary_artifact_never_puts_bytes_in_the_snapshot(provider):
     provider.create_binary(
         name="Chart", data=b"\x89PNG\r\n\x1a\nfake", kind="image", mime="image/png"
     )
-    ctx = inv._resolve_artifact("chart", _State())
+    ctx = asyncio.run(inv._resolve_artifact("chart", _State()))
     assert "\x89PNG" not in ctx.snapshot
     assert "Binary artifact" in ctx.snapshot
 
 
 def test_a_missing_artifact_resolves_to_none(provider):
-    assert inv._resolve_artifact("no-such-slug", _State()) is None
+    assert asyncio.run(inv._resolve_artifact("no-such-slug", _State())) is None
 
 
 def test_a_provider_failure_degrades_to_none(monkeypatch, tmp_path):
@@ -146,7 +148,7 @@ def test_a_provider_failure_degrades_to_none(monkeypatch, tmp_path):
         raise OSError("disk gone")
 
     monkeypatch.setattr(registry, "get_provider", _boom)
-    assert inv._resolve_artifact("anything", _State()) is None
+    assert asyncio.run(inv._resolve_artifact("anything", _State())) is None
     # And the injection path must degrade the same way rather than killing the turn.
     from personalclaw.dashboard.chat_runner import _inject_artifact_content
 

@@ -1225,59 +1225,24 @@ async def api_artifact_extract(request: web.Request) -> web.Response:
 
 
 def _recover_image_gen_args(session_key: str, slug: str) -> dict[str, str] | None:
-    """Recover the original image_generate args (prompt/size) for *slug* from a
-    session's history — the tool record whose output names this slug.
+    """Recover the image_generate args (prompt/size) to make *slug* again from scratch, from a
+    session's history: the newest call that made it new from a prompt, else the newest edit of it
+    (``mcp_artifacts.image_remake_args``). Returns ``{"prompt", "size"}`` or None if not found.
 
-    The transcript records each ``image_generate`` call with ``meta.input`` (the
-    JSON args) and ``meta.output`` (which contains ``slug: <slug>``). We scan
-    newest-first so the most recent call that produced this slug wins. Returns
-    ``{"prompt", "size"}`` or None if not found.
+    An edit's prompt is the fallback only because it assumes the image it changed ("add a glow"):
+    regenerating recreates the image from scratch, so a prompt that made it new is the right one.
     """
-    import json as _json
-
     from personalclaw.dashboard.chat_utils import _history_key_for
     from personalclaw.history import ConversationLog
+    from personalclaw.mcp_artifacts import image_remake_args
 
     try:
         # The FE passes the dashboard session id (e.g. "chat-1-…"); the history file
         # is keyed "dashboard:chat-1-…". Normalize so the lookup hits the log.
-        msgs = ConversationLog()._read_messages(
-            _history_key_for(session_key)
-        )  # noqa: SLF001 — read-only history access
+        msgs = ConversationLog().read_messages(_history_key_for(session_key))
     except Exception:
         return None
-    # Prefer the GENERATION record that created this slug ("Generated image …") over
-    # an EDIT record ("Edited image artifact …"): regenerating recreates the original
-    # from scratch, so an edit's incremental instruction ("add a glow") is the wrong
-    # prompt — it assumes a base image. Fall back to an edit prompt only if no
-    # generation record is found. Scan newest-first within each class.
-    edit_match: dict[str, str] | None = None
-    for m in reversed(msgs):
-        meta = m.get("meta") if isinstance(m, dict) else None
-        if not isinstance(meta, dict):
-            continue
-        out = str(meta.get("output", ""))
-        if f"slug: {slug}" not in out and f"slug:{slug}" not in out:
-            continue
-        raw_in = meta.get("input", "")
-        try:
-            args = _json.loads(raw_in) if isinstance(raw_in, str) else (raw_in or {})
-        except (ValueError, TypeError):
-            args = {}
-        if not isinstance(args, dict):
-            continue
-        prompt = str(args.get("prompt", "")).strip()
-        if not prompt:
-            continue
-        entry = {"prompt": prompt, "size": str(args.get("size", "")).strip()}
-        is_edit = bool(str(args.get("edit_artifact", "")).strip()) or out.lstrip().startswith(
-            "Edited"
-        )
-        if is_edit:
-            edit_match = edit_match or entry
-        else:
-            return entry  # newest generation record wins
-    return edit_match
+    return image_remake_args(msgs, slug)
 
 
 async def api_artifact_regenerate(request: web.Request) -> web.Response:

@@ -127,7 +127,7 @@ class TestTheAgentIsToldWhatDoesMakeTheNextVersion:
         art = _picture(wired)
         out = _call_tool("artifact_update", {"slug": art.slug, "content": _SVG})
         assert out.startswith("Error:"), out
-        assert f"image_generate with edit_artifact='{art.slug}'" in out
+        assert f"image_generate with slug='{art.slug}'" in out
         assert "artifact_save" in out
         _assert_untouched(wired, art.slug)
 
@@ -148,28 +148,29 @@ class TestTheAgentIsToldWhatDoesMakeTheNextVersion:
         assert "image" in out and "docx" in out
         _assert_untouched(wired, art.slug)
 
+    @pytest.mark.parametrize("image_edits", [True, False, None])
     @pytest.mark.parametrize("kind", sorted(BINARY_KINDS - {"video"}))
-    def test_every_binary_kind_says_how_its_next_version_is_made(self, kind) -> None:
+    def test_every_binary_kind_says_how_its_next_version_is_made(self, kind, image_edits) -> None:
         """One phrase per binary kind, naming a tool and this slug, never `artifact_update`."""
-        said = next_version_instruction(kind, "the-slug")
+        said = next_version_instruction(kind, "the-slug", image_edits)
         assert said.startswith("call "), (kind, said)
         assert "the-slug" in said, said
         assert "artifact_update" not in said, said
 
     def test_a_video_says_that_no_tool_makes_its_next_version(self, wired) -> None:
         """No tool edits a video, so the refusal says what is true rather than naming one."""
-        assert next_version_instruction("video", "a-clip") == ""
+        assert next_version_instruction("video", "a-clip", None) == ""
         clip = wired.create_binary(name="A clip", data=b"\x00" * 32, mime="video/mp4", kind="video")
         out = _call_tool("artifact_update", {"slug": clip.slug, "content": "text"})
         assert out.startswith("Error:"), out
         assert "video_generate saves a new one" in out
         from personalclaw.investigate import _resolve_artifact
 
-        ctx = _resolve_artifact(clip.slug, MagicMock())
+        ctx = asyncio.run(_resolve_artifact(clip.slug, MagicMock()))
         assert ctx is not None and "video_generate saves a new one" in ctx.opening_prompt
 
     def test_a_text_kind_is_versioned_by_artifact_update(self) -> None:
-        assert "artifact_update" in next_version_instruction("markdown", "notes")
+        assert "artifact_update" in next_version_instruction("markdown", "notes", None)
 
 
 class TestEveryOtherWriterOfABodyIsHeldToIt:
@@ -279,14 +280,14 @@ class TestTheIteratePanelNamesTheToolForTheKind:
         from personalclaw.investigate import _resolve_artifact
 
         with patch.object(registry, "get_provider", return_value=provider):
-            ctx = _resolve_artifact(slug, MagicMock())
+            ctx = asyncio.run(_resolve_artifact(slug, MagicMock()))
         assert ctx is not None
         return ctx.opening_prompt
 
     def test_an_image_is_iterated_with_image_generate(self, provider) -> None:
         art = _picture(provider)
         prompt = self._opening(provider, art.slug)
-        assert f"image_generate with edit_artifact='{art.slug}'" in prompt
+        assert f"image_generate with slug='{art.slug}'" in prompt
         assert "artifact_update" not in prompt
 
     def test_a_text_artifact_is_iterated_with_artifact_update(self, provider) -> None:
@@ -300,7 +301,7 @@ class TestTheIteratePanelNamesTheToolForTheKind:
         from personalclaw.investigate import _resolve_artifact
 
         with patch.object(registry, "get_provider", return_value=provider):
-            ctx = _resolve_artifact(doc.slug, MagicMock())
+            ctx = asyncio.run(_resolve_artifact(doc.slug, MagicMock()))
         assert ctx is not None
         assert f"document_create with slug='{doc.slug}'" in ctx.opening_prompt
         # A binary body is a raw reference, never content to read: every binary kind says so.

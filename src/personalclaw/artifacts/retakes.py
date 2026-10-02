@@ -54,8 +54,12 @@ def open_retakes(session_key: str, slugs: list[str]) -> None:
         atomic_write(path, json.dumps({"pid": os.getpid(), "slugs": list(slugs)}))
 
 
-def take_retake(session_key: str) -> str:
+def take_retake(session_key: str, named: str = "") -> str:
     """The next image the replayed turn in *session_key* retakes, or ``""``. Each is taken once.
+
+    A call that names the image it versions (*named*) takes that one wherever the record lists it,
+    and ``""`` when the record does not: a later call in the turn that names no image would
+    otherwise take it as well, and land a second take on it in place of the next image's.
 
     Reads tolerate a missing or unreadable record (no retake). A record whose gateway is gone
     is removed rather than taken.
@@ -79,7 +83,11 @@ def take_retake(session_key: str) -> str:
         if not (isinstance(pid, int) and pid_is_alive(pid)) or not slugs:
             path.unlink(missing_ok=True)
             return ""
-        slug, rest = slugs[0], slugs[1:]
+        if named and named not in slugs:
+            return ""
+        slug = named or slugs[0]
+        rest = list(slugs)
+        rest.remove(slug)
         if rest:
             atomic_write(path, json.dumps({**record, "slugs": rest}))
         else:

@@ -10,13 +10,13 @@ attributed as the agent so updates snapshot + emit lifecycle events.
 
 import logging
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.artifacts import retakes
 from personalclaw.artifacts.models import ArtifactKindMismatch, is_valid_slug
 from personalclaw.mcp_core import _resolve_session_key
-from personalclaw.tool_providers.base import BUILDS_META_KEY, tool_failure
+from personalclaw.tool_providers.base import BUILDS_META_KEY, ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
 
 logger = logging.getLogger(__name__)
@@ -181,8 +181,7 @@ def _list_tools() -> list[dict[str, Any]]:
                 "inline or via content_file; or update metadata only (description/tags). "
                 "An image, video, PDF or office document is not text: only its metadata "
                 "changes here, and its next version comes from the tool that made it "
-                "(image_generate with edit_artifact; document_create, sheet_create or "
-                "deck_create with slug)."
+                "(image_generate, document_create, sheet_create or deck_create with slug)."
             ),
             "inputSchema": {
                 "type": "object",
@@ -255,29 +254,40 @@ def _list_tools() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": False},
             "_meta": {BUILDS_META_KEY: True},
             "description": (
-                "Generate an image from a text prompt (or edit an existing one), using "
-                "the model bound to the 'image_gen' use-case in Settings → Models. The "
-                "result is saved as a versioned kind='image' artifact; returns its slug "
-                "so it can be shown, referenced, or embedded in a document. Pass "
-                "edit_artifact=<slug> to edit a prior generated image in place (a new "
-                "version on that artifact) instead of creating a new one. Requires an "
-                "image_gen model to be configured; if none is, it says so."
+                "Generate an image from a text prompt, using the model bound to the "
+                "'image_gen' use-case in Settings → Models, and save it as a versioned "
+                "kind='image' artifact; returns its slug so it can be shown, referenced, or "
+                "embedded in a document. To change an existing image, pass its slug: the image "
+                "is saved as that artifact's next version instead of as a new artifact. With "
+                "slug alone the model makes a new image from the prompt and never sees the "
+                "current one, so the prompt describes the whole picture with the change made. "
+                "Add edit=true to send the current image to the model to change as the prompt "
+                "says, which only a model that edits images can do: each result says which way "
+                "the bound model takes. Requires an image_gen model to be configured; if none "
+                "is, it says so."
             ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "What to generate / how to edit"},
+                    "prompt": {
+                        "type": "string",
+                        "description": "What to generate (with edit=true: what to change)",
+                    },
                     "size": {
                         "type": "string",
                         "description": "e.g. '1024x1024' (provider-specific; omit for default)",
                     },
                     "name": {
                         "type": "string",
-                        "description": "Artifact display name (else derived from the prompt)",
+                        "description": "Display name of a new image (else derived from the prompt)",  # noqa: E501
                     },
-                    "edit_artifact": {
+                    "slug": {
                         "type": "string",
-                        "description": "Slug of a prior kind:image artifact to edit in place",
+                        "description": "Slug of the existing kind:image artifact this image is the next version of",  # noqa: E501
+                    },
+                    "edit": {
+                        "type": "boolean",
+                        "description": "With slug: send that image to the model to change, for a model that edits images",  # noqa: E501
                     },
                 },
                 "required": ["prompt"],
@@ -708,31 +718,68 @@ def _materialize_image(result: Any) -> tuple[bytes, str] | None:
 
 
 #: How the agent makes the next version of a BINARY artifact: the tool, and what to pass it. Its
-#: body is bytes, so `artifact_update` (text) refuses it. `video` has no entry: no tool makes a
-#: video's next version (`video_generate` always saves a new video).
+#: body is bytes, so `artifact_update` (text) refuses it. An image's depends on the model that
+#: makes it (:func:`_image_next_version`). `video` has no entry: no tool makes a video's next
+#: version (`video_generate` always saves a new video).
 _BINARY_NEXT_VERSION: dict[str, str] = {
-    "image": "call image_generate with edit_artifact='{slug}' and a prompt saying what to change",
     "docx": "call document_create with slug='{slug}' and the new markdown",
     "pdf": "call document_create with slug='{slug}', format='pdf' and the new markdown",
     "xlsx": "call sheet_create with slug='{slug}' and the new rows",
     "pptx": "call deck_create with slug='{slug}' and the new outline",
 }
 
+#: An image's next version: the image itself, changed by a model that edits images, or a new image
+#: from a prompt, which every image model can make.
+_IMAGE_EDIT = "call image_generate with slug='{slug}', edit=true and a prompt saying what to change"
+_IMAGE_REMAKE = (
+    "call image_generate with slug='{slug}' and a prompt that describes the whole picture with "
+    "the change made"
+)
+
+#: Why a model that edits no image makes the next version from a prompt that describes it all.
+_MAKES_NEW_ONLY = (
+    "the model chosen under Image · Generation makes new images from a prompt and edits none, so "
+    "it never sees the current one"
+)
+
 #: What is true of a kind no tool makes a next version of.
 _NO_NEXT_VERSION = "no tool makes a new version of a video: video_generate saves a new one"
 
 
-def next_version_instruction(kind: str, slug: str) -> str:
-    """What the agent does to land a change as the next version of artifact *slug* of *kind*, or
-    ``""`` when no tool makes one (a video).
+def _image_next_version(slug: str, edits: bool | None) -> str:
+    """How image *slug*'s next version is made on the bound image model: an edit when that model is
+    known to edit images (*edits*), else a new image from a prompt saved as that version, with the
+    reason when the model is known to edit none."""
+    if edits:
+        return _IMAGE_EDIT.format(slug=slug)
+    how = _IMAGE_REMAKE.format(slug=slug)
+    return f"{how}: {_MAKES_NEW_ONLY}" if edits is False else how
 
-    One phrase per kind, shared by the refusal ``artifact_update`` gives a binary artifact and
-    the Iterate panel's opening prompt, so the two cannot name different tools.
+
+def image_model_edits() -> bool | None:
+    """Whether the model bound to Image · Generation edits images
+    (:func:`~personalclaw.image_gen.registry.active_model_edits`), asked from this sync tool code.
+    """
+    from personalclaw.image_gen.registry import active_model_edits
+
+    return _run_async(active_model_edits())
+
+
+def next_version_instruction(kind: str, slug: str, image_edits: bool | None) -> str:
+    """What the agent does to land a change as the next version of artifact *slug* of *kind*, or
+    ``""`` when no tool makes one (a video). *image_edits* is whether the bound image model edits
+    images (:func:`image_model_edits`); only an image's instruction depends on it.
+
+    One phrase per kind, shared by the refusal ``artifact_update`` gives a binary artifact, each
+    image ``image_generate`` saves and the Iterate panel's opening prompt, so none of them can
+    name another tool, or a way the bound image model cannot take.
     """
     from personalclaw.artifacts.models import is_binary_kind
 
     if not is_binary_kind(kind):
         return f"call artifact_update with slug='{slug}' and the new content"
+    if kind == "image":
+        return _image_next_version(slug, image_edits)
     how = _BINARY_NEXT_VERSION.get(kind)
     return how.format(slug=slug) if how else ""
 
@@ -744,7 +791,8 @@ def _a(word: str) -> str:
 
 def _change_it(kind: str, slug: str, subject: str = "it") -> str:
     """The sentence saying how to change artifact *slug* of *kind* itself."""
-    how = next_version_instruction(kind, slug)
+    edits = image_model_edits() if kind == "image" else None
+    how = next_version_instruction(kind, slug, edits)
     return f"To change {subject}, {how}." if how else f"And {_NO_NEXT_VERSION}."
 
 
@@ -757,10 +805,11 @@ def _kind_refusal(slug: str, kind: str) -> str:
     )
 
 
-def iterate_instruction(kind: str, slug: str) -> str:
+def iterate_instruction(kind: str, slug: str, image_edits: bool | None) -> str:
     """The Iterate panel's opening prompt for artifact *slug* of *kind*: the slug and the tool
-    that makes its next version, so the change lands on it rather than as a near-duplicate."""
-    how = next_version_instruction(kind, slug)
+    that makes its next version, so the change lands on it rather than as a near-duplicate. For
+    an image, the way the bound model takes (*image_edits*, :func:`next_version_instruction`)."""
+    how = next_version_instruction(kind, slug, image_edits)
     if not how:
         return (
             f"Iterate on artifact `{slug}`. Note that {_NO_NEXT_VERSION}. "
@@ -970,14 +1019,62 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     return f"Unknown artifact tool: {name}"
 
 
-#: The slug in one of ``image_generate``'s three result sentences — "Generated image '…' (slug:
-#: …)", "Edited image artifact '…' → version N (slug: …)" and "Regenerated image '…' → version N
-#: (slug: …)" below. Parsed back out of an answer's tool rows by :func:`images_made_in`, so the
-#: parser lives beside the sentences it reads.
-_IMAGE_RESULT_SLUG_RE = re.compile(
-    r"^(?:Generated image|Edited image artifact|Regenerated image) '.*?\(slug: ([a-z0-9-]+)\)",
+#: One of ``image_generate``'s result sentences, with the version it names and its slug: "Generated
+#: image '…' (slug: …)" (a new image, so version 1), "Generated image '…' → version N (slug: …)",
+#: "Edited image artifact '…' → version N (slug: …)" and "Regenerated image '…' → version N (slug:
+#: …)" below. Parsed back out of a chat's tool rows by :func:`images_made_in` and
+#: :func:`image_prompt`, so the parser lives beside the sentences it reads.
+_IMAGE_RESULT_RE = re.compile(
+    r"^(?:Generated image|Edited image artifact|Regenerated image) '.*?'"
+    r"(?: → version (?P<version>\d+))? \(slug: (?P<slug>[a-z0-9-]+)\)",
     re.DOTALL,
 )
+
+
+class _MadeImage(NamedTuple):
+    """An image ``image_generate`` saved, as a chat's rows record it: its slug, the version it
+    saved, whether that version was an edit of the one before, and the call's arguments."""
+
+    slug: str
+    version: int
+    edited: bool
+    args: dict[str, Any]
+
+
+def _images_made(messages: list[dict]) -> list[_MadeImage]:
+    """Each image ``image_generate`` saved in *messages* (a chat's rows), in order.
+
+    An approved call is recorded as two rows that share its ``tool_call_id``: the call, which
+    carries its ``input``, and the row its result lands on after the approval, which carries its
+    ``output``. A result is read with the input of the nearest call row before it by that id."""
+    import json as _json
+
+    inputs: dict[str, Any] = {}
+    made: list[_MadeImage] = []
+    for msg in messages:
+        meta = msg.get("meta") if isinstance(msg, dict) else None
+        if not isinstance(meta, dict) or msg.get("role") != "tool":
+            continue
+        call_id = str(meta.get("tool_call_id") or "")
+        if call_id and meta.get("input"):
+            inputs[call_id] = meta["input"]
+        found = _IMAGE_RESULT_RE.match(str(meta.get("output") or ""))
+        if not found or not is_valid_slug(found.group("slug")):
+            continue
+        raw = meta.get("input") or inputs.get(call_id, "")
+        try:
+            args = _json.loads(raw) if isinstance(raw, str) and raw else raw
+        except ValueError:
+            args = {}
+        made.append(
+            _MadeImage(
+                slug=found.group("slug"),
+                version=int(found.group("version") or 1),
+                edited=found.group(0).startswith("Edited"),
+                args=args if isinstance(args, dict) else {},
+            )
+        )
+    return made
 
 
 def images_made_in(messages: list[dict]) -> list[str]:
@@ -987,14 +1084,35 @@ def images_made_in(messages: list[dict]) -> list[str]:
     listed once. What a Regenerate of that answer retakes (:mod:`personalclaw.artifacts.retakes`).
     """
     out: list[str] = []
-    for msg in messages:
-        meta = msg.get("meta") if isinstance(msg, dict) else None
-        if not isinstance(meta, dict) or msg.get("role") != "tool":
-            continue
-        found = _IMAGE_RESULT_SLUG_RE.match(str(meta.get("output") or ""))
-        if found and is_valid_slug(found.group(1)) and found.group(1) not in out:
-            out.append(found.group(1))
+    for image in _images_made(messages):
+        if image.slug not in out:
+            out.append(image.slug)
     return out
+
+
+def _prompt_of(image: _MadeImage) -> str:
+    return str(image.args.get("prompt") or "").strip()
+
+
+def image_prompt(messages: list[dict], slug: str, version: int) -> tuple[str, bool] | None:
+    """The prompt ``image_generate`` was given for version *version* of image *slug*, and whether
+    that version was an edit of the one before it, read from one chat's rows (*messages*); None
+    when no row there made that version."""
+    for image in reversed(_images_made(messages)):
+        if image.slug == slug and image.version == version:
+            return (_prompt_of(image), image.edited) if _prompt_of(image) else None
+    return None
+
+
+def image_remake_args(messages: list[dict], slug: str) -> dict[str, str] | None:
+    """The prompt and size to make image *slug* again from scratch, read from one chat's rows
+    (*messages*): the newest call that made it new from a prompt, else the newest edit of it,
+    whose prompt assumes the image it changed. None when no row there made it."""
+    made = [i for i in _images_made(messages) if i.slug == slug and _prompt_of(i)]
+    pick = next((i for i in reversed(made) if not i.edited), made[-1] if made else None)
+    if pick is None:
+        return None
+    return {"prompt": _prompt_of(pick), "size": str(pick.args.get("size") or "").strip()}
 
 
 def _other_model_refusal(model_ref: str) -> str:
@@ -1009,15 +1127,75 @@ def _other_model_refusal(model_ref: str) -> str:
     return memory_writes.other_model_refusal(model_ref)
 
 
+def _image_request_refusal(
+    prov: Any, args: dict[str, Any], edits: bool | None, model_ref: str
+) -> str:
+    """What ``image_generate`` refuses of *args* before anything is sent, or ``""``: an edit that
+    names no image, a ``slug`` that names no image artifact, and an edit for the bound model
+    *model_ref* when it edits none (*edits*, :func:`image_model_edits`).
+
+    The same check runs before anyone is asked to approve the call (:func:`_preflight`) and as the
+    call runs, so the two answers cannot drift. A model that edits none was asked anyway, after
+    the call was approved, and refused, so the agent saved a second image instead of the next
+    version of the one it was asked to change.
+    """
+    slug = str(args.get("slug") or "").strip()
+    edit = args.get("edit") is True
+    if edit and not slug:
+        return (
+            "edit=true changes an existing image: pass its slug too, or leave out edit to make "
+            "a new image."
+        )
+    if slug:
+        target = prov.get(slug)
+        if target is None:
+            return (
+                f"'{slug}' is not an existing image artifact. Leave out slug to make a new image."
+            )
+        if target.kind != "image":
+            return (
+                f"'{slug}' is {_a(target.kind)} artifact, so an image cannot be its next version. "
+                "Leave out slug to make a new image. "
+                f"{_change_it(target.kind, slug, f'{slug!r} itself')}"
+            )
+    if edit and edits is False:
+        return (
+            f"The model chosen under Image · Generation ({model_ref}) makes new images from a "
+            f"prompt and edits none, so nothing was sent. To make the next version of '{slug}', "
+            f"{_IMAGE_REMAKE.format(slug=slug)}: the model never sees the current one."
+        )
+    return ""
+
+
+def _image_landed(head: str, art: Any, edits: bool | None) -> str:
+    """The result of an image ``image_generate`` saved: *head*, the sentence saying what was saved;
+    how its next version is made on the bound model (*edits*); and a ready-to-embed markdown image
+    so the picture shows inline in chat (the image renderer gates the src and styles it).
+
+    The image is pinned to the version made (``?version=N``), never the live ``/raw``, so each chat
+    message stays bound to the image it produced (an immutable transcript) and the versioned
+    ``/raw`` is hard-cacheable. This is the primary delivery surface; for a channel the on-disk
+    artifact body is the materialized cache.
+    """
+    raw_url = f"/api/artifacts/{art.slug}/raw?version={art.version}"
+    return (
+        f"{head} To make its next version, {_image_next_version(art.slug, edits)}.\n\n"
+        "Show it to the user by embedding this markdown image in your reply:\n"
+        f"![{art.name}]({raw_url})"
+    )
+
+
 def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any) -> str:
-    """image_generate: resolve the image_gen capability, generate/edit, save kind:image.
+    """image_generate: resolve the image_gen capability, generate or edit, save kind:image.
 
     Thin wrapper over the capability (image_gen/registry.active_image_gen) — the
     real work is the provider's; this materializes the result + lands a versioned
     binary artifact + returns the slug.
 
-    A generation in a turn that REGENERATES an answer lands as the next version of the image
-    that answer made (:mod:`personalclaw.artifacts.retakes`), not as a second image.
+    The image lands as the next version of the image artifact ``slug`` names: a new image from
+    the prompt, or, with ``edit``, that image changed by a model that edits images. Without
+    ``slug`` it is a new image, except in a turn that REGENERATES an answer, where it lands as the
+    next version of the image that answer made (:mod:`personalclaw.artifacts.retakes`).
     """
     import tempfile
     from pathlib import Path
@@ -1033,7 +1211,8 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
             "in Settings → Models."
         )
     provider, model_id = resolved
-    refused = _other_model_refusal(f"{provider.name}:{model_id}")
+    model_ref = f"{provider.name}:{model_id}"
+    refused = _other_model_refusal(model_ref)
     if refused:
         _audit("denied", error="the chat's words go to its own model only")
         return tool_failure(refused)
@@ -1042,17 +1221,19 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         _audit("denied", error="empty prompt")
         return tool_failure("provide a non-empty prompt.")
     size = str(args.get("size", "")).strip()
-    edit_slug = str(args.get("edit_artifact", "")).strip()
+    slug = str(args.get("slug", "")).strip()
+    edit = args.get("edit") is True
+    edits = image_model_edits()
+    unmade = _image_request_refusal(prov, args, edits, model_ref)
+    if unmade:
+        _audit("denied", slug, unmade)
+        return tool_failure(unmade)
 
     try:
-        if edit_slug:
-            src = prov.get(edit_slug)
-            if src is None or src.kind != "image":
-                _audit("denied", edit_slug, "edit source not an image artifact")
-                return tool_failure(f"{edit_slug!r} is not an existing image artifact to edit.")
-            raw = prov.raw_bytes(edit_slug)
+        if edit:
+            raw = prov.raw_bytes(slug)
             if raw is None:
-                return tool_failure(f"could not read source image {edit_slug!r}.")
+                return tool_failure(f"could not read source image {slug!r}.")
             src_bytes, src_mime = raw
             from personalclaw.artifacts.models import ext_for_mime
 
@@ -1085,59 +1266,63 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
                 size=size,
             )
     except ImageGenError as e:
-        _audit("error", edit_slug, str(e))
+        _audit("error", slug, str(e))
         return tool_failure(f"{e}")
     except Exception as e:
         refusal = _refused(e)
         if refusal is None:
             raise
-        _audit("denied", edit_slug, refusal)
+        _audit("denied", slug, refusal)
         return tool_failure(refusal)
 
     if not results:
-        _audit("error", edit_slug, "no image returned")
+        _audit("error", slug, "no image returned")
         return tool_failure("the image provider returned no image.")
 
     try:
         materialized = _materialize_image(results[0])
     except _MediaNotSaved as e:
-        _audit("error", edit_slug, str(e))
+        _audit("error", slug, str(e))
         return tool_failure(f"{e}")
     if materialized is None:
-        _audit("error", edit_slug, "could not materialize image")
+        _audit("error", slug, "could not materialize image")
         return tool_failure("generated image could not be saved (no resolvable bytes).")
     data, mime = materialized
+    revised = getattr(results[0], "revised_prompt", "") or ""
+    note = f" The provider revised the prompt to: {revised}." if revised else ""
 
-    display_name = str(args.get("name", "")).strip() or prompt[:60]
-    retake = "" if edit_slug else retakes.take_retake(sk or "")
+    if slug:
+        # This call names the image it versions: a regenerated answer's record of that image is
+        # taken here, so a later call in the turn that names none cannot land on it too.
+        retakes.take_retake(sk or "", named=slug)
+        art = prov.update_binary(slug, data=data, mime=mime, actor="agent", session_id=sk)
+        if art is None:
+            return tool_failure(f"could not save the image as the next version of {slug!r}.")
+        _audit("success", art.slug)
+        if edit:
+            head = f"Edited image artifact '{art.name}' → version {art.version} (slug: {art.slug})."
+        else:
+            head = (
+                f"Generated image '{art.name}' → version {art.version} (slug: {art.slug}) via "
+                f"{model_ref}: a new image from the prompt, saved as that artifact's next "
+                f"version.{note}"
+            )
+        return _image_landed(head, art, edits)
+    retake = retakes.take_retake(sk or "")
     retaken = prov.get(retake) if retake else None
     if retaken is not None and retaken.kind == "image":
         art = prov.update_binary(retake, data=data, mime=mime, actor="agent", session_id=sk)
         if art is not None:
             _audit("success", art.slug)
-            raw_url = f"/api/artifacts/{art.slug}/raw?version={art.version}"
-            return (
+            return _image_landed(
                 f"Regenerated image '{art.name}' → version {art.version} (slug: {art.slug}). "
                 "This turn regenerates an earlier answer, so the image is saved as the next "
-                "version of the one that answer made.\n\n"
-                f"Show it to the user by embedding this markdown image in your reply:\n"
-                f"![{art.name}]({raw_url})"
+                "version of the one that answer made.",
+                art,
+                edits,
             )
-    if edit_slug:
-        art = prov.update_binary(edit_slug, data=data, mime=mime, actor="agent", session_id=sk)
-        if art is None:
-            return tool_failure(f"could not update image artifact {edit_slug!r}.")
-        _audit("success", art.slug)
-        # Pin the inline image to THIS version (not live /raw) so the chat message
-        # keeps showing the image it produced even after a later edit.
-        raw_url = f"/api/artifacts/{art.slug}/raw?version={art.version}"
-        return (
-            f"Edited image artifact '{art.name}' → version {art.version} (slug: {art.slug}).\n\n"
-            f"Show the result by embedding this markdown image in your reply:\n"
-            f"![{art.name}]({raw_url})"
-        )
     art = prov.create_binary(
-        name=display_name,
+        name=str(args.get("name", "")).strip() or prompt[:60],
         data=data,
         mime=mime,
         kind="image",
@@ -1146,20 +1331,8 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         session_id=sk,
     )
     _audit("success", art.slug)
-    revised = getattr(results[0], "revised_prompt", "") or ""
-    note = f" The provider revised the prompt to: {revised}." if revised else ""
-    # Pin to the exact version produced (?version=N) so each chat message stays
-    # bound to the image it generated — an immutable transcript — and the versioned
-    # /raw is hard-cacheable. (Live /raw would silently change after a later edit.)
-    raw_url = f"/api/artifacts/{art.slug}/raw?version={art.version}"
-    # Hand the model a ready-to-embed markdown image so the picture shows inline in
-    # chat (the image renderer gates the src + styles it), plus the slug for later
-    # reference/editing. This is the primary delivery surface; for a channel
-    # (channels/etc.) the on-disk artifact body is the materialized cache.
-    return (
-        f"Generated image '{art.name}' (slug: {art.slug}) via {provider.name}:{model_id}.{note}\n\n"
-        f"Show it to the user by embedding this markdown image in your reply:\n"
-        f"![{art.name}]({raw_url})"
+    return _image_landed(
+        f"Generated image '{art.name}' (slug: {art.slug}) via {model_ref}.{note}", art, edits
     )
 
 
@@ -1418,10 +1591,27 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
     """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
-    call, and arguments the tool's schema refuses (``mcp_shared.preflight_refusal``)."""
-    from personalclaw.mcp_shared import preflight_refusal
+    call, arguments the tool's schema refuses (``mcp_shared.admitted_arguments``), and an image
+    ``image_generate`` will refuse to make (:func:`_image_request_refusal`).
 
-    return preflight_refusal(name, raw_args, _validate_args)
+    A call with no image model bound is left to the call, which says so itself."""
+    from personalclaw.artifacts import registry
+    from personalclaw.image_gen.registry import active_image_gen
+    from personalclaw.mcp_shared import admitted_arguments
+
+    args = admitted_arguments(name, raw_args, _validate_args)
+    if isinstance(args, ToolFailure):
+        return args
+    if name != "image_generate":
+        return None
+    prov = registry.get_provider("native")
+    resolved = active_image_gen()
+    if prov is None or resolved is None:
+        return None
+    provider, model_id = resolved
+    edits = image_model_edits() if args.get("edit") is True else None
+    refusal = _image_request_refusal(prov, args, edits, f"{provider.name}:{model_id}")
+    return tool_failure(refusal) if refusal else None
 
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:

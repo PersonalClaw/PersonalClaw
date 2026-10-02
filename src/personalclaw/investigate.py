@@ -1078,16 +1078,53 @@ def _resolve_audit_event(entity_id: str, state) -> InvestigateContext | None:
 # ── Artifacts: iterate on a versioned artifact ───────────────────────────────
 
 
-def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
+#: The events that cut an artifact's version (a ``referenced`` event names the version it read).
+_VERSION_CUTS = frozenset({"created", "edited", "iterated", "reverted"})
+
+
+def _image_prompt_line(art) -> str:
+    """The snapshot line saying how image artifact *art*'s current version was made: the prompt
+    ``image_generate`` was given for it, read from the chat that made it, or ``""`` when that chat
+    names none (an image saved from a file, a restored version, a chat since deleted).
+
+    A model that edits no image makes the next version from a prompt alone, and this prompt is
+    what tells the agent what the picture shows, so the change can keep everything else."""
+    from personalclaw.constants import dashboard_history_key
+    from personalclaw.history import ConversationLog
+    from personalclaw.mcp_artifacts import image_prompt
+
+    cuts = (e for e in art.events if e.type in _VERSION_CUTS and e.version == art.version)
+    made = next(cuts, None)
+    if made is None or made.type == "reverted" or not made.session_id:
+        return ""
+    try:
+        messages = ConversationLog().read_messages(dashboard_history_key(made.session_id))
+    except Exception:  # noqa: BLE001 — an unreadable chat names no prompt
+        logger.debug("chat read failed for artifact %s", art.slug, exc_info=True)
+        return ""
+    found = image_prompt(messages, art.slug, art.version)
+    if found is None:
+        return ""
+    prompt, edited = found
+    if edited:
+        return f"v{art.version} is v{art.version - 1} edited with the prompt: {prompt}"
+    return f"v{art.version} was made from the prompt: {prompt}"
+
+
+async def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
     """An artifact, staged so the agent can ITERATE on it rather than just read it.
 
     This resolver is the only one that suggests ``agent`` mode. Every other kind
     stages a read-only investigation, but iterating on an artifact means calling the
     tool that makes its kind's next version against this one slug (``artifact_update``
-    for text, ``image_generate`` with ``edit_artifact`` for an image, …) — and the
+    for text, ``image_generate`` with ``slug`` for an image, …) — and the
     work legitimately needs the wider toolset too: searching the web, reading
     knowledge, running commands, investigating the project. A narrower mode would
     produce a panel where the agent cannot do the thing the panel is for.
+
+    An image's next version is made the way the bound image model can: an edit when it edits
+    images, else a new image from a prompt describing the whole picture, which is why the
+    snapshot carries the prompt the current version was made from.
 
     The body rides the snapshot RAW and is fenced once at injection, matching every
     other resolver — an artifact body is agent-authored content, so fencing it twice
@@ -1134,6 +1171,14 @@ def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         lines.append(f"Existing versions: {', '.join('v' + str(v) for v in versions[-8:])}")
 
     body = art.content or ""
+    image_edits: bool | None = None
+    if art.kind == "image":
+        from personalclaw.image_gen.registry import active_model_edits
+
+        image_edits = await active_model_edits()
+        made_from = await asyncio.to_thread(_image_prompt_line, art)
+        if made_from:
+            lines.append(made_from)
     if is_binary_kind(art.kind):
         # A binary body is a raw URL reference, never bytes — putting a data URL in
         # the snapshot would blow the turn budget for no benefit.
@@ -1152,8 +1197,10 @@ def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         # in place (a new version on the same slug), not create a near-duplicate —
         # which is exactly what a vaguer prompt produces. The tool is the one that makes
         # THIS kind's next version: naming `artifact_update` for an image is what had a
-        # retried turn file text as the picture's next version.
-        opening_prompt=iterate_instruction(art.kind, art.slug),
+        # retried turn file text as the picture's next version. For an image, the way the
+        # bound model takes: naming an edit for a model that edits none had the agent save a
+        # second image instead.
+        opening_prompt=iterate_instruction(art.kind, art.slug, image_edits),
     )
 
 

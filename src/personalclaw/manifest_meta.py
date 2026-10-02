@@ -388,6 +388,17 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Generate an image and save it as an artifact",
                 "args": {"prompt": "a watercolor fox", "size": "1024x1024"},
             },
+            {
+                "summary": "Save a new image as the next version of an existing one",
+                "args": {
+                    "prompt": "a watercolor fox under a pink evening sky",
+                    "slug": "a-watercolor-fox",
+                },
+            },
+            {
+                "summary": "Edit an existing image into its next version, on a model that edits",
+                "args": {"prompt": "make the sky pink", "slug": "a-watercolor-fox", "edit": True},
+            },
         ],
     },
     "video_generate": {

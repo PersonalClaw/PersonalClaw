@@ -575,8 +575,10 @@ IMAGE_GENERATE_SCHEMA = ToolSchema(
         FieldSpec("prompt", str, required=True, max_len=MAX_SHORT_STRING),
         FieldSpec("size", str, max_len=32),  # "1024x1024" / "auto" — provider validates
         FieldSpec("name", str, max_len=200),  # artifact display name (else derived from prompt)
-        # Edit mode: a prior kind:image artifact slug to edit in place.
-        FieldSpec("edit_artifact", str, max_len=80),
+        # The existing kind:image artifact this image becomes the next version of.
+        FieldSpec("slug", str, max_len=80),
+        # With slug: the model is sent that image to change, rather than making a new one.
+        FieldSpec("edit", bool),
     ],
 )
 

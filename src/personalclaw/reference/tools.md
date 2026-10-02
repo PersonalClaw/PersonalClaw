@@ -94,7 +94,7 @@ Save content as a named, versioned artifact so it persists beyond chat scrollbac
 
 ### `artifact_update`
 
-Update a saved artifact by slug, creating a new version snapshot (each agent update is a checkpoint, like a commit). Pass new content inline or via content_file; or update metadata only (description/tags). An image, video, PDF or office document is not text: only its metadata changes here, and its next version comes from the tool that made it (image_generate with edit_artifact; document_create, sheet_create or deck_create with slug).
+Update a saved artifact by slug, creating a new version snapshot (each agent update is a checkpoint, like a commit). Pass new content inline or via content_file; or update metadata only (description/tags). An image, video, PDF or office document is not text: only its metadata changes here, and its next version comes from the tool that made it (image_generate, document_create, sheet_create or deck_create with slug).
 
 **Response type:** `artifact.detail`
 
@@ -215,17 +215,18 @@ List the document formats this instance can actually generate right now. Check b
 
 ### `image_generate`
 
-Generate an image from a text prompt (or edit an existing one), using the model bound to the 'image_gen' use-case in Settings → Models. The result is saved as a versioned kind='image' artifact; returns its slug so it can be shown, referenced, or embedded in a document. Pass edit_artifact=<slug> to edit a prior generated image in place (a new version on that artifact) instead of creating a new one. Requires an image_gen model to be configured; if none is, it says so.
+Generate an image from a text prompt, using the model bound to the 'image_gen' use-case in Settings → Models, and save it as a versioned kind='image' artifact; returns its slug so it can be shown, referenced, or embedded in a document. To change an existing image, pass its slug: the image is saved as that artifact's next version instead of as a new artifact. With slug alone the model makes a new image from the prompt and never sees the current one, so the prompt describes the whole picture with the change made. Add edit=true to send the current image to the model to change as the prompt says, which only a model that edits images can do: each result says which way the bound model takes. Requires an image_gen model to be configured; if none is, it says so.
 
 **Response type:** `artifact.detail`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
-- `edit_artifact` (string, optional) — Slug of a prior kind:image artifact to edit in place
-- `name` (string, optional) — Artifact display name (else derived from the prompt)
-- `prompt` (string, required) — What to generate / how to edit
+- `edit` (boolean, optional) — With slug: send that image to the model to change, for a model that edits images
+- `name` (string, optional) — Display name of a new image (else derived from the prompt)
+- `prompt` (string, required) — What to generate (with edit=true: what to change)
 - `size` (string, optional) — e.g. '1024x1024' (provider-specific; omit for default)
+- `slug` (string, optional) — Slug of the existing kind:image artifact this image is the next version of
 
 **Example — Generate an image and save it as an artifact:**
 
@@ -233,6 +234,25 @@ Generate an image from a text prompt (or edit an existing one), using the model 
 {
   "prompt": "a watercolor fox",
   "size": "1024x1024"
+}
+```
+
+**Example — Save a new image as the next version of an existing one:**
+
+```json
+{
+  "prompt": "a watercolor fox under a pink evening sky",
+  "slug": "a-watercolor-fox"
+}
+```
+
+**Example — Edit an existing image into its next version, on a model that edits:**
+
+```json
+{
+  "edit": true,
+  "prompt": "make the sky pink",
+  "slug": "a-watercolor-fox"
 }
 ```
 

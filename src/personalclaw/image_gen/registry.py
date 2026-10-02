@@ -8,6 +8,7 @@ OpenAI-family config provider; bespoke platforms (FAL) register from their own
 removable bundle.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -163,6 +164,34 @@ def active_image_gen() -> tuple[ImageGenProvider, str] | None:
     if prov is None:
         return None
     return (prov, model_id)
+
+
+#: How long :func:`active_model_edits` waits for a listing. The Iterate panel and every image call
+#: wait on it, and a listing usually answers from its provider's cache.
+_LISTING_TIMEOUT_S = 10.0
+
+
+async def active_model_edits() -> bool | None:
+    """Whether the model bound to ``image_gen`` edits an image it is given (True) or only makes new
+    ones from a prompt (False), as its provider lists it (``ImageGenModel.supports_edit``).
+
+    None when nothing is bound, when its provider cannot list its models in time, or when the
+    listing has no model by the bound id: nothing is known, and a caller offers only what every
+    model does.
+    """
+    resolved = active_image_gen()
+    if resolved is None:
+        return None
+    provider, model_id = resolved
+    try:
+        models = await asyncio.wait_for(provider.list_models(), _LISTING_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 — a listing that cannot run says nothing either way
+        logger.debug("image model listing failed for %r", provider.name, exc_info=True)
+        return None
+    for model in models:
+        if model.name == model_id:
+            return bool(model.supports_edit)
+    return None
 
 
 def provider_named(name: str) -> ImageGenProvider | None:
