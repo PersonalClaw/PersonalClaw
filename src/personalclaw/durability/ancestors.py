@@ -20,9 +20,11 @@ what the two last agreed on, and without this it read as an edit made there — 
 a row a conflict to review.
 
 **Machine-local**, under the sync root beside the pull cursor and the conflict queue, which the
-home audit ignores, so it is never exported into the shards a pull rewrites. Nothing in it is any
-other machine's to read: the copy in the shared registry was also the one object an encrypted sync
-leaves readable, and put every record's id and a hash of its content there.
+home audit ignores, so it is never exported into the shards a pull rewrites. Never in the shared
+registry either: that is the one object an encrypted sync leaves readable, and a copy there put
+every record's id and a hash of its content in it. The agreements alone ride this home's sync
+copies (:meth:`Ancestors.agreements`), inside the export and encrypted with it: a peer reads only
+the newest copy, and needs them to tell this home's edit of its version from an edit made apart.
 
 A sha is taken over what two homes compare of a row (:func:`conflicts.compared`). A home with no
 file here, or a peer it has never agreed with, has no base: a record then merges by its store's
@@ -43,7 +45,7 @@ logger = logging.getLogger(__name__)
 _ANCESTORS_FILE = "ancestors.json"
 
 #: How many versions of one record this home keeps as published, newest last. A peer hands back
-#: a copy at most a few cycles old — it pulls every seq it has not seen before it exports — so this
+#: a copy at most a few cycles old — it pulls this home's newest copy before it exports — so this
 #: covers every one it can, and a copy older than all of them reads as a conflict, never as an
 #: edit taken over a newer one.
 PUBLISHED_VERSIONS = 16
@@ -100,6 +102,16 @@ class Ancestors:
         """``entity id → content sha`` this home and *peer_id* last agreed on in *entry_id*. A copy,
         and empty where they have agreed on nothing yet."""
         return dict(self._peers.get(peer_id, {}).get(entry_id, {}))
+
+    def agreements(self) -> dict[str, dict[str, dict[str, str]]]:
+        """Everything this home last agreed on with each peer — ``peer → entry → entity → sha`` —
+        as a sync's export carries it (``shards.export_shards(agreements=)``). A peer reads only
+        this home's newest copy, so this is how it learns that this home took its version of a
+        record before changing it again (:func:`reconcile._in_common`). A copy."""
+        return {
+            peer: {entry_id: dict(family) for entry_id, family in families.items()}
+            for peer, families in self._peers.items()
+        }
 
     def record(self, peer_id: str, entry_id: str, shas: Mapping[str, str]) -> None:
         """Record *shas* — the records a reconcile of *peer_id*'s rows landed on the peer's version

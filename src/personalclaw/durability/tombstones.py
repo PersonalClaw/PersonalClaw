@@ -13,7 +13,8 @@ propagates across machines.
 This module owns the log's read/write + the export fold. The delete write-sites call
 :func:`record_tombstone` (wired in DAS-6c-iii-b). A GC (:func:`prune`) trims entries past the
 sync horizon so the log can't grow without bound — a tombstone only needs to outlive the window
-in which a peer could still be carrying the deleted row live.
+in which a peer could still be carrying the deleted row live. A peer reads only a machine's
+newest copy, so that window is how long a machine may be away and still see the delete.
 
 Clock-free at the seam: ``now`` / ``keep_after`` are passed in, so a replay is deterministic.
 """
@@ -108,7 +109,8 @@ def prune(entry_dir: Path, *, keep_after: str) -> int:
     """Drop side-log entries whose ``deleted_at`` is <= ``keep_after`` (past the sync
     horizon). Returns how many were removed. Rewrites the log atomically; a log that
     empties is left as an empty file (cheap, and its absence already means "no tombstones").
-    ``keep_after`` is an ISO timestamp the caller computes from the staleness window."""
+    ``keep_after`` is an ISO timestamp the caller computes from its horizon
+    (``service.TOMBSTONE_HORIZON_SECS``)."""
     path = _log_path(entry_dir)
     rows = read_tombstones(entry_dir)
     if not rows:

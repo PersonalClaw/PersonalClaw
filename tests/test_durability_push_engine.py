@@ -78,9 +78,7 @@ class TestPublish:
         tr = FakeTransport()
         reg = Registry()
         ob = Outbox(tmp_path / "sync")
-        report = publish_export(
-            tr, _export_dir(tmp_path), reg, ob, self_id="me", manifest_sha="sha1", now="t"
-        )
+        report = publish_export(tr, _export_dir(tmp_path), reg, ob, self_id="me", now="t")
         assert report.seq == 1 and report.registry_committed
         # Objects landed under this machine's seq prefix.
         prefix = shard_prefix("me", 1)
@@ -94,9 +92,7 @@ class TestPublish:
         tr = FakeTransport(push_outcome="transient")
         reg = Registry()
         ob = Outbox(tmp_path / "sync")
-        report = publish_export(
-            tr, _export_dir(tmp_path), reg, ob, self_id="me", manifest_sha="s", now="t"
-        )
+        report = publish_export(tr, _export_dir(tmp_path), reg, ob, self_id="me", now="t")
         assert not report.registry_committed  # a failed push must NOT announce the seq
         assert ob.get(entry_id("fake", 1)).status == STATUS_PENDING
         assert tr.registry_bytes is None  # registry untouched
@@ -109,7 +105,6 @@ class TestPublish:
             Registry(),
             Outbox(tmp_path / "s"),
             self_id="me",
-            manifest_sha="s",
             now="t",
         )
         assert report.push_outcome == OUTCOME_TRANSIENT and report.cas_attempts == 0
@@ -119,8 +114,8 @@ class TestPublish:
         reg = Registry()
         ob = Outbox(tmp_path / "sync")
         export = _export_dir(tmp_path)  # same export dir, published twice
-        publish_export(tr, export, reg, ob, self_id="me", manifest_sha="s1", now="t1")
-        r2 = publish_export(tr, export, reg, ob, self_id="me", manifest_sha="s2", now="t2")
+        publish_export(tr, export, reg, ob, self_id="me", now="t1")
+        r2 = publish_export(tr, export, reg, ob, self_id="me", now="t2")
         assert r2.seq == 2 and Registry.loads(tr.registry_bytes).seq_of("me") == 2
 
 
@@ -132,7 +127,7 @@ class TestCasRetry:
 
         def reload():
             remote = Registry()
-            remote.bump("peer", manifest_sha="p", now="t")  # a peer published while we raced
+            remote.bump("peer", now="t")  # a peer published while we raced
             return remote
 
         report = publish_export(
@@ -141,7 +136,6 @@ class TestCasRetry:
             reg,
             Outbox(tmp_path / "s"),
             self_id="me",
-            manifest_sha="s",
             now="t",
             reload_registry=reload,
         )
@@ -158,7 +152,6 @@ class TestCasRetry:
             Registry(),
             Outbox(tmp_path / "s"),
             self_id="me",
-            manifest_sha="s",
             now="t",
         )
         assert not report.registry_committed and "no reloader" in report.detail
@@ -175,7 +168,6 @@ class TestCasRetry:
             Registry(),
             Outbox(tmp_path / "s"),
             self_id="me",
-            manifest_sha="s",
             now="t",
             reload_registry=reload,
         )
@@ -212,7 +204,6 @@ class TestCasRetry:
             Registry.absent(),
             Outbox(tmp_path / "s"),
             self_id="me",
-            manifest_sha="s",
             now="t",
             reload_registry=Registry.absent,  # what read_registry answers for a store without one
         )
@@ -246,7 +237,6 @@ class TestCasRetry:
             Registry.loads(empty.to_bytes()),
             Outbox(tmp_path / "s"),
             self_id="me",
-            manifest_sha="s",
             now="t",
             reload_registry=lambda: Registry.loads(empty.to_bytes()),  # read_registry's answer
         )

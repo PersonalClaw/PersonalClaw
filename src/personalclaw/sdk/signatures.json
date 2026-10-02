@@ -8821,6 +8821,13 @@
     ],
     "returns": "PushResult"
    },
+   "remove": {
+    "kind": "method",
+    "params": [
+     {"annotation": "list[str]", "kind": "positional_or_keyword", "name": "keys"}
+    ],
+    "returns": "int"
+   },
    "test": {
     "kind": "method",
     "params": [],

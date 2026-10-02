@@ -1,10 +1,11 @@
 """The transport-driven pull half of the sync cycle (DAS-6c-ii-e).
 
 This is where the pure pieces meet a real remote. Given a transport, the local
-:class:`registry.Registry` just pulled, and the durable :class:`cursor.Cursor`, it walks the
-peers' unseen shard sets and merges each into the live store:
+:class:`registry.Registry` just pulled, and the durable :class:`cursor.Cursor`, it takes each
+peer's newest shard set the cursor hasn't consumed and merges it into the live store:
 
-    for each peer prefix the cursor hasn't consumed (registry.new_prefixes_since, ascending):
+    for each peer whose registry seq is past the cursor's:
+        prefix = shard_prefix(peer, its newest seq)     # one whole copy of its records
         refs   = transport.list_remote(prefix)          # cheap
         objs   = transport.pull(refs)                   # bytes
         dir    = materialize objs (strip the prefix)    # a validatable shard dir
@@ -12,17 +13,28 @@ peers' unseen shard sets and merges each into the live store:
         for each entry: reconcile.reconcile_entry(...)  # 6c-i + 6c-ii-c + 6c-ii-d
         cursor.record(peer, seq, aggregate_verdict)     # 6c-ii-b — consumed-only
 
+**Only the newest.** Every seq is a whole export of that machine's records, not a change to
+the one before, so the newest holds everything an older one does: a row merge measures it from
+what the two homes last agreed on (``ancestors``), a database merge takes the newest copy whole,
+and a deletion rides it as a tombstone (``tombstones``). Pulling each seq in turn read every
+copy a machine had sent since — 96 a day at the default fifteen minutes — and made every old
+copy one some peer might still need, so none could ever be removed. A peer now reads one copy of
+each machine per cycle, and the copies a newer one replaced are removed (``durability.published``).
+
 The **DB path is an injected seam**, not skipped. A `sqlite` entry can't be losslessly
 rebuilt from row shards (the exporter stores embedding/blob columns as size placeholders), so
-it goes to an optional ``db_merger`` callback (a `tree` is not in the shards at all). Until
-it's provided (DAS-6c-ii-f), a seq that contains a DB entry is **held** — the cursor is not
-advanced, so the seq is re-pulled once the seam lands, rather than silently skipping unmerged
-database data (§4.1: advance only on consumed rows). That is the honest partial-slice
-behavior, and it keeps the row-entry convergence path (criterion 4) fully working today.
+it goes to an optional ``db_merger`` callback (a `tree` is not in the shards at all). Without
+one, a seq that contains a DB entry is **held** — the cursor is not advanced, so the peer's
+newest is pulled again once there is one, rather than silently skipping unmerged database data
+(§4.1: advance only on consumed rows).
 
 Aggregate verdict for a seq: any held entry (prerequisite-absent, or a DB entry with no
 merger) holds the whole seq; otherwise ``payload-bad`` if any entry was poison (advance past
-it), else ``consumed``. A prefix the remote can't actually serve yet (a partial push) holds.
+it), else ``consumed``. A prefix the remote can't serve whole yet holds too: one with nothing
+under it, or an export that lacks files it declares (``shards.IncompleteExport``) — a folder
+that syncs itself brings another machine's files over one by one, and a copy read while its
+machine removed it is short. Taken as poison, the cursor moved past it, and the copy was not read
+again until that machine sent another, which may be days when its records don't change.
 
 **Nothing another machine names lands outside where a sync may write.** Every path a peer names
 is resolved before anything is written, and refused unless it is inside the export it came in
@@ -51,7 +63,12 @@ from personalclaw.durability.ancestors import Ancestors
 from personalclaw.durability.conflicts import ConflictQueue
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT, Cursor
 from personalclaw.durability.registry import Registry, shard_prefix
-from personalclaw.durability.shards import ImportResult, OutsideTheExport, import_shards
+from personalclaw.durability.shards import (
+    ImportResult,
+    IncompleteExport,
+    OutsideTheExport,
+    import_shards,
+)
 from personalclaw.record_ids import is_path_in_store, is_safe_record_id
 from personalclaw.sync_transports.base import KeysRefused, SyncTransportProvider
 
@@ -189,6 +206,7 @@ def _pull_one_seq(
     queue: Optional[ConflictQueue] = None,
     now: str = "",
     codec=None,
+    self_id: str = "",
 ) -> SeqOutcome:
     prefix = shard_prefix(peer_id, seq)
     out = SeqOutcome(peer_id=peer_id, seq=seq)
@@ -200,10 +218,11 @@ def _pull_one_seq(
         # refused whole, as one outside the export it came in is.
         return _refuse(out, refusal.refused)
     if not refs:
-        # The registry says this seq exists but its objects aren't listable yet — a partial
-        # push. Hold: prerequisite-absent, retried next cycle when the push completes.
+        # The registry names this seq but nothing of it is listable here yet: a folder that
+        # syncs itself hasn't brought it over, or a newer copy replaced it since the registry was
+        # read. Hold: prerequisite-absent, and the next cycle reads the newest.
         out.verdict = PREREQ_ABSENT
-        out.detail = "no objects under prefix (partial push?)"
+        out.detail = "nothing of it is in the store yet"
         return out
     if codec is not None:
         objs, refused = codec.decrypt_after_pull(objs)
@@ -240,6 +259,12 @@ def _pull_one_seq(
             imported = import_shards(shard_dir)
         except OutsideTheExport as exc:
             return _refuse(out, {f"{prefix}{rel}": OUTSIDE_THE_EXPORT for rel in exc.paths})
+        except IncompleteExport as exc:
+            # Not all of it is here: still arriving, or removed while it was read. Nothing of it
+            # is merged, and the next cycle reads it — or the newer copy that replaced it — again.
+            out.verdict = PREREQ_ABSENT
+            out.detail = f"{len(exc.paths)} of its files are not in the store yet"
+            return out
         except (ValueError, OSError) as exc:
             # A structurally invalid export won't merge on retry — advance past it.
             out.verdict = PAYLOAD_BAD
@@ -252,6 +277,9 @@ def _pull_one_seq(
             return _refuse(out, refused)
         held = False
         poison = False
+        # What the peer last agreed on with this home, as its copy says: the version of a record
+        # it took from here before changing it, which an older copy of it used to show.
+        agreed_there = imported.agreements.get(self_id, {}) if self_id else {}
         for entry_id, rows in imported.rows.items():
             entry = inv.by_id(entry_id)
             if entry is None:
@@ -268,6 +296,7 @@ def _pull_one_seq(
                     rows,
                     ancestors=ancestors.of(peer_id, entry.id) if ancestors else {},
                     published=ancestors.published(entry.id) if ancestors else {},
+                    agreed_there=agreed_there.get(entry.id, {}),
                     queue=queue,
                     now=now,
                 )
@@ -317,15 +346,16 @@ def pull_from_peers(
     now: str = "",
     codec=None,
 ) -> PullReport:
-    """Pull and merge every peer shard set the cursor hasn't consumed, oldest seq first.
+    """Pull and merge each peer's newest shard set the cursor hasn't consumed (see the module
+    docstring on why only the newest).
 
     Advances the cursor only on a consumed (or payload-bad) seq; a held seq (a not-yet-servable
     prefix, an unknown entry, or a DB entry with no ``db_merger``) leaves the cursor where it
-    is, so it is re-pulled next cycle. ``codec`` is the optional DAS-8 sync codec: when present
-    every pulled object is decrypted before it is materialized, and a plaintext one is a
-    permanent skip. ``ancestors`` is what this home last agreed on with each peer: each seq is
-    merged against its peer's, and what the merge agrees on is written back before the cursor
-    moves past the seq. Returns a :class:`PullReport` of per-seq outcomes.
+    is, so the peer's newest is pulled again next cycle. ``codec`` is the optional DAS-8 sync
+    codec: when present every pulled object is decrypted before it is materialized, and a
+    plaintext one is a permanent skip. ``ancestors`` is what this home last agreed on with each
+    peer: each seq is merged against its peer's, and what the merge agrees on is written back
+    before the cursor moves past the seq. Returns a :class:`PullReport` of per-seq outcomes.
     """
     report = PullReport()
     seen = cursor.seen()
@@ -335,25 +365,22 @@ def pull_from_peers(
             # single plain name names some other folder, so nothing is pulled from it.
             report.peers_refused[peer.machine_id] = NOT_ONE_NAME
             continue
-        already = int(seen.get(peer.machine_id, 0) or 0)
-        for seq in range(already + 1, peer.seq + 1):
-            outcome = _pull_one_seq(
-                transport,
-                home,
-                peer.machine_id,
-                seq,
-                db_merger,
-                ancestors=ancestors,
-                queue=queue,
-                now=now,
-                codec=codec,
-            )
-            if ancestors is not None:
-                ancestors.save()
-            outcome.advanced = cursor.record(peer.machine_id, seq, outcome.verdict)
-            report.outcomes.append(outcome)
-            if not outcome.advanced:
-                # Contiguity: don't pull seq+1 past a held seq — its prerequisite may be
-                # exactly the held one. Resume from here next cycle.
-                break
+        if peer.seq <= int(seen.get(peer.machine_id, 0) or 0):
+            continue
+        outcome = _pull_one_seq(
+            transport,
+            home,
+            peer.machine_id,
+            peer.seq,
+            db_merger,
+            ancestors=ancestors,
+            queue=queue,
+            now=now,
+            codec=codec,
+            self_id=self_id,
+        )
+        if ancestors is not None:
+            ancestors.save()
+        outcome.advanced = cursor.record(peer.machine_id, peer.seq, outcome.verdict)
+        report.outcomes.append(outcome)
     return report

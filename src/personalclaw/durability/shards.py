@@ -54,7 +54,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Mapping
 
 from personalclaw.atomic_write import atomic_write, make_private_dirs, write_private_file
 from personalclaw.durability import inventory as inv
@@ -71,6 +71,8 @@ SHARD_SCHEMA_VERSION = 1
 PART_SPLIT_BYTES = 48 * 1024 * 1024
 
 _MANIFEST = "manifest.json"
+#: In a sync's export: what this home last agreed on with each machine (``agreements``).
+_AGREEMENTS = "agreements.json"
 _MACHINE_ID_FILE = "machine_id"
 # Rows whose timestamp can't be parsed go here rather than being silently
 # back-dated into a year they didn't happen in.
@@ -166,6 +168,8 @@ class ExportResult:
     databases: list[DbCopy] = field(default_factory=list)  # sync-only whole-DB copies
     #: A store's files this export could not carry, by home-relative path, with why (:class:`Read`).
     left_out: dict[str, str] = field(default_factory=dict)
+    #: The sync-only file of what this home last agreed on with each machine (``agreements``).
+    agreements: ShardFile | None = None
 
     @property
     def rows(self) -> int:
@@ -544,6 +548,7 @@ def export_shards(
     *,
     entries: list[str] | None = None,
     for_sync: bool = False,
+    agreements: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
 ) -> ExportResult:
     """Export the records to deterministic shards under ``out_dir``.
 
@@ -560,6 +565,12 @@ def export_shards(
     losslessly. The hourly export leaves it False, so it carries this machine's own stores, and
     its byte-for-byte determinism (and its tests) are unaffected — DB copies are not
     byte-identical across runs by nature.
+
+    ``agreements`` is a sync's too: ``peer machine id → entry id → entity id → content sha``, what
+    this home last agreed on with each machine (``ancestors.Ancestors.agreements``), written as
+    ``agreements.json`` and declared in the manifest. A peer reads only this machine's newest copy,
+    so this is how it learns that this home took its version of a record before changing it again
+    — which it learned before from an older copy that held that version.
     """
     result = ExportResult()
     make_private_dirs(out_dir)
@@ -639,6 +650,12 @@ def export_shards(
     # every entry this run didn't touch.
     if entries is not None:
         result.shards = _merged_shard_records(out_dir, result.shards, touched=set(entries))
+    if agreements is not None:
+        body = (canonical_json(agreements) + "\n").encode("utf-8")
+        write_private_file(out_dir / _AGREEMENTS, body)
+        result.agreements = ShardFile(
+            path=_AGREEMENTS, bytes=len(body), rows=0, sha256=_sha256(body)
+        )
     _drop_earlier_folder_copies(out_dir)
     _write_manifest(home, out_dir, result)
     return result
@@ -720,6 +737,9 @@ def _write_manifest(home: Path, out_dir: Path, result: ExportResult) -> None:
             for d in result.databases
         ],
     }
+    if result.agreements is not None:
+        a = result.agreements
+        manifest["agreements"] = {"path": a.path, "bytes": a.bytes, "sha256": a.sha256}
     write_private_file(out_dir / _MANIFEST, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
@@ -735,6 +755,9 @@ class ValidationResult:
     rows_checked: int = 0
     #: The paths the manifest names outside the export, never read (:func:`validate`).
     outside: list[str] = field(default_factory=list)
+    #: The files the export should hold and doesn't — the manifest, or a shard or database copy
+    #: it declares (:class:`IncompleteExport`).
+    missing: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -752,6 +775,20 @@ class OutsideTheExport(ValueError):
         self.paths = list(paths)
         super().__init__(
             "the export's manifest names a path outside it, so none of it is read: "
+            + ", ".join(self.paths[:5])
+        )
+
+
+class IncompleteExport(ValueError):
+    """An export that lacks files it should hold: its manifest, or a shard or database copy the
+    manifest declares. Not a broken one: a folder that syncs itself brings another machine's files
+    over one by one, and a copy read while that machine removed it is short too. Nothing of it is
+    read, and it is worth reading again once it is whole. ``paths`` are the files it lacks."""
+
+    def __init__(self, paths: list[str]) -> None:
+        self.paths = list(paths)
+        super().__init__(
+            f"the export lacks {len(self.paths)} of its files, so none of it is read: "
             + ", ".join(self.paths[:5])
         )
 
@@ -782,6 +819,7 @@ def validate(shard_dir: Path) -> ValidationResult:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         result.problems.append(f"missing {_MANIFEST}")
+        result.missing.append(_MANIFEST)
         return result
     except json.JSONDecodeError as exc:
         result.problems.append(f"{_MANIFEST} is not valid JSON: {exc}")
@@ -808,6 +846,7 @@ def validate(shard_dir: Path) -> ValidationResult:
         path = shard_dir / rel
         if not path.is_file():
             result.problems.append(f"{rel}: declared in manifest but missing on disk")
+            result.missing.append(rel)
             continue
         data = path.read_bytes()
         result.shards_checked += 1
@@ -844,13 +883,47 @@ def validate(shard_dir: Path) -> ValidationResult:
         path = shard_dir / rel
         if not path.is_file():
             result.problems.append(f"{rel}: declared database missing on disk")
+            result.missing.append(rel)
             continue
         data = path.read_bytes()
         if len(data) != record.get("bytes"):
             result.problems.append(f"{rel}: db size {len(data)} != manifest {record.get('bytes')}")
         if _sha256(data) != record.get("sha256"):
             result.problems.append(f"{rel}: db sha256 mismatch (content changed)")
+
+    # A sync's agreements (`export_shards(agreements=)`), when the manifest declares them.
+    record = manifest.get("agreements")
+    if isinstance(record, dict):
+        rel = str(record.get("path", ""))
+        if not _outside_the_export(result, shard_dir, rel):
+            path = shard_dir / rel
+            if not rel or not path.is_file():
+                result.problems.append(f"{rel or _AGREEMENTS}: declared agreements missing on disk")
+                result.missing.append(rel or _AGREEMENTS)
+            else:
+                data = path.read_bytes()
+                if len(data) != record.get("bytes") or _sha256(data) != record.get("sha256"):
+                    result.problems.append(f"{rel}: agreements differ from the manifest")
     return result
+
+
+def _agreements_of(raw: Any) -> dict[str, dict[str, dict[str, str]]]:
+    """``peer → entry → entity id → sha`` from *raw*, another machine's agreements file: only
+    plain strings are kept, and anything else dropped — it is merge evidence, never an order."""
+    out: dict[str, dict[str, dict[str, str]]] = {}
+    for peer, families in (raw if isinstance(raw, dict) else {}).items():
+        if not isinstance(families, dict):
+            continue
+        kept: dict[str, dict[str, str]] = {}
+        for entry_id, family in families.items():
+            if isinstance(family, dict):
+                kept[str(entry_id)] = {
+                    str(rid): sha
+                    for rid, sha in family.items()
+                    if rid and isinstance(sha, str) and sha
+                }
+        out[str(peer)] = kept
+    return out
 
 
 def export_and_validate(home: Path, out_dir: Path) -> tuple[ExportResult, ValidationResult]:
@@ -883,6 +956,9 @@ class ImportResult:
     machine_id: str = ""
     # entry id -> shard-dir-relative path of its whole-DB copy (sync-only, DAS-6c-ii-g).
     databases: dict[str, str] = field(default_factory=dict)
+    #: What the exporting home last agreed on with each machine: ``peer → entry → entity → sha``
+    #: (sync-only, ``export_shards(agreements=)``). Empty for an export that carries none.
+    agreements: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
 
     @property
     def entries(self) -> int:
@@ -921,7 +997,8 @@ def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> Impor
     The inverse of :func:`export_shards`, which a sync's pull reads another machine's
     export with. Runs :func:`validate` first — a shard whose bytes/sha/row-count drifted
     from the manifest is not trustworthy input for a merge, so a failed validation raises
-    :class:`ValueError` rather than importing silently corrupt data. ``entries`` optionally
+    :class:`ValueError` rather than importing silently corrupt data: an export that lacks some
+    of its files as :class:`IncompleteExport`, which a pull reads again. ``entries`` optionally
     restricts to specific entry ids (the sync cycle imports only the entries a remote
     actually changed).
 
@@ -939,6 +1016,8 @@ def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> Impor
     report = validate(shard_dir)
     if report.outside:
         raise OutsideTheExport(report.outside)
+    if report.missing:
+        raise IncompleteExport(report.missing)
     if not report.ok:
         raise ValueError(
             "refusing to import an invalid shard export:\n" + "\n".join(report.problems)
@@ -974,6 +1053,15 @@ def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> Impor
         if wanted is not None and entry_id not in wanted:
             continue
         result.databases[entry_id] = rel
+    record = manifest.get("agreements")
+    if isinstance(record, dict):
+        # validate() checked it is inside the export, there, and as the manifest says.
+        try:
+            raw = json.loads((shard_dir / str(record.get("path", ""))).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            result.problems.append(f"agreements unreadable during import ({exc})")
+        else:
+            result.agreements = _agreements_of(raw)
     return result
 
 

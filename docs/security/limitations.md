@@ -473,6 +473,16 @@ A secret still appears in plaintext in these places:
   Settings → Providers, the import list and the question Allow asks — and the list of configured
   servers leaves them out; a save keeps a masked value as it was, or replaces it with what you type
   over the mask. The file keeps them. Put a token in an environment variable or a header instead.
+- **A sync's older copies.** Each sync sends your records to the store you chose as one whole
+  copy (encrypted for a bucket or a shared folder), and a token in a file a sync carries — one in
+  an MCP server's arguments or URL, above — is in every copy sent while it was there. On a
+  transport that removes old copies (Folder Sync, S3 Sync), the store keeps this machine's newest
+  copy, and the one before it until a newer copy has stood 15 minutes
+  (`durability/published.py`): the first sync after you remove the token sends a copy without it,
+  and a sync at least 15 minutes after that removes the last copy with it — within about 40
+  minutes at the default 15-minute window, and within twice the window when you set it longer.
+  Git Sync and Rsync Sync keep every copy they are sent, and the service a synced folder goes
+  through, or a bucket with versioning on, may keep a removed file in its own history.
 - **Claude Code's own config.** Putting an MCP server into Claude Code's scope
   (`POST /api/mcp/apply` with `ccGlobal`) writes it into Claude Code's `.claude.json` (in your
   home directory, or in `$CLAUDE_CONFIG_DIR` when that is set) with its values, because Claude

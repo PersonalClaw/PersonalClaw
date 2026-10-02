@@ -918,6 +918,7 @@ function SyncSection({ cfg, setCfg, status, transports, onChanged }: {
                   </span>
                 </div>
               )}
+              <CopiesKept sync={sync} />
             </div>
             <p data-type="caption" className="mt-2 text-on-surface-low">
               Credentials never sync — API keys and this instance's secrets are excluded before
@@ -927,6 +928,42 @@ function SyncSection({ cfg, setCfg, status, transports, onChanged }: {
         )}
       </RowGroup>
     </Section>
+  )
+}
+
+/** Which of this machine's copies the shared store keeps.
+ *
+ *  Each sync sends this machine's records as one whole copy. Every run used to send one and none
+ *  was ever removed, so a folder chosen because it syncs itself took a full copy every fifteen
+ *  minutes, for good. A copy now goes only when the records changed, and one a newer copy replaced
+ *  is removed once the newer has stood long enough for a machine reading it to finish — on a
+ *  transport that can remove; one that can't keeps every copy, and the line says so. Nothing is
+ *  said while the chosen transport isn't installed: nothing is known of it. */
+function CopiesKept({ sync }: { sync: DurabilitySyncStatus }) {
+  if (!sync.transport || sync.removes_old_copies == null) return null
+  const minutes = Math.round(sync.keeps_previous_secs / 60)
+  return (
+    <>
+      <div data-type="body-s" className="flex items-baseline justify-between gap-m">
+        <span className="text-on-surface-var">Copies kept in the store</span>
+        <span data-type="caption" className="shrink-0 text-on-surface-low">
+          {sync.removes_old_copies
+            ? `this machine's newest, and the one before it for ${minutes} min`
+            : 'every copy this machine sends'}
+        </span>
+      </div>
+      {sync.removes_old_copies && sync.removal_failed && (
+        <p data-type="caption" style={{ color: 'var(--color-warning)' }}>
+          The last sync couldn’t remove older copies ({sync.removal_failed}). They stay in the store
+          until a sync can.
+        </p>
+      )}
+      <p data-type="caption" className="text-on-surface-low">
+        {sync.removes_old_copies
+          ? 'A new copy is sent only when your records change, and one a newer copy replaced is then removed. Storage that keeps its own history of removed files — a synced folder’s trash, a versioned bucket — may hold it a while longer.'
+          : 'A new copy is sent only when your records change. This transport removes none of them.'}
+      </p>
+    </>
   )
 }
 

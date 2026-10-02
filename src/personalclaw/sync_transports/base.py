@@ -1,19 +1,24 @@
 """Abstract base for sync transport providers.
 
 A sync transport carries durability shard objects between machines through one remote —
-a git repo, a synced folder, later an object store. Every method is insert-only and
-idempotent on the object key, because the sync cycle retries freely on a CAS race and a
-retried push of an object already present must be a no-op, never a duplicate or an
-overwrite. A transport owns credentials and byte movement ONLY; the merge, the
-machine-seq registry contents, and the outbox all live above it in
-:mod:`personalclaw.durability.sync`.
+a git repo, a synced folder, later an object store. A push is insert-only and idempotent on
+the object key, because the sync cycle retries freely on a CAS race and a retried push of an
+object already present must be a no-op, never a duplicate or an overwrite. A transport owns
+credentials and byte movement ONLY; the merge, the machine-seq registry contents, the outbox,
+and which copies the remote keeps all live above it in :mod:`personalclaw.durability`.
 
-A transport whose remote is a folder on this machine — a synced folder, a clone — reads and
-writes nothing outside it. Whoever else writes that folder can put anything in it, a link to any
-file of this machine's included, and a key followed through one reads that file as another
-machine's object, or writes an object over it. So a key that names a path outside the folder, or
-that leads out of it through a link, is refused with :class:`KeysRefused`, and nothing is read or
-written through it (``personalclaw.sdk.sync.is_path_in_store`` is the rule).
+Each sync sends this machine's records as one whole copy, and the cycle removes the copies a
+newer one has replaced (``durability.published``) through :meth:`SyncTransportProvider.remove`.
+A transport that can't remove an object — or whose remote keeps every version anyway, as a git
+history does — leaves ``removes_old_copies`` False, and its remote keeps every copy, which the
+Backups page says.
+
+A transport whose remote is a folder on this machine — a synced folder, a clone — reads, writes
+and removes nothing outside it. Whoever else writes that folder can put anything in it, a link to
+any file of this machine's included, and a key followed through one reads that file as another
+machine's object, writes an object over it, or removes it. So a key that names a path outside the
+folder, or that leads out of it through a link, is refused with :class:`KeysRefused`, and nothing
+is read, written or removed through it (``personalclaw.sdk.sync.is_path_in_store`` is the rule).
 """
 
 from abc import ABC, abstractmethod
@@ -94,6 +99,10 @@ class SyncTransportProvider(ABC):
     name: str = ""
     #: Human label for the Store / doctor.
     display_name: str = ""
+    #: True for a transport that removes objects from its remote (:meth:`remove`), so a sync
+    #: keeps only this machine's newest copies there. Default False: its remote keeps every copy
+    #: a sync ever sent, and the Backups page says so.
+    removes_old_copies: bool = False
 
     @abstractmethod
     def push(self, objects: list[SyncObject]) -> PushResult:
@@ -125,3 +134,14 @@ class SyncTransportProvider(ABC):
     def test(self) -> ConnectionResult:
         """Cheap reachability + auth probe. Never raises — a failure is a ``ConnectionResult``
         with ``ok=False`` and a human ``detail``."""
+
+    def remove(self, keys: list[str]) -> int:
+        """Remove objects from the remote, and return how many were there to remove. Idempotent
+        on ``key``: one already gone is not an error. A key it won't remove is raised
+        (:class:`KeysRefused`), and none of them is removed; a remote it can't reach raises, as
+        a listing does.
+
+        The sync cycle calls this only on a transport that sets ``removes_old_copies``, and only
+        for this machine's own copies that a newer one replaced. One that doesn't remove keeps
+        this default."""
+        raise NotImplementedError(f"{self.display_name or self.name} keeps every copy it is sent")

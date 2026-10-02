@@ -2,8 +2,8 @@
 
 When the cycle pulls a peer's shards it merges them, and only then may it record "I have
 now seen this peer up to seq N". The cursor is that durable per-peer high-water mark — the
-``seen`` map :meth:`registry.Registry.new_prefixes_since` reads to decide what is still
-unpulled. Its one hard rule, verbatim:
+``seen`` map ``pull_engine.pull_from_peers`` reads to decide whether a peer's newest copy is
+still unpulled. Its one hard rule, verbatim:
 
     the pull cursor advances **only on consumed rows** — prerequisite-absent holds the
     drain, payload-bad advances+logs.
@@ -11,11 +11,11 @@ unpulled. Its one hard rule, verbatim:
 So the cursor is *not* advanced merely because a pull was attempted. Three consume verdicts:
 
 * **consumed** — the shard set merged cleanly → advance the peer's high-water mark to that
-  seq. Because prefixes are pulled oldest-first (the registry yields them ascending), the
-  mark only ever moves forward by contiguous seqs; a gap is never skipped.
+  seq. A pull takes the peer's newest seq, a whole copy of its records, so the mark moves
+  straight to it; the seqs it passes held nothing the newest doesn't.
 * **prerequisite-absent** — the shard references state this machine doesn't have yet (an
-  out-of-order arrival) → **hold**: do not advance, so the same seq is retried next cycle
-  once its prerequisite lands. This is the one verdict that must not advance, or the drain
+  out-of-order arrival, a copy not all there) → **hold**: do not advance, so the peer's newest
+  is pulled again next cycle. This is the one verdict that must not advance, or the drain
   would strand work it silently skipped past.
 * **payload-bad** — the shard is structurally broken and will never merge → advance anyway
   and log, so one poison object can't wedge the cursor and block every later seq behind it.
@@ -66,9 +66,8 @@ class Cursor:
         return seen
 
     def seen(self) -> dict[str, int]:
-        """The ``peer_id → highest consumed seq`` map, as
-        :meth:`registry.Registry.new_prefixes_since` expects. A copy — callers can't
-        mutate the cursor's state behind its back."""
+        """The ``peer_id → highest consumed seq`` map. A copy — callers can't mutate the
+        cursor's state behind its back."""
         return dict(self._seen)
 
     def seq_of(self, peer_id: str) -> int:

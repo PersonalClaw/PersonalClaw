@@ -32,6 +32,7 @@ function sync(over: Partial<DurabilitySyncStatus> = {}): DurabilitySyncStatus {
     transport: 'dir-sync', encrypt: 'auto', encrypted: true,
     ok: null, last_success: 0, problem: null, skipped: '',
     passphrase_credential: CREDENTIAL, passphrase_stored: false,
+    removes_old_copies: true, keeps_previous_secs: 900, removal_failed: '',
     ...over,
   }
 }
@@ -231,5 +232,56 @@ describe('the Sync card takes the passphrase it needs', () => {
 
     await waitFor(() => expect(statusCall.mock.calls.length).toBeGreaterThan(reads))
     expect(await screen.findByLabelText('Sync passphrase')).toBeTruthy()
+  })
+})
+
+// Every sync sent this machine's records as a whole new copy into the shared store, and nothing
+// ever removed one, so a folder chosen because it syncs itself took a full copy every fifteen
+// minutes, for good — and the card said nothing of it. It now says which copies the store keeps.
+describe('the Sync card says which copies the store keeps', () => {
+  it('a transport that removes old copies keeps the newest, and the one before it a while', async () => {
+    stubPanel([status({ sync: sync({ passphrase_stored: true, keeps_previous_secs: 900 }) })])
+
+    render(<DurabilityPanel />)
+
+    await waitFor(() => expect(jobLine('Copies kept in the store'))
+      .toMatch(/this machine's newest, and the one before it for 15 min$/))
+    expect(screen.getByText(/sent only when your records change, and one a newer copy replaced is then removed/))
+      .toBeTruthy()
+    expect(screen.getByText(/a synced folder’s trash, a versioned bucket/)).toBeTruthy()
+  })
+
+  it('a transport that keeps every copy says so', async () => {
+    stubPanel([status({ sync: sync({ passphrase_stored: true, removes_old_copies: false }) })])
+
+    render(<DurabilityPanel />)
+
+    await waitFor(() => expect(jobLine('Copies kept in the store')).toMatch(/every copy this machine sends$/))
+    expect(screen.getByText(/This transport removes none of them/)).toBeTruthy()
+    expect(screen.queryByText(/is then removed/)).toBeNull()
+  })
+
+  it('says when the last sync could not remove older copies, so the line above is not taken as done', async () => {
+    stubPanel([status({ sync: sync({ passphrase_stored: true, removal_failed: 'the sync folder is busy' }) })])
+
+    render(<DurabilityPanel />)
+
+    expect(await screen.findByText(/couldn’t remove older copies \(the sync folder is busy\)\. They stay/))
+      .toBeTruthy()
+  })
+
+  it('says nothing of a transport that is not installed, or of none', async () => {
+    stubPanel([status({ sync: sync({ passphrase_stored: true, removes_old_copies: null }) })])
+
+    const { unmount } = render(<DurabilityPanel />)
+    await waitFor(() => expect(jobLine('Shards leaving this machine')).toMatch(/encrypted$/))
+    expect(screen.queryByText('Copies kept in the store')).toBeNull()
+    unmount()
+
+    invalidateKeys('settings:durability')
+    stubPanel([status({ sync: sync({ transport: '', encrypted: false }) })])
+    render(<DurabilityPanel />)
+    await waitFor(() => expect(jobLine('Shards leaving this machine')).toMatch(/no transport chosen/))
+    expect(screen.queryByText('Copies kept in the store')).toBeNull()
   })
 })

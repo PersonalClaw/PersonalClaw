@@ -480,8 +480,11 @@ Data leaving the running system:
   path (`durability/pull_engine.py`). A transport whose remote is a folder on this machine (Folder
   Sync's shared folder, Git Sync's clone) holds its keys to the same rule, since whoever else
   writes that folder can put a link to any file of this machine's in it: a key outside the folder,
-  or one that leads out of it through a link, is neither read nor written, and the transport says
-  which (`sync_transports.base.KeysRefused`). The sync refuses the peer's change such a key is in,
+  or one that leads out of it through a link, is neither read, written nor removed, and the
+  transport says which (`sync_transports.base.KeysRefused`). A sync removes only this machine's
+  own copies that a newer one replaced (`durability/published.py`), and Folder Sync removes each
+  through the folders on its way opened without following a link, so one made a link since its key
+  was looked at leads nowhere. The sync refuses the peer's change such a key is in,
   whole, fails a cycle whose registry, salt or push is refused, and names the keys in its report
   either way. A pack whose name or component id would build a path outside
   its store is refused before any of it is parsed or written, and every path the pack layout

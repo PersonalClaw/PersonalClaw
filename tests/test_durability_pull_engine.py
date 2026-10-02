@@ -1,9 +1,9 @@
 """DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-e — the transport-driven pull half of the cycle.
 
-Drives the pure pieces against a fake in-memory transport: walk the registry's unseen peer
-seqs oldest-first, pull each, import + reconcile into the live store, and advance the cursor
-only on a consumed seq. A DB entry with no merger seam holds the seq (re-pulled later, never
-silently skipped); a held seq stops contiguity so seq+1 isn't pulled past its prerequisite.
+Drives the pure pieces against a fake in-memory transport: take each peer's newest seq past
+the cursor — a whole copy of its records — import + reconcile it into the live store, and
+advance the cursor only on a consumed seq. A DB entry with no merger seam holds the seq
+(re-pulled later, never silently skipped), and so does a copy that is not all there yet.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ class TestPullSweep:
         tr.stage_export(peer_home, "peerA", 1)
 
         reg = Registry()
-        reg.bump("peerA", manifest_sha="s", now="t")  # peer published seq 1
+        reg.bump("peerA", now="t")  # peer published seq 1
         local = tmp_path / "local"
         cursor = Cursor(tmp_path / "sync")
         report = pull_from_peers(tr, local, reg, cursor, self_id="me")
@@ -102,7 +102,7 @@ class TestPullSweep:
         _entity(tmp_path / "peer", "tasks", "x", {})
         tr.stage_export(tmp_path / "peer", "peerA", 1)
         reg = Registry()
-        reg.bump("peerA", manifest_sha="s", now="t")
+        reg.bump("peerA", now="t")
         cursor = Cursor(tmp_path / "sync")
         cursor.record("peerA", 1, CONSUMED)  # already consumed seq 1
         report = pull_from_peers(tr, tmp_path / "local", reg, cursor, self_id="me")
@@ -112,26 +112,65 @@ class TestPullSweep:
         # Registry says peerA is at seq 1, but no objects were staged (push not finished).
         tr = FakeTransport()
         reg = Registry()
-        reg.bump("peerA", manifest_sha="s", now="t")
+        reg.bump("peerA", now="t")
         cursor = Cursor(tmp_path / "sync")
         report = pull_from_peers(tr, tmp_path / "local", reg, cursor, self_id="me")
         assert report.advanced == 0 and report.held == 1
         assert report.outcomes[0].verdict == PREREQ_ABSENT
         assert cursor.seq_of("peerA") == 0  # not advanced — retried next cycle
 
-    def test_held_seq_stops_contiguity(self, tmp_path):
-        # peerA at seq 2: seq 1 staged, seq 2 NOT (partial). Pulling must consume 1 and stop.
+    def test_only_the_peers_newest_copy_is_pulled(self, tmp_path):
+        """Each seq is a whole copy of the peer's records, so the newest holds what the older
+        ones do: one is read, not every copy the peer sent since the cursor."""
         tr = FakeTransport()
-        _entity(tmp_path / "peer", "tasks", "t1", {})
-        tr.stage_export(tmp_path / "peer", "peerA", 1)
+        peer = tmp_path / "peer"
+        for seq in (1, 2, 3):
+            _entity(peer, "tasks", f"t{seq}", {"title": f"made by copy {seq}"})
+            tr.stage_export(peer, "peerA", seq)
         reg = Registry()
-        reg.bump("peerA", manifest_sha="s", now="t")
-        reg.bump("peerA", manifest_sha="s2", now="t2")  # seq 2 announced, not staged
+        for _ in range(3):
+            reg.bump("peerA", now="t")
+        listed: list[str] = []
+        real_list = tr.list_remote
+        tr.list_remote = lambda prefix="": listed.append(prefix) or real_list(prefix)
         cursor = Cursor(tmp_path / "sync")
+
         report = pull_from_peers(tr, tmp_path / "local", reg, cursor, self_id="me")
-        assert cursor.seq_of("peerA") == 1  # consumed 1, held 2, did not skip to 2
-        verdicts = [o.verdict for o in report.outcomes]
-        assert verdicts == [CONSUMED, PREREQ_ABSENT]
+
+        assert [(o.seq, o.verdict) for o in report.outcomes] == [(3, CONSUMED)]
+        assert listed == [shard_prefix("peerA", 3)]
+        assert cursor.seq_of("peerA") == 3
+        assert sorted(p.stem for p in (tmp_path / "local" / "tasks").glob("*.json")) == [
+            "t1",
+            "t2",
+            "t3",
+        ]
+
+    def test_a_copy_that_is_not_all_there_is_held_and_read_again(self, tmp_path):
+        """A folder that syncs itself brings a copy's files over one by one, and a copy read while
+        its machine removes it is short: neither is poison. Nothing of it is merged, the cursor
+        stays, and the next pull reads it once it is whole."""
+        tr = FakeTransport()
+        _entity(tmp_path / "peer", "tasks", "t1", {"title": "whole"})
+        tr.stage_export(tmp_path / "peer", "peerA", 1)
+        shard = shard_prefix("peerA", 1) + "tasks/entities.jsonl"
+        held_back = tr.objects.pop(shard)
+        reg = Registry()
+        reg.bump("peerA", now="t")
+        cursor = Cursor(tmp_path / "sync")
+        local = tmp_path / "local"
+
+        first = pull_from_peers(tr, local, reg, cursor, self_id="me")
+
+        assert [o.verdict for o in first.outcomes] == [PREREQ_ABSENT]
+        assert "not in the store yet" in first.outcomes[0].detail
+        assert cursor.seq_of("peerA") == 0 and not (local / "tasks").exists()
+
+        tr.objects[shard] = held_back
+        second = pull_from_peers(tr, local, reg, cursor, self_id="me")
+
+        assert [o.verdict for o in second.outcomes] == [CONSUMED]
+        assert cursor.seq_of("peerA") == 1 and (local / "tasks" / "t1.json").exists()
 
 
 class TestDbSeam:
@@ -150,7 +189,7 @@ class TestDbSeam:
         tr = FakeTransport()
         tr.stage_export(peer_home, "peerA", 1)
         reg = Registry()
-        reg.bump("peerA", manifest_sha="s", now="t")
+        reg.bump("peerA", now="t")
         cursor = Cursor(tmp_path / "sync")
         report = pull_from_peers(tr, tmp_path / "local", reg, cursor, self_id="me")
         assert report.advanced == 0  # held — a DB entry can't be row-merged
@@ -170,7 +209,7 @@ class TestDbSeam:
         tr = FakeTransport()
         tr.stage_export(peer_home, "peerA", 1)
         reg = Registry()
-        reg.bump("peerA", manifest_sha="s", now="t")
+        reg.bump("peerA", now="t")
         cursor = Cursor(tmp_path / "sync")
         seen_entries = []
 

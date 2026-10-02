@@ -84,6 +84,28 @@ class TestPruneWiredIntoCycle:
         tasks = tmp_path / "tasks"
         tasks.mkdir()
         tomb.record_tombstone(tasks, "ancient", now="2000-01-01T00:00:00+00:00")
-        # A generous window; "ancient" is decades past now − 4×window, so it prunes.
-        service._prune_tombstones(tmp_path, 900.0)
+        # "ancient" is decades past the horizon, so it prunes.
+        service._prune_tombstones(tmp_path)
         assert tomb.read_tombstones(tasks) == []
+
+    def test_a_marker_rides_the_copies_for_the_whole_horizon(self, tmp_path):
+        """A peer reads only a machine's newest copy, and the ones before it are removed, so a
+        delete reaches a machine that was away only while its marker is still in the newest. The
+        marker of a delete made yesterday stays, through every sync in between; one older than
+        the horizon goes."""
+        from datetime import datetime, timedelta, timezone
+
+        from personalclaw.durability import service
+
+        tasks = tmp_path / "tasks"
+        tasks.mkdir()
+        now = datetime.now(timezone.utc)
+        horizon = timedelta(seconds=service.TOMBSTONE_HORIZON_SECS)
+        tomb.record_tombstone(tasks, "yesterday", now=(now - timedelta(days=1)).isoformat())
+        tomb.record_tombstone(tasks, "within", now=(now - horizon + timedelta(days=1)).isoformat())
+        tomb.record_tombstone(tasks, "past", now=(now - horizon - timedelta(days=1)).isoformat())
+
+        service._prune_tombstones(tmp_path)
+
+        assert {t["id"] for t in tomb.read_tombstones(tasks)} == {"yesterday", "within"}
+        assert service.TOMBSTONE_HORIZON_SECS >= 30 * 24 * 60 * 60

@@ -216,7 +216,7 @@ class TestEndToEndThroughPullEngine:
         tr = Tr()
         tr.stage(peer_home, "peerA", 1)
         reg = Registry()
-        reg.bump("peerA", manifest_sha="s", now="t")
+        reg.bump("peerA", now="t")
         local = tmp_path / "local"
         cursor = Cursor(tmp_path / "sync")
 

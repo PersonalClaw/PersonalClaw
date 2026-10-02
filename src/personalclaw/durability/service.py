@@ -562,6 +562,8 @@ def run_sync_job() -> JobResult:
         if not acquired:
             return JobResult("sync", skipped="another sync/export is already running")
         try:
+            from datetime import datetime, timezone
+
             from personalclaw.durability.shards import machine_id
             from personalclaw.durability.sync_cycle import run_sync_cycle
 
@@ -570,14 +572,13 @@ def run_sync_job() -> JobResult:
                 transport,
                 home,
                 self_id=machine_id(home),
+                now=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 encrypt=str(getattr(cfg, "sync_encrypt", "auto") or "auto"),
             )
-            # GC tombstone side-logs past the sync horizon: once every peer
-            # has had a chance to see a delete (older than the staleness window * a safety
-            # factor), its marker is dead weight. Only after a SUCCESSFUL cycle — a failed
-            # push means peers may not have pulled the delete yet.
+            # GC tombstone side-logs past the horizon (`TOMBSTONE_HORIZON_SECS`). Only after a
+            # SUCCESSFUL cycle — a failed push means peers may not have pulled the delete yet.
             if report.ok:
-                _prune_tombstones(home, float(getattr(cfg, "sync_stale_after_secs", 900) or 900))
+                _prune_tombstones(home)
             if report.conflicts:
                 _draft_conflict_proposals(home)
         except Exception as exc:  # noqa: BLE001 — a failed sync must not kill the loop
@@ -600,6 +601,7 @@ def run_sync_job() -> JobResult:
         "rows_removed": report.rows_removed,
         "seq_published": report.seq_published,
         "refused": dict(report.refused),
+        "removal_failed": report.removal_failed,
     }
     if not ok:
         from personalclaw.durability.shards import refused_sentence
@@ -641,6 +643,7 @@ def sync_stamp_fields(result: JobResult, *, at: float, previous: dict) -> dict:
     if result.skipped:
         return fields
     fields.update(last_sync_run=at, last_sync_ok=bool(result.ok))
+    extra = result.extra or {}
     if result.ok:
         fields.update(
             last_sync_success=at,
@@ -648,9 +651,11 @@ def sync_stamp_fields(result: JobResult, *, at: float, previous: dict) -> dict:
             sync_failure_reason="",
             sync_failing_since=0.0,
             sync_failures=0,
+            # Why the run could not remove the copies a newer one replaced: they stay, and the
+            # Backups card says so rather than that the store keeps only the newest.
+            sync_removal_failed=str(extra.get("removal_failed", "") or ""),
         )
         return fields
-    extra = result.extra or {}
     streak = previous.get("last_sync_ok") is False
     fields.update(
         # The code and the transport's own words, not a finished sentence: `SYNC_PROBLEMS` stays
@@ -721,20 +726,25 @@ def _draft_conflict_proposals(home: Path) -> None:
         logger.warning("durability: conflict merge pass failed", exc_info=True)
 
 
-def _prune_tombstones(home: Path, stale_after_secs: float) -> None:
-    """GC each tombstone-bearing entry's sync-only delete side-log (DAS-6c-iii).
+#: How long a delete's marker rides this machine's copies (DAS-6c-iii): a machine away for longer
+#: than this never sees the delete, and its copy of the record can come back. A peer reads only a
+#: machine's newest copy (`pull_engine`), and the copies before it are removed
+#: (`durability.published`), so the marker has to be in the newest when that peer comes back. The
+#: markers are an id and a time each, so a long horizon costs nearly nothing.
+TOMBSTONE_HORIZON_SECS = 90 * 24 * 60 * 60
 
-    Horizon = now − stale_after_secs × a safety factor, so a marker is only dropped well
-    after every peer that syncs within the window has had a chance to observe the delete.
-    Best-effort — a prune failure never affects the sync outcome."""
+
+def _prune_tombstones(home: Path) -> None:
+    """GC each tombstone-bearing entry's sync-only delete side-log (DAS-6c-iii): a marker older
+    than :data:`TOMBSTONE_HORIZON_SECS` is dropped. Best-effort — a prune failure never affects
+    the sync outcome."""
     try:
         from datetime import datetime, timedelta, timezone
 
         from personalclaw.durability import inventory as inv
         from personalclaw.durability.tombstones import prune
 
-        # 4× the staleness window is a generous "everyone has surely pulled by now" margin.
-        horizon = datetime.now(timezone.utc) - timedelta(seconds=stale_after_secs * 4)
+        horizon = datetime.now(timezone.utc) - timedelta(seconds=TOMBSTONE_HORIZON_SECS)
         keep_after = horizon.isoformat()
         for entry in inv.all_entries():
             if entry.tombstones and entry.kind == inv.KIND_JSON_ENTITY_DIR:
@@ -1034,6 +1044,10 @@ def status() -> dict:
     cfg = _cfg()
     stale = float(getattr(cfg, "sync_stale_after_secs", 900) or 900)
     from personalclaw.durability.crypto import PASSPHRASE_CREDENTIAL, passphrase_stored
+    from personalclaw.durability.published import KEEP_PREVIOUS_SECS
+    from personalclaw.sync_transports.registry import get_transport
+
+    chosen = get_transport(str(getattr(cfg, "sync_transport", "") or ""))
 
     return {
         "enabled": enabled(),
@@ -1055,6 +1069,10 @@ def status() -> dict:
             "encrypted": _resolved_encryption(cfg),
             "passphrase_credential": PASSPHRASE_CREDENTIAL,
             "passphrase_stored": passphrase_stored(),
+            # Which of this machine's copies the store keeps (`durability.published`): `None`
+            # while the chosen transport isn't installed and enabled, so nothing is known of it.
+            "removes_old_copies": None if chosen is None else bool(chosen.removes_old_copies),
+            "keeps_previous_secs": KEEP_PREVIOUS_SECS,
         },
     }
 
@@ -1085,6 +1103,7 @@ def _sync_outcome(state: dict) -> dict:
         "last_success": float(state.get("last_sync_success", 0) or 0),
         "problem": problem,
         "skipped": str(state.get("last_sync_skipped", "") or ""),
+        "removal_failed": str(state.get("sync_removal_failed", "") or ""),
     }
 
 

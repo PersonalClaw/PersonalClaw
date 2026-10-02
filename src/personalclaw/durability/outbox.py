@@ -197,6 +197,24 @@ class Outbox:
         self._write(entry)
         return entry
 
+    def forget_below(self, target: str, seq: int) -> int:
+        """Drop ``target``'s entries for every seq below ``seq`` — the oldest of its copies the
+        store still keeps (``durability.published``): an entry outlives no copy it was kept for.
+        Returns how many went."""
+        gone = 0
+        if not self._dir.is_dir():
+            return gone
+        for path in sorted(self._dir.glob("*.json")):
+            entry = self.get(path.stem)
+            if entry is None or entry.target != target or entry.seq >= seq:
+                continue
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            gone += 1
+        return gone
+
     # ── persistence ──────────────────────────────────────────────────────────
     def _write(self, entry: OutboxEntry) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)

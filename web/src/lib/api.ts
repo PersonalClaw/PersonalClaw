@@ -392,6 +392,14 @@ export interface DurabilitySyncStatus extends DurabilityJob {
   skipped: string
   passphrase_credential: string
   passphrase_stored: boolean
+  /** Whether the chosen transport removes this machine's copies a newer one replaced; `null`
+   *  while it isn't installed and enabled, so nothing is known of it. */
+  removes_old_copies: boolean | null
+  /** How long the copy before the newest stays after the newest lands, in seconds. */
+  keeps_previous_secs: number
+  /** Why the last run that went through could not remove the copies a newer one replaced;
+   *  '' when it could, or had none to remove. */
+  removal_failed: string
 }
 export interface DurabilityStatus {
   enabled: boolean

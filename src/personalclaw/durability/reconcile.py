@@ -389,6 +389,7 @@ def reconcile_entry(
     *,
     ancestors: Optional[Mapping[str, str]] = None,
     published: Optional[Mapping[str, Sequence[str]]] = None,
+    agreed_there: Optional[Mapping[str, str]] = None,
     queue: Optional[conflicts_mod.ConflictQueue] = None,
     now: str = "",
 ) -> ReconcileResult:
@@ -414,6 +415,9 @@ def reconcile_entry(
     peer's is taken in, this home's stays. ``published`` is what this home published of each
     record, oldest first (:meth:`ancestors.Ancestors.published`): a peer's copy that is one of
     those, newer than the agreement, is this home's own edit handed back (:func:`_in_common`).
+    ``agreed_there`` is what the peer's copy says it last agreed on with this home, record by
+    record (``shards.ImportResult.agreements``): one of those versions, newer than this home's
+    own agreement, is one the peer took from here, and its edit since is measured from it.
     """
     if not handles_kind(entry.kind):
         return ReconcileResult(entry.id, handled=False, detail=f"non-row kind {entry.kind}")
@@ -428,7 +432,9 @@ def reconcile_entry(
     dest = Path(home) / entry.path
     remote_rows = _peer_rows(entry, remote_rows)
     remote = entity_rows(entry, remote_rows)
-    bases, handed_back = _in_common(entry, remote, ancestors or {}, published or {})
+    bases, handed_back = _in_common(
+        entry, remote, ancestors or {}, published or {}, agreed_there or {}
+    )
     outcome: dict[str, Any] = {}
 
     def merge_into(local: list[dict]) -> MergeResult:
@@ -517,16 +523,21 @@ def _in_common(
     remote: list[dict],
     ancestors: Mapping[str, str],
     published: Mapping[str, Sequence[str]],
+    agreed_there: Mapping[str, str],
 ) -> tuple[dict[str, str], dict[str, str]]:
     """The version this home and the peer have in common of each record: ``(bases, handed
     back)``.
 
-    Their last agreement (``ancestors``), unless the peer's copy is a version this home published
-    after it (``published``, oldest first): the peer took this home's edit and handed it back
-    before this home pulled that, and this home may have edited the record again since. The two
-    have that version in common, which is newer than the agreement: measured from the agreement,
-    the peer's copy read as an edit made there, and every second edit in a row was a conflict.
-    ``handed back`` is those records, ``id → sha``, which the two now agree on.
+    Their last agreement (``ancestors``), unless the peer has since held a version this home
+    published after it (``published``, oldest first): the peer took this home's edit, and this home
+    may have edited the record again since. The two have that version in common, which is newer
+    than the agreement: measured from the agreement, the peer's copy read as an edit made there,
+    and every second edit in a row was a conflict. The peer's copy shows it two ways. It is that
+    version — handed back before this home pulled it; ``handed back`` is those records,
+    ``id → sha``, which the two now agree on. Or the peer says it agreed on that version
+    (``agreed_there``) and has changed the record since: a peer is read at its newest copy only, so
+    the copy that held the version it took is not read. A version this home never published is no
+    such evidence, whatever a copy says.
     """
     bases = dict(ancestors)
     handed_back: dict[str, str] = {}
@@ -540,6 +551,8 @@ def _in_common(
         sha = conflicts_mod.row_sha(conflicts_mod.compared(entry, row))
         if sha in since:
             bases[rid] = handed_back[rid] = sha
+        elif agreed_there.get(rid) in since:
+            bases[rid] = agreed_there[rid]
     return bases, handed_back
 
 
