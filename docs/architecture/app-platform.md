@@ -241,7 +241,9 @@ off stays off until you switch it on, and one this core cannot host stays refuse
 **Taking the code back** (`personalclaw/app_code.py`). The loader claims an app's directory
 before it runs any of its code. Each registry app code can write to through the SDK — model types
 and catalogs, media catalogs and scanners, subscription sources, `acp:` runtime entries, sidecar
-runners, trust-mode callbacks — records how to take an entry back, and an entry is the app's when
+runners, trust-mode callbacks, skills marketplaces — records how to take an entry back
+(`tests/test_sdk_registration_takeback_census.py` holds every `register*` the SDK publishes to it,
+and names the ones that are not an app's to contribute), and an entry is the app's when
 the app's code made the call; a core module that registers its own type while the app's import
 pulls it in stays core's. `release(name)` runs those take-backs, removes every module loaded from
 the app's directory from `sys.modules` (and its cached bytecode, since the next version's file

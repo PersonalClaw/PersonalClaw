@@ -261,7 +261,9 @@ same list:
   `~/.personalclaw/skills/`, after a supply-chain scan whose `DANGEROUS` verdict is not
   overridable. `personalclaw skills verify` re-checks installed skills' file
   hashes against their install baseline, so a skill mutated after install is
-  detectable.
+  detectable. A marketplace an app adds is there while the app is installed and
+  switched on: switching the app off or uninstalling it takes the marketplace off
+  Skills > Browse at once, and the skills you installed from it stay in your library.
 - **Auto-created skills** land under the `auto/` namespace when
   `skills.auto_create_from_sessions` is on (it is **off** by default): a session
   with a non-trivial multi-step procedure gets one synthesized. They carry

@@ -12,8 +12,9 @@ Discovery paths (loaded by ``_all_skill_paths()`` in ``agent.py``):
                                             owner allows it (``personalclaw.outside_home``)
 
 ``SkillsRegistry`` holds named ``SkillsMarketplace`` implementations.
-Additional marketplaces (skills.sh, custom registries) register via
-``get_default_skills_registry().register(name, marketplace)``.
+Additional marketplaces (an app's, a configured catalog) register via
+``get_default_skills_registry().register(name, marketplace)``; one an app's code
+registers leaves with the app.
 """
 
 import builtins
@@ -23,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import app_code
 from personalclaw.record_ids import record_path
 from personalclaw.skills.loader import validate_skill_md as _validate_skill_md
 
@@ -371,7 +373,21 @@ class SkillsRegistry:
         self._marketplaces: dict[str, SkillsMarketplace] = {}
 
     def register(self, name: str, marketplace: SkillsMarketplace) -> None:
+        """Offer *marketplace* under *name*, in place of whatever held the name.
+
+        One an app's code registers (the module the provider loader imports, or a call the app
+        makes later) leaves with the app: unloading it (a disable, each uninstall rung, the start
+        of an update) takes it back (:mod:`personalclaw.app_code`). So a removed app's marketplace
+        is not listed or searched, and a search, preview or install that names it is refused
+        instead of running the app's code. A core catalogue stays for the life of the process.
+        """
         self._marketplaces[name] = marketplace
+        app_code.keep(lambda: self._forget(name, marketplace))
+
+    def _forget(self, name: str, marketplace: SkillsMarketplace) -> None:
+        """Drop *name* if *marketplace* is still what it offers."""
+        if self._marketplaces.get(name) is marketplace:
+            del self._marketplaces[name]
 
     def unregister(self, name: str) -> None:
         """Remove a registered marketplace. Idempotent — a name that was never registered

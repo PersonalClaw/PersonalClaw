@@ -51,8 +51,11 @@ REAL_REGISTRY_TYPES = {
     "inbox",
     "notification",
 }
-# Types with a genuine factory↔registry contract mismatch flagged for an owner.
-MISMATCH_TYPES = {"skills"}
+# Types with a genuine factory↔registry contract mismatch flagged for an owner. None now:
+# ``skills`` was one (its factory built a SkillsLoader nothing used, while the marketplaces it
+# stands for lived in the SkillsRegistry with nothing tying an app's marketplace to the app)
+# until the registry took an app's marketplace back with the app's code.
+MISMATCH_TYPES: set[str] = set()
 
 
 @pytest.fixture(autouse=True)
@@ -97,9 +100,9 @@ def test_every_seam_names_its_source_of_truth():
 
 
 def test_known_contract_mismatches_are_flagged():
-    """skills (loader vs marketplace) is a real factory↔registry mismatch — it
-    must be flagged for an owner, not silently swallowed. Clean seams must not be
-    labelled MISMATCH."""
+    """A seam whose factory and registry disagree says so (MISMATCH) for its owner to
+    reconcile, not silently swallowed. A clean or reconciled seam must not be labelled
+    MISMATCH."""
     handlers = _handlers()
     for t in MISMATCH_TYPES:
         assert (
@@ -144,6 +147,16 @@ def test_seam_handler_create_runs_factory_for_non_none_instances():
     # crash (lifecycle parity with the real handlers).
     assert reg.enable("does-not-exist") is False
     assert none_handler.source_of_truth == "factory returns None"
+
+
+def test_the_skills_seam_builds_nothing_and_names_what_takes_a_marketplace_back():
+    """A skills app's marketplace registers itself from the app's code and leaves with it
+    (``test_a_skills_marketplace_leaves_with_its_app.py``), so the native app's factory has
+    nothing to build, and the seam names the mechanism that ties a marketplace to its app."""
+    from personalclaw.skills.native import create_provider
+
+    assert create_provider() is None
+    assert "app_code" in _handlers()["skills"].source_of_truth
 
 
 # ── Knowledge is a REAL registry handler now ──

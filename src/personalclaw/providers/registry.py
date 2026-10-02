@@ -1173,8 +1173,9 @@ class EntitySeamHandler(_TypeHandler):
     ``register()``/``deregister()`` are *intentional* no-ops, and that is the
     honest design — not a stub. Every domain registry these types could target
     is either (a) consumed by no one (``knowledge_providers.registry``),
-    or (b) populated by its own subsystem on
-    import / entry-point. Wiring an instance in here would manufacture a SECOND
+    or (b) populated by the code that owns the entity: on import, by entry point, or from
+    an app's own code, which that registry takes back with the app (``app_code``).
+    Wiring an instance in here would manufacture a SECOND
     source of truth that nothing reads — the exact split this project removed
     for Bedrock. Where a type has a factory↔registry *contract mismatch*
     (noted in ``source_of_truth``), that is flagged for the owning feature to
@@ -1184,7 +1185,7 @@ class EntitySeamHandler(_TypeHandler):
 
     def __init__(self, *, source_of_truth: str) -> None:
         # Human-readable name of where this entity actually lives + is consumed
-        # (and, for the two mismatch cases, which feature owns reconciling it).
+        # (and, for a contract mismatch, which feature owns reconciling it).
         # Introspectable so a test/debug surface can assert the seam is honest.
         self.source_of_truth = source_of_truth
 
@@ -1408,10 +1409,12 @@ def get_provider_registry() -> ProviderRegistry:
         _registry.register_type_handler(
             "skills",
             EntitySeamHandler(
-                source_of_truth="MISMATCH (owner: S1/E11 skills): factory returns a "
-                "SkillsLoader (built ad-hoc by ~8 call sites), but SkillsRegistry "
-                "holds SkillsMarketplace; native/installed marketplaces self-register "
-                "in skills.native on import. Reconcile the contract before wiring.",
+                source_of_truth="skills.marketplace SkillsRegistry. A skills app's code "
+                "registers its marketplace there (when the loader imports it, or later from "
+                "its own call), and the registry takes it back when the app's code is "
+                "unloaded (app_code), so the marketplace lives as long as the app is "
+                "installed and on. The factory returns None. The core catalogues (native, "
+                "installed) register when skills.native is imported and stay.",
             ),
         )
     return _registry

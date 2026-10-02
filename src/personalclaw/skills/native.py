@@ -154,7 +154,9 @@ get_default_skills_registry().register("installed", NativeSkillsMarketplace(root
 
 
 def create_provider(config=None):
-    """Extension factory for native skills provider."""
-    from personalclaw.skills.loader import SkillsLoader
+    """Extension factory for the native skills app: nothing to build.
 
-    return SkillsLoader()
+    The app's catalogues are the two registered above, when this module is imported (which
+    resolving this factory does), and they stay for the life of the process, as the app does.
+    """
+    return None
