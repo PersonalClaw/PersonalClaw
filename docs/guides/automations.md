@@ -119,12 +119,12 @@ a stop that cuts it off records it. Its row is the hand run's (`manual`), and th
 is left alone, as it is for any hand run.
 
 An interrupted run is **not run again on its own**, because it may already have done part of its
-work. It waits for you instead, with the slots a stopped PersonalClaw missed: the Triggers page
-lists both under **Waiting for you after a restart**, and each card offers **Run now** (once,
-however many slots it covers, recorded as late) and **Dismiss** (recorded as your decision). An
-automation with catch-up enabled gets no card: it fires once, staggered, on its own. One notice
-in the bell says what is waiting ("Missed scheduled runs"), even inside your quiet hours, where it
-is kept without a toast; its row in Settings → Notifications is **Runs to review after a restart**.
+work. It waits for you instead, with the times PersonalClaw missed (see
+[When a scheduled time is missed](#when-a-scheduled-time-is-missed)): the Triggers page lists both
+under **Waiting for your decision**, and each card offers **Run now** (once, however many times it
+covers, recorded as late) and **Dismiss** (recorded as your decision). One notice in the bell says
+what is waiting ("Missed scheduled runs"), even inside your quiet hours, where it is kept without a
+toast; its row in Settings → Notifications is **Missed or interrupted runs to review**.
 
 | | |
 |---|---|
@@ -145,6 +145,47 @@ is kept without a toast; its row in Settings → Notifications is **Runs to revi
 - `src/personalclaw/dashboard/handlers/triggers.py:2227` — `api_trigger_review`, the cards and the
   decision; the decision's outcome comes from `src/personalclaw/triggers/missed.py:432`,
   `resolve_missed`.
+
+---
+
+## When a scheduled time is missed
+
+**In your words:** *"If my laptop was closed at 3am, I want to decide whether the 3am backup runs
+at 9am. Some jobs I'd rather just run late; most I want to be asked about."*
+
+A time is **missed** when PersonalClaw could not run it within seven minutes: PersonalClaw was
+stopped, or it was running and the computer was asleep (the lid shut, or the process paused). Both
+are judged the same way, by the clock against the time, so a laptop that slept through a time and a
+gateway that was not running at all are treated alike. A run only a minute or two late is not
+missed: it runs as usual.
+
+What a missed time does is a setting on each scheduled automation, **If a time is missed**, under
+**Advanced** when you create or edit it on the Triggers page:
+
+- **Wait for me to decide** (the default). It does not run late by itself. The Triggers page shows
+  it under **Waiting for your decision**, with **Run now** and **Dismiss**, and the bell has one
+  "Missed scheduled runs" notice saying how many were missed and why. A one-time automation whose
+  time was missed is switched off with its time taken, so nothing runs it later unless you choose
+  **Run now**.
+- **Run it once, late.** It runs once by itself within a few minutes of PersonalClaw being back,
+  however many of its times were missed, and gets no card. Its history row reads **ran late**, with
+  how many minutes after the time it stood in for. The notice still counts it, and says it will
+  fire once on its own.
+
+The panel shows a **runs once if missed** chip on an automation set to run late. An agent sets the
+same thing with the automation tools' `catch_up` field (`true` runs a missed time once, late;
+`false`, the default, waits for you), which their schema describes in these terms.
+
+| | |
+|---|---|
+| **Checked on** | the review at the top of the **Triggers** page, the "Missed scheduled runs" notice, the automation's **run history** (a late catch-up reads *ran late*), and the chip on its panel |
+| **The setting** | `catch_up` on the trigger: off waits on the review, on runs once, late |
+
+- `src/personalclaw/triggers/scheduling.py` — `slot_missed`, the one rule for what counts as
+  missed, and `LATE_THRESHOLD_SECS`.
+- `src/personalclaw/triggers/service.py` — `recover`, what both a restart (`boot`) and a wake
+  (`tick`) do with missed times.
+- `src/personalclaw/triggers/review.py` — the cards, and the notice's wording for each cause.
 
 ---
 
@@ -203,7 +244,7 @@ export PERSONALCLAW_HOME="$PWD/.dev-home"
      *interrupted by a restart* whose reason says it was interrupted by a gateway restart and how
      long it ran, and the automation is no longer rendered as running. It does **not** wait out a
      30-minute deadline first, because the owning pid is provably gone. It is not run again: the top
-     of the **Triggers** page shows it under *Waiting for you after a restart*, with **Run now** and
+     of the **Triggers** page shows it under *Waiting for your decision*, with **Run now** and
      **Dismiss**.
    - **The guarantee broken would look like:** a row stuck at *running* indefinitely, with the next
      scheduled fire silently suppressed by an overlap gate waiting on a run that ended when you

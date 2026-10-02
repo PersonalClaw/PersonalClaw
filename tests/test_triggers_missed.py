@@ -62,19 +62,16 @@ def test_the_count_is_EXACT_so_the_summary_is_honest():
 def test_the_NEWEST_slots_become_the_review_rows():
     """A 3am backup missed six days ago is history; last night's is a decision.
 
-    The newest MISSED slot is one interval back, not `now`: the slot at
-    `now` is DUE, and the scheduler
-    is about to fire it. Listing it as missed would offer the user a review card for work that is
-    already on its way — measured while writing this test, and the off-by-one was in the assertion,
-    not the code.
+    The rows are the slots AFTER the last fire, through `now`. The last fire ran, so it is never a
+    row — the rows used to start there, one interval early, which put a card's latest slot an
+    interval before the real one. And the slot at `now` is missed like the others: recovery
+    re-arms the schedule past it (`service.plan_boot`), so nothing is about to fire it.
     """
     rows, _summary, _spent = enumerate_missed(
         trigger_id="t", last_fire_at=NOW - 10 * HOUR, interval_secs=HOUR, now=NOW
     )
-    assert rows[-1].scheduled_for == NOW - HOUR
-    assert rows[0].scheduled_for < rows[-1].scheduled_for
-    # Every listed slot is strictly in the past.
-    assert all(r.scheduled_for < NOW for r in rows)
+    assert [r.scheduled_for for r in rows] == [NOW - k * HOUR for k in range(9, -1, -1)]
+    assert all(NOW - 10 * HOUR < r.scheduled_for <= NOW for r in rows)
 
 
 def test_the_budget_bounds_the_ROWS_not_the_count():

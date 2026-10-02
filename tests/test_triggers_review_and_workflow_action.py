@@ -533,7 +533,8 @@ def test_a_pass_the_queue_missed_is_not_reviewed_because_the_next_pass_does_its_
 
     reconcile_heartbeat_tasks_trigger(_store(home))
     queue_trigger = _store(home).get(HEARTBEAT_TASKS_TRIGGER_ID).trigger
-    queue_trigger.next_fire_at = to_iso(NOW - 180)
+    # Fifteen minutes overdue: past `LATE_THRESHOLD_SECS`, so the slot is missed, not merely late.
+    queue_trigger.next_fire_at = to_iso(NOW - 900)
     other = Trigger(
         id="clock:every-minute",
         name="Every minute",
@@ -541,7 +542,7 @@ def test_a_pass_the_queue_missed_is_not_reviewed_because_the_next_pass_does_its_
         spec={"kind": "interval", "interval_secs": 60},
         workflow={"inline": {"provider": "notify", "config": {}}},
     )
-    other.next_fire_at = to_iso(NOW - 180)
+    other.next_fire_at = to_iso(NOW - 900)
     review = review_at_boot([queue_trigger.to_dict(), other.to_dict()], now=NOW)
     assert {r.trigger_id for r in review.rows} == {"clock:every-minute"}
 

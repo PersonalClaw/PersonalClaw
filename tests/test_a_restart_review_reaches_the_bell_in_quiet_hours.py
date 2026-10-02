@@ -77,9 +77,12 @@ def _boot_with_a_missed_slot(tmp_path) -> dict:
         workflow={"inline": {"provider": "notify", "config": {}}},
         capabilities={"providers": ["notify"]},
     )
-    trigger.next_fire_at = to_iso((time.time() // HOUR) * HOUR)
+    slot = (time.time() // HOUR) * HOUR
+    trigger.next_fire_at = to_iso(slot)
     store.save_all([trigger])
-    return SVC.boot(store)
+    # Back fifteen minutes after its slot: missed (`scheduling.slot_missed`) whatever minute of the
+    # hour this runs at, and with no later slot of the hourly cron passed yet.
+    return SVC.boot(store, now=slot + 15 * 60)
 
 
 def _notes(state) -> list[dict]:

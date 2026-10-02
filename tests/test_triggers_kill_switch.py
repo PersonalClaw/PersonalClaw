@@ -35,6 +35,9 @@ from personalclaw.triggers.models import Outcome, Trigger
 from personalclaw.triggers.store import TriggerStore
 
 NOW = 1_800_000_000.0
+#: Due at NOW, a minute before it: a slot past `scheduling.LATE_THRESHOLD_SECS` is missed
+#: and goes to the review instead of firing, which is not what these tests are about.
+_DUE = "2027-01-15T07:59:00+00:00"
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +67,7 @@ def _due(store, tid="clock:nightly", provider="run-prompt"):
             kind="clock",
             enabled=True,
             spec={"kind": "interval", "interval_secs": 60},
-            next_fire_at="2027-01-15T07:00:00+00:00",
+            next_fire_at=_DUE,
             capabilities={"providers": [provider]},
             workflow={"inline": {"provider": provider, "config": {}}},
         )

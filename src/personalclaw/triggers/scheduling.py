@@ -73,7 +73,26 @@ BOOT_STAGGER_WINDOW_SECS = 120.0
 #: So: base + window + one poll, doubled for headroom against a slow provider registration on the
 #: same boot. Anything under this is scheduling; anything over it is a story — the lid was shut, the
 #: machine was asleep, a run overran its interval.
+#:
+#: It is also the line between a slot that runs late and a slot that was MISSED (`slot_missed`),
+#: and that line is drawn by the wall clock against the slot, whatever kept the slot from running:
+#: a gateway that was stopped, or one that was alive and could not tick because the computer slept.
 LATE_THRESHOLD_SECS = 2 * (BOOT_STAGGER_BASE_SECS + BOOT_STAGGER_WINDOW_SECS + POLL_CEILING_SECS)
+
+
+def slot_missed(slot: float, now: float) -> bool:
+    """Whether a slot that has not run yet was MISSED, rather than merely being run a little late.
+
+    The one rule for every path that finds an overdue slot: the boot after a restart, and the first
+    tick after the process wakes (a closed lid, a stopped process). Both compare the wall clock with
+    the slot, so a gateway that slept through a slot and one that was not running at all answer the
+    same way. Within `LATE_THRESHOLD_SECS` the slot runs as normal: a tick that wakes a few seconds
+    behind is scheduling, not a miss. Past it, a slot whose trigger does not catch up goes to the
+    missed-run review, and one that does fires once, staggered, recorded as late.
+
+    An unknown slot (0 or below) was not missed: with no slot there is nothing to have missed.
+    """
+    return slot > 0 and now - slot >= LATE_THRESHOLD_SECS
 
 
 #: A fire claim's self-expiry. Beyond this the claim is considered abandoned and another fire may
@@ -208,20 +227,20 @@ def recompute_from_completion(
 def boot_recovery(
     *, next_fire_at: float, now: float, trigger_id: str, catch_up: bool
 ) -> tuple[float, str]:
-    """What an overdue trigger's `next_fire_at` becomes at boot, and why.
+    """What an overdue trigger's `next_fire_at` becomes at boot or on a wake, and why.
 
-    Three cases, and the reason each is not the obvious one:
+    Four cases, and the reason each is not the obvious one:
 
     * Not overdue — untouched. Re-arming a schedule that is still valid
     would re-phase it for no gain.
-    * Overdue WITHOUT `catch_up` — pushed to the stagger window and the
-    missed slot is DROPPED. Firing
-      it now is what makes a restart run every automation at once, and the user did not ask for the
-      missed one.
-    * Overdue WITH `catch_up` — also pushed, not fired inline. The plan's
-    catch_up is "fire ONCE at
-      boot/wake", and doing that inside recovery would run it before the gateway finished starting.
-      The stagger is what makes it survivable; session 65 owns the exactly-once bookkeeping.
+    * Overdue, but not missed (`slot_missed`) — pushed into the stagger window and run as normal. A
+      restart that took a few seconds across a slot did not miss it.
+    * Missed WITHOUT `catch_up` — the missed slot is DROPPED (the caller resumes the schedule and
+      puts the slot on the missed-run review). Firing it now is what makes a restart run every
+      automation at once, and the user did not ask for the missed one.
+    * Missed WITH `catch_up` — pushed, not fired inline. catch_up is "fire ONCE at boot/wake", and
+      doing that inside recovery would run it before the gateway finished starting. The stagger is
+      what makes it survivable.
 
     The push is deterministic per id, so two triggers overdue by the same
     amount do not land together.
@@ -231,6 +250,8 @@ def boot_recovery(
     if now < next_fire_at:
         return next_fire_at, "still_upcoming"
     staggered = now + BOOT_STAGGER_BASE_SECS + jitter_offset(trigger_id, BOOT_STAGGER_WINDOW_SECS)
+    if not slot_missed(next_fire_at, now):
+        return staggered, "due_staggered"
     return staggered, "caught_up_staggered" if catch_up else "missed_dropped"
 
 

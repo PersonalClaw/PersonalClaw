@@ -408,12 +408,15 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       {provider === 'heartbeat-tasks' && <HeartbeatQueue reloadKey={job.last_run_ts ?? 0} />}
 
       {/* context chips */}
-      {(job.timezone || job.channel || job.silent || job.strict_schedule || (job.skip_dates?.length ?? 0) > 0) && (
+      {(job.timezone || job.channel || job.silent || job.strict_schedule || job.catch_up || (job.skip_dates?.length ?? 0) > 0) && (
         <div className="flex flex-wrap gap-1.5 text-[0.75rem]">
           {job.timezone && <Chip>{job.timezone}</Chip>}
           {job.channel && <Chip>↳ {channelLabel(job.channel, channels)}</Chip>}
           {job.silent && <Chip>silent</Chip>}
           {job.strict_schedule && <Chip>strict</Chip>}
+          {/* `catch_up`: a time missed while PersonalClaw was stopped or the computer slept runs
+              once, late, instead of waiting on the review. Said only when on: off is the default. */}
+          {job.catch_up && <Chip>runs once if missed</Chip>}
           {(job.skip_dates?.length ?? 0) > 0 && <Chip>{job.skip_dates!.length} skip date{job.skip_dates!.length > 1 ? 's' : ''}</Chip>}
         </div>
       )}

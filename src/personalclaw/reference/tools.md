@@ -317,6 +317,7 @@ Create an automation from ONE natural-language message. Use for 'when a file in 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `catch_up` (boolean, optional) — For an automation that runs at a time or on a schedule. false (the default): If one of its times is missed because PersonalClaw was stopped or the computer was asleep, it does not run late on its own: it waits on the Triggers page for you to run it or dismiss it. true: If one of its times is missed because PersonalClaw was stopped or the computer was asleep, it runs once by itself within a few minutes of PersonalClaw being back, however many times were missed, and its history says how late it ran. Set it true only when the owner wants a missed time run late rather than asked about ('even if my laptop is closed').
 - `changes` (array, optional) — The files the job changes, each a full path as the owner named it ('~/notes/kitchen.md'). Its agent may change these and nothing else; leave it out for a job that only reads or reports.
 - `kind` (string, optional) — Optional explicit kind, bypassing NL routing (file/clock/event/web_watch/idle/webhook/run_completed, or manual for one that runs only when the owner runs it).
 - `message` (string, optional) — What the automation should do when it fires.
@@ -518,7 +519,7 @@ Fire an automation now. A manual run bypasses quiet-hours and duty limits but ne
 
 ### `automation_update`
 
-Patch an automation. Only settable fields apply (name, spec, gates, workflow, enabled, delivery, …); health/run fields are rejected and reported. An edit that changes what its action runs switches it off until the owner allows the change on the Triggers page, and letting its agent approve its own tool calls is the owner's to change, not yours.
+Patch an automation. Only settable fields apply (name, spec, gates, workflow, enabled, delivery, catch_up, …); health/run fields are rejected and reported. An edit that changes what its action runs switches it off until the owner allows the change on the Triggers page, and letting its agent approve its own tool calls is the owner's to change, not yours. `catch_up` (true or false) is what a missed time does: For an automation that runs at a time or on a schedule. false (the default): If one of its times is missed because PersonalClaw was stopped or the computer was asleep, it does not run late on its own: it waits on the Triggers page for you to run it or dismiss it. true: If one of its times is missed because PersonalClaw was stopped or the computer was asleep, it runs once by itself within a few minutes of PersonalClaw being back, however many times were missed, and its history says how late it ran. Set it true only when the owner wants a missed time run late rather than asked about ('even if my laptop is closed').
 
 **Response type:** `automation.update.result`
 

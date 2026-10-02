@@ -252,6 +252,9 @@ def to_schedule_row(
         # `autopause_after`, so publishing it whole would invite a form to send the whole dict back
         # and clobber a threshold it never edited.
         "failure_dedupe": bool(_failure_policy(trigger).get("dedupe_hash", False)),
+        # What a missed slot does (`missed.catch_up_plan`): off, it waits on the review; on, it
+        # runs once, late. Published so the panel says which and the editor sends it back.
+        "catch_up": getattr(trigger, "catch_up", False) is True,
         "strict_schedule": bool(spec.get("strict", False)),
         "timezone": str(spec.get("timezone") or "") or None,
         "skip_dates": list(spec.get("skip_dates") or []),

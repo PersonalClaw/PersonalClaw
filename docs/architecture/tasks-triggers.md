@@ -617,25 +617,42 @@ off, with its record. The chat's one-time task keeps its row either way. A
 run's record outlives its trigger, so a new trigger never takes the id of one
 whose runs are kept (`tools._unique_id`): its history is its own.
 
-A fire that starts after its slot by more than `scheduling.LATE_THRESHOLD_SECS`
-is recorded `ran_late` with how late (`missed.late_outcome`, carried on the fire
-as `DueFire.late`). A tick that dies before the grant is written leaves the
-one-shot armed, so it fires on the next tick; one that dies after leaves its
-claim, which the boot's orphan pass below records as interrupted and puts on
-the review, where Run now runs it and it then retires.
+A slot the tick reaches more than `scheduling.LATE_THRESHOLD_SECS` after it is
+not run late: it was missed (`scheduling.slot_missed`, below). A catch-up fire,
+which stands in for a missed slot, is recorded `ran_late` with how late against
+that slot (`missed.late_outcome`, carried on the fire as `DueFire.late`). A tick
+that dies before the grant is written leaves the one-shot armed, so it fires on
+the next tick; one that dies after leaves its claim, which the boot's orphan
+pass below records as interrupted and puts on the review, where Run now runs it
+and it then retires.
 
-### After a restart: missed and interrupted runs wait for you
+### After a restart or a sleep: missed and interrupted runs wait for you
 
-Two boot passes find work that did not happen, and neither re-runs it on its
-own: running a 3am job at 9am is sometimes right and sometimes exactly wrong,
-and a run a restart cut off may already have done part of its work.
+A slot is **missed** when the wall clock is past it by
+`scheduling.LATE_THRESHOLD_SECS` or more (`scheduling.slot_missed`), whatever
+kept it from running: the gateway was stopped, or it was alive and could not
+tick because the computer slept or the process was stopped. One rule, applied
+by one function, `service.recover`: `service.boot` calls it for every trigger
+after a restart, and `service.tick` calls it for the triggers a wake finds
+missed, before it computes the due set. Within the threshold a slot runs as
+normal (at boot, pushed into the stagger window: `scheduling.boot_recovery`'s
+`due_staggered`). Past it, a trigger with `catch_up` fires once, staggered
+(`missed.catch_up_plan`), and the clock loop holds the slot it stands in for
+(`review.catch_up_slots`, the tick's `catching_up`) so its record says how late
+it ran; every other missed slot is dropped, the schedule resumed on its own
+grid (or, for a one-shot, its slot taken: switched off with no next fire), and
+the slot goes to the review. Neither path re-runs one on its own: running a 3am
+job at 9am is sometimes right and sometimes exactly wrong, and a run a restart
+cut off may already have done part of its work.
 
 - **Missed slots.** `triggers/missed.review_at_boot` walks each active,
-  enabled schedule from its armed slot to now, on the interval grid or, for a
-  cron, by walking the expression (`missed.cron_slots`). A paused or disabled
-  schedule missed nothing, and neither did one whose next fire does the missed
-  one's work (`models.MISSED_FIRE_SUPERSEDED_PROVIDERS`: the HEARTBEAT.md
-  queue).
+  enabled schedule whose armed slot was missed, from that slot to now: on the
+  interval grid, or for a cron or a one-shot by walking the schedule
+  (`missed.stepped_slots`). A paused or disabled schedule missed nothing, and
+  neither did one whose next fire does the missed one's work
+  (`models.MISSED_FIRE_SUPERSEDED_PROVIDERS`: the HEARTBEAT.md queue). A wake's
+  review cards are kept by the tick that dropped the slots, and the gateway
+  announces them (`GatewayOrchestrator._surface_wake_review`).
 - **Interrupted runs.** `triggers/reaper.terminalize_orphans` closes a run
   whose process is gone with the status `interrupted`
   (`RESTART_INTERRUPTED_STATUS`) and the reason in `error`. It is not
@@ -650,7 +667,11 @@ and a run a restart cut off may already have done part of its work.
   gives back only its own claim: one a tick wrote over it meanwhile stays.
 
 Both land in `trigger-review.json` beside `triggers.json`
-(`triggers/review.py`): one card per trigger and kind, until you decide it.
+(`triggers/review.py`): one card per trigger and kind, until you decide it. A
+card names why its slots did not run (`ReviewCard.cause`: `stopped`, `paused`,
+or `stopped_or_paused` once a card holds both), and the notice and the card's
+sentence say it in those words: "while PersonalClaw was not running" is false
+of a laptop whose lid was shut.
 The "Missed scheduled runs" notice points at the Triggers page, where the
 cards sit above the list (`GET /api/triggers/review`). It is composed from the
 cards this boot kept (`review.boot_notice`, over the one reading of the report

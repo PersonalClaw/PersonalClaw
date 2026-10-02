@@ -477,6 +477,8 @@ class GatewayOrchestrator:
         self.dashboard_state: DashboardState | None = None
         #: The boot's missed-run notice, held while the dashboard is not up (`_record_boot_review`).
         self._held_boot_review: tuple[dict[str, Any], list[Any]] | None = None
+        #: The catch-ups the boot staggered, and the slot each stands in for, for the clock loop.
+        self._boot_catch_ups: dict[str, tuple[float, float]] = {}
         self._background_tasks: "set[asyncio.Task]" = set()  # prevent GC of fire-and-forget tasks
         self._dashboard_runner: web.AppRunner | None = None
         self._handler_tasks: "set[asyncio.Task]" = set()  # type: ignore[type-arg]
@@ -1261,7 +1263,20 @@ class GatewayOrchestrator:
             # A row written by anyone else (a loop's auto-nudge, the chat's automation tools in
             # their own process) reaches an open Triggers page within one tick, rather than never.
             on_store_changed=lambda: self._push_trigger_refresh("crons"),
+            # Slots the process slept through: the tick kept their cards, and the owner hears of
+            # them in the same one notice a restart's review sends.
+            on_missed=self._surface_wake_review,
+            # `getattr`, as `_push_trigger_refresh` reads the dashboard: an orchestrator that has
+            # not run the boot sweep has no catch-ups to hand over.
+            catching_up=getattr(self, "_boot_catch_ups", None),
         )
+
+    def _surface_wake_review(self, report: dict[str, Any]) -> None:
+        """Announce what a wake found missed (`TickResult.missed`), as a boot's review is."""
+        from personalclaw.triggers.review import cards_from_boot
+
+        self._surface_missed_review(report, cards_from_boot(report))
+        self._push_trigger_refresh("crons")
 
     def _push_trigger_refresh(self, *kinds: str) -> None:
         """Hint open dashboard views to refresh after a store-backed fire (S107).
@@ -2832,6 +2847,9 @@ class GatewayOrchestrator:
             # has re-armed every schedule and the orphan pass has closed every run, so this is the
             # only record left of what did not happen. Then ONE notice about all of it.
             self._record_boot_review(boot_report, interrupted, base_dir=_trigger_store.base_dir)
+            from personalclaw.triggers.review import catch_up_slots
+
+            self._boot_catch_ups = catch_up_slots(boot_report)
             # The unified CLOCK LOOP — now the only thing that fires a clock trigger. The
             # legacy timer is gone entirely, along with the class that owned it.
             self._clock_task = asyncio.create_task(self._clock_loop())

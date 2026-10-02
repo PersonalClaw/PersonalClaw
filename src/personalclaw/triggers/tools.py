@@ -473,6 +473,44 @@ def posture_refusal(
     )
 
 
+#: What `catch_up` does, in the owner's words: the tool schema's description and a created
+#: automation's announcement say it in these sentences, so the two cannot disagree. True of both
+#: ways a time is missed (`scheduling.slot_missed`): PersonalClaw stopped, or the computer asleep.
+CATCH_UP_OFF = (
+    "If one of its times is missed because PersonalClaw was stopped or the computer was asleep, "
+    "it does not run late on its own: it waits on the Triggers page for you to run it or "
+    "dismiss it."
+)
+CATCH_UP_ON = (
+    "If one of its times is missed because PersonalClaw was stopped or the computer was asleep, "
+    "it runs once by itself within a few minutes of PersonalClaw being back, however many times "
+    "were missed, and its history says how late it ran."
+)
+
+
+def catch_up_refusal(kind: str, catch_up: Any) -> AutomationToolResult | None:
+    """Refuse a `catch_up` that is not true or false, or that is on for a trigger with no times.
+
+    Not a bool is refused rather than coerced, for the reason the dashboard's `enabled` gives: the
+    string "false" is truthy, and a row stores what it is sent while `Trigger.from_dict` reads only
+    `True` back, so a coerced value would catch up until the next reload and then silently not.
+    And only a schedule has times to miss: kept on any other kind, the setting would say something
+    the automation never does.
+    """
+    if not isinstance(catch_up, bool):
+        return AutomationToolResult(
+            False, "Error: catch_up is true or false.", {"catch_up": catch_up}
+        )
+    if catch_up and kind != "clock":
+        return AutomationToolResult(
+            False,
+            "Error: catch_up is for an automation that runs at a time or on a schedule; this one "
+            "has no times to miss.",
+            {"catch_up": catch_up, "kind": kind},
+        )
+    return None
+
+
 def spec_error_refusal(kind: str, spec: Any) -> AutomationToolResult | None:
     """Refuse a spec that cannot do what it says — structure AND semantics (#483/#687/#612/#270).
 
@@ -693,6 +731,7 @@ def create(
     to: str = "",
     chat_channels: Any = None,
     changes: list[str] | None = None,
+    catch_up: bool = False,
 ) -> AutomationToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
 
@@ -725,6 +764,11 @@ def create(
     here is refused with the ones that are, so the owner can be asked which
     (`channel_delivery.named_chat_channel`, over `chat_channels`, the registered ones when None),
     and an id the channel does not take is refused in the channel's own words.
+
+    `catch_up` is what a missed time does (`missed.catch_up_plan`): off, a time missed while
+    PersonalClaw was stopped or the computer slept waits on the Triggers page for the owner to run
+    or dismiss; on, it runs once by itself when PersonalClaw is back, recorded as late. Only a
+    schedule has times to miss, so it is refused for any other kind rather than kept and ignored.
     """
     from personalclaw.triggers import grants
     from personalclaw.triggers import screen as _screen
@@ -887,6 +931,7 @@ def create(
         unsendable_message_refusal(workflow, chat_channels=chat_channels),
         write_scope_refusal(workflow),
         None if owner_consented else posture_refusal(workflow, stored={}, creating=True),
+        catch_up_refusal(resolved_kind, catch_up),
     ):
         if refusal is not None:
             return refusal
@@ -918,6 +963,7 @@ def create(
         spec=resolved_spec,
         gates=resolved_gates,
         workflow=dict(workflow),
+        catch_up=catch_up is True,
     )
     if via_key and not words:
         # A task's result goes where the owner named, as a trigger made on the Triggers page with
@@ -993,6 +1039,8 @@ def create(
         lines.append(f"  sends you “{redact_for_display(words)}” {where}")
     elif via_key:
         lines.append(f"  sends you what it produced {where}")
+    if saved.catch_up:
+        lines.append(f"  {CATCH_UP_ON}")
     reach = grants.what_its_agent_may_do(saved)
     if reach:
         lines.append(f"  when it runs: {reach}")
@@ -1185,6 +1233,10 @@ def update(
     # row on just the same.
     if applied.get("enabled") and needs_review(row.trigger):
         return _awaiting_review_refusal(row.trigger)
+    if "catch_up" in applied:
+        refusal = catch_up_refusal(row.trigger.kind, applied["catch_up"])
+        if refusal is not None:
+            return refusal
     if "spec" in applied:
         if row.trigger.kind == "event" and isinstance(applied["spec"], dict):
             # The same derivation `create` applies: an edit that names a pattern has named its

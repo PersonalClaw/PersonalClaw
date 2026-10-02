@@ -1245,6 +1245,11 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         return json_error(
             "invalid_request", message="'failure_dedupe' must be a boolean", status=400
         )
+    # What a missed slot does: off (the default), it waits on the review; on, it runs once, late.
+    # A non-bool is a 400 for `enabled`'s reason: the string "false" is truthy under `bool()`.
+    catch_up = body.get("catch_up", False)
+    if not isinstance(catch_up, bool):
+        return json_error("invalid_request", message="'catch_up' must be a boolean", status=400)
 
     # 🔴 the write re-point: the clock spec is built for the STORE, not for `add_job`. The
     # store's spellings are `expr`/`interval_secs`/`at` (the legacy `cron_expr`/`every_secs`/`at_ts`
@@ -1342,6 +1347,7 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
             **dict(trigger.failure_policy or {}),
             "dedupe_hash": failure_dedupe,
         }
+        trigger.catch_up = catch_up
         store.upsert(trigger)
         row = store.get(raw_id)
 
@@ -1592,9 +1598,12 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
         "strict_schedule",
         "failure_delivery",
         "failure_dedupe",
+        "catch_up",
     ):
         if key in body:
             kwargs[key] = body[key]
+    if "catch_up" in kwargs and not isinstance(kwargs["catch_up"], bool):
+        return json_error("invalid_request", message="'catch_up' must be a boolean", status=400)
     if "failure_delivery" in kwargs:
         if not _delivery.is_valid_route(kwargs["failure_delivery"]):
             return json_error("invalid_request", message=_FAILURE_ROUTE_RULE, status=400)
@@ -1720,6 +1729,8 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
             policy = dict(row.trigger.failure_policy or {})
             policy["dedupe_hash"] = bool(kwargs["failure_dedupe"])
             patch["failure_policy"] = policy
+        if "catch_up" in kwargs:
+            patch["catch_up"] = kwargs["catch_up"]
 
         from personalclaw.safety_flags import confirm_granted
 

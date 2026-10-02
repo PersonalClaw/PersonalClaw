@@ -1753,6 +1753,9 @@ export interface ScheduleJob {
   // value and not an absent one. `failure_dedupe` is the flattened `failure_policy.dedupe_hash`: the
   // form owns one key of that dict and must not send (and so clobber) `autopause_after` beside it.
   failure_delivery?: string | null; failure_dedupe?: boolean
+  // What a missed time does (`Trigger.catch_up`): false (the default) waits on the Triggers page's
+  // review; true runs it once by itself, late. See `MISSED_RUN_CHOICES`.
+  catch_up?: boolean
   script?: string | null; command?: string | null  // zero-token exec modes
   action?: { provider?: string; config?: Record<string, unknown> }  // canonical {provider, config}
   last_run_ts?: number | null; next_run_ts?: number | null
@@ -3009,7 +3012,7 @@ function _triggerToHook(t: Trigger): HookItem {
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
 // the catalog of things a trigger can run. settingsSchema drives the config form.
-/** One decision a restart left on the Triggers page (`GET /api/triggers/review`). `latest` is the slot
+/** One decision a restart or a sleep left on the Triggers page (`GET /api/triggers/review`). `latest` is the slot
  *  a Run now stands in for (the newest missed slot, or when the interrupted run started); `count`
  *  is how many slots the card covers, and `count_is_floor` marks it "at least". */
 export interface TriggerReviewCard {
@@ -3020,6 +3023,9 @@ export interface TriggerReviewCard {
   oldest: number
   reason: string
   count_is_floor: boolean
+  /** Why its slots did not run: PersonalClaw was `stopped` (a restart found them), `paused` (it was
+   *  running and the computer slept, or the process was stopped), or both. */
+  cause: 'stopped' | 'paused' | 'stopped_or_paused'
   name: string
   /** The id the list opens the automation's panel with (`?open=`). */
   open_id: string

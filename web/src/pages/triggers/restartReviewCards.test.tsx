@@ -19,12 +19,17 @@ const now = () => Date.now() / 1000
 
 const MISSED: TriggerReviewCard = {
   trigger_id: 'clock:hourly', kind: 'missed', count: 3, latest: now() - 2 * HOUR, oldest: now() - 4 * HOUR,
-  reason: '', count_is_floor: false, name: 'Hourly digest', open_id: 'schedule:clock:hourly',
+  reason: '', count_is_floor: false, cause: 'stopped', name: 'Hourly digest', open_id: 'schedule:clock:hourly',
 }
 const INTERRUPTED: TriggerReviewCard = {
   trigger_id: 'clock:backup', kind: 'interrupted', count: 1, latest: now() - HOUR, oldest: now() - HOUR,
   reason: 'Interrupted by a gateway restart: the process running this (pid 4242) is gone. It ran 12s.',
-  count_is_floor: false, name: 'Nightly backup', open_id: 'schedule:clock:backup',
+  count_is_floor: false, cause: 'stopped', name: 'Nightly backup', open_id: 'schedule:clock:backup',
+}
+// A slot the gateway slept through: it was running, so "while PersonalClaw was not running" is false.
+const SLEPT: TriggerReviewCard = {
+  trigger_id: 'clock:pack', kind: 'missed', count: 1, latest: now() - 9 * 60, oldest: now() - 9 * 60,
+  reason: '', count_is_floor: false, cause: 'paused', name: 'Pack the soccer bag', open_id: 'schedule:clock:pack',
 }
 
 const { STATE } = vi.hoisted(() => ({
@@ -91,16 +96,24 @@ const cardFor = async (name: string) => {
 }
 
 describe('the review above the Triggers list', () => {
-  beforeEach(() => { STATE.cards = [MISSED, INTERRUPTED] })
+  beforeEach(() => { STATE.cards = [MISSED, INTERRUPTED, SLEPT] })
 
   it('shows each card with what did not happen and that nothing runs on its own', async () => {
     mount()
     const section = await screen.findByTestId('trigger-review')
-    expect(within(section).getByRole('heading', { name: 'Waiting for you after a restart' })).toBeInTheDocument()
+    expect(within(section).getByRole('heading', { name: 'Waiting for your decision' })).toBeInTheDocument()
+    expect(section).toHaveTextContent('because PersonalClaw was stopped or restarting, or the computer was asleep. None of them runs on its own')
     const missed = await cardFor('Hourly digest')
     expect(missed).toHaveTextContent('Missed 3 scheduled runs while PersonalClaw was not running; the latest was 2h ago. Run now runs it once.')
     const cut = await cardFor('Nightly backup')
     expect(cut).toHaveTextContent('A run was interrupted by a restart 1h ago. It is not run again on its own, because it may already have done part of its work.')
+  })
+
+  it('says a slot the computer slept through was missed while it was asleep, not while it was stopped', async () => {
+    mount()
+    const slept = await cardFor('Pack the soccer bag')
+    expect(slept).toHaveTextContent('Missed 1 scheduled run 9m ago, while PersonalClaw was paused or the computer was asleep.')
+    expect(slept).not.toHaveTextContent('not running')
   })
 
   it('Run now sends the decision for that card and the card leaves the review', async () => {

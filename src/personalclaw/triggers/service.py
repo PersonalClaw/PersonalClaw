@@ -151,6 +151,12 @@ class TickResult:
     unparked: list[str] = field(default_factory=list)
     #: Set when the store changed under us — the caller should re-read before acting on stale state.
     store_changed: bool = False
+    #: What this tick found MISSED (`scheduling.slot_missed`): the process was alive and asleep
+    #: through a slot. `recover`'s report, with `cause` "paused" — the review rows (already kept as
+    #: cards when the tick persists), the catch-up plan and the re-arms. Empty when nothing was
+    #: missed. The caller announces it (`loop.tick_once`'s `on_missed`), the way the boot's report
+    #: is announced after a restart.
+    missed: dict[str, Any] = field(default_factory=dict)
 
     @property
     def suppressed(self) -> int:
@@ -166,6 +172,7 @@ class TickResult:
             "unparked": list(self.unparked),
             "store_changed": self.store_changed,
             "suppressed": self.suppressed,
+            "missed": dict(self.missed),
         }
 
 
@@ -324,6 +331,14 @@ def plan_boot(triggers: list[Trigger], *, now: float) -> list[tuple[str, float, 
             if on_grid > 0:
                 new_at = on_grid + jitter_offset(trigger.id, BOOT_STAGGER_WINDOW_SECS)
                 reason = "missed_dropped_resumed_on_grid"
+            else:
+                # 🔴 NO LATER SLOT (a one-shot): its slot is TAKEN, never pushed into the stagger.
+                # The push is what ran a one-shot's dropped slot a minute after every restart —
+                # "review, don't auto-run" held for a schedule and not for "remind me at 5pm".
+                # Switched off with no next fire, as the tick takes a one-shot's slot; the row
+                # stays so the review's Run now can run it (`retire_after_run` owns its removal).
+                new_at = 0.0
+                reason = "missed_dropped_slot_taken"
         out.append((trigger.id, new_at, reason))
     return out
 
@@ -418,18 +433,27 @@ async def tick(
     persist: bool = True,
     user_active: bool = False,
     base_dir: Any = None,
+    catching_up: dict[str, tuple[float, float]] | None = None,
 ) -> TickResult:
     """One tick: decide what fires, persist the reschedule, and return the dispatch list.
 
     The order inside a tick is itself a contract:
 
     1. Read the store (fresh — another process may have written it).
-    2. Coalesce the due set.
-    3. For each due trigger: **persist the next fire FIRST** (§3.1 persist-before-execute),
+    2. Recover what a wake finds MISSED (`scheduling.slot_missed`), exactly as a boot does
+       (`recover`): a slot the process slept through is reviewed, or caught up once, never run
+       late on its own.
+    3. Coalesce the due set.
+    4. For each due trigger: **persist the next fire FIRST** (§3.1 persist-before-execute),
     then walk
        S86's fire path.
-    4. Record a ledger row for every evaluated trigger, fired or not (§7 crit 8).
-    5. Compute the next sleep from the rows as they now stand.
+    5. Record a ledger row for every evaluated trigger, fired or not (§7 crit 8).
+    6. Compute the next sleep from the rows as they now stand.
+
+    *catching_up* is the caller's map of staggered catch-ups, held across ticks
+    (`loop.run_forever`): trigger id → `(the missed slot it stands in for, when it fires)`. A
+    catch-up is re-armed to its staggered time, so the slot it replaces lives only here, and the
+    fire that runs it is recorded late against that slot. Mutated in place.
 
     `persist=False` makes the whole tick a dry run for the `automation doctor` and for tests —
     the fire
@@ -446,6 +470,7 @@ async def tick(
     """
     from personalclaw.triggers import claims
     from personalclaw.triggers.routing import routed
+    from personalclaw.triggers.scheduling import slot_missed
 
     # 🔴 PROVIDER ROWS JOIN THE ARM PATH HERE. `routed` merges every registered `trigger`
     # provider's rows into the one `load()` that `armable` below reads, so an app-served row can be
@@ -486,11 +511,32 @@ async def tick(
     # parked trigger produces no fires, so nothing in the outcome path could ever revive it.
     result.unparked.extend(_unpark_ready(store, triggers, now=now, persist=persist))
 
+    # 🔴 A SLOT MISSED WHILE THE PROCESS SLEPT, decided as a restart decides it. Measured before
+    # this: a `catch_up: false` one-shot whose slot passed while the gateway was stopped with
+    # SIGSTOP fired 8 minutes late the instant it woke, and was delivered — while the same slot
+    # missed across a restart went to the review. Nothing bounded how late a woken tick could run a
+    # slot: `LATE_THRESHOLD_SECS` only labelled it `ran_late`. Sleep is read from the wall clock
+    # against the armed slot, never from whether the process restarted, and these triggers go
+    # through `recover`, the boot's own decision, before the due set below is computed — so they
+    # are re-armed, taken or staggered by then and none of them fires late in this tick.
+    asleep = [
+        by_id[tid]
+        for tid in due_ids(triggers, now=now)
+        if tid in by_id and slot_missed(to_epoch(by_id[tid].next_fire_at), now)
+    ]
+    if asleep:
+        result.missed = _recover_on_wake(
+            store, asleep, now=now, persist=persist, base_dir=base_dir, catching_up=catching_up
+        )
+
     for trigger_id in due_ids(triggers, now=now):
         trigger = by_id.get(trigger_id)
         if trigger is None:
             continue
         scheduled_for = to_epoch(trigger.next_fire_at)
+        # A staggered catch-up stands in for the slot it replaces, so its record says how late it
+        # ran against THAT slot, not against the staggered time it was re-armed to.
+        scheduled_for = _stands_in_for(catching_up, trigger.id, scheduled_for) or scheduled_for
 
         # ── Persist the NEXT fire before handing this one out. A crash between here and the
         # dispatch loses one fire; a crash with the old `next_fire_at` still on disk fires
@@ -578,6 +624,57 @@ async def tick(
 
     result.next_sleep = sleep_for(list(by_id.values()), now=now)
     return result
+
+
+def _recover_on_wake(
+    store: Any,
+    triggers: list[Trigger],
+    *,
+    now: float,
+    persist: bool,
+    base_dir: Any,
+    catching_up: dict[str, tuple[float, float]] | None,
+) -> dict[str, Any]:
+    """`recover` for the slots a wake found missed, and the cards it owes. Returns the report.
+
+    The cards are kept HERE, in the tick that dropped the slots, rather than by whoever announces
+    them: a re-arm that dropped a slot and a card that records it are one decision, and a caller
+    that forgot to announce must not be able to make the miss a silent drop. The boot keeps its
+    cards in the gateway instead, because it merges them with the runs a restart interrupted.
+    """
+    from personalclaw.triggers import review as _review
+
+    report = recover(store, triggers, now=now, persist=persist)
+    report["cause"] = _review.PAUSED
+    if persist:
+        _review.record(_review.cards_from_boot(report), base_dir=base_dir)
+    if catching_up is not None:
+        catching_up.update(_review.catch_up_slots(report))
+    logger.info(
+        "clock woke past %d slot(s) it missed: %d to review, %d catching up",
+        len(triggers),
+        len(_review.cards_from_boot(report)),
+        len(_review.catching_up(report)),
+    )
+    return report
+
+
+def _stands_in_for(
+    catching_up: dict[str, tuple[float, float]] | None, trigger_id: str, fire_at: float
+) -> float:
+    """The missed slot a catch-up fire stands in for, or 0.0 when this fire is not that catch-up.
+
+    Taken out of the map whatever it answers: the trigger is firing now, so the catch-up planned
+    for it is spent. It counts only when this fire is at the time the catch-up was planned for —
+    a trigger edited to another time since then is firing on its own schedule, not catching up.
+    """
+    if not catching_up:
+        return 0.0
+    held = catching_up.pop(trigger_id, None)
+    if held is None:
+        return 0.0
+    slot, planned = held
+    return slot if abs(fire_at - planned) < 1.0 else 0.0
 
 
 @dataclass
@@ -999,7 +1096,7 @@ _DID_ITS_WORK: frozenset[str] = frozenset(
 )
 
 
-def retire_after_run(store: Any, trigger: Any, *, status: str) -> bool:
+def retire_after_run(store: Any, trigger: Any, *, status: str, from_review: bool = False) -> bool:
     """Remove a `delete_after_run` one-shot once a run of it is recorded as having done its work.
 
     ``status`` is what the caller just recorded for that run (`ScheduleRun.status`), and
@@ -1008,9 +1105,11 @@ def retire_after_run(store: Any, trigger: Any, *, status: str) -> bool:
     Called by the recorders, after they write the run: the scheduled fire's
     (`gateway._record_fire_outcome`), the end of work a fire only started
     (`gateway._report_to_its_trigger`), and a Run now's (`_record_manual_run`), which is how the
-    review runs an interrupted one. The row goes only for a one-shot whose own fire the clock has
-    granted (`last_fired_at` at or after its time) and whose slot the tick took (switched off, no
-    next fire) — never for one switched off before its time, or re-armed since.
+    review runs an interrupted one or a missed one. The row goes only for a one-shot whose slot the
+    clock took (switched off, no next fire) and whose own fire it granted (`last_fired_at` at or
+    after its time) — or, *from_review*, whose missed slot the review just ran in its place: a
+    missed one-shot's slot is taken without a grant (`recover`), and its Run now is its run. Never
+    for one switched off before its time (it has no card), or re-armed since.
 
     A run that did not do its work — it failed, a gate or the owner held it, it only started work
     that has not ended, it waits on you — leaves the row in the list, switched off, with its
@@ -1027,7 +1126,7 @@ def retire_after_run(store: Any, trigger: Any, *, status: str) -> bool:
         or bool(getattr(trigger, "enabled", False))
         or str(getattr(trigger, "next_fire_at", "") or "").strip()
         or at <= 0
-        or to_epoch(getattr(trigger, "last_fired_at", "")) < at
+        or (to_epoch(getattr(trigger, "last_fired_at", "")) < at and not from_review)
     ):
         return False
     return bool(store.delete(trigger.id))
@@ -1053,7 +1152,6 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
     from `next_fire_at`, and by then that pointed into the FUTURE. Re-arming destroys the only
     evidence that anything was missed, so the evidence has to be read first.
     """
-    from personalclaw.triggers.missed import review_at_boot
     from personalclaw.triggers.routing import routed
 
     # Provider rows join the boot re-arm too, for the same reason `tick` needs them: boot
@@ -1065,19 +1163,42 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
     # Owner-authored rows only. Boot RE-ARMS (it writes `next_fire_at`), so a foreign
     # row reaching this walk would be armed on the owner's clock — the exact thing the filter exists
     # to prevent, and the reason it belongs here and not only in `tick`.
-    triggers = provider.armable(store)
+    return recover(store, provider.armable(store), now=now, persist=persist)
 
-    # Snapshot BEFORE `plan_boot` re-arms — see the docstring.
+
+def recover(
+    store: Any, triggers: list[Trigger], *, now: float, persist: bool = True
+) -> dict[str, Any]:
+    """The one answer to slots that did not run: review them, plan the catch-ups, re-arm the rest.
+
+    Called by `boot` for every trigger after a restart, and by `tick` for the triggers whose slot a
+    wake found missed (`scheduling.slot_missed`) — the process was alive and asleep, a closed lid
+    or a stopped process. One function, so a slot missed while PersonalClaw slept and one missed
+    while it was stopped are decided the same way: a `catch_up` trigger fires once, staggered, and
+    every other missed slot goes to the review (`triggers/review.py`), never run on its own.
+
+    Mutates *triggers* in place (their `next_fire_at`, and `enabled` for a one-shot whose slot it
+    takes) and writes each change when *persist*. Returns the boot report's shape: what was
+    re-armed, the review, and the catch-up plan.
+    """
+    from personalclaw.triggers.missed import review_at_boot
+
+    # Snapshot BEFORE `plan_boot` re-arms — see `boot`'s docstring.
     review = review_at_boot([t.to_dict() for t in triggers], now=now)
     caught_up = catch_up_at_boot(triggers, now=now)
 
+    by_id = {t.id: t for t in triggers}
     rearmed: list[dict[str, Any]] = []
     for trigger_id, new_at, reason in plan_boot(triggers, now=now):
-        trigger = next((t for t in triggers if t.id == trigger_id), None)
+        trigger = by_id.get(trigger_id)
         if trigger is None:
             continue
         if new_at != to_epoch(trigger.next_fire_at):
             trigger.next_fire_at = to_iso(new_at)
+            if reason == "missed_dropped_slot_taken":
+                # A one-shot's missed slot is taken the way the tick takes one: switched off with
+                # no next fire, the row kept for the review's Run now.
+                trigger.enabled = False
             if persist:
                 store.upsert(trigger)
             rearmed.append({"id": trigger_id, "next_fire_at": new_at, "reason": reason})
@@ -1092,18 +1213,20 @@ def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any
 
 
 def catch_up_at_boot(triggers: list[Trigger], *, now: float) -> list[dict[str, Any]]:
-    """Which triggers get an automatic catch-up fire at this boot, and why the rest do not.
+    """Which triggers get an automatic catch-up fire at this boot or wake, and why the rest do not.
 
-    A thin adapter over `missed.catch_up_plan` so `boot` reports one shape and the storm guards
+    A thin adapter over `missed.catch_up_plan` so `recover` reports one shape and the storm guards
     live in exactly one place. Returns EVERY candidate including the refused ones: §3.4's rule is
     that a `catch_up: true` trigger which did NOT catch up needs an explanation as much as one that
     did, and a list of only the winners cannot answer "why not mine".
 
-    Snapshot before re-arming for the same reason the review is — `missed_last_slot` is "is the
-    armed fire in the past", which recovery makes false by design.
+    Snapshot before re-arming for the same reason the review is — `missed_last_slot` is "was the
+    armed fire missed", which recovery makes false by design. `slot` is that armed fire, the first
+    slot that did not run (`review.catch_up_slots` prefers the newest the review counted).
     """
     from personalclaw.triggers.missed import catch_up_plan
 
+    armed = {t.id: to_epoch(t.next_fire_at) for t in triggers}
     out: list[dict[str, Any]] = []
     for trigger_id, fire_at, reason in catch_up_plan([t.to_dict() for t in triggers], now=now):
         out.append(
@@ -1112,6 +1235,7 @@ def catch_up_at_boot(triggers: list[Trigger], *, now: float) -> list[dict[str, A
                 "fire_at": fire_at,
                 "reason": reason,
                 "catching_up": fire_at > 0,
+                "slot": armed.get(trigger_id, 0.0),
             }
         )
     return out

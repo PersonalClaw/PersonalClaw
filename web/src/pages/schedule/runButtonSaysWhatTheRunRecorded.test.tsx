@@ -116,7 +116,7 @@ describe('the automation panel’s Run button', () => {
 describe('the restart review’s Run now', () => {
   const CARD: TriggerReviewCard = {
     trigger_id: 'clock:balance', kind: 'missed', count: 1, latest: Date.now() / 1000 - 3600,
-    oldest: Date.now() / 1000 - 3600, reason: '', count_is_floor: false, name: 'Check my balance',
+    oldest: Date.now() / 1000 - 3600, reason: '', count_is_floor: false, cause: 'stopped', name: 'Check my balance',
     open_id: 'schedule:clock:balance',
   }
 

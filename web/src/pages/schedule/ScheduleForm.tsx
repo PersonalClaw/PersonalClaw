@@ -6,7 +6,7 @@ import { useQuery } from '../../lib/data'
 import { useAgentCatalog, useModelCatalog } from '../../lib/agents'
 import { Combobox, type ComboOption } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
-import { Field, TextInput, TextArea, Segmented, ChipInput, FieldError } from '../../ui/forms'
+import { Field, TextInput, TextArea, Segmented, ChipInput, FieldError, useFieldHintId } from '../../ui/forms'
 import { SoonTag } from '../tasks/taskMeta'
 import { localDateTimeInput, localDateTimeSeconds } from '../../lib/epoch'
 import {
@@ -73,6 +73,9 @@ export type ScheduleDraft = {
   // fall-back branch); see FAILURE_ROUTES.
   failure_delivery: string  // '' | 'inbox' | 'none'
   failure_dedupe: boolean   // → `failure_policy.dedupe_hash`
+  /** What a missed time does (`Trigger.catch_up`): false waits on the Triggers page's review for
+   *  you to run or dismiss it, true runs it once by itself, late. See `MISSED_RUN_CHOICES`. */
+  catch_up: boolean
 }
 
 /** The failure routes `delivery.route_for` can actually honour.
@@ -92,6 +95,23 @@ export const FAILURE_ROUTES: Array<{ value: string; label: string }> = [
   { value: '', label: 'Same as results' },
 ]
 
+/** What a missed time does (`Trigger.catch_up`), in her words. A time is missed when PersonalClaw
+ *  could not run it within a few minutes of it, because PersonalClaw was stopped or the computer was
+ *  asleep (`scheduling.slot_missed`); a run only a little late still runs as usual. Each hint says
+ *  what its choice does, and is true of both ways a time is missed. */
+export const MISSED_RUN_CHOICES: Array<{ value: 'review' | 'catch_up'; label: string; hint: string }> = [
+  {
+    value: 'review',
+    label: 'Wait for me to decide',
+    hint: "If PersonalClaw was stopped or the computer was asleep when this was due, it doesn't run late by itself. It waits on the Triggers page for you to run it or dismiss it.",
+  },
+  {
+    value: 'catch_up',
+    label: 'Run it once, late',
+    hint: 'If PersonalClaw was stopped or the computer was asleep when this was due, it runs once by itself within a few minutes of PersonalClaw being back, however many times it was missed. Its history says how late it ran.',
+  },
+]
+
 export function emptyDraft(): ScheduleDraft {
   return {
     name: '', message: '', kind: 'every', intervalValue: 1, intervalUnit: 'h', cron: '0 9 * * *', at: '',
@@ -101,6 +121,8 @@ export function emptyDraft(): ScheduleDraft {
     // `failure_policy` (so dedup is opt-in). A form that defaulted dedup ON would silently coalesce
     // repeat alerts for every automation created through the UI.
     failure_delivery: 'inbox', failure_dedupe: false,
+    // The entity's default: a missed time is reviewed, not run late on its own.
+    catch_up: false,
   }
 }
 
@@ -122,6 +144,7 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
     // then WRITE that invented route the next time they saved the form. Only a row that carries the
     // field not at all (`null`/`undefined`) falls back to the entity default.
     failure_delivery: j.failure_delivery ?? 'inbox', failure_dedupe: !!j.failure_dedupe,
+    catch_up: j.catch_up === true,
   }
 }
 
@@ -178,6 +201,9 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
     // silently not happen (the rule issues 268/689 established).
     failure_delivery: d.failure_delivery,
     failure_dedupe: d.failure_dedupe,
+    // What a missed time does — a trigger field like the two above, so it rides every mode, and by
+    // presence: turning it off is an edit the server must receive.
+    catch_up: d.catch_up,
   }
   if (d.kind === 'cron') body.cron = d.cron.trim()
   // 🔴 The cadence is sent ONLY when the user actually changed it (#531). `secsToInterval` and
@@ -345,7 +371,7 @@ function Advanced({ draft, set, triggerOnly }: { draft: ScheduleDraft; set: <K e
     <div className="rounded-lg bg-surface-container/60">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center gap-s px-m h-11 text-on-surface-var text-[0.8125rem]">
         <ChevronDown size={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
-        Advanced — delivery, timezone, skip dates
+        Advanced — delivery, timezone, skip dates, missed runs
       </button>
       {open && (
         <div className="flex flex-col gap-l px-m pb-l pt-1">
@@ -368,6 +394,13 @@ function Advanced({ draft, set, triggerOnly }: { draft: ScheduleDraft; set: <K e
           <Field label="If it fails" hint="Failures can reach you even when results stay silent.">
             <NativeSelect value={draft.failure_delivery} onChange={(v) => set('failure_delivery', v)}
               options={FAILURE_ROUTES} label="Where failures go" name="failure-delivery" />
+          </Field>
+          {/* `catch_up`. Beside the delivery rows because it answers the question they do — what
+              this automation does when you were not there — and its hint changes with the choice,
+              so the sentence under the control is always what the selected setting does. */}
+          <Field label="If a time is missed" hint={MISSED_RUN_CHOICES[draft.catch_up ? 1 : 0].hint}>
+            <NativeSelect value={draft.catch_up ? 'catch_up' : 'review'} onChange={(v) => set('catch_up', v === 'catch_up')}
+              options={MISSED_RUN_CHOICES} label="What a missed time does" name="missed-time" />
           </Field>
           <div className="flex flex-col gap-s">
             {/* `failure_policy.dedupe_hash`. Opt-in, matching the declared schema: coalescing alerts
@@ -498,9 +531,12 @@ function IntervalField({ draft, set, invokesModel }: { draft: ScheduleDraft; set
 }
 
 function NativeSelect({ value, onChange, options, label, name }: { value: string; onChange: (v: string) => void; options: Array<{ value: string; label: string }>; label?: string; name?: string }) {
+  // Inside a `Field`, the select is described by that field's hint, so the sentence under it is read
+  // with it — for "If a time is missed" that sentence is what the chosen setting does.
+  const hintId = useFieldHintId()
   return (
     <div className="relative">
-      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} name={name}
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} aria-describedby={hintId} name={name}
         className="h-10 appearance-none rounded-md bg-surface-container pl-m pr-9 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>

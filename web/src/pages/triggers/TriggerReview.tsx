@@ -9,10 +9,11 @@ import { TextLink } from '../../ui/TextLink'
 import { InlineLoadError } from '../../ui/ListScaffold'
 import { relPast } from './triggerMeta'
 
-/** What a restart left for you to decide, above the list (`GET /api/triggers/review`).
+/** What a restart or a sleep left for you to decide, above the list (`GET /api/triggers/review`).
  *
  *  Two kinds of card, one decision each. MISSED: a schedule's slots that did not run while
- *  PersonalClaw was stopped. INTERRUPTED: a run a restart cut off. Neither runs on its own —
+ *  PersonalClaw was stopped, or while it was running and the computer slept (`card.cause`).
+ *  INTERRUPTED: a run a restart cut off. Neither runs on its own —
  *  running a 3am job at 9am is sometimes right and sometimes exactly wrong, and an interrupted run
  *  may already have done part of its work — so each card offers Run now (once, however many slots
  *  it covers) and Dismiss, and either choice is a row in that automation's history.
@@ -33,7 +34,7 @@ export function TriggerReview({ cards, error, onRetry, onDecided, onOpen }: {
   if (error) {
     return (
       <div className="mb-m" data-testid="trigger-review-error">
-        <InlineLoadError what="the runs waiting for you after a restart" error={error} onRetry={onRetry} />
+        <InlineLoadError what="the runs waiting for your decision" error={error} onRetry={onRetry} />
       </div>
     )
   }
@@ -68,9 +69,9 @@ export function TriggerReview({ cards, error, onRetry, onDecided, onOpen }: {
 
   return (
     <section aria-labelledby="trigger-review-heading" data-testid="trigger-review" className="mb-l rounded-lg border border-outline-variant/50 bg-surface-container px-l py-m">
-      <Eyebrow as="h2" id="trigger-review-heading">Waiting for you after a restart</Eyebrow>
+      <Eyebrow as="h2" id="trigger-review-heading">Waiting for your decision</Eyebrow>
       <p data-type="body-s" className="mt-xs text-on-surface-var">
-        These did not run while PersonalClaw was stopped or restarting, and none of them runs on its own. Run each now, or dismiss it.
+        These did not run when they were due, because PersonalClaw was stopped or restarting, or the computer was asleep. None of them runs on its own: run each now, or dismiss it.
       </p>
       <ul className="mt-m flex flex-col gap-s">
         {cards.map((card) => {
@@ -103,6 +104,14 @@ export function TriggerReview({ cards, error, onRetry, onDecided, onOpen }: {
   )
 }
 
+/** Why a missed card's slots did not run, true of each cause (`review.py`'s `CAUSES`): a laptop
+ *  whose lid was shut was running PersonalClaw the whole time, so "not running" is false of it. */
+const MISSED_WHILE: Record<TriggerReviewCard['cause'], string> = {
+  stopped: 'while PersonalClaw was not running',
+  paused: 'while PersonalClaw was paused or the computer was asleep',
+  stopped_or_paused: 'while PersonalClaw was stopped, paused or asleep',
+}
+
 /** The card's one sentence: what did not happen, when, and why it is waiting for you. */
 export function reviewSentence(card: TriggerReviewCard): string {
   if (card.kind === 'interrupted') {
@@ -110,7 +119,8 @@ export function reviewSentence(card: TriggerReviewCard): string {
   }
   const n = card.count
   const many = `${card.count_is_floor ? 'at least ' : ''}${n} scheduled run${n === 1 ? '' : 's'}`
+  const why = MISSED_WHILE[card.cause]
   return n === 1
-    ? `Missed ${many} ${relPast(card.latest)}, while PersonalClaw was not running.`
-    : `Missed ${many} while PersonalClaw was not running; the latest was ${relPast(card.latest)}. Run now runs it once.`
+    ? `Missed ${many} ${relPast(card.latest)}, ${why}.`
+    : `Missed ${many} ${why}; the latest was ${relPast(card.latest)}. Run now runs it once.`
 }

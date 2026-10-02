@@ -746,17 +746,40 @@ def test_unparking_does_NOT_reset_the_failure_counter(store, tmp_path):
 # ── 🔴 the TICK now records lateness ──
 
 
-def test_the_TICK_records_an_overdue_fire_as_ran_late(store, tmp_path):
-    """🔴 Driven through the real tick, not the pure helper. `scheduled_for` comes from the trigger's
-    own `next_fire_at` and `now` is when the fire was granted, so the tick is the one place holding
-    both stamps — `FireContext` carries no `scheduled_for`, which is why `firepath` cannot decide
-    this and adding one there would duplicate a value the tick already owns."""
-    _parkable(store, tmp_path, tid="clock:late")
-    result = asyncio.run(SVC.tick(store, now=NOW + 2400, base_dir=tmp_path, persist=True))
+def test_the_TICK_records_a_catch_up_fire_as_ran_late(store, tmp_path):
+    """🔴 Driven through the real tick, not the pure helper. A slot 40 minutes late is MISSED
+    (`scheduling.slot_missed`), so the tick runs it only for a `catch_up` trigger: once, staggered,
+    and recorded `ran_late` against the slot it stands in for — which the caller's `catching_up`
+    map carries across ticks, because the staggered re-arm moved `next_fire_at` off the slot.
+    `FireContext` carries no `scheduled_for`, which is why `firepath` cannot decide this and the
+    tick, holding both stamps, does."""
+    trigger = _parkable(store, tmp_path, tid="clock:late")
+    trigger.spec = {"kind": "interval", "interval_secs": 3600}
+    trigger.catch_up = True
+    store.upsert(trigger)
+    held: dict = {}
+    woke = asyncio.run(
+        SVC.tick(store, now=NOW + 2400, base_dir=tmp_path, persist=True, catching_up=held)
+    )
+    assert woke.fires == [], "staggered, not inline"
+    fire_at = SVC.to_epoch(store.get("clock:late").trigger.next_fire_at)
+    result = asyncio.run(
+        SVC.tick(store, now=fire_at, base_dir=tmp_path, persist=True, catching_up=held)
+    )
     row = next(r for r in result.ledger_rows if r["trigger_id"] == "clock:late")
     assert row["outcome"] == "ran_late"
     assert "after its scheduled slot" in row["reason"]
     assert row["scheduled_for"] == NOW, "the slot must be recorded beside it"
+
+
+def test_the_TICK_does_not_run_a_MISSED_slot_that_does_not_catch_up(store, tmp_path):
+    """The other half: the same slot, `catch_up` off, is not run late at all — it is reviewed."""
+    from personalclaw.triggers import review
+
+    _parkable(store, tmp_path, tid="clock:late")
+    result = asyncio.run(SVC.tick(store, now=NOW + 2400, base_dir=tmp_path, persist=True))
+    assert result.fires == []
+    assert [c.trigger_id for c in review.pending(base_dir=tmp_path)] == ["clock:late"]
 
 
 def test_the_TICK_leaves_an_ON_TIME_fire_alone(store, tmp_path):

@@ -63,6 +63,8 @@ async def run_forever(
     base_dir: Any = None,
     user_active: Callable[[], bool] | None = None,
     on_store_changed: Callable[[], None] | None = None,
+    on_missed: Callable[[dict[str, Any]], None] | None = None,
+    catching_up: dict[str, tuple[float, float]] | None = None,
 ) -> None:
     """Drive the clock forever: tick, dispatch what fired, execute, sleep. NEVER returns normally.
 
@@ -80,12 +82,19 @@ async def run_forever(
     `on_store_changed` is told when a tick finds the store written by someone else since the last
     one (`TickResult.store_changed`): the one place that notices every writer, including one in
     another process. Best-effort, like everything else a tick reports.
+
+    `on_missed` is handed what a tick found missed after the process slept (`TickResult.missed`),
+    to announce it the way a boot's review is announced. `catching_up` seeds the staggered
+    catch-ups the boot planned (`review.catch_up_slots`), so their fires are recorded late too.
     """
     # Resumes whose session was not ready last tick. Owned HERE, by the only thing that outlives a
     # tick: `tick_once` is deliberately stateless so a test can drive one iteration, and a retry
     # queue held inside it would be discarded on every return — which is the same silent drop
     # §3.2 refuses. Bounded, and the bound drops the OLDEST: see `MAX_PENDING_RESUMES`.
     pending: list[Any] = []
+    # The staggered catch-ups not yet fired, and the slot each stands in for — held here for the
+    # same reason as `pending`: it has to outlive the tick that planned it.
+    held_catch_ups: dict[str, tuple[float, float]] = dict(catching_up or {})
     while True:
         sleep_for = MAX_ITERATION_SLEEP_SECS
         try:
@@ -96,6 +105,8 @@ async def run_forever(
                 base_dir=base_dir,
                 user_active=bool(user_active()) if user_active else False,
                 pending_resumes=pending,
+                catching_up=held_catch_ups,
+                on_missed=on_missed,
             )
             sleep_for = min(max(0.5, float(result.next_sleep)), MAX_ITERATION_SLEEP_SECS)
             if on_store_changed is not None and getattr(result, "store_changed", False):
@@ -116,6 +127,8 @@ async def tick_once(
     user_active: bool = False,
     now: float = 0.0,
     pending_resumes: list[Any] | None = None,
+    catching_up: dict[str, tuple[float, float]] | None = None,
+    on_missed: Callable[[dict[str, Any]], None] | None = None,
 ) -> Any:
     """One iteration: tick, dispatch each fire, drain each target session. Returns the `TickResult`.
 
@@ -126,8 +139,9 @@ async def tick_once(
     dispatcher enqueues onto the target session's inbox, and S90's executor drains it — so a
     crash between decision and execution leaves the payload in the inbox, not lost.
 
-    `pending_resumes` is the caller's cross-tick retry list, mutated in place. Owned by
-    `run_forever` because this function is deliberately stateless — see that function.
+    `pending_resumes` and `catching_up` are the caller's cross-tick state, mutated in place. Owned
+    by `run_forever` because this function is deliberately stateless — see that function.
+    `on_missed` announces what the tick found missed after a sleep; it never fails the tick.
     """
     from personalclaw.triggers import service as svc
     from personalclaw.triggers import wakeup as wk
@@ -135,7 +149,16 @@ async def tick_once(
     # `now` is threaded so a test (and the doctor's dry run) can drive an exact instant. Without
     # it the loop is only testable against wall-clock, which makes an armed-for-later trigger
     # untestable — the first probe of this file silently fired nothing for exactly that reason.
-    result = await svc.tick(store, now=now, base_dir=base_dir, user_active=user_active)
+    result = await svc.tick(
+        store, now=now, base_dir=base_dir, user_active=user_active, catching_up=catching_up
+    )
+    if result.missed and on_missed is not None:
+        # The cards are already kept (the tick wrote them); this only says so, so a failure to
+        # announce is logged and the tick goes on.
+        try:
+            on_missed(result.missed)
+        except Exception:  # noqa: BLE001 - an announcement must never fail the tick
+            logger.warning("could not announce the slots a wake found missed", exc_info=True)
 
     # 🔴 THE TWO SEPARATE WAKE SOURCES, both BEFORE the early return (§3.2 / crit 7).
     #

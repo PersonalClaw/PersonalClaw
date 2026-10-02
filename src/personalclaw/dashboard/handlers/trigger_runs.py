@@ -868,9 +868,10 @@ async def _record_manual_run(
         else:
             live.last_success_at = stamp
         store.upsert(live)
-        # A one-shot whose own fire was cut off, run again from the review: once this run has done
-        # its work it leaves the list, as its scheduled run would have (`retire_after_run`).
-        retire_after_run(store, live, status=status)
+        # A one-shot whose own fire was cut off, or whose slot was missed, run from the review
+        # (`late` is the review's word): once this run has done its work it leaves the list, as its
+        # scheduled run would have (`retire_after_run`).
+        retire_after_run(store, live, status=status, from_review=bool(late))
     except Exception:  # noqa: BLE001 - see the docstring: recording must never fail the run
         logger.debug("could not record the manual run for %s", trigger, exc_info=True)
 

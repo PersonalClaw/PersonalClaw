@@ -1290,6 +1290,7 @@ MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
             FieldSpec("kind", str, max_len=32, pattern=re.compile(r"^[a-z_]*$")),
             FieldSpec("spec", dict),
             FieldSpec("changes", list, item_type=str, item_max_len=1024, max_items=10),
+            FieldSpec("catch_up", bool),
         ],
     ),
     "automation_list": ToolSchema(

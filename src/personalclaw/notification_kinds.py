@@ -289,15 +289,16 @@ _KINDS: tuple[NotificationKind, ...] = (
         decision=True,
         owner="personalclaw.inbox",
     ),
-    # What a restart or a stop left undone: the slots a stopped gateway missed and the runs it cut
-    # off. A decision: none is run on its own, and each waits on the Triggers page's review until
-    # the owner runs or dismisses it, so its record is that card (`triggers/review.py`). WARNING
+    # What a restart, a stop or a sleep left undone: the slots a stopped or sleeping gateway missed
+    # and the runs a stop cut off. A decision: none is run on its own, and each waits on the
+    # Triggers page's review until the owner runs or dismisses it, so its record is that card
+    # (`triggers/review.py`). WARNING
     # with `attention`, like `cron/trigger_import`, so quiet hours record it silently rather than
     # drop it: a restart at 01:00 inside them used to leave the card and no notice at all.
     NotificationKind(
         "cron",
         "run_review",
-        "Runs to review after a restart",
+        "Missed or interrupted runs to review",
         "immediate",
         SEV_WARNING,
         attention=True,

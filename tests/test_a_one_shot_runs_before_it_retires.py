@@ -136,19 +136,31 @@ async def _page_trigger(*, action: dict | None = None, **when: Any) -> str:
     return str(payload["trigger"]["raw_id"])
 
 
-async def _one_shot(at: float) -> str:
+async def _one_shot(at: float, **more: Any) -> str:
     """The page's One-shot: "Run once at date and time"."""
-    return await _page_trigger(at=at)
+    return await _page_trigger(at=at, **more)
 
 
-async def _tick_at(monkeypatch, bell: _State, now: float) -> None:
-    """One pass of the gateway's clock loop at ``now``: its tick, dispatch, runner and recorder."""
+async def _tick_at(monkeypatch, bell: _State, now: float, held: dict | None = None) -> None:
+    """One pass of the gateway's clock loop at ``now``: its tick, dispatch, runner and recorder.
+
+    With the loop's announcer of what a wake missed, and *held* as the catch-ups the loop keeps
+    across ticks (`run_forever`'s `catching_up`), so a test of several passes holds them as it does.
+    """
     import personalclaw.triggers.loop as clock_loop
 
     tick_once = clock_loop.tick_once
 
-    async def one_tick(store, *, runner, sessions=None, base_dir=None, **_kw):
-        await tick_once(store, runner=runner, sessions=sessions, base_dir=base_dir, now=now)
+    async def one_tick(store, *, runner, sessions=None, base_dir=None, on_missed=None, **_kw):
+        await tick_once(
+            store,
+            runner=runner,
+            sessions=sessions,
+            base_dir=base_dir,
+            now=now,
+            catching_up=held,
+            on_missed=on_missed,
+        )
 
     monkeypatch.setattr(clock_loop, "run_forever", one_tick)
     orch = object.__new__(GatewayOrchestrator)
@@ -192,18 +204,42 @@ async def test_a_one_shot_made_on_the_triggers_page_runs_at_its_time(home, bell,
 
 
 @pytest.mark.asyncio
-async def test_a_one_shot_that_runs_late_runs_once_and_says_it_ran_late(home, bell, monkeypatch):
-    """The laptop slept through its time. It runs when the clock ticks again, once, and its history
-    says it ran late and by how much. 🔴 Before: nothing ran, and nothing was recorded."""
+async def test_a_one_shot_the_laptop_slept_through_waits_for_you(home, bell, monkeypatch):
+    """The laptop slept through its time. It is not run late on its own: the bell has the one
+    "Missed scheduled runs" notice, the review keeps its card, and nothing ran or retired it.
+    🔴 Before: the first tick after the wake ran it eight minutes late."""
+    from personalclaw.triggers import review
+
     at = _soon(3600)
     tid = await _one_shot(at)
     await _tick_at(monkeypatch, bell, at + 480)
-    assert [n["title"] for n in bell.notes] == [TITLE]
+    assert [n["title"] for n in bell.notes] == ["Missed scheduled runs"]
+    assert "while PersonalClaw was paused or the computer was asleep" in bell.notes[0]["body"]
+    assert _history(home, tid) == []
+    assert [c.trigger_id for c in review.pending(base_dir=home)] == [tid]
+    kept = _row(home, tid)
+    assert kept is not None and kept.enabled is False and kept.next_fire_at == ""
+    await _tick_at(monkeypatch, bell, at + 540)
+    assert len(bell.notes) == 1, "nothing runs it later"
+
+
+@pytest.mark.asyncio
+async def test_a_one_shot_that_catches_up_runs_once_and_says_it_ran_late(home, bell, monkeypatch):
+    """Set to run a missed time once, late: it runs a minute or two after the wake, once, and its
+    history says it ran late and by how much. 🔴 Before: nothing ran, and nothing was recorded."""
+    at = _soon(3600)
+    tid = await _one_shot(at, catch_up=True)
+    held: dict = {}
+    await _tick_at(monkeypatch, bell, at + 480, held)
+    assert [n["title"] for n in bell.notes] == ["Missed scheduled runs"], "staggered, not inline"
+    fired = _slot(home, tid) + 1  # the staggered catch-up's time
+    await _tick_at(monkeypatch, bell, fired, held)
+    assert [n["title"] for n in bell.notes][1:] == [TITLE]
     (run,) = _history(home, tid)
     assert run["status"] == "ran_late", run
-    assert run["summary"].startswith("Ran 8 min after its scheduled slot."), run
-    await _tick_at(monkeypatch, bell, at + 540)
-    assert len(bell.notes) == 1, "a one-shot runs once"
+    minutes = int((fired - at) // 60)
+    assert run["summary"].startswith(f"Ran {minutes} min after its scheduled slot."), run
+    assert _row(home, tid) is None, "it did its work, so it left the list"
 
 
 @pytest.mark.asyncio
@@ -525,10 +561,11 @@ async def test_a_restart_between_its_time_and_its_run_leaves_it_on_the_review(
 async def test_a_one_shot_whose_time_passed_while_the_gateway_was_down_runs_when_it_is_back(
     home, bell, monkeypatch
 ):
-    """Nothing was running at its time. The boot re-arms it just after the restart; it runs then,
-    once, and its history says it ran late. 🔴 Before: that fire deleted the row first."""
+    """Nothing was running at its time, and it is set to run a missed time once, late. The boot
+    re-arms it just after the restart; it runs then, once, and its history says it ran late.
+    🔴 Before: that fire deleted the row first."""
     at = _soon(3600)
-    tid = await _one_shot(at)
+    tid = await _one_shot(at, catch_up=True)
     store = TriggerStore(base_dir=home)
     back = at + 7200
     SVC.boot(store, now=back)
@@ -538,6 +575,25 @@ async def test_a_one_shot_whose_time_passed_while_the_gateway_was_down_runs_when
     assert [n["title"] for n in bell.notes] == [TITLE]
     assert [r["status"] for r in _history(home, tid)] == ["ran_late"]
     assert _row(home, tid) is None
+
+
+@pytest.mark.asyncio
+async def test_a_one_shot_missed_while_the_gateway_was_down_waits_for_you(home, bell, monkeypatch):
+    """The default: a one-shot whose time passed while nothing was running is not run after the
+    restart. Its card waits on the review, and nothing runs it. 🔴 Before: the boot pushed it into
+    its stagger and it ran a minute after every restart."""
+    from personalclaw.triggers import review
+
+    at = _soon(3600)
+    tid = await _one_shot(at)
+    back = at + 7200
+    report = SVC.boot(TriggerStore(base_dir=home), now=back)
+    assert [c.trigger_id for c in review.cards_from_boot(report)] == [tid]
+    for later in (back + 61, back + 300):
+        await _tick_at(monkeypatch, bell, later)
+    assert bell.notes == [] and _history(home, tid) == []
+    kept = _row(home, tid)
+    assert kept is not None and kept.enabled is False
 
 
 @pytest.mark.asyncio
@@ -572,14 +628,19 @@ async def test_a_tick_that_dies_before_its_grant_is_written_leaves_the_one_shot_
 @pytest.mark.asyncio
 async def test_a_repeating_fire_that_starts_late_is_recorded_late(home, bell, monkeypatch):
     """The tick decided the fire was late and the history kept only that it ran. A fire well after
-    its slot is `ran_late`, with how late; the next day's on-time fire is a plain run.
+    its slot (a catch-up: only a schedule set to run a missed time once runs one that late) is
+    `ran_late`, with how late; the next day's on-time fire is a plain run.
     🔴 Before: both read `success`."""
-    tid = await _page_trigger(cron="45 6 * * *")
+    tid = await _page_trigger(cron="45 6 * * *", catch_up=True)
     slot = _slot(home, tid)
-    await _tick_at(monkeypatch, bell, slot + 600)
+    held: dict = {}
+    await _tick_at(monkeypatch, bell, slot + 480, held)
+    fired = _slot(home, tid) + 1  # the staggered catch-up's time
+    await _tick_at(monkeypatch, bell, fired, held)
     (late,) = _history(home, tid)
     assert late["status"] == "ran_late", late
-    assert late["summary"].startswith("Ran 10 min after its scheduled slot."), late
+    minutes = int((fired - slot) // 60)
+    assert late["summary"].startswith(f"Ran {minutes} min after its scheduled slot."), late
     await _tick_at(monkeypatch, bell, _slot(home, tid) + 1)
     assert [r["status"] for r in _history(home, tid)] == ["ran_late", "success"]
     assert _row(home, tid).enabled is True, "a repeating schedule never retires"

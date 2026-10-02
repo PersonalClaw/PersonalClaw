@@ -1,11 +1,13 @@
-"""What a restart leaves for the user to decide: missed runs and interrupted runs.
+"""What a restart or a sleep leaves for the user to decide: missed runs and interrupted runs.
 
-Two passes at boot find work that did not happen. `service.boot` enumerates the slots a stopped
-gateway missed (`missed.review_at_boot`), and `reaper.terminalize_orphans` closes the runs a
-restart cut off. Neither is re-run on its own, deliberately: running the 3am backup at 9am is
+Three passes find work that did not happen. `service.boot` enumerates the slots a stopped gateway
+missed (`missed.review_at_boot`), `service.tick` the slots a gateway that was alive and asleep
+missed (the same `service.recover`, on a wake), and `reaper.terminalize_orphans` closes the runs a
+restart cut off. None is re-run on its own, deliberately: running the 3am backup at 9am is
 sometimes right and sometimes exactly wrong, and a run a restart interrupted may already have
 done part of its work, so running it again is the user's decision (§3.4 "review, don't
-auto-run").
+auto-run"). A card says which it was (`ReviewCard.cause`), because "while PersonalClaw was not
+running" is false about a laptop whose lid was shut.
 
 They used to end at a notification that said "Review them and choose what to run now" with
 nothing to review. The boot re-arms every schedule, which destroys the evidence of what was
@@ -40,6 +42,14 @@ MISSED = "missed"
 INTERRUPTED = "interrupted"
 KINDS = (MISSED, INTERRUPTED)
 
+#: Why a card's slots did not run. STOPPED: PersonalClaw was not running (the boot found them).
+#: PAUSED: it was running and could not tick — the computer slept, or the process was stopped — so
+#: a wake found them. A card that holds slots of both says so (STOPPED_OR_PAUSED).
+STOPPED = "stopped"
+PAUSED = "paused"
+STOPPED_OR_PAUSED = "stopped_or_paused"
+CAUSES = (STOPPED, PAUSED, STOPPED_OR_PAUSED)
+
 
 @dataclass
 class ReviewCard:
@@ -47,7 +57,8 @@ class ReviewCard:
 
     `latest` is the slot a Run now stands in for (the newest missed slot, or when the interrupted
     run started) and `oldest` the first; `count` is how many slots the card covers, and
-    `count_is_floor` says the enumeration stopped early so the number is "at least".
+    `count_is_floor` says the enumeration stopped early so the number is "at least". `cause` is why
+    the slots did not run (`CAUSES`); an interrupted run's is always a stop.
     """
 
     trigger_id: str
@@ -57,12 +68,14 @@ class ReviewCard:
     oldest: float
     reason: str = ""
     count_is_floor: bool = False
+    cause: str = STOPPED
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ReviewCard":
+        cause = str(raw.get("cause") or STOPPED)
         return cls(
             trigger_id=str(raw.get("trigger_id") or ""),
             kind=str(raw.get("kind") or MISSED),
@@ -71,6 +84,8 @@ class ReviewCard:
             oldest=float(raw.get("oldest") or 0.0),
             reason=str(raw.get("reason") or ""),
             count_is_floor=bool(raw.get("count_is_floor")),
+            # A card kept before cards named their cause was a boot's: only a restart made cards.
+            cause=cause if cause in CAUSES else STOPPED,
         )
 
 
@@ -131,6 +146,7 @@ def _merge(cards: list[ReviewCard], new: ReviewCard) -> None:
             card.oldest = min(card.oldest, new.oldest) if card.oldest else new.oldest
             card.reason = new.reason or card.reason
             card.count_is_floor = card.count_is_floor or new.count_is_floor
+            card.cause = card.cause if card.cause == new.cause else STOPPED_OR_PAUSED
             return
     cards.append(new)
 
@@ -148,13 +164,44 @@ def catching_up(report: dict[str, Any]) -> set[str]:
     }
 
 
-def cards_from_boot(report: dict[str, Any]) -> list[ReviewCard]:
-    """One MISSED card per trigger from a `service.boot` report: its review rows plus its summary.
+def catch_up_slots(report: dict[str, Any]) -> dict[str, tuple[float, float]]:
+    """Each catch-up in a `service.recover` report: id → `(the slot it stands in for, its fire)`.
 
-    A trigger the boot catches up on its own gets no card (`catching_up`).
+    The slot is the newest one the review counted for that trigger (what a Run now stands in for
+    too, `ReviewCard.latest`), or the armed slot when the review counted none. The clock loop holds
+    this across ticks (`service.tick`'s `catching_up`), so the staggered fire is recorded late
+    against the slot it replaces.
+    """
+    newest: dict[str, float] = {}
+    for row in (report.get("review") or {}).get("rows") or []:
+        tid = str(row.get("trigger_id") or "")
+        slot = float(row.get("scheduled_for") or 0.0)
+        if tid and slot > newest.get(tid, 0.0):
+            newest[tid] = slot
+    out: dict[str, tuple[float, float]] = {}
+    for c in report.get("catch_up") or []:
+        tid = str(c.get("id") or "")
+        fire_at = float(c.get("fire_at") or 0.0)
+        if not (c.get("catching_up") and tid and fire_at > 0):
+            continue
+        slot = newest.get(tid) or float(c.get("slot") or 0.0)
+        if slot > 0:
+            out[tid] = (slot, fire_at)
+    return out
+
+
+def cards_from_boot(report: dict[str, Any]) -> list[ReviewCard]:
+    """One MISSED card per trigger from a `service.recover` report: its rows plus its summary.
+
+    A trigger that catches up on its own gets no card (`catching_up`). Each card carries the
+    report's `cause`: a boot's report names none (PersonalClaw was stopped), a wake's says PAUSED.
     """
     skip = catching_up(report)
-    return [card for card in missed_by_trigger(report) if card.trigger_id not in skip]
+    cause = str(report.get("cause") or STOPPED)
+    cards = [card for card in missed_by_trigger(report) if card.trigger_id not in skip]
+    for card in cards:
+        card.cause = cause
+    return cards
 
 
 def missed_by_trigger(report: dict[str, Any]) -> list[ReviewCard]:
@@ -223,29 +270,40 @@ def _plural(n: int, one: str, many: str) -> str:
     return one if n == 1 else many
 
 
-def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, Any] | None:
-    """The ONE notice about what a boot found, or None when it found nothing (§3.4).
+#: Why the slots did not run, as the notice says it. Each is true of its cause and only of it: a
+#: laptop whose lid was shut was running PersonalClaw the whole time.
+_WHILE: dict[str, str] = {
+    STOPPED: "while PersonalClaw was not running",
+    PAUSED: "while PersonalClaw was paused or the computer was asleep",
+    STOPPED_OR_PAUSED: "while PersonalClaw was stopped, paused or asleep",
+}
 
-    *cards* are the ones this boot kept for the Triggers page (`cards_from_boot` plus
-    `cards_from_orphans`), so the sentence that sends the owner there counts exactly what waits
-    there. A trigger catching up on its own is counted as missed and named as firing by itself,
-    and has no card. One notice naming the count, not one per slot: a laptop opened after a
-    weekend would otherwise deliver hundreds. And none at all when nothing was missed:
-    "0 automations missed a run" on every restart trains the owner to dismiss the one that matters.
+
+def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, Any] | None:
+    """The ONE notice about what a boot or a wake found, or None when it found nothing (§3.4).
+
+    *cards* are the ones kept for the Triggers page (`cards_from_boot`, plus `cards_from_orphans`
+    at a boot), so the sentence that sends the owner there counts exactly what waits there. A
+    trigger catching up on its own is counted as missed and named as firing by itself, and has no
+    card. One notice naming the count, not one per slot: a laptop opened after a weekend would
+    otherwise deliver hundreds. And none at all when nothing was missed: "0 automations missed a
+    run" on every restart trains the owner to dismiss the one that matters. The report's `cause`
+    says why they were missed (a wake's is PAUSED), in words true of it.
     """
     every = missed_by_trigger(report)
     missed = sum(card.count for card in every)
     cut_off = sum(1 for card in cards if card.kind == INTERRUPTED)
     if missed <= 0 and cut_off <= 0:
         return None
+    cause = str(report.get("cause") or STOPPED)
     caught_up = len(catching_up(report))
     waiting = sum(card.count for card in cards)
     said: list[str] = []
     if missed > 0:
         said.append(
             f"{missed} scheduled {_plural(missed, 'run was', 'runs were')} missed across "
-            f"{len(every)} {_plural(len(every), 'automation', 'automations')} while PersonalClaw "
-            "was not running."
+            f"{len(every)} {_plural(len(every), 'automation', 'automations')} "
+            f"{_WHILE.get(cause, _WHILE[STOPPED])}."
         )
     if caught_up:
         said.append(
@@ -271,6 +329,7 @@ def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, An
             "interrupted": cut_off,
             "triggers": len(every),
             "caught_up": caught_up,
+            "cause": cause,
             "truncated": bool((report.get("review") or {}).get("truncated")),
         },
     }

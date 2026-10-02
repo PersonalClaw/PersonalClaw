@@ -220,6 +220,8 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
           // not action config, so they survive that return as part of `rest`; leaving them out would
           // draw both controls in the shared Advanced block and persist neither at create time.
           failure_delivery: sched.failure_delivery, failure_dedupe: sched.failure_dedupe,
+          // What a missed time does — the shared Advanced block draws it, so this body sends it.
+          catch_up: sched.catch_up,
         }
         if (sched.kind === 'cron') body.cron = sched.cron.trim()
         else if (sched.kind === 'every') body.every = intervalToSecs(sched.intervalValue, sched.intervalUnit)

@@ -74,6 +74,17 @@ def _event_spec_hint() -> str:
     )
 
 
+def _catch_up_hint() -> str:
+    """What `catch_up` does, from the sentences a created automation's announcement uses too."""
+    from personalclaw.triggers.tools import CATCH_UP_OFF, CATCH_UP_ON
+
+    return (
+        "For an automation that runs at a time or on a schedule. false (the default): "
+        f"{CATCH_UP_OFF} true: {CATCH_UP_ON} Set it true only when the owner wants a missed time "
+        "run late rather than asked about ('even if my laptop is closed')."
+    )
+
+
 def _list_tools() -> list[dict[str, Any]]:
     """§4's eight-tool namespace. `automation_pause`/`automation_resume` share a handler but are
     separate tools, so an agent reads the intent from the name it called."""
@@ -159,6 +170,10 @@ def _list_tools() -> list[dict[str, Any]]:
                         "owner named it ('~/notes/kitchen.md'). Its agent may change these and "
                         "nothing else; leave it out for a job that only reads or reports.",
                     },
+                    "catch_up": {
+                        "type": "boolean",
+                        "description": _catch_up_hint(),
+                    },
                     # JSON TEXT: a trigger spec's keys depend on its kind, and a free-form object
                     # has no portable schema (tool_providers.portable_schema) — a strict provider
                     # rejects the whole request over one. The validator decodes it.
@@ -190,10 +205,11 @@ def _list_tools() -> list[dict[str, Any]]:
             "name": "automation_update",
             "annotations": {"readOnlyHint": False},
             "description": "Patch an automation. Only settable fields apply (name, spec, gates, "
-            "workflow, enabled, delivery, …); health/run fields are rejected and reported. An "
-            "edit that changes what its action runs switches it off until the owner allows the "
-            "change on the Triggers page, and letting its agent approve its own tool calls is "
-            "the owner's to change, not yours.",
+            "workflow, enabled, delivery, catch_up, …); health/run fields are rejected and "
+            "reported. An edit that changes what its action runs switches it off until the owner "
+            "allows the change on the Triggers page, and letting its agent approve its own tool "
+            "calls is the owner's to change, not yours. `catch_up` (true or false) is what a "
+            "missed time does: " + _catch_up_hint(),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -457,6 +473,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             chat_channels=_chat_channels() if via.strip() else None,
             created_by="agent",
             changes=[str(c) for c in args.get("changes") or [] if isinstance(c, str)],
+            catch_up=args.get("catch_up", False),
         )
     elif name == "set_onetime_task":
         resume, resume_err = _resolve_resume_target(args)
