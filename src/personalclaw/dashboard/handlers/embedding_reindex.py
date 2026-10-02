@@ -94,7 +94,9 @@ async def api_reindex_start(request: web.Request) -> web.Response:
     old vectors instead of wiping them with no way to rebuild).
     """
     state = request.app["state"]
-    embedder, embed_fn, model = _resolve_embed(request.app)
+    # Off the event loop: resolving the model embeds one probe with it, a round trip that
+    # every other request waited for on the loop.
+    embedder, embed_fn, model = await asyncio.to_thread(_resolve_embed, request.app)
     if embed_fn is None:
         from personalclaw.embedding_providers.registry import bound_unavailable_reason
 

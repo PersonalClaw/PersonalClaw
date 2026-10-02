@@ -397,19 +397,24 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # installed specialist, broadcast a non-blocking suggestion the FE renders as a
     # chip. Best-effort — a classifier error must never break the send.
     #
-    # This broadcast is the EARLIEST frame of a send (it runs before the run task's
-    # first await), which is what made it the one frame a brand-new chat could never
-    # receive: creating the session by sending re-keys the frontend's ChatSession, and
-    # the remount closes its WebSocket while the replacement is still handshaking, so
-    # the frame lands in the reconnect gap and is delivered to nothing (issue 569). So
-    # the same payload also rides the send RESPONSE below — causally after the request,
-    # therefore unraceable. ONE dict feeds both transports so they cannot disagree
-    # about the session (or anything else) the suggestion is for.
+    # Classified on a worker thread, after the run task is registered (so a second send
+    # finds this one running): it embeds the message with the embedding model, and on the
+    # loop every other request waited for that round trip. The turn runs meanwhile.
+    #
+    # This broadcast is one of a send's first frames, which is what made it the one frame a
+    # brand-new chat could never receive: creating the session by sending re-keys the
+    # frontend's ChatSession, and the remount closes its WebSocket while the replacement is
+    # still handshaking, so the frame lands in the reconnect gap and is delivered to nothing
+    # (issue 569). So the same payload also rides the send RESPONSE below — causally after
+    # the request, therefore unraceable. ONE dict feeds both transports so they cannot
+    # disagree about the session (or anything else) the suggestion is for.
     _routing: dict[str, Any] | None = None
     try:
         from personalclaw.agents.routing import suggest_for_send
 
-        _suggestion = suggest_for_send(state, session, message, pasted=_pasted)
+        _suggestion = await asyncio.to_thread(
+            suggest_for_send, state, session, message, pasted=_pasted
+        )
         if _suggestion is not None:
             _routing = {
                 "session": session.key,

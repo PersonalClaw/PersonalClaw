@@ -373,9 +373,32 @@ item vector).
     after that update re-embeds every memory once, in the background. The index is one
     value (`_Index`: the FAISS index, its ids, their width and model), published by one
     assignment, and a search reads it once: a rebuild on the re-index's thread can
-    never hand a search its ids with another build's index. It follows a running
-    re-index: each vector it writes marks the index behind, and the next search
-    rebuilds it (off to the side, then published).
+    never hand a search its ids with another build's index. No search rebuilds it or
+    waits for a rebuild. A running re-index points it at its model first; each vector it
+    writes is compared beside the index, one by one, until the re-index publishes an index
+    that holds it (after 256 of them, and at its end, built off to the side); and a search
+    that finds the index on another model's vectors while a build runs on another thread
+    reads by keyword meanwhile.
+  - **A recall embeds its question once, and never a stored memory.** The fact and lesson
+    ranking (`_rank_rows`) compares the question with each row's stored vector: a fact is
+    embedded when it is written (`set_semantic`, keyed and valued as the ranking reads it,
+    `semantic_vector_text`), a lesson by `write_lesson`, an episode by `write_episodic`,
+    and the re-index embeds whichever the bound model has not, facts included. It used to
+    embed every fact and lesson again at every question: a store of 32 facts and 6 lessons
+    made one recall 39 round trips to a cloud model, about 20 seconds. `memory_recall`'s
+    route (`GET /api/memory/recall`) embeds the question once for its three arms
+    (`MemoryService.embed_query`), waiting at most `QUERY_EMBED_BUDGET_SECS` (4 s); a model
+    that does not answer in time leaves the recall to keyword search, and the block and the
+    ranking disclosure say so. The route runs in a worker thread, never on the event loop
+    (where the wait stopped every request the gateway served), and answers within
+    `RECALL_BUDGET_SECS` (8 s), inside the agent's own wait for the gateway
+    (`mcp_core.GATEWAY_READ_TIMEOUT_SECS`), or answers `memory_recall_timeout` naming what it
+    was still doing. Each logs one WARNING with the stage and the budget, never the question.
+    Nothing on the event loop waits on a model: every route whose memory work can, and the
+    putting together of every turn's message (a chat's, a webhook's, a heartbeat's, a
+    subagent's), hands that work to a worker thread the same way
+    (`tests/test_nothing_waits_on_a_model_on_the_event_loop.py`). A recall the route stopped
+    waiting for stops at its next stage and records nothing.
 - **`memory_ranking.py`** — the ONE owner of "how did this recall actually rank".
   Derives a `RecallRanking` from the provider's declared `MemoryCapabilities`
   (`vector` / `full_text_search` / `entity_graph`) and composes the user-facing
@@ -388,7 +411,8 @@ item vector).
   (`unembedded`) and how many the model bound now can compare (`comparable`). With none
   comparable the recall is keyword-ranked and says so; with some waiting it says how many
   were read by keyword, in `keyword_read_note`'s words, which the Memory page and the
-  Doctor print too.
+  Doctor print too. A recall whose question the model did not embed in time carries why
+  (`question_unembedded`), and reads as keyword-ranked for that reason.
   Adding a capability is forced to declare what it means for recall —
   `tests/test_recall_ranking_disclosure.py` censuses the dataclass fields, and a
   second census requires every handler calling a ranking scorer to serve the

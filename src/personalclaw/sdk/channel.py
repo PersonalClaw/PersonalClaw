@@ -189,7 +189,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.events import COMPACTION_AUTOMATIC
 from personalclaw.llm_helpers import save_conversation_turn
 from personalclaw.mcp_discovery import McpServerInfo, list_servers
-from personalclaw.memory_service import MemoryService
+from personalclaw.memory_service import MemoryService, QueryVector
 from personalclaw.prompt_providers.runtime import render_use_case_prompt
 from personalclaw.providers.settings import ProviderSettings
 from personalclaw.providers.use_cases import (
@@ -323,6 +323,7 @@ __all__ = [
     "NOT_THE_OWNER_SENTENCE",
     "OutboundMessage",
     "ProviderSettings",
+    "QueryVector",
     "ResourceRead",
     "STOP_REASON_CANCELLED",
     "STOP_REASON_END_TURN",

@@ -10,8 +10,8 @@ import { deliverableToOpenSession } from './sessionDelivery'
 //   new chat (session created BY the send)  backend suggested (score 1.000)   chip: NO
 //   existing session, same message          backend suggested (score 1.000)   chip: YES
 //
-// The mechanism is a TRANSPORT gap, not a stale comparison. `/api/chat` broadcasts
-// `routing_suggestion` synchronously, before the run task's first await, so it is the earliest
+// The mechanism is a TRANSPORT gap, not a stale comparison. `/api/chat` broadcast
+// `routing_suggestion` synchronously, before the run task's first await, so it was the earliest
 // frame of a send. Meanwhile the frontend creates the session and navigates, which re-keys
 // ChatSession (`new-<epoch>` → the session key) — the remount CLOSES the ChatPage socket and its
 // replacement is still handshaking. The recorded socket lifecycle for that send reads:

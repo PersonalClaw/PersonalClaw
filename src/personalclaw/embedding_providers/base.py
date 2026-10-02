@@ -8,11 +8,14 @@ independent — a provider opts into management only if it owns local models.
 """
 
 import asyncio
+import logging
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
+
+logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
@@ -109,6 +112,40 @@ def run_embed_sync(factory: Callable[[], Coroutine[Any, Any, _T]], timeout: floa
         # Cancel and walk away. Awaiting the task here is exactly the bug being fixed.
         future.cancel()
         raise
+
+
+@dataclass(frozen=True)
+class Embedded:
+    """One text embedded within a budget (:func:`embed_within`)."""
+
+    #: Its vector, or ``None``: none came back, or not in time.
+    vector: list[float] | None
+    #: The model did not answer within the budget.
+    timed_out: bool = False
+
+
+def embed_within(fn: Callable[[str], list[float] | None], text: str, *, within: float) -> Embedded:
+    """Embed ``text`` with the sync embed fn ``fn``, waiting at most ``within`` seconds.
+
+    For a question someone is waiting on (a recall, a turn's skill match): a model that is
+    loading, busy or unreachable must not hold it for the embed fn's own deadline, which is
+    sized for a re-index. The call is abandoned, not joined, so the budget is real — the pool is
+    shut down without waiting, and the call finishes into nothing. It runs in the caller's
+    context, so a question asked inside an Incognito or Temporary session is not sent to the
+    model (``memory_writes``): the embed fns answer ``None`` there without calling it.
+    """
+    from personalclaw.memory_writes import ScopeCarryingExecutor
+
+    pool = ScopeCarryingExecutor(max_workers=1, thread_name_prefix="embed-within")
+    try:
+        return Embedded(pool.submit(fn, text).result(timeout=within))
+    except TimeoutError:
+        return Embedded(None, timed_out=True)
+    except Exception:  # noqa: BLE001 — an embed that raised is no vector, as the fns answer one
+        logger.debug("embedding within %ss failed", within, exc_info=True)
+        return Embedded(None)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 @dataclass

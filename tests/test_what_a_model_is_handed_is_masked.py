@@ -283,9 +283,13 @@ def test_the_recall_route_masks_its_semantic_half():
     fact list was masked and its recall of the same facts was not. The lessons it recalls beside
     them are masked the same way."""
     from personalclaw.dashboard.handlers import memory as memory_handlers
+    from personalclaw.memory_service import QueryVector
 
     class _Svc:
-        def semantic_context(self, query: str, *, cap: int) -> str:
+        def embed_query(self, text: str) -> QueryVector:
+            return QueryVector(None)
+
+        def semantic_context(self, query: str, *, cap: int, query_vector: Any = None) -> str:
             return f"github_token: {TOKEN}\nkey: api_key={KEY}"
 
         def record_recall(self, keys: list[str]) -> None:

@@ -150,39 +150,47 @@ def _write(path: Path, model: str, vectors: dict[str, list[float]]) -> None:
 
 @dataclass
 class _Job:
-    """Texts waiting to be embedded with one model into one file."""
+    """Texts waiting to be embedded with one model, into one file or into memory only."""
 
-    path: Path
+    path: Path | None
     embedder: Embedder
     texts: dict[str, str]  # digest -> text
 
 
 class ToolVectors:
-    """The process's tool-description vectors (see the module docstring).
+    """The process's tool-description vectors (see the module docstring), or, built with
+    another ``what``, an index of the same kind for other descriptions: skill surfacing keeps the
+    skills' in one (``skills.surfacing``), in a file of its own, and agent routing its candidates'
+    (``agents.routing``) in memory only, which is what a ``path`` of ``None`` means.
 
     Thread-safe: a turn's selection reads it from a worker thread while the background fill
     writes it from its own.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, what: str = "tool description", thread: str = "tool-vectors") -> None:
+        #: What its texts are, as its log lines name them, and its fill thread's name.
+        self._what = what
+        self._thread = thread
         self._lock = threading.Lock()
         # The one (file, model) held in memory, and its vectors, oldest first.
-        self._held: tuple[Path, str] | None = None
+        self._held: tuple[Path | None, str] | None = None
         self._vectors: dict[str, list[float]] = {}
         self._jobs: list[_Job] = []
         # (file, model, digest) of every text queued or being embedded now, so a turn that asks
         # while the fill runs does not queue the same texts twice.
-        self._pending: set[tuple[Path, str, str]] = set()
-        self._failed: dict[tuple[Path, str, str], float] = {}
+        self._pending: set[tuple[Path | None, str, str]] = set()
+        self._failed: dict[tuple[Path | None, str, str], float] = {}
         self._worker: threading.Thread | None = None
 
-    def _hold(self, path: Path, model: str) -> None:
+    def _hold(self, path: Path | None, model: str) -> None:
         """Hold *path*'s vectors for *model* in memory (lock held)."""
         if self._held != (path, model):
             self._held = (path, model)
-            self._vectors = _read(path, model)
+            self._vectors = _read(path, model) if path is not None else {}
 
-    def vectors(self, path: Path, model: str, texts: Iterable[str]) -> dict[str, list[float]]:
+    def vectors(
+        self, path: Path | None, model: str, texts: Iterable[str]
+    ) -> dict[str, list[float]]:
         """The vector of each of *texts* the index holds for *model*. Never embeds anything."""
         with self._lock:
             self._hold(path, model)
@@ -193,7 +201,7 @@ class ToolVectors:
                     out[text] = vector
             return out
 
-    def want(self, path: Path, embedder: Embedder, texts: Iterable[str]) -> None:
+    def want(self, path: Path | None, embedder: Embedder, texts: Iterable[str]) -> None:
         """Embed those of *texts* the index lacks, in the background; returns at once."""
         now = time.monotonic()
         model = embedder.model
@@ -220,7 +228,7 @@ class ToolVectors:
             else:
                 self._jobs.append(_Job(path=path, embedder=embedder, texts=todo))
             if self._worker is None:
-                self._worker = threading.Thread(target=self._fill, name="tool-vectors", daemon=True)
+                self._worker = threading.Thread(target=self._fill, name=self._thread, daemon=True)
                 self._worker.start()
 
     def drain(self, timeout: float | None = None) -> bool:
@@ -245,8 +253,10 @@ class ToolVectors:
                 vectors = self._embed(job)
             except Exception:  # noqa: BLE001 — a failed fill leaves those tools ranked by words
                 logger.warning(
-                    "tool vectors: embedding %d tool description(s) failed",
+                    "%s vectors: embedding %d %s(s) failed",
+                    self._what,
                     len(job.texts),
+                    self._what,
                     exc_info=True,
                 )
             self._store(job, vectors)
@@ -270,7 +280,7 @@ class ToolVectors:
             if self._held == (job.path, model):
                 stored = self._vectors
             else:
-                stored = _read(job.path, model)
+                stored = _read(job.path, model) if job.path is not None else {}
             embedded = 0
             for i, digest in enumerate(job.texts):
                 key = (job.path, model, digest)
@@ -286,15 +296,17 @@ class ToolVectors:
             for digest in list(stored)[: max(0, len(stored) - MAX_VECTORS)]:
                 del stored[digest]
             snapshot = dict(stored)
-        if embedded:
+        if embedded and job.path is not None:
             try:
                 _write(job.path, model, snapshot)
             except OSError:
-                logger.warning("tool vectors: could not save %s", job.path, exc_info=True)
+                logger.warning("%s vectors: could not save %s", self._what, job.path, exc_info=True)
         logger.info(
-            "tool vectors: embedded %d of %d tool description(s) with %s",
+            "%s vectors: embedded %d of %d %s(s) with %s",
+            self._what,
             embedded,
             len(job.texts),
+            self._what,
             model,
         )
 

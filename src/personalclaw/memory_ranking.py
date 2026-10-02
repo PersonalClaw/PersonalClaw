@@ -65,8 +65,9 @@ AXES: tuple[_Axis, ...] = (
 #: The :class:`RecallRanking` fields that are not axes: store state, not capabilities. An
 #: embedding rebind leaves vectors of the previous model in the store until the re-index
 #: re-embeds them, a memory written while no model was bound has none, and a recall reads both
-#: by keyword, which the capabilities cannot show.
-STATE_FIELDS: tuple[str, ...] = ("stale", "unembedded", "comparable")
+#: by keyword, which the capabilities cannot show; nor that the model did not answer one recall's
+#: question in time, so that recall read everything by keyword.
+STATE_FIELDS: tuple[str, ...] = ("stale", "unembedded", "comparable", "question_unembedded")
 
 #: The authored degradation clause. It comes from the Settings entity-graph section,
 #: which said it first; reusing it is why the two surfaces read as one product.
@@ -90,6 +91,9 @@ class RecallRanking:
     #: Memories holding a vector of the model bound now — what the semantic arm compares. With
     #: none of them and some waiting, that arm has nothing to compare and the recall is by keyword.
     comparable: int = 0
+    #: Why this recall's question has no vector though a model is bound — a clause such as "the
+    #: embedding model did not answer within 4 s" — or ``""``. Such a recall ran by keyword.
+    question_unembedded: str = ""
 
     @property
     def waiting(self) -> int:
@@ -104,7 +108,7 @@ class RecallRanking:
     @property
     def mode(self) -> str:
         """The strongest ranking arm that ran (a member of :data:`MODES`)."""
-        if self.vector and not self._vectors_stale:
+        if self.vector and not self._vectors_stale and not self.question_unembedded:
             return "semantic"
         if self.full_text_search:
             return "keyword"
@@ -114,7 +118,11 @@ class RecallRanking:
     def degraded(self) -> bool:
         """True when any recall-relevant axis is missing, or part of the store is read by keyword
         because the model bound now has not embedded it (:attr:`waiting`)."""
-        return not all(getattr(self, a.field) for a in AXES) or (self.vector and self.waiting > 0)
+        return (
+            not all(getattr(self, a.field) for a in AXES)
+            or (self.vector and self.waiting > 0)
+            or bool(self.question_unembedded)
+        )
 
     @property
     def label(self) -> str:
@@ -133,6 +141,8 @@ class RecallRanking:
         missing = [a.absent for a in AXES if not getattr(self, a.field)]
         if self._vectors_stale:
             missing.insert(0, _nothing_comparable(self.stale, self.unembedded))
+        if self.question_unembedded:
+            missing.insert(0, self.question_unembedded)
         ranked = _ranked(self.mode, missing)
         if not (self.vector and self.waiting > 0):
             return ranked
@@ -147,6 +157,7 @@ class RecallRanking:
         d.update(
             stale=self.stale,
             unembedded=self.unembedded,
+            question_unembedded=self.question_unembedded,
             mode=self.mode,
             degraded=self.degraded,
             label=self.label,
@@ -219,14 +230,20 @@ def _join(parts: list[str]) -> str:
 
 
 def recall_ranking(
-    caps: "MemoryCapabilities", *, stale: int = 0, unembedded: int = 0, comparable: int = 0
+    caps: "MemoryCapabilities",
+    *,
+    stale: int = 0,
+    unembedded: int = 0,
+    comparable: int = 0,
+    question_unembedded: str = "",
 ) -> RecallRanking:
     """Derive the recall disclosure from a provider's declared capabilities.
 
     ``caps`` is whatever ``MemoryService.capabilities()`` returned — the live store
     state (``embed_fn`` presence, the graph toggle), not a config reading, so the
     disclosure describes the recall that actually ran. ``stale``, ``unembedded`` and
-    ``comparable`` are the store's ``embedded_stale``, ``unembedded`` and ``embedded_count``
+    ``comparable`` are the store's ``embedded_stale``, ``unembedded`` and ``embedded_count``;
+    ``question_unembedded`` says why this recall's question went unembedded
     (:class:`RecallRanking`).
     """
     return RecallRanking(
@@ -236,11 +253,23 @@ def recall_ranking(
         stale=max(0, stale),
         unembedded=max(0, unembedded),
         comparable=max(0, comparable),
+        question_unembedded=question_unembedded,
     )
 
 
 def ranking_payload(
-    caps: "MemoryCapabilities", *, stale: int = 0, unembedded: int = 0, comparable: int = 0
+    caps: "MemoryCapabilities",
+    *,
+    stale: int = 0,
+    unembedded: int = 0,
+    comparable: int = 0,
+    question_unembedded: str = "",
 ) -> dict[str, object]:
     """``recall_ranking(caps, …).to_dict()`` — the shape every recall-ish API returns."""
-    return recall_ranking(caps, stale=stale, unembedded=unembedded, comparable=comparable).to_dict()
+    return recall_ranking(
+        caps,
+        stale=stale,
+        unembedded=unembedded,
+        comparable=comparable,
+        question_unembedded=question_unembedded,
+    ).to_dict()

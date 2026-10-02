@@ -1493,6 +1493,14 @@
     ],
     "returns": "list[float] | None"
    },
+   "embed_query": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "text"},
+     {"annotation": "float | None", "default": "None", "kind": "keyword_only", "name": "within"}
+    ],
+    "returns": "QueryVector"
+   },
    "entity_graph": {
     "kind": "method",
     "params": [],
@@ -1809,7 +1817,8 @@
     "params": [
      {"annotation": "str", "kind": "keyword_only", "name": "query_text"},
      {"annotation": "int", "default": "8", "kind": "keyword_only", "name": "limit"},
-     {"default": "None", "kind": "keyword_only", "name": "now"}
+     {"default": "None", "kind": "keyword_only", "name": "now"},
+     {"annotation": "list[float] | None", "default": "EMBED_QUERY", "kind": "keyword_only", "name": "query_vector"}
     ],
     "returns": "list[dict]"
    },
@@ -1817,7 +1826,8 @@
     "kind": "method",
     "params": [
      {"annotation": "str", "kind": "keyword_only", "name": "query_text"},
-     {"annotation": "int", "default": "8", "kind": "keyword_only", "name": "limit"}
+     {"annotation": "int", "default": "8", "kind": "keyword_only", "name": "limit"},
+     {"annotation": "list[float] | None", "default": "EMBED_QUERY", "kind": "keyword_only", "name": "query_vector"}
     ],
     "returns": "list[dict]"
    },
@@ -1826,7 +1836,8 @@
     "params": [
      {"annotation": "str", "kind": "keyword_only", "name": "query_text"},
      {"annotation": "int", "default": "8", "kind": "keyword_only", "name": "limit"},
-     {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "workspace"}
+     {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "workspace"},
+     {"annotation": "list[float] | None", "default": "EMBED_QUERY", "kind": "keyword_only", "name": "query_vector"}
     ],
     "returns": "list[dict]"
    },
@@ -1835,7 +1846,8 @@
     "params": [
      {"annotation": "str", "kind": "keyword_only", "name": "query_text"},
      {"annotation": "int", "default": "8", "kind": "keyword_only", "name": "limit"},
-     {"default": "None", "kind": "keyword_only", "name": "now"}
+     {"default": "None", "kind": "keyword_only", "name": "now"},
+     {"annotation": "list[float] | None", "default": "EMBED_QUERY", "kind": "keyword_only", "name": "query_vector"}
     ],
     "returns": "list[dict]"
    },
@@ -1901,7 +1913,7 @@
     "kind": "method",
     "params": [
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "query_text"},
-     {"annotation": "list[float] | None", "default": "None", "kind": "keyword_only", "name": "query_embedding"},
+     {"annotation": "list[float] | None", "default": "EMBED_QUERY", "kind": "keyword_only", "name": "query_vector"},
      {"annotation": "int", "default": "8", "kind": "keyword_only", "name": "limit"},
      {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "tag_filter"},
      {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "mmr"}
@@ -1912,7 +1924,8 @@
     "kind": "method",
     "params": [
      {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "query_text"},
-     {"annotation": "int", "default": "1500", "kind": "keyword_only", "name": "cap"}
+     {"annotation": "int", "default": "1500", "kind": "keyword_only", "name": "cap"},
+     {"annotation": "list[float] | None", "default": "EMBED_QUERY", "kind": "keyword_only", "name": "query_vector"}
     ],
     "returns": "str"
    },
@@ -2220,6 +2233,18 @@
     "returns": "list[str]"
    }
   }
+ },
+ "personalclaw.sdk.channel.QueryVector": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "list[float] | None", "kind": "positional_or_keyword", "name": "vector"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "timed_out"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "model"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass"
  },
  "personalclaw.sdk.channel.ResourceRead": {
   "bases": ["object"],

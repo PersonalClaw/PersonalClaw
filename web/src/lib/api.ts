@@ -8470,7 +8470,7 @@ export const api = {
   // the server gates on first-turn-of-session and its own closed theme set.
   //
   // `routing_suggestion` is the SAME payload the server also broadcasts over WS. It rides
-  // the response because the broadcast is the earliest frame of a send, and a chat created
+  // the response because the broadcast is among a send's first frames, and a chat created
   // BY this send remounts ChatSession (closing its socket) before the frame arrives — so
   // the WS copy is unreachable exactly on a new chat's first message (issue 569). A
   // response is causally after its request, so this copy cannot be raced.

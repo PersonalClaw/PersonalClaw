@@ -12,7 +12,7 @@ is owned by ``mcp_core`` and reused here.
 import urllib.parse
 from typing import Any
 
-from personalclaw.mcp_core import _delete, _get, _post
+from personalclaw.mcp_core import GATEWAY_READ_TIMEOUT_SECS, _delete, _get, _post
 from personalclaw.tool_providers.base import tool_failure
 from personalclaw.validation import ALLOWED_LESSON_CATEGORIES, ALLOWED_LESSON_SCOPES
 
@@ -236,6 +236,13 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if args.get("deep"):
             qs += "&deep=true"
         d = _get(f"/api/memory/recall?{qs}")
+        if d.get("timed_out"):
+            # The gateway did not answer at all. The route bounds its own work and answers a
+            # recall that ran out of time in words (`memory_recall_timeout`), passed on below.
+            return tool_failure(
+                f"memory search did not answer within {GATEWAY_READ_TIMEOUT_SECS:g} s, so "
+                "nothing was recalled this time. The memories are intact; ask again in a moment."
+            )
         if d.get("error"):
             return tool_failure(f"{d['error']}")
         return d.get("result", "No matching memory found.")

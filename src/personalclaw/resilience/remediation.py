@@ -766,7 +766,7 @@ def _job_reindex_embeddings() -> str:
     #
     # 🔴 This job could not re-embed anything, and said so as a clean zero (#1782).
     #
-    # 1. It passed `skills.surfacing._active_embedder()`'s bare `Callable[[str], vector]`.
+    # 1. It passed a bare `Callable[[str], vector]` (the bound model's single-text embed fn).
     #    `reembed_all` wants the EMBEDDER OBJECT: `active_batch_embed_fn` gates the batch
     #    path on `isinstance(embedder, UnifiedEmbedder)`, and `_item_embed_one` looks for
     #    `.embed` then `.embed_for_item`. A plain function has neither, so both resolved to

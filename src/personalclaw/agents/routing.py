@@ -11,10 +11,18 @@ Deterministic-first, LLM never in the hot path (the calibrated shape from
     or two words is a KEYWORD and matches when the message says it, as whole words in that
     order; a longer hint is an EXAMPLE REQUEST and matches when the message holds most of its
     words (gate 0.7, ``skills.loader._MIN_TRIGGER_OVERLAP``).
-  * **stage 2** — cosine of the message vs a cached ``specialty + route_hints``
-    embedding via the one unified embed path; skipped entirely when no embedder is
-    bound. A suggestion needs the top score above the confidence gate AND a clear
-    margin over the runner-up (≥0.1) so ambiguous fits stay silent.
+  * **stage 2** — cosine of the message vs each candidate's ``specialty + route_hints``
+    vector; skipped entirely when no embedder is bound. A suggestion needs the top score
+    above the confidence gate AND a clear margin over the runner-up (≥0.1) so ambiguous
+    fits stay silent.
+
+A send never waits on the embedding model for a candidate: the candidates' vectors come from an
+index held in memory (:data:`_SPECIALTY_VECTORS`), keyed by the text embedded and the model that
+embedded it, which embeds what it lacks in the background. Until every candidate has one, stage 2
+is skipped, since a margin over a candidate left out would be no margin. The message itself is
+embedded within :data:`QUERY_EMBED_BUDGET_SECS`. Routing used to embed the message and then each
+candidate it had no vector for, one round trip each, on the event loop that serves every request,
+so a model answering in 3 s held every other request for 3 s per text.
 
 The message both stages read is what the person TYPED: a block they pasted (a log, an export,
 a document) is material for the answer, not the request, and its words would otherwise swamp
@@ -32,6 +40,8 @@ import re
 from dataclasses import dataclass
 
 from personalclaw.agents.defaults import is_reserved_agent
+from personalclaw.agents.native.tool_vectors import ToolVectors, bound_embedder
+from personalclaw.embedding_providers.base import embed_within
 from personalclaw.own_words import typed_text
 
 logger = logging.getLogger(__name__)
@@ -44,6 +54,14 @@ _MARGIN = 0.1
 # A hint this short is a keyword: an overlap ratio over one or two words is all-or-nothing and
 # order-blind ("on call" would match "call me on Monday"), so it has to be said as a phrase.
 _KEYWORD_MAX_WORDS = 2
+
+#: How long a send waits for the embedding model to embed the message before routing suggests by
+#: route hints alone. The send's response waits on it (the turn does not: it is already running),
+#: so a model that is loading, busy or unreachable must not hold it for the model's own deadline.
+QUERY_EMBED_BUDGET_SECS = 1.5
+
+#: Each candidate's :func:`specialty_text` vector, in memory only (see the module docstring).
+_SPECIALTY_VECTORS = ToolVectors(what="agent specialty", thread="agent-specialty-vectors")
 
 
 @dataclass(frozen=True)
@@ -109,30 +127,43 @@ def eligible_candidates(cfg) -> list[tuple[str, str, str]]:
     return out
 
 
-def _embed(text: str):
-    """The active sync embed fn's vector for *text* (+ the model id), or (None, "")."""
-    try:
-        from personalclaw.embedding_providers.registry import (
-            _active_embedding_spec,
-            get_active_embed_fn,
-        )
+def specialty_text(specialty: str, hints: str) -> str:
+    """What is embedded for a candidate: its specialty and its route hints."""
+    return f"{specialty} {hints}".strip()
 
-        fn = get_active_embed_fn()
-    except Exception:
-        return None, ""
-    if fn is None:
-        return None, ""
-    model = ""
-    try:
-        spec = _active_embedding_spec()
-        if spec:
-            model = f"{spec[0]}:{spec[1]}"
-    except Exception:
-        model = ""
-    try:
-        return fn(text), model
-    except Exception:
-        return None, model
+
+def _embedding_scores(
+    message: str, candidates: list[tuple[str, str, str]], index: ToolVectors
+) -> list[tuple[float, str, str]]:
+    """Stage 2: the message's cosine with each candidate's vector, best first, or nothing when
+    no embedding model is bound, a candidate has no vector yet (it is being embedded) or the model
+    did not embed the message within :data:`QUERY_EMBED_BUDGET_SECS`. Never embeds a candidate."""
+    embedder = bound_embedder()
+    if embedder is None:
+        return []
+    texts = {name: specialty_text(specialty, hints) for name, specialty, hints in candidates}
+    wanted = [t for t in texts.values() if t]
+    known = index.vectors(None, embedder.model, wanted)
+    missing = [t for t in wanted if t not in known]
+    if missing:
+        index.want(None, embedder, missing)
+        return []
+    embedded = embed_within(embedder.one, message, within=QUERY_EMBED_BUDGET_SECS)
+    if embedded.vector is None:
+        if embedded.timed_out:
+            logger.info(
+                "agent routing: the embedding model did not embed the message within %g s, so "
+                "this send is matched by route hints alone",
+                QUERY_EMBED_BUDGET_SECS,
+            )
+        return []
+    scored = [
+        (_cosine(embedded.vector, known[texts[name]]), name, specialty)
+        for name, specialty, _hints in candidates
+        if texts[name]
+    ]
+    scored.sort(key=lambda r: r[0], reverse=True)
+    return scored
 
 
 def classify(
@@ -140,13 +171,13 @@ def classify(
     candidates: list[tuple[str, str, str]],
     *,
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
-    embed_cache: dict | None = None,
+    index: ToolVectors | None = None,
 ) -> RouteCandidate | None:
     """Return the single best routing candidate above the gate + margin, or None.
 
-    ``embed_cache`` (when given) maps ``agent -> (model, vector)`` so specialty
-    embeddings are computed once and reused; a model mismatch recomputes (staleness
-    discipline from ``workflows/models``). Never raises.
+    ``index`` holds the candidates' vectors (:data:`_SPECIALTY_VECTORS` unless given). A vector
+    is filed under the text embedded and the model that embedded it, so an edited specialty or
+    another model is embedded afresh and never compared stale. Never raises.
     """
     message = (message or "").strip()
     if not message or not candidates:
@@ -159,15 +190,7 @@ def classify(
         kw_scored.sort(key=lambda r: r[0], reverse=True)
 
         # Stage 2: embedding cosine over "specialty + hints" (skipped with no embedder).
-        qvec, model = _embed(message)
-        emb_scored: list[tuple[float, str, str]] = []
-        if qvec is not None:
-            for name, specialty, hints in candidates:
-                cvec = _candidate_vector(name, specialty, hints, model, embed_cache)
-                if cvec is None:
-                    continue
-                emb_scored.append((_cosine(qvec, cvec), name, specialty))
-            emb_scored.sort(key=lambda r: r[0], reverse=True)
+        emb_scored = _embedding_scores(message, candidates, index or _SPECIALTY_VECTORS)
 
         # Prefer the embedding result (semantic) when it clears the confidence gate
         # AND beats its runner-up by the margin.
@@ -192,22 +215,6 @@ def classify(
     except Exception:
         logger.debug("routing classify failed", exc_info=True)
         return None
-
-
-def _candidate_vector(name: str, specialty: str, hints: str, model: str, cache: dict | None):
-    """Cached specialty embedding for a candidate, keyed by embedding model so a
-    model change recomputes (stale vector → degrade to keyword, never wrong-agent)."""
-    text = (specialty + " " + hints).strip()
-    if not text:
-        return None
-    if cache is not None:
-        entry = cache.get(name)
-        if entry and entry[0] == model:
-            return entry[1]
-    vec, _m = _embed(text)
-    if cache is not None and vec is not None:
-        cache[name] = (model, vec)
-    return vec
 
 
 # ── Suppression store (entity_settings/agent_routing.json) ──────────────────────
@@ -326,13 +333,11 @@ def routing_status() -> dict:
 _TURNS_BETWEEN_SUGGESTIONS = 5
 
 
-def _routing_state(state) -> tuple[dict, dict]:
-    """(embed_cache, last_suggested_turn) dicts lazily attached to DashboardState."""
-    if not hasattr(state, "_routing_embed_cache"):
-        state._routing_embed_cache = {}
+def _last_suggested_turn(state) -> dict:
+    """The last_suggested_turn dict, lazily attached to DashboardState."""
     if not hasattr(state, "_routing_last_turn"):
         state._routing_last_turn = {}
-    return state._routing_embed_cache, state._routing_last_turn
+    return state._routing_last_turn
 
 
 def suggest_for_send(
@@ -367,7 +372,7 @@ def suggest_for_send(
         import time as _time
 
         now = _time.time()
-        _embed_cache, _last_turn = _routing_state(state)
+        _last_turn = _last_suggested_turn(state)
         key = getattr(session, "key", "")
         user_turns = sum(1 for m in getattr(session, "messages", []) if m.get("role") == "user")
         prev = _last_turn.get(key, -_TURNS_BETWEEN_SUGGESTIONS)
@@ -383,7 +388,6 @@ def suggest_for_send(
             typed_text(message, pasted),
             candidates,
             min_confidence=rc.min_confidence,
-            embed_cache=_embed_cache,
         )
         if result is None:
             return None

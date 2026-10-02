@@ -935,6 +935,31 @@ def _refused(exc: urllib.error.HTTPError) -> dict:
     return {**body, "error": str(error) if error else f"HTTP {exc.code}: {text}"}
 
 
+#: How long a tool waits for the gateway to answer a read or a delete (``_get``, ``_delete``),
+#: and a write (``_post``). A route that does slow work bounds it inside these and answers in
+#: words (``memory_service.RECALL_BUDGET_SECS``), so a timeout here means the gateway did not
+#: answer at all.
+GATEWAY_READ_TIMEOUT_SECS = 10.0
+GATEWAY_WRITE_TIMEOUT_SECS = 30.0
+
+
+def _timed_out(exc: BaseException) -> bool:
+    """Whether a failed call ran out of time: the socket's timeout while reading the answer, or
+    while connecting (``urlopen`` wraps that one)."""
+    return isinstance(exc, TimeoutError) or (
+        isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, TimeoutError)
+    )
+
+
+def _unanswered(method: str, path: str, budget: float) -> dict:
+    """What a call the gateway did not answer in time returns: which call, and how long it waited
+    (``timed_out`` marks it for a tool that says more). Logged once. The path is named without
+    its query, which holds what was asked."""
+    call = f"{method} {path.split('?', 1)[0]}"
+    logger.warning("The gateway did not answer %s within %s s", call, f"{budget:g}")
+    return {"error": f"the gateway did not answer {call} within {budget:g} s", "timed_out": True}
+
+
 # NB: ``_api_base()`` and the credential are resolved INSIDE each try below. Each refuses
 # (``GatewayBaseUnresolved``, ``InternalSecretUnavailable``) rather than guessing a port or
 # sending an empty credential, and a refusal must reach the agent as this tool's result
@@ -950,11 +975,13 @@ def _post(path: str, body: dict | None = None) -> dict:
             headers=_internal_headers({"Content-Type": "application/json"}),
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=GATEWAY_WRITE_TIMEOUT_SECS) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return _refused(exc)
     except Exception as e:
+        if _timed_out(e):
+            return _unanswered("POST", path, GATEWAY_WRITE_TIMEOUT_SECS)
         return {"error": str(e)}
 
 
@@ -964,11 +991,13 @@ def _get(path: str) -> dict:
             f"{_api_base()}{path}",
             headers=_internal_headers(),
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=GATEWAY_READ_TIMEOUT_SECS) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return _refused(exc)
     except Exception as e:
+        if _timed_out(e):
+            return _unanswered("GET", path, GATEWAY_READ_TIMEOUT_SECS)
         return {"error": str(e)}
 
 
@@ -981,11 +1010,13 @@ def _delete(path: str, body: dict | None = None) -> dict:
             headers=_internal_headers({"Content-Type": "application/json"} if data else None),
             method="DELETE",
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=GATEWAY_READ_TIMEOUT_SECS) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return _refused(exc)
     except Exception as e:
+        if _timed_out(e):
+            return _unanswered("DELETE", path, GATEWAY_READ_TIMEOUT_SECS)
         return {"error": str(e)}
 
 

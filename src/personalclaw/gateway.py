@@ -2910,7 +2910,10 @@ class GatewayOrchestrator:
             # every other stored text a prompt is built from is (`redact_for_model`).
             from personalclaw.security import redact_for_model
 
-            full_message, _ = self.ctx_builder.build_message(
+            # On a worker thread: building the message embeds it with the embedding model, and
+            # on the event loop every request the gateway serves waited for that round trip.
+            full_message, _ = await asyncio.to_thread(
+                self.ctx_builder.build_message,
                 redact_for_model(task_text),
                 is_new,
                 prompt_use_case="background",
@@ -4346,7 +4349,8 @@ class GatewayOrchestrator:
                         if self.ctx_builder:
                             from personalclaw.context_headroom import resolve_window
 
-                            msg, _ = self.ctx_builder.build_message(
+                            msg, _ = await asyncio.to_thread(
+                                self.ctx_builder.build_message,
                                 announce,
                                 is_new,
                                 parent_key,
@@ -4506,7 +4510,8 @@ class GatewayOrchestrator:
                     if self.ctx_builder:
                         from personalclaw.context_headroom import resolve_window
 
-                        msg, _ = self.ctx_builder.build_message(
+                        msg, _ = await asyncio.to_thread(
+                            self.ctx_builder.build_message,
                             announce,
                             is_new,
                             parent_key,

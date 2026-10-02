@@ -3,8 +3,8 @@
  *
  *  Why one function rather than a comparison at each delivery site: agent routing's
  *  first-message suggestion (issue 569) was never surfaced because its ONE transport
- *  could not reach the page. `/api/chat` broadcasts `routing_suggestion` synchronously,
- *  before the run task's first await — so it is the earliest frame of a send — while
+ *  could not reach the page. `/api/chat` broadcasts `routing_suggestion` among a send's
+ *  first frames (it was the very first, before the run task's first await), while
  *  creating a session BY that send re-keys `ChatSession` (`new-<epoch>` → the session
  *  key). The remount closes the ChatPage socket and its replacement is still
  *  handshaking, so the frame is delivered to no ChatPage socket at all. The fix adds a

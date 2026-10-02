@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from personalclaw.agents import routing
+from personalclaw.agents.native.tool_vectors import Embedder, ToolVectors
 from personalclaw.providers import entity_routes
 
 
@@ -27,6 +28,23 @@ def _cfg(
             enabled=enabled, min_confidence=min_confidence, cooldown_hours=cooldown_hours
         ),
     )
+
+
+def _bind(monkeypatch, answer, *, asked: list[str] | None = None) -> ToolVectors:
+    """Bind an embedding model answering ``answer(text)``, and give routing an index of its own,
+    which it returns: a send reads the specialists' vectors there, and the index embeds them in
+    the background."""
+
+    def one(text: str):
+        if asked is not None:
+            asked.append(text)
+        return answer(text)
+
+    embedder = Embedder(model="test:model", one=one, many=None)
+    monkeypatch.setattr(routing, "bound_embedder", lambda: embedder)
+    index = ToolVectors(what="agent specialty", thread="test-agent-specialty-vectors")
+    monkeypatch.setattr(routing, "_SPECIALTY_VECTORS", index)
+    return index
 
 
 async def _noop_run(state, session, message):
@@ -95,19 +113,24 @@ class TestClassify:
             "database expert optimize slow sql query": [1.0, 0.0],
             "devops deploy releases pipelines": [0.0, 1.0],
         }
-        monkeypatch.setattr(routing, "_embed", lambda t: (vecs.get(t), "test:model"))
+        index = _bind(monkeypatch, vecs.get)
         cands = [
             ("dba", "database expert", "optimize slow sql query"),
             ("devops", "devops", "deploy releases pipelines"),
         ]
-        r = routing.classify("run the deployment pipeline", cands, embed_cache={})
+        # The first message is matched by hints while the specialties are embedded.
+        assert routing.classify("run the deployment pipeline", cands) is None
+        assert index.drain(timeout=10)
+        r = routing.classify("run the deployment pipeline", cands)
         assert r is not None and r.agent == "devops" and r.method == "embedding"
 
     def test_low_margin_stays_silent(self, monkeypatch):
         # Two near-identical vectors → margin < 0.1 → no suggestion.
-        monkeypatch.setattr(routing, "_embed", lambda t: ([1.0, 0.0], "test:model"))
+        index = _bind(monkeypatch, lambda t: [1.0, 0.0])
         cands = [("a", "sa", "ha"), ("b", "sb", "hb")]
-        assert routing.classify("anything", cands, embed_cache={}) is None
+        routing.classify("anything", cands)
+        assert index.drain(timeout=10)
+        assert routing.classify("anything", cands) is None
 
 
 class TestSuppressionStore:
@@ -249,17 +272,14 @@ class TestSuggestForSend:
         cfg = _cfg({"oncall-triage": _profile("on-call triage", "pager, alert, incident, on call")})
         self._patch_cfg(monkeypatch, cfg)
         embedded: list[str] = []
-
-        def fake_embed(text):
-            embedded.append(text)
-            return [1.0, 0.0], "test:model"
-
-        monkeypatch.setattr(routing, "_embed", fake_embed)
+        index = _bind(monkeypatch, lambda t: [1.0, 0.0], asked=embedded)
         pasted = "line one of a long export\n" * 40
-        routing.suggest_for_send(
-            SimpleNamespace(), self._session(), f"summarize this {pasted}", pasted=[pasted]
-        )
-        assert embedded and embedded[0].strip() == "summarize this"
+        for _ in range(2):  # the first send's specialty is embedded in the background
+            routing.suggest_for_send(
+                SimpleNamespace(), self._session(), f"summarize this {pasted}", pasted=[pasted]
+            )
+            assert index.drain(timeout=10)
+        assert "summarize this" in embedded
         assert all("long export" not in t for t in embedded)
 
     def test_suppressed_agent_no_suggestion(self, monkeypatch):

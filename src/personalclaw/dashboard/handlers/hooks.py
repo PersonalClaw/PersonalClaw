@@ -435,7 +435,9 @@ async def _run_hook_inner(
         if is_new and state.context_builder:
             from personalclaw.context_headroom import resolve_window
 
-            full_message, _ = state.context_builder.build_message(
+            # On a worker thread: building the message embeds it with the embedding model.
+            full_message, _ = await asyncio.to_thread(
+                state.context_builder.build_message,
                 message,
                 is_new,
                 session_key,

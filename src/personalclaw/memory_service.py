@@ -22,11 +22,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 from personalclaw import memory_writes
 from personalclaw.identity import current_username
-from personalclaw.memory_providers.base import MemoryProvider
+from personalclaw.memory_providers.base import EMBED_QUERY, MemoryProvider
 
 if TYPE_CHECKING:
     from personalclaw.memory import MemoryStore
@@ -34,6 +35,27 @@ if TYPE_CHECKING:
     from personalclaw.vector_memory import SemanticRejectCode, VectorMemoryStore
 
 logger = logging.getLogger(__name__)
+
+#: How long a recall waits for the embedding model to embed its question before it searches by
+#: keyword, and says so. One round trip to a cloud model is well under a second; the budget is
+#: for a model that is loading, busy or unreachable, which must not spend the agent's whole wait.
+QUERY_EMBED_BUDGET_SECS = 4.0
+#: How long one whole recall may take (``GET /api/memory/recall``). Inside the agent's own wait
+#: for the gateway (``mcp_core.GATEWAY_READ_TIMEOUT_SECS``), so the route answers in words, and
+#: names where it was, before the tool stops waiting for it.
+RECALL_BUDGET_SECS = 8.0
+
+
+@dataclass(frozen=True)
+class QueryVector:
+    """A recall's question, embedded once for every arm (:meth:`MemoryService.embed_query`)."""
+
+    #: The question's vector, or ``None``: the arms rank by words and links alone.
+    vector: list[float] | None
+    #: The bound model did not answer within the budget, so the recall is by keyword this time.
+    timed_out: bool = False
+    #: The model that embedded it, or was asked to (``provider:model``; ``""`` for none named).
+    model: str = ""
 
 
 def normalize_workspace_ref(workspace: str | None) -> str:
@@ -450,9 +472,17 @@ class MemoryService:
             else ""
         )
 
-    def semantic_context(self, query_text: str = "", *, cap: int = 1500) -> str:
+    def semantic_context(
+        self,
+        query_text: str = "",
+        *,
+        cap: int = 1500,
+        query_vector: "list[float] | None" = EMBED_QUERY,
+    ) -> str:
         vs = self._vs
-        return (vs.get_semantic_context(query_text=query_text, cap=cap) or "") if vs else ""
+        if vs is None:
+            return ""
+        return vs.get_semantic_context(query_text=query_text, cap=cap, query_vector=query_vector)
 
     def lessons_context(
         self, workspace: str | None = None, *, citations_out: list[dict] | None = None
@@ -477,7 +507,7 @@ class MemoryService:
         self,
         *,
         query_text: str = "",
-        query_embedding: list[float] | None = None,
+        query_vector: "list[float] | None" = EMBED_QUERY,
         limit: int = 8,
         tag_filter: list[str] | None = None,
         mmr: bool = True,
@@ -489,14 +519,17 @@ class MemoryService:
         suppresses near-duplicates and near-duplicates are exactly what a repetition detector is
         looking for (see `learning.mining.similar_run_matches`: three runs of the same plan reranked
         for diversity collapse to one, and the "you built this three times" verdict never fires).
+
+        ``query_vector`` is the question's vector when the caller has it, ``None`` to search by
+        keyword alone, and :data:`EMBED_QUERY` to embed it here, as every recall arm takes it.
         """
         vs = self._vs
         if vs is None:
             return []
-        if query_embedding is None and query_text and self.has_vector:
-            query_embedding = self.embed(query_text)
+        if query_vector is EMBED_QUERY:
+            query_vector = self.embed(query_text) if query_text and self.has_vector else None
         return vs.search_episodic(
-            query_embedding=query_embedding,
+            query_embedding=query_vector,
             query_text=query_text,
             limit=limit,
             tag_filter=tag_filter,
@@ -1577,7 +1610,14 @@ class MemoryService:
 
     # ── two-stage retrieval rank (M5b — O-A2) ─────────────────────────────────
 
-    def rank_episodic(self, *, query_text: str, limit: int = 8, now=None) -> list[dict]:
+    def rank_episodic(
+        self,
+        *,
+        query_text: str,
+        limit: int = 8,
+        now=None,
+        query_vector: "list[float] | None" = EMBED_QUERY,
+    ) -> list[dict]:
         """Two-stage episodic retrieval: stage 1 = the store's relevance search
         (vector or FTS), stage 2 = a multiplicative operational boost by record
         heat (memory-architecture.md §3.3 read path). Returns the reranked hits.
@@ -1591,7 +1631,9 @@ class MemoryService:
         so it ranks among the semantic hits by it; with none, every keyword hit ranked
         after every semantic one, and mid re-index the exact match came last."""
         # over-fetch so the boost can reorder a wider candidate set
-        hits = self.search_episodic(query_text=query_text, limit=max(limit * 2, limit))
+        hits = self.search_episodic(
+            query_text=query_text, query_vector=query_vector, limit=max(limit * 2, limit)
+        )
         if not hits:
             return []
         from personalclaw.memory_record import MemoryRecord
@@ -1779,7 +1821,14 @@ class MemoryService:
 
     # ── provenance-first recall (mem-tree, descoped) ──────────────────────────
 
-    def recall_with_provenance(self, *, query_text: str, limit: int = 8, now=None) -> list[dict]:
+    def recall_with_provenance(
+        self,
+        *,
+        query_text: str,
+        limit: int = 8,
+        now=None,
+        query_vector: "list[float] | None" = EMBED_QUERY,
+    ) -> list[dict]:
         """Episodic recall that carries PROVENANCE, not just text — each hit keeps
         its source, originating session, and timestamp so the agent (and the UI)
         can see *where* and *when* a memory came from, the mem-tree provenance-
@@ -1792,7 +1841,9 @@ class MemoryService:
         leaves ``limit`` to return when there are that many."""
         from personalclaw.vector_memory import recallable_episode
 
-        ranked = self.rank_episodic(query_text=query_text, limit=limit * 3, now=now)
+        ranked = self.rank_episodic(
+            query_text=query_text, limit=limit * 3, now=now, query_vector=query_vector
+        )
         hits = [h for h in ranked if recallable_episode(h, query_text=query_text)][:limit]
         out: list[dict] = []
         for h in hits:
@@ -1817,6 +1868,27 @@ class MemoryService:
         if vs is None or vs.embed_fn is None:
             return None
         return vs._try_embed(text)
+
+    def embed_query(self, text: str, *, within: float | None = None) -> QueryVector:
+        """Embed a recall's question once, for every arm to rank with, waiting at most ``within``
+        seconds (:data:`QUERY_EMBED_BUDGET_SECS` by default) for the model.
+
+        A model that does not answer in time leaves the question unembedded and marks it
+        ``timed_out``: the recall searches by keyword, and says so, rather than spending the
+        agent's whole wait on one round trip (``embedding_providers.base.embed_within``: the call
+        is abandoned, not joined, and runs in the work's own context, so a question asked in an
+        Incognito or Temporary session is not sent to the model)."""
+        from personalclaw.embedding_providers.base import embed_within
+
+        vs = self._vs
+        if vs is None or not text:
+            return QueryVector(None)
+        fn, model = vs._embedder()
+        if fn is None:
+            return QueryVector(None)
+        budget = QUERY_EMBED_BUDGET_SECS if within is None else within
+        embedded = embed_within(lambda t: vs._try_embed(t, fn), text, within=budget)
+        return QueryVector(embedded.vector, timed_out=embedded.timed_out, model=model or "")
 
     # ── read path: semantic CRUD (dashboard + recall) ─────────────────────────
 
@@ -2003,21 +2075,34 @@ class MemoryService:
         vs = self._vs
         return vs.lesson_standings(rows) if vs else {}
 
-    def recall_facts(self, *, query_text: str, limit: int = 8) -> list[dict]:
+    def recall_facts(
+        self,
+        *,
+        query_text: str,
+        limit: int = 8,
+        query_vector: "list[float] | None" = EMBED_QUERY,
+    ) -> list[dict]:
         """The facts that answer ``query_text`` — only related ones (``rank_semantic``'s
         ``related_only``) — each as ``{"text", "created_at"}``, the text rendered as the fact
         block renders it, holder and contributor included."""
         vs = self._vs
         if vs is None:
             return []
-        rows = vs.rank_semantic(query_text, limit=limit, related_only=True)
+        rows = vs.rank_semantic(
+            query_text, limit=limit, related_only=True, query_vector=query_vector
+        )
         return [
             {"text": line, "created_at": str(row.get("updated_at") or "")}
             for row, line in zip(rows, vs.fact_lines(rows))
         ]
 
     def recall_lessons(
-        self, *, query_text: str, limit: int = 8, workspace: str | None = None
+        self,
+        *,
+        query_text: str,
+        limit: int = 8,
+        workspace: str | None = None,
+        query_vector: "list[float] | None" = EMBED_QUERY,
     ) -> list[dict]:
         """The lessons that answer ``query_text`` (``VectorMemoryStore.rank_lessons``), each as
         ``{"text", "source", "created_at"}``: the rule as the user taught it, who wrote it and
@@ -2027,7 +2112,9 @@ class MemoryService:
             return []
         ws = normalize_workspace_ref(workspace) or None
         out: list[dict] = []
-        for row in vs.rank_lessons(query_text, limit=limit, workspace=ws):
+        for row in vs.rank_lessons(
+            query_text, limit=limit, workspace=ws, query_vector=query_vector
+        ):
             try:
                 rule = json.loads(row.get("value_json") or '""')
             except (TypeError, ValueError):

@@ -10,6 +10,7 @@ attaches one; the API-only path attaches one in ``_get_memory``), so
 no embedder configured.
 """
 
+import asyncio
 import json
 import logging
 
@@ -194,7 +195,11 @@ async def api_lessons_create(request: web.Request) -> web.Response:
 
     negative = body.get("negative") or None
     svc = service_for(_get_memory(state))
-    svc.write_lesson(rule, category, negative, scope=scope, scope_ref=scope_ref)
+    # Off the event loop: the lesson is embedded, and may be judged against the lessons it could
+    # contradict, each a round trip to a model.
+    await asyncio.to_thread(
+        svc.write_lesson, rule, category, negative, scope=scope, scope_ref=scope_ref
+    )
     state.push_refresh("lessons")
     return web.json_response({"ok": True})
 

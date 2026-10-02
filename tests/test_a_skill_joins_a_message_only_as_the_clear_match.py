@@ -18,7 +18,8 @@ from __future__ import annotations
 import pytest
 
 import personalclaw.skills.surfacing as surf
-from personalclaw.skills.surfacing import _EmbedCache, surface_skills
+from personalclaw.agents.native.tool_vectors import Embedder
+from personalclaw.skills.surfacing import surface_skills
 
 #: The library, in the order of every score string below.
 _SKILLS = (
@@ -146,7 +147,18 @@ def library(monkeypatch, tmp_path):
         # A skill with triggers embeds as `description\ntriggers`; its score is its description's.
         return _BY_TEXT[query_vec[0]][skill_vec[0].split("\n", 1)[0]]
 
-    monkeypatch.setattr(surf, "_active_embedder", lambda: (embed, "local:measured"))
+    class _Measured:
+        """A skill index holding every description's "vector": its text, which ``cosine``
+        reads the measured score by."""
+
+        def vectors(self, path, model, texts):
+            return {text: [text] for text in texts}
+
+        def want(self, path, embedder, texts):
+            raise AssertionError(f"every description is held, yet {list(texts)} were asked for")
+
+    measured = Embedder(model="local:measured", one=embed, many=None)
+    monkeypatch.setattr(surf, "bound_embedder", lambda: measured)
     monkeypatch.setattr(surf, "_cosine", cosine)
     skills = []
     for key in _SKILLS:
@@ -164,35 +176,32 @@ def library(monkeypatch, tmp_path):
                 "use_count": 0,
             }
         )
-    cache = _EmbedCache(path=tmp_path / ".emb.json")
-    return skills, cache
+    return skills, {"index": _Measured(), "index_path": tmp_path / ".emb.json"}
 
 
 def test_a_bare_answer_naming_a_path_carries_no_skill(library):
-    skills, cache = library
+    skills, held = library
     assert (
-        surface_skills(
-            "It's ~/Notes/Garden/Home/kitchen-reno.md.", skills, max_skills=3, embed_cache=cache
-        )
+        surface_skills("It's ~/Notes/Garden/Home/kitchen-reno.md.", skills, max_skills=3, **held)
         == []
     )
 
 
 @pytest.mark.parametrize("message", list(_MEASURED))
 def test_each_message_gets_the_skill_it_asks_for_or_none(library, message):
-    skills, cache = library
+    skills, held = library
     want = _MEASURED[message][0]
-    got = surface_skills(message, skills, max_skills=3, embed_cache=cache)
+    got = surface_skills(message, skills, max_skills=3, **held)
     assert got == ([want] if want else []), f"{message!r} surfaced {got}"
 
 
 def test_the_doctor_says_why_the_close_skill_stayed_out(library):
-    skills, cache = library
+    skills, held = library
     rows = surface_skills(
         "It's ~/Notes/Garden/Home/kitchen-reno.md.",
         skills,
         max_skills=3,
-        embed_cache=cache,
+        **held,
         explain=True,
     )
     trip = next(r for r in rows if r["key"] == "imported/claude_code/trip-research")
@@ -206,7 +215,7 @@ def test_the_doctor_says_why_the_close_skill_stayed_out(library):
 
 def test_a_declared_trigger_still_fires_where_meaning_picks_nothing(library):
     """Triggers are the author's own words: the lead rule is for meaning, not for them."""
-    skills, cache = library
+    skills, held = library
     for s in skills:
         if s["key"] == "task-and-project":
             s["triggers"] = "async standup"
@@ -215,18 +224,16 @@ def test_a_declared_trigger_still_fires_where_meaning_picks_nothing(library):
         "today.",
         skills,
         max_skills=3,
-        embed_cache=cache,
+        **held,
     )
     assert got == ["task-and-project"]
 
 
 def test_a_library_too_small_to_measure_a_lead_picks_nothing_on_meaning(library, tmp_path):
-    skills, cache = library
+    skills, held = library
     few = [s for s in skills if s["key"].startswith("imported/claude_code/")][:3]
-    assert surface_skills("release feedsmith 0.9.0", few, max_skills=3, embed_cache=cache) == []
-    rows = surface_skills(
-        "release feedsmith 0.9.0", few, max_skills=3, embed_cache=cache, explain=True
-    )
+    assert surface_skills("release feedsmith 0.9.0", few, max_skills=3, **held) == []
+    rows = surface_skills("release feedsmith 0.9.0", few, max_skills=3, **held, explain=True)
     assert all(
         "too few to tell a clear match" in r["reason"] for r in rows if r["sem_score"] >= 0.55
     )

@@ -34,7 +34,7 @@ from personalclaw import feedback as fb
 from personalclaw.dashboard.handlers import skills as skills_h
 from personalclaw.skills import ephemeral
 from personalclaw.skills.loader import AUTO_SKILL_SOURCE_VALUE
-from personalclaw.skills.surfacing import _EmbedCache, surface_skills
+from personalclaw.skills.surfacing import surface_skills
 
 
 @pytest.fixture(autouse=True)
@@ -183,18 +183,14 @@ class TestTheGateIsNowReachable:
     def test_the_withheld_skill_stops_surfacing(self, isolated, tmp_path):
         """End to end through the real gate: the keyword match still hits, and the skill is gone."""
         candidate = self._candidate(tmp_path)
-        cache = _EmbedCache(tmp_path / "emb.json")
         # Control first — matched and surfaced while nothing is suppressed.
-        assert surface_skills("tighten the loop", [candidate], max_skills=5, embed_cache=cache) == [
-            self.KEY
-        ]
+        assert surface_skills("tighten the loop", [candidate], max_skills=5) == [self.KEY]
         _thumb_down(self.KEY, 5)
         assert (
             surface_skills(
                 "tighten the loop",
                 [candidate],
                 max_skills=5,
-                embed_cache=cache,
                 suppressed=fb.suppressed_producers(),
             )
             == []
@@ -204,7 +200,6 @@ class TestTheGateIsNowReachable:
         """``clear_producer`` is the documented escape hatch ('until the user edits it'). It only
         means anything once something can put the producer in the set in the first place."""
         candidate = self._candidate(tmp_path)
-        cache = _EmbedCache(tmp_path / "emb.json")
         _thumb_down(self.KEY, 5)
         fb.clear_producer("skill_synthesis", self.KEY)
         assert ("skill_synthesis", self.KEY) not in fb.suppressed_producers()
@@ -212,7 +207,6 @@ class TestTheGateIsNowReachable:
             "tighten the loop",
             [candidate],
             max_skills=5,
-            embed_cache=cache,
             suppressed=fb.suppressed_producers(),
         ) == [self.KEY]
 
@@ -224,6 +218,5 @@ class TestTheGateIsNowReachable:
             "tighten the loop",
             [self._candidate(tmp_path)],
             max_skills=5,
-            embed_cache=_EmbedCache(tmp_path / "emb.json"),
             suppressed=fb.suppressed_producers(),
         ) == [self.KEY]

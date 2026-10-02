@@ -19,10 +19,24 @@ and projecting them (mem-fs-mirror), so there is one source of truth.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from personalclaw.memory_record import MemoryCapabilities, MemoryRecord
+
+
+class _EmbedQuery:
+    """The type of :data:`EMBED_QUERY`, named so a signature that defaults to it says so."""
+
+    def __repr__(self) -> str:
+        return "EMBED_QUERY"
+
+
+#: Passed as a recall's query vector: embed the question where it is ranked, with the model bound
+#: now. A caller that embedded it already passes the vector, and ``None`` when there is none, so
+#: one recall's arms embed one question once between them, and a question the model did not
+#: answer in time is ranked by its words (``MemoryService.embed_query``).
+EMBED_QUERY: Any = _EmbedQuery()
 
 
 class MemoryProvider(ABC):

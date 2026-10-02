@@ -408,8 +408,8 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
     # Wire recall to the SAME L3 seam the Memory Studio recall uses (semantic_context),
     # so the decomposition sees the agent's own memory view + can't drift from it.
     # Best-effort: a recall failure just yields un-memory-checked phases (grill swallows
-    # it and continues). semantic_context is a sync call — matching the existing recall
-    # handler, which calls it inline in an async handler too.
+    # it and continues). semantic_context embeds the query, so it runs in a worker thread, as
+    # the recall route's does: on the event loop that wait stopped every other request.
     state = request.app["state"]
 
     async def _recall(query: str) -> str:
@@ -418,7 +418,7 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
             from personalclaw.memory_service import MemoryService
 
             svc = MemoryService.over_vector_store(_get_provider(state))
-            facts = svc.semantic_context(query, cap=1500) or ""
+            facts = await asyncio.to_thread(svc.semantic_context, query, cap=1500) or ""
         except Exception:
             logger.debug("grill-tree recall failed", exc_info=True)
             return ""
@@ -904,8 +904,9 @@ async def api_loop_update(request: web.Request) -> web.Response:
         # Reads ``body``, not the merged ``spec``: a SETTLED decision is one the user just
         # answered, and the merge carries forward the phases/answers of every earlier write,
         # so feeding it the merged config would re-harden the same decisions on every
-        # subsequent edit of the same loop.
-        _persist_grill_decisions(body, request.app["state"])
+        # subsequent edit of the same loop. Off the event loop: each decision is written as a
+        # lesson, which is embedded, a round trip to the model.
+        await asyncio.to_thread(_persist_grill_decisions, body, request.app["state"])
     if updated is None:
         # spec frozen — allow a name-only patch via rename
         if set(body) <= {"name"}:

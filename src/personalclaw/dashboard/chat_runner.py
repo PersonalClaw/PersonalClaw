@@ -3309,7 +3309,12 @@ async def run_chat(
             # build_message; a custom engine that raises is quarantined to default
             # so the turn still gets context). Active-recall + structured-
             # compaction land as engine hooks on this seam.
-            _assembled = assemble_context(
+            #
+            # On a worker thread: assembling embeds the message with the embedding model (the
+            # turn's memory, its skill match, active recall), and on the event loop every other
+            # request the gateway serves waited for those round trips.
+            _assembled = await asyncio.to_thread(
+                assemble_context,
                 state.context_builder,
                 message,
                 is_new_session=is_new,

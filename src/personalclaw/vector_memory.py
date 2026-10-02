@@ -32,7 +32,7 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
-from personalclaw.memory_providers.base import MemoryProvider
+from personalclaw.memory_providers.base import EMBED_QUERY, MemoryProvider
 from personalclaw.security import redact_values_for_display
 from personalclaw.sqlite_compat import connect_shared, sqlite3
 
@@ -229,6 +229,27 @@ _LIKE_WORD_MAX_CHARS = 256
 #: How many of the newest keyword matches, per result asked for, are scored before the best
 #: are kept (``_fts5_episodic_search``).
 _KEYWORD_WINDOW = 4
+#: How many vectors a re-index may write past the published index before it publishes a rebuilt
+#: one. Until then a search compares the query with each of them directly, beside the index
+#: (``VectorMemoryStore._vector_search``), so the cap bounds that work per search.
+_UNINDEXED_MAX = 256
+
+
+def semantic_vector_text(key: str, value_json: str) -> str:
+    """The text a semantic row's stored vector embeds: what the fact and lesson ranking compares
+    the question with (:meth:`VectorMemoryStore._rank_rows`).
+
+    A fact's key says what it is about (``pref.kitchen_dishwasher_placement``), so a fact is its
+    key and its value. A lesson's key is a hash, so a lesson is its rule. One definition for the
+    writer (:meth:`VectorMemoryStore.set_semantic`) and the re-index, so a vector the re-index
+    wrote and one written with the row compare the same text.
+    """
+    if key.startswith("lesson."):
+        try:
+            return str(json.loads(value_json))
+        except (TypeError, ValueError):
+            return str(value_json)
+    return f"{key} {value_json}"
 
 
 def _conceptual_richness(text: str) -> float:
@@ -663,15 +684,16 @@ _OF_MODEL = "COALESCE(embedding_model, '') = ?"
 
 @dataclass(frozen=True)
 class EmbeddingCoverage:
-    """How much of one store's episodic memory a semantic search compares, from one read.
+    """How much of one store's memory a semantic search compares, from one read: its episodes,
+    and the facts and lessons the recall ranks (:data:`_RANKED_SEMANTIC_CLAUSE`).
 
     ``comparable`` memories hold a vector of the model compared under, at the width it writes now
     (its newest vector's). ``other_model`` ones hold another model's vector, or this model's at
     another width; ``unembedded`` ones hold none at all, written while no model was bound or when
     it failed. A search reads those two by keyword beside its vector results until the re-index
-    embeds them (``VectorMemoryStore._fts5_episodic_search``'s ``beside``), so every surface that
-    counts them — the recall disclosure, the Memory page, the Doctor, the gateway's start — reads
-    :attr:`read_by_keyword` from here.
+    embeds them (``VectorMemoryStore._fts5_episodic_search``'s ``beside``, and the fact and lesson
+    ranking's keyword arm), so every surface that counts them — the recall disclosure, the Memory
+    page, the Doctor, the gateway's start — reads :attr:`read_by_keyword` from here.
     """
 
     comparable: int
@@ -686,40 +708,86 @@ class EmbeddingCoverage:
 
 
 def embedding_coverage(conn: sqlite3.Connection, space: str, *, bound: bool) -> EmbeddingCoverage:
-    """:class:`EmbeddingCoverage` of ``conn``'s live episodic memories under ``space``'s model.
+    """:class:`EmbeddingCoverage` of ``conn``'s live episodes, facts and lessons under ``space``'s
+    model.
 
     ``bound`` says a model is bound for ``space`` to be. Without one nothing is compared, so there
     is no other model and nothing waiting to be embedded; only a vector of ``''`` at another width
     than its newest is counted, which is what the index of ``''``'s vectors cannot hold. Read-only,
     and tolerant of a database the store has not migrated yet (the Doctor opens it ``mode=ro``):
-    with no model column, every vector is one that records no model, and with no text column no
-    row has anything to embed.
+    with no model column, every vector is one that records no model, and with no text or vector
+    column no row has anything to embed or compare.
     """
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(episodic_memories)").fetchall()}
-    model = "COALESCE(embedding_model, '')" if "embedding_model" in cols else "''"
-    # A row with no text has nothing to embed, and a table with no text column holds none.
-    has_text = "COALESCE(text, '') != ''" if "text" in cols else "0"
-    live = "is_deleted = 0 AND embedding IS NOT NULL"
-    newest = conn.execute(
-        f"SELECT length(embedding) FROM episodic_memories WHERE {live} "  # noqa: S608
-        f"AND {model} = ? ORDER BY created_at DESC, id DESC LIMIT 1",
-        (space,),
-    ).fetchone()
-    width = int(newest[0]) if newest else 0
-    row = conn.execute(
-        f"SELECT COALESCE(SUM({live} AND {model} = ? AND length(embedding) = ?), 0), "  # noqa: S608
-        f"COALESCE(SUM({live} AND {model} = ? AND length(embedding) != ?), 0), "
-        f"COALESCE(SUM({live} AND {model} != ?), 0), "
-        f"COALESCE(SUM(is_deleted = 0 AND embedding IS NULL AND {has_text}), 0) "
-        "FROM episodic_memories",
-        (space, width, space, width, space),
-    ).fetchone()
-    comparable, other_width, other_models, unembedded = (int(v) for v in row)
+    tables = (
+        _CoveredTable(conn, "episodic_memories", text="text", rows="1", newest="created_at DESC"),
+        _CoveredTable(
+            conn,
+            "semantic_memory",
+            text="value_json",
+            rows=_RANKED_SEMANTIC_CLAUSE,
+            newest="updated_at DESC",
+        ),
+    )
+    # The width the model writes now: its newest vector's, an episode's when there is one (the
+    # one each write stores), else a fact's or a lesson's.
+    width = next((w for w in (t.newest_width(space) for t in tables) if w), 0)
+    comparable = other_width = other_models = unembedded = 0
+    for table in tables:
+        counts = table.counts(space, width)
+        comparable += counts[0]
+        other_width += counts[1]
+        other_models += counts[2]
+        unembedded += counts[3]
     if not bound:
         return EmbeddingCoverage(comparable=comparable, other_model=other_width, unembedded=0)
     return EmbeddingCoverage(
         comparable=comparable, other_model=other_width + other_models, unembedded=unembedded
     )
+
+
+class _CoveredTable:
+    """One table's part of :func:`embedding_coverage`: its live rows matching ``rows`` (SQL), read
+    through whichever of its text, vector and model columns the database has."""
+
+    def __init__(self, conn: sqlite3.Connection, name: str, *, text: str, rows: str, newest: str):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({name})").fetchall()}
+        self._conn, self._name, self._newest = conn, name, newest
+        # A database that predates the table has no rows of it to count.
+        self._absent = not cols
+        self._rows = rows
+        self._model = "COALESCE(embedding_model, '')" if "embedding_model" in cols else "''"
+        # A row with no text has nothing to embed, and a table with no text column holds none.
+        self._has_text = f"COALESCE({text}, '') != ''" if text in cols else "0"
+        has_vector = "embedding" in cols
+        self._live = "is_deleted = 0 AND embedding IS NOT NULL" if has_vector else "0"
+        self._none = "embedding IS NULL" if has_vector else "1"
+        self._len = "length(embedding)" if has_vector else "0"
+
+    def newest_width(self, space: str) -> int:
+        """The byte width of ``space``'s newest vector here, or 0 with none."""
+        if self._absent:
+            return 0
+        newest = self._conn.execute(
+            f"SELECT {self._len} FROM {self._name} WHERE {self._live} "  # noqa: S608
+            f"AND {self._model} = ? AND {self._rows} ORDER BY {self._newest} LIMIT 1",
+            (space,),
+        ).fetchone()
+        return int(newest[0]) if newest else 0
+
+    def counts(self, space: str, width: int) -> "tuple[int, int, int, int]":
+        """``(comparable, space's at another width, another model's, none at all)``."""
+        if self._absent:
+            return 0, 0, 0, 0
+        live, model, size = self._live, self._model, self._len
+        row = self._conn.execute(
+            f"SELECT COALESCE(SUM({live} AND {model} = ? AND {size} = ?), 0), "  # noqa: S608
+            f"COALESCE(SUM({live} AND {model} = ? AND {size} != ?), 0), "
+            f"COALESCE(SUM({live} AND {model} != ?), 0), "
+            f"COALESCE(SUM(is_deleted = 0 AND {self._none} AND {self._has_text}), 0) "
+            f"FROM {self._name} WHERE {self._rows}",
+            (space, width, space, width, space),
+        ).fetchone()
+        return int(row[0]), int(row[1]), int(row[2]), int(row[3])
 
 
 #: What a store embeds with until a function is pinned on it: the model bound in Settings →
@@ -793,6 +861,10 @@ _NON_FACT_KEY_PREFIXES = (
     "slot.",
 )
 _NON_FACT_KEY_CLAUSE = " AND ".join(f"key NOT LIKE '{p}%'" for p in _NON_FACT_KEY_PREFIXES)
+#: The semantic rows a recall ranks by meaning, and so the ones that hold a vector: the facts
+#: (:meth:`VectorMemoryStore.rank_semantic`) and the lessons (:meth:`~VectorMemoryStore.
+#: rank_lessons`). The other rows have readers of their own that compare nothing.
+_RANKED_SEMANTIC_CLAUSE = f"(key LIKE 'lesson.%' OR ({_NON_FACT_KEY_CLAUSE}))"
 
 
 def is_fact_key(key: str) -> bool:
@@ -1009,6 +1081,32 @@ def _merge_by_score(first: list[dict], second: list[dict], limit: int) -> list[d
     return merged
 
 
+class _StoredSimilarity:
+    """Cosine similarity of one query with rows' stored vectors (``embedding``, packed float32),
+    for a row whose vector is ``space``'s model's at the query's width; 0 for any other row."""
+
+    def __init__(self, query: list[float], space: str) -> None:
+        self._space = space
+        self._width = len(query)
+        self._query = query
+        self._q = np.asarray(query, dtype=np.float32) if _HAS_NUMPY else None
+        self._q_norm = float(np.linalg.norm(self._q)) if self._q is not None else 0.0
+
+    def of(self, row: Any) -> float:
+        blob = _row_value(row, "embedding", None)
+        if not isinstance(blob, (bytes, memoryview)) or len(blob) != self._width * 4:
+            return 0.0
+        if (_row_value(row, "embedding_model", "") or "") != self._space:
+            return 0.0
+        if self._q is None:
+            return VectorMemoryStore._cosine_sim(
+                self._query, list(struct.unpack(f"{self._width}f", blob))
+            )
+        vec = np.frombuffer(blob, dtype=np.float32)
+        norm = float(np.linalg.norm(vec))
+        return float(np.dot(self._q, vec) / (self._q_norm * norm)) if self._q_norm and norm else 0.0
+
+
 # ── Store ──
 
 
@@ -1056,9 +1154,12 @@ class VectorMemoryStore(MemoryProvider):
         self._index = _Index(faiss=None, ids=[], dim=embedding_dim, ref=None)
         self._index_lock = threading.RLock()
         self._faiss_writes_since_save = 0
-        # Set when a vector is stored without being added (`_store_reembedding`, on the
-        # re-index's thread), so the next use rebuilds the index (`_sync_index`).
-        self._index_behind = False
+        # The vectors a re-index wrote that the published index does not hold yet: memory id →
+        # (vector, model). Replaced whole under `_unindexed_lock`, so a search reads one value; it
+        # compares the query with them directly, beside the index, instead of rebuilding the
+        # index or waiting for a rebuild (`_store_reembedding`, `_vector_search`).
+        self._unindexed: dict[str, tuple[bytes, str]] = {}
+        self._unindexed_lock = threading.Lock()
         # What this store embeds with — see `embed_fn`.
         self._embed_fn: Any = _FOLLOW_BINDING
         # Optional one-shot contradiction judge: (new_rule, existing_rule) → bool
@@ -1713,6 +1814,11 @@ class VectorMemoryStore(MemoryProvider):
             log("Semantic write rejected for %r: %s", key, reason)
             self.log_reject_event(code, key, value, source, value_json=value_json)
             return result
+        prior = self.db.execute(
+            "SELECT value_json, embedding_model, embedding IS NOT NULL AS has_vector "
+            "FROM semantic_memory WHERE key = ? AND is_deleted = 0",
+            (key,),
+        ).fetchone()
         conflict = self._write_semantic(
             key,
             value_json,
@@ -1732,7 +1838,33 @@ class VectorMemoryStore(MemoryProvider):
         self.link_written_record(
             from_kind="semantic", from_ref=key, key=key, text=_linkable_text(value)
         )
+        if is_fact_key(key):
+            self._store_fact_vector(key, value_json, prior)
         return None
+
+    def _store_fact_vector(self, key: str, value_json: str, prior: Any) -> None:
+        """Embed a fact as the ranking compares it (:func:`semantic_vector_text`) and store the
+        vector with the model that wrote it, as an episode's is when it is written.
+
+        A fact rewritten with the value it had keeps the vector it holds when that is the bound
+        model's, or when no model is bound (it is kept for when one is): consolidation restates
+        facts, and each restatement would be a round trip to the model for the vector already
+        stored. Any other write replaces the vector, and one the model did not answer is cleared
+        rather than left: a vector of the old value would rank the new one by words it no longer
+        holds. A fact with none is read by keyword and counted, and the re-index embeds it
+        (:meth:`_to_reembed`). A lesson is embedded by its own writer (:meth:`write_lesson`).
+        """
+        if prior is not None and prior["value_json"] == value_json and prior["has_vector"]:
+            ref = self._embedding_ref()
+            if ref is None or (prior["embedding_model"] or "") == ref:
+                return
+        vec, model = self._embed(semantic_vector_text(key, value_json))
+        blob = struct.pack(f"{len(vec)}f", *vec) if vec else None
+        self.db.execute(
+            "UPDATE semantic_memory SET embedding = ?, embedding_model = ? WHERE key = ?",
+            (blob, (model or None) if blob is not None else None, key),
+        )
+        self.db.commit()
 
     def _write_semantic(
         self,
@@ -1997,6 +2129,7 @@ class VectorMemoryStore(MemoryProvider):
         limit: int = 100,
         arms: "tuple[str, ...] | list[str] | set[str] | None" = None,
         related_only: bool = False,
+        query_vector: "list[float] | None" = EMBED_QUERY,
     ) -> list[dict]:
         """Rank semantic-memory rows against ``query_text`` — the recall ARITHMETIC.
 
@@ -2013,20 +2146,31 @@ class VectorMemoryStore(MemoryProvider):
         sum. The empty mask is legal and returns ``[]``: the harness's control cell.
 
         ``related_only`` is for an explicit lookup (``memory_recall``): only the facts that answer
-        the question, never the best of the rest (see :meth:`_rank_rows`).
+        the question, never the best of the rest (see :meth:`_rank_rows`). ``query_vector`` is the
+        question's vector when the caller has it (:data:`EMBED_QUERY`: embed it here).
         """
         # `contributor` rides along for the owner-preference ordering term
-        # and for the recall label.
+        # and for the recall label; the stored vector and its model for the vector arm.
         all_rows = self.db.execute(
-            "SELECT key, value_json, updated_at, contributor, holder, weight "
-            "FROM semantic_memory WHERE is_deleted = 0 AND " + _NON_FACT_KEY_CLAUSE
+            "SELECT key, value_json, updated_at, contributor, holder, weight, embedding, "
+            "embedding_model FROM semantic_memory WHERE is_deleted = 0 AND " + _NON_FACT_KEY_CLAUSE
         ).fetchall()
         return self._rank_rows(
-            query_text, all_rows, limit=limit, arms=arms, related_only=related_only
+            query_text,
+            all_rows,
+            limit=limit,
+            arms=arms,
+            related_only=related_only,
+            query_vector=query_vector,
         )
 
     def rank_lessons(
-        self, query_text: str, *, limit: int = 8, workspace: str | None = None
+        self,
+        query_text: str,
+        *,
+        limit: int = 8,
+        workspace: str | None = None,
+        query_vector: "list[float] | None" = EMBED_QUERY,
     ) -> list[dict]:
         """The lessons that answer ``query_text``, best first — what ``memory_recall`` finds of the
         rules the user taught.
@@ -2046,7 +2190,9 @@ class VectorMemoryStore(MemoryProvider):
             for row in lessons
             if (v := standings.get(str(row.get("key") or ""))) is None or v.injected
         ]
-        return self._rank_rows(query_text, shown, limit=limit, arms=None, related_only=True)
+        return self._rank_rows(
+            query_text, shown, limit=limit, arms=None, related_only=True, query_vector=query_vector
+        )
 
     def _rank_rows(
         self,
@@ -2056,15 +2202,25 @@ class VectorMemoryStore(MemoryProvider):
         limit: int,
         arms: "tuple[str, ...] | list[str] | set[str] | None",
         related_only: bool = False,
+        query_vector: "list[float] | None" = EMBED_QUERY,
     ) -> list[dict]:
         """The ONE hybrid-recall rule, over rows carrying ``key``, ``value_json``,
-        ``updated_at`` and ``contributor``: keyword overlap, vector similarity and the graph
-        boost, merged and ordered (see :meth:`rank_semantic` for ``arms``).
+        ``updated_at``, ``contributor`` and their stored vector (``embedding``,
+        ``embedding_model``): keyword overlap, vector similarity and the graph boost, merged and
+        ordered (see :meth:`rank_semantic` for ``arms``).
 
         ``related_only`` (an explicit lookup) admits only a row that holds a word of the question
         (:func:`shares_a_query_word`), is linked to an entity it names, or whose vector reaches the
         relevance floor episodic recall uses; left False, any positive score admits, which is how
         a prompt's fact block ranks everything it has.
+
+        The vector arm compares the question with each row's STORED vector, written with the row
+        (:meth:`set_semantic`, :meth:`write_lesson`) and by the re-index, and never with one
+        embedded here: embedding every row at every question made one recall a round trip to the
+        model per fact and per lesson. A row holding no vector of the model compared under now is
+        ranked by its words and links, as every row is with no model bound. ``query_vector`` is
+        the question's own vector when the caller has it, ``None`` when it has none (ranked by
+        words alone), and :data:`EMBED_QUERY` to embed it here.
         """
         active = RECALL_ARMS if arms is None else tuple(a for a in RECALL_ARMS if a in set(arms))
         query_words = (
@@ -2072,9 +2228,19 @@ class VectorMemoryStore(MemoryProvider):
             if RECALL_ARM_KEYWORD in active
             else set()
         )
-        # One embedder for the query and every row it is scored against, even across a rebind.
-        embed = self.embed_fn if RECALL_ARM_VECTOR in active else None
-        query_embedding = self._try_embed(query_text, embed) if embed is not None else None
+        query_embedding: list[float] | None = None
+        space = ""
+        if RECALL_ARM_VECTOR in active:
+            if query_vector is EMBED_QUERY:
+                # One read of the binding: the query and the vectors it is compared with are one
+                # model's, even across a rebind.
+                fn, ref = self._embedder()
+                query_embedding = self._try_embed(query_text, fn) if fn is not None else None
+                space = ref or ""
+            else:
+                query_embedding = query_vector
+                space = self._comparison_space()
+        similarity = _StoredSimilarity(query_embedding, space) if query_embedding else None
         owner = current_username()
 
         # The graph arm: records linked to entities
@@ -2096,16 +2262,11 @@ class VectorMemoryStore(MemoryProvider):
             # Normalize keyword score to [0, 1]
             kw_score = min(kw_raw / 10.0, 1.0) if kw_raw > 0 else 0.0
 
-            # Vector score (when embeddings available)
-            vec_score = 0.0
-            if query_embedding is not None:
-                entry_text = f"{r['key']} {r['value_json']}"
-                entry_emb = self._try_embed(entry_text, embed)
-                if entry_emb:
-                    vec_score = max(0.0, self._cosine_sim(query_embedding, entry_emb))
+            # Vector score: the row's stored vector, when it holds one of the query's model
+            vec_score = max(0.0, similarity.of(r)) if similarity is not None else 0.0
 
             # Hybrid merge
-            if query_embedding is not None and vec_score > 0:
+            if similarity is not None and vec_score > 0:
                 score = _SEMANTIC_VECTOR_WEIGHT * vec_score + _SEMANTIC_KEYWORD_WEIGHT * kw_score
             else:
                 score = kw_score
@@ -2123,7 +2284,10 @@ class VectorMemoryStore(MemoryProvider):
             ):
                 continue
             if score > 0:
-                scored_rows.append((score, dict(r)))
+                row = dict(r)
+                row.pop("embedding", None)
+                row.pop("embedding_model", None)
+                scored_rows.append((score, row))
 
         # Owner preference: at comparable relevance the
         # owner's own memories order above another contributor's. Applied in the
@@ -2145,7 +2309,13 @@ class VectorMemoryStore(MemoryProvider):
         )
         return [r[1] for r in scored_rows[:limit]]
 
-    def get_semantic_context(self, query_text: str = "", cap: int = 1500) -> str:
+    def get_semantic_context(
+        self,
+        query_text: str = "",
+        cap: int = 1500,
+        *,
+        query_vector: "list[float] | None" = EMBED_QUERY,
+    ) -> str:
         """Format semantic memory for prompt injection with hybrid retrieval.
 
         When embeddings are available and a query is provided, uses hybrid
@@ -2153,13 +2323,13 @@ class VectorMemoryStore(MemoryProvider):
         Falls back to keyword-only scoring without embeddings.
 
         The query-aware ranking itself lives in :meth:`rank_semantic`; this method owns
-        only the character-capped rendering.
+        only the character-capped rendering. ``query_vector`` as :meth:`rank_semantic` takes it.
         """
         max_rows = max(cap // 15, 20)
 
         # Query-aware filtering: hybrid vector + keyword scoring
         if query_text:
-            rows = self.rank_semantic(query_text, limit=max_rows)
+            rows = self.rank_semantic(query_text, limit=max_rows, query_vector=query_vector)
             owner = current_username()
         else:
             # No query: recent entries
@@ -2615,15 +2785,18 @@ class VectorMemoryStore(MemoryProvider):
         """Build the index of ``space``'s vectors off to the side, then publish it: one assignment.
 
         A search on another thread goes on reading the index it already read, and the next reads
-        this one; it never sees one half filled, or ids and an index from two builds. The behind
-        mark is cleared before the rows are read, so a vector re-embedded while this runs marks
-        the new index behind again. Builds hold the index lock, so two never interleave.
+        this one; it never sees one half filled, or ids and an index from two builds. Once it is
+        published, the re-embedded vectors it holds are no longer compared beside it; one written
+        while this ran is not in it, and still is. Builds hold the index lock, so two never
+        interleave.
         """
         with self._index_lock:
-            self._index_behind = False
             if not _HAS_FAISS or not _HAS_NUMPY:
                 built = _Index(faiss=None, ids=[], dim=self._index.dim, ref=space)
                 self._index = built
+                # No index: a search compares the stored vectors themselves, every one of them.
+                with self._unindexed_lock:
+                    self._unindexed = {}
                 return built
             rows = self._embedded_rows(space)
             dim = self._data_dimension(rows)
@@ -2639,6 +2812,13 @@ class VectorMemoryStore(MemoryProvider):
                 id_map.append(row["id"])
             built = _Index(faiss=index, ids=id_map, dim=dim, ref=space)
             self._index = built
+            held = set(id_map)
+            with self._unindexed_lock:
+                self._unindexed = {
+                    mem_id: entry
+                    for mem_id, entry in self._unindexed.items()
+                    if mem_id not in held and entry[1] == space
+                }
         if skipped:
             logger.warning(
                 "Skipped %d embeddings at another width than the model now writes (the index is "
@@ -2650,20 +2830,40 @@ class VectorMemoryStore(MemoryProvider):
         return built
 
     def _sync_index(self, space: str) -> _Index:
-        """The index of ``space``'s vectors, for one operation to use throughout.
+        """The index of ``space``'s vectors, for one write or maintenance pass to use throughout.
 
         Pointed at ``space``'s vectors when it holds another model's (a rebind, or a clear) — at
-        the store's next use, which is how a rebind reaches it without a restart — and rebuilt
-        when it is behind them (a re-index writing vectors of its model)."""
+        the store's next use, which is how a rebind reaches it without a restart. A re-index
+        writing vectors of its model does not make it rebuild: those are compared beside it until
+        the re-index publishes an index that holds them (:meth:`reembed_stale`)."""
         current = self._index
-        if current.ref == space and not self._index_behind:
+        if current.ref == space:
             return current
         with self._index_lock:
             current = self._index
-            if current.ref != space or self._index_behind:
+            if current.ref != space:
                 current = self._build_index_for(space)
                 self.save_faiss_index()
             return current
+
+    def _index_for_read(self, space: str) -> "_Index | None":
+        """The index a search of ``space``'s vectors reads, or ``None`` when it has none to read
+        now and answers by keyword.
+
+        A search never waits for a rebuild: the index holding another model's vectors while a
+        build runs on another thread (the re-index's, the Doctor's) is ``None``, and the search
+        reads by keyword meanwhile, as it does just after a rebind. With nothing building it
+        points the index at ``space``'s vectors itself, which is :meth:`_sync_index`'s switch
+        after a rebind."""
+        current = self._index
+        if current.ref == space:
+            return current
+        if not self._index_lock.acquire(blocking=False):
+            return None
+        try:
+            return self._sync_index(space)
+        finally:
+            self._index_lock.release()
 
     def rebuild_faiss_index(self) -> dict[str, int]:
         """Rebuild the index from the stored vectors and persist it — the Doctor's Fix and the
@@ -2708,7 +2908,9 @@ class VectorMemoryStore(MemoryProvider):
         An episodic memory with text and no vector of that model: none at all, another model's,
         one with no model recorded, or this model's at a width it no longer produces (asked of
         the model with one probe embedding — the newest row can be the stale one). A semantic
-        row (a lesson) holding a vector that is not this model's at that width.
+        row the recall ranks (a fact or a lesson, :data:`_RANKED_SEMANTIC_CLAUSE`) with no such
+        vector, and any other semantic row holding a vector that is not this model's at that
+        width.
         """
         probe = self._try_embed("embedding width probe", fn)
         width = len(probe) if probe else 0
@@ -2731,7 +2933,8 @@ class VectorMemoryStore(MemoryProvider):
             r
             for r in self.db.execute(
                 "SELECT key, value_json, embedding, embedding_model FROM semantic_memory "
-                "WHERE is_deleted = 0 AND embedding IS NOT NULL"
+                "WHERE is_deleted = 0 AND COALESCE(value_json, '') != '' "
+                f"AND (embedding IS NOT NULL OR {_RANKED_SEMANTIC_CLAUSE})"
             ).fetchall()
             if _stale(r)
         ]
@@ -2764,6 +2967,11 @@ class VectorMemoryStore(MemoryProvider):
         it ends: each row is right on its own, so a pass that is stopped keeps what it wrote and
         the next re-embeds only the rest rather than starting over. The index file a stop leaves
         behind is checked against these rows when the store next opens (:meth:`load_faiss_index`).
+
+        A search while this runs never rebuilds the index or waits for it. The pass points the
+        index at its model first, and each vector it writes is compared beside the index until
+        the pass publishes one that holds it — after :data:`_UNINDEXED_MAX` of them, and at its
+        end — building it off to the side (:meth:`_build_index_for`).
         """
         fn, model = self._embedder()
         if fn is None:
@@ -2772,12 +2980,17 @@ class VectorMemoryStore(MemoryProvider):
         episodic, semantic = self._to_reembed(fn, space)
         total = len(episodic) + len(semantic)
         done = reembedded = 0
+        if episodic:
+            self._sync_index(space)
 
         def _step() -> None:
             nonlocal done
             done += 1
             if done % _REEMBED_COMMIT_EVERY == 0:
                 self.db.commit()
+            if len(self._unindexed) >= _UNINDEXED_MAX:
+                self.db.commit()
+                self._build_index_for(space)
             if on_progress is not None:
                 on_progress(done, total)
 
@@ -2787,7 +3000,7 @@ class VectorMemoryStore(MemoryProvider):
                     reembedded += 1
                 _step()
             for row in semantic:
-                vec = self._try_embed(str(json.loads(row["value_json"])), fn)
+                vec = self._try_embed(semantic_vector_text(row["key"], row["value_json"]), fn)
                 if vec:
                     self.db.execute(
                         "UPDATE semantic_memory SET embedding = ?, embedding_model = ? "
@@ -2827,10 +3040,14 @@ class VectorMemoryStore(MemoryProvider):
             )
         except Exception:
             return False
-        # The index does not hold this vector: a search while the re-index runs would miss the
-        # memory (it is no longer read by keyword either). Adding it here would change the index
-        # from the re-index's thread under a search, so the next use rebuilds it instead.
-        self._index_behind = True
+        # The index does not hold this vector, and the memory is no longer read by keyword (its
+        # vector is the model's now): a search compares it beside the index until the re-index
+        # publishes one that holds it. Adding it to the index here would change the index from
+        # the re-index's thread under a search, and rebuilding at the next search made every
+        # search during a re-index pay for, or wait for, a whole rebuild.
+        if _HAS_FAISS:
+            with self._unindexed_lock:
+                self._unindexed = {**self._unindexed, mem_id: (blob, model or "")}
         return True
 
     def _add_to_index(self, mem_id: str, blob: bytes, space: str) -> None:
@@ -3170,10 +3387,20 @@ class VectorMemoryStore(MemoryProvider):
     ) -> list[dict] | None:
         """The vector arm of :meth:`search_episodic`, over the vectors of ``space``'s model (the
         one the query was embedded by, compared under now) and no other. ``None`` when no stored
-        vector is comparable with the query at all; ``[]`` when some are and none matched."""
+        vector is comparable with the query at all, or the index is being rebuilt for this model
+        on another thread (by keyword meanwhile); ``[]`` when some are and none matched.
+
+        Beside the index, the vectors a re-index wrote since it was published are compared one
+        by one (:meth:`_store_reembedding`), so a memory the re-index reached is found by meaning
+        at once, and no search rebuilds the index or waits for a rebuild."""
+        # Read before the index: a vector a rebuild publishes in between is then in one of the
+        # two, never in neither. Duplicates are dropped below.
+        unindexed = self._unindexed
         # One read of the index for the whole search: its ids and width are the ones it was
         # published with, whatever a rebuild on another thread publishes meanwhile.
-        index = self._sync_index(space)
+        index = self._index_for_read(space)
+        if index is None:
+            return None
         if (
             _HAS_NUMPY
             and _HAS_FAISS
@@ -3203,19 +3430,30 @@ class VectorMemoryStore(MemoryProvider):
                 return None
             k = min(limit * 2, index.faiss.ntotal)  # type: ignore[attr-defined]
             distances, indices = index.faiss.search(vec.reshape(1, -1), k)  # type: ignore[attr-defined]  # noqa: E501
+            nearest = [
+                (index.ids[int(idx)], float(dist))
+                for dist, idx in zip(distances[0], indices[0])
+                if idx != -1
+            ]
+            returned = {mem_id for mem_id, _ in nearest}
+            beside = sorted(
+                (
+                    (mem_id, float(np.dot(np.frombuffer(blob, dtype=np.float32), vec)))
+                    for mem_id, (blob, model) in unindexed.items()
+                    if model == space and mem_id not in returned and len(blob) // 4 == index.dim
+                ),
+                key=lambda pair: pair[1],
+                reverse=True,
+            )[: limit * 2]
 
             now = datetime.now(tz=timezone.utc)
             candidates: list[dict] = []
-            for dist, idx in zip(distances[0], indices[0]):
-                if idx == -1:
-                    break
-                mem_id = index.ids[int(idx)]
+            for mem_id, cosine_sim in nearest + beside:
                 mem = self._get_episodic(mem_id)
                 if not mem or mem["is_deleted"]:
                     continue
                 if tag_filter and not self._matches_tags(mem, tag_filter):
                     continue
-                cosine_sim = float(dist)
                 created = datetime.fromisoformat(mem["created_at"])
                 days_old = max(0, (now - created).days)
                 score = cosine_sim * (0.7 + 0.3 * mem["importance"]) * math.exp(-0.03 * days_old)
@@ -3430,7 +3668,11 @@ class VectorMemoryStore(MemoryProvider):
         # one is chosen again.
         ref = self._embedding_ref()
         if ref is None:
-            coverage = EmbeddingCoverage(self._count_vectors(), 0, 0)
+            ranked_vectors = self.db.execute(
+                "SELECT COUNT(*) FROM semantic_memory WHERE is_deleted = 0 "
+                f"AND embedding IS NOT NULL AND {_RANKED_SEMANTIC_CLAUSE}"
+            ).fetchone()[0]
+            coverage = EmbeddingCoverage(self._count_vectors() + int(ranked_vectors), 0, 0)
         else:
             coverage = embedding_coverage(self.db, ref, bound=True)
         return {

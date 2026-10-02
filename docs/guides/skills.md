@@ -201,6 +201,12 @@ simulator prints each skill's lead. Three practical consequences:
   surface on a phrase, declare it.
 - No embedding model bound, or any error at all, degrades to the pure keyword
   path. Triggers are the floor, not the optional extra.
+- A turn never waits for a description to be embedded. Descriptions are embedded
+  in the background, once per model, so a skill added or edited (or every skill,
+  just after a change of embedding model) is matched by its triggers until its
+  vector is ready. The message itself is embedded within 1.5 s
+  (`QUERY_EMBED_BUDGET_SECS`); a model slower than that leaves the turn to the
+  triggers, and the Doctor's surfacing simulator says so.
 
 **Which skills joined a turn is shown on the turn.** The chat names them ("used
 skill trip-research") under the answer, from the moment the turn starts — a turn
@@ -273,7 +279,7 @@ turn index. `--dry-run` reports without writing.
 | `~/.personalclaw/skills/<key>/SKILL.md` | Your library — and where bundled/project skills are synced to |
 | `~/.agents/skills/<key>/SKILL.md` | Cross-client directory, read only once you allow it; never written |
 | `~/.personalclaw/agents/<agent>/skills/<key>/SKILL.md` | One agent's private override |
-| `~/.personalclaw/skills/.skill_embeddings.json` | Cached description embeddings, keyed by mtime + model |
+| `~/.personalclaw/skills/.skill_embeddings.json` | Description embeddings, keyed by the text embedded and the model, filled in the background |
 
 Nothing here rewrites a `SKILL.md`. Refinements ride as a sidecar overlay merged
 at load time, so the file you wrote stays the file on disk.

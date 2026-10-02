@@ -82,6 +82,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "file_content_search_timeout": (
         "File content search exceeded its time limit; narrow the directory or filter and retry."
     ),
+    # A memory recall that did not finish within its budget (`memory_service.RECALL_BUDGET_SECS`,
+    # inside the agent's own wait for the gateway). Its message names what the recall was still
+    # doing; nothing about the memories changed, so asking again is the remedy.
+    "memory_recall_timeout": (
+        "Memory search did not finish within its time limit, so nothing was recalled this time."
+    ),
     # A DIFFERENT check from `invalid_path`, and the distinction is load-bearing: `_reject_name`
     # judges a single NAME (separators, `..`, over-long) before any root is consulted, so it fires
     # on input the allowlist never sees. Its three call sites — mkdir, upload, and the create-file

@@ -16,6 +16,7 @@ The wiring here is the ONLY place the router touches live stores; the assembly
 itself lives in :mod:`personalclaw.legibility.context_router` (pure, testable).
 """
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -123,7 +124,9 @@ async def api_context_get(request: web.Request) -> web.Response:
     if project is None:
         return web.json_response({"error": "no project available"}, status=404)
 
-    routed = _route_for_project(state, project, query)
+    # Off the event loop: the routing recalls memory and searches knowledge, each embedding the
+    # query, a round trip to the model.
+    routed = await asyncio.to_thread(_route_for_project, state, project, query)
     return web.json_response(routed.to_dict())
 
 
@@ -177,7 +180,7 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
     body = await json_object_body(request)
     query = string_field(body, "query")[:500]
 
-    routed = _route_for_project(state, project, query)
+    routed = await asyncio.to_thread(_route_for_project, state, project, query)
     block = cr.render_block(routed)
 
     written: list[str] = []

@@ -2213,8 +2213,10 @@ class SubagentManager:
 
         full_message = message  # a text run is handed the task alone (`subagent_tier`)
         if info.capability_class != CAPABILITY_TEXT:
-            full_message, _ = self._ctx_builder.build_message(
-                message, is_new, session_key, window=await resolve_window(serving=client)
+            # Off the event loop: building the message embeds it with the embedding model.
+            window = await resolve_window(serving=client)
+            full_message, _ = await asyncio.to_thread(
+                self._ctx_builder.build_message, message, is_new, session_key, window=window
             )
 
         result_text = ""

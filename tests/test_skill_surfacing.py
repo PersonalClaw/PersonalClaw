@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 import personalclaw.skills.surfacing as surf
-from personalclaw.skills.surfacing import _EmbedCache, surface_skills
+from personalclaw.agents.native.tool_vectors import Embedder, ToolVectors
+from personalclaw.skills.surfacing import surface_skills
 
 
 def _skill(
@@ -28,7 +27,19 @@ def _skill(
 @pytest.fixture(autouse=True)
 def _no_embedder(monkeypatch):
     """Default: no active embedding model → pure keyword (legacy parity)."""
-    monkeypatch.setattr(surf, "_active_embedder", lambda: (None, ""))
+    monkeypatch.setattr(surf, "bound_embedder", lambda: None)
+
+
+def _bound(monkeypatch, tmp_path, fn, skills: list[dict]) -> dict:
+    """Bind ``fn`` as the embedding model, with ``skills``' descriptions already in a skill index
+    of the test's own: the ``index``/``index_path`` a turn reads."""
+    embedder = Embedder(model="stub:v1", one=fn, many=None)
+    monkeypatch.setattr(surf, "bound_embedder", lambda: embedder)
+    index = ToolVectors(what="skill description", thread="skill-vectors")
+    path = tmp_path / ".emb.json"
+    index.want(path, embedder, [surf.skill_text(s) for s in skills])
+    assert index.drain(timeout=10)
+    return {"index": index, "index_path": path}
 
 
 # ── keyword path (no embedder) — must match legacy get_triggered_skills ──
@@ -143,7 +154,6 @@ class _StubEmbedder:
 
 
 def test_semantic_surfaces_paraphrase_keyword_misses(monkeypatch, tmp_path):
-    monkeypatch.setattr(surf, "_active_embedder", lambda: (_StubEmbedder(), "stub:v1"))
     # triggers say "invoice"; query says "charge" — no keyword overlap, but both
     # embed onto the billing axis → semantic hit. The library around it is what lets meaning
     # tell a clear match: billing is the one skill on the query's axis.
@@ -153,65 +163,60 @@ def test_semantic_surfaces_paraphrase_keyword_misses(monkeypatch, tmp_path):
         _skill(f"other-{n}", f"unrelated task {n}", path=str(tmp_path / f"o{n}.md"))
         for n in range(4)
     ]
-    for s in skills:
-        Path(s["path"]).write_text("x")
-    cache = _EmbedCache(path=tmp_path / ".emb.json")
+    bound = _bound(monkeypatch, tmp_path, _StubEmbedder(), skills)
     out = surface_skills(
-        "help me with this charge", skills, max_skills=3, semantic_threshold=0.9, embed_cache=cache
+        "help me with this charge", skills, max_skills=3, semantic_threshold=0.9, **bound
     )
     assert out == ["billing"]
 
 
 def test_semantic_off_topic_excluded(monkeypatch, tmp_path):
-    monkeypatch.setattr(surf, "_active_embedder", lambda: (_StubEmbedder(), "stub:v1"))
     skills = [_skill("shipping", "delivery tracking", "deliver track", path=str(tmp_path / "s.md"))]
-    Path(skills[0]["path"]).write_text("x")
-    cache = _EmbedCache(path=tmp_path / ".emb.json")
+    bound = _bound(monkeypatch, tmp_path, _StubEmbedder(), skills)
     out = surface_skills(
-        "question about my invoice", skills, max_skills=3, semantic_threshold=0.9, embed_cache=cache
+        "question about my invoice", skills, max_skills=3, semantic_threshold=0.9, **bound
     )
     assert out == []  # billing query, shipping skill → orthogonal → no hit
 
 
-# ── embedding cache (mtime + model keyed) ──
+# ── the skill index (text + model keyed, filled in the background) ──
 
 
-def test_embed_cache_reuses_until_mtime_changes(tmp_path):
-    calls = {"n": 0}
+def test_a_changed_description_is_embedded_again_and_an_unchanged_one_is_read(
+    monkeypatch, tmp_path
+):
+    calls: list[str] = []
 
-    def embed(_text):
-        calls["n"] += 1
+    def embed(text):
+        calls.append(text)
         return [1.0, 0.0]
 
-    f = tmp_path / "s.md"
-    f.write_text("v1")
-    cache = _EmbedCache(path=tmp_path / ".emb.json")
-    mt = f.stat().st_mtime
-    cache.get_or_embed(str(f), "desc", mt, "m1", embed)
-    cache.get_or_embed(str(f), "desc", mt, "m1", embed)  # same mtime+model → cached
-    assert calls["n"] == 1
-    cache.get_or_embed(str(f), "desc", mt + 1, "m1", embed)  # mtime change → re-embed
-    assert calls["n"] == 2
-    cache.get_or_embed(str(f), "desc", mt + 1, "m2", embed)  # model change → re-embed
-    assert calls["n"] == 3
+    skills = [_skill("a", "first skill", "x"), _skill("b", "second skill", "y")]
+    bound = _bound(monkeypatch, tmp_path, embed, skills)
+    calls.clear()
+    skills[1] = _skill("b", "second skill, reworded", "y")
+
+    surface_skills("anything at all", skills, max_skills=3, **bound)
+    assert bound["index"].drain(timeout=10)
+    assert calls == ["anything at all", surf.skill_text(skills[1])], calls
 
 
-def test_embed_cache_persists_across_instances(tmp_path):
-    calls = {"n": 0}
+def test_the_index_is_read_back_after_a_restart(monkeypatch, tmp_path):
+    calls: list[str] = []
 
-    def embed(_text):
-        calls["n"] += 1
+    def embed(text):
+        calls.append(text)
         return [0.5, 0.5]
 
-    f = tmp_path / "s.md"
-    f.write_text("v1")
-    p = tmp_path / ".emb.json"
-    c1 = _EmbedCache(path=p)
-    c1.get_or_embed(str(f), "desc", f.stat().st_mtime, "m1", embed)
-    c1.flush()
-    c2 = _EmbedCache(path=p)
-    c2.get_or_embed(str(f), "desc", f.stat().st_mtime, "m1", embed)
-    assert calls["n"] == 1  # second instance read from disk
+    skills = [_skill("a", "first skill", "x")]
+    bound = _bound(monkeypatch, tmp_path, embed, skills)
+    calls.clear()
+    restarted = {"index": ToolVectors(), "index_path": bound["index_path"]}
+
+    rows = surface_skills("anything at all", skills, max_skills=3, explain=True, **restarted)
+    assert restarted["index"].drain(timeout=10)
+    assert calls == ["anything at all"], "the description's vector came from the file"
+    assert rows[0]["sem_score"] > 0
 
 
 # ── search_skills (PT5): discover ANY skill by capability (parity w/ tool_search) ──

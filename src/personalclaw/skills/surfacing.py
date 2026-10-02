@@ -29,10 +29,17 @@ next skill by :data:`SEMANTIC_LEAD` spreads (:func:`_semantic_standout`). The sp
 message's own, which is what keeps the rule from depending on one embedder's scale. A
 skill's declared ``triggers`` are the author's words and are unaffected.
 
-Skill-description embeddings are cached **mtime+model-keyed** in a sidecar
-``<skills_dir>/.skill_embeddings.json`` so we embed each description once and
-re-embed only when the SKILL.md changes (or the active model changes). No SKILL.md
-is ever rewritten.
+Skill-description vectors come from the process's index of them (:func:`skill_vectors`, a
+:class:`~personalclaw.agents.native.tool_vectors.ToolVectors` in the sidecar
+``<skills_dir>/.skill_embeddings.json``), keyed by the text embedded and the model that embedded
+it, and never from the turn. Surfacing used to embed every description it had no vector for
+inside the turn, one round trip each, on the event loop that serves every request: after an
+embedding-model change the first turn embedded the whole library, and with a model answering in
+3 s the gateway answered nothing else for 58 s. Now a turn compares the message with the vectors
+the index holds, a skill without one yet is matched by its triggers alone, and the index embeds
+what it lacks in the background, in batches. The message itself is embedded only when there is a
+vector to compare it with, and within :data:`QUERY_EMBED_BUDGET_SECS`. No SKILL.md is ever
+rewritten.
 
 Degrades cleanly: no active embedding model → pure keyword (identical to the old
 path). Never raises — a surfacing error returns the keyword result, never breaks a turn.
@@ -40,7 +47,6 @@ path). Never raises — a surfacing error returns the keyword result, never brea
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import re
@@ -49,7 +55,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw.agents.native.tool_vectors import ToolVectors, bound_embedder
+from personalclaw.embedding_providers.base import embed_within
 from personalclaw.skills.loader import skills_dir
 
 logger = logging.getLogger(__name__)
@@ -73,7 +80,73 @@ MIN_SCORED_FOR_LEAD = 5
 # keyword half of the union is byte-identical to the legacy trigger path.
 _KEYWORD_GATE = 0.7
 
-_EMBED_CACHE_FILE = ".skill_embeddings.json"
+#: The skill index's file, beside the skills (the durability inventory reads it as derived).
+_VECTORS_FILE = ".skill_embeddings.json"
+
+#: How long a turn's skill match waits for the embedding model to embed the message before it
+#: matches by triggers alone. It runs while the turn's prompt is put together, so a model that is
+#: loading, busy or unreachable must not hold the turn up for the model's own deadline.
+QUERY_EMBED_BUDGET_SECS = 1.5
+
+_SKILL_VECTORS = ToolVectors(what="skill description", thread="skill-vectors")
+
+
+def skill_vectors() -> ToolVectors:
+    """The process's index of skill-description vectors (see the module docstring)."""
+    return _SKILL_VECTORS
+
+
+def vectors_path() -> Path:
+    """The skill index's file in the skills directory in use."""
+    return skills_dir() / _VECTORS_FILE
+
+
+def skill_text(skill: dict) -> str:
+    """What is embedded for a skill: its description, and its triggers, which carry its intent
+    phrases."""
+    desc = (skill.get("description", "") or skill.get("name", "") or "").strip()
+    triggers = skill.get("triggers", "") or ""
+    return f"{desc}\n{triggers}".strip() if triggers else desc
+
+
+@dataclass(frozen=True)
+class _Meaning:
+    """What a turn can compare by meaning: the message's vector and each skill's that the index
+    holds (by :func:`skill_text`), or why there is nothing to compare."""
+
+    query: list[float] | None
+    known: dict[str, list[float]]
+    #: Why meaning picks nothing this time, for the Doctor's surfacing simulator; "" when it can.
+    why_not: str = ""
+
+
+def _meaning(
+    query: str, skills: list[dict], index: ToolVectors | None, path: Path | None
+) -> _Meaning:
+    """The vectors a turn compares, never embedding a description: the index's for the model bound
+    now, the rest asked of it in the background. The message is embedded only when one skill has
+    a vector, within :data:`QUERY_EMBED_BUDGET_SECS`."""
+    embedder = bound_embedder()
+    if embedder is None:
+        return _Meaning(None, {}, "no embedder for semantic")
+    index = index or skill_vectors()
+    path = path or vectors_path()
+    texts = [t for t in (skill_text(s) for s in skills) if t]
+    known = index.vectors(path, embedder.model, texts)
+    missing = [t for t in texts if t not in known]
+    if missing:
+        index.want(path, embedder, missing)
+    if not known:
+        return _Meaning(None, {}, "no skill description is embedded yet; they are being embedded")
+    embedded = embed_within(embedder.one, query, within=QUERY_EMBED_BUDGET_SECS)
+    if embedded.vector is None:
+        why = (
+            f"the embedding model did not answer within {QUERY_EMBED_BUDGET_SECS:g} s"
+            if embedded.timed_out
+            else "the embedding model returned no vector for the message"
+        )
+        return _Meaning(None, known, why)
+    return _Meaning(embedded.vector, known)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -106,79 +179,6 @@ def _keyword_score(query_words: set[str], triggers: str) -> tuple[float, bool]:
     return best, False
 
 
-class _EmbedCache:
-    """mtime+model-keyed sidecar cache of skill-description embeddings.
-
-    ``{skill_path: {"mtime": float, "model": str, "vec": [float]}}``. A miss
-    (new/changed file or model switch) re-embeds; everything else is a file read.
-    """
-
-    def __init__(self, path: Path | None = None):
-        self._path = path or (skills_dir() / _EMBED_CACHE_FILE)
-        self._data: dict[str, dict] | None = None
-        self._dirty = False
-
-    def _load(self) -> dict[str, dict]:
-        if self._data is None:
-            try:
-                raw = json.loads(self._path.read_text(encoding="utf-8"))
-                self._data = raw if isinstance(raw, dict) else {}
-            except (OSError, json.JSONDecodeError):
-                self._data = {}
-        return self._data
-
-    def get_or_embed(
-        self, path: str, text: str, mtime: float, model: str, embed_fn
-    ) -> list[float] | None:
-        data = self._load()
-        row = data.get(path)
-        if isinstance(row, dict) and row.get("mtime") == mtime and row.get("model") == model:
-            vec = row.get("vec")
-            return vec if isinstance(vec, list) else None
-        try:
-            vec = embed_fn(text)
-        except Exception:
-            return None
-        if vec is None:
-            return None
-        data[path] = {"mtime": mtime, "model": model, "vec": vec}
-        self._dirty = True
-        return vec
-
-    def flush(self) -> None:
-        if self._dirty and self._data is not None:
-            try:
-                atomic_write(self._path, json.dumps(self._data, sort_keys=True))
-                self._dirty = False
-            except Exception:
-                logger.debug("skill embedding cache flush failed", exc_info=True)
-
-
-def _active_embedder():
-    """Return ``(embed_fn, model_label)`` or ``(None, "")`` if no model is active."""
-    try:
-        from personalclaw.embedding_providers.registry import (
-            _active_embedding_spec,
-            get_active_embed_fn,
-        )
-    except Exception:
-        return None, ""
-    try:
-        fn = get_active_embed_fn()
-    except Exception:
-        fn = None
-    if fn is None:
-        return None, ""
-    model = ""
-    try:
-        spec = _active_embedding_spec()
-        if spec:
-            model = f"{spec[0]}:{spec[1]}"
-    except Exception:
-        model = ""
-    return fn, model
-
-
 @overload
 def surface_skills(
     text: str,
@@ -186,7 +186,8 @@ def surface_skills(
     *,
     max_skills: int,
     semantic_threshold: float = ...,
-    embed_cache: _EmbedCache | None = ...,
+    index: ToolVectors | None = ...,
+    index_path: Path | None = ...,
     suppressed: set[tuple[str, str]] = ...,
     explain: Literal[False] = ...,
 ) -> list[str]: ...
@@ -199,7 +200,8 @@ def surface_skills(
     *,
     max_skills: int,
     semantic_threshold: float = ...,
-    embed_cache: _EmbedCache | None = ...,
+    index: ToolVectors | None = ...,
+    index_path: Path | None = ...,
     suppressed: set[tuple[str, str]] = ...,
     explain: Literal[True],
 ) -> list[dict]: ...
@@ -211,7 +213,8 @@ def surface_skills(
     *,
     max_skills: int,
     semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
-    embed_cache: _EmbedCache | None = None,
+    index: ToolVectors | None = None,
+    index_path: Path | None = None,
     suppressed: set[tuple[str, str]] | None = None,
     explain: bool = False,
 ) -> list[str] | list[dict]:
@@ -245,14 +248,13 @@ def surface_skills(
     if not query_words:
         return []
 
-    embed_fn, model = _active_embedder()
-    query_vec = None
-    if embed_fn is not None:
-        try:
-            query_vec = embed_fn(query)
-        except Exception:
-            query_vec = None
-    cache = embed_cache or _EmbedCache()
+    meaning = _meaning(
+        query,
+        [s for s in skills if not s.get("always") and s.get("status") != "archived"],
+        index,
+        index_path,
+    )
+    query_vec = meaning.query
 
     # Pass 1 — score every candidate, because whether meaning picks a skill depends on how
     # the OTHER skills score for this message (`_semantic_standout`).
@@ -307,20 +309,10 @@ def surface_skills(
 
         sem_score: float | None = None
         if query_vec is not None:
-            # Embed the description (+ triggers, which carry intent phrases).
-            desc = (s.get("description", "") or s.get("name", "")).strip()
-            embed_text = f"{desc}\n{triggers}".strip() if triggers else desc
-            try:
-                mtime = Path(s["path"]).stat().st_mtime
-            except (OSError, KeyError):
-                mtime = 0.0
-            vec = cache.get_or_embed(
-                s.get("path", s.get("key", "")), embed_text, mtime, model, embed_fn
-            )
+            vec = meaning.known.get(skill_text(s))
             if vec is not None:
                 sem_score = _cosine(query_vec, vec)
         candidates.append((s, kw_score, sem_score))
-    cache.flush()
 
     standout = _semantic_standout(
         [(c[0].get("key", ""), c[2]) for c in candidates if c[2] is not None],
@@ -355,9 +347,7 @@ def surface_skills(
                 )
                 reason = f"included ({why})"
             elif query_vec is None:
-                reason = (
-                    f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}; no embedder for semantic)"
-                )
+                reason = f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}; {meaning.why_not})"
             elif sem_score < semantic_threshold:
                 reason = (
                     f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}, "
@@ -496,14 +486,9 @@ def search_skills(query: str, skills: list[dict], *, limit: int = 20) -> list[di
     Excludes only ``archived`` skills (kept on disk, off discovery)."""
     q = (query or "").strip()
     qwords = set(re.findall(r"\w+", q.lower()))
-    embed_fn, model = _active_embedder()
-    query_vec = None
-    if embed_fn is not None and q:
-        try:
-            query_vec = embed_fn(q)
-        except Exception:
-            query_vec = None
-    cache = _EmbedCache()
+    library = [s for s in skills if s.get("status") != "archived"]
+    meaning = _meaning(q, library, None, None) if q else _Meaning(None, {})
+    query_vec = meaning.query
     scored: list[tuple[float, int, str, str]] = []  # (score, use_count, key, desc)
     for s in skills:
         if s.get("status") == "archived":
@@ -517,17 +502,11 @@ def search_skills(query: str, skills: list[dict], *, limit: int = 20) -> list[di
         substr = 0.5 if q and q.lower() in hay else 0.0
         sem = 0.0
         if query_vec is not None:
-            embed_text = f"{desc}\n{triggers}".strip() if triggers else desc
-            try:
-                mtime = Path(s["path"]).stat().st_mtime
-            except (OSError, KeyError):
-                mtime = 0.0
-            vec = cache.get_or_embed(s.get("path", key), embed_text, mtime, model, embed_fn)
+            vec = meaning.known.get(skill_text(s))
             if vec is not None:
                 sem = _cosine(query_vec, vec)
         score = max(kw, substr, sem)
         if score > 0 or not q:
             scored.append((score, int(s.get("use_count", 0) or 0), key, desc[:200]))
-    cache.flush()
     scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
     return [{"key": k, "description": d} for _s, _uc, k, d in scored[:limit]]

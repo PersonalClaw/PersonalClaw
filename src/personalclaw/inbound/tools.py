@@ -135,20 +135,22 @@ async def _memory_recall(arguments: dict, state: Any) -> str:
     query = _require_text(arguments, "query")
     limit = _clamp_limit(arguments, default=8, ceiling=20)
 
-    def _run() -> list[tuple[str, str, str]]:
+    def _run() -> tuple[list[tuple[str, str, str]], bool]:
         from personalclaw.memory_service import MemoryService
         from personalclaw.vector_memory import VectorMemoryStore
 
         store = VectorMemoryStore()
         store.init()
         svc = MemoryService.over_vector_store(store)
+        # One embedding of the question for the three, within the recall's budget.
+        asked = svc.embed_query(query)
         found = [
             ("lesson", str(hit.get("created_at") or ""), str(hit.get("text") or ""))
-            for hit in svc.recall_lessons(query_text=query, limit=limit)
+            for hit in svc.recall_lessons(query_text=query, limit=limit, query_vector=asked.vector)
         ]
         found += [
             ("fact", str(hit.get("created_at") or ""), str(hit.get("text") or ""))
-            for hit in svc.recall_facts(query_text=query, limit=limit)
+            for hit in svc.recall_facts(query_text=query, limit=limit, query_vector=asked.vector)
         ]
         found += [
             (
@@ -156,17 +158,29 @@ async def _memory_recall(arguments: dict, state: Any) -> str:
                 str(hit.get("created_at") or hit.get("ts") or ""),
                 str(hit.get("text") or hit.get("value") or ""),
             )
-            for hit in svc.recall_with_provenance(query_text=query, limit=limit)
+            for hit in svc.recall_with_provenance(
+                query_text=query, limit=limit, query_vector=asked.vector
+            )
         ]
-        return [(kind, when, text.strip()) for kind, when, text in found if text.strip()][:limit]
+        hits = [(kind, when, text.strip()) for kind, when, text in found if text.strip()]
+        return hits[:limit], asked.timed_out
 
-    hits = await asyncio.get_event_loop().run_in_executor(None, _run)
+    hits, by_keyword = await asyncio.get_event_loop().run_in_executor(None, _run)
+    note = ""
+    if by_keyword:
+        from personalclaw.memory_service import QUERY_EMBED_BUDGET_SECS
+
+        note = (
+            f"\nSearched by keyword only: the embedding model did not answer within "
+            f"{QUERY_EMBED_BUDGET_SECS:g} s, so a memory that matches the question only in "
+            "meaning may be missing."
+        )
     if not hits:
-        return f"No memories matched {query!r}."
+        return f"No memories matched {query!r}.{note}"
     lines = [f"{len(hits)} memory hit(s) for {query!r}:"]
     for kind, when, text in hits:
         lines.append(f"- [{kind}{f' · {when[:19]}' if when else ''}] {text}")
-    return "\n".join(lines)
+    return "\n".join(lines) + note
 
 
 async def _knowledge_search(arguments: dict, state: Any) -> str:

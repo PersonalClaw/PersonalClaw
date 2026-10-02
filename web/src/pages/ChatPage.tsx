@@ -2403,7 +2403,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (screenShare.sharing) await screenShare.captureAndStage(sid)
       oweSpokenReply(sid)
       const sent = await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)
-      // Agent routing (569): the server emits its suggestion as the FIRST frame of the
+      // Agent routing (569): the server emits its suggestion among the FIRST frames of the
       // send, which on a chat created BY this send is before the remounted ChatSession's
       // socket has finished reconnecting — so the WS copy reaches nobody and the chip
       // never appeared on the one message where routing matters most. The response
