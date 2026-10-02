@@ -36,6 +36,7 @@ from personalclaw.agents.native.inbox_tool_defs import (
 )
 from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_definitions
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
+from personalclaw.agents.native.smart_case import LineQuery, glob_case_sensitive
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions
 from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text
 from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal
@@ -687,10 +688,14 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Find files matching a glob pattern under a folder, with no approval: the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Args: pattern (str, e.g. '**/*.md'), optional path (str).",  # noqa: E501
+                description="Find files matching a glob pattern under a folder, with no approval: the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Case is smart: the pattern matches any case unless it contains a capital letter, and ignore_case=true or false overrides that. Args: pattern (str, e.g. '**/*.md'), optional path (str), optional ignore_case (bool).",  # noqa: E501
                 parameters={
                     **s,
-                    "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}},
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string"},
+                        "ignore_case": {"type": "boolean"},
+                    },
                     "required": ["pattern"],
                 },
             ),
@@ -699,7 +704,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Search file contents (substring by default, or a Python regex with regex=true), with no approval: under the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Skips .git/node_modules/venv/build dirs and binary files. Args: query (str), optional path (str), optional glob (str), optional regex (bool), optional max_results (int).",  # noqa: E501
+                description="Search file contents (substring by default, or a Python regex with regex=true), with no approval: under the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Skips .git/node_modules/venv/build dirs and binary files. Case is smart: the query and the glob each match any case unless they contain a capital letter (a regex escape such as \\W is not one), and ignore_case=true or false overrides both. Args: query (str), optional path (str), optional glob (str), optional regex (bool), optional ignore_case (bool), optional max_results (int).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {
@@ -707,6 +712,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                         "path": {"type": "string"},
                         "glob": {"type": "string"},
                         "regex": {"type": "boolean"},
+                        "ignore_case": {"type": "boolean"},
                         "max_results": {"type": "integer"},
                     },
                     "required": ["query"],
@@ -1294,13 +1300,14 @@ class NativeBuiltinToolProvider(ToolProvider):
             return self._failure("glob", refused)
         scope = self.file_scope()
         base = self._folder(a, scope)
+        names = glob_case_sensitive(pattern, a.get("ignore_case"))
 
         def _glob() -> str:
             # A match the tools could not open is not listed: a secret file, a link out of every
             # place, or what a knowledge source does not share.
             matches = sorted(
                 scope.shown(p)
-                for p in base.glob(pattern)
+                for p in base.glob(pattern, case_sensitive=names)
                 if p.is_file() and scope.admits(str(p)) is not None
             )
             if len(matches) > 500:
@@ -1327,24 +1334,22 @@ class NativeBuiltinToolProvider(ToolProvider):
         scope = self.file_scope()
         base = self._folder(a, scope)
         max_results = int(a.get("max_results") or 200)
-        use_regex = bool(a.get("regex"))
-        # Compile once when in regex mode; a bad pattern is a usable error, not a crash.
-        matcher = None
-        if use_regex:
-            try:
-                matcher = _re.compile(query)
-            except _re.error as e:
-                return ToolResult(
-                    success=False,
-                    error=f"invalid regex: {e}",
-                    recovery_hints=[
-                        "Fix the pattern, or drop regex=true to search for the literal text."
-                    ],
-                )
+        names = glob_case_sensitive(glob_pat, a.get("ignore_case"))
+        # Compiled once; a bad pattern is a usable error, not a crash.
+        try:
+            match = LineQuery(query, regex=bool(a.get("regex")), ignore_case=a.get("ignore_case"))
+        except _re.error as e:
+            return ToolResult(
+                success=False,
+                error=f"invalid regex: {e}",
+                recovery_hints=[
+                    "Fix the pattern, or drop regex=true to search for the literal text."
+                ],
+            )
 
         def _grep() -> str:
             hits: list[str] = []
-            for p in base.glob(glob_pat):
+            for p in base.glob(glob_pat, case_sensitive=names):
                 if not p.is_file():
                     continue
                 # Skip VCS/vendored/build dirs — searching them is slow + noisy.
@@ -1360,8 +1365,10 @@ class NativeBuiltinToolProvider(ToolProvider):
                         if is_binary(head):
                             continue
                         text = (head + fh.read()).decode("utf-8", errors="ignore")
+                    if not match.in_file(text):
+                        continue
                     for i, line in enumerate(text.splitlines(), 1):
-                        if matcher.search(line) if matcher else query in line:
+                        if match.in_line(line):
                             hits.append(f"{scope.shown(p)}:{i}: {line.strip()[:200]}")
                             if len(hits) >= max_results:
                                 # Signal the cap: the worker must know more matches may
