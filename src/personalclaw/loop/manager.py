@@ -557,8 +557,11 @@ async def end_run(state, svc, loop_id: str, *, discard: bool = False) -> None:
       with it, saying how the loop ended, a failed loop's too: nothing would read what it found
       (``children.end_children``).
     * A task a worker held in progress goes back to open: no worker holds it now.
-    * A question its scheduler asked (a merge to approve) is cleared: the work that waited is the
-      kept work, which the loop's page puts to its owner (``loop.kept_work``).
+    * A loop that cannot be resumed runs nothing again, so nothing of it stays queued; a failed
+      loop keeps its queue for Resume.
+    * A question its scheduler asked (a merge to approve, a conflict to resolve) is cleared: the
+      work that waited is the kept work, which the loop's page puts to its owner
+      (``loop.kept_work``).
     * The loop's Tasks stay: only a delete removes them (:func:`teardown_for_delete`).
     """
     from personalclaw.loop import children, tasks_link
@@ -576,6 +579,8 @@ async def end_run(state, svc, loop_id: str, *, discard: bool = False) -> None:
     loop = store.get(loop_id)
     if loop is not None and not kept_for_resume:
         await _settle_worktrees(loop, discard=discard)
+        # After the worktrees, which are found through the tasks it queued among others.
+        store.clear_queue(loop_id)
     await tasks_link.release_in_progress(loop_id)
     # A question the scheduler asked (a merge to approve, an identity to set) asks nothing of a run
     # that has ended: what was waiting to merge is the work the ending kept, listed on the page.

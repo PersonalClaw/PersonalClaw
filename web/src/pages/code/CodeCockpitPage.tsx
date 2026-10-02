@@ -62,6 +62,7 @@ import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { LoopApprovals } from '../loops/LoopApprovals'
 import { MergeReview, MergedWork } from './MergeReview'
+import { MergeConflict } from './MergeConflict'
 import { CockpitToast, useOnScreenReport, type CodeToastState } from './CodeToast'
 import { useMode } from '../../app/theme'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -1530,16 +1531,20 @@ function RailTab({ icon: Icon, label, on, onClick, badge }: { icon: typeof ListC
 const isTerminalTask = (t: TaskItem): boolean =>
   t.status === 'done' || t.status === 'completed' || t.status === 'cancelled'
 
-type ExecState = 'done' | 'cancelled' | 'running' | 'queued' | 'blocked' | 'ready' | 'waiting'
+type ExecState = 'done' | 'cancelled' | 'running' | 'queued' | 'blocked' | 'ready' | 'waiting' | 'undone'
 // `stageActive` defaults true so callers that don't pass it (e.g. the task detail
 // view) keep the prior behavior. A queued/ready task in a NOT-yet-active stage is
 // 'waiting' — the phase barrier holds it until its stage opens, even if its own
 // deps are satisfied; surfacing that avoids the user thinking it'll run now.
-function execState(t: TaskItem, doneIds: Set<string>, queued: Set<string>, stageActive = true, knownIds?: Set<string>): ExecState {
+// `ended`: the project finished or was stopped (TERMINAL_STATUSES), so nothing of it runs again.
+// A task it left unfinished is 'undone' — not queued, ready to queue or waiting for a stage that
+// will never open, which is what a stopped project's rail used to say.
+function execState(t: TaskItem, doneIds: Set<string>, queued: Set<string>, stageActive = true, knownIds?: Set<string>, ended = false): ExecState {
   if (t.status === 'done' || t.status === 'completed') return 'done'
   // Cancelled is terminal (TERMINAL_STATUSES) — must NOT fall through to ready/queued,
   // which would wrongly invite the user to queue work that's been cancelled.
   if (t.status === 'cancelled') return 'cancelled'
+  if (ended) return 'undone'
   if (t.status === 'in_progress') return 'running'
   const deps = (t.dependencies?.map((d) => d.depends_on_task_id) ?? t.depends_on ?? [])
   // A dep blocks only if it's a KNOWN task that isn't terminal. An edge to an unknown id
@@ -1554,7 +1559,8 @@ function execState(t: TaskItem, doneIds: Set<string>, queued: Set<string>, stage
   return queued.has(t.id) ? 'queued' : 'ready'
 }
 
-function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, activeTaskIds, mainActivity }: {
+/** The Tasks rail's list: each stage's tasks and what can be done with them. Exported for its tests. */
+export function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, activeTaskIds, mainActivity }: {
   project: CodeProject; onTasksChanged: () => void; loading: boolean
   tasksByList: Record<string, TaskItem[]>; onSelect: (taskId: string) => void; activeTaskIds: Set<string>
   mainActivity: ActivityItem[]
@@ -1572,8 +1578,12 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
   // a blocker we can show or act on; counting it left a task 'blocked' with no listed
   // blocker). Matches the TaskDetailView blocker-list's byId filter.
   const knownIds = new Set(allTasks.map((t) => t.id))
-  const queueable = allTasks.filter((t) => !doneIds.has(t.id) && !queuedSet.has(t.id))
-  const runningCount = allTasks.filter((t) => t.status === 'in_progress').length
+  // A project that finished or was stopped runs nothing again: none of its tasks is queued,
+  // queueable or running, and its drive mode is not something left to switch.
+  const ended = TERMINAL_STATUSES.has(project.status)
+  const queueable = ended ? [] : allTasks.filter((t) => !doneIds.has(t.id) && !queuedSet.has(t.id))
+  const runningCount = ended ? 0 : allTasks.filter((t) => t.status === 'in_progress').length
+  const undoneCount = ended ? allTasks.filter((t) => !doneIds.has(t.id)).length : 0
 
   async function queue(ids: string[]) {
     if (!ids.length || busy) return
@@ -1640,10 +1650,11 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
               </span>
             )}
             {runningCount > 0 && (queuedSet.size > 0 || queueable.length > 0) && <span className="opacity-40">·</span>}
-            {queuedSet.size > 0 && <span>{queuedSet.size} queued</span>}
+            {!ended && queuedSet.size > 0 && <span>{queuedSet.size} queued</span>}
             {queueable.length > 0 && <span className="opacity-70">{queueable.length} can queue</span>}
+            {undoneCount > 0 && <span>{undoneCount} not done</span>}
           </span>
-          <div className="flex items-center gap-1.5">
+          {!ended && <div className="flex items-center gap-1.5">
             {/* Autopilot drives the phased plan itself; one-by-one hands queueing to
                 the user. Toggle is live (any non-terminal state). */}
             <Button variant={autopilot ? 'tonal' : 'ghost'} size="xs" disabled={busy} disabledReason={BUSY_REASON}
@@ -1659,7 +1670,7 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
                 <Play size={11} /> Queue all
               </Button>
             )}
-          </div>
+          </div>}
         </div>
       )}
       {noLists && isPreLaunch && (
@@ -1678,7 +1689,7 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
           // (which bypass Plan Review's dup-guard) — `key || si` then emitted the SAME
           // React key for both, a duplicate-key warning + reconciliation glitch. The
           // index keeps each row's React identity unique regardless.
-          <StageGroup key={`${key}:${si}`} stage={s} status={st} tasks={tasks}
+          <StageGroup key={`${key}:${si}`} stage={s} status={st} tasks={tasks} ended={ended}
             preview={noLists} doneIds={doneIds} queuedSet={queuedSet} knownIds={knownIds}
             onSelect={onSelect} activeTaskIds={activeTaskIds}
             attention={['blocked', 'needs_input', 'stagnant', 'failed', 'stopped'].includes(project.status)} />
@@ -1690,9 +1701,11 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
 
 /** One stage's task group: an (optional) expandable objective + exit-criteria
  *  header, then its task rows. Rows NAVIGATE to the task detail view on click. */
-function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, knownIds, onSelect, activeTaskIds, attention = false }: {
+function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, knownIds, onSelect, activeTaskIds, attention = false, ended }: {
   stage: CodeStage; status: string; tasks: TaskItem[]; preview: boolean
   doneIds: Set<string>; queuedSet: Set<string>; knownIds: Set<string>; onSelect: (taskId: string) => void; activeTaskIds: Set<string>; attention?: boolean
+  /** The project finished or was stopped: its unfinished tasks read 'not done' (`execState`). */
+  ended: boolean
 }) {
   // The active stage's header reads primary (in-flight) — but when the PROJECT is in an
   // attention state (blocked/needs_input/stagnant/failed/stopped) it's parked AT this
@@ -1782,7 +1795,7 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
             {tasks.map((t) => (
               <motion.div key={t.id} variants={listItemEnter}>
                 <TaskRow task={t} preview={preview}
-                  state={execState(t, doneIds, queuedSet, stageOpen, knownIds)} active={activeTaskIds.has(t.id)} onSelect={() => onSelect(t.id)} />
+                  state={execState(t, doneIds, queuedSet, stageOpen, knownIds, ended)} active={activeTaskIds.has(t.id)} onSelect={() => onSelect(t.id)} />
               </motion.div>
             ))}
           </motion.div>}
@@ -1795,14 +1808,14 @@ const STATE_ICON: Record<ExecState, typeof Circle> = {
   // distinct play-ready glyph so it stands out from the inert/blocked tasks, which
   // shared the bare Circle + the same muted color — making the one row inviting action
   // the LEAST distinguishable. blocked/waiting stay bare circles + muted.
-  done: CheckCircle2, cancelled: XCircle, running: Loader2, queued: Clock, blocked: Circle, ready: CirclePlay, waiting: Clock,
+  done: CheckCircle2, cancelled: XCircle, running: Loader2, queued: Clock, blocked: Circle, ready: CirclePlay, waiting: Clock, undone: Circle,
 }
 const STATE_COLOR: Record<ExecState, string> = {
   done: 'var(--color-ok)', cancelled: 'var(--color-on-surface-low)', running: 'var(--color-primary)',
   // ready leans on the on-surface-var (clearer than the muted -low) so it reads as
   // available-to-act, not dormant like blocked/waiting.
   queued: 'var(--color-primary)', blocked: 'var(--color-on-surface-low)', ready: 'var(--color-on-surface-var)',
-  waiting: 'var(--color-on-surface-low)',
+  waiting: 'var(--color-on-surface-low)', undone: 'var(--color-on-surface-low)',
 }
 // Human state word for the accessible name. done/ready carry no text badge (icon /
 // strikethrough only), so without this a screen reader announces a completed and a
@@ -1810,6 +1823,7 @@ const STATE_COLOR: Record<ExecState, string> = {
 // state is spoken.
 const STATE_LABEL: Record<ExecState, string> = {
   done: 'done', cancelled: 'cancelled', running: 'running', queued: 'queued', blocked: 'blocked', ready: 'ready to queue', waiting: 'waiting for its stage',
+  undone: 'not done',
 }
 
 /** A navigable task row — clicking opens the task detail view in the sidebar. A
@@ -1841,6 +1855,7 @@ function TaskRow({ task, state, preview, active, onSelect }: {
       {state === 'queued' && <span data-type="caption" className="shrink-0 text-primary">queued</span>}
       {state === 'blocked' && <span data-type="caption" className="shrink-0 text-on-surface-low/70">blocked</span>}
       {state === 'waiting' && <span data-type="caption" className="shrink-0 text-on-surface-low/70" title="Waiting for its stage to start">waiting</span>}
+      {state === 'undone' && <span data-type="caption" className="shrink-0 text-on-surface-low/70" title="The project ended before this task was done">not done</span>}
       {/* `ready` is the actionable state — a quiet chip (matches the others' pattern)
           so it reads as available-to-queue, not just an unlabeled inert row. */}
       {state === 'ready' && <span data-type="caption" className="shrink-0 text-on-surface-low/70" title="Ready to queue">ready</span>}
@@ -1877,7 +1892,10 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
   blockers: { id: string; title: string }[]; onOpenTask: (taskId: string) => void
   onBack: () => void; onChanged: () => void
 }) {
-  const state = execState(task, doneIds, new Set(project.queued_task_ids ?? []), stageOpen, knownIds)
+  // The project finished or was stopped: nothing of it runs again, so its task has no queue to
+  // join and no stage to wait for.
+  const ended = TERMINAL_STATUSES.has(project.status)
+  const state = execState(task, doneIds, new Set(project.queued_task_ids ?? []), stageOpen, knownIds, ended)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   // A long-running task accumulates many cycle findings; rendering every FindingCard
@@ -1898,7 +1916,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
   // mirrors the project-level steer box (which showed an echo while the task one
   // gave no confirmation at all). Local-only: task nudges aren't in project.nudges.
   const [lastSteer, setLastSteer] = useState<{ text: string; failed?: boolean } | null>(null)
-  const queued = (project.queued_task_ids ?? []).includes(task.id)
+  const queued = !ended && (project.queued_task_ids ?? []).includes(task.id)
   const autopilot = project.autopilot !== false
   const done = task.status === 'done' || task.status === 'completed'
   // Cancelled is ALSO terminal (isTerminalTask) — its worker is gone, so the
@@ -1906,7 +1924,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
   // not fall through to "Queued by autopilot." / a no-op steer box (guidance nothing
   // reads). `done` alone excluded cancelled; gate the terminal surfaces on this.
   const terminal = isTerminalTask(task)
-  const running = task.status === 'in_progress'
+  const running = !ended && task.status === 'in_progress'
   const live = running ? liveActivity : []
   const plan = task.action_plan ?? []
   const crit = task.exit_criteria ?? []
@@ -1963,7 +1981,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
           <ChevronLeft size={14} /> Tasks
         </Button>
         <span data-type="caption" className="ml-auto inline-flex items-center gap-1" style={{ color: running ? 'var(--color-primary)' : done ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }}>
-          {running && <Loader2 size={10} className="animate-spin" />}{running ? 'running' : queued ? 'queued' : done ? 'done' : task.status}
+          {running && <Loader2 size={10} className="animate-spin" />}{running ? 'running' : queued ? 'queued' : done ? 'done' : state === 'undone' ? STATE_LABEL.undone : task.status}
         </span>
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -1976,6 +1994,13 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             The build’s finished work is waiting for you to merge it into {project.pending_question.merge.into}. Review it under Tasks.
           </p>
         )}
+        {/* A finished task's work conflicts with the workspace: what it is and the choices are under Tasks. */}
+        {project.status === 'needs_input' && project.pending_question?.conflict && (
+          <p role="status" data-type="body-s" className="mt-m rounded-lg bg-surface-container p-s text-on-surface-var">
+            The work of “{project.pending_question.conflict.title || project.pending_question.conflict.branch}” conflicts
+            with {project.pending_question.conflict.into}, and is kept on its branch until you choose how to resolve it. Choose under Tasks.
+          </p>
+        )}
         {/* A spend cap refused the loop's next call: paused, nothing to answer here — the
             header's Resume carries on once the cap has room. */}
         {project.status === 'needs_input' && project.pending_question?.spend_cap && (
@@ -1983,7 +2008,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             detail={project.pending_question.why} settings={project.pending_question.settings} />
         )}
         {/* attended question for THIS task — answer in the steer box below */}
-        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && (
+        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && !project.pending_question.conflict && (
           <div data-type="body-s" className="mt-3 rounded-lg p-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> Needs your input
@@ -2079,7 +2104,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
           SYSTEM owns the queue (it re-queues each poll), so manual queue/unqueue is
           futile — hide it and show the active-stage scheduling state instead. */}
       <div className="shrink-0 border-t border-outline-variant/40 p-2">
-        {autopilot ? (
+        {ended ? null : autopilot ? (
           !terminal && (
             <>
               <p data-type="caption" className="mb-2 inline-flex items-center gap-1 text-on-surface-low">
@@ -3369,6 +3394,10 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
   const [steers, setSteers] = useState<{ text: string; failed?: boolean }[]>([])
   const findings = project.findings ?? []
   const missingCommands = missingCommandNotices(project.command_runnability)
+  // The worker asked something only when the pause is its question: a merge waiting, a conflict and
+  // a spend cap are the scheduler's, each answered on its own card above, not in the steer box.
+  const pq = project.pending_question
+  const workerAsks = project.status === 'needs_input' && !pq?.merge && !pq?.conflict && !pq?.spend_cap
 
   // Resume a loop a spend cap paused, from the notice that says so (the header's Resume does the same).
   const [resuming, setResuming] = useState(false)
@@ -3422,6 +3451,11 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
         {project.status === 'needs_input' && project.pending_question?.merge && (
           <MergeReview loopId={project.id} waiting={project.pending_question.merge} onMerged={onNudged} />
         )}
+        {/* A finished task's work conflicts with your branch: kept on its branch until you redo it,
+            resolve it yourself and Resume, or drop it. */}
+        {project.status === 'needs_input' && project.pending_question?.conflict && (
+          <MergeConflict loopId={project.id} conflict={project.pending_question.conflict} onChosen={onNudged} />
+        )}
         {/* A spend cap refused the loop's next call: paused rather than asking, with the cap's
             own sentence, where it is changed, and Resume. */}
         {project.status === 'needs_input' && project.pending_question?.spend_cap && (
@@ -3430,7 +3464,7 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
             onResume={() => void resume()} busy={resuming} />
         )}
         {/* Attended question — the call to action; answer in the steer box below. */}
-        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && (
+        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && !project.pending_question.conflict && (
           <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
@@ -3554,7 +3588,7 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
         {STEERABLE.has(project.status) ? (
           <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
             <textarea ref={steerRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
-              placeholder={project.status === 'needs_input' ? 'Answer the worker…' : 'Steer the worker…'}
+              placeholder={workerAsks ? 'Answer the worker…' : 'Steer the worker…'}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
               data-type="body-s" className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
             {/* Same split as the task-level steer box above: emptiness stays `disabled` (with the

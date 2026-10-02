@@ -165,6 +165,8 @@ describe('a confirmed delete reports its failure', () => {
   //      covered only by the hand-written slice list above, and **two more were covered by nothing at
   //      all** (`chat/SdlcProgressCard`, `knowledge/KnowledgeListPage`'s two intent deletes). None is
   //      currently swallowing, so this adds no new defect — it closes the hole a new one would land in.
+  //      (The chat card's delete has since gone with the rest of its lifecycle controls, which no
+  //      surface rendered.)
   //
   // The window is still 900 chars of proximity, not scope analysis — so the vacuity floor is
   // load-bearing: if either predicate breaks, the sweep matches nothing and reads as a clean pass.
@@ -236,7 +238,6 @@ describe('a confirmed delete reports its failure', () => {
     // idiom, and the slice list above names only the three in `loops/`.
     const arm = confirmGatedCalls().filter((g) => g.idiom === 'arm')
     for (const [rel, call] of [
-      [join('chat', 'SdlcProgressCard.tsx'), 'deleteULoop'],
       [join('knowledge', 'KnowledgeListPage.tsx'), 'deleteKnowledgeIntent'],
       [join('loops', 'LoopsListPage.tsx'), 'deleteULoop'],
       [join('loops', 'DesignCockpitPage.tsx'), 'deleteULoop'],

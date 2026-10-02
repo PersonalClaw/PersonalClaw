@@ -13,14 +13,14 @@ import { join } from 'node:path'
 // loop's findings, deliverable and history, with no undo.
 //
 // 🔑 IT WAS ONE OF TWO SITES THAT LOST THE TIMER WHEN THE PATTERN WAS COPIED, and that is the real
-// lesson: there is no `ArmedButton` primitive, so all eight armed controls in the tree are independent
+// lesson: there is no `ArmedButton` primitive, so all six armed controls in the tree are independent
 // hand-rolled copies of `useState` + a timeout. Copy-paste does not carry an invariant. This rail is
 // the cheap stand-in for the primitive — it cannot make the pattern reusable, but it can stop the next
 // copy from losing the one part that matters.
 //
 // 🪤 THERE ARE TWO LEGITIMATE DISARM MECHANISMS, AND A RAIL THAT KNOWS ONLY ONE IS WORSE THAN NONE:
 //
-//   (a) an effect keyed on the armed state — `LoopCockpitPage`, `formControls`, `SdlcProgressCard`:
+//   (a) an effect keyed on the armed state — `LoopCockpitPage`, `formControls`:
 //         useEffect(() => { if (!armed) return
 //           const t = window.setTimeout(() => setArmed(false), 4000); return () => clearTimeout(t) }, [armed])
 //
@@ -48,7 +48,6 @@ const ARMED: { rel: string; setter: string; what: string }[] = [
   { rel: 'pages/loops/LoopCockpitPage.tsx', setter: 'setConfirmDelete', what: "the loop's findings, deliverable and history" },
   { rel: 'pages/loops/LoopCockpitPage.tsx', setter: 'setConfirmStop', what: 'a run that then cannot resume' },
   { rel: 'pages/loops/LoopsListPage.tsx', setter: 'setConfirmDelete', what: 'a loop, from its row' },
-  { rel: 'pages/chat/SdlcProgressCard.tsx', setter: 'setConfirmDel', what: 'a loop, from the chat card' },
   { rel: 'pages/workflows/WorkflowsListPage.tsx', setter: 'setArmed', what: 'a workflow run and its artifacts' },
   { rel: 'pages/tasks/formControls.tsx', setter: 'setArmed', what: 'a checklist row the user typed' },
 ]
@@ -79,7 +78,8 @@ describe('every armed destroy disarms itself', () => {
     for (const { rel } of ARMED) {
       expect(read(rel).length, `${rel} must be substantial`).toBeGreaterThan(500)
     }
-    expect(ARMED.length, 'the armed-control census').toBeGreaterThanOrEqual(7)
+    // Six since the chat card's armed delete went with its lifecycle controls, which nothing rendered.
+    expect(ARMED.length, 'the armed-control census').toBeGreaterThanOrEqual(6)
   })
 
   it('4000ms is the one interval, so two armed controls never expire differently', () => {
@@ -101,7 +101,7 @@ describe('the pattern that has no primitive', () => {
     // reason a timer went missing at all. If an `ArmedButton` primitive ever lands, this census is the
     // migration list, and this assertion is what will fail and point at it.
     const files = new Set(ARMED.map((a) => a.rel))
-    expect(files.size, 'files hand-rolling the armed-destroy pattern').toBeGreaterThanOrEqual(6)
+    expect(files.size, 'files hand-rolling the armed-destroy pattern').toBeGreaterThanOrEqual(5)
     // There is deliberately no `ui/ArmedButton` yet; if one appears, this reminds the author to migrate.
     let hasPrimitive = false
     try {

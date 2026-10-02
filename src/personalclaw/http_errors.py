@@ -1199,6 +1199,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "This work has commits made under another name than yours, so it was not merged; it is "
         "kept."
     ),
+    # ── a finished task whose work conflicts with the workspace (dashboard/handlers/loop_routes.py
+    #    — GET/POST /api/loops/{id}/conflict) ──
+    # 409 `loop_conflict_not_waiting`: the loop is not paused on a task's work that conflicts, or
+    # not on that task's. 409 `loop_conflict_moved`: the task's branch is not at the commit the
+    # page showed, so nothing was changed; the work is read again.
+    "loop_conflict_not_waiting": (
+        "This loop is not waiting for you to resolve a conflict in that task's work."
+    ),
+    "loop_conflict_moved": (
+        "The work changed since you read it, so nothing was redone or dropped. Read it again."
+    ),
 }
 
 

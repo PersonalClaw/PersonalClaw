@@ -6372,6 +6372,23 @@ export interface LoopMergeReviewTask {
   commits: string[]; stat: string; diff: string
 }
 export interface LoopMergeReview { into: string; tasks: LoopMergeReviewTask[]; cut: boolean }
+/** The finished task's work a Code loop paused on because merging it conflicts (`loop/conflicts.py`).
+ *  Its work is kept as it is, on its own branch, until its owner chooses. */
+export interface LoopMergeConflict {
+  task_id: string; title: string; branch: string
+  /** The commit the branch is at: what a choice names. */
+  tip: string
+  /** The workspace's checked-out branch the work went into, and the files the merge conflicted on. */
+  into: string; files: string[]
+  /** The task's own worktree folder, where its branch is checked out. */
+  path: string
+}
+/** The conflict as `GET /api/loops/{id}/conflict` reads it: the files it conflicts on as git reads them
+ *  now (empty once it would merge cleanly), and the task's work as a merge review shows it. */
+export interface LoopConflictReview {
+  into: string; files: string[]; cut: boolean
+  task: LoopMergeReviewTask & { title: string; path: string }
+}
 /** One merge a loop made into its workspace's branch (`loop/files.record_merge`). */
 export interface LoopMerge {
   task_id: string; title: string; branch: string; into: string
@@ -6629,7 +6646,12 @@ export interface PlanStep {
  *  asked, and — when a spend ceiling refused its next call — `spend_cap` with the Settings page
  *  (`settings`, a route id) the ceiling is changed on. Then `question` is the refusal's sentence
  *  and there is nothing to answer: the owner lifts the cap or waits for it to reset, and resumes. */
-export interface LoopQuestion { question: string; why?: string; merge?: LoopMergeWaiting; spend_cap?: boolean; settings?: string }
+export interface LoopQuestion {
+  question: string; why?: string; merge?: LoopMergeWaiting; spend_cap?: boolean; settings?: string
+  /** A finished task's work that conflicts with the workspace's branch: nothing of it was merged, and
+   *  the loop waits for its owner to redo the task, resolve the conflict herself, or drop the work. */
+  conflict?: LoopMergeConflict
+}
 
 export interface PlanSession {
   project_id: string; created_at: number; steps: PlanStep[]
@@ -8713,6 +8735,11 @@ export const api = {
   /** Approve merging the reviewed work, each task at the commit the review showed; the loop resumes. */
   uLoopMerge: (id: string, tips: Record<string, string>) =>
     post<{ ok: boolean; loop: Loop }>(`/api/loops/${encodeURIComponent(id)}/merge`, { tips, confirm: true }),
+  /** The finished task's work a Code loop paused on because it conflicts with the workspace. */
+  uLoopConflictReview: (id: string) => get<LoopConflictReview>(`/api/loops/${encodeURIComponent(id)}/conflict`),
+  /** Redo the task on top of the workspace, or drop its work, at the commit the page showed; the loop resumes. */
+  uLoopConflict: (id: string, choice: 'redo' | 'drop', taskId: string, tip: string) =>
+    post<{ ok: boolean; loop: Loop }>(`/api/loops/${encodeURIComponent(id)}/conflict`, { choice, task_id: taskId, tip, confirm: true }),
   // The task work an ended run kept because it was not merged (`loop/kept_work.py`): its owner
   // merges it into the workspace or discards it, one task at a time.
   uLoopKeptWork: (id: string) => get<KeptWorkReview>(`/api/loops/${encodeURIComponent(id)}/kept-work`),

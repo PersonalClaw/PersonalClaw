@@ -48,7 +48,6 @@ def _task_scope_texts(task) -> list[str]:
 
 
 _POOL_CAP = 4  # max concurrent task-workers per loop
-_CONFLICT_REDO_CAP = 2  # auto-resolve a task's merge conflict at most this many times
 
 
 def _ended_worker_question(loop: Loop, task, why: str) -> str:
@@ -444,9 +443,6 @@ class CodeKind(LoopKindStrategy):
     tracks_phases = True  # on_new_cycle advances the SDLC stage (set_phase_status below)
 
     def __init__(self) -> None:
-        # Per-(loop:task) merge-conflict auto-resolve budget (in-memory; the loser
-        # rebases up to _CONFLICT_REDO_CAP times before pausing for the user).
-        self._conflict_redos: dict[str, int] = {}
         # "<loop>:<stage>" → the cycles of work the stage had when it was last escalated as
         # stalled. It escalates again only after as many more cycles of work without clearing,
         # so a steer that does not unstick it is not followed by cycles spun to the budget.
@@ -1999,11 +1995,13 @@ class CodeKind(LoopKindStrategy):
             if task is not None and not tasks_link._is_done(task.status):
                 worker = ctx.svc.get_by_session(skey)
                 # A worker that cannot run again by itself: the nudge service switches its loop
-                # off (and keeps it) once it spends its budget or its turns keep failing. A loop
-                # that is GONE was torn down by something else (a conflict redo, the ask below
-                # after the owner steers), so its task is not finished: step 2 starts it afresh.
+                # off (and keeps it) once it spends its budget or its turns keep failing; one that
+                # wrote a finding did its task. A loop that is GONE was torn down by something
+                # else (a redo its owner chose, kept work she discarded, the ask below after she
+                # steers), so its task is not finished, whatever an attempt set aside wrote: step 2
+                # starts it afresh.
                 ended = why_it_ended(worker) if worker is not None else ""
-                if (ended or worker is None) and loop_files.task_finding_count(loop.id, tid) > 0:
+                if ended and loop_files.task_finding_count(loop.id, tid) > 0:
                     await tasks_link.mark_task_done(tid)
                     task = await self._get_task(tid) or task
                 elif ended:
@@ -2236,20 +2234,21 @@ class CodeKind(LoopKindStrategy):
 
     async def _reap_merge_done(self, loop: Loop, tid: str, task, ws: str, ctx, *, by: str) -> bool:
         """Merge a done task's branch into base, as git is configured to commit there, and note it
-        on the loop's page (*by*: who merged it). Clean → unqueue + task_done. Conflict
-        → autopilot auto-resolves (the loser rebases: discard branch + re-open the task
-        to re-run on the merged base) up to _CONFLICT_REDO_CAP, else pause NEEDS_INPUT.
-        Returns True iff the merge did NOT integrate (caller stops + awaits the user)."""
-        from personalclaw.loop import store, worktree
+        on the loop's page (*by*: who merged it). Clean → unqueue + task_done. A merge that does not
+        go in is undone and the task's work stays as it is, on its branch and in its worktree, and
+        the loop pauses for its owner: a conflict asks how to resolve it (``loop.conflicts``), any
+        other git failure asks her to check the workspace's git state. Both are the scheduler's
+        questions, so a Resume tries the merge again. Returns True iff the merge did NOT integrate
+        (caller stops + awaits the user)."""
+        from personalclaw.loop import conflicts, store, worktree
 
         branch = worktree.branch_name(tid)
         into = worktree.base_branch(ws)
+        title = str(getattr(task, "title", "") or tid)
         commits = worktree.branch_commits(ws, tid)
         result = worktree.merge_worktree(ws, tid, loop.tasks_project_id)
-        redo_key = f"{loop.id}:{tid}"
         self._drop_approval(loop.id, tid)
         if result.ok:
-            self._conflict_redos.pop(redo_key, None)
             store.unqueue_tasks(loop.id, [tid])
             self._landed.add(loop.id)
             if not result.already:
@@ -2257,7 +2256,7 @@ class CodeKind(LoopKindStrategy):
                     loop.id,
                     {
                         "task_id": tid,
-                        "title": str(getattr(task, "title", "") or tid),
+                        "title": title,
                         "branch": branch,
                         "into": into,
                         "commits": commits,
@@ -2277,51 +2276,21 @@ class CodeKind(LoopKindStrategy):
                 },
             )
             return False
-        conflicts = result.conflicts
-        if conflicts:
-            shown = ", ".join(conflicts[:5]) + ("…" if len(conflicts) > 5 else "")
-            redos = self._conflict_redos.get(redo_key, 0)
-            if loop.autopilot and redos < _CONFLICT_REDO_CAP:
-                self._conflict_redos[redo_key] = redos + 1
-                # REUSE the worktree instead of removing it: the task is
-                # about to re-run on the merged base, so all it needs is a clean tree on
-                # a fresh branch — and a reset keeps the hydration that remove+re-add
-                # would pay for again (HC-1 measured ~5.2 s of it per worktree on a
-                # 10K-file repo). Any reset failure tears down, which is the old
-                # behaviour exactly, so the fallback path is the one already proven.
-                if not worktree.reset_worktree(ws, tid, loop.tasks_project_id):
-                    worktree.remove_worktree(ws, tid, loop.tasks_project_id)
-                try:
-                    from personalclaw.tasks import registry
-
-                    await registry.update_task(tid, status="open")
-                except Exception:
-                    logger.warning(
-                        "conflict auto-resolve: reset task %s failed", tid, exc_info=True
-                    )
-                ctx.publish(
-                    loop.id,
-                    "gate_check",
-                    {
-                        "loop_id": loop.id,
-                        "ok": False,
-                        "label": "merge",
-                        "output": f'Conflict in {shown} — re-running "{task.title}" on the updated base.',  # noqa: E501
-                    },
-                )
-                return False
-            question = (
-                f'Task "{task.title}" keeps conflicting on {shown} after {redos} auto-retries '
-                f"— resolve it on branch {branch} in the workspace, then resume."
+        if result.conflicts:
+            conflicts.ask(loop, tid, title, ws, result.conflicts)
+            out = (
+                f"Merge conflict in {conflicts.named(result.conflicts)}: the work is kept on "
+                f"{branch} until you choose how to resolve it."
             )
-            out = f"Merge conflict in: {shown} — resolve in the workspace, then resume."
         else:
-            question = (
-                f'Task "{task.title}" finished but its branch {branch} could not be merged '
-                "(a git error, not a content conflict). Check the workspace's git state, then resume."  # noqa: E501
+            loop_files.write_question(
+                loop.id,
+                f'Task "{title}" finished but its branch {branch} could not be merged (a git '
+                "error, not a content conflict), so nothing of it was merged and its work is "
+                "kept as it is. Check the workspace's git state, then resume.",
+                asked_by=loop_files.SCHEDULER_QUESTION,
             )
             out = "Merge failed (not a content conflict) — check git state, then resume."
-        loop_files.write_question(loop.id, question)
         store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
         ctx.publish(
             loop.id,

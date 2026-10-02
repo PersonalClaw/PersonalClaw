@@ -93,7 +93,6 @@ describe('the nine persisted destroys adopted it', () => {
     ['pages/knowledge/ReportsPage.tsx', 'Delete ${report.name}'],
     ['pages/notifications/NotificationsPage.tsx', 'Delete: ${subject}'],
     ['pages/settings/ChatPanel.tsx', 'Delete ${t.name}'],
-    ['pages/chat/SdlcProgressCard.tsx', 'Click again to delete'],
     ['pages/loops/LoopsListPage.tsx', 'Delete loop'],
   ]
 
@@ -124,7 +123,7 @@ describe('the nine persisted destroys adopted it', () => {
     // `text-danger` (no `hover:`) on an armed two-click delete means "you are one click away", shown
     // persistently. The tone prop supplies the PRE-arm hover tint; replacing the armed class with it
     // would delete the stronger signal at the more dangerous moment.
-    for (const rel of ['pages/chat/SdlcProgressCard.tsx', 'pages/loops/LoopsListPage.tsx']) {
+    for (const rel of ['pages/loops/LoopsListPage.tsx']) {
       expect(codeOf(rel), `${rel} keeps its armed tint`).toMatch(/\? 'text-danger'/)
     }
   })

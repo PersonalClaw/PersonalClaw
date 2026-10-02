@@ -1,27 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Loader2, ArrowUpRight, CircleDot, CheckCircle2, Circle, AlertTriangle, HelpCircle, Clock, Search, Pause, Play, Square, Trash2 } from 'lucide-react'
+import { Loader2, ArrowUpRight, CircleDot, CheckCircle2, Circle, AlertTriangle, HelpCircle, Clock, Search } from 'lucide-react'
 import { api, type Loop } from '../../lib/api'
-import { IconButton } from '../../ui/IconButton'
-import { loopStatusLabel, loopStatusTone, effectiveLoopStatus, LOOP_ACTION_SOURCE_STATUSES, type LoopAction } from '../../lib/loopStatus'
+import { loopStatusLabel, loopStatusTone, effectiveLoopStatus } from '../../lib/loopStatus'
 import { loopKindMeta } from '../../lib/loopKind'
 import { foldRunSnapshot } from '../loops/runFold'
 import { RunProgress } from '../loops/RunProgress'
 import { messageEnter } from '../../design/motion'
-
-// Terminal statuses, the gate for the two-step DELETE. Delete is not one of the four
-// lifecycle actions, so it has no row in `LOOP_ACTION_SOURCE_STATUSES` — the backend
-// deletes a loop in any state and this set is a product judgement (a live loop is stopped
-// first, not destroyed) rather than a copy of a backend guard.
-const DONE_ST = new Set(['complete', 'failed', 'stopped'])
 
 /** Live in-chat progress widget for a Code project / Goal Loop the agent created
  *  or started from chat (see sdlc_tools.py). Detected from the tool segment by
  *  tool name + the `/#/code/<id>` or `/#/loops/<id>` deep link the tool returns,
  *  then this card polls the entity directly — status + stage/sub-goal progress +
  *  recent activity + a jump to the cockpit. Replaces the bare ToolCard for these
- *  tools so a created/launched entity reads as a living thing, not a log line. */
+ *  tools so a created/launched entity reads as a living thing, not a log line.
+ *
+ *  It is a status mirror: it pauses, stops and deletes nothing. Those live on the loop's own
+ *  page, where a Code project's Delete says what it removes: its branches, and the work its run
+ *  kept. The card once carried a second copy of them, a Delete with no word of that, for a
+ *  Projects hub that no longer renders it; nothing turned that copy on, so it is gone. */
 
 const SDLC_TOOLS = new Set([
   // Unified project-run tools (code/goal/general/design/research kinds). A status
@@ -54,21 +52,11 @@ function fmtE(sec: number): string {
   return `${Math.floor(h / 24)}d ${h % 24}h`
 }
 
-export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
-  refObj: SdlcRef
-  /** Render inline lifecycle controls (pause/resume/stop, and delete when terminal)
-   *  in the card header. Off by default (the in-chat card is a read-only status
-   *  mirror); the Projects hub turns it on so a loop can be steered from there. */
-  controllable?: boolean
-  /** Called after a successful delete so the host can drop the card / refresh. */
-  onDeleted?: () => void
-}) {
+export function SdlcProgressCard({ refObj }: { refObj: SdlcRef }) {
   const { kind, id, created } = refObj
   // Both kinds are the ONE unified Loop now — fetched via uLoop, read by kind below.
   const [entity, setEntity] = useState<Loop | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)        // an action POST is in flight
-  const [confirmDel, setConfirmDel] = useState(false)  // two-step delete arm
   const gone = useRef(false)  // 404 → entity deleted; stop polling
   const loaded = useRef(false)  // have we ever fetched the entity? (ref, not stale state)
 
@@ -112,34 +100,6 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, id])
-
-  // Does the backend accept this action from the loop's CURRENT status? One question, one
-  // source — the mirror of its transition guard. Keyed on the RAW status deliberately: the
-  // effective status below rewrites a budget-exhausted finish for DISPLAY, and gating on a
-  // rewritten status would offer an action the backend never agreed to.
-  const canAct = (action: LoopAction) => !!entity && LOOP_ACTION_SOURCE_STATUSES[action].has(entity.status)
-
-  // Lifecycle controls (only rendered when `controllable`). Optimistically refetch so
-  // the pill + gating update without waiting for the next poll tick. `start` is absent by
-  // design — this card watches a run that already exists, so its actions are a subset.
-  async function act(e: React.MouseEvent, action: Exclude<LoopAction, 'start'>) {
-    e.preventDefault(); e.stopPropagation()
-    if (busy) return
-    setBusy(true)
-    try { const next = await api.uLoopAction(id, action); setEntity(next) }
-    catch { /* transient — the poll loop will reconcile */ }
-    finally { setBusy(false) }
-  }
-  // Two-step delete (arm, then confirm within 4s) so a misclick can't destroy a
-  // finished loop's history — same guard as the Loops list + cockpit.
-  async function del(e: React.MouseEvent) {
-    e.preventDefault(); e.stopPropagation()
-    if (!confirmDel) { setConfirmDel(true); window.setTimeout(() => setConfirmDel(false), 4000); return }
-    setConfirmDel(false); setBusy(true)
-    try { await api.deleteULoop(id); gone.current = true; onDeleted?.() }
-    catch { setErr('Could not delete.') }
-    finally { setBusy(false) }
-  }
 
   // Use the EFFECTIVE status so a budget-exhausted finish (complete + a stop_reason other
   // than 'done') reads as the honest warn-toned "Ended early" here too — matching the Code
@@ -210,20 +170,6 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
             its progress), and a hard-coded "·" left the header opening with a bare bullet. */}
         {typeof cycles === 'number' && cycles > 0 && <span data-type="caption" className="shrink-0 text-on-surface-low/70">{progress ? '· ' : ''}{cycles} cycles</span>}
         {elapsed > 0 && <span data-type="caption" className="shrink-0 inline-flex items-center gap-0.5 text-on-surface-low/70" title="Elapsed (running time)"><Clock size={10} />{fmtE(elapsed)}</span>}
-        {/* lifecycle controls (hub only) — gated by the RAW status, same as the Loops
-            list: pause a running loop, resume a parked one, stop any active run, delete
-            a terminal one (two-step). */}
-        {controllable && entity && (
-          <span className="shrink-0 inline-flex items-center gap-0.5">
-            {busy && <Loader2 size={11} className="animate-spin text-on-surface-low" />}
-            {canAct('pause') && <IconButton icon={Pause} label="Pause" size={28} onClick={(e) => act(e, 'pause')} />}
-            {canAct('resume') && <IconButton icon={Play} label="Resume" size={28} onClick={(e) => act(e, 'resume')} />}
-            {canAct('stop') && <IconButton icon={Square} label="Stop" size={28} onClick={(e) => act(e, 'stop')} />}
-            {DONE_ST.has(entity.status) && <IconButton icon={Trash2} size={28} tone="danger"
-              label={confirmDel ? 'Click again to delete' : 'Delete'} onClick={del}
-              className={confirmDel ? 'text-danger' : undefined} />}
-          </span>
-        )}
         <span data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5" style={loopStatusTone(status)}>
           {isPolling ? <Loader2 size={10} className="inline animate-spin" /> : loopStatusLabel(status)}
         </span>

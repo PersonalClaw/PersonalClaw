@@ -657,39 +657,6 @@ class TestReusePool:
 
         assert _git(path, "rev-parse", "HEAD").stdout.strip() == base
 
-
-def test_conflict_redo_resets_then_falls_back_to_teardown():
-    """The reuse pool's real CALL SITE, by AST.
-
-    ``_reap_merge_done``'s conflict auto-resolve used to ``remove_worktree`` and pay full
-    hydration again on the re-run; HC-2 makes it reset first. Asserting on
-    ``worktree.py`` alone would not notice the scheduler never adopting it — and the
-    ``remove_worktree`` call must still be REACHABLE, because it is the documented
-    teardown fallback for any reset failure."""
-    import ast
-    import inspect
-    import textwrap
-
-    from personalclaw.loop.kinds import sdlc
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(sdlc.CodeKind._reap_merge_done)))
-    calls = [
-        ast.unparse(n.func)
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-    ]
-    assert "worktree.reset_worktree" in calls, calls
-    assert "worktree.remove_worktree" in calls, "the teardown fallback is gone"
-    # The teardown must be GUARDED by the reset's failure, not run unconditionally.
-    guarded = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, ast.If)
-        and "worktree.reset_worktree" in ast.unparse(n.test)
-        and "worktree.remove_worktree" in ast.unparse(n.body)
-    ]
-    assert guarded, "remove_worktree is not gated on a failed reset"
-
     def test_reuse_preserves_the_sparse_cone(self, tmp_path):
         """Reset must not silently re-hydrate the repo — that would make phase 2 of
         every loop pay the full cost the plan is trying to avoid."""
@@ -699,3 +666,31 @@ def test_conflict_redo_resets_then_falls_back_to_teardown():
         assert wt.reset_worktree(ws, "t-cone") is True
         assert wt.sparse_scope(path) == ["src"]
         assert "docs/guide.md" not in _tree(path)
+
+
+def test_a_redo_resets_the_worktree_then_falls_back_to_teardown():
+    """The reuse pool's real CALL SITE, by AST: the redo its owner chose for a task whose work
+    conflicted (``loop.conflicts._redo``), the one place a task's worktree is finished with and
+    reused. Asserting on ``worktree.py`` alone would not notice the redo never adopting it — and
+    the ``remove_worktree`` call must still be REACHABLE, because it is the documented teardown
+    fallback for any reset failure."""
+    import ast
+    import inspect
+    import textwrap
+
+    from personalclaw.loop import conflicts
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(conflicts._redo)))
+    # Named, not only called: both run off the event loop, handed to ``asyncio.to_thread``.
+    named = [ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
+    assert "worktree.reset_worktree" in named, named
+    assert "worktree.remove_worktree" in named, "the teardown fallback is gone"
+    # The teardown must be GUARDED by the reset's failure, not run unconditionally.
+    guarded = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.If)
+        and "worktree.reset_worktree" in ast.unparse(n.test)
+        and "worktree.remove_worktree" in ast.unparse(n.body)
+    ]
+    assert guarded, "remove_worktree is not gated on a failed reset"

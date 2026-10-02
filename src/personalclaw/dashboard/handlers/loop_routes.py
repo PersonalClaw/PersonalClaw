@@ -1474,6 +1474,90 @@ async def api_loop_merge(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "loop": _loop_view(cid)})
 
 
+# ── a finished task whose work conflicts with the workspace (``loop.conflicts``) ──
+
+
+def _conflict_waiting(cid: str) -> tuple[Loop, dict] | web.Response:
+    """Loop *cid* and the conflict its scheduler put to its owner, or the refusal to answer with."""
+    from personalclaw.loop import conflicts
+
+    if not loop_files.valid_loop_id(cid):
+        return json_error("invalid_id", status=400)
+    loop = store.get(cid)
+    if loop is None:
+        return json_error("not_found", status=404)
+    conflict = conflicts.waiting(loop)
+    if conflict is None:
+        return json_error("loop_conflict_not_waiting", status=409)
+    return loop, conflict
+
+
+async def api_loop_conflict_review(request: web.Request) -> web.Response:
+    """GET /api/loops/{id}/conflict — the finished task's work that conflicts with your branch.
+
+    The loop paused on it: the files it conflicts on, as git reads them now, and the work as a merge
+    review shows it (its branch, the commit it is at, its commits, its diff, its folder)."""
+    from personalclaw.loop import conflicts
+
+    waiting = _conflict_waiting(request.match_info["id"])
+    if isinstance(waiting, web.Response):
+        return waiting
+    review = await conflicts.review(*waiting)
+    return web.json_response(
+        {
+            "into": review["into"],
+            "files": review["files"],
+            "task": review["task"],
+            "cut": review["cut"],
+        }
+    )
+
+
+async def api_loop_conflict(request: web.Request) -> web.Response:
+    """POST /api/loops/{id}/conflict {choice, task_id, tip, confirm: true} — redo or drop that work.
+
+    ``redo`` runs the task again on top of your branch as it is now, setting aside the attempt
+    that conflicted; ``drop`` deletes its branch and folder and cancels the task. Either discards
+    the commits on the task's branch, so the request says it means to and names the commit it read
+    (``tip``): a branch that moved is read again. The loop then resumes. To resolve the conflict
+    yourself, do so, then Resume the loop: it merges the branch again."""
+    from personalclaw.loop import conflicts
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers.nudge import get_instance
+
+    cid = request.match_info["id"]
+    waiting = _conflict_waiting(cid)
+    if isinstance(waiting, web.Response):
+        return waiting
+    loop, _ = waiting
+    body = await json_object_body(request)
+    if not confirm_granted(body):
+        return json_error("confirm_required", status=400)
+    choice, task_id, tip = body.get("choice"), body.get("task_id"), body.get("tip")
+    if choice not in conflicts.CHOICES:
+        return json_error(
+            "invalid_request", message="'choice' must be 'redo' or 'drop'", status=400
+        )
+    if not isinstance(task_id, str) or not isinstance(tip, str) or not tip.strip():
+        return json_error(
+            "invalid_request",
+            message="'task_id' and 'tip' must name the work the page showed",
+            status=400,
+        )
+    svc = get_instance()
+    if svc is None:
+        return json_error(
+            "service_unavailable", message="The loop scheduler is not running.", status=503
+        )
+    outcome = await conflicts.choose(svc, loop, task_id, tip.strip(), choice)
+    if outcome.code == "loop_conflict_moved":
+        return json_error("loop_conflict_moved", status=409)
+    if outcome.code:
+        return json_error("loop_conflict_not_waiting", status=409)
+    await manager.start(request.app["state"], svc, cid)
+    return web.json_response({"ok": True, "loop": _loop_view(cid)})
+
+
 # ── plan walkthrough (stepwise, gated planning) ──
 
 
@@ -1745,6 +1829,8 @@ def register_unified_loop_routes(app: web.Application) -> None:
     app.router.add_post("/api/loops/{id}/autopilot", api_loop_autopilot)
     app.router.add_get("/api/loops/{id}/merge", api_loop_merge_review)
     app.router.add_post("/api/loops/{id}/merge", api_loop_merge)
+    app.router.add_get("/api/loops/{id}/conflict", api_loop_conflict_review)
+    app.router.add_post("/api/loops/{id}/conflict", api_loop_conflict)
     app.router.add_get("/api/loops/{id}/plan-session", api_loop_plan_session)
     app.router.add_post("/api/loops/{id}/plan/start", api_loop_plan_start)
     app.router.add_post("/api/loops/{id}/plan/retry", api_loop_plan_retry)

@@ -201,17 +201,17 @@ class _Ctx:
 LINE = "- Digest titles are escaped once. (#21)\n"
 
 
-def _fanned_out(ws, *, state=None, project_id="", name="digest titles"):
-    """A running Attended code loop on autopilot whose one task worker has started in its own
-    worktree and has made the edit its owner approved there, not yet merged. Its planner's nudge
-    row is still on disk from its walkthrough, as one is after a restart."""
+def _fanned_out(ws, *, state=None, project_id="", name="digest titles", attended=True):
+    """A running code loop on autopilot, Attended unless said otherwise, whose one task worker has
+    started in its own worktree and has made the edit its owner approved there, not yet merged.
+    Its planner's nudge row is still on disk from its walkthrough, as one is after a restart."""
     loop = store.create(
         Loop(
             id="",
             name=name,
             kind="code",
             task="add a Fixed line for the digest titles",
-            attended=True,
+            attended=attended,
             autopilot=True,
             model="ollama:local-model",
             max_cycles=30,
@@ -431,6 +431,46 @@ def test_a_stopped_run_keeps_the_work_nobody_merged(repo):
 
     assert store.get(loop.id).status == LoopStatus.STOPPED.value
     assert _edit_in(wt) and worktree.branch_exists(str(repo), tid)
+
+
+# ── a loop that cannot be resumed has nothing queued ─────────────────────────
+
+
+@pytest.mark.parametrize("ending", ["complete", "stopped"])
+def test_a_finished_or_stopped_loop_has_nothing_queued(repo, ending):
+    """The queue is what the scheduler runs next, and nothing of a loop that cannot be resumed runs
+    again. A stopped loop kept its task ids, so its page counted "1 queued" beside a task waiting
+    for a stage that would never start."""
+    loop, tid, _wt, state = _fanned_out(repo)
+    assert store.get(loop.id).kind_config["queued_task_ids"] == [tid]
+
+    ENDINGS[ending](state, loop)
+
+    assert store.get(loop.id).kind_config["queued_task_ids"] == []
+
+
+def test_a_failed_loop_keeps_its_queue_for_resume(repo):
+    loop, tid, _wt, state = _fanned_out(repo)
+
+    _fail_stalled(state, loop)
+
+    assert store.get(loop.id).kind_config["queued_task_ids"] == [tid]
+
+
+def test_at_boot_a_loop_that_ended_with_tasks_queued_has_none(repo):
+    """One that ended before its ending emptied the queue: the boot sweep empties it, and leaves a
+    failed loop's for its Resume."""
+    stopped, tid, _wt, state = _fanned_out(repo)
+    store.update_status(stopped.id, LoopStatus.STOPPED)  # its ending never ran
+    failed = store.create(Loop(id="", name="feed", kind="code", task="tidy the feed"))
+    store.queue_tasks(failed.id, ["t-feed"])
+    store.update_status(failed.id, LoopStatus.RUNNING)
+    store.update_status(failed.id, LoopStatus.FAILED)
+
+    _run(W.LoopWatchdog(state, SVC)._boot_sweep())
+
+    assert store.get(stopped.id).kind_config["queued_task_ids"] == []
+    assert store.get(failed.id).kind_config["queued_task_ids"] == ["t-feed"]
 
 
 def test_only_a_delete_discards_the_work_and_only_its_own(repo, tmp_path):
@@ -711,3 +751,36 @@ def test_a_failed_loops_kept_work_says_resume_carries_it_on(repo):
     # Discarding it lets Resume start the task afresh, not in a worktree that is gone.
     _call(H.api_loop_kept_work_discard, state, "DELETE", "/", id=loop.id, task_id=tid)
     assert SVC.get_by_session(task_session_key(loop.id, tid)) is None
+
+
+def test_resume_after_its_kept_work_is_discarded_starts_the_task_afresh(repo):
+    """The finding the discarded attempt wrote is not the task's: Resume used to mark it done on
+    that finding and then ask about "commits under another name" on a branch that was gone."""
+    from personalclaw.tasks import registry
+
+    loop, tid, wt, state = _fanned_out(repo)
+    findings = loop_files.loop_dir(loop.id) / "findings"
+    findings.mkdir(exist_ok=True)
+    (findings / f"task_{tid}_001.json").write_text(
+        '{"cycle": 1, "stage": "implementation", "summary": "added the line, still checking it"}'
+    )
+    loop_files.record_cycle_findings(loop.id)
+    loop_files.write_credited_cycles(loop.id, 1)
+    store.update_status(loop.id, LoopStatus.RUNNING, started_at=1.0)
+    wd = W.LoopWatchdog(state, SVC)
+    wd._swept = True
+    _run(wd._poll_once())
+    wd._last_activity[loop.id] = 1.0
+    _run(wd._poll_once())
+    assert store.get(loop.id).status == LoopStatus.FAILED.value
+    _call(H.api_loop_kept_work_discard, state, "DELETE", "/", id=loop.id, task_id=tid)
+
+    _run(manager.start(state, SVC, loop.id))
+    _run(kinds.get("code").schedule(store.get(loop.id), _Ctx(state, SVC)))
+
+    after = store.get(loop.id)
+    assert after.status == LoopStatus.RUNNING.value, loop_files.pending_question(loop.id)
+    assert SVC.get_by_session(task_session_key(loop.id, tid)) is not None, "nothing ran the task"
+    task = _run(registry.get_task(tid, provider_name="native"))
+    assert getattr(task.status, "value", task.status) == "in_progress"
+    assert os.path.isdir(wt) and not _edit_in(wt), "a fresh worktree, without the discarded edit"

@@ -71,7 +71,12 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
   // A RUN-BACKED loop (`run_id`) waiting on the user is parked at a gate, and a gate is
   // answered on the run page — typing into this box would STEER the run (the loop nudge route's
   // run verb), which leaves the gate exactly as unanswered as before. So its Answer opens the run.
-  const answersOnItsPage = !!loop.run_id && loop.status === 'needs_input'
+  // The same holds for a pause its scheduler made rather than a question its worker asked: work
+  // waiting for a merge, work that conflicts, a spend cap. Each is settled on the loop's own page,
+  // and a typed answer would only restart the loop onto the same pause.
+  const q = loop.pending_question
+  const schedulerPause = !!q && typeof q !== 'string' && !!(q.merge || q.conflict || q.spend_cap)
+  const answersOnItsPage = loop.status === 'needs_input' && (!!loop.run_id || schedulerPause)
 
   const send = async () => {
     const t = text.trim()
@@ -102,7 +107,7 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
         </button>
         {loop.status === 'needs_input' && !answering && (
           <RowAction tone="primary" onClick={() => (answersOnItsPage ? navigate(loopRoute(loop)) : setAnswering(true))}
-            title={answersOnItsPage ? 'Open the run to answer its question' : "Answer the loop's question"}
+            title={answersOnItsPage ? (loop.run_id ? 'Open the run to answer its question' : 'Open the loop: what it waits for is settled on its page') : "Answer the loop's question"}
             ariaLabel={`Answer: ${loopLabel}`}><MessageCircleQuestion size={14} /> Answer</RowAction>
         )}
         {loop.status !== 'needs_input' && !answering && (

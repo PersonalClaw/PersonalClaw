@@ -385,7 +385,9 @@ The supervisor does not take the worker's word for it:
   every nudge loop the loop has (its stage worker's, its task workers' and its planner's), stops the
   turns in flight, and puts a task a worker held back to open. A failed loop can be resumed, so its
   workers' nudge loops are kept, switched off, and every task worktree with them; Resume switches
-  them back on where they were. A finished or stopped loop removes the task worktrees whose work was
+  them back on where they were, and its queue is still what Resume runs. A finished or stopped loop
+  runs nothing again, so its queue is emptied (the boot sweep empties one an ending before this left
+  full), and its page reads a task it left unfinished as not done. It removes the task worktrees whose work was
   merged (or that made none) and keeps the rest (`worktree.sweep_finished`): work nobody merged is
   never thrown away by an ending. What a kept worktree holds and has not committed is committed on
   its own branch, as git is configured to commit there (left uncommitted when git has no identity),
@@ -467,7 +469,20 @@ The supervisor does not take the worker's word for it:
   `loop_merge_approved`); the approval is held by the scheduler alone (`CodeKind.approve_merge`,
   in memory: the loop's folder is its workers' to write, so nothing there stands for it, and after
   a restart the loop asks again), the loop resumes, and the scheduler merges each task at that
-  commit, or asks again if its branch moved. Its questions (a merge to approve, an identity to set)
+  commit, or asks again if its branch moved. **A merge that conflicts** is undone and keeps the
+  task's work as it is, on its own branch at the commit it reached and in its worktree, whatever the
+  Mode or the drive: the loop pauses and asks its owner, and nothing of the work is discarded until
+  she chooses (`loop/conflicts.py`; `GET /api/loops/{id}/conflict` reads the files it conflicts on
+  from git, `merge-tree --write-tree`, and the work as a merge review shows it). **Redo** runs the
+  task again from the branch as it is now, its worktree reset onto it, the attempt set aside;
+  **Drop** deletes the task's branch and worktree and cancels the task; either names the commit she
+  read (`POST …/conflict` with `choice`, `task_id`, `tip` and `{"confirm": true}`; a branch that
+  moved answers `loop_conflict_moved`), and only for a task the loop has queued. Or she resolves it
+  herself, in her workspace or on the task's branch, and Resumes: the scheduler merges it again,
+  and asks again while it still conflicts. A merge git refuses for another reason keeps the work the
+  same way and asks her to check the workspace's git state. A task whose worker is gone (a redo she
+  chose, kept work she discarded) is started afresh, never marked done on a finding the attempt set
+  aside wrote. Its questions (a merge to approve, a conflict to resolve, an identity to set)
   are asked again while they hold, so a Resume never stops on one already settled
   (`files.SCHEDULER_QUESTION`). An Attended loop
   never makes the first commit of an empty repository either: its tasks then stay the stage

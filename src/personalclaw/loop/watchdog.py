@@ -29,7 +29,13 @@ from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import gates, instrument, kinds, manager, spend_cap, store, supervisor
-from personalclaw.loop.loop import ENDED_STATUSES, Loop, LoopStatus, LoopStopReason
+from personalclaw.loop.loop import (
+    ENDED_STATUSES,
+    TERMINAL_STATUSES,
+    Loop,
+    LoopStatus,
+    LoopStopReason,
+)
 from personalclaw.workflows.supervisor_policy import policy_for_kind
 
 logger = logging.getLogger(__name__)
@@ -1014,6 +1020,7 @@ class LoopWatchdog:
 
         await self._reap_planner_rows()
         await self._switch_off_ended(loops)
+        self._empty_ended_queues(loops)
 
         decided = await concurrency.boot_sweep(
             "loop", loops, survived=_lost_its_worker, decide=self._rearm_running
@@ -1077,6 +1084,22 @@ class LoopWatchdog:
                 logger.warning(
                     "loop %s: switching off its workers at boot failed", loop.id, exc_info=True
                 )
+
+    @staticmethod
+    def _empty_ended_queues(loops: list[Loop]) -> None:
+        """Empty the queue of every loop that has ended for good, at boot. Its ending empties it
+        (:func:`manager.end_run`); one that ended before endings did kept task ids no scheduler runs
+        again, and its page counted them as queued. A failed loop's queue is its Resume's.
+        Best-effort, like the rows above: a queue that cannot be emptied must not cost the loops
+        their boot adoption."""
+        terminal = {s.value for s in TERMINAL_STATUSES}
+        for loop in loops:
+            if loop.status not in terminal or not (loop.kind_config or {}).get("queued_task_ids"):
+                continue
+            try:
+                store.clear_queue(loop.id)
+            except Exception:
+                logger.warning("loop %s: emptying its queue at boot failed", loop.id, exc_info=True)
 
     async def _rearm_running(self, loop: Loop) -> bool:
         """Re-arm one RUNNING loop whose worker died with the process — or park it for the

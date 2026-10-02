@@ -331,9 +331,6 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // `dismiss` goes through `reportingWrite`. A failed feedback row costs the learning signal, not the
   // action the user asked for, and a second toast about it would explain nothing.
   'pages/artifacts/ArtifactViewer.tsx': 1,
-  // (b) "transient — the poll loop will reconcile", and the sibling `del` in the same component does
-  // set an error. A lifecycle pill that a 5s poll corrects is not a claim the user has to act on.
-  'pages/chat/SdlcProgressCard.tsx': 1,
   // (b) Teardown on unmount, twice: "unmounted mid-create → don't leak". The user has left the
   // surface; there is nobody to tell and nothing for them to do.
   'pages/code/CodeCockpitPage.tsx': 2,
@@ -569,12 +566,15 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     const c = census()
     // 30 → 29: the Knowledge page's re-embed trigger ("surfaced by reload") is gone. Its chip starts
     // the one embedding re-index now and renders that job's refusal and progress. 29 → 28:
-    // `lib/agents.ensureBindableAgentName` no longer swallows a binding it could not save.
-    expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(28)
+    // `lib/agents.ensureBindableAgentName` no longer swallows a binding it could not save. 28 → 27:
+    // the chat card's lifecycle controls, whose Pause/Resume/Stop swallowed a refusal, are gone
+    // (nothing rendered them).
+    expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(27)
     // Lowered by exactly the sites fixed since it was measured (ChatPage's two tag writes,
     // LoopPlanReview's swallowed spec save and the lifecycle-hook toggle among them, the
-    // Knowledge page's re-embed trigger: 48 → 47, and the binding save above: 47 → 46).
-    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(46)
+    // Knowledge page's re-embed trigger: 48 → 47, the binding save above: 47 → 46, and the chat
+    // card's lifecycle write: 46 → 45).
+    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(45)
 
     const kinds = (src: string) => silentSites(src, W).map((s) => s.split(':')[0])
     const n = (src: string) => kinds(src).length

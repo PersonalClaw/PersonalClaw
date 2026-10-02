@@ -97,6 +97,19 @@ describe('Active Work reads the same cycle as the cockpit', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 
+  it.each([
+    ['work that conflicts', { conflict: { task_id: 't-1', title: 'Escape the digest titles', branch: 'pclaw/task-t-1', tip: 'a1b2c3d', into: 'main', files: ['CHANGELOG.md'], path: '/home/user/wt' } }],
+    ['work waiting for its merge', { merge: { into: 'main', tasks: [{ task_id: 't-1', title: 'Escape the digest titles', branch: 'pclaw/task-t-1', tip: 'a1b2c3d' }] } }],
+    ['a spend cap', { spend_cap: true, settings: 'models' }],
+  ])("a pause its scheduler made (%s) is settled on the loop's page, not typed into a box", async (_what, extra) => {
+    loops.push(loop({ id: 'c1', kind: 'code', name: 'Fix the digest', status: 'needs_input',
+      pending_question: { question: 'The loop waits for you on its page.', ...extra } }))
+    const navigate = mount('active')
+    fireEvent.click(await screen.findByRole('button', { name: /Answer: Fix the digest/ }))
+    expect(navigate).toHaveBeenCalledWith('code/c1')
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
   it("a loops-table loop's Answer still opens the answer box — the control", async () => {
     loops.push(loop({ status: 'needs_input' }))
     const navigate = mount('active')

@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **906 registrations** over **734 distinct paths** — 899 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **908 registrations** over **735 distinct paths** — 901 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -29,7 +29,7 @@ The 128 families the surface divides into, largest first.
 | `/api/memory` | 49 | 41 |
 | `/api/workflows` | 46 | 41 |
 | `/api/models` | 38 | 30 |
-| `/api/loops` | 26 | 21 |
+| `/api/loops` | 28 | 22 |
 | `/api/artifacts` | 25 | 16 |
 | `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 899 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 901 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -616,6 +616,8 @@ The 899 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PATCH` | `/api/loops/{id}` | {action: start\|pause\|resume\|stop}. |
 | `PUT` | `/api/loops/{id}` | edit a pre-launch spec, or a name-only rename in any |
 | `POST` | `/api/loops/{id}/autopilot` | {on: bool} — toggle the execution drive live. |
+| `GET` | `/api/loops/{id}/conflict` | the finished task's work that conflicts with your branch. |
+| `POST` | `/api/loops/{id}/conflict` | {choice, task_id, tip, confirm: true} — redo or drop that work. |
 | `GET` | `/api/loops/{id}/design/tokens` | the RESOLVED token tree |
 | `POST` | `/api/loops/{id}/grill-tree` | guided-decomposition intake (grill's ``tree`` |
 | `GET` | `/api/loops/{id}/kept-work` | the task work an ended run kept because it was not merged. |

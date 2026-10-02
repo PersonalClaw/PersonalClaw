@@ -157,7 +157,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   // took it.
   //
   // 4000ms matches every sibling that got this right: `LoopCockpitPage` (for both its
-  // delete AND its stop), `LoopsListPage`, `SdlcProgressCard`, `WorkflowsListPage` and
+  // delete AND its stop), `LoopsListPage`, `WorkflowsListPage` and
   // `tasks/formControls`. This file was one of two that lost the timer when the pattern
   // was copied — which is what happens with no shared primitive to copy FROM.
   //

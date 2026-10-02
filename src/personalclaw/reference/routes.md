@@ -463,6 +463,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PATCH /api/loops/{id}` — {action: start|pause|resume|stop}.
 - `PUT /api/loops/{id}` — edit a pre-launch spec, or a name-only rename in any
 - `POST /api/loops/{id}/autopilot` — {on: bool} — toggle the execution drive live.
+- `GET /api/loops/{id}/conflict` — the finished task's work that conflicts with your branch.
+- `POST /api/loops/{id}/conflict` — {choice, task_id, tip, confirm: true} — redo or drop that work.
 - `GET /api/loops/{id}/design/tokens` — the RESOLVED token tree
 - `POST /api/loops/{id}/grill-tree` — guided-decomposition intake (grill's ``tree``
 - `GET /api/loops/{id}/kept-work` — the task work an ended run kept because it was not merged.

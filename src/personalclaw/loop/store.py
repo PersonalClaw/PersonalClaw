@@ -777,6 +777,11 @@ def unqueue_tasks(loop_id: str, task_ids: list[str]) -> list[str]:
     return _mutate_queue(loop_id, lambda q: [t for t in q if t not in drop])
 
 
+def clear_queue(loop_id: str) -> None:
+    """Empty the code-kind queue: a loop that cannot be resumed runs nothing again."""
+    _mutate_queue(loop_id, lambda q: [])
+
+
 def _mutate_queue(loop_id: str, fn) -> list[str]:
     loop = get(loop_id)
     if loop is None:

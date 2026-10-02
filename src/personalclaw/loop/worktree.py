@@ -645,8 +645,8 @@ def add_worktree(
     An EXISTING worktree is handed back as-is. That is deliberately NOT the reuse-pool
     reset: this path is also the RESUME path (a loop restarting mid-task finds its
     worker's worktree), and resetting here would delete a live task's in-progress work.
-    The reuse reset belongs at the phase/redo boundary where the work is finished with —
-    see :func:`reset_worktree` and its caller in ``sdlc._reap_merge_done``.
+    The reuse reset belongs where the work is finished with: a redo its owner chose after
+    the task's work conflicted (:func:`reset_worktree`, called by ``loop.conflicts``).
 
     Emits one ``TIMING_LOG_PREFIX`` line per call (see the block above): the duration
     covers the work that call actually did, so ``reused`` reports the real cost of the
@@ -960,6 +960,29 @@ def conflict_paths(workspace: str) -> list[str]:
     if rc != 0:
         return []
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+
+def merge_conflicts(workspace: str, task_id: str) -> list[str] | None:
+    """The files merging task *task_id*'s branch into the checked-out branch would conflict on,
+    read without touching the working tree (``merge-tree --write-tree``): ``[]`` when it would merge
+    cleanly, ``None`` when git cannot say (the branch is gone, or this git has no ``--write-tree``).
+    """
+    if not branch_exists(workspace, task_id):
+        return None
+    rc, out = _git(
+        workspace,
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        "--no-messages",
+        "HEAD",
+        branch_name(task_id),
+    )
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    # Both answers open with the tree the merge would write; anything else is git saying it can't.
+    if rc not in (0, 1) or not lines or not re.fullmatch(r"[0-9a-f]{40,64}", lines[0]):
+        return None
+    return lines[1:] if rc == 1 else []
 
 
 def branch_exists(workspace: str, task_id: str) -> bool:
