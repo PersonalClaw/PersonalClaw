@@ -846,6 +846,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             session_key=sk,
             source="mcp",
             tool_name=name,
+            tool_input=args,
             outcome=outcome,
             metadata={"slug": slug} if slug else None,
             error=error,

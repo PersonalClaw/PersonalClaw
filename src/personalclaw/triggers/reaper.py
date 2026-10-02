@@ -213,6 +213,7 @@ def _audit(trigger_id: str, *, tool_name: str, outcome: str, elapsed: float) -> 
             session_key=f"cron:{trigger_id}",
             source="cron",
             tool_name=tool_name,
+            tool_input=None,
             outcome=outcome,
             metadata={"job_id": trigger_id, "elapsed": int(elapsed)},
         )

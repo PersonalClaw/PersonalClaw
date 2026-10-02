@@ -136,6 +136,7 @@ def report_ungated_call(
             tool_kind=tool_kind,
             outcome="ungated_declared" if excused else "ungated",
             request_id=request_id,
+            tool_input=tool_input,
             metadata={
                 "risk": risk,
                 "provider": acp_cli,

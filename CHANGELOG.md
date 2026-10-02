@@ -1035,6 +1035,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **The audit log records what a tool call ran: a shell call's row keeps its command and a file write's row the file it changed, masked (a credential in a command is stored as its mask), on one line and cut at 500 characters with a marker saying how much was cut, on every path that audits a call; Settings → Security → Audit log shows it beside the tool, and `personalclaw security events` prints it (`SecurityEventLog.log_tool_invocation(tool_input=…)`, an SDK addition no app has to change for).**
 - **A key or token in an MCP server's arguments or URL is kept in the credential store, with a reference in `mcp.json`, so no snapshot, export or sync carries it; a server restored onto a machine without the value does not start, and the Tools page says which value to type in.**
 - **Removing an MCP server, or changing any other configuration that can carry a credential, rewrites the shard export at once instead of at the next hourly export.**
 - **Unattended agents now ask unless their automation or loop was allowed to run on its own: Settings → Agent defaults → Approval mode ships as Ask each time, so a trigger's Invoke Agent agent or a subagent started outside a chat asks in your Inbox, an Auto a config already holds is kept, named by Doctor and by Settings, and said in the Allow of each trigger it reaches, and a gateway with nowhere to ask refuses their calls instead of approving them.**

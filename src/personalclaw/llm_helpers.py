@@ -118,8 +118,10 @@ async def stream_and_collect(
     for attempt in range(_PROMPT_BUSY_RETRIES + 1):
         result_text = ""
         # The calls that were ASKED about: each is audited where it is answered
-        # (`_resolve_permission`), every other call once, at its result.
+        # (`_resolve_permission`), every other call once, at its result, with the arguments its
+        # card carried (a result carries none).
         asked: set[str] = set()
+        called: dict[str, Any] = {}
         if on_substitution is not None:
             let_fail_over(provider)
         try:
@@ -143,6 +145,7 @@ async def stream_and_collect(
                     # checks its deny-list, task mode and approval only after yielding it), so it
                     # is not audited here: this row said `auto_approved` for every call, a refused
                     # one included. PreToolUse hooks fire, informational only.
+                    called[str(event.tool_call_id or "")] = event.tool_input
                     await fire_tool_hooks(
                         get_global_hook_store(),
                         event.title,
@@ -160,6 +163,7 @@ async def stream_and_collect(
                         tool_kind=event.tool_kind,
                         outcome=unasked_outcome(meta),
                         request_id=str(event.tool_call_id or ""),
+                        tool_input=called.pop(str(event.tool_call_id or ""), None),
                         metadata={
                             "reason": decided_by,
                             "decided_by": decided_by,
@@ -252,6 +256,7 @@ async def _resolve_permission(
             tool_kind=event.tool_kind,
             outcome=outcome,
             request_id=event.request_id,
+            tool_input=event.tool_input,
             **extra,
         )
 

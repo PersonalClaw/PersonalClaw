@@ -2426,6 +2426,7 @@
      {"annotation": "str | int", "default": "''", "kind": "keyword_only", "name": "request_id"},
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "downstream_service"},
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "resources"},
+     {"annotation": "object", "default": "None", "kind": "keyword_only", "name": "tool_input"},
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "error"},
      {"annotation": "dict | None", "default": "None", "kind": "keyword_only", "name": "metadata"}
     ],

@@ -407,7 +407,7 @@ Security audit and deny list.
 |---|---|
 | `security audit` | Scan conversation history for suspicious tool usage. |
 | `security deny-list` | Show active deny patterns. |
-| `security events [-n LIMIT]` | Show recent security event log entries (default 20). |
+| `security events [-n LIMIT]` | Show recent security event log entries (default 20), masked, each with what it ran or touched: a shell call's command, the file a write changed. |
 | `security verify` | Verify security event log HMAC integrity. |
 
 ## Backup & restore

@@ -588,6 +588,7 @@ def call_tool_with_logging(
             source="mcp",
             tool_name=name,
             tool_kind=session_key,
+            tool_input=raw_args,
             outcome=outcome,
             downstream_service=downstream_service,
             error=reason,
@@ -601,10 +602,11 @@ def call_tool_with_logging(
         source="mcp",
         tool_name=name,
         tool_kind=session_key,
+        tool_input=args,
         outcome=outcome,
         downstream_service=downstream_service,
-        resources=json.dumps(args)[:500] if args else "",
-        error=result[:500] if outcome == "failed" else "",
+        resources=json.dumps(args) if args else "",
+        error=result if outcome == "failed" else "",
     )
     return result
 
@@ -701,6 +703,7 @@ def run_mcp_stdio_loop(
                     source="mcp",
                     tool_name=tool_name,
                     tool_kind=server_name,
+                    tool_input=tool_args,
                     outcome="rejected_excluded",
                     error="managedToolPolicy.exclude",
                 )

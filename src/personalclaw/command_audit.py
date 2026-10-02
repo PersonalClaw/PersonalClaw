@@ -13,6 +13,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from personalclaw.audit_subject import audit_text
 from personalclaw.security import DeniedCommand, redact_for_display
 from personalclaw.sel import SecurityEvent, SecurityEventLog
 
@@ -38,9 +39,9 @@ def audit_command_refusal(
 
     Best-effort on purpose: an audit fault must never turn a refusal into a run. It is logged at
     WARNING rather than swallowed, so a control that stopped being recorded is visible. The
-    command is the evidence, masked as any text a person reads is (``redact_for_display``): a
-    command can carry a credential its run was handed, and the audit log is not a place to keep
-    one.
+    command is the evidence, written as the log writes a tool call's command
+    (``audit_subject.audit_text``: masked, on one line, cut at a bound that says so): a command
+    can carry a credential its run was handed, and the audit log is not a place to keep one.
     """
     if isinstance(refused, DeniedCommand):
         reason, control = refused.refusal(), "shell_denylist"
@@ -61,12 +62,12 @@ def audit_command_refusal(
                 operation=operation,
                 tool_kind="execute_bash",
                 outcome="refused",
-                resources=redact_for_display(reason),
+                resources=audit_text(reason),
                 metadata={
                     **(metadata or {}),
                     "control": control,
                     "rule": rule,
-                    "command": redact_for_display(command)[:400],
+                    "command": audit_text(command),
                 },
             )
         )

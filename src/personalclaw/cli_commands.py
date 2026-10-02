@@ -25,7 +25,7 @@ from personalclaw.security import (
     scan_history,
     scan_memory,
 )
-from personalclaw.sel import sel
+from personalclaw.sel import redact_event, sel
 from personalclaw.vector_memory import NO_INDEX_NOTE, VectorMemoryStore
 
 
@@ -767,7 +767,8 @@ def _security(args: argparse.Namespace) -> None:
     elif action == "events":
 
         limit = getattr(args, "limit", 20)
-        events = sel().recent(limit=limit)
+        # Masked as every reader outside the log sees a record (`sel.redact_event`).
+        events = [redact_event(e) for e in sel().recent(limit=limit)]
         if not events:
             print("No security events recorded.")
             return
@@ -780,6 +781,9 @@ def _security(args: argparse.Namespace) -> None:
             src = e.get("source", "?")
             caller = e.get("caller_identity", "?")
             print(f"  {ts}  [{src}] {etype}: {op} → {outcome}  (caller: {caller})")
+            # What it ran or touched: a shell call's command, the file a write changed.
+            if e.get("resources"):
+                print(f"    resources: {e['resources']}")
             if e.get("error"):
                 print(f"    error: {e['error'][:120]}")
             reason = (e.get("metadata") or {}).get("reason")

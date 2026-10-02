@@ -988,6 +988,23 @@ wrote `auto_approved` for every call and the chat wrote `invoked`, so a call the
 read as approved; the eval runner wrote `invoked` for every call as it appeared and then a second
 row for one that asked.
 
+**A tool call's row says what it ran.** Each writer hands the log the call's arguments
+(`log_tool_invocation(tool_input=…)`), and the row's `resources` records the command of a shell
+call (the platform's `bash`, or an agent CLI's shell call by its kind, its name or a `Running: `
+title) and the path a file write names (the native `write_file`/`edit_file`, or an agent CLI's
+call it reports as `edit`, `delete` or `move`): `audit_subject.subject_of`. A row's `resources`
+(that subject, or what a row about no such call records), its `operation` (an agent CLI can title
+a shell call with the command itself) and its `error` are stored masked the way a call's title is
+masked where it is shown (exfiltration URLs, then credential shapes, withheld whole if the masker
+fails), on one line with each control character a visible escape, and cut at 500 characters with
+a marker saying how many were left out (`audit_subject.audit_text`). A command refused before it
+ran keeps its command the same way (`command_audit`, `metadata.command`), and so does an action
+the denylist held (`guardrails.denylist`). Settings → Security → Audit log shows the command or path
+beside the tool on each row, and `personalclaw security events` prints it.
+`tests/test_sel_subject_census.py` holds every row whose tool is named at run time to handing its
+call's arguments over, so a new path that audits a shell call or a write cannot leave out what it
+ran.
+
 **Size and retention.** The live file rotates by size: the write that takes it past 16 MiB
 archives it to `sel_archive/security_events.<UTC time>.jsonl` under a cross-process lock and starts
 a fresh chain (`verify_integrity` tolerates the break at a rotation), and the rotation is itself

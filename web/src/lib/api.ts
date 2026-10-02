@@ -4450,6 +4450,9 @@ export interface SelEvent {
   agent?: string; source?: string; operation?: string; tool_kind?: string; outcome?: string
   resources?: string; error?: string; prev_hash?: string; entry_hash?: string
   downstream_service?: string; request_id?: string; integrity_ok?: boolean
+  /** Who decided and why (`reason`, `risk`, `decided_by`), and for a command refused before it ran
+   *  the command itself (`command`). A tool call's own command or path is its `resources`. */
+  metadata?: Record<string, unknown>
   /** How this row's `outcome` READS, decided server-side by the same table and matcher that
    *  define the filter pills (`sel.audit_outcome_tone`) — one of `danger`/`warning`/`success`/
    *  `neutral`, and `neutral` for a word nobody classified. The dashboard used to map outcome

@@ -464,6 +464,7 @@ class EvalRunner:
             tool_kind=event.tool_kind,
             outcome="denied" if reason else "auto_approved",
             request_id=event.request_id,
+            tool_input=event.tool_input,
             metadata={"reason": reason or "read_only_tool", "decided_by": decided_by},
         )
 
@@ -495,8 +496,9 @@ class EvalRunner:
         chunks: list[str] = []
         tool_calls: list[str] = []
         # The calls this turn asked about. Each gets its row when it is decided; every other
-        # call gets its one row from its result.
+        # call gets its one row from its result, with the arguments its card carried.
         asked: set[str] = set()
+        called: dict[str, Any] = {}
         from personalclaw.usage_ledger import Attribution, recorder
 
         record = recorder(provider, Attribution(source="eval", session_key=session_key))
@@ -508,6 +510,7 @@ class EvalRunner:
                 # The card of a call being made, before any gate has run: not a decision, so it is
                 # not audited (the row this wrote said `invoked` for a call later refused).
                 tool_calls.append(event.text)
+                called[str(event.tool_call_id or "")] = event.tool_input
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 asked.add(str(event.tool_call_id or ""))
                 await self._decide_permission(provider, event, session_key)
@@ -523,6 +526,7 @@ class EvalRunner:
                     tool_kind=event.tool_kind,
                     outcome=unasked_outcome(meta),
                     request_id=str(event.tool_call_id or ""),
+                    tool_input=called.pop(str(event.tool_call_id or ""), None),
                     metadata={
                         "reason": decided_by,
                         "decided_by": decided_by,

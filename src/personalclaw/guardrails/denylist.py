@@ -296,14 +296,18 @@ def enforce_action(
     if not decision.blocked:
         return decision
     try:
+        from personalclaw.audit_subject import audit_text
         from personalclaw.sel import sel
 
+        # The command it would have run, as a refused command's row keeps it (`command_audit`).
+        commands = _config_commands(action_config) if isinstance(action_config, dict) else []
         sel().log_api_access(
             caller=f"action:{provider_name}",
             operation="guardrails.denylist",
             outcome="blocked" if decision.verdict == "block" else "needs_human",
             source="guardrails",
             resources=f"{decision.matched} — {decision.reason}",
+            metadata={"command": audit_text("; ".join(commands))} if commands else None,
         )
     except Exception:
         logger.debug("denylist SEL audit failed", exc_info=True)

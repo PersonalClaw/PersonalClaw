@@ -556,6 +556,7 @@ async def _maybe_cancel_and_replace(
             source="dashboard",
             tool_name="mid_turn_cancel_replace",
             tool_kind="command",
+            tool_input=None,
             outcome=str(outcome),
             metadata={"session": session.key, "queue_id": qid},
         )
@@ -1315,6 +1316,7 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             source="dashboard",
             tool_name="dashboard_stop",
             tool_kind="command",
+            tool_input=None,
             outcome="hard",
             metadata={"session": name, "force": True},
         )
@@ -1380,6 +1382,7 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
         source="dashboard",
         tool_name="dashboard_stop",
         tool_kind="command",
+        tool_input=None,
         outcome=outcome,
         metadata={"session": name, "force": False},
     )
@@ -1744,6 +1747,7 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
         source="dashboard",
         tool_name="dashboard_interrupt",
         tool_kind="command",
+        tool_input=None,
         outcome=outcome,
         metadata={"session": name, "queue_len": len(session._queue)},
     )

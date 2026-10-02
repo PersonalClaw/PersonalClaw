@@ -367,6 +367,10 @@ function EventRow({ ev }: { ev: SelEvent }) {
   // how the audit log would come to assert a verdict no one decided.
   const tone = TONE_COLOR[ev.outcome_tone ?? 'neutral'] ?? TONE_COLOR.neutral
   const tampered = ev.integrity_ok === false
+  // What it ran: a tool call's command or the file it wrote (its `resources`), or the command a
+  // row about a refused command kept. Other rows' resources stay in the opened row.
+  const command = typeof ev.metadata?.command === 'string' ? ev.metadata.command : ''
+  const ran = ev.event_type === 'tool_invocation' ? ev.resources : command
   return (
     <div className="rounded-md px-3 py-1.5" style={tampered
       ? { background: 'color-mix(in srgb, var(--color-danger) 16%, var(--color-surface-container))' }
@@ -376,7 +380,12 @@ function EventRow({ ev }: { ev: SelEvent }) {
             about eight characters over the pill beside it (`denied_revision_required`). */}
         <span data-type="caption" className="min-w-14 shrink-0 whitespace-nowrap font-mono" style={{ color: tone }}>{ev.outcome || '—'}</span>
         <span data-type="caption" className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low">{ev.event_type}</span>
-        <span className="min-w-0 flex-1 truncate text-on-surface">{ev.operation || ev.resources || '—'}</span>
+        {/* What it ran beside what it was, so the log answers "what did it run" without
+            opening every row. */}
+        <span className="min-w-0 flex-1 truncate text-on-surface">
+          {ev.operation || ev.resources || '—'}
+          {ev.operation && ran && <span className="text-on-surface-low"> · {ran}</span>}
+        </span>
         {/* Not colour alone: the glyph + its accessible label carry the meaning too. */}
         {tampered && <ShieldAlert size={13} className="shrink-0" style={{ color: 'var(--color-danger)' }} aria-label="Integrity check failed — this record was altered" />}
         <span data-type="caption" className="shrink-0 text-on-surface-low">{fmtTime(ev.timestamp)}</span>
@@ -393,6 +402,8 @@ function EventRow({ ev }: { ev: SelEvent }) {
             <Kv k="source" v={ev.source} /><Kv k="tool kind" v={ev.tool_kind} />
             <Kv k="downstream" v={ev.downstream_service} />
             {ev.resources && <Kv k="resources" v={ev.resources} span />}
+            {/* A command refused before it ran keeps it here, its row's resources being the refusal. */}
+            {command && <Kv k="command" v={command} span />}
             {ev.error && <Kv k="error" v={ev.error} span />}
           </div>
           {/* Investigate: opens a chat with this entry AND the others from

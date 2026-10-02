@@ -166,6 +166,7 @@ async def rebind(state: DashboardState, session: _ChatSession, change: Rebinding
         source="dashboard",
         tool_name="dashboard_stop",
         tool_kind="command",
+        tool_input=None,
         outcome=outcome,
         metadata={"session": session.key, "moved": sorted(change.fields)},
     )

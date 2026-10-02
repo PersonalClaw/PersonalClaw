@@ -859,6 +859,7 @@ class SubagentManager:
             tool_kind=event.tool_kind,
             outcome="approved" if decided_by == approval_grants.YOU else "auto_approved",
             request_id=request_id,
+            tool_input=event.tool_input,
             metadata={**(metadata or {}), "decided_by": decided_by},
         )
 
@@ -896,6 +897,7 @@ class SubagentManager:
                 )
             ),
             request_id=request_id,
+            tool_input=event.tool_input,
             error=error or "",
             metadata={**(metadata or {}), "decided_by": decided_by},
         )
@@ -2485,6 +2487,7 @@ class SubagentManager:
                         tool_kind=event.tool_kind,
                         outcome=unasked_outcome(meta),
                         request_id=event.tool_call_id or "",
+                        tool_input=call_inputs.get(event.tool_call_id or ""),
                         metadata={
                             "subagent_id": info.id,
                             "reason": decided_by,

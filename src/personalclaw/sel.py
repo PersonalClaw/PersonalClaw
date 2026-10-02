@@ -6,7 +6,8 @@ Records structured JSON events for every tool/MCP action with:
 - Caller subsystem (``caller_scope``: which unattended pass invoked the call, read from
   the one shared attribution seam in ``guardrails.audit`` — see :class:`SecurityEvent`)
 - Operation type (tool_call, tool_approved, tool_rejected, tool_denied, mcp_call)
-- Resources affected (tool name, tool kind, arguments summary)
+- Resources affected (a shell call's command, the file a write changes, an arguments summary),
+  stored masked and bounded (``audit_subject``)
 - Outcome (approved, rejected, denied, completed, failed)
 - Downstream service (MCP server name if applicable)
 - HMAC-SHA256 integrity chain (each entry signs over previous hash)
@@ -31,6 +32,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
+from personalclaw.audit_subject import SUBJECT_MAX_CHARS, audit_text, subject_of
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ logger = logging.getLogger(__name__)
 _SEL_FILE = "security_events.jsonl"
 _RETENTION_DAYS = 365
 _HMAC_KEY_FILE = "sel_hmac.key"
-_MAX_ARG_LEN = 500
+_MAX_ARG_LEN = SUBJECT_MAX_CHARS
 # Default tamper-check window: verify the most recent N entries instead of the
 # whole (unbounded, append-only) chain, so the audit UI stays responsive.
 _VERIFY_WINDOW = 5000
@@ -697,10 +699,21 @@ class SecurityEventLog:
         request_id: str | int = "",
         downstream_service: str = "",
         resources: str = "",
+        tool_input: object = None,
         error: str = "",
         metadata: dict | None = None,
     ) -> None:
-        """Convenience: log a tool invocation event."""
+        """Log one tool invocation.
+
+        ``tool_input`` is the call's arguments as its runtime handed them, and the row records
+        from them what the call ran or changed (``audit_subject.subject_of``): a shell call's
+        command, the file a write names. ``resources`` is what a row with no such subject records
+        instead. That text, the tool's name (an agent CLI's title can be its command) and
+        ``error`` are stored masked, on one line, and cut at a bound that says so
+        (``audit_subject.audit_text``). ``tests/test_sel_subject_census.py`` holds every row
+        whose tool is named at run time to handing its call's arguments over.
+        """
+        subject = subject_of(tool_name, tool_kind, tool_input) or resources
         self.log(
             SecurityEvent(
                 event_id=uuid.uuid4().hex[:16],
@@ -709,13 +722,13 @@ class SecurityEventLog:
                 caller_identity=session_key,
                 agent=agent,
                 source=source or _infer_source(session_key),
-                operation=tool_name,
+                operation=audit_text(tool_name),
                 tool_kind=tool_kind,
                 outcome=outcome,
                 request_id=str(request_id),
                 downstream_service=downstream_service,
-                resources=resources[:_MAX_ARG_LEN] if resources else "",
-                error=error[:_MAX_ARG_LEN] if error else "",
+                resources=audit_text(subject) if subject else "",
+                error=audit_text(error) if error else "",
                 metadata=metadata or {},
             )
         )

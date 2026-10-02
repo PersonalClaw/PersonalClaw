@@ -71,6 +71,7 @@ async def refuse_unattended(
         tool_kind=event.tool_kind,
         outcome="denied",
         request_id=event.request_id,
+        tool_input=event.tool_input,
         metadata={
             # The answers the agent offered for the call (`turn_endings.offered`), as on every
             # other decision row of the approval gate.

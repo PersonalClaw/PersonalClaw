@@ -195,6 +195,8 @@ class TestEventLogging:
         sel_file = sel_dir / "security_events.jsonl"
         data = json.loads(sel_file.read_text().strip())
         assert len(data["resources"]) == 500
+        # The cut is stated, never silent: what is kept, then how much was left out.
+        assert data["resources"] == "x" * 473 + "…[cut: 527 more characters]"
 
 
 class TestVerifyIntegrity:

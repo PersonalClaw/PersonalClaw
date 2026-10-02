@@ -3980,6 +3980,7 @@ async def run_chat(
                         tool_kind=event.tool_kind,
                         outcome=unasked_outcome(_tmeta),
                         request_id=event.tool_call_id,
+                        tool_input=_called_as[1] if _called_as else None,
                         metadata={
                             "reason": _decided_by,
                             "decided_by": _decided_by,
@@ -4088,6 +4089,7 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="failed",
                                 request_id=event.tool_call_id,
+                                tool_input=_called_as[1] if _called_as else None,
                                 metadata={
                                     "reason": (
                                         "loop_breaker_circuit"
@@ -4170,6 +4172,7 @@ async def run_chat(
                         tool_kind=event.tool_kind,
                         outcome="denied",
                         request_id=event.request_id,
+                        tool_input=event.tool_input,
                         metadata={
                             "reason": f"task_mode:{_task_mode}",
                             "decided_by": "task_mode",
@@ -4213,6 +4216,7 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="refused" if _control else "denied",
                                 request_id=event.request_id,
+                                tool_input=event.tool_input,
                                 error="denylist_command",
                                 metadata={
                                     **_offered,
@@ -4249,6 +4253,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="refused" if _control else "denied",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             error="hook_deny",
                             metadata={
                                 **_offered,
@@ -4278,6 +4283,7 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="denied",
                                 request_id=event.request_id,
+                                tool_input=event.tool_input,
                                 error=f"validation_failed: {e}",
                                 metadata={"decided_by": "validation", **_offered},
                             )
@@ -4300,6 +4306,7 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="auto_approved",
                                 request_id=event.request_id,
+                                tool_input=event.tool_input,
                                 metadata={
                                     **_offered,
                                     "reason": approval_grants.HOOK_PATTERN,
@@ -4327,6 +4334,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="denied",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             error=f"validation_failed: {e}",
                             metadata={"decided_by": "validation", **_offered},
                         )
@@ -4352,6 +4360,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="hook_error",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             error=str(hook_exc),
                             metadata={"decided_by": "hook", **_offered},
                         )
@@ -4370,6 +4379,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="hook_blocked",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             metadata={"decided_by": "hook", **_offered},
                         )
                         continue
@@ -4448,6 +4458,7 @@ async def run_chat(
                         tool_kind=event.tool_kind,
                         outcome="auto_approved",
                         request_id=event.request_id,
+                        tool_input=event.tool_input,
                         metadata={
                             **_offered,
                             "reason": _unasked_by,
@@ -4483,6 +4494,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="denied",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             error=f"validation_failed: {e}",
                             metadata={"decided_by": "validation", **_offered},
                         )
@@ -4511,6 +4523,7 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="hook_error",
                                 request_id=event.request_id,
+                                tool_input=event.tool_input,
                                 error=str(hook_exc),
                                 metadata={"decided_by": "hook", **_offered},
                             )
@@ -4527,6 +4540,7 @@ async def run_chat(
                                 tool_kind=event.tool_kind,
                                 outcome="hook_blocked",
                                 request_id=event.request_id,
+                                tool_input=event.tool_input,
                                 metadata={"decided_by": "hook", **_offered},
                             )
                             continue
@@ -4540,6 +4554,7 @@ async def run_chat(
                         tool_kind=event.tool_kind,
                         outcome="auto_approved",
                         request_id=event.request_id,
+                        tool_input=event.tool_input,
                         # Record the effective risk of a blanket auto-approval so a
                         # security auditor can see a DESTRUCTIVE tool ran under trust/
                         # YOLO without a human prompt — the highest-value audit signal
@@ -4603,6 +4618,7 @@ async def run_chat(
                             else ("cancelled" if refused_as == "cancelled" else "rejected")
                         ),
                         request_id=event.request_id,
+                        tool_input=event.tool_input,
                         metadata={
                             **_offered,
                             "reason": "batch_rejection",
@@ -4791,6 +4807,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="denied",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             error=f"validation_failed: {e}",
                             metadata={
                                 "reason": "interactive",
@@ -4820,6 +4837,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="hook_error",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             error=str(hook_exc),
                             metadata={"reason": "interactive", "decided_by": "hook", **_offered},
                         )
@@ -4838,6 +4856,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="hook_blocked",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             metadata={"reason": "interactive", "decided_by": "hook", **_offered},
                         )
                     else:
@@ -4869,6 +4888,7 @@ async def run_chat(
                             tool_kind=event.tool_kind,
                             outcome="approved",
                             request_id=event.request_id,
+                            tool_input=event.tool_input,
                             metadata={
                                 **_offered,
                                 "reason": "interactive",
@@ -4915,6 +4935,7 @@ async def run_chat(
                             else ("cancelled" if ended_as == "cancelled" else "rejected")
                         ),
                         request_id=event.request_id,
+                        tool_input=event.tool_input,
                         metadata={
                             **_offered,
                             "reason": "interactive",

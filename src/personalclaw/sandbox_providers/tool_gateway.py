@@ -209,6 +209,7 @@ class ToolGateway:
                 tool_kind="sandbox_tool",
                 outcome=outcome,
                 request_id=request_id,
+                tool_input=args,
                 downstream_service=f"sandbox:{self._ctx.sandbox}",
                 resources=self._profile.name,
                 error=error,

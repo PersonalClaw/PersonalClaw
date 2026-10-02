@@ -141,6 +141,7 @@ async def run_second_opinion(
             session_key=session_key or "second-opinion",
             tool_name=operation,
             tool_kind="handoff",
+            tool_input=None,
             outcome=outcome,
             downstream_service=backend.name,
             resources=brief_path,

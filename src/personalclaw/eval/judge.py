@@ -101,6 +101,7 @@ class LLMJudge:
                 sel().log_tool_invocation(
                     session_key="eval_judge",
                     tool_name=event.title,
+                    tool_input=event.tool_input,
                     outcome="rejected",
                     source="eval_judge",
                 )

@@ -223,6 +223,7 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
         source="chat_followups",
         tool_name="chat_followups",
         tool_kind="command",
+        tool_input=None,
         outcome="allowed",
         metadata={"session": session.key, "count": len(items)},
     )
