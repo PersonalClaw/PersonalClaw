@@ -170,7 +170,7 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
  *  string sink printed markdown's backticks around it literally. */
 export function Row({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   const hintId = useId()
-  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (90 hinted rows, and
+  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (95 hinted rows, and
   // ux-690 recorded the divided-row layout as a distinction, not drift). The hint is independent of
   // that: a control with its own `aria-label` still needs the sentence beside it to be its description,
   // so this provides the hint id without claiming to name anything.
