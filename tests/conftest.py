@@ -568,6 +568,25 @@ def _reset_context_engine_breakers():
 
 
 @pytest.fixture(autouse=True)
+def _reset_memory_store_cache():
+    """Empty ``context``'s process-wide cache of memory stores around every test.
+
+    ``ContextBuilder`` keeps each memory store it opens in ``context._memory_stores`` so a live
+    gateway reuses one per folder, and the learning cleanup (``learning.composed_text.settle``)
+    walks every cached store. In a test session the cache outlives the test that filled it, while
+    ``_close_sqlite_connections`` closes that store's database when the test ends, so a later
+    test in the same worker walked a closed store and failed on its first query. Cleared, not
+    snapshot-restored, for the reason ``_reset_session_restrictions`` gives: outside a live
+    gateway the correct state is empty.
+    """
+    import personalclaw.context as ctx
+
+    ctx._memory_stores.clear()
+    yield
+    ctx._memory_stores.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_session_restrictions():
     """Clear the process-global per-session memory-restriction registry around every test.
 
