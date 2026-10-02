@@ -60,12 +60,22 @@ against core protocols). Paths are relative to
   (nothing by that name, more than one note matching it, no text) stops the draft before the
   model runs: `422 draft_source_unread` names each file and why, and nothing is written, since
   a draft written around it would guess or promise it on her behalf. Every draft is written
-  under the same rules, whatever prompt is bound: commit her to nothing she did not say, and
-  where the reply needs her word, answer `ASK:` with one question, which the panel shows while
-  writing nothing. A word limit in her words ("120 words max") is asked for over the whole
-  reply, an over-long draft is asked for once more within it (never cut), and the panel counts
-  the draft against it. The route answers `{"item", "drafting"}`; the row's `context_summary`
-  says what the draft stood on, and the SEL row names the notes the model was given.
+  under the same rules, whatever prompt is bound: say for her only what she said or her notes
+  say, leave each question nothing of hers answers to her, marked `[your answer: …]` where its
+  answer goes (`reply_answers.placeholder`), and when nothing else could be written, answer
+  `ASK:` with one question, which the panel shows while writing nothing. A model can ignore its
+  rules, so a written draft is checked (`reply_answers.check`): one more background call, given
+  the message, her words, the notes and the reply in numbered parts, each fenced as data, names
+  each part that answers for her with what none of them say, and each becomes a placeholder
+  unless its words are plainly her words' or her notes'. The check never discards a draft; one
+  that cannot be made is said (`drafting.unchecked`) and the draft is kept as written. The panel
+  lists what is left for her, read from the draft as she edits, and `POST /api/inbox/send`
+  refuses a reply that still holds a placeholder (`422 reply_has_open_answer`, naming each),
+  since the sender would get the mark. A word limit in her words ("120 words max") is asked for
+  over the whole reply, an over-long draft is asked for once more within it (never cut), and the
+  panel counts the draft against it; the shortened draft is the one checked. The route answers
+  `{"item", "drafting"}`; the row's `context_summary` says what the draft stood on, and the SEL
+  row names the notes the model was given.
 - **Agents read it** with `inbox_list` (`agents/native/inbox_tool_defs.py`): the open items
   (`OPEN_STATUSES`), newest first, with what each is, who raised it, when, and its text, the
   sender and text fenced as untrusted data. It declares itself a read, so a read-only automation

@@ -22,6 +22,8 @@ WAITED_FOR = [
     ("mcp_workflows.py", "summarize"),  # a chat's workflow tool matching a template
     ("dashboard/handlers/loop_routes.py", "_ask"),  # the loop composer's task analysis
     ("inbox_service.py", "draft_reply"),  # the Inbox page's Draft reply
+    ("inbox_service.py", "_within_limit"),  # …asked again within her word limit
+    ("reply_answers.py", "check"),  # …and checked for answers she never gave
     ("inbox_service.py", "generate_digest"),  # the Inbox page's channel digest
     ("packs/prompt_cards.py", "convert_card"),  # the prompt-card import form
     ("dashboard/chat_handlers.py", "api_nav_resolve_links"),  # link summaries a caller awaits

@@ -31,7 +31,8 @@ const accepted = (over: Partial<InboxItem> = {}): InboxItem => ({
 } as InboxItem)
 
 const drafting = (over: Partial<InboxDrafting> = {}): InboxDrafting => ({
-  read: [], related: [], summary: '', word_limit: null, words: 0, question: '', skipped: false, ...over,
+  read: [], related: [], summary: '', word_limit: null, words: 0, question: '', skipped: false,
+  answered_for_you: 0, unchecked: false, ...over,
 })
 
 const words = (n: number) => Array.from({ length: n }, () => 'word').join(' ')

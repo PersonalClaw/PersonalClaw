@@ -787,6 +787,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "draft_source_unread": (
         "A file named in what the reply should say could not be read, so no draft was written."
     ),
+    # ── a reply that still leaves a place for the owner's answer (handlers_inbox.api_inbox_send) ─
+    # A drafted reply marks each answer only the owner can give (`reply_answers.placeholder`:
+    # `[your answer: …]`). A reply that still holds one is not sent, since the sender would get the
+    # mark; the site's message names each place.
+    "reply_has_open_answer": (
+        "The reply still has a place left for your answer, so it was not sent."
+    ),
     # ── an Inbox message's attachment (handlers_inbox.api_inbox_attachment) ──
     # Two codes because the row's panel says two different things: the row or attachment named
     # does not exist, or the attachment is listed and was never kept (too large, past the count,

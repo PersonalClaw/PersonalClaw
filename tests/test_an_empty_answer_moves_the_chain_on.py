@@ -143,7 +143,8 @@ def test_an_inbox_reply_the_first_model_left_empty_is_drafted_by_the_next(
     asyncio.run(svc.draft_reply(item.id, instructions="Say the plan is on its way."))
 
     assert store.items[item.id].draft == "Three feeds published; two are worth reading."
-    assert chain == ["here", "relay"]
+    # The draft's own walk. Its check (`reply_answers.check`) walks the same chain after it.
+    assert chain[:2] == ["here", "relay"]
 
 
 def test_a_knowledge_node_moves_on_from_an_empty_answer(chain):

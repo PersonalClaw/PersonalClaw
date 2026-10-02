@@ -14,7 +14,7 @@ import { verdictMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel,
 import { InboxMessageBody } from './ForeignContent'
 import { InboxAttachments } from './InboxAttachments'
 import { WorkflowGateActions } from './WorkflowGateActions'
-import { DraftNotices, WordCount } from './DraftNotices'
+import { DraftNotices, WordCount, OpenAnswers, openAnswers, openAnswersReason } from './DraftNotices'
 import { DeniedCallRerun } from './DeniedCallRerun'
 import { InboxSection as Section } from './InboxSection'
 import { TriggerParkActions } from './TriggerParkActions'
@@ -99,6 +99,8 @@ export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, nav
   }
 
   const dirtyDraft = draft !== (item.draft ?? '')
+  // The places the draft still leaves for her answer: what goes to the sender must not hold one.
+  const leftOpen = openAnswers(draft).length
   const canReply = item.can_reply ?? false
   // Handled, replied or dismissed: the row is done, so the panel shows what became of it, not the
   // controls that would do it again. Send stayed offered after a reply went out (the row read
@@ -358,11 +360,12 @@ export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, nav
                 <div className="flex flex-col gap-xs">
                   <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
                   {draft.trim() && <WordCount text={draft} limit={drafting?.word_limit ?? null} />}
+                  <OpenAnswers text={draft} />
                 </div>
                 <div className="flex flex-wrap items-center gap-s">
                   {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} loading={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
-                  <Button size="sm" onClick={send} loading={busy === 'send'} disabled={busy === 'send' || !draft.trim()}
-                    disabledReason={!draft.trim() ? 'Write a reply first' : undefined}><Send size={14} /> Send reply</Button>
+                  <Button size="sm" onClick={send} loading={busy === 'send'} disabled={busy === 'send' || !draft.trim() || leftOpen > 0}
+                    disabledReason={!draft.trim() ? 'Write a reply first' : leftOpen ? openAnswersReason(leftOpen) : undefined}><Send size={14} /> Send reply</Button>
                 </div>
               </div>
             </Section>

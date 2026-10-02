@@ -829,7 +829,13 @@ async def api_inbox_send(request: web.Request) -> web.Response:
     For a row held from SOMEONE NEW (``native_source.hold_from_someone_new``), the reply goes
     back through the channel they wrote on, threaded under their message: the one answer they
     get, and only because the owner pressed Send.
+
+    A reply that still holds a place a drafted reply left for her answer (``[your answer: …]``,
+    :func:`personalclaw.reply_answers.open_answers`) is refused with ``422
+    reply_has_open_answer`` naming each one, before it goes anywhere.
     """
+    from personalclaw.reply_answers import open_answers, unsent_sentence
+
     state: "DashboardState" = request.app["state"]
     try:
         body = await request.json()
@@ -856,6 +862,10 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "this item's source does not support replies"}, status=400
         )
+    # The sender would get the mark itself: it goes once she has answered there, or taken it out.
+    left = open_answers(text)
+    if left:
+        return json_error("reply_has_open_answer", message=unsent_sentence(left), status=422)
 
     if item.source == "native":
         # The reply is recorded as the draft, restored from the stored one like a saved draft is

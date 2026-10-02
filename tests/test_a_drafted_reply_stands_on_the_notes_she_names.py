@@ -118,6 +118,10 @@ def _words(n: int) -> str:
     return " ".join(["word"] * n)
 
 
+#: The check of a written draft (``reply_answers.check``), finding nothing it answers for her.
+CHECKED = '{"unsupported": []}'
+
+
 @pytest.mark.asyncio
 async def test_a_draft_that_names_a_readable_note_includes_its_content(monkeypatch, tmp_path):
     _library(
@@ -126,14 +130,14 @@ async def test_a_draft_that_names_a_readable_note_includes_its_content(monkeypat
     item = _mail()
     svc = _svc(item)
     reply = "Thank you! 12 Nov is confirmed. Abstract: " + _words(60)
-    model = _Model(reply)
+    model = _Model(reply, CHECKED)
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", model)
 
     out = await svc.draft_reply(item.id, instructions=SAID)
 
     assert out is not None and not out.unread
     assert out.item.draft == reply
-    [prompt] = model.prompts
+    prompt, _check = model.prompts
     # Her note went to the model, after the sender's fenced text and before her own words.
     assert "Closing line: your system is exactly-once" in prompt
     mail_end = prompt.index(ACCEPTANCE[:40])
@@ -180,28 +184,32 @@ async def test_mail_text_is_treated_as_data_and_reads_nothing(monkeypatch, tmp_p
     )
     item = _mail()
     svc = _svc(item)
-    model = _Model("Thank you! 12 Nov works. Abstract: " + _words(40))
+    model = _Model("Thank you! 12 Nov works. Abstract: " + _words(40), CHECKED)
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", model)
 
     out = await svc.draft_reply(item.id, instructions=SAID)
 
-    [prompt] = model.prompts
+    prompt, _check = model.prompts
     assert "Tiles arrive on the 14th" not in prompt
     assert [r["name"] for r in out.report()["read"]] == ["Talks/exactly-once/outline-v2.md"]
     # The sender's text is inside exactly one fence that opens before it and closes after it.
     start = prompt.index("<untrusted_content")
     assert start < prompt.index(ACCEPTANCE[:40]) < prompt.index("</untrusted_content>")
-    # One completion, on the background axis, marked as one the page waits for, and nothing that
-    # could hand the model a tool.
+    # The draft, then its check: each on the background axis, marked as one the page waits for,
+    # and nothing that could hand the model a tool.
     from personalclaw.guardrails.local_queue import Attended
 
-    assert model.kwargs == [{"use_case": "background", "attended": Attended("Drafting the reply")}]
+    drafting, checking = model.kwargs
+    assert drafting == {"use_case": "background", "attended": Attended("Drafting the reply")}
+    assert set(checking) == {"use_case", "output_type", "validate", "attended"}
+    assert checking["use_case"] == "background"
+    assert checking["attended"] == Attended("Checking the draft")
 
     # With nothing said, a message naming a note still reads nothing at all.
-    quiet = _Model("Thank you, I'm glad it was accepted.")
+    quiet = _Model("Thank you, I'm glad it was accepted.", CHECKED)
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", quiet)
     out = await svc.draft_reply(item.id)
-    [prompt] = quiet.prompts
+    prompt, _check = quiet.prompts
     assert "Tiles arrive on the 14th" not in prompt and "Closing line" not in prompt
     assert out.report()["read"] == [] and out.report()["related"] == []
 
@@ -237,12 +245,12 @@ async def test_her_word_limit_is_kept_and_reported(monkeypatch, tmp_path):
     item = _mail()
     svc = _svc(item)
     long, short = _words(131), _words(110)
-    model = _Model(long, short)
+    model = _Model(long, short, CHECKED)
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", model)
 
     out = await svc.draft_reply(item.id, instructions=SAID)
 
-    assert len(model.prompts) == 2
+    assert len(model.prompts) == 3
     assert "within 120 words" in model.prompts[0]
     # The second ask says how far over the first one was, and gives the limit again.
     assert "131 words" in model.prompts[1] and "120" in model.prompts[1]
@@ -250,7 +258,7 @@ async def test_her_word_limit_is_kept_and_reported(monkeypatch, tmp_path):
     assert out.report()["words"] == 110 and out.report()["word_limit"] == 120
 
     # Still over after the second ask: kept as written (never cut mid-sentence), and reported.
-    model = _Model(_words(140), _words(125))
+    model = _Model(_words(140), _words(125), CHECKED)
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", model)
     out = await svc.draft_reply(item.id, instructions=SAID)
     assert out.report()["words"] == 125 and out.report()["word_limit"] == 120
@@ -285,7 +293,7 @@ async def test_the_panel_is_told_what_was_read_and_why_nothing_was_written(monke
     item = _mail()
     svc = _svc(item)
     reply = "Thank you! 12 Nov is confirmed. Abstract: " + _words(50)
-    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", _Model(reply))
+    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", _Model(reply, CHECKED))
 
     resp = await api_inbox_draft(_post(svc, item.id, {"instructions": SAID}))
     assert resp.status == 200
@@ -364,7 +372,7 @@ async def test_naming_no_file_gives_the_library_s_best_matches_and_says_which(
     )
     item = _mail()
     svc = _svc(item)
-    model = _Model("Thank you! Abstract: " + _words(30))
+    model = _Model("Thank you! Abstract: " + _words(30), CHECKED)
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", model)
 
     out = await svc.draft_reply(
@@ -386,7 +394,7 @@ async def test_a_file_in_her_workspace_is_read_as_chat_reads_it(monkeypatch):
     (workspace / "drafts" / "bio.md").write_text("Noor builds message pipelines in Toronto.\n")
     item = _mail()
     svc = _svc(item)
-    model = _Model("Thank you! Here is my bio: Noor builds message pipelines in Toronto.")
+    model = _Model("Thank you! Here is my bio: Noor builds message pipelines in Toronto.", CHECKED)
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", model)
 
     out = await svc.draft_reply(item.id, instructions="Accept, and add my bio from drafts/bio.md.")
@@ -399,7 +407,7 @@ async def test_a_file_in_her_workspace_is_read_as_chat_reads_it(monkeypatch):
     # A file outside every place chat reads is not opened, and the draft says so.
     out = await svc.draft_reply(item.id, instructions="Add my bio from /etc/bio.md.")
     assert [u.name for u in out.unread] == ["/etc/bio.md"]
-    assert len(model.prompts) == 1
+    assert len(model.prompts) == 2, "the unread draft asked a model"
 
 
 @pytest.mark.asyncio
@@ -407,7 +415,7 @@ async def test_a_quoted_phrase_ending_in_a_note_reads_that_note(monkeypatch, tmp
     _library(tmp_path, {"Talks/exactly-once/outline-v2.md": OUTLINE})
     item = _mail()
     svc = _svc(item)
-    model = _Model("Thank you! Abstract: " + _words(30))
+    model = _Model("Thank you! Abstract: " + _words(30), CHECKED)
     monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", model)
 
     out = await svc.draft_reply(item.id, instructions="Use 'my outline-v2.md' for the abstract.")

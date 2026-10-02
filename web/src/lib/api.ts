@@ -4303,10 +4303,14 @@ export interface InboxDraftNote { name: string; found: string; where: 'library' 
 /** What one Generate draft stood on (`POST /api/inbox/{id}/draft`). `read`: the files her words
  *  named; `related`: naming none, the library's best matches for her words; `summary`: the row's
  *  `context_summary` saying so, '' when nothing was written. `question`: the model would not draft
- *  without her word, and nothing was written. `skipped`: it judged no reply is needed. */
+ *  without her word, and nothing was written. `skipped`: it judged no reply is needed.
+ *  `answered_for_you`: how many parts of the draft its check left to her (`[your answer: …]`)
+ *  because they answered for her with what neither her words nor her notes say; `unchecked`: a
+ *  draft was written that could not be checked. */
 export interface InboxDrafting {
   read: InboxDraftNote[]; related: InboxDraftNote[]; summary: string
   word_limit: number | null; words: number; question: string; skipped: boolean
+  answered_for_you: number; unchecked: boolean
 }
 export interface InboxDraftResult { item: InboxItem; drafting: InboxDrafting }
 export interface InboxItem {

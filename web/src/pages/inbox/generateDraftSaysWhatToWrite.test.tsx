@@ -27,7 +27,10 @@ const accepted = (over: Partial<InboxItem> = {}): InboxItem => ({
 
 const drafted = (draft: string) => ({
   item: accepted({ draft }),
-  drafting: { read: [], related: [], summary: '', word_limit: null, words: 0, question: '', skipped: false },
+  drafting: {
+    read: [], related: [], summary: '', word_limit: null, words: 0, question: '', skipped: false,
+    answered_for_you: 0, unchecked: false,
+  },
 })
 
 beforeEach(async () => {

@@ -68,6 +68,7 @@ from personalclaw.security import fence_untrusted
 
 if TYPE_CHECKING:
     from personalclaw.inbox_providers.base import IncomingMessage, MessageSourceProvider
+    from personalclaw.reply_answers import Checked
     from personalclaw.reply_grounding import Grounding, Unread
 
 logger = logging.getLogger(__name__)
@@ -104,25 +105,40 @@ _MAX_DRAFT_QUESTION_CHARS = 300
 def _drafting_rules(user: str) -> str:
     """What every draft is written under, after whatever template is bound for drafting.
 
-    A draft is sent as her, so the model may decide nothing for her: no promise, date or
-    acceptance she did not give. Where the reply needs one, it asks her (:data:`DRAFT_ASK`)
-    instead of writing around it. Measured before this: a draft with nothing to go on answered a
-    request for an abstract with "I'll get you the final abstract by end of week"."""
+    A draft is sent as her, so the model may say for her only what she said or her notes say: no
+    promise, date, acceptance or answer she did not give. Each question in the message that
+    nothing of hers answers is left for her, marked where its answer goes
+    (:func:`personalclaw.reply_answers.placeholder`), and a reply that could hold nothing else asks
+    her (:data:`DRAFT_ASK`) instead. Measured before these: a draft with nothing to go on answered
+    a request for an abstract with "I'll get you the final abstract by end of week", and one given
+    the abstract answered the rest of the mail for her ("I'm in for the dinner — no dietary
+    restrictions"). A model can ignore its rules, so the draft is checked after it is written
+    (:func:`personalclaw.reply_answers.check`)."""
+    from personalclaw.reply_answers import placeholder
+
+    example = placeholder("dinner — yes or no, dietary needs")
     return (
         "Rules for this draft, whatever is above:\n"
-        f"- Commit {user} to nothing they have not said here: no promise, date, deadline, "
-        'acceptance or follow-up of your own ("I\'ll send it by Friday" is a promise). Thanks, '
-        "an acknowledgement, or a question back to the sender commit to nothing.\n"
-        f"- Where the reply needs something only {user} can give (content they have not given "
-        f"you, a decision, a date), do not write around it: answer with {DRAFT_ASK} and one short "
-        f"question to {user} saying what you need from them."
+        f"- Commit {user} to nothing they have not said here, and answer nothing for them that "
+        "neither their words nor their notes quoted here answer: no promise, date, deadline, "
+        "acceptance, choice, preference, fact about them or follow-up of your own (\"I'll send it "
+        'by Friday" is a promise). Thanks, an acknowledgement, or a question back to the sender '
+        "commit to nothing.\n"
+        f"- Each question or request in the message that neither {user}'s words nor their notes "
+        f"answer is {user}'s to answer: where its answer goes, write [your answer: …] saying in a "
+        f"few words what is needed, e.g. {example}. Never answer one yourself, and never leave one "
+        "out.\n"
+        f"- If nothing {user} said and none of their notes give you anything to write but those "
+        f"places, answer instead with {DRAFT_ASK} and one short question to {user} saying what "
+        "you need from them."
     )
 
 
 @dataclass
 class DraftOutcome:
-    """What one Generate draft did: the item as it now stands, what the draft stood on, and the
-    model's question for her when it would not write without her word.
+    """What one Generate draft did: the item as it now stands, what the draft stood on, the
+    model's question for her when it would not write without her word, and what the check of the
+    draft did (:attr:`checked`, ``None`` when nothing was written to check).
 
     Nothing was written when a file she named could not be read (:attr:`unread`, and the model
     never ran) or when the model asked (:attr:`question`)."""
@@ -131,6 +147,7 @@ class DraftOutcome:
     grounding: "Grounding"
     question: str = ""
     skipped: bool = False
+    checked: "Checked | None" = None
 
     @property
     def unread(self) -> "list[Unread]":
@@ -144,9 +161,12 @@ class DraftOutcome:
         return not self.unread and not self.question
 
     def report(self) -> dict:
-        """What the reply panel is told about this draft."""
+        """What the reply panel is told about this draft: ``answered_for_you`` counts the parts the
+        check left to her because they answered for her with what nothing of hers says, and
+        ``unchecked`` is a draft written that could not be checked."""
         from personalclaw.reply_grounding import word_count
 
+        checked = self.checked
         return {
             "read": [n.report() for n in self.grounding.named],
             "related": [n.report() for n in self.grounding.related],
@@ -155,6 +175,8 @@ class DraftOutcome:
             "words": word_count(self.item.draft) if self.wrote else 0,
             "question": self.question,
             "skipped": self.skipped,
+            "answered_for_you": checked.answered_for_you if checked else 0,
+            "unchecked": bool(checked and checked.unchecked),
         }
 
 
@@ -693,7 +715,9 @@ class InboxService:
         message itself reads nothing. A file she names that cannot be read stops the draft before
         the model runs (:attr:`DraftOutcome.unread`), since a draft written around it would guess
         or promise on her behalf. A word limit she gives is asked for, and an over-long draft is
-        asked for once more within it.
+        asked for once more within it. What the draft answers for her is checked before it is
+        kept (:func:`personalclaw.reply_answers.check`): each part that answers for her with what
+        neither her words nor those notes say is left to her as a placeholder.
 
         Returns None if the item is unknown or the model call fails. A model that judges no
         reply is warranted returns the SKIP sentinel → we store an empty draft and leave the
@@ -708,6 +732,7 @@ class InboxService:
         from personalclaw.llm_helpers import one_shot_completion
         from personalclaw.prompt_providers.runtime import render_use_case_prompt
         from personalclaw.providers.prompt_use_cases import active_prompt_ref
+        from personalclaw.reply_answers import Checked, check
         from personalclaw.reply_grounding import ground, word_count
 
         said = instructions.strip()
@@ -723,6 +748,7 @@ class InboxService:
         # The prompt this draft is written from, named with the draft it writes: what a verdict
         # on the draft is rated against.
         producer = active_prompt_ref("inbox_draft")
+        message = fence_message_for_prompt(item)
         prompt = (
             render_use_case_prompt(
                 "inbox_draft",
@@ -730,7 +756,7 @@ class InboxService:
                     "user_name": self._user_name,
                     "channel": item.channel_name or item.channel,
                     "sender": item.sender_name or "unknown",
-                    "message": fence_message_for_prompt(item),
+                    "message": message,
                     "style": style,
                 },
             )
@@ -767,6 +793,12 @@ class InboxService:
             return DraftOutcome(item, grounding, question=text)
         if text and limit and word_count(text) > limit:
             text = await self._within_limit(prompt, text, limit, item_id)
+        checked = Checked(text)
+        if text:
+            checked = await check(
+                text, user=user, message=message, notes=grounding.notes, said=said
+            )
+            text = checked.text
         # The verdict is left as it is: asking for a draft is not sorting the message, and a
         # verdict written here would name no maker (her own Noise read "Needs reply · Set by you").
         stored = self.inbox.update(
@@ -777,7 +809,7 @@ class InboxService:
         )
         if stored is None:
             return None
-        return DraftOutcome(stored, grounding, skipped=kind == "skip")
+        return DraftOutcome(stored, grounding, skipped=kind == "skip", checked=checked)
 
     async def _within_limit(self, prompt: str, draft: str, limit: int, item_id: str) -> str:
         """*draft*, asked for once more within the owner's word *limit*. The shorter answer is
