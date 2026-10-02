@@ -19,10 +19,11 @@ import { TextLink } from '../../ui/TextLink'
  *  held to (`GET /api/usage/budget`); it is read-only. Honest-partial: a period mixing a model
  *  with no price row shows a "partial — N unpriced" marker, never a confidently-complete dollar
  *  figure. */
-/** The same period control drives every read on the page, as one `window` of the gateway's local
- *  days, so the tiles, the tables and the chart never count two different spans. The gateway
- *  decides where each day starts, because the daily cap beside them counts its days: a page that
- *  worked out "today" from UTC said a turn cost money today while the cap said nothing had. */
+/** The same period control drives every read on the page, as one `window` of days in the owner's
+ *  timezone (the one her schedules run in), so the tiles, the tables and the chart never count two
+ *  different spans. The gateway decides where each day starts, because the daily cap beside them
+ *  counts its days: a page that worked out "today" from UTC said a turn cost money today while the
+ *  cap said nothing had. */
 const PERIODS: ReadonlyArray<{ id: string; label: string; days: number; window: UsageWindow }> = [
   { id: 'today', label: 'Today', days: 1, window: 'day' },
   { id: '7d', label: '7 days', days: 7, window: 'week' },
@@ -261,8 +262,9 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
  *
  *  Both numbers come from `GET /api/usage/budget`: the spend meter's day total and the cap it is
  *  compared with. This line used to set the ledger's total for the page's "Today" beside the cap:
- *  chat turns included (no cap covers them), on a UTC day (the cap resets on the host's), so it
- *  could read a cap as spent that was not, and the reverse. A cap of 0 is unlimited and not shown.
+ *  chat turns included (no cap covers them), on a UTC day (the cap resets at the owner's
+ *  midnight), so it could read a cap as spent that was not, and the reverse. A cap of 0 is
+ *  unlimited and not shown.
  *
  *  A metered call nothing priced is not in the dollar total, and the line says how many there
  *  were: shown as the whole spend, the total told the owner those calls were free, and the cap

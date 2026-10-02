@@ -666,8 +666,8 @@ def rate_entry(body: object) -> tuple[str, dict[str, Any]]:
 
 def set_rate(key: str, row: dict[str, Any], *, home: Path | None = None) -> None:
     """Price *key* at *row* (:func:`rate_entry` validates both), recording the day it was set
-    (``recorded``, the machine's local day) and leaving every other price as it is stored now.
-    Raises :class:`RatesUnreadable` when ``config.json`` cannot be read."""
+    (``recorded``, her day: :mod:`personalclaw.spend_day`) and leaving every other price as it is
+    stored now. Raises :class:`RatesUnreadable` when ``config.json`` cannot be read."""
     from personalclaw import spend_day
 
     priced = {**dict(row), "recorded": spend_day.today()}

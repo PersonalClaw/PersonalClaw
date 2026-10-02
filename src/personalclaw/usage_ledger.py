@@ -454,7 +454,7 @@ def rollup(
     session_prefix: str = "",
 ) -> list[dict]:
     """Aggregate the ledger, grouped by one of ``model|source|agent|provider|day`` (a ``day`` is
-    the local day the daily cap counts, :mod:`personalclaw.spend_day`).
+    her day, in her timezone, the day the daily cap counts: :mod:`personalclaw.spend_day`).
 
     Rows carry summed tokens + cost + a ``priced`` flag that is False when ANY
     constituent row was unpriced (so a partially-unpriced group can't look complete).
@@ -466,11 +466,12 @@ def rollup(
     if group_by not in _GROUP_KEYS:
         raise ValueError(f"group_by must be one of {_GROUP_KEYS}, got {group_by!r}")
     groups: dict[str, dict] = {}
+    zone = spend_day.zone() if group_by == "day" else None
     for row in _iter_rows():
         if not _row_selected(row, since, until, session_key, session_prefix):
             continue
         ts = str(row.get("ts", ""))
-        key = spend_day.day_of(ts) if group_by == "day" else str(row.get(group_by, ""))
+        key = spend_day.day_of(ts, zone) if zone is not None else str(row.get(group_by, ""))
         agg = groups.setdefault(key, _blank_agg())
         _fold(agg, row)
     out = [{group_by: k, **v} for k, v in groups.items()]

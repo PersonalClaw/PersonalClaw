@@ -10,10 +10,11 @@ Two scopes matter for a personal gateway:
 * ``run`` — one unattended run (a goal-loop cycle, a cron fire, a subagent). The
   counter is in-memory, keyed by a caller-supplied run key, and reset when the run
   ends. It stops a single runaway from burning a whole day's budget in one go.
-* ``day`` — all unattended spend for a calendar day (this machine's local day,
+* ``day`` — all unattended spend for a calendar day (her day, in her timezone,
   :mod:`personalclaw.spend_day`, the day every spend surface counts), persisted to
   ``~/.personalclaw/spend.json`` (atomic_write, pruned >30 days) so it survives a
-  restart. It is the real cost guardrail.
+  restart. It is the real cost guardrail. Each operation on the meter reads the day once,
+  before it takes the lock, so no operation mixes two days.
 
 Dollars come from ``routing.rates.price_call``, the one pricing function: the cost the provider
 reported, else the call's tokens at the effective rate (a rate the owner set, a local model's
@@ -304,10 +305,10 @@ class SpendMeter:
         except (OSError, ValueError):
             return {}
 
-    def _save_day(self, data: dict) -> None:
+    def _save_day(self, data: dict, today: str) -> None:
         # Prune days older than the retention window before writing.
         try:
-            cutoff = datetime.now().toordinal() - _PRUNE_DAYS
+            cutoff = datetime.strptime(today, spend_day.DAY_FORMAT).toordinal() - _PRUNE_DAYS
 
             def _keep(day_key: str) -> bool:
                 ordinal = _ordinal_of(day_key)
@@ -340,11 +341,12 @@ class SpendMeter:
         made. Their dollars are unknown, so ``dollars`` holds only what the priced ones cost, and
         they are counted as calls the figure leaves out rather than as free spend, even when they
         reported no tokens. Their tokens count as any call's do."""
+        today = spend_day.today()
         with self._lock:
-            self._charge_locked(tokens, dollars, run_key, unpriced)
+            self._charge_locked(tokens, dollars, run_key, unpriced, today)
 
     def _charge_locked(
-        self, tokens: int, dollars: float, run_key: str | None, unpriced: int
+        self, tokens: int, dollars: float, run_key: str | None, unpriced: int, today: str
     ) -> None:
         tokens = max(0, int(tokens or 0))
         dollars = max(0.0, float(dollars or 0.0))
@@ -353,15 +355,14 @@ class SpendMeter:
             return
         # Day scope (persisted).
         data = self._load_day()
-        day = spend_day.today()
-        existing = data.get(day)
+        existing = data.get(today)
         prev = existing if isinstance(existing, dict) else {}
-        data[day] = {
+        data[today] = {
             "tokens": int(prev.get("tokens", 0)) + tokens,
             "dollars": round(float(prev.get("dollars", 0.0)) + dollars, 6),
             "unpriced": int(prev.get("unpriced", 0) or 0) + unpriced,
         }
-        self._save_day(data)
+        self._save_day(data, today)
         # Run scope (in-memory).
         if run_key:
             rt = self._run_totals.setdefault(run_key, _ScopeTotal())
@@ -389,8 +390,9 @@ class SpendMeter:
         not weigh a call to a model known to cost nothing at all.
         """
         run = run if (run is not None and run_key) else Budget()
+        today = spend_day.today()
         with self._lock:
-            seen = None if cost.by_unit else self._seen_today().get(cost.ref)
+            seen = None if cost.by_unit else self._seen_today(today).get(cost.ref)
             dollars: float | None = None
             if cost.by_unit:
                 # Billed by its unit: it uses no tokens, and its price for what it asks is known.
@@ -410,7 +412,7 @@ class SpendMeter:
             dollars = None if dollars is None else round(dollars, 6)
 
             rooms: list[_Room] = []
-            day_total = self._day_total_locked()
+            day_total = self._day_total_locked(today)
             scopes = [("day", day, day_total, list(self._holds.values()))]
             if run_key:
                 run_total = self._run_totals.get(run_key, _ScopeTotal())
@@ -511,19 +513,20 @@ class SpendMeter:
         Never raises."""
         tokens = max(0, int(tokens or 0))
         dollars = max(0.0, float(dollars or 0.0))
+        today = spend_day.today()
         with self._lock:
             held = self._holds.pop(hold.id, None) if hold is not None else None
             if held is not None and tokens == 0 and dollars == 0.0:
                 tokens, answer_tokens, dollars = held.tokens, held.answer_tokens, held.dollars
                 priced = priced or held.dollars > 0.0
             if tokens or dollars:
-                seen = self._seen_today().setdefault(ref, _Seen())
+                seen = self._seen_today(today).setdefault(ref, _Seen())
                 seen.tokens = max(seen.tokens, tokens)
                 seen.answer_tokens = max(seen.answer_tokens, max(0, int(answer_tokens or 0)))
                 if priced:
                     seen.dollars = max(seen.dollars, dollars)
             try:
-                self._charge_locked(tokens, dollars, run_key, 0 if priced else 1)
+                self._charge_locked(tokens, dollars, run_key, 0 if priced else 1, today)
             except Exception:  # noqa: BLE001 - settling never breaks the call it closes
                 logger.warning("spend charge failed", exc_info=True)
 
@@ -540,11 +543,10 @@ class SpendMeter:
             holds = list(self._holds.values())
         return sum(h.tokens for h in holds), round(sum(h.dollars for h in holds), 6)
 
-    def _seen_today(self) -> dict[str, _Seen]:
-        """What calls to each model have cost today; a new day starts with nothing known."""
-        day = spend_day.today()
-        if self._seen_day != day:
-            self._seen_day = day
+    def _seen_today(self, today: str) -> dict[str, _Seen]:
+        """What calls to each model have cost *today*; a new day starts with nothing known."""
+        if self._seen_day != today:
+            self._seen_day = today
             self._seen = {}
         return self._seen
 
@@ -570,11 +572,12 @@ class SpendMeter:
     # ── Verdicts ─────────────────────────────────────────────────────────
 
     def day_totals(self) -> _ScopeTotal:
+        today = spend_day.today()
         with self._lock:
-            return self._day_total_locked()
+            return self._day_total_locked(today)
 
-    def _day_total_locked(self) -> _ScopeTotal:
-        row = self._load_day().get(spend_day.today(), {})
+    def _day_total_locked(self, today: str) -> _ScopeTotal:
+        row = self._load_day().get(today, {})
         if not isinstance(row, dict):
             row = {}
         return _ScopeTotal(

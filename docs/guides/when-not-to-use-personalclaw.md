@@ -241,8 +241,9 @@ overspending quietly, and a dollar ceiling refuses each call that costs money on
 room for it, while calls to a model that costs nothing keep running. A loop a ceiling refuses is
 paused, not failed: it says which ceiling and what was spent, raises one Inbox item, and tries
 nothing again until you resume it. The day counter is
-persisted to `~/.personalclaw/spend.json` so it survives a restart, and its day is this
-machine's local day, the day Settings → Usage counts too. That is a genuine control.
+persisted to `~/.personalclaw/spend.json` so it survives a restart, and its day is the day in
+your timezone (`timezone` in config.json, set by `personalclaw setup`, else this machine's), the
+one your schedules run in and Settings → Usage counts too. That is a genuine control.
 Five things about it are worth knowing *before* you point a goal loop at something and go to
 bed:
 

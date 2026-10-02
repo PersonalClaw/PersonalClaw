@@ -72,15 +72,16 @@ may have cut into, per cell it keeps whichever saw more ``calls`` (:func:`_merge
 a durable fold earns its place beside the ledger's own ``group_by="day"`` rollup, which can only see
 the retained tail.
 
-**A day is this machine's local day** (:mod:`personalclaw.spend_day`), the day the daily cap counts,
-so the Usage page's "Today" and chart and the cap beside them count one day.
+**A day is her day** (:mod:`personalclaw.spend_day`): the calendar day in her timezone, the one her
+schedules run in and the daily cap counts, so the Usage page's "Today" and chart and the cap beside
+them count one day. A pass over the ledger resolves that zone once (:func:`fold_files`).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, tzinfo
 from pathlib import Path
 from typing import Any, Callable
 
@@ -267,10 +268,12 @@ def fold_turn_row(
     row: dict[str, Any],
     *,
     look: Callable[[str, str], tuple[bool, bool]] | None = None,
+    zone: tzinfo | None = None,
 ) -> bool:
-    """Fold one ``usage/turns.jsonl`` ledger turn in place. Returns whether it landed in a cell."""
+    """Fold one ``usage/turns.jsonl`` ledger turn in place, on her day in *zone* (her timezone,
+    resolved here when the caller has not). Returns whether it landed in a cell."""
     look = look or _rate_lookup(None)
-    date = spend_day.day_of(row.get("ts"))
+    date = spend_day.day_of(row.get("ts"), zone)
     provider = str(row.get("provider", "") or "")
     model = str(row.get("model", "") or "")
     if not date or not (provider or model):
@@ -333,7 +336,10 @@ def ledgered_audit_ids(ledger_rows: list[dict[str, Any]]) -> frozenset[str]:
 
 
 def audit_census(
-    rows: list[dict[str, Any]], *, ledgered: frozenset[str] = frozenset()
+    rows: list[dict[str, Any]],
+    *,
+    ledgered: frozenset[str] = frozenset(),
+    zone: tzinfo | None = None,
 ) -> dict[str, Any]:
     """Count the guarded-attempt spend the fold leaves out, so the gap is stated not hidden.
 
@@ -345,9 +351,12 @@ def audit_census(
 
     ``unpriced_calls`` are the attempts among them whose cost nothing priced
     (``guardrails.audit.row_priced``): ``dollars_est`` holds nothing for them, so it is a floor
-    whenever one is counted, never the whole of what they cost.
+    whenever one is counted, never the whole of what they cost. ``days`` counts them on her days
+    in *zone*, as :func:`fold_turn_row` dates a turn.
     """
     from personalclaw.guardrails.audit import row_priced
+
+    zone = spend_day.zone() if zone is None else zone
 
     out: dict[str, Any] = {
         "calls": 0,
@@ -366,7 +375,7 @@ def audit_census(
         if not row_priced(rec):
             out["unpriced_calls"] += 1
         _count(out["by_use_case"], str(rec.get("use_case", "") or "(blank)"))
-        day = spend_day.day_of_epoch(rec.get("ts"))
+        day = spend_day.day_of_epoch(rec.get("ts"), zone)
         if day:
             _count(out["days"], day)
     return out
@@ -414,17 +423,19 @@ def fold_files(
     audit_path: Path | None = None,
     ledger_path: Path | None = None,
 ) -> dict[str, Any]:
-    """A fold built from scratch: the ledger summed, the attempts no ledger row counts censused."""
+    """A fold built from scratch: the ledger summed, the attempts no ledger row counts censused,
+    every row dated in her timezone, resolved once for the pass."""
     audit_path, ledger_path = _default_paths(audit_path, ledger_path)
     look = _rate_lookup(home)
+    zone = spend_day.zone()
     fold = empty_fold()
     turns = 0
     ledger_rows = _iter_json_lines(ledger_path)
     for row in ledger_rows:
-        if fold_turn_row(fold, row, look=look):
+        if fold_turn_row(fold, row, look=look, zone=zone):
             turns += 1
     fold["uncounted"] = audit_census(
-        _iter_json_lines(audit_path), ledgered=ledgered_audit_ids(ledger_rows)
+        _iter_json_lines(audit_path), ledgered=ledgered_audit_ids(ledger_rows), zone=zone
     )
     fold["sources"] = {"usage_ledger": turns}
     return fold
@@ -512,7 +523,7 @@ def refresh(
 
 
 def window_dates(window: str, *, today: str = "") -> list[str]:
-    """The days a window covers, oldest first: N local days ending with *today*, which is the day
+    """The days a window covers, oldest first: N of her days ending with *today*, which is the day
     the daily cap is counting unless a caller names another (:mod:`personalclaw.spend_day`)."""
     days = WINDOW_DAYS.get(window, WINDOW_DAYS["day"])
     try:

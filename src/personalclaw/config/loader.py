@@ -3820,7 +3820,8 @@ class AppConfig:
         metadata=_meta(
             "Timezone",
             "IANA timezone name (e.g. 'America/Los_Angeles'). "
-            "Used to display cron schedules in local time.",
+            "Schedules run in it, and Usage, the daily spend caps and the monthly recap count "
+            "their days in it. Empty uses this machine's timezone.",
         ),
     )
     snapshot_dir: str = field(

@@ -313,7 +313,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow run incident mode holds reads Held, not Running, on its page, in the run list and on the chat's run card, and Mission Control no longer lists it as working.**
 - **Home's To triage, Mission Control and the phone name a row an app or a run raised by the app's name or the work it is for, not by its notification source (`app:demo-proposer`, `loop`).**
 - **A merge restore brings a snapshot's knowledge library back, from `personalclaw restore`, the Backups page and a folder sync, and one that leaves a part unchanged names it and does not say it completed (`personalclaw restore` exits 1).**
-- **Settings → Usage counts the day the daily cap counts, this machine's local day, in its Today, its 7- and 30-day totals, its chart and the Settings tile, where it counted the UTC day.**
+- **Settings → Usage, the daily spend caps and the monthly usage recap count the day in your timezone, the one your schedules run in, where Usage's Today, totals, chart and Settings tile counted the UTC day and the caps the gateway clock's.**
 - **The agent is told what `~` means, so a path you write as `~/Notes` reaches your home's Notes folder, not one under the working directory.**
 - **A mail's attachment is no longer read into its message: the Inbox showed a PDF quote's font data as the message and listed no attachment.**
 - **A PDF's text is read from its pages, not from the font and image data inside it.**

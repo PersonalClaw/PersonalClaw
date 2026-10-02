@@ -65,12 +65,17 @@ MACHINE_ZONE_PATHS = frozenset({"/etc/localtime", "/etc/timezone"})
 #: reimplementing it. This is the derived owner set from the docstring above; the rail asserts
 #: each one still routes through `personalclaw.timezones`, so "rewired" cannot silently
 #: regress to "rewritten".
+#:
+#: `spend_day.py` joined it later. It never constructed a zone, so the negative half could not
+#: see it, yet it answered the same question on its own: it dated spend by the process clock's
+#: zone while schedules ran in `config.timezone`, so one user had two days.
 DERIVED_CONSUMERS = (
     "triggers/arm.py",
     "schedule.py",
     "triggers/calendar.py",
     "knowledge/report_schedules.py",
     "cli_setup.py",
+    "spend_day.py",
 )
 
 

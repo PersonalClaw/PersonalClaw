@@ -415,11 +415,19 @@ def test_the_recap_cron_is_registered_and_ARMED(home):
 
 
 def test_the_recap_cron_fires_on_the_first_of_the_month(home):
-    """The schedule must land on the 1st: on the 31st the month it recaps is still open."""
+    """The schedule must land on the 1st: on the 31st the month it recaps is still open.
+
+    The 1st on her clock, which is where the cron fires. ``next_fire_at`` is a UTC instant, and
+    09:00 on the 1st more than nine hours east of UTC is still the last day of the month in UTC.
+    """
+    from personalclaw.timezones import resolve_zone
+
     store = _store(home)
     P.reconcile_usage_recap_cron(store)
     assert P.USAGE_RECAP_SCHEDULE.split()[2] == "1"
-    assert store.get(P.USAGE_RECAP_JOB_NAME).trigger.next_fire_at.split("T")[0].endswith("-01")
+    fires = datetime.fromisoformat(store.get(P.USAGE_RECAP_JOB_NAME).trigger.next_fire_at)
+    on_her_clock = fires.astimezone(resolve_zone())
+    assert (on_her_clock.day, on_her_clock.hour, on_her_clock.minute) == (1, 9, 0)
 
 
 def test_the_recap_cron_is_not_duplicated(home):

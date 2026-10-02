@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw import spend_day
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
 from personalclaw.action_providers.services import get_action_services
 
@@ -55,12 +56,17 @@ _MARK_FILE = "usage_recap_sent.json"
 
 
 def previous_month(now: datetime | None = None) -> str:
-    """The ``YYYY-MM`` of the calendar month before *now* (UTC by default).
+    """The ``YYYY-MM`` of the calendar month before *now*'s; by default, before the month her
+    spend day is in (:mod:`personalclaw.spend_day`), the calendar the fold's days are kept in.
+
+    The UTC month was the default: run by hand on a month's last evening west of Greenwich, the
+    recap covered the month still under way, and its 09:00 fire on the 1st more than nine hours
+    east of Greenwich (Sydney, Auckland) covered the month before last.
 
     Separate from `execute` so a test can pin the boundary arithmetic — December → the previous
     January is the case an f-string built from `month - 1` gets wrong.
     """
-    ref = now or datetime.now(tz=timezone.utc)
+    ref = now or datetime.strptime(spend_day.today(), spend_day.DAY_FORMAT)
     year, month = ref.year, ref.month - 1
     if month == 0:
         year, month = year - 1, 12

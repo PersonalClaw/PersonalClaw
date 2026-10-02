@@ -6,7 +6,7 @@ this cost me?") at different grains, and a second usage handler module would spl
 
 * ``/api/usage/rollup`` + ``/api/usage/totals`` — the ledger (``usage_ledger``), one row
   per model call, filterable by session and an arbitrary ``[since, until)`` window, or by the
-  fold's ``window`` of local days so a page's tiles and its chart count the same days. The
+  fold's ``window`` of her days so a page's tiles and its chart count the same days. The
   session-grain forensic view.
 * ``/api/usage`` — the per-DAY durable fold (``routing/usage.py``) of the same ledger,
   grouped by model / provider / purpose under the single ``interactive|background|loop|eval|app``
@@ -15,6 +15,9 @@ this cost me?") at different grains, and a second usage handler module would spl
 * ``/api/usage/budget`` — today's spend as the daily cap counts it (the spend meter), beside that
   cap. The ledger also holds every chat turn, which no cap counts, so its totals are no figure to
   set beside the cap.
+
+Every day here is her day (:mod:`personalclaw.spend_day`): the calendar day in her timezone, the
+one her schedules run in, whatever zone the gateway process's own clock is in.
 
 The overlap is intentional and bounded: the fold is the long-horizon record (the ledger JSONL is
 capped), the rollup is the recent per-session detail.
@@ -41,8 +44,9 @@ logger = logging.getLogger(__name__)
 
 def _bounds(request: web.Request) -> tuple[str, str] | web.Response:
     """The ``[since, until)`` a ledger read covers: the query's own, or the start of the fold's
-    ``window`` (``day``/``week``/``month``) of local days, which ends now. A window is the days the
-    daily cap counts (``spend_day``), so "Today" here is the cap's today, not the UTC one."""
+    ``window`` (``day``/``week``/``month``) of her days, which ends now. A window is the days the
+    daily cap counts (``spend_day``), so "Today" here is the cap's today in her timezone, not the
+    UTC one nor the gateway clock's."""
     since = request.query.get("since", "")
     until = request.query.get("until", "")
     window = request.query.get("window", "")
@@ -58,7 +62,9 @@ def _bounds(request: web.Request) -> tuple[str, str] | web.Response:
         return json_error(
             "bad_request", message="give a window or since/until, not both", status=400
         )
-    return spend_day.start_of(usage_fold.window_dates(window)[0]), ""
+    zone = spend_day.zone()
+    first = usage_fold.window_dates(window, today=spend_day.today(zone))[0]
+    return spend_day.start_of(first, zone), ""
 
 
 # The rollup grouping keys the ledger supports (mirrors usage_ledger._GROUP_KEYS);
@@ -174,9 +180,9 @@ async def api_usage_budget(request: web.Request) -> web.Response:
     The two numbers the guardrails compare, from the one place they compare them: the day total
     the spend meter charges (``guardrails.budgets.SpendMeter``) and the ceiling
     ``budget_from_config`` builds. The meter counts the model calls PersonalClaw makes on its own
-    (automations, loops, subagents, background work) and no chat turn, over the host's local day.
-    The Usage page used to set the ledger's total beside the cap instead: chat turns included, on
-    a UTC day, so it could show a cap spent that was not, or not show one that was.
+    (automations, loops, subagents, background work) and no chat turn, over her day. The Usage
+    page used to set the ledger's total beside the cap instead: chat turns included, on a UTC day,
+    so it could show a cap spent that was not, or not show one that was.
 
     ``cap_unreadable`` is True when the configured ceiling could not be read; the caps are then
     ``null``, never an unlimited 0 nobody chose.
@@ -185,10 +191,9 @@ async def api_usage_budget(request: web.Request) -> web.Response:
     model, so their dollars are not in ``spent_dollars`` and the dollar cap could not count them.
     The page says so beside the total, rather than letting them read as free.
 
-    ``resets_at`` is when the day the caps count ends (epoch seconds, this host's next local
-    midnight), which a run a cap stopped says in the reader's own time.
+    ``resets_at`` is when the day the caps count ends (epoch seconds, her next midnight), which a
+    run a cap stopped says in the reader's own time.
     """
-    from personalclaw import spend_day
     from personalclaw.guardrails.budgets import (
         BudgetConfigUnreadable,
         budget_from_config,

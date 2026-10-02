@@ -66,9 +66,9 @@ const useSecurity = () => useQuery('settings:security', () => api.securityStats(
 // panel's rails.
 const useSecretsVault = () => useQuery('settings:secrets-card', () => api.secrets(), { persist: true })
 const useMemoryStats = () => useQuery('settings:memory-stats', () => api.memoryStats(), { persist: true })
-// Today's spend for the Usage bento tile: the Usage panel's "Today", the gateway's local day the
-// daily cap counts. A ledger read that FAILS now rejects and the tile says so; `null` is once again
-// only what the ledger itself returns.
+// Today's spend for the Usage bento tile: the Usage panel's "Today", the day in the owner's
+// timezone that the daily cap counts. A ledger read that FAILS now rejects and the tile says so;
+// `null` is once again only what the ledger itself returns.
 const useUsageToday = () => useQuery('settings:usage-today',
   () => api.usageTotals({ window: 'day' }).then((d) => d.totals), { persist: false })
 const useModelsActive = () => useQuery('settings:models-active', () => api.modelsActive(), { persist: true })

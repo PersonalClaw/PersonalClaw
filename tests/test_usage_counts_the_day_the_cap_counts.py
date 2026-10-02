@@ -1,12 +1,16 @@
-"""The Usage page counts the day the daily cap counts: this machine's local day.
+"""Every spend surface counts her day: the calendar day in the timezone her schedules run in.
 
-The cap resets at the local midnight, and the page counted the UTC day beside it. On an evening in
-Toronto (UTC-4) a turn at 20:40 is 00:40 UTC the next day, so at 04:00 the next morning the page's
-"Today" held that turn while the cap line under it said nothing had been spent today, and the
-7-day chart put the spend on a day she did not spend it.
+The cap reset at the gateway clock's midnight, and the page counted the UTC day beside it. On an
+evening in Toronto (UTC-4) a turn at 20:40 is 00:40 UTC the next day, so at 04:00 the next morning
+the page's "Today" held that turn while the cap line under it said nothing had been spent today,
+and the 7-day chart put the spend on a day she did not spend it. Then both counted the gateway
+clock's day, which is hers only when that clock is in her timezone: on a gateway whose clock is on
+UTC (a container) or in another city, her ``config.timezone`` ran her schedules and nothing else.
 
-Everything here runs in America/Toronto with the clock at 2026-09-30 08:00 UTC (04:00 there), and a
-$10.50 turn at 2026-09-30 00:40 UTC (20:40 on the 29th there).
+The clock stands at 2026-09-30 08:00 UTC (04:00 in Toronto) unless a test moves it, the turn is
+$10.50 at 2026-09-30 00:40 UTC (20:40 on the 29th there), and every test runs three ways
+(:data:`WAYS`): her timezone is this machine's own, or it is her ``config.timezone`` on a gateway
+whose clock is on UTC, or on Los Angeles time.
 """
 
 from __future__ import annotations
@@ -29,19 +33,38 @@ HER_DAY, HER_TODAY = "2026-09-29", "2026-09-30"
 
 
 class _Clock(datetime):
-    """The clock at :data:`NOW`, read in whatever zone the process is in."""
+    """The clock at :attr:`at` (:data:`NOW` unless a test moves it), read in whatever zone is
+    asked for."""
+
+    at = NOW
 
     @classmethod
     def now(cls, tz=None):  # type: ignore[override]
-        return NOW.astimezone(tz) if tz is not None else NOW.astimezone().replace(tzinfo=None)
+        return cls.at.astimezone(tz) if tz is not None else cls.at.astimezone().replace(tzinfo=None)
 
 
-@pytest.fixture
-def toronto(monkeypatch):
+#: How her timezone is known: ``(the gateway clock's zone, her config.timezone)``.
+WAYS = {
+    "this-machines-zone": ("America/Toronto", ""),
+    "configured-on-a-utc-clock": ("UTC", "America/Toronto"),
+    "configured-on-a-pacific-clock": ("America/Los_Angeles", "America/Toronto"),
+}
+
+
+@pytest.fixture(params=sorted(WAYS))
+def toronto(request, monkeypatch):
+    from personalclaw.config.loader import config_dir
+
+    clock_zone, configured = WAYS[request.param]
+    if configured:
+        (config_dir() / "config.json").write_text(
+            json.dumps({"timezone": configured}), encoding="utf-8"
+        )
     before = os.environ.get("TZ")
-    os.environ["TZ"] = "America/Toronto"
+    os.environ["TZ"] = clock_zone
     time.tzset()
     monkeypatch.setattr(spend_day, "datetime", _Clock)
+    monkeypatch.setattr(_Clock, "at", NOW)
     try:
         yield
     finally:
@@ -187,3 +210,39 @@ def test_a_day_the_ledger_no_longer_holds_is_kept_from_the_fold(toronto, tmp_pat
 
     assert sorted(fold["days"]) == ["2026-09-20", HER_DAY]
     assert fold["days"]["2026-09-20"] == aged
+
+
+@pytest.mark.asyncio
+async def test_her_caps_start_afresh_at_her_midnight(toronto):
+    """04:00 on the 30th there: the caps start afresh at 00:00 on 1 October there, 04:00 UTC,
+    not at the midnight of the gateway's own clock."""
+    from personalclaw.dashboard.handlers.usage import api_usage_budget
+
+    midnight = datetime(2026, 10, 1, 4, 0, tzinfo=timezone.utc).timestamp()
+    assert spend_day.next_day_starts() == midnight
+    budget = _body(await api_usage_budget(make_mocked_request("GET", "/api/usage/budget")))
+    assert budget["resets_at"] == midnight
+
+
+def test_the_monthly_recap_covers_the_month_before_hers(toronto, monkeypatch):
+    """Run by hand at 20:30 on 30 September there, 00:30 UTC on 1 October, the recap is of
+    August: her September is still under way."""
+    from personalclaw.action_providers import usage_recap_provider as P
+
+    monkeypatch.setattr(_Clock, "at", datetime(2026, 10, 1, 0, 30, tzinfo=timezone.utc))
+    # The recap's own clock too, so every clock it could read is the pinned one.
+    monkeypatch.setattr(P, "datetime", _Clock)
+    assert P.previous_month() == "2026-08"
+
+
+def test_her_day_runs_midnight_to_midnight_on_her_clock_across_the_clock_change(
+    toronto, monkeypatch
+):
+    """Her clocks go back an hour at 02:00 on 1 November, so that day lasts 25 hours: from 04:00
+    UTC to 05:00 UTC on the 2nd. A day is midnight to midnight on her wall clock."""
+    monkeypatch.setattr(_Clock, "at", datetime(2026, 11, 1, 4, 1, tzinfo=timezone.utc))
+    assert spend_day.today() == "2026-11-01"
+    assert spend_day.start_of("2026-11-01") == "2026-11-01T04:00:00+00:00"
+    assert spend_day.start_of("2026-11-02") == "2026-11-02T05:00:00+00:00"
+    assert spend_day.next_day_starts() == datetime(2026, 11, 2, 5, tzinfo=timezone.utc).timestamp()
+    assert spend_day.day_of("2026-11-02T04:30:00+00:00") == "2026-11-01"  # 23:30 there

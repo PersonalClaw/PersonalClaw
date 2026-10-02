@@ -2,23 +2,71 @@
 
 Read-only rollup + totals over the usage ledger, with the shared
 {error:{code,message}} envelope on a bad group_by.
+
+The routes that count days count hers: the calendar day in her timezone (``config.timezone``),
+whatever zone the gateway's own clock is in. Every test here runs with her timezone set to
+America/Toronto, the process clock on UTC (as a container's is), and the clock pinned, so none
+depends on the hour it runs at.
 """
 
 from __future__ import annotations
+
+import json
+import os
+import time
+from datetime import datetime, timezone
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw import spend_day
 from personalclaw import usage_ledger as ul
 from personalclaw.dashboard.handlers.usage import register_usage_routes
 from personalclaw.usage_ledger import TurnUsage
+
+ZONE = "America/Toronto"
+
+#: 20:01 on 1 October in Toronto: the UTC date is already the 2nd, her day is still the 1st.
+EVENING = datetime(2026, 10, 2, 0, 1, tzinfo=timezone.utc)
+EVENING_DAY = "2026-10-01"
+
+
+class _Clock(datetime):
+    """The clock at :attr:`at`, read in whatever zone is asked for."""
+
+    at = EVENING
+
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[override]
+        return cls.at.astimezone(tz) if tz is not None else cls.at.astimezone().replace(tzinfo=None)
+
+
+def _config(home, **budgets) -> None:
+    """Her config.json: her timezone, and the daily caps when a test sets them."""
+    doc: dict = {"timezone": ZONE}
+    if budgets:
+        doc["guardrails"] = {"budgets": budgets}
+    (home / "config.json").write_text(json.dumps(doc), encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
 def _home(tmp_path, monkeypatch):
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    return tmp_path
+    _config(tmp_path)
+    monkeypatch.setattr(spend_day, "datetime", _Clock)
+    monkeypatch.setattr(_Clock, "at", EVENING)
+    before = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    try:
+        yield tmp_path
+    finally:
+        if before is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = before
+        time.tzset()
 
 
 def _seed():
@@ -253,20 +301,11 @@ async def test_session_totals_join_bare_frontend_key_to_namespaced_ledger_rows(_
 # it deliberately does NOT sum (a loop's inner inference is in both records, with no shared id).
 
 
-def _today() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-
-
 def _seed_attempt(home, *, use_case: str, dollars: float, provider="anthropic", model="claude-x"):
-    """Append one guarded-attempt row — the axis the fold censuses instead of summing."""
-    import json
-    import time
-
+    """Append one guarded-attempt row, made now — the axis the fold censuses instead of summing."""
     rec = {
         "audit_id": "a1",
-        "ts": time.time(),
+        "ts": _Clock.at.timestamp(),
         "use_case": use_case,
         "provider": provider,
         "model": model,
@@ -281,10 +320,11 @@ def _seed_attempt(home, *, use_case: str, dollars: float, provider="anthropic", 
         fh.write(json.dumps(rec) + "\n")
 
 
-def _seed_turn(source="chat", cost=1.0, model="claude-x"):
+def _seed_turn(source="chat", cost=1.0, model="claude-x", at: datetime | None = None):
+    """Record one turn, made *at* that instant (now, by default)."""
     ul.record_turn(
         TurnUsage(
-            ts=f"{_today()}T12:00:00+00:00",
+            ts=(at or _Clock.at).isoformat(),
             session_key="s1",
             source=source,
             agent="",
@@ -312,7 +352,7 @@ async def test_usage_fold_route_returns_rows_total_and_estimated_share(_home):
         assert body["total"]["calls"] == 2
         assert body["total"]["dollars_est"] == 1.25
         assert body["estimated_share"] == 1.0  # a turn carries no reported-cost flag
-        assert len(body["series"]) == 1 and body["series"][0]["date"] == _today()
+        assert len(body["series"]) == 1 and body["series"][0]["date"] == EVENING_DAY
     finally:
         await c.close()
 
@@ -393,14 +433,6 @@ async def test_empty_home_is_an_empty_fold_not_an_error(_home):
 # ── /api/usage/budget: the daily cap beside the spend it is held to ──────────────────────
 
 
-def _cap(home, **budgets) -> None:
-    import json
-
-    (home / "config.json").write_text(
-        json.dumps({"guardrails": {"budgets": budgets}}), encoding="utf-8"
-    )
-
-
 @pytest.mark.asyncio
 async def test_the_daily_budget_is_the_meters_spend_beside_the_cap(_home):
     """The cap meters the calls PersonalClaw makes on its own; the ledger holds every chat turn
@@ -410,7 +442,7 @@ async def test_the_daily_budget_is_the_meters_spend_beside_the_cap(_home):
 
     _seed()  # $3.50 in the ledger, chat turns included
     get_meter().charge(1200, 0.25)
-    _cap(_home, max_dollars_per_day=1.0)
+    _config(_home, max_dollars_per_day=1.0)
     c = await _client()
     try:
         r = await c.get("/api/usage/budget")
@@ -425,12 +457,9 @@ async def test_the_daily_budget_is_the_meters_spend_beside_the_cap(_home):
             "max_tokens_per_day": 0,
             "cap_unreadable": False,
         }
-        # The caps start afresh at this host's next local midnight.
-        from datetime import datetime
-
-        reset = datetime.fromtimestamp(resets_at)
-        assert (reset.hour, reset.minute, reset.second) == (0, 0, 0)
-        assert 0 < resets_at - datetime.now().timestamp() <= 86_400 + 3_600
+        # The caps start afresh at her next midnight: 00:00 on 2 October in Toronto, 04:00 UTC.
+        # The gateway's own clock (UTC) passed its midnight at 20:00 her time, a minute ago.
+        assert resets_at == datetime(2026, 10, 2, 4, 0, tzinfo=timezone.utc).timestamp()
     finally:
         await c.close()
 
@@ -445,7 +474,7 @@ async def test_the_daily_budget_says_how_many_calls_its_dollars_leave_out(_home)
     get_meter().charge(1200, 0.25)
     get_meter().charge(800, 0.0, unpriced=1)
     get_meter().charge(0, 0.0, unpriced=1)  # an unpriced call that reported no tokens
-    _cap(_home, max_dollars_per_day=1.0)
+    _config(_home, max_dollars_per_day=1.0)
     c = await _client()
     try:
         body = await (await c.get("/api/usage/budget")).json()
@@ -470,5 +499,101 @@ async def test_a_cap_that_cannot_be_read_is_said_to_be_unreadable(_home, monkeyp
         body = await (await c.get("/api/usage/budget")).json()
         assert body["cap_unreadable"] is True
         assert body["max_dollars_per_day"] is None and body["max_tokens_per_day"] is None
+    finally:
+        await c.close()
+
+
+# ── her midnight, not UTC's: a minute either side of each ───────────────────────────────
+
+
+def _at(day: int, hour: int, minute: int) -> datetime:
+    return datetime(2026, 10, day, hour, minute, tzinfo=timezone.utc)
+
+
+#: (now, her day then, the instant her day started, the instant it ends), in October, when
+#: Toronto is UTC-4.
+MIDNIGHT_MINUTES = [
+    pytest.param(_at(2, 3, 59), "2026-10-01", _at(1, 4, 0), _at(2, 4, 0), id="2359-in-toronto"),
+    pytest.param(_at(2, 4, 1), "2026-10-02", _at(2, 4, 0), _at(3, 4, 0), id="0001-in-toronto"),
+    pytest.param(_at(1, 23, 59), "2026-10-01", _at(1, 4, 0), _at(2, 4, 0), id="2359-utc"),
+    pytest.param(_at(2, 0, 1), "2026-10-01", _at(1, 4, 0), _at(2, 4, 0), id="0001-utc"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("now", "her_day", "day_starts", "day_ends"), MIDNIGHT_MINUTES)
+async def test_a_turn_counts_on_her_day_on_every_route(
+    _home, monkeypatch, now, her_day, day_starts, day_ends
+):
+    """A turn made now is in Today on every route, on her day, and the cap counts it on her day
+    and starts afresh at her next midnight, whichever side of hers or UTC's the minute is on."""
+    from personalclaw.guardrails.budgets import get_meter
+
+    monkeypatch.setattr(_Clock, "at", now)
+    _seed_turn(source="loop", cost=0.75)
+    get_meter().charge(900, 0.75)
+    _config(_home, max_dollars_per_day=5.0)
+    c = await _client()
+    try:
+        fold = await (await c.get("/api/usage?window=day")).json()
+        assert fold["dates"] == [her_day]
+        assert fold["total"]["calls"] == 1 and fold["total"]["dollars_est"] == 0.75
+
+        totals = await (await c.get("/api/usage/totals?window=day")).json()
+        assert totals["since"] == day_starts.isoformat()
+        assert totals["totals"]["turns"] == 1
+
+        by_day = await (await c.get("/api/usage/rollup?group_by=day&window=day")).json()
+        assert [(r["day"], r["turns"]) for r in by_day["rows"]] == [(her_day, 1)]
+
+        budget = await (await c.get("/api/usage/budget")).json()
+        assert (budget["spent_tokens"], budget["spent_dollars"]) == (900, 0.75)
+        assert budget["resets_at"] == day_ends.timestamp()
+    finally:
+        await c.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("before", "now", "today", "week"),
+    [
+        pytest.param(
+            _at(2, 3, 59),
+            _at(2, 4, 1),
+            1,
+            [("2026-10-01", 1), ("2026-10-02", 1)],
+            id="her-midnight-divides",
+        ),
+        pytest.param(
+            _at(1, 23, 59), _at(2, 0, 1), 2, [("2026-10-01", 2)], id="utc-midnight-does-not"
+        ),
+    ],
+)
+async def test_her_midnight_divides_her_days_and_utc_midnight_does_not(
+    _home, monkeypatch, before, now, today, week
+):
+    """Two turns two minutes apart: one at 23:59, one at 00:01. Across her midnight they are two
+    days, in the Usage tiles, the chart and the cap alike; across UTC's (20:00 hers) they are one.
+    """
+    from personalclaw.guardrails.budgets import get_meter
+
+    for at in (before, now):
+        monkeypatch.setattr(_Clock, "at", at)
+        _seed_turn(source="loop", cost=0.5)
+        get_meter().charge(100, 0.5)
+    _config(_home, max_dollars_per_day=5.0)
+    c = await _client()
+    try:
+        fold = await (await c.get("/api/usage?window=day")).json()
+        assert fold["total"]["calls"] == today
+        totals = await (await c.get("/api/usage/totals?window=day")).json()
+        assert totals["totals"]["turns"] == today
+        budget = await (await c.get("/api/usage/budget")).json()
+        assert budget["spent_tokens"] == 100 * today
+
+        chart = await (await c.get("/api/usage?window=week")).json()
+        assert [(s["date"], s["calls"]) for s in chart["series"] if s["calls"]] == week
+        by_day = await (await c.get("/api/usage/rollup?group_by=day&window=week")).json()
+        assert sorted((r["day"], r["turns"]) for r in by_day["rows"]) == week
     finally:
         await c.close()
