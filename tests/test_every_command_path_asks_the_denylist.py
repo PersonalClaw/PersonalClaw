@@ -115,12 +115,11 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
         _COMPOSED
     ),
     "gateway.py::_wslview_open::subprocess.run": "the system browser opener",
-    "knowledge/pipeline/executor.py::PipelineExecutor._media_duration::subprocess.run": _PROBE,
-    "knowledge/pipeline/nodes/media_nodes.py::VideoClassifyNode._dense_regions::subprocess.run": (
-        _COMPOSED
-    ),
     "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::asyncio.create_subprocess_exec": (
         _COMPOSED
+    ),
+    "knowledge/pipeline/nodes/media_nodes.py::media_seconds::asyncio.create_subprocess_exec": (
+        _PROBE
     ),
     "knowledge_providers/pack_parse.py::run_parse_script::subprocess.run": (
         "a connector pack's parse script (an app's code)"
@@ -129,6 +128,9 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "local_models/residency.py::_darwin_memory::subprocess.check_output": _PROBE,
     "local_models/sidecar.py::SidecarInstall._run::subprocess.Popen": "a model sidecar's install",
     "local_models/sidecar.py::SidecarRunner._spawn::subprocess.Popen": "a model sidecar (app code)",
+    "local_models/sidecar.py::run_once::asyncio.create_subprocess_exec": (
+        "one call of an app's worker (app code)"
+    ),
     "loop/worktree.py::_git::subprocess.run": _GIT,
     "mcp_core.py::_get_ppid::subprocess.check_output": _PROBE,
     "mcp_shared.py::_resolve_excluded_tools._get_ppid::subprocess.check_output": _PROBE,

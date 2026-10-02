@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import web
@@ -27,7 +27,6 @@ from personalclaw.dashboard.chat_title import (
     _parse_tags_line,
 )
 from personalclaw.dashboard.state import _ChatSession
-from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 
 
 def _state_with_tags(tmp_path, monkeypatch):
@@ -41,20 +40,15 @@ def _state_with_tags(tmp_path, monkeypatch):
     return state
 
 
-def _mock_title_stream(state, text):
-    """Wire state.sessions.get_or_create to a client streaming *text*."""
-    client = MagicMock()
-    client.reject_tool = AsyncMock()
+def _mock_title_stream(monkeypatch, text):
+    """Answer the title chore (``chores.run_chore``) with *text*, keeping the prompt it was sent."""
 
-    async def _stream(prompt):
-        _stream.last_prompt = prompt
-        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=text)
-        yield LLMEvent(kind=EVENT_COMPLETE)
+    async def _run_chore(prompt, **_kw):
+        _run_chore.last_prompt = prompt
+        return text
 
-    client.stream = _stream
-    state.sessions.get_or_create = AsyncMock(return_value=(client, False, False))
-    state.sessions.release = MagicMock()
-    return _stream
+    monkeypatch.setattr("personalclaw.chores.run_chore", _run_chore)
+    return _run_chore
 
 
 # ── Shared tag helpers (chat_tags) ──────────────────────────────────────────
@@ -157,7 +151,7 @@ class TestMaybeAutoTitleTagging:
             {"role": "assistant", "content": "sure"},
         ]
         state._sessions["s1"] = session
-        stream = _mock_title_stream(state, "Offsite Planning\nTAGS: Work, Events")
+        stream = _mock_title_stream(monkeypatch, "Offsite Planning\nTAGS: Work, Events")
         await _maybe_auto_title(state, session)
         assert session.title == "Offsite Planning"
         assert session._titled is True
@@ -177,7 +171,7 @@ class TestMaybeAutoTitleTagging:
             {"role": "assistant", "content": "hi"},
         ]
         state._sessions["s1"] = session
-        stream = _mock_title_stream(state, "Hello Chat\nTAGS: Done")
+        stream = _mock_title_stream(monkeypatch, "Hello Chat\nTAGS: Done")
         await _maybe_auto_title(state, session)
         assert "TAGS:" not in stream.last_prompt  # tag ask omitted entirely
         assert session.tags == ["t-work"]  # untouched
@@ -191,7 +185,7 @@ class TestMaybeAutoTitleTagging:
             {"role": "assistant", "content": "ok"},
         ]
         state._sessions["s1"] = session
-        stream = _mock_title_stream(state, "Secret\nTAGS: Work")
+        stream = _mock_title_stream(monkeypatch, "Secret\nTAGS: Work")
         await _maybe_auto_title(state, session)
         # incognito is titled by its mode: no model is asked for its title or its tags
         assert session.title == "Incognito chat"
@@ -208,7 +202,7 @@ class TestMaybeAutoTitleTagging:
             {"role": "assistant", "content": "ok"},
         ]
         state._sessions["s1"] = session
-        _mock_title_stream(state, "Scratch\nTAGS: Work")
+        _mock_title_stream(monkeypatch, "Scratch\nTAGS: Work")
         await _maybe_auto_title(state, session)
         assert session.tags == []
 
@@ -221,7 +215,7 @@ class TestMaybeAutoTitleTagging:
             {"role": "assistant", "content": "hi"},
         ]
         state._sessions["s1"] = session
-        stream = _mock_title_stream(state, "Hello Chat\nTAGS: Work")
+        stream = _mock_title_stream(monkeypatch, "Hello Chat\nTAGS: Work")
         with patch("personalclaw.dashboard.chat_title._auto_tag_enabled", return_value=False):
             await _maybe_auto_title(state, session)
         assert session.title == "Hello Chat"  # title still applied
@@ -237,7 +231,7 @@ class TestMaybeAutoTitleTagging:
             {"role": "assistant", "content": "hi"},
         ]
         state._sessions["s1"] = session
-        _mock_title_stream(state, "Hello Chat\nTAGS: none")
+        _mock_title_stream(monkeypatch, "Hello Chat\nTAGS: none")
         await _maybe_auto_title(state, session)
         assert session.title == "Hello Chat"
         assert session.tags == []

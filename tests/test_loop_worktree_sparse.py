@@ -458,20 +458,21 @@ class TestPoolBound:
 
     def test_executor_is_constructed_with_the_bound(self, tmp_path, monkeypatch):
         """Asserting ``pool_size`` alone would not catch ``add_worktrees`` ignoring it,
-        so capture the real ``max_workers`` the executor is built with."""
-        import concurrent.futures as cf
+        so capture the real ``max_workers`` the executor is built with. Every worker pool is a
+        ``memory_writes.ScopeCarryingExecutor``, so that is the class watched."""
+        from personalclaw import memory_writes
 
         ws = _repo(tmp_path)
         monkeypatch.setattr(os, "cpu_count", lambda: 64)
         seen: list[int | None] = []
-        real = cf.ThreadPoolExecutor
+        real = memory_writes.ScopeCarryingExecutor
 
         class Spy(real):  # type: ignore[misc,valid-newtype]
             def __init__(self, max_workers=None, **kw):
                 seen.append(max_workers)
                 super().__init__(max_workers=max_workers, **kw)
 
-        monkeypatch.setattr(cf, "ThreadPoolExecutor", Spy)
+        monkeypatch.setattr(memory_writes, "ScopeCarryingExecutor", Spy)
         wt.add_worktrees(ws, [(f"t-p{i}", ["src"]) for i in range(6)])
         assert seen == [4], f"executor was not bounded: {seen}"
 
