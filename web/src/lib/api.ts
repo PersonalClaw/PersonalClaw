@@ -6133,7 +6133,22 @@ export interface LoopVerdict {
   // A Code loop's stage gate records each evaluation here too (`gate: 'stage'`), with the stage it
   // judged and a verdict per exit criterion; it carries no scores, so the rail never plots it.
   gate?: 'stage'; stage?: string; criteria?: StageGateCriterion[]; note?: string
+  // A cycle decided by a check (`loop/supervisor._record_check`): the command the supervisor ran,
+  // where, and what came of it; the judge's answer when one was asked. No scores either.
+  check?: LoopCheck; judge?: LoopCheckJudge
+  // Why this cycle could not be decided, in words (a check that could not run, a judge that gave
+  // no answer), with what the loop does next.
+  cannot_judge?: string
 }
+/** One run of a loop's check: `output` is the end of what it printed, masked; `not_run` says why
+ *  it did not run (`refused`: the shell denylist's rule; `not_run`: anything else), and
+ *  `exit_code` is null then unless the shell itself reported one. */
+export interface LoopCheck {
+  command: string; dir: string; outcome: 'passed' | 'failed' | 'refused' | 'not_run'
+  exit_code: number | null; output: string; not_run: string
+}
+/** The judge a verifiable goal with several sub-goals asks once its check passes. */
+export interface LoopCheckJudge { outcome: 'pass' | 'fail' | 'no_answer'; answer?: string; why?: string }
 /** One exit criterion of a stage, as its gate judged it on the loop's records. */
 export interface StageGateCriterion { criterion: string; verdict: 'pass' | 'fail' | 'cant_tell'; reason: string }
 export interface LoopNudge { text: string; sent_at: number; sent_at_cycle: number; applied_cycle: number | null }

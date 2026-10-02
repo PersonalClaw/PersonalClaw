@@ -28,6 +28,7 @@ import logging
 
 from personalclaw.loop import files as loop_files
 from personalclaw.loop.loop import Loop
+from personalclaw.workflows.judge_contract import verdict_for_cycle
 from personalclaw.workflows.supervisor_policy import (
     DONE_NEVER,
     DONE_ORCHESTRATED,
@@ -88,16 +89,45 @@ async def done_signal(loop: Loop, findings: list[dict], policy: SupervisorPolicy
 async def _verify_command_signal(
     loop: Loop, findings: list[dict], spec: ConvergenceSpec
 ) -> bool | None:
-    """The deterministic mechanism: RUN the declared command and read its exit code.
+    """The deterministic mechanism: RUN the declared command where the loop's work is, and read
+    its exit code.
 
-    An unset command yields ``None`` (``run_verify_command`` returns the can't-tell tristate for
-    an empty command), which is how a General loop with no check defers to budget by design.
+    The folder is :func:`~personalclaw.loop.loop.effective_dir`: where the worker's files land
+    (the bound workspace, a greenfield code loop's own folder, the project's context folder, else
+    the workspace root), the folder the loop's page names and the worker's brief tells it the
+    check runs in. Run with no folder, a relative check ran wherever the gateway process had been
+    started, failed every cycle on a file that was there, and the loop could never finish.
+
+    Every cycle's check, and the judge's answer when one is asked, is recorded as that cycle's
+    verdict on the loop's ledger (:func:`_record_check`), including why a check that could not
+    run could not. An unset command on a kind whose check is optional (a General loop with none)
+    yields ``None`` with nothing recorded, which is how it defers to budget by design.
     """
-    from personalclaw.loop.gates import run_verify_command
+    from personalclaw.loop.gates import CheckReport, refusal, run_verify_command
+    from personalclaw.loop.loop import effective_dir
 
-    ok = await run_verify_command(_command(loop, spec), loop.workspace_dir or None, label="verify")
-    if ok is not True:
-        return ok  # False (the check ran + failed) / None (couldn't run) → not done yet
+    command = _command(loop, spec)
+    if not command.strip() and spec.done_check_optional:
+        return None
+    where = effective_dir(loop)
+    report = CheckReport()
+    ok = await run_verify_command(command, where or None, label="verify", report=report)
+    if ok is True:
+        outcome = "passed"
+    elif ok is False:
+        outcome = "failed"
+    else:
+        # Refused by the shell denylist is not "could not run": no later cycle changes it, and the
+        # watchdog pauses the loop with the rule (`refused_check`).
+        outcome = "refused" if refusal(command) else "not_run"
+    check = {
+        "command": command,
+        "dir": where,
+        "outcome": outcome,
+        "exit_code": report.exit_code,
+        "output": report.output,
+        "not_run": report.not_run,
+    }
     # The check passed — but a worker can point the command at a SUBSET of a multi-criterion goal
     # (e.g. `npm test` green after only the engine phase, while the AI / UI sub-goals are unbuilt).
     # A green command on a partial build then falsely completes the whole goal (observed live: goal
@@ -105,20 +135,28 @@ async def _verify_command_signal(
     # command passing is necessary but not sufficient — a separate judge must confirm every
     # criterion is met before we call it done.
     criteria = _criteria(loop, spec)
-    if len(criteria) <= 1:
-        return True  # single/no criterion → the command IS the whole goal
-    return await _all_criteria_met(loop, criteria, findings)
+    if ok is not True or len(criteria) <= 1:
+        # False (the check ran + failed) / None (couldn't run) → not done yet; True with a
+        # single/no criterion → the command IS the whole goal.
+        _record_check(loop, findings, check, judged=len(criteria) > 1)
+        return ok
+    done, judge = await _all_criteria_met(loop, criteria, findings, check)
+    _record_check(loop, findings, check, judged=True, judge=judge)
+    return done
 
 
-async def _all_criteria_met(loop: Loop, criteria: list[str], findings: list[dict]) -> bool | None:
+async def _all_criteria_met(
+    loop: Loop, criteria: list[str], findings: list[dict], check: dict
+) -> tuple[bool | None, dict]:
     """A strict judge over a verifiable loop's criteria: PASS only if the evidence from completed
-    cycles shows EVERY criterion is met. Guards against a green command on a partial build.
+    cycles shows EVERY criterion is met. Guards against a green command on a partial build. It is
+    shown the check's own result beside the cycles' reports: what it judges is the work's result,
+    not only the worker's account of it.
 
-    Returns True (all met), False (>=1 unmet → keep going), or None (judge unavailable → defer;
-    the watchdog still bounds by budget). Conservative: any ambiguity is NOT a pass.
+    Returns its decision — True (all met), False (>=1 unmet → keep going), or None (no answer →
+    defer; the watchdog still bounds by budget) — and its answer for the cycle's verdict.
+    Conservative: any ambiguity is NOT a pass.
     """
-    if not findings:
-        return None
     from personalclaw.loop.gates import judge_verdict, verdict_is_pass, verdict_rendered
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
@@ -126,6 +164,11 @@ async def _all_criteria_met(loop: Loop, criteria: list[str], findings: list[dict
     evidence = "\n".join(
         f"- cycle {f.get('cycle')}: {str(f.get('summary', '') or f.get('key_insight', ''))[:300]}"
         for f in recent
+    )
+    printed = f", printing:\n{check['output']}" if check["output"] else "."
+    evidence += (
+        f"\n\nThe supervisor ran the check `{check['command']}` in {check['dir']} this cycle: "
+        f"it passed (exit 0){printed}"
     )
     criteria_block = "\n".join(f"- {s}" for s in criteria)
     # The completion gate lives in the prompt system (bundled ``task-subgoal-judge``, bindable in
@@ -135,14 +178,86 @@ async def _all_criteria_met(loop: Loop, criteria: list[str], findings: list[dict
         {"task": loop.task, "criteria": criteria_block, "evidence": evidence},
     )
     if not prompt:
-        return None
+        return None, {"outcome": "no_answer", "why": "its prompt could not be loaded"}
     raw = await judge_verdict(prompt, loop_id=loop.id)
+    answer = " ".join((raw or "").split())[:300]
     if verdict_is_pass(raw):
-        return True
+        return True, {"outcome": "pass", "answer": answer}
     # A real FAIL → keep cycling. A non-verdict (judge/provider unavailable) → defer (None), NOT a
     # clean False, so the watchdog can flag a degraded done-ness brain rather than silently spin;
     # budget still caps the loop.
-    return False if verdict_rendered(raw) else None
+    if verdict_rendered(raw):
+        return False, {"outcome": "fail", "answer": answer}
+    why = (
+        f"its answer was neither PASS nor FAIL (“{answer}”)"
+        if answer
+        else f"its model (the {_judge_setting()} setting in Settings → Models) could not "
+        "be reached, or answered nothing"
+    )
+    return None, {"outcome": "no_answer", "answer": answer, "why": why}
+
+
+def _judge_setting() -> str:
+    """The Models page's name for the model setting a loop's judges ride."""
+    from personalclaw.loop.judge import judge_use_case
+    from personalclaw.providers.use_cases import USE_CASE_NAMES
+
+    axis = judge_use_case()
+    return f"“{USE_CASE_NAMES.get(axis, axis)}”"
+
+
+def _record_check(
+    loop: Loop, findings: list[dict], check: dict, *, judged: bool, judge: dict | None = None
+) -> None:
+    """Write this cycle's check — and the judge's answer, when it was asked — as the cycle's
+    verdict on the loop's ledger, with the sentence its page shows.
+
+    A check scores nothing, so the verdict carries no marginal or quality score: the returns rail
+    plots judged cycles only. ``cannot_judge`` says, in words, why this cycle could not be decided
+    (a check that could not run, a judge that gave no answer), and that the loop keeps going. A
+    refused check carries none: the loop does not keep going, it pauses with the rule as its
+    question (``gates.pause_for_refusal``)."""
+    where = check["dir"]
+    if check["outcome"] == "passed":
+        state, sentence = "passed (exit 0)", f"The check passed in {where}"
+    elif check["outcome"] == "failed":
+        state = f"failed (exit {check['exit_code']})"
+        sentence = f"The check failed in {where} (exit {check['exit_code']})"
+    elif check["outcome"] == "refused":
+        state = "refused"
+        sentence = f"The check did not run in {where}: {check['not_run']}"
+    else:
+        state = "could not run"
+        sentence = f"The check could not run in {where}: {check['not_run']}"
+    cannot_judge = ""
+    if judge is None:
+        sentence += ", so the judge was not asked." if judged else "."
+        if check["outcome"] == "not_run":
+            cannot_judge = (
+                f"{sentence} The loop keeps going and runs it again after its next cycle."
+            )
+    elif judge["outcome"] == "pass":
+        sentence += ", and the judge found every sub-goal met."
+    elif judge["outcome"] == "fail":
+        sentence += ", but the judge found a sub-goal not met yet."
+    else:
+        sentence += f", but the judge gave no answer: {judge['why']}."
+        cannot_judge = f"{sentence} The loop keeps going and asks again after its next cycle."
+    done = check["outcome"] == "passed" and (judge is None or judge["outcome"] == "pass")
+    record = {
+        "verdict": verdict_for_cycle(done, False).value,
+        "passed": done,
+        "done": done,
+        "done_reason": sentence,
+        "evidence_refs": [f"command:{check['command']} → {state}"],
+        "check": check,
+    }
+    if judge is not None:
+        record["judge"] = judge
+    if cannot_judge:
+        record["cannot_judge"] = cannot_judge
+    cycle = int(findings[-1].get("cycle", len(findings))) if findings else 0
+    loop_files.write_verdict(loop.id, cycle, record)
 
 
 async def _judge_assessment_signal(
@@ -225,7 +340,25 @@ async def _judge_assessment_signal(
     if verdict is None:
         # No verdict → can't quality-assess. None (defer) — NOT a clean False — so the watchdog can
         # flag the done-ness brain as degraded rather than silently never completing. Budget
-        # still bounds a capped loop.
+        # still bounds a capped loop. The cycle says so in words: a cycle left with no verdict
+        # reads as one nobody checked. It carries no score, so the returns rail skips it.
+        sentence = (
+            "The judge gave no verdict for this cycle: its model (the "
+            f"{_judge_setting()} setting in Settings → Models) could not be reached, or its "
+            "answer could not be read."
+        )
+        loop_files.write_verdict(
+            loop.id,
+            cycle,
+            {
+                "verdict": verdict_for_cycle(False, False).value,
+                "passed": False,
+                "done": False,
+                "done_reason": sentence,
+                "cannot_judge": f"{sentence} The loop keeps going and asks again after its "
+                "next cycle.",
+            },
+        )
         return None
     # P4 adversarial-skeptic: a HIGH-stakes verdict (a claimed completion or a claimed regression)
     # must survive a second independent judge told to REFUTE it before the supervisor acts on it. A

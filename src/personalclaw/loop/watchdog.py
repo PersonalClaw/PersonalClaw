@@ -612,12 +612,15 @@ class LoopWatchdog:
         # If that second observation DISAGREES (returns False), block the graduation and
         # surface it — a completion is never shipped on a single observation. A reproduce
         # that can't run (None) never blocks (fail-safe). Budget-stops (genuine=False) are
-        # not shippable claims, so they skip the gate.
+        # not shippable claims, so they skip the gate, and so does a loop with no document
+        # deliverable on disk (a verifiable goal's check IS its output): the gate guards a
+        # graduation that cannot happen there, and a disagreeing judge told its owner an
+        # output was not graduated when there was none.
         ship_ok = True
         if genuine:
             try:
                 loop = store.get(loop_id)
-                if loop is not None:
+                if loop is not None and self._deliverable_file(loop) is not None:
                     confirmed = await instrument.reproduce_confirm(loop)
                     if confirmed is False:
                         ship_ok = False

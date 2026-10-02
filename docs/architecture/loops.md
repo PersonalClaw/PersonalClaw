@@ -286,8 +286,8 @@ stays where it ran and is held by the same rules ([workflows.md](workflows.md)).
   and provisions tasks each cycle.
 - **Design loops** advance design steps (token system → components → …) on a
   live canvas.
-- **Goal/general loops** are done when their `is_done_signal` says so — no
-  stage machinery.
+- **Goal/general loops** are done when their declared done-signal says so (the table
+  above) — no stage machinery.
 - Classification (`loop/classify.py` + per-kind classifiers) picks kind, stop
   logic, and entry stage up front; classifiers never raise — they return safe
   defaults flagged `classified=False`.
@@ -314,7 +314,23 @@ The supervisor does not take the worker's word for it:
 
 - **`loop/gates.py`** — `run_verify_command` re-runs a stage's verify command
   itself (with a cwd from `effective_dir`); `judge_verdict` renders an LLM
-  verdict; `verdict_is_pass` parses it strictly.
+  verdict; `verdict_is_pass` parses it strictly. A caller that passes a
+  `CheckReport` gets what the run did as well: the exit code, the end of what it
+  printed (masked), and why it could not run when it could not.
+- A **Verifiable goal's** check (and a General loop's, when it has one) runs in
+  `effective_dir` after every cycle, and the worker's brief names that folder, since
+  a relative path in the check is a path in it. Each cycle's check is a
+  `judge_verdict` row carrying a `check` record (command, folder, outcome, exit
+  code, output) and the sentence its page shows; a goal with several sub-goals
+  asks its judge once the check passes, shown the check's output beside the
+  cycles' reports, and the answer is on the same row. A check that cannot run, or
+  a judge that gives no answer, puts `cannot_judge` on the row: why, in words, and
+  that the loop asks again after its next cycle. An open-ended judge that gives no
+  verdict leaves the same kind of row, so no cycle is left blank. None of these
+  rows carries a score.
+- The **reproduce** pass at completion re-checks a genuine finish before its
+  document deliverable graduates to an artifact, and runs only when there is one
+  to graduate (a verifiable goal's check is its output).
 - The **SDLC gate** reads the deliverable *content* (not just existence), and
   the **goal judge** re-runs commands / reads artifacts — ground truth over
   worker self-report.
@@ -473,7 +489,11 @@ redirecting a run-backed loop (`run_id`) to its run page, `#/workflows/runs/<id>
   trail, findings, sub-goal prompt bar, artifact/task/project links). It names
   the loop's `work_dir` — `loop.effective_dir`, where the worker's own files land,
   which for a goal/general loop is not `files_dir` — with a link into Files, and a
-  failed outputs read renders as an error, never as "No outputs saved yet";
+  failed outputs read renders as an error, never as "No outputs saved yet". Each
+  cycle in the trail marks its check (passed, failed, could not run), its detail
+  shows the command, the folder, the exit code and the end of what it printed as
+  plain text, and the latest cycle's `cannot_judge` is said at the top while the
+  loop runs;
 - code loops additionally get the mini-IDE at
   `web/src/pages/code/CodeCockpitPage.tsx` — Monaco-based edit/save,
   PTY-backed build/test commands, and the SDLC stage trail.

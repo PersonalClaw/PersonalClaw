@@ -13,7 +13,7 @@ from personalclaw.loop import files as loop_files
 from personalclaw.loop.goal_meta import GOAL_TYPES as _GOAL_TYPES
 from personalclaw.loop.goal_meta import GRANULARITIES as _GRANULARITIES
 from personalclaw.loop.kinds import LoopKindStrategy, attendedness_lines, register
-from personalclaw.loop.loop import Loop
+from personalclaw.loop.loop import Loop, effective_dir
 
 
 class GoalKind(LoopKindStrategy):
@@ -209,7 +209,9 @@ class GoalKind(LoopKindStrategy):
 
     def build_brief(self, loop: Loop, context_dir: str = "") -> str:
         """Ported from loops/manager.write_brief — goal/sub-goals/scope/DoD/
-        deliverables/context. Pure: takes the resolved project ``context_dir``.
+        deliverables/context. Writes nothing: takes the resolved project ``context_dir``, and
+        names a verifiable goal's check folder through ``effective_dir``, the resolver the
+        supervisor runs the check with.
         (Intake-clarification + orchestrator framing fold in when the manager wires
         provisioning in 2c; the durable spec the worker reads each cycle is here.)"""
         cfg = loop.kind_config or {}
@@ -258,11 +260,15 @@ class GoalKind(LoopKindStrategy):
             ]
         lines += attendedness_lines(loop, subject="goal")
         if goal_type == "verifiable" and verify_command:
+            # Named with its folder: a relative path in the check is a path in THAT folder
+            # (`effective_dir`, where the supervisor runs it), which is not always the folder the
+            # worker's shell starts in.
             lines += [
                 "",
-                f"**Verification check:** the supervisor runs `{verify_command}` each "
-                "cycle and reads its result. Drive your work toward making it pass; do "
-                "not self-certify — the supervisor's run is the source of truth.",
+                f"**Verification check:** the supervisor runs `{verify_command}` in "
+                f"`{effective_dir(loop)}` after each cycle and reads its result. Drive your work "
+                "toward making it pass; do not self-certify — the supervisor's run is the "
+                "source of truth.",
             ]
         if loop.success_criteria:
             lines += [

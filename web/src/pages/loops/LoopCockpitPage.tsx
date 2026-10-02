@@ -5,7 +5,7 @@ import {
   ArrowLeft, Pause, Play, Square, X, Check, MessageSquarePlus,
   Play as Start, Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
   Maximize2, PanelRight, ScrollText, Download, FileText, Bot, Cpu, BarChart3, ExternalLink, ListChecks, Link2, AlertTriangle, Copy,
-  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles, CirclePause,
+  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles, CirclePause, CheckCircle2, XCircle,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
@@ -26,7 +26,7 @@ import { thinkingGlow } from '../../design/gradients'
 import { spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
-import { api, ApiError, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem, type LoopSpend } from '../../lib/api'
+import { api, ApiError, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type LoopCheck, type LoopCheckJudge, type Artifact, type TaskItem, type LoopSpend } from '../../lib/api'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { loopSpendPill, loopSpendTitle } from '../../lib/runCost'
 import { peekQuery, writeQuery } from '../../lib/data'
@@ -482,6 +482,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     // Keep the first scored verdict; only overwrite an unscored one (or fill an empty slot).
     if (prev == null || (scored && !prevScored)) verdictByCycle.set(v.cycle, v)
   }
+  // What the latest cycle could not decide, in the loop's own words (a check that could not run, a
+  // judge that gave no answer), read off its stored verdict so it is still said after a reload.
+  // The live `judge_error` event covers a cycle whose verdict has not reached this page yet.
+  const latestCycle = Math.max(-1, ...verdictByCycle.keys())
+  const undecided = verdictByCycle.get(latestCycle)?.cannot_judge
+    || (judgeDegraded ? 'The done-ness check could not run on a recent cycle. The loop keeps going and checks again after its next cycle.' : '')
   // ROI bars keyed to their TRUE cycle number. The judge is best-effort, so a
   // cycle whose judge failed has no verdict — the flat marginal_scores array
   // can't express that gap and would mislabel every later bar. Prefer the
@@ -830,9 +836,9 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             </div>
           )}
           <RepromptNotice reprompt={runFlags.reprompt} className="rounded-md px-m py-s" />
-          {judgeDegraded && running && (
-            <div data-type="body-s" className="rounded-md px-m py-2 flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--color-warning) 12%, transparent)', color: 'var(--color-warning)' }}>
-              <AlertTriangle size={14} className="shrink-0" /> Done-ness check was unavailable on a recent cycle — the loop keeps running on its cycle budget. It’ll resume quality assessment automatically.
+          {undecided && running && (
+            <div role="status" data-type="body-s" className="rounded-md px-m py-s flex items-center gap-s" style={{ background: 'color-mix(in srgb, var(--color-warning) 12%, transparent)', color: 'var(--color-warning)' }}>
+              <AlertTriangle size={14} className="shrink-0" /> {undecided}
             </div>
           )}
           {/* An Attended loop's workers ask before they act, and their asks are answered here. */}
@@ -1399,6 +1405,7 @@ function CycleNode({ f, verdict, dur, hasNudge, onClick, delay }: { f: LoopFindi
         <span data-type="caption" className="shrink-0 inline-flex items-center justify-center size-5 rounded-pill tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-on-surface)' }}>{f.cycle}</span>
         <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>{asText(f.key_insight) || asText(f.summary) || `Cycle ${f.cycle}`}</span>
         {hasNudge && <MessageSquarePlus size={13} className="text-info shrink-0" />}
+        {verdict?.check && <CheckOutcome check={verdict.check} judge={verdict.judge} done={verdict.done} />}
         {typeof verdict?.marginal_value === 'number' && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums" title="judge's marginal value (return this cycle)">▲{verdict.marginal_value.toFixed(1)}</span>}
         <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
       </div>
@@ -1434,7 +1441,8 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
           </div>
         </Section>
       ) : null}
-      {(verdict?.done_reason || verdict?.evidence_refs?.length) ? (
+      {verdict?.check ? <CheckDetail check={verdict.check} sentence={verdict.done_reason} />
+      : (verdict?.done_reason || verdict?.evidence_refs?.length) ? (
         <Section label="Judge verdict">
           {verdict.done_reason ? <p data-type="body-s" className="text-on-surface-var">{asText(verdict.done_reason)}{typeof verdict.band_used === 'number' && <span className="text-on-surface-low"> · returns band {verdict.band_used.toFixed(1)}</span>}</p> : null}
           {/* Ground truth the SUPERVISOR observed itself — ran the verify command, read the
@@ -1489,6 +1497,50 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return <div><Eyebrow className="mb-1.5">{label}</Eyebrow>{children}</div>
+}
+
+const CHECK_SAID: Record<LoopCheck['outcome'], string> = {
+  passed: 'Check passed', failed: 'Check failed', refused: 'Check refused', not_run: 'Check could not run',
+}
+
+function checkIcon(outcome: LoopCheck['outcome']) {
+  return outcome === 'passed' ? { Icon: CheckCircle2, tone: 'text-ok' }
+    : outcome === 'failed' ? { Icon: XCircle, tone: 'text-danger' }
+    : { Icon: HelpCircle, tone: 'text-on-surface-low' }
+}
+
+/** A cycle's check, at a glance in the cycle list: passed, failed, refused or could not run. A passed
+ *  check that did not finish the goal says why: its judge found a sub-goal not met yet, or gave no
+ *  answer, which is not a judgment. */
+function CheckOutcome({ check, judge, done }: { check: LoopCheck; judge?: LoopCheckJudge; done: boolean }) {
+  const { Icon, tone } = checkIcon(check.outcome)
+  const said = check.outcome !== 'passed' || done ? CHECK_SAID[check.outcome]
+    : judge?.outcome === 'no_answer' ? 'Check passed, the judge gave no answer'
+    : 'Check passed, goal not met yet'
+  return <span role="img" aria-label={said} title={said} className={`shrink-0 ${tone}`}><Icon size={13} aria-hidden /></span>
+}
+
+/** What the supervisor's check did on this cycle: its sentence, the command, the folder it ran in,
+ *  its exit code, and the end of what it printed. The output is the command's own text, shown as
+ *  text and never rendered. */
+function CheckDetail({ check, sentence }: { check: LoopCheck; sentence?: string }) {
+  const { Icon, tone } = checkIcon(check.outcome)
+  return (
+    <Section label="Check">
+      {sentence && <p data-type="body-s" className="text-on-surface-var">{sentence}</p>}
+      <div className="mt-s flex items-start gap-s">
+        <Icon size={13} className={`mt-xs shrink-0 ${tone}`} aria-hidden />
+        <span data-type="caption" className="font-mono break-words text-on-surface">{check.command}</span>
+      </div>
+      <p data-type="caption" className="mt-xs text-on-surface-low">
+        in <span className="font-mono break-words">{check.dir}</span>
+        {check.exit_code != null && <> · exit {check.exit_code}</>}
+      </p>
+      {check.output && (
+        <pre data-type="caption" aria-label="What the check printed" className="mt-s max-h-40 overflow-auto rounded-md bg-surface-high/60 p-s text-on-surface-var whitespace-pre-wrap break-words">{check.output}</pre>
+      )}
+    </Section>
+  )
 }
 
 function groupNudges(nudges: LoopNudge[]) {

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from personalclaw.loop import files as loop_files
 from personalclaw.loop.kinds import LoopKindStrategy, attendedness_lines, register
-from personalclaw.loop.loop import Loop
+from personalclaw.loop.loop import Loop, effective_dir
 
 
 class GeneralKind(LoopKindStrategy):
@@ -92,10 +92,13 @@ class GeneralKind(LoopKindStrategy):
                 "context at the start; write durable notes there as you learn them.",
             ]
         if verify_command:
+            # Named with its folder (`effective_dir`, where the supervisor runs it): a relative
+            # path in the check is a path in that folder.
             lines += [
                 "",
-                f"**Verification check:** the supervisor runs `{verify_command}` each "
-                "cycle and reads the result. Drive toward making it pass; don't self-certify.",
+                f"**Verification check:** the supervisor runs `{verify_command}` in "
+                f"`{effective_dir(loop)}` after each cycle and reads the result. Drive toward "
+                "making it pass; don't self-certify.",
             ]
         if loop.success_criteria:
             lines += [

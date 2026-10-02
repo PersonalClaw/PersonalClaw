@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.security import mask_child_output
@@ -21,6 +23,10 @@ logger = logging.getLogger(__name__)
 # A verify/test command is a build/lint/test run — generous bound so a real check
 # (a full test suite) can finish, but a hung command can't wedge the poll loop.
 VERIFY_TIMEOUT_SECS = 180
+
+#: How much of what a check printed is kept: its END, where a test runner prints its summary and a
+#: failing command its error. Read as it arrives, so a check that prints a lot never holds more.
+CHECK_OUTPUT_TAIL = 2000
 
 
 class CheckRefused(Exception):
@@ -62,7 +68,39 @@ def pause_for_refusal(loop_id: str, refused: str, publish: Callable[..., None]) 
     publish(loop_id, "needs_input", {"loop_id": loop_id})
 
 
-async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify") -> bool | None:
+@dataclass
+class CheckReport:
+    """What one run of a check command did, for the words its loop says about it.
+
+    :func:`run_verify_command` fills one when its caller hands it one; the tristate it returns
+    stays the decision. ``exit_code`` is set once the command ran to its end; ``output`` is the end
+    of what it printed (its output and its errors as they came), masked as every view masks a
+    child's output; ``not_run`` says why the command could not run, and is ``""`` once it ran."""
+
+    exit_code: int | None = None
+    output: str = ""
+    not_run: str = ""
+
+
+def _seconds(n: int) -> str:
+    return f"{n} second" if n == 1 else f"{n} seconds"
+
+
+async def _printed_tail(proc) -> bytes:
+    """Everything *proc* prints until it exits, keeping only the last :data:`CHECK_OUTPUT_TAIL`
+    bytes."""
+    kept = bytearray()
+    if proc.stdout is not None:
+        while chunk := await proc.stdout.read(65536):
+            kept += chunk
+            del kept[:-CHECK_OUTPUT_TAIL]
+    await proc.wait()
+    return bytes(kept)
+
+
+async def run_verify_command(
+    cmd: str, cwd: str | None, *, label: str = "verify", report: CheckReport | None = None
+) -> bool | None:
     """Run a verification command and read its exit code — the deterministic
     done-ness signal the supervisor owns.
 
@@ -70,27 +108,36 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
       * ``True``  — exit 0 (the check passed → the gate is met),
       * ``False`` — a genuine non-zero exit (the check ran + failed),
       * ``None``  — the command could NOT run (refused by the shell denylist or the
-        safety screen, timed out, or the binary is missing / exit 127). ``None`` means
-        "can't tell" — the caller should NOT treat it as a pass. A caller that records
-        the outcome on its run asks :func:`refusal` for the words of a refusal.
+        safety screen, timed out, the binary is missing / exit 127, or its folder is
+        gone). ``None`` means "can't tell" — the caller should NOT treat it as a pass.
+        A caller that records the outcome on its run asks :func:`refusal` for the words
+        of a refusal.
+
+    *cwd* is the folder the command runs in. A caller passes the folder the work is in: with
+    none, the command runs wherever the gateway process was started. *report*, when given, is
+    filled with what the run did (:class:`CheckReport`), so its caller can say it in words.
 
     Best-effort + bounded; never raises. The loop is an auto-approved unattended run
     within its trust TTL, so the command executes under the host trust boundary —
     but it is still screened here, whoever persisted it: the shell denylist every
     command path asks, then the destructive-command screen.
     """
+    report = report if report is not None else CheckReport()
     cmd = (cmd or "").strip()
     if not cmd:
+        report.not_run = "no check command is set"
         return None
     from personalclaw.command_audit import audit_command_refusal
     from personalclaw.security import audit_bash_command, denied_command
 
     if (denied := denied_command(cmd)) is not None:
         audit_command_refusal(cmd, denied, source="loop_gate", operation=label)
+        report.not_run = f"the shell denylist refused it ({denied.why()})"
         return None
     danger = audit_bash_command(cmd)
     if danger:
         logger.warning("loop gate: refusing to run %s command — %s", label, danger)
+        report.not_run = f"the safety screen refused it ({danger})"
         return None
     try:
         # Resource ceiling: a loop verify command is agent-influenced (the loop
@@ -109,10 +156,12 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
             # The loop's persisted command, so the child allowlist (`build_child_env`), like a
             # cron script: never a copy of the gateway's environment and the secrets in it.
             env=build_child_env(site="loop-verify"),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+            # What it prints and what it reports as an error, as they came, so its report shows
+            # the end a person reads (a test runner's summary, a command's error).
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
             # Own group: this is `/bin/sh -c <persisted command>`, so the shell forks a
-            # test runner / `make` / a bundler that inherits stderr. `proc.kill()` reaches
+            # test runner / `make` / a bundler that inherits the pipe. `proc.kill()` reaches
             # only the shell; the grandchild then holds the pipe and the reap below waits
             # for IT, turning a 180s bound into the command's own runtime. See
             # cancellation.kill_timed_out.
@@ -120,26 +169,37 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
         )
     except Exception:
         logger.warning("loop gate: could not spawn %s command `%s`", label, cmd, exc_info=True)
+        report.not_run = (
+            f"its folder {cwd} does not exist"
+            if cwd and not os.path.isdir(cwd)
+            else "it could not be started (the gateway log has the error)"
+        )
         return None
     try:
-        _out, err = await asyncio.wait_for(proc.communicate(), timeout=VERIFY_TIMEOUT_SECS)
+        printed = await asyncio.wait_for(_printed_tail(proc), timeout=VERIFY_TIMEOUT_SECS)
     except asyncio.TimeoutError:
         await kill_timed_out(proc)  # group-signalled + bounded reap (no zombie, no tree)
         logger.warning("loop gate: %s command timed out — `%s`", label, cmd)
+        report.not_run = (
+            f"it was still running after {_seconds(VERIFY_TIMEOUT_SECS)}, so it was stopped"
+        )
         return None
     rc = proc.returncode
+    report.exit_code = rc
+    report.output = mask_child_output(printed, limit=CHECK_OUTPUT_TAIL, tail=True, one_line=False)
     if rc == 127:
         # The tool isn't installed here. For a verifiable gate this command IS the
         # done-ness signal, so a missing tool means the loop can NEVER self-complete
         # — surface it distinctly (not the silent "didn't pass yet" of a real fail)
         # so the un-runnable gate is diagnosable rather than a forever-spin. None.
-        detail = mask_child_output(err)
+        detail = mask_child_output(printed)
         logger.warning(
             "loop gate: %s command not runnable (exit 127 — tool missing?) `%s`%s",
             label,
             cmd,
             f" — {detail}" if detail else "",
         )
+        report.not_run = "a program it runs is not installed here (exit 127)"
         return None
     return rc == 0
 

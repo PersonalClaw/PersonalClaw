@@ -2335,12 +2335,16 @@ class CodeKind(LoopKindStrategy):
         """Completion for a code loop with NO stage plan (free-running off its brief):
         ≥1 finding AND any configured verify/test command passes. The project-level
         'prove it' gate; no judge (no stage criteria to judge against). A command the shell
-        denylist refuses proves nothing, so it pauses the loop with the rule instead."""
+        denylist refuses proves nothing, so it pauses the loop with the rule instead. The
+        commands run where the work is (`effective_dir`: the bound workspace, else the loop's
+        own folder a greenfield worker builds in), as the stage gate's do."""
         if not findings:
             return False
         from personalclaw.loop.gates import run_verify_command
+        from personalclaw.loop.loop import effective_dir
 
         cfg = loop.kind_config or {}
+        ws = effective_dir(loop)
         for cmd in (
             str(cfg.get("verify_command", "")).strip(),
             str(cfg.get("test_command", "")).strip(),
@@ -2349,7 +2353,7 @@ class CodeKind(LoopKindStrategy):
                 gates.pause_for_refusal(loop.id, refused, ctx.publish)
                 return False
             if cmd:
-                ok = await run_verify_command(cmd, loop.workspace_dir or None)
+                ok = await run_verify_command(cmd, ws or None)
                 if ok is False:
                     return False  # a real failure holds completion
         return True

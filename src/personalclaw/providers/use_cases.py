@@ -98,8 +98,11 @@ CHAT_SUBCATEGORIES: tuple[str, ...] = (
 #: no name here.
 USE_CASE_NAMES: dict[str, str] = {
     "chat": "Chat",
+    "code_tools": "Code & tools",
     "background": "Background",
     "reasoning": "Reasoning",
+    "orchestration": "Orchestration",
+    "loops": "Loops",
     "embedding": "Embedding",
     "stt": "Speech-to-text",
     "diarization": "Speaker diarization",

@@ -177,6 +177,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A Verifiable loop runs its check in the folder its worker writes to, so a check that passes finishes the loop with one notification; every cycle's check, and its judge's answer, is shown on the loop's page, and a check or judge that cannot run says why.**
 - **The agent's file search finds a word whatever its case: `grep` and `glob` ignore case unless the pattern has a capital letter, and take `ignore_case` to choose either way, so "dentist" finds "Dentist" and "pick up" finds "Pick up".**
 - **Consolidation reads every memory the bound embedding model embedded, with or without faiss: the width a model writes is its newest vector's, never a 384 default, and the memory search index takes its width from its vectors. Without faiss the memory stats count no index, and Settings → Memory → Health shows the Doctor's search index check with its Fix.**
 - **Changing where an automation's results go from chat or the CLI is checked when it is saved: a chat channel named by its name is that channel, anything that is not a route is refused with the ones there are, and the reply says where results and failures go and whether the automation runs now; a task made in chat without a channel now sends you its result.**
