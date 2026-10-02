@@ -381,7 +381,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               milder verdict beside it. The badge is the signal; the diagnosis is
                               printed on the meta line below, not left to a hover. Warn-toned, not
                               danger, because the trigger RUNS as authored; this is an advisory. */}
-                          {advisory.length > 0 && <span data-type="caption" className="shrink-0 text-warn">· check schedule</span>}
+                          {/* A web watch whose last check leaves it unable to fire carries that
+                              sentence among its warnings, and "check schedule" would send the owner
+                              to a cadence that is not the problem. */}
+                          {advisory.length > 0 && <span data-type="caption" className="shrink-0 text-warn">· {t.store?.last_check?.can_fire === false ? "can't fire" : 'check schedule'}</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
                           {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip
                               on every row would be noise on the single-user install that is the

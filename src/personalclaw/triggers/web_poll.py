@@ -28,11 +28,21 @@ tiers refuse it; re-implementing a fetch here would bypass every one of those co
 
 **A daily request budget, enforced.** §3 asks for one, and without it a `poll_interval` of 60 on a
 handful of watches is a few thousand requests a day at someone else's server. The budget is counted
-in the sidecar and refuses with a ledger-visible reason rather than silently skipping.
+in the sidecar and refuses visibly rather than silently skipping.
+
+**Every check leaves a record** (`WatchCheck`, `CheckRecord`). A watch whose checks were refused by
+the network settings, or whose page held nothing it could track, used to read "Firing on its own"
+with no runs and no warning: the poll returned its reasons for "the ledger rows", and the gateway
+logged them at INFO, below the owner's log level. Each check now updates the watch's last check in
+its sidecar — what it came to, in words, and how many checks in a row came to it — which
+`/api/triggers` serves as `last_check` and the Triggers page shows; a watch that cannot fire carries
+a warning; and the first check of a stretch it cannot fire through is reported once on the
+trigger's failure route, the Inbox by default (`report_checks`). A check is not a run: only a fire
+runs the action, and only a fire writes the automation's run history.
 
 **State is a SIDECAR**, matching `file_poll`'s reasoning exactly: a seen-set is high-churn runtime
 state, and writing it onto the trigger entity would rewrite `triggers.json` on every poll and race
-every unrelated edit.
+every unrelated edit. The last check lives there for the same reason.
 
 **The headless-browser escalation tier IS built**. A page that answers 200 with an empty JS
 shell defeats the plain fetch — `extract_items` finds nothing on a real success, the escalation
@@ -40,7 +50,7 @@ signal. When a watch opts in (`escalate_headless: true`, default OFF so existing
 byte-unchanged), the poll escalates to `render_url`, which drives a headless Chromium through the
 SAME egress guard and returns post-JS HTML for the shared extractor. A render is far costlier than a
 fetch, so escalations spend their own bounded budget (`max_headless_requests`), accounted win-or-
-lose and refused with a ledger-visible reason. When Playwright is absent `render_url` reports
+lose and refused with a visible reason. When Playwright is absent `render_url` reports
 `unavailable` and the poll serves the plain result rather than crashing.
 
 **Fresh items land in the knowledge store as user items** — searchable bookmarks, not memory. The
@@ -59,6 +69,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +105,10 @@ MAX_HEADLESS_REQUESTS_PER_DAY = 24  # ~hourly, well under the plain floor
 #: grows forever.
 MAX_SEEN_KEYS = 500
 
+#: How much of a failed fetch's own error a check keeps. Enough to say what went wrong; an error
+#: that carries a whole response body is not a sentence anyone reads.
+_ERROR_CHARS = 200
+
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 #: Anchor hrefs and RSS/Atom entry ids — the two shapes carrying a stable per-item identity without
@@ -106,9 +121,112 @@ _ITEM_RES: tuple[re.Pattern[str], ...] = (
 )
 
 
+class WatchCheck(str, Enum):
+    """What one check of a watched page came to: the closed vocabulary the watch's sidecar
+    records, `/api/triggers` serves as `last_check.outcome` and the Triggers page names.
+
+    A check is the watch LOOKING, not the automation running: only `FIRED` starts its action, and
+    that run is recorded in its history like any other.
+    """
+
+    #: PersonalClaw's own network settings refused the request — the egress guard, or safety
+    #: settings that give automations no network access. Nothing changes until a setting does.
+    REFUSED = "refused"
+    #: The page could not be read: its host could not be reached or found, or it answered an error.
+    FAILED = "failed"
+    #: Today's request budget is spent; the watch checks again tomorrow.
+    BUDGET = "budget"
+    #: The first look: what is on the page is recorded, and nothing fires.
+    SEEDED = "seeded"
+    #: The page was read, and nothing on it is something this watch can track.
+    EMPTY = "empty"
+    #: Nothing new since the checks before.
+    UNCHANGED = "unchanged"
+    #: New items: the watch fired.
+    FIRED = "fired"
+
+
+#: The checks after which the watch cannot fire until something changes — a setting, the page or
+#: its address, or the day. `/api/triggers` turns each into a warning on the row (`can_fire`).
+CANNOT_FIRE: frozenset[str] = frozenset(
+    {
+        WatchCheck.REFUSED.value,
+        WatchCheck.FAILED.value,
+        WatchCheck.BUDGET.value,
+        WatchCheck.EMPTY.value,
+    }
+)
+
+#: Of those, the ones reported on the trigger's failure route: once for each stretch of them, so a
+#: refused watch checked every five minutes files one Inbox item, not 288 a day. Not the budget: it
+#: lifts by itself the next day, which the row's warning already says.
+REPORTED: frozenset[str] = frozenset(
+    {WatchCheck.REFUSED.value, WatchCheck.FAILED.value, WatchCheck.EMPTY.value}
+)
+
+#: How a check that could not read the page ends: what happens next, and what it means for the fire.
+_RETRIES = "It tries again at its next check, and cannot fire until one reads the page."
+
+
+@dataclass
+class CheckRecord:
+    """The watch's last check — what every check leaves behind, kept in the watch's sidecar.
+
+    `since` and `count` describe the STRETCH the last check belongs to: the checks in a row that
+    came to the same outcome at the same address. So a refused watch reads "refused, 3 checks since
+    19:35" rather than only its newest refusal, and `reported` says whether that stretch has been
+    put on the trigger's failure route. Persisted, so a restart neither repeats a report nor drops
+    one still owed. `url` is the address the check read: a check of an address the watch no longer
+    has says nothing about the one it has now.
+    """
+
+    outcome: str = ""
+    #: The check in words for its owner — what the row's warning, the page and a report say.
+    said: str = ""
+    #: Items on the page at this check; for `FIRED`, the new ones.
+    items: int = 0
+    url: str = ""
+    at: float = 0.0
+    since: float = 0.0
+    count: int = 0
+    reported: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "said": self.said,
+            "items": self.items,
+            "url": self.url,
+            "at": self.at,
+            "since": self.since,
+            "count": self.count,
+            "reported": self.reported,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> CheckRecord:
+        """Tolerant read: a check this build does not know reads as no check at all, which the
+        next poll replaces — never as one that can fire, or one that cannot."""
+        if not isinstance(raw, dict):
+            return cls()
+        outcome = str(raw.get("outcome", "") or "")
+        if outcome not in {c.value for c in WatchCheck}:
+            return cls()
+        return cls(
+            outcome=outcome,
+            said=str(raw.get("said", "") or ""),
+            items=int(raw.get("items", 0) or 0),
+            url=str(raw.get("url", "") or ""),
+            at=float(raw.get("at", 0.0) or 0.0),
+            since=float(raw.get("since", 0.0) or 0.0),
+            count=int(raw.get("count", 0) or 0),
+            reported=raw.get("reported") is True,
+        )
+
+
 @dataclass
 class WatchState:
-    """One web watch's persisted memory: what it has seen, and what it has spent.
+    """One web watch's persisted memory: what it has seen, what it has spent, and its last check.
 
     `seeded` mirrors `file_poll.WatchState`: the FIRST poll of a page records every item without
     firing. A watch that fired on its first look would deliver the entire current front page as
@@ -125,6 +243,7 @@ class WatchState:
     headless_today: int = 0
     last_polled_at: float = 0.0
     last_status: int = 0
+    check: CheckRecord = field(default_factory=CheckRecord)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +254,7 @@ class WatchState:
             "headless_today": self.headless_today,
             "last_polled_at": self.last_polled_at,
             "last_status": self.last_status,
+            "check": self.check.to_dict(),
         }
 
     @classmethod
@@ -150,6 +270,7 @@ class WatchState:
             headless_today=int(raw.get("headless_today", 0) or 0),
             last_polled_at=float(raw.get("last_polled_at", 0.0) or 0.0),
             last_status=int(raw.get("last_status", 0) or 0),
+            check=CheckRecord.from_dict(raw.get("check")),
         )
 
 
@@ -369,9 +490,53 @@ def _render_headless(url: str, renderer: Any, policy: Any) -> Any:
 
 
 def _with_escalation(base: str, escalation: str) -> str:
-    """Fold an escalation marker into a non-firing reason so the ledger's skipped row shows it —
-    §7 criterion 8 bans a silent escalation as much as a silent skip."""
+    """Fold an escalation marker into the check's sentence, so the watch's record shows it — §7
+    criterion 8 bans a silent escalation as much as a silent skip."""
     return f"{base} [{escalation}]" if escalation else base
+
+
+def _items(count: int, *, new: bool = False) -> str:
+    """`count` items, counted in words: "1 item", "3 new items"."""
+    word = "new item" if new else "item"
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def _empty_said(url: str, novelty_key: str) -> str:
+    """Why a page that was read gives this watch nothing to track, and what changes that.
+
+    The two strategies are named because they are what the owner can act on: a page with no links
+    and no feed entries is not one a watch can follow, and its feed, or a page listing the items as
+    links, is.
+    """
+    if novelty_key and novelty_key != "auto":
+        return (
+            f"It read {url}, and the pattern it was given (novelty_key) matched nothing there, so "
+            "it cannot fire. Change the pattern, or point it at a page the pattern matches."
+        )
+    return (
+        f"It read {url} and found nothing it can watch: it follows a page's links and its feed "
+        "entries (RSS or Atom), and this page has none, so it cannot fire. Point it at the page's "
+        "feed, or at a page that lists what you want as links."
+    )
+
+
+def _record(
+    state: WatchState, outcome: str, said: str, *, url: str, items: int, now: float
+) -> bool:
+    """Put one check on the watch's record. Returns whether it began a new stretch.
+
+    A stretch is the checks in a row with one outcome at one address: a new outcome, or the same
+    one at an address the watch did not have before, starts one — and with it a report owed, when
+    the outcome is one `REPORTED` names.
+    """
+    check = state.check
+    if check.outcome == outcome and check.url == url:
+        check.said, check.items, check.at, check.count = said, items, now, check.count + 1
+        return False
+    state.check = CheckRecord(
+        outcome=outcome, said=said, items=items, url=url, at=now, since=now, count=1
+    )
+    return True
 
 
 def _route_to_knowledge(trigger: Any, url: str, fresh_raw: list[str], store: Any) -> int:
@@ -411,22 +576,56 @@ def _route_to_knowledge(trigger: Any, url: str, fresh_raw: list[str], store: Any
 
 @dataclass
 class PollOutcome:
-    """One poll's result: a payload to dispatch, or a reason there is none.
+    """One poll's result: a payload to dispatch, and what the check came to.
 
-    A REASON rather than `None`, because §7 criterion 8 bans silent drops and "the budget was spent"
-    is something a user must be able to see — a watch that stopped polling with no explanation is
-    indistinguishable from a broken one.
+    `check` is "" only when the watch was not checked at all — it was not due — and then nothing
+    was recorded either. Every check has an outcome and a sentence, because §7 criterion 8 bans
+    silent drops: "the budget was spent" or "the network settings refused it" is something a user
+    must be able to see, and a watch that stopped firing with no explanation is indistinguishable
+    from a broken one.
     """
 
     payload: dict[str, Any] | None = None
-    reason: str = ""
+    check: str = ""
+    #: The check in words for its owner (`CheckRecord.said`).
+    said: str = ""
     fetched: bool = False
     #: The headless-escalation marker, when this poll attempted one. Set whether the escalation
     #: fired, was refused by its budget, failed, or found the tier unavailable — §7 criterion 8
-    #: bans a silent escalation as much as a silent skip. On a NON-firing poll it is mirrored into
-    #: `reason` (→ the ledger's skipped row); on a firing poll it rides in the payload under the
-    #: `escalation` key (the fired payload is a dict literal below, keys hardcoded).
+    #: bans a silent escalation as much as a silent skip. It is folded into `said`, and on a firing
+    #: poll it also rides in the payload under the `escalation` key.
     escalation: str = ""
+    #: Whether this check began a new stretch (`_record`), and whether that stretch is owed its
+    #: report on the trigger's failure route (`report_checks`).
+    started: bool = False
+    owed: bool = False
+
+
+def _checked(
+    trigger: Any,
+    state: WatchState,
+    outcome: WatchCheck,
+    said: str,
+    *,
+    url: str,
+    now: float,
+    base_dir: Path | str | None,
+    items: int = 0,
+    fetched: bool = False,
+    escalation: str = "",
+) -> PollOutcome:
+    """Record this check on the watch, persist the watch, and say what the check came to."""
+    said = _with_escalation(said, escalation)
+    started = _record(state, outcome.value, said, url=url, items=items, now=now)
+    save_state(trigger.id, state, base_dir=base_dir)
+    return PollOutcome(
+        check=outcome.value,
+        said=said,
+        fetched=fetched,
+        escalation=escalation,
+        started=started,
+        owed=outcome.value in REPORTED and not state.check.reported,
+    )
 
 
 def poll_one(
@@ -454,31 +653,43 @@ def poll_one(
     spec = trigger.spec if isinstance(trigger.spec, dict) else {}
     url = str(spec.get("url", "") or "").strip()
     if not url:
-        return PollOutcome(reason="no url")
+        return PollOutcome()
 
     state = load_state(trigger.id, base_dir=base_dir)
 
     interval = poll_interval_for(trigger)
     if state.last_polled_at and now - state.last_polled_at < interval:
-        return PollOutcome(reason="not due")
+        return PollOutcome()
+
+    if state.check.url and state.check.url != url:
+        # 🔴 A watch pointed at another page starts over. What it saw at the old address says
+        # nothing about the new one, and keeping it would deliver the new page's every item as new
+        # — which is what pointing a watch at a page's feed, as an empty check advises, would do.
+        state.seeded, state.seen = False, []
+
+    def checked(outcome: WatchCheck, said: str, **kw: Any) -> PollOutcome:
+        return _checked(trigger, state, outcome, said, url=url, now=now, base_dir=base_dir, **kw)
 
     if budget_remaining(state, now=now) <= 0:
-        # Visible, not silent: the reason travels to the ledger row.
-        return PollOutcome(
-            reason=f"daily request budget spent ({MAX_REQUESTS_PER_DAY} requests); "
-            "resumes tomorrow"
+        # Visible, not silent: the check is recorded, and the row says when it resumes.
+        return checked(
+            WatchCheck.BUDGET,
+            f"It has made today's {MAX_REQUESTS_PER_DAY} requests to the page, so it cannot "
+            "check it or fire until tomorrow.",
         )
 
-    # The run's egress posture, resolved BEFORE the request is spent. A tier of
-    # "off" refuses visibly — the reason travels to the ledger row, like the budget refusals
-    # above — rather than making a request the run's posture forbids.
+    # The run's egress posture, resolved BEFORE the request is spent. A tier of "off" refuses
+    # visibly — the check says so, like the budget refusal above — rather than making a request the
+    # run's posture forbids.
     egress = _poll_egress_policy(str(getattr(trigger, "id", "") or ""))
     if egress is None:
-        return PollOutcome(
-            reason="this run's safety profile denies all network egress (egress tier 'off')"
+        return checked(
+            WatchCheck.REFUSED,
+            "The safety settings for automations give them no network access, so it cannot "
+            "check its page or fire.",
         )
 
-    body, status, error = _fetch(url, fetcher, egress)
+    body, status, failure, failed_said = _fetch(url, fetcher, egress)
 
     # Accounted whether or not the fetch SUCCEEDED. A failing url that did not count toward the
     # budget would retry forever at full rate, which is the shape that gets a user's IP blocked.
@@ -488,9 +699,8 @@ def poll_one(
     state.last_polled_at = now
     state.last_status = status
 
-    if error:
-        save_state(trigger.id, state, base_dir=base_dir)
-        return PollOutcome(reason=error, fetched=True)
+    if failure is not None:
+        return checked(failure, failed_said, fetched=True)
 
     novelty_key = str(spec.get("novelty_key", ""))
     raw_items = extract_items(body, novelty_key=novelty_key)
@@ -538,67 +748,90 @@ def poll_one(
     # Newest kept, oldest dropped past the cap.
     state.seen = (keys + [s for s in state.seen if s not in set(keys)])[:MAX_SEEN_KEYS]
 
+    if not keys:
+        # 🔴 A page with nothing to track is not a page with nothing NEW. Read as "no new items" it
+        # said the watch works, and it can never fire. Nor is it the seed: the first check that
+        # finds items is, so a page that gains them does not deliver every one of them as new.
+        return checked(
+            WatchCheck.EMPTY, _empty_said(url, novelty_key), fetched=True, escalation=escalation
+        )
+
     if not state.seeded:
         # 🔴 The FIRST poll records without firing. Firing here would deliver the entire current page
         # as "new" — the behaviour that makes someone delete the automation on day one. Mirrors
         # `file_poll`'s seeding pass, and the seed is persisted so a restart does not re-seed.
         state.seeded = True
-        save_state(trigger.id, state, base_dir=base_dir)
-        return PollOutcome(
-            reason=_with_escalation(f"seeded {len(keys)} item(s) without firing", escalation),
+        return checked(
+            WatchCheck.SEEDED,
+            f"Its first check recorded the {_items(len(keys))} on the page; it fires when a new "
+            "one appears.",
+            items=len(keys),
             fetched=True,
             escalation=escalation,
         )
-
-    save_state(trigger.id, state, base_dir=base_dir)
 
     if not fresh:
-        return PollOutcome(
-            reason=_with_escalation("no new items", escalation),
+        return checked(
+            WatchCheck.UNCHANGED,
+            f"Nothing new: the {_items(len(keys))} on the page were all there before.",
+            items=len(keys),
             fetched=True,
             escalation=escalation,
         )
+
+    # Recorded and persisted BEFORE anything is written for the fresh items, so a crash between the
+    # two cannot leave them unseen and fire them a second time.
+    outcome = checked(
+        WatchCheck.FIRED,
+        f"{_items(len(fresh), new=True)} on the page, so it fired.",
+        items=len(fresh),
+        fetched=True,
+        escalation=escalation,
+    )
 
     # Fresh items land in the KNOWLEDGE store as searchable user bookmarks — not memory. The
     # seen-set already gated "new", so only genuinely-new items are written.
     fresh_raw = [raw for _, raw in fresh]
     _route_to_knowledge(trigger, url, fresh_raw, knowledge_store)
 
-    return PollOutcome(
-        payload={
-            "trigger_id": trigger.id,
-            "trigger_name": trigger.name,
-            "kind": "web_watch",
-            "url": url,
-            "new_count": len(fresh),
-            # The escalation marker rides in the fired payload too, so a headless-sourced fire is
-            # not a silent escalation (§7 criterion 8) — the non-firing path folds it into reason.
-            "escalation": escalation,
-            # The raw item keys the fire is ABOUT, so the action can say what changed. Capped: a
-            # payload carrying 400 urls is a prompt nobody can afford.
-            #
-            # FENCED with provenance at the source (§7/R4 rule c). These strings came off a
-            # third-party page, and S126 closed the template sink; fencing HERE additionally means
-            # any future consumer of the payload inherits the marker and the origin rather than
-            # having to know that `new_items` is untrusted.
-            "new_items": [
-                fence_untrusted(
-                    raw,
-                    source=f"web_watch:{trigger.id}",
-                    source_type="web_watch",
-                    source_id=url,
-                    transformation_path="poll:extract-items",
-                )
-                for raw in fresh_raw[:20]
-            ],
-        },
-        fetched=True,
-        escalation=escalation,
-    )
+    outcome.payload = {
+        "trigger_id": trigger.id,
+        "trigger_name": trigger.name,
+        "kind": "web_watch",
+        "url": url,
+        "new_count": len(fresh),
+        # The escalation marker rides in the fired payload too, so a headless-sourced fire is
+        # not a silent escalation (§7 criterion 8).
+        "escalation": escalation,
+        # The raw item keys the fire is ABOUT, so the action can say what changed. Capped: a
+        # payload carrying 400 urls is a prompt nobody can afford.
+        #
+        # FENCED with provenance at the source (§7/R4 rule c). These strings came off a
+        # third-party page, and S126 closed the template sink; fencing HERE additionally means
+        # any future consumer of the payload inherits the marker and the origin rather than
+        # having to know that `new_items` is untrusted.
+        "new_items": [
+            fence_untrusted(
+                raw,
+                source=f"web_watch:{trigger.id}",
+                source_type="web_watch",
+                source_id=url,
+                transformation_path="poll:extract-items",
+            )
+            for raw in fresh_raw[:20]
+        ],
+    }
+    return outcome
 
 
-def _fetch(url: str, fetcher: Any, policy: Any) -> tuple[str, int, str]:
-    """`(body, status, error)`. Never raises — a bad url is a reason, not an exception.
+def _fetch(url: str, fetcher: Any, policy: Any) -> tuple[str, int, WatchCheck | None, str]:
+    """`(body, status, failure, said)` — the page, or what kept the check from reading it.
+
+    Never raises: a bad url is a check that could not read the page, not an exception. `failure` is
+    None for a page that was read; `REFUSED` when PersonalClaw's own network settings refused the
+    request before anything left the machine (`EgressBlocked`), with the guard's sentence naming
+    the setting that lifts it; and `FAILED` for a host that could not be found or reached, or a page
+    that answered an error, each of which may clear by itself.
 
     Routed through `net.fetch` by default: that is where host classification, private-IP denial,
     redirect-hop re-checks, the byte cap and the timeout live. A watch pointed at
@@ -610,6 +843,9 @@ def _fetch(url: str, fetcher: Any, policy: Any) -> tuple[str, int, str]:
     egress tier. Passing it explicitly is what makes an operator `deny_hosts` and a narrowed
     ceiling apply to a poll — `net.fetch`'s own default is a bare `STRICT` that layers neither.
     """
+    from personalclaw.net import EgressBlocked
+    from personalclaw.net.guard import refusal_for
+
     try:
         if fetcher is None:
             from personalclaw.net import fetch as net_fetch
@@ -622,9 +858,16 @@ def _fetch(url: str, fetcher: Any, policy: Any) -> tuple[str, int, str]:
             response = _await_maybe(net_fetch(url, policy=policy))
         else:
             response = _await_maybe(fetcher(url))
+    except EgressBlocked as exc:
+        said = refusal_for(url, exc.decision, then="and its next check reaches it")
+        if exc.decision.category == "unresolvable":
+            # The guard looked the host up and found nothing: the address, or the connection, not a
+            # setting — so it may clear by itself.
+            return "", 0, WatchCheck.FAILED, f"{said} {_RETRIES}"
+        return "", 0, WatchCheck.REFUSED, f"{said} It cannot fire while its checks are refused."
     except Exception as exc:  # noqa: BLE001 - an unreachable page must not kill the poll loop
-        name = type(exc).__name__
-        return "", 0, f"fetch failed ({name}: {exc})"
+        error = f"{type(exc).__name__}: {exc}"[:_ERROR_CHARS]
+        return "", 0, WatchCheck.FAILED, f"PersonalClaw could not reach {url} ({error}). {_RETRIES}"
 
     status = int(getattr(response, "status", 0) or 0)
     raw = getattr(response, "body", b"") or b""
@@ -632,8 +875,10 @@ def _fetch(url: str, fetcher: Any, policy: Any) -> tuple[str, int, str]:
         raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
     )
     if status and not 200 <= status < 300:
-        return "", status, f"the page answered HTTP {status}"
-    return body, status, ""
+        gone = status in (404, 410)
+        missing = ", so there is no page there to read — check the address" if gone else ""
+        return "", status, WatchCheck.FAILED, f"{url} answered HTTP {status}{missing}. {_RETRIES}"
+    return body, status, None, ""
 
 
 def poll_all(
@@ -644,18 +889,19 @@ def poll_all(
     fetcher: Any = None,
     renderer: Any = None,
     knowledge_store: Any = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    """Poll every enabled web watch once. Returns `(payloads, skipped)`.
+) -> tuple[list[dict[str, Any]], list[tuple[Any, PollOutcome]]]:
+    """Poll every enabled web watch once. Returns `(payloads, checks)`.
 
-    `skipped` carries `{trigger_id, reason}` so the caller can write the ledger rows §7 criterion 8
-    requires. One watch's failure never strands the rest: a poll loop that died on one unreachable
-    host would silently stop every other watch the user has.
+    `checks` pairs each watch this pass CHECKED with what the check came to, for `report_checks`; a
+    watch that was not due was not checked and is not in it. One watch's failure never strands the
+    rest: a poll loop that died on one unreachable host would silently stop every other watch the
+    user has.
 
     `renderer`/`knowledge_store` are the escalation and digest-routing seams, forwarded to
     `poll_one`; both default to the production tiers and are injected only by tests.
     """
     payloads: list[dict[str, Any]] = []
-    skipped: list[dict[str, str]] = []
+    checks: list[tuple[Any, PollOutcome]] = []
     for trigger in web_watch_triggers(store):
         try:
             outcome = poll_one(
@@ -666,14 +912,85 @@ def poll_all(
                 renderer=renderer,
                 knowledge_store=knowledge_store,
             )
-        except Exception:  # noqa: BLE001 - see the docstring
+        except Exception as exc:  # noqa: BLE001 - see the docstring
             logger.warning("web_watch poll failed for %s", trigger.id, exc_info=True)
-            skipped.append({"trigger_id": trigger.id, "reason": "the poll raised"})
+            spec = trigger.spec if isinstance(trigger.spec, dict) else {}
+            outcome = _checked(
+                trigger,
+                load_state(trigger.id, base_dir=base_dir),
+                WatchCheck.FAILED,
+                f"Its check could not run ({type(exc).__name__}); the gateway log has the "
+                f"details. {_RETRIES}",
+                url=str(spec.get("url", "") or "").strip(),
+                now=now,
+                base_dir=base_dir,
+            )
+        if not outcome.check:
             continue
+        checks.append((trigger, outcome))
         if outcome.payload is not None:
             payloads.append(outcome.payload)
-        elif outcome.reason and outcome.reason != "not due":
-            # "not due" is the common case and not worth a row; everything else is a decision the
-            # user may need to see.
-            skipped.append({"trigger_id": trigger.id, "reason": outcome.reason})
-    return payloads, skipped
+    return payloads, checks
+
+
+def mark_reported(trigger_id: str, *, base_dir: Path | str | None = None) -> None:
+    """Record that the watch's current stretch of checks has been reported. Never raises."""
+    state = load_state(trigger_id, base_dir=base_dir)
+    if state.check.outcome:
+        state.check.reported = True
+        save_state(trigger_id, state, base_dir=base_dir)
+
+
+def report_checks(
+    checks: list[tuple[Any, PollOutcome]], *, state: Any, base_dir: Path | str | None = None
+) -> bool:
+    """Put this pass's checks on the record beyond the watch's own. Returns whether any watch was
+    checked, which is when the Triggers page has something new to show.
+
+    The first check of a stretch the watch cannot fire through is logged once at WARNING: the
+    gateway log is where an operator looks, and one line per poll at INFO — below the owner's level
+    — is how a refused watch went unseen. A stretch `REPORTED` names is reported ONCE on the
+    trigger's failure route (`delivery.report_run`, the Inbox by default), the route the
+    automation's own failures take: "If it fails: filed in your Inbox" is what it was created
+    saying, and a watch that cannot read its page has failed at the one thing it does. *state* is
+    the dashboard state every note goes through. The stretch is marked reported whatever its route
+    did with the report: a muted route stays muted, and trying again every poll would only repeat
+    the attempt.
+
+    Runs on the event loop, not the poll's worker thread: a channel route sends from the loop.
+    """
+    from personalclaw.triggers.delivery import report_run
+
+    for trigger, outcome in checks:
+        if outcome.started and outcome.check in CANNOT_FIRE:
+            logger.warning("web watch %s cannot fire: %s", trigger.id, outcome.said)
+        if outcome.owed:
+            report_run(state, trigger, ok=False, error=outcome.said)
+            mark_reported(trigger.id, base_dir=base_dir)
+    return bool(checks)
+
+
+def last_check(trigger: Any, *, base_dir: Path | str | None = None) -> dict[str, Any] | None:
+    """The watch's last check as `/api/triggers` serves it (`last_check`), or None before its first.
+
+    A check of an address the watch no longer has is no check of this one, so it reads as None
+    too. `can_fire` is the verdict the Triggers page and the agent read rather than re-derive:
+    false while the watch, as things stand, cannot fire (`CANNOT_FIRE`). The times are UTC
+    instants; `checks` is how many checks in a row came to this outcome, since `since`.
+    """
+    from personalclaw.instants import utc_iso
+
+    spec = trigger.spec if isinstance(trigger.spec, dict) else {}
+    url = str(spec.get("url", "") or "").strip()
+    check = load_state(trigger.id, base_dir=base_dir).check
+    if not check.outcome or check.url != url:
+        return None
+    return {
+        "outcome": check.outcome,
+        "said": check.said,
+        "items": check.items,
+        "at": utc_iso(check.at),
+        "since": utc_iso(check.since),
+        "checks": check.count,
+        "can_fire": check.outcome not in CANNOT_FIRE,
+    }

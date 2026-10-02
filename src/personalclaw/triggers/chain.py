@@ -283,9 +283,9 @@ def next_fires(
     A trigger waiting on more than one of them fires once.
 
     `fires` is `(trigger, payload)` pairs for the caller to dispatch; `refused` carries
-    `{trigger_id, reason}` so the caller can write the ledger rows criterion 8 requires. Both are
-    returned rather than the caller re-deriving refusals, because a chain that stopped with no row
-    is indistinguishable from one that was never configured.
+    `{trigger_id, trigger_name, reason}` for `record_refusals`, which writes the rows criterion 8
+    requires. Both are returned rather than the caller re-deriving refusals, because a chain that
+    stopped with no row is indistinguishable from one that was never configured.
     """
     payload = dict(source_payload or {})
     candidates: list[Any] = []
@@ -303,7 +303,33 @@ def next_fires(
         reason = chain_refusal(payload, next_id=trigger.id)
         if reason:
             logger.info("run_completed %s refused: %s", trigger.id, reason)
-            refused.append({"trigger_id": trigger.id, "reason": reason})
+            refused.append(
+                {"trigger_id": trigger.id, "trigger_name": trigger.name or "", "reason": reason}
+            )
             continue
         fires.append((trigger, chain_payload(payload, source_id=source_id, trigger=trigger)))
     return fires, refused
+
+
+async def record_refusals(refused: list[dict[str, str]], *, base_dir: Any = None) -> None:
+    """Write each refused chained fire to its trigger's run history as a typed suppression row.
+
+    The rows `next_fires` returned "so the caller can write the ledger rows" were logged at INFO by
+    the one caller and written nowhere, so a chain stopped by its depth cap, or by a loop it would
+    have run, showed nothing on its trigger. `skipped_gate`, the row every other refusal before
+    dispatch writes (a grant the action lacks, the rung ladder): nothing ran and nothing was spent,
+    and the reason says which guard held it. Through `service.persist_suppression`, the one writer
+    of a suppressed fire's row, so these read exactly as those do. Never raises.
+    """
+    import time
+
+    from personalclaw.triggers.models import Outcome
+    from personalclaw.triggers.service import persist_suppression
+
+    for row in refused:
+        await persist_suppression(
+            {**row, "outcome": Outcome.SKIPPED_GATE.value},
+            now=time.time(),
+            base_dir=base_dir,
+            name=str(row.get("trigger_name") or ""),
+        )

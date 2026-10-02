@@ -198,6 +198,38 @@ def test_a_MALFORMED_path_is_treated_as_empty(store):
     assert [t.id for t, _ in fires] == ["run_completed:b"]
 
 
+def test_a_REFUSED_chain_leaves_a_row_in_its_triggers_history(tmp_path, monkeypatch):
+    """🔴 The refusals came back "so the caller can write the ledger rows", and the gateway logged
+    them at INFO and wrote nothing: a chain its depth cap or a loop stopped showed no trace on the
+    trigger it stopped. Driven through the gateway's own chaining, so the row is the one a user
+    reads in that trigger's history: a suppression with the guard's reason, and no run."""
+    import asyncio
+
+    import personalclaw.config.loader as loader
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    _add(
+        TriggerStore(base_dir=tmp_path), "run_completed:b", "run_completed", {"source_trigger": "a"}
+    )
+    orchestrator = object.__new__(GatewayOrchestrator)
+    asyncio.run(
+        orchestrator._fire_chained_triggers(
+            source_trigger="a",
+            payload={chain.DEPTH_KEY: chain.MAX_CHAIN_DEPTH, chain.PATH_KEY: ["x", "y", "a"]},
+        )
+    )
+
+    runs, total = asyncio.run(ScheduleRunStore(tmp_path).list_for_job("run_completed:b"))
+    assert total == 1
+    [row] = runs
+    assert row["status"] == "skipped_gate"
+    assert "chain depth limit reached" in row["error"] and "x → y → a" in row["error"]
+    assert row["job_name"] == "run_completed:b"
+    assert TriggerStore(base_dir=tmp_path).get("run_completed:b").trigger.run_count == 0
+
+
 # ── the wiring ──
 
 

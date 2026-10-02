@@ -2957,6 +2957,13 @@ export interface HeartbeatTask { text: string; deliver: string; allowed: boolean
  *  does; or a snapshot that does not say. `''` when no restore holds it. */
 export type RestoreHold = '' | 'another_home' | 'this_home' | 'unknown'
 
+/** One check a web watch made of its page (`triggers/web_poll.py::last_check`). `outcome` is the
+ *  backend's `WatchCheck`, `said` the server's sentence for it, and `checks` how many checks in a row
+ *  came to it since `since` (UTC instants). `can_fire` is the server's verdict: false while the watch,
+ *  as things stand, cannot fire. `items` is what the page held, or for `fired` the new ones. */
+export interface TriggerCheck {
+  outcome: string; said: string; items: number; at: string; since: string; checks: number; can_fire: boolean
+}
 export interface Trigger {
   // `GET /api/triggers` serves THREE namespaces (handlers/triggers.py `api_triggers`). A data-event
   // trigger is a row in the one trigger store, so it arrives as `store` with `store_kind: 'event'`
@@ -2996,6 +3003,9 @@ export interface Trigger {
   // the snapshot was taken (`triggers/restore_hold.py`): where that was, as the restore could tell.
   // `''` (or absent) when no restore holds it, and always on a row that is switched on.
   restore_hold?: RestoreHold
+  // A web watch's last check of its page; null for any other kind, or a watch not checked yet. While
+  // its `can_fire` is false, `warnings` carries its `said` (`dashboard/handlers/triggers.py`).
+  last_check?: TriggerCheck | null
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null

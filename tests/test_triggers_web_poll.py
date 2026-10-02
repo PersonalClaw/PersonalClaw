@@ -149,8 +149,8 @@ def test_an_ASYNC_fetcher_is_awaited_not_left_a_coroutine(store, tmp_path):
         trigger, now=NOW, base_dir=tmp_path, fetcher=_async_fetcher({"v": FEED_TWO})
     )
     # The seed pass never fires, but it must have SEEN the items — an un-awaited coroutine would
-    # have extracted nothing and seeded zero.
-    assert "seeded" in outcome.reason
+    # have extracted nothing, and the check would have found the page EMPTY.
+    assert outcome.check == web_poll.WatchCheck.SEEDED
     state = web_poll.load_state(trigger.id, base_dir=tmp_path)
     assert len(state.seen) >= 1, "async fetch body was not awaited — seed saw no items"
 
@@ -217,7 +217,8 @@ def test_the_FIRST_poll_seeds_without_firing(store, tmp_path):
         trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO})
     )
     assert outcome.payload is None
-    assert "seeded" in outcome.reason
+    assert outcome.check == web_poll.WatchCheck.SEEDED
+    assert "recorded the 2 items on the page" in outcome.said
 
 
 def test_the_seed_SURVIVES_a_restart(store, tmp_path):
@@ -236,7 +237,8 @@ def test_an_UNCHANGED_page_does_not_fire(store, tmp_path):
     web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))
     outcome = web_poll.poll_one(trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages))
     assert outcome.payload is None
-    assert outcome.reason == "no new items"
+    assert outcome.check == web_poll.WatchCheck.UNCHANGED
+    assert outcome.said.startswith("Nothing new: the 2 items on the page")
 
 
 def test_a_NEW_item_fires_and_names_it(store, tmp_path):
@@ -342,7 +344,7 @@ def test_a_watch_polled_TOO_SOON_is_not_fetched(store, tmp_path):
     pages = {"v": FEED_TWO}
     web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages))
     outcome = web_poll.poll_one(trigger, now=NOW + 10, base_dir=tmp_path, fetcher=_fetcher(pages))
-    assert outcome.reason == "not due"
+    assert outcome.check == "", "a watch that was not due was not checked"
     assert outcome.fetched is False, "a not-due watch must not spend a request"
 
 
@@ -358,7 +360,8 @@ def test_the_DAILY_BUDGET_refuses_with_a_visible_reason(store, tmp_path):
         trigger, now=NOW + 10_000, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO})
     )
     assert outcome.payload is None
-    assert "budget" in outcome.reason
+    assert outcome.check == web_poll.WatchCheck.BUDGET
+    assert "until tomorrow" in outcome.said
     assert outcome.fetched is False
 
 
@@ -394,7 +397,8 @@ def test_an_UNREACHABLE_page_is_a_reason_not_a_crash(store, tmp_path):
 
     outcome = web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=boom)
     assert outcome.payload is None
-    assert "fetch failed" in outcome.reason
+    assert outcome.check == web_poll.WatchCheck.FAILED
+    assert "could not reach https://example.com/feed (OSError: unreachable)" in outcome.said
 
 
 def test_an_HTTP_ERROR_is_reported_not_treated_as_an_empty_page(store, tmp_path):
@@ -405,7 +409,8 @@ def test_an_HTTP_ERROR_is_reported_not_treated_as_an_empty_page(store, tmp_path)
         return types.SimpleNamespace(status=404, body=b"", url=url, headers={}, truncated=False)
 
     outcome = web_poll.poll_one(trigger, now=NOW, base_dir=tmp_path, fetcher=gone)
-    assert "404" in outcome.reason
+    assert outcome.check == web_poll.WatchCheck.FAILED
+    assert "answered HTTP 404" in outcome.said and "check the address" in outcome.said
 
 
 def test_ONE_bad_watch_does_not_strand_the_others(store, tmp_path):
@@ -419,18 +424,25 @@ def test_ONE_bad_watch_does_not_strand_the_others(store, tmp_path):
             raise OSError("unreachable")
         return _fetcher(pages)(url)
 
-    payloads, skipped = web_poll.poll_all(store, now=NOW, base_dir=tmp_path, fetcher=mixed)
-    assert {row["trigger_id"] for row in skipped} == {"web_watch:bad", "web_watch:good"}
+    payloads, checks = web_poll.poll_all(store, now=NOW, base_dir=tmp_path, fetcher=mixed)
+    assert {t.id: o.check for t, o in checks} == {
+        "web_watch:bad": web_poll.WatchCheck.FAILED,
+        "web_watch:good": web_poll.WatchCheck.SEEDED,
+    }
     assert payloads == [], "both are seeding/failing on this pass, neither fires"
 
 
-def test_poll_all_reports_skips_for_the_LEDGER(store, tmp_path):
-    """The caller writes ledger rows from these, which is how a suppressed poll stays visible."""
+def test_poll_all_returns_every_CHECK_it_made(store, tmp_path):
+    """The caller reports from these (`report_checks`); a watch that was not due is not in them."""
     _watch(store)
-    _payloads, skipped = web_poll.poll_all(
+    _payloads, checks = web_poll.poll_all(
         store, now=NOW, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO})
     )
-    assert skipped and "seeded" in skipped[0]["reason"]
+    assert [(t.id, o.check) for t, o in checks] == [("web_watch:w", "seeded")]
+    _payloads, again = web_poll.poll_all(
+        store, now=NOW + 10, base_dir=tmp_path, fetcher=_fetcher({"v": FEED_TWO})
+    )
+    assert again == [], "a watch that was not due was not checked"
 
 
 def test_a_CORRUPT_sidecar_reads_as_unseeded_rather_than_raising(tmp_path):
@@ -560,8 +572,8 @@ def test_escalation_is_OFF_by_default_a_shell_page_does_not_escalate(store, tmp_
     )
     assert render.calls["n"] == 0, "escalation must not run when the watch didn't opt in"
     assert outcome.escalation == ""
-    # seeded on an empty shell (no items), and the renderer stayed idle
-    assert "seeded 0 item" in outcome.reason
+    # an empty shell has nothing to track, and the renderer stayed idle
+    assert outcome.check == web_poll.WatchCheck.EMPTY
 
 
 def test_escalation_ON_a_shell_page_renders_and_extracts(store, tmp_path):
@@ -575,7 +587,10 @@ def test_escalation_ON_a_shell_page_renders_and_extracts(store, tmp_path):
     )
     assert render.calls["n"] == 1
     assert "escalated to headless; extracted 1 item(s)" in seed.escalation
-    assert "seeded 1 item" in seed.reason  # the rendered item WAS seen via the headless tier
+    # the rendered item WAS seen via the headless tier, and the check says how
+    assert seed.check == web_poll.WatchCheck.SEEDED
+    assert "recorded the 1 item on the page" in seed.said
+    assert "[escalated to headless; extracted 1 item(s)]" in seed.said
     # a NEW rendered item now fires, carrying the escalation marker in the payload
     render2 = _renderer(RENDERED_FEED.replace("js-post-1", "js-post-2"))
     fire = web_poll.poll_one(
@@ -603,7 +618,7 @@ def test_escalation_budget_EXHAUSTED_stops_with_a_visible_reason(store, tmp_path
     )
     assert render.calls["n"] == 1, "a spent budget must not launch another render"
     assert "headless escalation budget spent" in outcome.escalation
-    assert "headless escalation budget spent" in outcome.reason
+    assert "headless escalation budget spent" in outcome.said
 
 
 def test_a_FAILED_render_still_SPENDS_its_budget(store, tmp_path):

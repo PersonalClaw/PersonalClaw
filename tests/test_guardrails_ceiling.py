@@ -626,7 +626,7 @@ def test_web_poll_resolves_its_egress_through_the_profile(home):
 
 
 def test_poll_refuses_visibly_when_egress_is_off(home, tmp_path):
-    """A refusal must be a REASON on the ledger row, not a silent skip."""
+    """A refusal is a check on the watch's record, with its reason, never a silent skip."""
     from personalclaw.triggers import web_poll
 
     _write_ceiling(home, {"egress": {"value": "off"}})
@@ -636,8 +636,11 @@ def test_poll_refuses_visibly_when_egress_is_off(home, tmp_path):
         spec = {"url": "https://example.com/feed"}
 
     out = web_poll.poll_one(_T(), now=1_000_000.0, base_dir=tmp_path / "state")
-    assert out.payload is None and "denies all network egress" in out.reason
+    assert out.payload is None and out.check == web_poll.WatchCheck.REFUSED
+    assert "give them no network access" in out.said
     assert not out.fetched, "the refusal happens BEFORE a request is spent"
+    check = web_poll.last_check(_T(), base_dir=tmp_path / "state")
+    assert check is not None and check["can_fire"] is False
 
 
 # ── observability: a clamp is never silent ───────────────────────────────────

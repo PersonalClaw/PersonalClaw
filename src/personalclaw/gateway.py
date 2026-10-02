@@ -2409,9 +2409,9 @@ class GatewayOrchestrator:
         Never raises: a chain is a convenience layered on a completed run, and letting it fail the
         run it followed would make chaining strictly worse than not chaining.
 
-        The depth cap and cycle detection live in `chain.next_fires`, which returns refusals as data
-        so they are logged rather than dropped — a chain that stopped silently is indistinguishable
-        from one that was never configured.
+        The depth cap and cycle detection live in `chain.next_fires`, whose refusals are written to
+        each refused trigger's history (`chain.record_refusals`) — a chain that stopped silently is
+        indistinguishable from one that was never configured.
         """
         try:
             from personalclaw.config.loader import config_dir
@@ -2425,8 +2425,7 @@ class GatewayOrchestrator:
                 source_def=source_def,
                 source_run=source_run,
             )
-            for row in refused:
-                logger.info("chain %s did not fire: %s", row["trigger_id"], row["reason"])
+            await chain.record_refusals(refused, base_dir=config_dir())
             for chained, chained_payload in fires:
                 await self._fire_store_trigger(chained, chained_payload, event="trigger.chained")
         except Exception:  # noqa: BLE001 - a chain must never fail the run it followed
@@ -2621,9 +2620,9 @@ class GatewayOrchestrator:
         isolation inside `poll_all`, and the same never-die contract — a loop that threw once and
         stopped would silently retire every web watch the user has.
 
-        The skipped rows are LOGGED rather than dropped. §7 criterion 8 bans silent drops, and
-        "the daily request budget is spent" is exactly the kind of decision a user needs to find
-        when they ask why a watch went quiet.
+        Every check is put on the record (`web_poll.report_checks`), never only logged: one line at
+        INFO, below the owner's level, was all a refused watch left while it read "Firing on its
+        own". The Triggers page re-reads after each pass, so a check shows without a reload.
         """
         from personalclaw.config.loader import config_dir
         from personalclaw.triggers import web_poll
@@ -2637,11 +2636,11 @@ class GatewayOrchestrator:
 
                 if incident_active():
                     continue
-                payloads, skipped = await asyncio.to_thread(
+                payloads, checks = await asyncio.to_thread(
                     web_poll.poll_all, store, now=time.time()
                 )
-                for row in skipped:
-                    logger.info("web_watch %s did not fire: %s", row["trigger_id"], row["reason"])
+                if web_poll.report_checks(checks, state=getattr(self, "dashboard_state", None)):
+                    self._push_trigger_refresh("crons")
                 for payload in payloads:
                     await self._fire_file_trigger(payload)
             except asyncio.CancelledError:

@@ -774,7 +774,7 @@ def _route_said(route: str, *, chat_channels: Any) -> str:
 def _routes_said(trigger: Any, *, chat_channels: Any) -> list[str]:
     """Where *trigger*'s results go and where its failures go, as stored: the routes the fire path
     picks for each outcome (`delivery.route_for`, `delivery.files_in_inbox`)."""
-    from personalclaw.triggers.delivery import files_in_inbox, notifies_on_its_own, route_for
+    from personalclaw.triggers.delivery import notifies_on_its_own, route_for
 
     if notifies_on_its_own(trigger):
         results = "its action is itself a notification in PersonalClaw"
@@ -782,14 +782,39 @@ def _routes_said(trigger: Any, *, chat_channels: Any) -> list[str]:
         results = _route_said(route_for(trigger, ok=True), chat_channels=chat_channels) or (
             "nowhere; nothing is sent to you when it runs"
         )
-    if files_in_inbox(trigger, ok=False):
-        failures = "filed in your Inbox"
-    else:
-        failures = (
-            _route_said(route_for(trigger, ok=False), chat_channels=chat_channels)
-            or "you are not told"
-        )
+    failures = _failures_said(trigger, chat_channels=chat_channels) or "you are not told"
     return [f"Where its results go: {results}.", f"If it fails: {failures}."]
+
+
+def _failures_said(trigger: Any, *, chat_channels: Any) -> str:
+    """Where *trigger*'s failures go, as stored — the route the fire path picks for one
+    (`delivery.route_for`, `delivery.files_in_inbox`), which a web watch's checks report on too —
+    or "" when that route is muted."""
+    from personalclaw.triggers.delivery import files_in_inbox, route_for
+
+    if files_in_inbox(trigger, ok=False):
+        return "filed in your Inbox"
+    return _route_said(route_for(trigger, ok=False), chat_channels=chat_channels)
+
+
+def _watch_said(trigger: Any, *, chat_channels: Any) -> list[str]:
+    """How a web watch looks at its page, and where a check that cannot see it is reported: what
+    `web_poll` does, so the chat cannot promise a different watch from the one that runs."""
+    from personalclaw.triggers.web_poll import poll_interval_for
+
+    minutes = max(1, int(poll_interval_for(trigger) // 60))
+    every = "minute" if minutes == 1 else f"{minutes} minutes"
+    failures = _failures_said(trigger, chat_channels=chat_channels)
+    told = (
+        f"{failures}, once until that changes"
+        if failures
+        else "you are not told, and the Triggers page shows it"
+    )
+    return [
+        f"it checks the page every {every}: its first check only records what is there, and a "
+        "new item after that runs it",
+        f"if a check is refused, cannot read the page or finds nothing on it to watch: {told}",
+    ]
 
 
 def _as_stored(store: Any, trigger: Any) -> tuple[Any, list[Any]]:
@@ -799,9 +824,23 @@ def _as_stored(store: Any, trigger: Any) -> tuple[Any, list[Any]]:
     return (trigger, []) if row is None else (row.trigger, list(row.errors))
 
 
-def _standing(trigger: Any, errors: list[Any]) -> str:
+def _last_check(trigger: Any, *, base_dir: Any) -> dict[str, Any] | None:
+    """A web watch's last check of its page (`web_poll.last_check`), masked for a chat's context
+    as the Triggers page masks it; None for any other kind, or a watch not checked yet."""
+    if trigger.kind != "web_watch":
+        return None
+    from personalclaw.triggers.web_poll import last_check
+
+    check = last_check(trigger, base_dir=base_dir)
+    if check is not None:
+        check["said"] = redact_for_display(check["said"])
+    return check
+
+
+def _standing(trigger: Any, errors: list[Any], *, base_dir: Any = None) -> str:
     """Whether *trigger* runs now, as stored (:func:`_as_stored`): in the order the Triggers page's
-    status line decides it, so the chat and the page say the same thing."""
+    status line decides it, so the chat and the page say the same thing. *base_dir* is the store's
+    home, where a web watch keeps its last check."""
     from personalclaw.triggers import grants
     from personalclaw.triggers.legacy_import import needs_review
     from personalclaw.triggers.models import TriggerState
@@ -830,6 +869,9 @@ def _standing(trigger: Any, errors: list[Any]) -> str:
         return "it is parked: something it needs is busy, and it resumes on its own"
     if not trigger.enabled:
         return "it is switched off until you enable it, and visible on the Triggers page"
+    check = _last_check(trigger, base_dir=base_dir)
+    if check is not None and not check["can_fire"]:
+        return f"it is on, but it cannot fire as things stand: {check['said']}"
     return "it is active now and visible on the Triggers page"
 
 
@@ -1156,6 +1198,8 @@ def create(
         lines.append(f"  cron: {resolved_spec['expr']}")
     if resolved_spec.get("paths"):
         lines.append(f"  watching: {', '.join(resolved_spec['paths'])}")
+    if saved.kind == "web_watch":
+        lines.extend(f"  {line}" for line in _watch_said(saved, chat_channels=chat_channels))
     if saved.kind == "manual":
         lines.append(
             "  it runs only when you run it: Run now on the Triggers page, or the Run now button "
@@ -1183,7 +1227,7 @@ def create(
         # "active now" is a claim about state, so it tracks state — the switch, and whether the
         # action is allowed to run — as stored. This string is UI: it is what the user reads in
         # chat after the agent creates an automation for them.
-        _state = _standing(*_as_stored(store, saved))
+        _state = _standing(*_as_stored(store, saved), base_dir=getattr(store, "base_dir", None))
         lines.append(
             f"  I created this for you — {_state} "
             f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
@@ -1245,6 +1289,7 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
                 "next_fire_at": trigger.next_fire_at,
                 "last_error": redact_for_display(trigger.last_error_summary or ""),
                 "broken": [i.message for i in row.errors],
+                "last_check": _last_check(trigger, base_dir=getattr(store, "base_dir", None)),
             }
         )
     if not out:
@@ -1254,7 +1299,9 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
         flag = "" if a["enabled"] else " [paused]"
         broken = f" ⚠ {a['broken'][0]}" if a["broken"] else ""
         health = f" health={a['health']}" if a["health"] else ""
-        lines.append(f"{a['id']} — {a['name']} ({a['kind']}){flag}{health}{broken}")
+        check = a["last_check"]
+        stuck = f" ⚠ cannot fire: {check['said']}" if check and not check["can_fire"] else ""
+        lines.append(f"{a['id']} — {a['name']} ({a['kind']}){flag}{health}{broken}{stuck}")
     return AutomationToolResult(True, "\n".join(lines), {"automations": out})
 
 
@@ -1449,7 +1496,7 @@ def update(
     if note:
         lines.append(f"  {note}")
     else:
-        standing = _standing(current, errors)
+        standing = _standing(current, errors, base_dir=getattr(store, "base_dir", None))
         lines.append(f"  {standing[:1].upper()}{standing[1:]}.")
     unwritten = report_schedules.adopt(saved)
     if unwritten:

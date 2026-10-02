@@ -354,6 +354,9 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
 
     trigger = row.trigger
     errors, warnings = _issue_messages(row)
+    check = _last_check(trigger)
+    if check is not None and not check["can_fire"]:
+        warnings = [*warnings, check["said"]]
     return {
         "kind": _STORE,
         "store_kind": trigger.kind,
@@ -393,6 +396,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "last_error": _redact(trigger.last_error_summary or ""),
         "broken": errors,
         "warnings": warnings,
+        "last_check": check,
         "needs_review": _needs_review(trigger),
         "needs_grant": _needs_grant(trigger),
         "held_back": _held_back(trigger),
@@ -400,6 +404,24 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "restore_hold": trigger.restore_hold,
         **_attribution(trigger, owner=owner),
     }
+
+
+def _last_check(trigger: Any) -> dict[str, Any] | None:
+    """A web watch's last check of its page (`web_poll.last_check`), masked like `last_error`; None
+    for a kind that keeps none, or a watch not checked yet.
+
+    A watch whose checks were refused or found nothing to track read "Firing on its own" with
+    `warnings: []`: every check's outcome was computed, logged below the owner's level and served
+    nowhere. The sentence the check left is what the row's warning says while it cannot fire.
+    """
+    if trigger.kind != "web_watch":
+        return None
+    from personalclaw.triggers.web_poll import last_check
+
+    check = last_check(trigger, base_dir=config_dir())
+    if check is not None:
+        check["said"] = _redact(check["said"])
+    return check
 
 
 # ── serializers ──

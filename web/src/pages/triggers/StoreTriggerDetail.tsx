@@ -4,10 +4,11 @@ import { Trash2, Play, FlaskConical, AlertTriangle, Users } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
-import { api, ApiError, type ActionProvider, type Trigger as WireTrigger, type TriggerRunResult } from '../../lib/api'
+import { api, ApiError, type ActionProvider, type Trigger as WireTrigger, type TriggerCheck, type TriggerRunResult } from '../../lib/api'
 import { RunHistory } from '../schedule/ScheduleDetail'
-import { triggerStatusMeta, explainsCause, runFlashMeta } from '../schedule/scheduleMeta'
+import { triggerStatusMeta, explainsCause, runFlashMeta, relPast, absTime } from '../schedule/scheduleMeta'
 import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMeta'
+import { watchCheckMeta } from './watchCheck'
 import { DryRunResult } from './DryRunResult'
 import { ConfigReadout, GrantNote, ReviewNote } from './ReviewNote'
 import { HeldBackNote } from './HeldBackNote'
@@ -50,8 +51,9 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
   // the ones the backend would refuse to honour.
   const readOnly = trigger.read_only === true
   const broken = trigger.broken ?? []
-  // The row's advisories, in words — the list badges them "check schedule", and this panel is where
-  // a user comes to learn why. Yields to `broken`, as the list's badge does.
+  // The row's advisories, in words — the list badges them ("check schedule", or "can't fire" for a
+  // watch whose last check leaves it unable to), and this panel is where a user comes to learn why.
+  // Yields to `broken`, as the list's badge does.
   const warnings = broken.length === 0 ? (trigger.warnings ?? []) : []
   const paths = Array.isArray(trigger.spec?.paths) ? (trigger.spec!.paths as string[]) : []
   // A `manual` trigger never fires on its own (`Trigger.fires_automatically`), so it has no
@@ -64,6 +66,11 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
   const eventPattern = trigger.store_kind === 'event' ? String(spec.pattern ?? '') : ''
   const pm = EVENT_PATTERN_META.find((row) => row.pattern === eventPattern) ?? null
   const matcher = pm ? eventMatcherValue(spec, pm.matcher) : ''
+  // A web watch, described by the page it watches and the last check it made of it — the server's
+  // record (`last_check`), said in the server's own sentence.
+  const isWatch = trigger.store_kind === 'web_watch'
+  const watchUrl = isWatch && typeof spec.url === 'string' ? spec.url : ''
+  const check = isWatch ? (trigger.last_check ?? null) : null
 
   async function toggle() {
     setBusy(true)
@@ -138,7 +145,11 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
                 ? 'Paused — it will not fire until re-enabled'
                 : eventPattern
                   ? 'Listening — it fires when a matching event arrives'
-                  : 'Firing on its own'
+                  // 🔴 A watch whose checks are refused, or find nothing on the page to track,
+                  // cannot fire; this read "Firing on its own" through every one of them.
+                  : check && !check.can_fire
+                    ? (watchCheckMeta(check.outcome).notFiring ?? 'Not firing — see its last check')
+                    : 'Firing on its own'
 
   async function run(isDry: boolean) {
     setBusy(true)
@@ -288,7 +299,17 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
             ))}
           </ul>
         )}
+        {/* Which page: the panel said only "When a watched web page changes". */}
+        {watchUrl && <div className="mt-xs font-mono text-on-surface-low text-[0.8125rem] break-all">{watchUrl}</div>}
       </Section>
+
+      {isWatch && (
+        <Section label="Last check">
+          {check
+            ? <WatchCheckLine check={check} saidAbove={warnings.includes(check.said)} />
+            : <div className="text-on-surface-low text-[0.8125rem]">Not checked yet. Its first check records what is on the page and fires nothing.</div>}
+        </Section>
+      )}
 
       <Section label="What it runs">
         <div data-type="body-m" className="text-on-surface">{actionLabel(trigger.action?.provider)}</div>
@@ -337,6 +358,28 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
           </Button>
         </div>
       )}
+    </div>
+  )
+}
+
+/** A web watch's last check: what it came to, when, and how many checks in a row came to it — so a
+ *  refused watch reads "3 checks in a row since …", not only its newest refusal. The server's sentence
+ *  is said here unless the warning above already says it (`saidAbove`). */
+function WatchCheckLine({ check, saidAbove }: { check: TriggerCheck; saidAbove: boolean }) {
+  const meta = watchCheckMeta(check.outcome)
+  return (
+    <div className="flex flex-col gap-xs">
+      <div className="flex flex-wrap items-center gap-x-s gap-y-xs text-[0.8125rem]">
+        <span className="inline-flex items-center gap-s">
+          <meta.icon size={14} style={{ color: meta.tone }} className="shrink-0" aria-hidden="true" />
+          <span className="text-on-surface">{meta.label}</span>
+        </span>
+        <span className="text-on-surface-low text-[0.75rem]">{relPast(check.at)}</span>
+      </div>
+      {check.checks > 1 && (
+        <div className="text-on-surface-low text-[0.75rem]">{check.checks} checks in a row since {absTime(check.since)}</div>
+      )}
+      {!saidAbove && <p className="text-on-surface-var text-[0.8125rem] break-words">{check.said}</p>}
     </div>
   )
 }

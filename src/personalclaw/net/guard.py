@@ -118,6 +118,13 @@ def egress_refusal(url: str, decision: GuardDecision) -> str:
     switch that opens every private address at once, which is not what an owner vouching for one
     server should reach for.
     """
+    return refusal_for(url, decision, then="then test again")
+
+
+def refusal_for(url: str, decision: GuardDecision, *, then: str) -> str:
+    """:func:`egress_refusal`'s sentence, ending in the caller's own next step once the host is
+    allowed: a Test button says "then test again", and a web watch, which checks again by
+    itself, says its next check reaches the page. One sentence, so the two cannot drift apart."""
     host = decision.host or "its host"
     if decision.category == "unresolvable":
         return (
@@ -129,7 +136,7 @@ def egress_refusal(url: str, decision: GuardDecision) -> str:
     if decision.category == "not_listed":
         return (
             f"PersonalClaw's network settings refused {url}: this run reaches only the hosts "
-            f"it lists. If this endpoint is yours, {allow_host_step(host)}, then test again."
+            f"it lists. If this endpoint is yours, {allow_host_step(host)}, {then}."
         )
     if decision.category in OWNER_CAN_ALLOW:
         where = PLACES[decision.category]
@@ -141,7 +148,7 @@ def egress_refusal(url: str, decision: GuardDecision) -> str:
         )
         return (
             f"PersonalClaw's network settings refused {url}, which is on {place}. If this "
-            f"endpoint is yours, {allow_host_step(host)}, then test again."
+            f"endpoint is yours, {allow_host_step(host)}, {then}."
         )
     # The metadata service, a link-local or reserved address, a URL the guard cannot read: no
     # setting reaches these, so the guard's own reason is the whole answer.

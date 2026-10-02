@@ -54,6 +54,15 @@ How it is implemented, in the order the fire path runs it:
 - `src/personalclaw/triggers/delivery.py:51` — `EVENT_FAILED = "automation.run.failed"`, the event
   name above.
 
+A **web watch** can fail without ever running: its checks of the page are refused by the network
+settings, cannot read the page, or find nothing on it the watch can track (no links, no feed
+entries), and then it can never fire. The first check of each such stretch is reported on the same
+failure route, once rather than at every check, and the Triggers page shows the watch's last check
+with a warning, and says it is not firing, until a check reads something it can watch.
+
+- `src/personalclaw/triggers/web_poll.py` — `report_checks` reports the stretch through
+  `report_run`; `last_check` is the record the page and `automation_list` read.
+
 ### 2. A run that did NOTHING is labelled inert — not green
 
 **In your words:** *"A tick that was skipped must not look like a tick that worked. I need to be able

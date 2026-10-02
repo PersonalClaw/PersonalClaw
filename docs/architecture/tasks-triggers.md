@@ -233,7 +233,26 @@ finishes"): an id is the run, a name the one run going under that workflow, the
 one trigger by that name, or the workflow, and anything it cannot place is
 refused with the runs going now. The Triggers page makes one as **Run
 finishes**. A chain carried through a workflow run keeps its depth and path on
-the run, so a loop through a run is refused as a loop.
+the run, so a loop through a run is refused as a loop. A chain its depth cap or
+a loop refuses leaves a `skipped_gate` row with that reason in the refused
+trigger's history (`chain.record_refusals`), as every refusal before dispatch
+does.
+
+**A web watch says what each check of its page found** (`triggers/web_poll.py`).
+The gateway checks each enabled watch every `poll_interval` (5 minutes at the
+least) through the egress chokepoint, and every check leaves the watch's last
+check in its sidecar (`trigger-web-watch/`): what it came to (`WatchCheck`:
+`refused`, `failed`, `budget`, `seeded`, `empty`, `unchanged`, `fired`), the
+sentence for it, and how many checks in a row came to it. `/api/triggers`
+serves it as `last_check`, with `can_fire: false` after a check the watch
+cannot fire through — refused by the network settings, a page it could not
+read, today's requests spent, or a page with nothing it can track (no links,
+no feed entries) — and the sentence then rides in `warnings`, so the Triggers
+page, the list and `automation_list` all say it cannot fire. The first check of
+such a stretch is logged once at WARNING and, except a spent budget, reported
+once on the trigger's failure route (`web_poll.report_checks`,
+`delivery.report_run`), the Inbox by default; a muted route stays muted. A
+check is not a run: only a fire runs the action and writes run history.
 
 **A Send message action is checked where it is saved.** The Triggers page's
 create and edit (`_action_problem`) and the chat's and CLI's `automation_create`
