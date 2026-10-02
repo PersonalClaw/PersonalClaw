@@ -123,7 +123,7 @@ def _memory(tmp_path):
     from personalclaw.vector_memory import VectorMemoryStore
 
     Path(tmp_path).mkdir(parents=True, exist_ok=True)
-    vs = VectorMemoryStore(db_path=Path(tmp_path) / "memory.db", embedding_dim=_EMBED_DIM)
+    vs = VectorMemoryStore(db_path=Path(tmp_path) / "memory.db")
     vs.init()
     vs.embed_fn = _embed
     return vs

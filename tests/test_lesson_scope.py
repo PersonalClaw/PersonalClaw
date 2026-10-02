@@ -62,7 +62,7 @@ def wired(tmp_path):
     db_path = tmp_path / "memory.db"
     mem = MemoryStore(workspace=ws)
     mem.init()
-    vs = VectorMemoryStore(db_path=db_path, embedding_dim=3)
+    vs = VectorMemoryStore(db_path=db_path)
     vs.init()
     vs.embed_fn = lambda _t: [1.0, 0.0, 0.0]
     mem.vector_store = vs
@@ -93,7 +93,7 @@ async def _post(state, body):
 def _fresh_store(db_path) -> VectorMemoryStore:
     """A brand-new store over the same file — proves the scope is PERSISTED, not
     an artifact of the writing instance's in-memory state."""
-    vs = VectorMemoryStore(db_path=db_path, embedding_dim=3)
+    vs = VectorMemoryStore(db_path=db_path)
     vs.init()
     return vs
 

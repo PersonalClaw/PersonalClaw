@@ -16,7 +16,7 @@ from personalclaw.vector_memory import VectorMemoryStore
 
 @pytest.fixture
 def provider(tmp_path):
-    p = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    p = VectorMemoryStore(db_path=tmp_path / "m.db")
     p.init()
     p.embed_fn = lambda t: [1.0, 0.0, 0.0]
     return p
@@ -133,7 +133,7 @@ def test_vector_query_and_embed(provider):
 
 
 def test_vector_query_empty_without_embedder(tmp_path):
-    p = VectorMemoryStore(db_path=tmp_path / "m2.db", embedding_dim=3)
+    p = VectorMemoryStore(db_path=tmp_path / "m2.db")
     p.init()  # no embed_fn
     assert p.capabilities().vector is False
     assert p.vector_query(text="x") == []

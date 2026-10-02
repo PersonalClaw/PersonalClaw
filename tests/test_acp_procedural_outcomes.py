@@ -136,7 +136,7 @@ async def _drive(provider: AcpSessionProvider, message: str = "go") -> None:
 @pytest.fixture
 def svc(tmp_path):
     """Procedural memory over a tmp_path store — NEVER the real ~/.personalclaw."""
-    vs = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "m.db")
     vs.init()
     vs.embed_fn = lambda t: [1.0, 0.0, 0.0]
     return MemoryService.over_vector_store(vs)

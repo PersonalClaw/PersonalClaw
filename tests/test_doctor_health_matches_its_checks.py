@@ -249,7 +249,7 @@ def test_a_rebuild_indexes_at_the_width_the_vectors_have(tmp_path):
     """ "Re-index doesn't clear it": the rebuild used the same stale constant and skipped every
     row again. It now takes the width from the vectors."""
     pytest.importorskip("faiss")
-    writer = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=8)
+    writer = VectorMemoryStore(db_path=tmp_path / "memory.db")
     writer.init()
     writer.write_episodic("The collector keeps its queue in SQLite with WAL", embedding=_vec(0))
     writer.write_episodic("Release notes go out on Thursdays after the freeze", embedding=_vec(1))

@@ -47,7 +47,7 @@ def _distinct_embed(text: str):
 @pytest.fixture
 def svc(tmp_path):
     _seen_texts.clear()
-    vs = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=_EMB_DIM)
+    vs = VectorMemoryStore(db_path=tmp_path / "mem.db")
     vs.init()
     vs.embed_fn = _distinct_embed
     return MemoryService.over_vector_store(vs)

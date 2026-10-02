@@ -26,7 +26,7 @@ from personalclaw.vector_memory import VectorMemoryStore
 
 @pytest.fixture
 def store():
-    s = VectorMemoryStore(db_path=Path(tempfile.mkdtemp()) / "m.db", embedding_dim=3)
+    s = VectorMemoryStore(db_path=Path(tempfile.mkdtemp()) / "m.db")
     s.init()
     return s
 
@@ -907,7 +907,7 @@ class TestKillSwitchIsLive:
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
         from personalclaw.config.loader import config_path
 
-        store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+        store = VectorMemoryStore(db_path=tmp_path / "m.db")
         store.init()
         store.graph.upsert_entity("PersonalClaw", "project")
         store.invalidate_alias_index()
@@ -925,7 +925,7 @@ class TestKillSwitchIsLive:
 
     def test_an_explicit_pin_overrides_config(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-        store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+        store = VectorMemoryStore(db_path=tmp_path / "m.db")
         store.init()
         store.graph_enabled = False
         assert store.graph_enabled is False
@@ -937,7 +937,7 @@ class TestKillSwitchIsLive:
         """Fail-safe direction: losing free, deterministic linking is the worse
         surprise, so ambiguity keeps it running."""
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-        store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+        store = VectorMemoryStore(db_path=tmp_path / "m.db")
         store.init()
         from personalclaw.config.loader import AppConfig
 

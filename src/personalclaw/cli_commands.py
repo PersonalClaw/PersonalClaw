@@ -26,7 +26,7 @@ from personalclaw.security import (
     scan_memory,
 )
 from personalclaw.sel import sel
-from personalclaw.vector_memory import VectorMemoryStore
+from personalclaw.vector_memory import NO_INDEX_NOTE, VectorMemoryStore
 
 
 def _refuse(sentence: str) -> NoReturn:
@@ -1659,7 +1659,10 @@ def _memory_cmd(args: argparse.Namespace) -> None:
             print(
                 f"  Episodic: {stats['episodic_active']} active, {stats['episodic_deleted']} deleted"  # noqa: E501
             )
-            print(f"  FAISS index: {stats['faiss_index_size']} vectors")
+            if "faiss_index_size" in stats:
+                print(f"  FAISS index: {stats['faiss_index_size']} vectors")
+            else:
+                print(f"  FAISS index: none ({NO_INDEX_NOTE})")
             print(f"  Audit events: {stats['events_count']}")
 
         elif action == "audit":

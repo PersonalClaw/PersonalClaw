@@ -81,6 +81,11 @@ def faiss_available() -> bool:
     return _HAS_FAISS and _HAS_NUMPY
 
 
+#: What semantic recall does on an install without faiss, in the words each surface that reports
+#: the index says it: the Doctor's memory check and ``personalclaw memory stats``.
+NO_INDEX_NOTE = "faiss is not installed — semantic recall searches the stored vectors directly"
+
+
 #: The store whose in-memory faiss index semantic recall reads, per database, in THIS process.
 #: Several `VectorMemoryStore` instances can open one `memory.db`, each with its own copy of the
 #: index, so "the index" is ambiguous until the gateway names the one it hands to `MemoryStore`
@@ -808,8 +813,12 @@ class _Index:
     first, so every row a search can get back has its id.
     """
 
-    faiss: object | None  # faiss.IndexFlatIP (an untyped optional C-extension); None: no faiss
+    # faiss.IndexFlatIP (an untyped optional C-extension); None while it holds no vector, and
+    # always without faiss.
+    faiss: object | None
     ids: list[str]
+    #: The width of the vectors it holds; 0 while it holds none. Only a vector has a width: an
+    #: index built with none claims no width, and its first vector decides it.
     dim: int
     #: The model the index holds the vectors of (``_OF_MODEL``'s parameter), or None before the
     #: first build: the index never holds two models' vectors at once.
@@ -1132,7 +1141,6 @@ class VectorMemoryStore(MemoryProvider):
         extra_prefixes: list[str] | None = None,
         dedup_threshold: float = _DEFAULT_DEDUP_THRESHOLD,
         episodic_max: int = _DEFAULT_EPISODIC_MAX,
-        embedding_dim: int = 384,
         episodic_limit: int = _DEFAULT_EPISODIC_LIMIT,
     ):
         self._db_path = db_path or (config_dir() / _DB_FILE)
@@ -1142,8 +1150,6 @@ class VectorMemoryStore(MemoryProvider):
         self._dedup_threshold = dedup_threshold
         self._episodic_max = episodic_max
         self._episodic_limit = episodic_limit
-        # The width an index takes before any vector says otherwise (`_data_dimension`).
-        self._default_dim = embedding_dim
         self._prefixes = list(_BUILTIN_PREFIXES)
         if extra_prefixes:
             self._prefixes.extend(extra_prefixes)
@@ -1151,7 +1157,7 @@ class VectorMemoryStore(MemoryProvider):
         # FAISS state: one value, swapped whole (see `_Index`). Every change to it — a build, a
         # load, a write adding its vector — and every save holds `_index_lock`; a search takes
         # no lock, it reads `_index` once.
-        self._index = _Index(faiss=None, ids=[], dim=embedding_dim, ref=None)
+        self._index = _Index(faiss=None, ids=[], dim=0, ref=None)
         self._index_lock = threading.RLock()
         self._faiss_writes_since_save = 0
         # The vectors a re-index wrote that the published index does not hold yet: memory id →
@@ -2754,7 +2760,8 @@ class VectorMemoryStore(MemoryProvider):
         ).fetchall()
 
     def _data_dimension(self, rows: list) -> int:
-        """The width the index must have: the one the stored vectors HAVE.
+        """The width the index must have: the one the stored vectors HAVE (``rows`` oldest first),
+        or 0 when there are none — no vector, no width.
 
         🔴 THE DESYNC'S ROOT CAUSE. The width used to be a constructor constant (`embedding_dim`,
         default 384) that nothing kept in step with the model producing the vectors — the gateway
@@ -2764,11 +2771,29 @@ class VectorMemoryStore(MemoryProvider):
         vs 2 embedded" after a re-index, with consolidation (which filters rows by the same width)
         skipping them too. The data is the authority, so it decides: the newest row's width, i.e.
         the model as it embeds now. Rows of another width (the model's output changed) are
-        skipped and counted — a re-embed is what indexes them.
+        skipped and counted — a re-embed is what indexes them. The constant then survived as the
+        width of an index built with no vector, and with no faiss nothing ever replaced it:
+        consolidation read it as the width the model writes and skipped every memory a 1024-dim
+        model had embedded. An index holds no width until it holds a vector now.
         """
         if not rows:
-            return self._default_dim
+            return 0
         return len(rows[-1]["embedding"]) // 4  # float32
+
+    def _width_now(self, space: str) -> int:
+        """The width ``space``'s model writes now — :meth:`_data_dimension`'s rule, the newest
+        live vector's, and the one :func:`embedding_coverage` counts "embedded" by — or 0 when the
+        model has written none.
+
+        Read from the database, never from the index: without faiss there is no index, and the
+        index of a store that has not used it yet holds nothing."""
+        row = self.db.execute(
+            "SELECT length(embedding) FROM episodic_memories "
+            f"WHERE is_deleted = 0 AND embedding IS NOT NULL AND {_OF_MODEL} "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (space,),
+        ).fetchone()
+        return int(row[0]) // 4 if row else 0  # float32
 
     def build_faiss_index(self) -> int:
         """Rebuild the FAISS index from SQLite: the vectors of the model this store compares
@@ -2792,7 +2817,8 @@ class VectorMemoryStore(MemoryProvider):
         """
         with self._index_lock:
             if not _HAS_FAISS or not _HAS_NUMPY:
-                built = _Index(faiss=None, ids=[], dim=self._index.dim, ref=space)
+                # No faiss, so no index: a search compares the stored vectors themselves.
+                built = _Index(faiss=None, ids=[], dim=0, ref=space)
                 self._index = built
                 # No index: a search compares the stored vectors themselves, every one of them.
                 with self._unindexed_lock:
@@ -2800,6 +2826,11 @@ class VectorMemoryStore(MemoryProvider):
                 return built
             rows = self._embedded_rows(space)
             dim = self._data_dimension(rows)
+            if not dim:
+                # No vector of this model yet: the index holds none, so it claims no width.
+                built = _Index(faiss=None, ids=[], dim=0, ref=space)
+                self._index = built
+                return built
             index = faiss.IndexFlatIP(dim)
             id_map: list[str] = []
             skipped = 0
@@ -2869,7 +2900,8 @@ class VectorMemoryStore(MemoryProvider):
         """Rebuild the index from the stored vectors and persist it — the Doctor's Fix and the
         maintenance job for a desynced index. Returns ``{indexed, embedded, other_model, dim}``:
         ``other_model`` counts the vectors the index cannot hold (another model's, or this one's
-        at another width), and is 0 with no embedding model bound, where nothing is compared."""
+        at another width), and is 0 with no embedding model bound, where nothing is compared;
+        ``dim`` is 0 when the index holds no vector."""
         embedded = self._count_vectors()
         with self._index_lock:
             built = self._build_index_for(self._comparison_space())
@@ -2884,14 +2916,28 @@ class VectorMemoryStore(MemoryProvider):
         }
 
     def index_state(self) -> dict[str, Any]:
-        """Read-only view of the live index for the Doctor: its width, the ids it holds, and the
-        model they are vectors of (``embedding_model``; ``''`` names none)."""
+        """Read-only view of the live index for the Doctor: its width (0 while it holds no vector,
+        and always without faiss, where there is no index), the ids it holds, and the model they
+        are vectors of (``embedding_model``; ``''`` names none)."""
         current = self._index
         return {
             "dim": current.dim,
             "ids": list(current.ids),
             "embedding_model": current.ref,
         }
+
+    def _live_indexed(self) -> int:
+        """How many live memories the index holds: the ones semantic search can return from it,
+        and the count the Doctor's memory check compares (``memory_index_gaps``). A memory
+        deleted or folded into a fact keeps its vector in the index until the next build (search
+        skips it), so the index's own row count read higher than the memories embedded."""
+        held = set(self._index.ids)
+        if not held:
+            return 0
+        rows = self.db.execute(
+            "SELECT id FROM episodic_memories WHERE is_deleted = 0 AND embedding IS NOT NULL"
+        ).fetchall()
+        return sum(1 for r in rows if r[0] in held)
 
     def _count_vectors(self) -> int:
         """Live episodic memories holding a vector, whichever model wrote it."""
@@ -3060,51 +3106,60 @@ class VectorMemoryStore(MemoryProvider):
         (qwen3-embedding:0.6b) emits 1024: every episodic write raised, so the agent silently
         stopped remembering anything.
 
-        `rebuild_faiss_index` already skips-and-warns on this same mismatch. The write path not
-        doing so is the inconsistency; matching it keeps the text (already committed) and the
-        SQLite embedding, so a later `reembed`/rebuild recovers the vector. The id goes in before
-        the vector, so a search reading the index meanwhile never gets back a row without one.
+        A vector the index cannot take as it stands is one the index is not holding the model's
+        vectors for: the index holds none yet, or holds them at another width than this one (the
+        model's output changed). Either way the newest vector is the width the model writes now,
+        so the index is rebuilt from the database at its width (:meth:`_build_index_for`; this row
+        is committed before it runs, so the build reads it). A build, not an add: an index built
+        before its first vector used to start over from the one written here, and the vectors
+        another store on the same database wrote meanwhile were in no index at all. The vectors
+        left at the old width are the stale ones, read by keyword and counted until a re-embed.
+        The id goes in before the vector, so a search reading the index meanwhile never gets back
+        a row without one.
         """
         with self._index_lock:
             current = self._index
-            index: Any = current.faiss  # faiss.IndexFlatIP, an untyped optional C-extension
-            if index is None or current.ref != space:
+            if not faiss_available() or current.ref != space:
                 return
-            vec = np.frombuffer(blob, dtype=np.float32).reshape(1, -1)
-            if vec.shape[1] != current.dim and index.ntotal == 0:
-                # An EMPTY index has no width to defend — its width is only the constructor's
-                # default. Adopt the vector's: this is a model bound after the store opened, and
-                # skipping here is how every write of a first-bound 768-dim model went unindexed.
-                width = int(vec.shape[1])
-                index = faiss.IndexFlatIP(width)
-                current = _Index(faiss=index, ids=[], dim=width, ref=space)
-                self._index = current
-            if vec.shape[1] != current.dim:
-                logger.warning(
-                    "Skipping FAISS add for episodic %s: embedding is %d-dim but the index is "
-                    "%d-dim. The memory itself is saved; run a re-embed to restore semantic "
-                    "recall for it. This usually means the model's output width changed.",
-                    mem_id,
-                    vec.shape[1],
-                    current.dim,
-                )
+            width = len(blob) // 4  # float32
+            index: Any = current.faiss  # faiss.IndexFlatIP, an untyped optional C-extension
+            if index is None or index.ntotal == 0 or width != current.dim:
+                if index is not None and index.ntotal and width != current.dim:
+                    logger.warning(
+                        "Episodic %s is %d-dim and the index held %d-dim vectors: rebuilding it "
+                        "at %d-dim, the width the model now writes. Memories at another width "
+                        "are read by keyword until a re-embed.",
+                        mem_id,
+                        width,
+                        current.dim,
+                        width,
+                    )
+                self._build_index_for(space)
+                self.save_faiss_index()
                 return
             current.ids.append(mem_id)
-            index.add(vec)
+            index.add(np.frombuffer(blob, dtype=np.float32).reshape(1, -1))
             self._faiss_writes_since_save += 1
             if self._faiss_writes_since_save >= _FAISS_SAVE_INTERVAL:
                 self.save_faiss_index()
 
     def save_faiss_index(self) -> None:
         """Persist the FAISS index and its ids to disk, as one value (the index lock is held, so
-        no write adds a row between the two files)."""
+        no write adds a row between the two files).
+
+        An index that holds no vector has no width to save. The file an earlier index left is
+        removed and the id list written empty, so neither the next open nor the Doctor's read of
+        the files takes another index's vectors for this one's."""
         with self._index_lock:
             current = self._index
-            if not _HAS_FAISS or current.faiss is None:
+            if not _HAS_FAISS:
                 return
             try:
-                # faiss is an untyped optional C-extension; the index is object|None here.
-                faiss.write_index(current.faiss, str(self._faiss_path))  # type: ignore[call-overload]  # noqa: E501
+                if current.faiss is None:
+                    self._faiss_path.unlink(missing_ok=True)
+                else:
+                    # faiss is an untyped optional C-extension; the index is object|None here.
+                    faiss.write_index(current.faiss, str(self._faiss_path))  # type: ignore[call-overload]  # noqa: E501
                 atomic_write(self._faiss_path.with_suffix(".ids.json"), json.dumps(current.ids))
                 self._faiss_writes_since_save = 0
             except Exception:
@@ -3659,7 +3714,6 @@ class VectorMemoryStore(MemoryProvider):
             "(SELECT COUNT(*) FROM memory_events) AS events_count, "
             "(SELECT COUNT(*) FROM semantic_memory WHERE source='user_explicit') AS user_curated"
         ).fetchone()
-        faiss_size = len(self._index.ids)
         # Embedded = searchable by meaning now: the vectors of the model bound now, at its width.
         # The others, and the memories no model embedded, are read by keyword until the re-index
         # embeds them — counted by the ONE reader every surface uses (`embedding_coverage`), so the
@@ -3681,7 +3735,10 @@ class VectorMemoryStore(MemoryProvider):
             "episodic_active": row[2],
             "episodic_deleted": row[3],
             "events_count": row[4],
-            "faiss_index_size": faiss_size,
+            # How many live memories the faiss index holds (`_live_indexed`). Without faiss there
+            # is no index (recall compares the stored vectors themselves), and a count of one read
+            # as an index that had lost every memory.
+            **({"faiss_index_size": self._live_indexed()} if faiss_available() else {}),
             "embedded_count": coverage.comparable,
             "embedded_stale": coverage.other_model,
             "unembedded": coverage.unembedded,
@@ -4590,7 +4647,10 @@ class VectorMemoryStore(MemoryProvider):
 
         promoted = 0
         space = self._comparison_space()
-        width = self._sync_index(space).dim
+        # The width the model writes now, read from its vectors (`_width_now`). It used to be read
+        # from the index, which without faiss does not exist: the store's 384 default stood in, and
+        # every memory a 1024-dim model embedded was skipped as "another width".
+        width = self._width_now(space)
         rows = self.db.execute(
             "SELECT id, conversation_id, text, embedding, importance, created_at, visit_count "
             "FROM episodic_memories "
@@ -4604,9 +4664,9 @@ class VectorMemoryStore(MemoryProvider):
         # comparing across them is meaningless: the two spaces are unrelated, so a similarity
         # between them is a number without a meaning, even at one width (the query above).
         #
-        # Rows are also filtered to the CURRENT index width: `np.dot` on mismatched shapes raises
-        # ValueError — which would abort the whole consolidation pass, so a single row the model
-        # wrote at another width could stop the agent from ever promoting a pattern again.
+        # Rows are also filtered to that width: `np.dot` on mismatched shapes raises ValueError —
+        # which would abort the whole consolidation pass, so a single row the model wrote at
+        # another width could stop the agent from ever promoting a pattern again.
         usable, stale = [], 0
         for row in rows:
             if len(np.frombuffer(row["embedding"], dtype=np.float32)) == width:

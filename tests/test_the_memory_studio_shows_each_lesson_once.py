@@ -33,7 +33,7 @@ def _state(tmp_path, monkeypatch):
     ws.mkdir(exist_ok=True)
     mem = MemoryStore(workspace=ws)
     mem.init()
-    vs = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "memory.db")
     vs.init()
     mem.vector_store = vs
     cb = MagicMock()

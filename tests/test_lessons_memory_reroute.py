@@ -42,7 +42,7 @@ def _state_with_record_store(tmp_path, *, with_embedder: bool):
     ws.mkdir(exist_ok=True)
     mem = MemoryStore(workspace=ws)
     mem.init()
-    vs = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "memory.db")
     vs.init()
     if with_embedder:
         vs.embed_fn = lambda t: [1.0, 0.0, 0.0]

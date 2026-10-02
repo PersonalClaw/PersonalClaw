@@ -126,7 +126,7 @@ def _memory(home: Path):
     """The real memory store — a write through it reaches the bus exactly as a user's does."""
     from personalclaw.vector_memory import VectorMemoryStore
 
-    mem = VectorMemoryStore(db_path=home / "memory.db", embedding_dim=3)
+    mem = VectorMemoryStore(db_path=home / "memory.db")
     mem.init()
     return mem
 

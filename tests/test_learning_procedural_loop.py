@@ -49,7 +49,7 @@ PROMOTING_VISITS = 5
 
 @pytest.fixture
 def svc(tmp_path):
-    vs = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "m.db")
     vs.init()
     vs.embed_fn = lambda _t: [1.0, 0.0, 0.0]
     return MemoryService.over_vector_store(vs)
@@ -104,7 +104,7 @@ def test_the_block_reaches_the_real_session_context(tmp_path):
     from personalclaw.skills.loader import SkillsLoader
 
     store = MemoryStore(workspace=tmp_path / "ws")
-    vs = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "m.db")
     vs.init()
     vs.embed_fn = lambda _t: [1.0, 0.0, 0.0]
     store.vector_store = vs
@@ -129,7 +129,7 @@ def test_no_priors_renders_no_block(tmp_path):
     from personalclaw.skills.loader import SkillsLoader
 
     store = MemoryStore(workspace=tmp_path / "ws")
-    vs = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "m.db")
     vs.init()
     vs.embed_fn = lambda _t: [1.0, 0.0, 0.0]
     store.vector_store = vs

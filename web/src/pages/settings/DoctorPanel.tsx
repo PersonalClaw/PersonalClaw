@@ -743,7 +743,9 @@ function FixButton({ fixId, onFixed }: { fixId: string; onFixed: () => void }) {
 // ── one probe row with expandable evidence ─────────────────────────────────
 // Native details/summary disclosure: no JS state, keyboard-accessible by the
 // platform, and not a bespoke button element (design-system primitive discipline).
-function ProbeRow({ probe, onFixed }: { probe: DoctorProbe; onFixed: () => void }) {
+// Exported for the one other page that shows a check where its subject lives: Memory › Health
+// shows the memory index check as this same row, with this same Fix.
+export function ProbeRow({ probe, onFixed }: { probe: DoctorProbe; onFixed: () => void }) {
   const hasEvidence = probe.evidence && Object.keys(probe.evidence).length > 0
   const dot = probe.ok ? 'var(--color-success)' : probe.tier <= 2 ? 'var(--color-error)' : 'var(--color-warning)'
   // A failed probe offers its Fix, or says there is none and what to do. The page header promises

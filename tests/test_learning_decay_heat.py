@@ -38,7 +38,7 @@ def _isolated_home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def svc(tmp_path):
-    store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    store = VectorMemoryStore(db_path=tmp_path / "m.db")
     store.init()
     store.embed_fn = lambda t: [1.0, 0.0, 0.0]
     return MemoryService.over_vector_store(store)

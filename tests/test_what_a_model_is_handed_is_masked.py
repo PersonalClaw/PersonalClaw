@@ -1086,7 +1086,7 @@ def facts(tmp_path, monkeypatch):
     from personalclaw.vector_memory import VectorMemoryStore
 
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path, raising=False)
-    store = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    store = VectorMemoryStore(db_path=tmp_path / "memory.db")
     store.init()
     assert store.set_semantic("user.github_token", f"the bot token is {TOKEN}", 1.0, "seed") is None
     return store

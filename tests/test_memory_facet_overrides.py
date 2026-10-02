@@ -48,7 +48,7 @@ TEXT = "keep your answers short"
 def store(tmp_path, monkeypatch):
     """A real vector store on a temp path — never the user's home."""
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    vs = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "memory.db")
     vs.init()
     return vs
 

@@ -13,7 +13,7 @@ from personalclaw.vector_memory import VectorMemoryStore
 
 @pytest.fixture
 def svc(tmp_path):
-    s = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    s = VectorMemoryStore(db_path=tmp_path / "m.db")
     s.init()
     s.embed_fn = lambda t: [1.0, 0.0, 0.0]
     return MemoryService.over_vector_store(s)

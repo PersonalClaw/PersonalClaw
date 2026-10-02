@@ -61,7 +61,7 @@ def test_every_kind_is_mapped_everywhere():
 def _store(tmp_path):
     from personalclaw.vector_memory import VectorMemoryStore
 
-    store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    store = VectorMemoryStore(db_path=tmp_path / "m.db")
     store.init()
     return store
 
@@ -458,7 +458,7 @@ def _svc(tmp_path):
     from personalclaw.memory_service import MemoryService
     from personalclaw.vector_memory import VectorMemoryStore
 
-    store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    store = VectorMemoryStore(db_path=tmp_path / "m.db")
     store.init()
     return MemoryService.over_vector_store(store), store
 

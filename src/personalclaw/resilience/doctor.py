@@ -497,11 +497,9 @@ async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
             ),
         )
     if not ev.get("faiss_available"):
-        return ProbeResult(
-            ok=True,
-            detail="faiss is not installed — semantic recall searches the stored vectors directly",
-            evidence=ev,
-        )
+        from personalclaw.vector_memory import NO_INDEX_NOTE
+
+        return ProbeResult(ok=True, detail=NO_INDEX_NOTE, evidence=ev)
     return ProbeResult(ok=True, detail="memory.db healthy", evidence=ev)
 
 

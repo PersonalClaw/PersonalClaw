@@ -39,7 +39,7 @@ _ENTITIES = 40
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    s = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    s = VectorMemoryStore(db_path=tmp_path / "memory.db")
     s.init()
     # Pinned rather than read from config: the graph must be on whatever the ambient home says.
     s.graph_enabled = True
@@ -165,7 +165,7 @@ def test_every_store_that_shares_one_connection_opens_a_shared_one(tmp_path, mon
     from personalclaw.knowledge.store import KnowledgeStore
     from personalclaw.lexicon.store import LexiconStore
 
-    memory = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    memory = VectorMemoryStore(db_path=tmp_path / "memory.db")
     memory.init()
     knowledge = KnowledgeStore(str(tmp_path / "knowledge.db"))
     lexicon = LexiconStore(str(tmp_path / "lexicon.db"))

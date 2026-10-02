@@ -37,7 +37,7 @@ class _FakeProvider:
 
 @pytest.fixture
 def svc(tmp_path):
-    vs = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "m.db")
     vs.init()
     vs.embed_fn = lambda t: [1.0, 0.0, 0.0]
     return MemoryService.over_vector_store(vs)

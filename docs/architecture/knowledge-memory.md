@@ -325,9 +325,20 @@ item vector).
 ### Stores
 
 - **`vector_memory.py`** — semantic + episodic memory. FAISS index at
-  `~/.personalclaw/memory.faiss` (optional — degrades to FTS5 without
-  embeddings), time-decay retrieval, and config-threaded episodic knobs
+  `~/.personalclaw/memory.faiss` (optional, the `[embeddings]` extra: without it semantic
+  search compares the stored vectors directly, and without embeddings it reads by keyword),
+  time-decay retrieval, and config-threaded episodic knobs
   (`episodic_dedup_threshold`, `episodic_max_results` in `config/loader.py`).
+  - **A width is only ever a vector's.** The width the model writes now is its newest stored
+    vector's (`_width_now`, the rule `embedding_coverage` counts "embedded" by), and
+    consolidation reads it from the database, with or without faiss. The index holds no width
+    until it holds a vector: a vector it cannot take (it holds none yet, or holds the model's
+    at another width) has it rebuilt from the database at that vector's width, which also
+    takes in what another store on the same database wrote meanwhile. `/api/memory/stats`'
+    `faiss_index_size` counts the live memories the index holds (a deleted one's vector stays
+    in it until the next build), the number the Doctor's memory check compares; without faiss
+    there is no index, so the stats count none, and that check, which Memory → Health shows with
+    its Fix, says so.
   - **It embeds with the model bound now.** Every store — the main `memory.db` and
     each partition's — embeds through `embedding_providers/registry.py::bound_embedding()`,
     which reads the `embedding` binding at each call and rebuilds when it, or the

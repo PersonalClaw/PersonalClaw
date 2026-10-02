@@ -26,7 +26,7 @@ from personalclaw.vector_memory import VectorMemoryStore
 
 @pytest.fixture
 def store():
-    s = VectorMemoryStore(db_path=Path(tempfile.mkdtemp()) / "m.db", embedding_dim=3)
+    s = VectorMemoryStore(db_path=Path(tempfile.mkdtemp()) / "m.db")
     s.init()
     return s
 

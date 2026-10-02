@@ -376,7 +376,7 @@ async def test_an_agent_teaches_no_approve_rule(tmp_path, monkeypatch, refused_r
     from personalclaw.memory_service import MemoryService
     from personalclaw.vector_memory import VectorMemoryStore
 
-    store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    store = VectorMemoryStore(db_path=tmp_path / "m.db")
     store.init()
     monkeypatch.setattr(
         mem_handlers, "_get_service", lambda state: MemoryService.over_vector_store(store)

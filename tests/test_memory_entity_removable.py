@@ -38,7 +38,7 @@ from personalclaw.vector_memory import VectorMemoryStore
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    s = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    s = VectorMemoryStore(db_path=tmp_path / "m.db")
     s.init()
     # Pinned rather than left to config: `graph_enabled` reads AppConfig live, and these tests
     # must not depend on the ambient home's memory settings.

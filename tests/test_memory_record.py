@@ -39,7 +39,7 @@ def test_embedding_blob_matches_store_encoding(tmp_path):
     # built from a written episodic row must decode to the normalized vector.
     from personalclaw.vector_memory import VectorMemoryStore
 
-    store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    store = VectorMemoryStore(db_path=tmp_path / "m.db")
     store.init()
     store.embed_fn = lambda t: [1.0, 0.0, 0.0]
     assert store.write_episodic("a fragment to remember", source="test") is True
@@ -173,7 +173,7 @@ def test_capabilities_defaults_and_dict():
 def _store(tmp_path):
     from personalclaw.vector_memory import VectorMemoryStore
 
-    s = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+    s = VectorMemoryStore(db_path=tmp_path / "m.db")
     s.init()
     return s
 

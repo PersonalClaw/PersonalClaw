@@ -116,7 +116,7 @@ def _memory(tmp_path):
     """A real vector store — the backing for both facets and lessons."""
     from personalclaw.vector_memory import VectorMemoryStore
 
-    vs = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "memory.db")
     vs.init()
     vs.embed_fn = lambda t: [1.0, 0.0, 0.0]
     return vs

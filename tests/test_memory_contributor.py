@@ -41,7 +41,7 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def store(home):
-    s = VectorMemoryStore(db_path=home / "m.db", embedding_dim=3)
+    s = VectorMemoryStore(db_path=home / "m.db")
     s.init()
     return s
 
@@ -50,7 +50,7 @@ def store(home):
 def anon_store(tmp_path, monkeypatch):
     """A store with NO username configured — the single-user default."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    s = VectorMemoryStore(db_path=tmp_path / "anon.db", embedding_dim=3)
+    s = VectorMemoryStore(db_path=tmp_path / "anon.db")
     s.init()
     return s
 

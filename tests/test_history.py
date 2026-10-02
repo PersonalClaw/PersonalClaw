@@ -1729,7 +1729,7 @@ class TestPersonaCommitmentCapture:
         conv_log.init()
         mem = MemoryStore(workspace=tmp_path / "memory")
         mem.init()
-        vs = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+        vs = VectorMemoryStore(db_path=tmp_path / "m.db")
         vs.init()
         vs.embed_fn = lambda t: [1.0, 0.0, 0.0]
         consolidator = HistoryConsolidator(log=conv_log, memory=mem, vector_store=vs)
@@ -1884,7 +1884,7 @@ class TestCommitmentDeliveryScan:
         from personalclaw.memory_service import MemoryService
         from personalclaw.vector_memory import VectorMemoryStore
 
-        vs = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=3)
+        vs = VectorMemoryStore(db_path=tmp_path / "m.db")
         vs.init()
         vs.embed_fn = lambda t: [1.0, 0.0, 0.0]
         return MemoryService.over_vector_store(vs)

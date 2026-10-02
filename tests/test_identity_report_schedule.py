@@ -137,7 +137,7 @@ def _state(tmp_path):
 
     ws = tmp_path / "ws"
     ws.mkdir(exist_ok=True)
-    vs = VectorMemoryStore(db_path=Path(tmp_path) / "memory.db", embedding_dim=_EMBED_DIM)
+    vs = VectorMemoryStore(db_path=Path(tmp_path) / "memory.db")
     vs.init()
     vs.embed_fn = _embed
     mem = MemoryStore(workspace=ws)

@@ -293,7 +293,7 @@ def test_a_spool_failure_does_not_BREAK_THE_MEMORY_WRITE(tmp_path, monkeypatch):
 
     monkeypatch.setattr(dispatch, "spool_fire", _boom)
     _memory_trigger(tmp_path)
-    memory = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    memory = VectorMemoryStore(db_path=tmp_path / "memory.db")
     memory.init()
     assert memory.set_semantic("project.notes", "v", 1.0, "user_explicit") is None  # no raise
     assert len(attempts) == 1, "the spool was never tried, so this proved nothing"

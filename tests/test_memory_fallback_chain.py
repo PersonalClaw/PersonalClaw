@@ -67,7 +67,7 @@ def test_filesystem_provider_query_yields_markdown_records(tmp_path):
 def test_service_can_vector_search_reflects_embedder(tmp_path):
     store = MemoryStore(workspace=tmp_path)
     store.init()
-    vs = VectorMemoryStore(db_path=tmp_path / "v.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "v.db")
     vs.init()
     store.vector_store = vs
 
@@ -108,7 +108,7 @@ def test_service_for_attaches_filesystem_fallback(tmp_path):
 
 
 def test_fts_fallback_search_empty_without_fallback(tmp_path):
-    vs = VectorMemoryStore(db_path=tmp_path / "v.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "v.db")
     vs.init()
     svc = MemoryService.over_vector_store(vs)  # no fallback
     assert svc.fts_fallback_search("anything") == []

@@ -492,7 +492,7 @@ class TestEmbeddingDimensionChange:
     """
 
     def test_write_survives_a_wider_embedding(self, tmp_path: Path) -> None:
-        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=384)
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
         # What a switch to a 1024-dim model produces.
         wide = [0.01] * 1024
@@ -506,25 +506,26 @@ class TestEmbeddingDimensionChange:
         assert "SQLite" in entries[0]["text"]
 
     def test_write_still_indexes_a_matching_embedding(self, tmp_path: Path) -> None:
-        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=8)
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
         assert store.write_episodic("A memory with a correctly sized vector", embedding=[0.1] * 8)
         assert store.get_episodic_list()
 
-    def test_a_narrower_embedding_is_also_skipped(self, tmp_path: Path) -> None:
-        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=384)
+    def test_a_narrower_embedding_is_also_kept(self, tmp_path: Path) -> None:
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
         assert store.write_episodic("A memory embedded by a smaller model", embedding=[0.5] * 128)
         assert len(store.get_episodic_list()) == 1
 
-    def test_the_skip_is_logged_with_both_dimensions(self, tmp_path: Path, caplog) -> None:
-        """A silent skip would be its own bug — the operator needs to know to re-embed.
+    def test_a_width_change_is_logged_with_both_widths(self, tmp_path: Path, caplog) -> None:
+        """The index follows the newest vector's width, and says so: the memories left at the
+        old width are read by keyword until a re-embed, and the operator needs to know.
 
-        The index has to HOLD a vector first: an empty one has no width to defend, and adopts
-        the first vector's (settings B16 — the constructor's 384 default is not a real width)."""
+        The index has to HOLD a vector first: an empty one has no width, and takes the first
+        vector's."""
         import logging
 
-        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=384)
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
         store.write_episodic("A memory the index already holds at 384", embedding=[0.1] * 384)
         with caplog.at_level(logging.WARNING):
@@ -542,7 +543,7 @@ class TestEmbeddingDimensionChange:
         write, and semantic recall). Recall must return nothing and let the caller fall back
         to keyword search, never raise into the user's turn.
         """
-        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=8)
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
         store.write_episodic("A memory indexed at the current width", embedding=[0.3] * 8)
         # A query embedded by a DIFFERENT model than the index was built with.
@@ -551,27 +552,33 @@ class TestEmbeddingDimensionChange:
 
     def test_dedup_on_write_survives_a_width_change(self, tmp_path: Path) -> None:
         """The dedup search runs on the write path, so it must not raise either."""
-        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=8)
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
         assert store.write_episodic("First memory at the indexed width", embedding=[0.3] * 8)
         # Now the model changes: this write must still succeed (dedup simply skipped).
         assert store.write_episodic("Second memory from the new model", embedding=[0.3] * 1024)
         assert len(store.get_episodic_list()) == 2
 
-    def test_consolidation_tolerates_a_mixed_width_store(self, tmp_path: Path) -> None:
+    def test_consolidation_tolerates_a_mixed_width_store(self, tmp_path: Path, caplog) -> None:
         """`np.dot` on mismatched shapes raises ValueError, which aborted the whole pass."""
-        store = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=8)
+        import logging
+
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
+        store.embed_fn = lambda _text: [0.4] * 1024  # consolidation runs only while one embeds
+        # Rows the model wrote before its output width changed (apart, so none dedupes another)...
         for i in range(3):
-            store.write_episodic(
-                f"A consistent memory number {i} about the ingest work", embedding=[0.4] * 8
+            assert store.write_episodic(
+                f"A consistent memory number {i} about the ingest work",
+                embedding=[1.0 if j == i else 0.1 for j in range(8)],
             )
-        # A row left behind by the previous model.
-        store.write_episodic(
-            "A memory from the older embedding model entirely", embedding=[0.4] * 1024
-        )
-        # Must complete rather than raising; the stale row is simply not clustered.
-        store.promote_episodic_patterns()
+        # ...and one at the width it writes now (its newest vector's).
+        store.write_episodic("A memory at the width the model writes now", embedding=[0.4] * 1024)
+        # Must complete rather than raising; the stale rows are simply not clustered.
+        with caplog.at_level(logging.WARNING, logger="personalclaw.vector_memory"):
+            assert store.promote_episodic_patterns() == 0
+        assert "Consolidation skipped 3 episodic memories" in caplog.text
+        assert "now writes (1024)" in caplog.text
 
 
 class TestOccurrencesAreNotMerged:

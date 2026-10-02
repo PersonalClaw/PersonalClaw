@@ -33,7 +33,7 @@ SRC = str(Path(__file__).resolve().parents[1] / "src")
 def store(tmp_path, monkeypatch):
     """A real store on tmp_path — never the user's home."""
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path, raising=False)
-    vs = VectorMemoryStore(db_path=tmp_path / "memory.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "memory.db")
     vs.init()
     vs.graph_enabled = True
     yield vs
@@ -554,7 +554,7 @@ class TestLouvainDeterminism:
             "from pathlib import Path;"
             "from personalclaw.vector_memory import VectorMemoryStore;"
             "from personalclaw import memory_topology as mt;"
-            f"vs=VectorMemoryStore(db_path=Path({db_path!r}), embedding_dim=3);"
+            f"vs=VectorMemoryStore(db_path=Path({db_path!r}));"
             "vs.init();vs.graph_enabled=True;"
             "print(json.dumps(sorted(mt.detect_communities(vs.db).items())))"
         )

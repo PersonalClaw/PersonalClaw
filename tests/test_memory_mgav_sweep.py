@@ -100,7 +100,7 @@ def store(home):
     lying. Without an embedder recall is keyword + graph, which is what §2.1 degrades
     between.
     """
-    vs = VectorMemoryStore(db_path=home / "memory.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=home / "memory.db")
     vs.init()
     return vs
 

@@ -17,8 +17,9 @@ import {
   type MemoryGraphSummary, type MemoryLink, type MemoryGraphData,
   type MemoryEntityProposal, type MemorySlot, type MemorySlotTrimProposal,
   type MemoryFacet,
-  type RecallRanking,
+  type RecallRanking, hasApiCode,
 } from '../../lib/api'
+import { ProbeRow } from './DoctorPanel'
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { confirmForgetPreference } from './forgetPreference'
@@ -1540,6 +1541,8 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
         </div>
       </Section>
 
+      <SearchIndexSection onFixed={() => { reload(); onChanged() }} />
+
       <EntityGraphSection onChanged={reload} />
 
       <VolunteerPrecisionSection />
@@ -1571,14 +1574,40 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
               </div>
             </div>
           )}
-          {/* stays raw (ratchet): a role's inherited wght would flatten the <strong> figures */}
+          {/* stays raw (ratchet): a role's inherited wght would flatten the <strong> figures.
+              Read with no message, so it holds no episodic recall: that is chosen for each message,
+              and an "episodic 0" here read as recall that had been cut out of every turn. */}
           <div className="mt-3 text-on-surface-low text-[0.75rem]">
-            Injected-context budget: <strong className="text-on-surface-var">{obs.context_preview.total_chars.toLocaleString()} chars</strong>
-            {' '}(semantic {obs.context_preview.semantic_chars.toLocaleString()} · episodic {obs.context_preview.episodic_chars.toLocaleString()} · lessons {obs.context_preview.lessons_chars.toLocaleString()})
+            Injected-context budget before any message: <strong className="text-on-surface-var">{obs.context_preview.total_chars.toLocaleString()} chars</strong>
+            {' '}(semantic {obs.context_preview.semantic_chars.toLocaleString()} · lessons {obs.context_preview.lessons_chars.toLocaleString()}). Each message adds the episodic memories it recalls.
           </div>
         </Section>
       )}
     </div>
+  )
+}
+
+// ── Search index ────────────────────────────────────────────────────────────
+/** Whether semantic search reaches every memory the embedding model embedded: the Doctor's own
+ *  memory check (`memory.store`) — its measurement, its sentence and its Fix — shown on the tab
+ *  whose Observability counts the index and the embedded memories. Those two counts sat side by
+ *  side with nothing saying whether they should agree: "0 faiss index size · 40 embedded count"
+ *  carried no warning and no Fix. Hidden while the Doctor is switched off, which switches off its
+ *  checks and its Fixes everywhere. */
+function SearchIndexSection({ onFixed }: { onFixed: () => void }) {
+  const { data, error, refresh } = useQuery(
+    'settings:memory-index', () => api.doctorCapability('memory'), { persist: false },
+  )
+  if (hasApiCode(error, 'doctor_disabled')) return null
+  const probe = data?.probes.find((p) => p.id === 'memory.store')
+  if (data !== undefined && !probe) return null
+  const fixed = () => { invalidateKeys('settings:memory-index'); refresh(); onFixed() }
+  return (
+    <Section title="Search index" hint="Whether semantic search reaches every memory the embedding model has embedded.">
+      {probe ? <ProbeRow probe={probe} onFixed={fixed} />
+        : error ? <InlineLoadError what="the search index check" error={error} onRetry={refresh} />
+        : <ListSkeleton rows={1} what="the search index check" />}
+    </Section>
   )
 }
 

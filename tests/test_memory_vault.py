@@ -30,7 +30,7 @@ def service(tmp_path):
     ws.mkdir()
     store = MemoryStore(workspace=ws)
     store.init()
-    vs = VectorMemoryStore(db_path=tmp_path / "mem.db", embedding_dim=3)
+    vs = VectorMemoryStore(db_path=tmp_path / "mem.db")
     vs.init()
     vs.embed_fn = lambda t: [1.0, 0.0, 0.0]
     store.vector_store = vs
