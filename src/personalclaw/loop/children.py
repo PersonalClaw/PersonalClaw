@@ -8,11 +8,11 @@ Each records the worker session it was started from: the run its ``origin.sessio
 ``loop-<id>`` and ``loop-<id>-<task>`` (``manager.worker_ids``), and nothing else is named so.
 
 When the loop ends, that work has nobody left to report to. Stopping a loop ends every child it
-started (:func:`end_children`), and so do its failing and its deletion: each workflow run is
-cancelled, saying how its loop ended, and each subagent is stopped, so an approval either of them
-was waiting on ends with them and can no longer be allowed. What a run was asking for ends through
-the run (its stages' subagents are stopped, and each approval ends naming the loop:
-``dashboard.approval_owner``).
+started (:func:`end_children`, by the rule a turn's Stop and a run's ending follow too:
+``started_work``), and so do its failing and its deletion: each workflow run is cancelled, saying
+how its loop ended, and each subagent is stopped, so an approval either of them was waiting on ends
+with them and can no longer be allowed. What a run was asking for ends through the run (its stages'
+subagents are stopped, and each approval ends naming the loop: ``dashboard.approval_owner``).
 
 A child can also outlive a loop that ended some other way (it finished), or one stopped while the
 gateway was down. So the workflow supervisor asks :func:`parent_ended` of every run it is about to
@@ -23,15 +23,13 @@ resumed.
 decision path holds a loop's worker's own approvals to. A FAILED loop keeps its workers' worktrees
 for a Resume (``manager.end_run``), but a batch run is no worker's: its turn was stopped with the
 failure, nothing would read what it found, and asking her to allow its steps would start agents for
-a loop that has failed. A paused loop has not ended, and its children go on.
+a loop that has failed. A paused loop has not ended, and its children go on, except what the cycle
+its pause stopped had started: that ends with the cycle's turn (``started_work.end_turn``).
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 #: How an ended loop ended, as the rest of "its loop …" or "the loop that asked for it …": one
 #: table for its children and its worker's own approvals (``dashboard.approval_owner``).
@@ -65,7 +63,7 @@ def why_over(loop_id: str) -> str:
     return ENDINGS.get(status, f"is {status}")
 
 
-def _clause(loop_id: str, why: str) -> str:
+def clause(loop_id: str, why: str) -> str:
     """ "its loop “Release notes” was stopped": how a child names the loop that ended it."""
     from personalclaw.loop import store
 
@@ -82,7 +80,7 @@ def parent_ended(run: Any) -> str:
     if not loop_id:
         return ""
     why = why_over(loop_id)
-    return _clause(loop_id, why) if why else ""
+    return clause(loop_id, why) if why else ""
 
 
 def ended_by(run: Any) -> str:
@@ -93,11 +91,15 @@ def ended_by(run: Any) -> str:
     return f"the loop that started its run {why}" if why else ""
 
 
-def child_runs(loop_id: str) -> list[Any]:
-    """The workflow runs loop *loop_id* started that are still going."""
-    from personalclaw.workflows import store
+def is_paused(loop_id: str) -> bool:
+    """Whether loop *loop_id* is paused: not ended, its cycle in flight stopped until a Resume."""
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import LoopStatus
 
-    return [run for run in store.active_runs() if loop_of(run.origin.session_key) == loop_id]
+    loop = store.get(loop_id)
+    return loop is not None and str(getattr(loop.status, "value", loop.status)) == (
+        LoopStatus.PAUSED.value
+    )
 
 
 async def end_children(state: Any, loop_id: str, *, why: str) -> int:
@@ -105,35 +107,19 @@ async def end_children(state: Any, loop_id: str, *, why: str) -> int:
 
     Each workflow run is cancelled with the reason, and the controller driving it ends it saying
     so, stopping its stages' subagents (whose approvals end naming the loop). Each subagent a
-    worker started is stopped with the reason. Called before the loop's worker turns are stopped,
-    so a subagent a turn started ends saying its loop was stopped, rather than as that turn's.
+    worker started is stopped with the reason, and so is what it started in turn. Called before
+    the loop's worker turns are stopped, so a subagent a turn started ends saying its loop was
+    stopped, rather than as that turn's.
 
-    Fail-open, child by child: a child that will not stop must not keep the loop from reaching
-    the state its owner asked for, and the workflow supervisor ends any run left behind
-    (:func:`parent_ended`).
+    Fail-open, child by child (``started_work.end_started``), and the workflow supervisor ends any
+    run left behind (:func:`parent_ended`).
     """
-    from personalclaw.workflows import service
+    from personalclaw import started_work
 
-    clause = _clause(loop_id, why)
-    supervisor = getattr(state, "workflows", None)
-    ended = 0
-    for run in child_runs(loop_id):
-        try:
-            if service.cancel_run(run.id, supervisor=supervisor, reason=clause).get("ok"):
-                ended += 1
-        except Exception:
-            logger.warning("loop %s: could not stop its run %s", loop_id, run.id, exc_info=True)
-    manager = getattr(state, "subagents", None)
-    if manager is None:
-        return ended
-    for info in list(getattr(manager, "running", None) or []):
-        if loop_of(getattr(info, "parent_session_key", "")) != loop_id:
-            continue
-        try:
-            if await manager.cancel(info.id, reason=f"Cancelled because {clause}"):
-                ended += 1
-        except Exception:
-            logger.warning("loop %s: could not stop subagent %s", loop_id, info.id, exc_info=True)
-    if ended:
-        logger.info("loop %s %s: ended %d of the things it started", loop_id, why, ended)
-    return ended
+    ended = await started_work.end_started(
+        subagents=getattr(state, "subagents", None),
+        supervisor=getattr(state, "workflows", None),
+        owns=lambda key: loop_of(key) == loop_id,
+        clause=clause(loop_id, why),
+    )
+    return ended.runs + ended.subagents

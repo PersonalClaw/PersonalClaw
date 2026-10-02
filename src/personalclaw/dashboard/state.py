@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
-from personalclaw import bounded_log, record_files, restart_request, trust_mode
+from personalclaw import bounded_log, record_files, restart_request, started_work, trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
@@ -1110,12 +1110,14 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # Pending tool approvals: id → asyncio.Future[bool]
         self._pending_approvals: dict[str, dict] = {}
         self._approval_futures: dict[str, asyncio.Future] = {}  # type: ignore[type-arg]
-        # A stopped turn's pending approvals are over (see `cancel_turn_approvals`). The
-        # SessionManager owns the stop verb and cannot import upward to this object, so it is
-        # handed the one callback it needs — the same capability-shaped registration the
-        # subagent manager makes for its children. Guarded for a stub SessionManager in a test.
+        # A stopped turn's pending approvals are over (see `cancel_turn_approvals`), and so is the
+        # work it started (`started_work.end_turn`). The SessionManager owns the stop verb and
+        # cannot import upward to this object, so it is handed the two callbacks it needs.
+        # Guarded for a stub SessionManager in a test.
         if hasattr(sessions, "register_turn_stop_hook"):
             sessions.register_turn_stop_hook(self.cancel_turn_approvals)
+        if hasattr(sessions, "register_child_stopper"):
+            sessions.register_child_stopper(lambda key: started_work.end_turn(self, key))
         # The session sweep reaps the runtime of a chat that no longer exists, and asks this
         # object which chats exist each time it runs — whichever path made the chat.
         if hasattr(sessions, "register_dashboard_sessions"):

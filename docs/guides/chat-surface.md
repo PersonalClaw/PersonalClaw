@@ -126,6 +126,11 @@ want instead.
 If there is nothing queued there is nothing to promote, and Interrupt is not offered — with an
 empty queue it would just be Stop under another name.
 
+However a turn is stopped (Stop, Interrupt now, or a change of agent below), what that turn
+started stops with it: a batch of tasks it handed to `subagent_run`, a background subagent it
+started, and the approvals they were waiting on. Each says its chat turn was stopped. What an
+earlier turn of the chat started goes on.
+
 ### Changing the agent while it answers
 
 Picking another agent, agent CLI, model or reasoning effort while a turn runs — in the

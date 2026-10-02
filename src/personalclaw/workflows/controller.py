@@ -98,6 +98,7 @@ from personalclaw.workflows.models import (
     RunStatus,
     WorkflowRun,
     cancelled_because,
+    ended_because,
     now_stamp,
     run_ending,
     spec_path,
@@ -2213,6 +2214,9 @@ class RunController:
 
     async def _finish(self, status: RunStatus, *, error: str = "") -> None:
         """Write the run's terminal status. The single terminal writer (WF2-R10)."""
+        # Why it ended, when something other than its owner cancelled it (its loop's Stop, the
+        # turn that started it): its waits and what its steps started end saying so too.
+        because = store.cancel_reason(self.run.id) if status == RunStatus.CANCELLED else ""
         self.run.status = status
         self.run.error_message = error
         if status in TERMINAL_RUN_STATUSES:
@@ -2255,10 +2259,10 @@ class RunController:
             attention.expire_run_items(
                 self.services.attention_state,
                 self.run.id,
-                ended=f"the workflow run {run_ending(status)}",
+                ended=ended_because(f"the workflow run {run_ending(status)}", because),
             )
             attention.cancel_run_approvals(
-                self.services.attention_state, self.run, run_ending(status)
+                self.services.attention_state, self.run, run_ending(status), because=because
             )
             # A run says it ended when the ending is one to hear: a loop's the way a loops-table
             # loop does, any other run's when it failed or escalated. After the resolve above, so
@@ -2274,6 +2278,7 @@ class RunController:
         self._publish("workflow_run_update", {"status": status.value, "error": error})
         if status in TERMINAL_RUN_STATUSES:
             await run_finish.drain_overlap_queue(self)
+            await run_finish.end_what_its_steps_started(self, status, because=because)
 
     def _item_context(self, item: ReadyNode) -> dict[str, Any]:
         """The per-item fields a foreach row renders (WF2-R5): `[i/total] label`.

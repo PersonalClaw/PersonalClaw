@@ -593,7 +593,13 @@ took no `error` — so the run page read "Failed" over nothing.
 
 A run that ends closes whatever it was still asking, whichever way it ended:
 `gate_answers.close_waits` cancels each waiting step and withdraws its ask, and
-`_finish` closes the run's Inbox rows and cancels its approvals (#3620). A cancel
+`_finish` closes the run's Inbox rows and cancels its approvals (#3620), saying what
+ended the run when its cancel carried a reason ("the workflow run that asked for it was
+cancelled because its chat turn was stopped"). It also ends what its steps started
+(`started_work.end_run`): a batch one of its steps' subagents handed to `subagent_run`
+from its own session (`subagent:<id>`) is cancelled, saying how the run ended ("Stopped
+because the workflow run “…” that started it failed.") or the reason its own cancel
+carried, and deleting a run does the same for one its ending left running. A cancel
 always reaches that writer. The supervisor wakes a parked controller to apply a
 cancel written without waking it (`on_overlap: cancel_then_start` does that to
 the prior run), and after a restart it launches a controller to apply one rather

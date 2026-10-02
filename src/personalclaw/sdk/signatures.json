@@ -3332,10 +3332,11 @@
     "params": [],
     "returns": "None"
    },
-   "stop_children_of": {
+   "stop_agents": {
     "kind": "async method",
     "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "parent_key"}
+     {"annotation": "Iterable[str]", "kind": "positional_or_keyword", "name": "agent_ids"},
+     {"annotation": "str", "kind": "keyword_only", "name": "because"}
     ],
     "returns": "int"
    }

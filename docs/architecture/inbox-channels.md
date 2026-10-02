@@ -300,7 +300,11 @@ turn instead of reading it as a Deny. Only an answer makes the row `handled`
 answered" — the Inbox's `ApprovalDecision` says it in place of a decision. No approval survives a
 restart (its answer is awaited in memory), so a gateway that stops ends each one it holds that way,
 and `close_orphaned_approval_rows` expires, at boot, any row a killed process left asking for one
-("the gateway restarted before anyone answered").
+("the gateway restarted before anyone answered"). However it closes, the row's text stops asking
+(`approval_state.settled_row_text`): "Approval needed: bash … is waiting for your decision on bash"
+reads "Denied: bash … asked for your decision on bash. It was denied.", from the same four outcomes
+("It was approved.", "It expired: nobody answered within 2 hours.", "It was cancelled: its turn was
+stopped.").
 
 **Which chat channel asks.** A chat that started on a chat channel is asked in that chat, whatever
 the `approval/requested` rule says (`_asking_channels`, the channel from
@@ -401,13 +405,14 @@ There used to be a second, five-minute window for "unattended" sources, keyed by
 **An ended owner ends its approvals.** Cancelling a workflow run stops its dispatched stages
 (each subagent cancelled with the run's own reason), and a run that ends for any reason cancels
 every approval still under `workflow:<run>:`; stopping a loop stops its worker turns; stopping a
-chat turn (`SessionManager.stop_turn`, through the hook `DashboardState` registers) ends that
-turn's approvals; cancelling a subagent ends its spawn and tool approvals, which are keyed
-`subagent:<id>:<request_id>` so two subagents' requests can never share an id. Each ends as
-`cancelled`, with an `approval_cancelled` SEL row. And the decision path checks again
-(`approval_owner.owner_ended`, fail-closed): an approval whose run, loop or subagent is gone is
-answered **409 `approval_owner_ended`** and nothing runs. On day 8, approving a cancelled run's
-leftover spawn approval started the subagent.
+chat turn (`SessionManager.stop_turn`, through the hooks `DashboardState` registers) ends that
+turn's approvals and what the turn started (`started_work.end_turn`: its batch runs and
+subagents, and so what they were asking); cancelling a subagent ends its spawn and tool
+approvals, which are keyed `subagent:<id>:<request_id>` so two subagents' requests can never
+share an id. Each ends as `cancelled`, with an `approval_cancelled` SEL row. And the decision path
+checks again (`approval_owner.owner_ended`, fail-closed): an approval whose run, loop or subagent
+is gone is answered **409 `approval_owner_ended`** and nothing runs. On day 8, approving a
+cancelled run's leftover spawn approval started the subagent.
 
 **Announced once.** The Inbox row is the durable listing, not a second announcement: the chat
 card announces an approval in context and the nudge everywhere else, so the SPA's notification

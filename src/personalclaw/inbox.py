@@ -1223,7 +1223,11 @@ def _is_decision(row: "InboxItem") -> bool:
 
 
 def settle_verification_rows(
-    state: Any, store: "InboxStore", *, decision_pending: "Callable[[InboxItem], bool]"
+    state: Any,
+    store: "InboxStore",
+    *,
+    decision_pending: "Callable[[InboxItem], bool]",
+    expired_text: "Callable[[str], str] | None" = None,
 ) -> "list[InboxItem]":
     """Settle what verification left on a previous run's rows. Returns the rows it changed.
 
@@ -1235,7 +1239,8 @@ def settle_verification_rows(
     2. A decision row a verify filed as ``filtered`` before decisions stopped being verifiable
        (#3633) is off the Open list and every count, and resolving never reaches it because it
        is not open. It is restored, its withheld notification fired once, when
-       *decision_pending* says the decision still stands, and handled otherwise.
+       *decision_pending* says the decision still stands, and handled otherwise. An approval's
+       row that no longer stands expired with the restart, and *expired_text* words it so.
 
     Idempotent: a second pass finds nothing to do.
     """
@@ -1256,6 +1261,8 @@ def settle_verification_rows(
     unanswered = [row for row in over if row.refs.get("approval")]
     for row in unanswered:
         row.refs["ended"] = GATEWAY_RESTARTED
+        if expired_text is not None:
+            row.message = expired_text(row.message)
     if interrupted:
         store.save()
     restored = restore_filtered(state, store, stands)
@@ -1296,7 +1303,11 @@ def _verification_opted_in(source: str, kind: str) -> bool:
 
 
 def resolve_attention_items(
-    state: Any, refs: dict[str, str], *, store: "InboxStore | None" = None
+    state: Any,
+    refs: dict[str, str],
+    *,
+    store: "InboxStore | None" = None,
+    retext: "Callable[[str], str] | None" = None,
 ) -> int:
     """Close every open attention row whose ``refs`` match ALL the given pairs. Returns the count.
 
@@ -1322,12 +1333,20 @@ def resolve_attention_items(
 
     Best-effort like every other attention write: whatever the caller was doing (resuming a
     loop, ending a run) matters more than the bookkeeping, and must not fail because of it.
+
+    *retext* rewords a closed row's text, for a row whose text asked for what is now settled (an
+    approval's "is waiting for your decision").
     """
-    return _close_attention_items(state, refs, ItemStatus.HANDLED, store=store)
+    return _close_attention_items(state, refs, ItemStatus.HANDLED, store=store, retext=retext)
 
 
 def expire_attention_items(
-    state: Any, refs: dict[str, str], *, ended: str, store: "InboxStore | None" = None
+    state: Any,
+    refs: dict[str, str],
+    *,
+    ended: str,
+    store: "InboxStore | None" = None,
+    retext: "Callable[[str], str] | None" = None,
 ) -> int:
     """Close every open row whose ``refs`` match ALL the given pairs as EXPIRED, saying why
     (``refs.ended``). Returns the count.
@@ -1335,9 +1354,12 @@ def expire_attention_items(
     :func:`resolve_attention_items`'s counterpart for a request that ended with NO answer: an
     approval that ran out of time, or whose work stopped first. Closing one as HANDLED put a
     "Handled" mark on a decision nobody made — measured on approvals a gateway's shutdown ended
-    — so the row says it expired, and why, instead. Scoped and best-effort the same way.
+    — so the row says it expired, and why, instead. Scoped, best-effort and reworded
+    (*retext*) the same way.
     """
-    return _close_attention_items(state, refs, ItemStatus.EXPIRED, store=store, ended=ended)
+    return _close_attention_items(
+        state, refs, ItemStatus.EXPIRED, store=store, ended=ended, retext=retext
+    )
 
 
 def _close_attention_items(
@@ -1347,6 +1369,7 @@ def _close_attention_items(
     *,
     store: "InboxStore | None" = None,
     ended: str = "",
+    retext: "Callable[[str], str] | None" = None,
 ) -> int:
     if not refs or not all(refs.values()):
         logger.debug("refusing an unscoped close of attention rows (%r)", refs)
@@ -1362,9 +1385,11 @@ def _close_attention_items(
             if item.status in OPEN_STATUSES
             and all(item.refs.get(key) == value for key, value in refs.items())
         ]
-        if ended:
-            for item in matching:
+        for item in matching:
+            if ended:
                 item.refs["ended"] = ended
+            if retext is not None:
+                item.message = retext(item.message)
         return len(set_item_status(state, target, matching, status))
     except Exception:
         logger.debug("could not close the attention rows for %r", refs, exc_info=True)

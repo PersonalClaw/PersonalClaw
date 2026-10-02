@@ -478,11 +478,11 @@ class SessionManager:
         # so a consumer (the consolidator) can extract skills from the ending
         # session. Wired at gateway startup to consolidator.consolidate_session.
         self._on_session_expire: Callable[[str], Awaitable[object]] | None = None
-        # Stop a session's spawned children. Registered by SubagentManager at
-        # construction. A callback rather than a hard reference because the subagent
-        # manager already depends on this class — the arrow cannot point both ways, and
-        # a stop that cannot reach a spawned subagent is a stop that only looks like one.
-        # Returns how many were stopped.
+        # End what a stopped turn started: its subagents, its batch runs and what they wait on.
+        # Registered by the dashboard state (`started_work.end_turn`). A callback rather than a
+        # hard reference because that state already depends on this class — the arrow cannot
+        # point both ways, and a stop that cannot reach a spawned subagent is a stop that only
+        # looks like one. Returns how many subagents it reached.
         self._stop_children: Callable[[str], Awaitable[int]] | None = None
         # End a stopped turn's pending approvals. Registered by the dashboard state, for the
         # same reason as `_stop_children`: it depends on this class, not the other way round.
@@ -2070,7 +2070,7 @@ class SessionManager:
         return outcome
 
     def register_child_stopper(self, stopper: Callable[[str], Awaitable[int]]) -> None:
-        """Register the callback :meth:`stop_turn` uses to stop a session's subagents."""
+        """Register the callback :meth:`stop_turn` uses to end what a session's turn started."""
         self._stop_children = stopper
 
     def register_turn_stop_hook(self, hook: Callable[[str], int]) -> None:
@@ -2087,7 +2087,7 @@ class SessionManager:
             logger.warning("stop_turn: ending pending approvals failed for %s", key, exc_info=True)
 
     async def _stop_spawned_children(self, key: str) -> int:
-        """Stop every subagent spawned by *key*. Returns how many were stopped.
+        """End what the turn of *key* started. Returns how many subagents that reached.
 
         Fail-open: a child that will not die must not prevent the parent's own turn
         from stopping — the user pressed stop on the parent.
@@ -2154,8 +2154,8 @@ class SessionManager:
 
         if not preserve_queue:
             self.clear_queue(key)
-        # Spawned subagents are WORK this turn started, so a stop reaches them too
-        # (PR2-12). Before this, stopping a turn that had fanned out left every child
+        # Spawned subagents and batch runs are WORK this turn started, so a stop reaches them
+        # too (PR2-12). Before this, stopping a turn that had fanned out left every child
         # running: they kept burning tokens, kept holding their worktrees, and later
         # delivered results into a session the user had already stopped. Runs BEFORE
         # provider.cancel so the children are dying while the parent's soft-stop budget

@@ -1013,9 +1013,13 @@ def _live_child(mgr, agent_id: str, parent: str, *, queued: bool = False):
     return info
 
 
+#: How the turn's Stop words what it ended (`started_work.TURN_STOPPED`).
+_STOPPED = "its chat turn was stopped"
+
+
 @pytest.mark.asyncio
 class TestASpawnedSubagentIsReachedByAStop:
-    async def test_it_stops_running_and_queued_children_of_the_parent(self, monkeypatch):
+    async def test_it_stops_running_and_queued_children_it_is_handed(self, monkeypatch):
         from personalclaw.subagent import SubagentManager
 
         sessions = _sub_sessions()
@@ -1025,12 +1029,13 @@ class TestASpawnedSubagentIsReachedByAStop:
         queued = _live_child(mgr, "a2", "dashboard:main", queued=True)
         other = _live_child(mgr, "b1", "dashboard:other")
 
-        assert await mgr.stop_children_of("dashboard:main") == 2
+        assert await mgr.stop_agents(["a1", "a2"], because=_STOPPED) == 2
 
         assert running.done and running.cancelled
         assert queued.done and queued.cancelled
         assert queued not in mgr._queue, "a queued child must be dropped, not started"
-        assert not other.done, "a stop must not reach another session's children"
+        assert queued.error == running.error == f"Cancelled because {_STOPPED}", running.error
+        assert not other.done, "a stop must not reach a subagent it was not handed"
         # The RUNNING one goes through the one kill path — session reset, not a flag.
         assert any(
             c.args and c.args[0] == "subagent:a1" for c in sessions.reset.await_args_list
@@ -1044,8 +1049,8 @@ class TestASpawnedSubagentIsReachedByAStop:
         )
         monkeypatch.setattr(mgr, "_write_tombstone", lambda info, cause: None)
         _live_child(mgr, "a1", "dashboard:main")
-        assert await mgr.stop_children_of("dashboard:main") == 1
-        assert await mgr.stop_children_of("dashboard:main") == 0
+        assert await mgr.stop_agents(["a1"], because=_STOPPED) == 1
+        assert await mgr.stop_agents(["a1"], because=_STOPPED) == 0
 
     async def test_a_stop_refuses_further_spawns_for_that_fanout(self, monkeypatch):
         """A spawn already in flight toward the queue must be refused, not started
@@ -1064,35 +1069,39 @@ class TestASpawnedSubagentIsReachedByAStop:
         seen: list[dict] = []
         real_cancel = mgr.cancel
 
-        async def _spy(agent_id):
+        async def _spy(agent_id, *, reason):
             seen.append(dict(mgr._fanout_stops))
-            return await real_cancel(agent_id)
+            return await real_cancel(agent_id, reason=reason)
 
         monkeypatch.setattr(mgr, "cancel", _spy)
-        await mgr.stop_children_of("dashboard:main")
-        assert seen and "dashboard:main" in seen[0]
-        assert seen[0]["dashboard:main"] == "parent turn stopped by user"
+        await mgr.stop_agents(["a1"], because=_STOPPED)
+        assert seen and seen[0].get("dashboard:main") == _STOPPED, seen
 
-    async def test_an_empty_or_unknown_parent_is_a_no_op(self):
+    async def test_a_fanout_still_holding_other_work_stays_open(self, monkeypatch):
+        """An earlier turn's subagent in the same chat keeps the chat's fan-out open: marked
+        stopped, it would refuse every agent that chat started until the earlier one finished."""
         from personalclaw.subagent import SubagentManager
 
         mgr = SubagentManager(
             sessions=_sub_sessions(), ctx_builder=_sub_ctx(), is_yolo=lambda: True
         )
-        assert await mgr.stop_children_of("") == 0
-        assert await mgr.stop_children_of("dashboard:nobody") == 0
+        monkeypatch.setattr(mgr, "_write_tombstone", lambda info, cause: None)
+        _live_child(mgr, "a1", "dashboard:main")
+        earlier = _live_child(mgr, "a0", "dashboard:main")
 
-    async def test_the_manager_registers_itself_with_the_session_manager(self):
-        """The wiring, not just the method: an unregistered stopper is a closed gap
-        that still looks closed from the subagent side."""
-        from personalclaw.config.loader import AppConfig
-        from personalclaw.session import SessionManager
+        assert await mgr.stop_agents(["a1"], because=_STOPPED) == 1
+
+        assert "dashboard:main" not in mgr._fanout_stops
+        assert not earlier.done and not earlier.cancelled
+
+    async def test_an_empty_or_unknown_list_is_a_no_op(self):
         from personalclaw.subagent import SubagentManager
 
-        sessions = SessionManager(AppConfig())
-        assert sessions._stop_children is None
-        mgr = SubagentManager(sessions=sessions, ctx_builder=_sub_ctx(), is_yolo=lambda: True)
-        assert sessions._stop_children == mgr.stop_children_of
+        mgr = SubagentManager(
+            sessions=_sub_sessions(), ctx_builder=_sub_ctx(), is_yolo=lambda: True
+        )
+        assert await mgr.stop_agents([], because=_STOPPED) == 0
+        assert await mgr.stop_agents(["nobody"], because=_STOPPED) == 0
 
 
 def _fake_session(provider):

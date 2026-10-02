@@ -83,6 +83,24 @@ APPROVAL_OUTCOMES = frozenset(APPROVAL_ENDINGS)
 #: permission row records for them, so a reload renders what happened instead of a live card.
 UNANSWERED_OUTCOMES = frozenset({"expired", "cancelled"})
 
+#: How a settled approval's Inbox row says it ended, by the outcome above: the verb of its
+#: sentence ("It was denied.") and the word its title leads with ("Denied: bash"). Keyed by the
+#: four outcomes the chat card renders too (approved, denied, and the two endings with no answer),
+#: so the row and the card agree on what happened.
+SETTLED_AS: dict[str, tuple[str, str]] = {
+    "approved": ("was approved", "Approved"),
+    "rejected": ("was denied", "Denied"),
+    "expired": ("expired", "Expired"),
+    "cancelled": ("was cancelled", "Cancelled"),
+}
+
+#: What a pending approval's Inbox row says in its title and its first line
+#: (``_raise_approval_row``, :func:`_approval_row_body`), and how the first line reads once the
+#: approval has ended (:func:`settled_row_text`).
+_ASK_TITLE = "Approval needed: "
+_ASKING = " is waiting for your decision on "
+_ASKED = " asked for your decision on "
+
 
 def chat_approval_id(session_key: str, request_id: str | int) -> str:
     """The registry id of an approval a chat is waiting on — derived here, and only here.
@@ -176,15 +194,40 @@ def _approval_row_body(entry: dict[str, Any]) -> str:
     tool = str(entry.get("tool") or "a tool")
     # The risk in the words every other surface uses for it (`approval_brief.RISK_LABELS`).
     risk = RISK_LABELS.get(str(entry.get("risk") or ""), "").lower()
-    lines = [
-        f"{_who_asked(entry)} is waiting for your decision on {tool}"
-        + (f" (risk: {risk})." if risk else ".")
-    ]
+    lines = [f"{_who_asked(entry)}{_ASKING}{tool}" + (f" (risk: {risk})." if risk else ".")]
     for detail in (entry.get("tool_purpose"), entry.get("tool_input")):
         text = clip_words(str(detail or ""), 200)
         if text:
             lines.append(text)
     return "\n".join(lines)
+
+
+def settled_row_text(message: str, outcome: str, ended: str = "") -> str:
+    """The text of an approval's Inbox row once the approval has ended *outcome* (one of
+    :data:`APPROVAL_OUTCOMES`), from the text it asked with: its title says how it ended, its
+    first line says who asked and that it ended so, and why when nobody answered (*ended*). What
+    it was asked about stays as it was.
+
+    From the row's own text rather than the registry's entry, so a row a previous process left
+    asking reads settled too: the ask's title and first line are this module's
+    (:func:`_approval_row_body`), and nothing else is changed.
+    """
+    verb, word = SETTLED_AS[outcome]
+    title, gap, body = message.partition("\n\n")
+    if title.startswith(_ASK_TITLE):
+        title = f"{word}: {title[len(_ASK_TITLE):]}"
+    first, newline, rest = body.partition("\n")
+    if _ASKING in first:
+        why = f": {ended}" if ended else ""
+        first = f"{first.replace(_ASKING, _ASKED, 1)} It {verb}{why}."
+    return f"{title}{gap}{first}{newline}{rest}"
+
+
+def _restarted_text(message: str) -> str:
+    """An approval's row a previous process left asking, once the restart has ended it."""
+    from personalclaw.inbox import GATEWAY_RESTARTED
+
+    return settled_row_text(message, "expired", GATEWAY_RESTARTED)
 
 
 class DashboardApprovalState:
@@ -543,7 +586,7 @@ class DashboardApprovalState:
                 source="system",
                 kind="agent_request",
                 item_kind=ItemKind.AGENT_REQUEST.value,
-                title=f"Approval needed: {entry.get('tool') or 'a tool'}",
+                title=f"{_ASK_TITLE}{entry.get('tool') or 'a tool'}",
                 body=_approval_row_body(entry),
                 refs=refs,
                 dedup_key=f"approval:{entry['id']}",
@@ -599,10 +642,13 @@ class DashboardApprovalState:
         try:
             from personalclaw.inbox import expire_attention_items, resolve_attention_items
 
+            def settled(message: str) -> str:
+                return settled_row_text(message, outcome, ended)
+
             if outcome in UNANSWERED_OUTCOMES:
-                expire_attention_items(self, {"approval": approval_id}, ended=ended)
+                expire_attention_items(self, {"approval": approval_id}, ended=ended, retext=settled)
             else:
-                resolve_attention_items(self, {"approval": approval_id})
+                resolve_attention_items(self, {"approval": approval_id}, retext=settled)
         except Exception:
             self._log.debug("could not close the inbox row for %s", approval_id, exc_info=True)
         if entry and outcome not in UNANSWERED_OUTCOMES:
@@ -859,7 +905,9 @@ class DashboardApprovalState:
             and str(item.refs.get("approval")) not in self._pending_approvals
         }
         return sum(
-            expire_attention_items(self, {"approval": aid}, ended=GATEWAY_RESTARTED)
+            expire_attention_items(
+                self, {"approval": aid}, ended=GATEWAY_RESTARTED, retext=_restarted_text
+            )
             for aid in sorted(orphaned)
         )
 
@@ -876,7 +924,11 @@ class DashboardApprovalState:
         store = live_store(self)
         if store is None:
             return 0
-        return len(settle_verification_rows(self, store, decision_pending=self._decision_stands))
+        return len(
+            settle_verification_rows(
+                self, store, decision_pending=self._decision_stands, expired_text=_restarted_text
+            )
+        )
 
     def _decision_stands(self, row: Any) -> bool:
         """Whether the decision a filtered row asks for is still open.

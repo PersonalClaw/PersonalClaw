@@ -385,7 +385,7 @@ def _announce_loop_end(state: Any, run: Any, status: Any, *, refused: bool = Fal
     return ""
 
 
-def cancel_run_approvals(state: Any, run: Any, ending: str) -> int:
+def cancel_run_approvals(state: Any, run: Any, ending: str, *, because: str = "") -> int:
     """End every approval still listed for an ended run's stages. Returns how many ended.
 
     The same promise as :func:`expire_run_items`, for the other thing a run leaves asking: an
@@ -393,18 +393,21 @@ def cancel_run_approvals(state: Any, run: Any, ending: str) -> int:
     and approving it would start that work anyway. *ending* is the run's own phrase ("was
     cancelled"), worded as the decision path's owner check words it, so the audit row and the
     expired ask read the same whichever of the two ends an approval first — and, as that check
-    does, the loop that started the run is named first when it is over (`loop.children`).
+    does, the loop that started the run is named first when it is over (`loop.children`), else
+    what the run's cancel said ended it (*because*: "its chat turn was stopped").
     """
     cancel = getattr(state, "cancel_approvals", None)
     if cancel is None:
         return 0
     from personalclaw.loop.children import ended_by
+    from personalclaw.workflows.models import ended_because
 
     try:
         return int(
             cancel(
                 session_prefix=f"{ownership.OWNED_PREFIX}{run.id}:",
-                reason=ended_by(run) or f"the workflow run that asked for it {ending}",
+                reason=ended_by(run)
+                or ended_because(f"the workflow run that asked for it {ending}", because),
             )
         )
     except Exception:

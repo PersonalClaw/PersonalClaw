@@ -1555,6 +1555,16 @@ async def delete_run(
         return _service_failure(
             "WF_RUN_DELETE_REFUSED", "refusing to delete a path outside the runs root"
         )
+    # What its steps started ends with it (`started_work.end_run`), read off its state before the
+    # directory holding that state goes: a run that ended without ending them leaves none behind.
+    from personalclaw import started_work
+
+    await started_work.end_run(
+        run,
+        ending="was deleted",
+        subagents=getattr(getattr(supervisor, "_state", None), "subagents", None),
+        supervisor=supervisor,
+    )
     torn = await teardown_workspace(run, reason="delete", keep_open=keep_open)
     if target.is_dir():
         shutil.rmtree(target, ignore_errors=True)

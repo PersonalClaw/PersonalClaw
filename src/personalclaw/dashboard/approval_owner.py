@@ -80,7 +80,7 @@ def _run_ended(session_key: str) -> str:
     if owned is None:
         return ""
     from personalclaw.workflows import store
-    from personalclaw.workflows.models import TERMINAL_RUN_STATUSES, run_ending
+    from personalclaw.workflows.models import TERMINAL_RUN_STATUSES, ended_because, run_ending
 
     run_id = owned[0]
     run = store.get(run_id)
@@ -97,8 +97,11 @@ def _run_ended(session_key: str) -> str:
         return f"the workflow run that asked for it {run_ending(run.status)}"
     if store.cancel_requested(run_id):
         # The controller applies a cancel on its next step; between the request and that step the
-        # run still reads RUNNING, and an answer in that window is exactly the one to refuse.
-        return "the workflow run that asked for it was cancelled"
+        # run still reads RUNNING, and an answer in that window is exactly the one to refuse. It
+        # says what ended the run when something other than its owner did (its turn's Stop).
+        return ended_because(
+            "the workflow run that asked for it was cancelled", store.cancel_reason(run_id)
+        )
     return ""
 
 

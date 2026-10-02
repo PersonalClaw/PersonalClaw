@@ -169,7 +169,10 @@ workers' worktrees for a Resume, but a batch run is no worker's, and nothing wou
 found. The workflow supervisor asks the same question of every live run on each poll, boot included
 (`parent_ended`), so a run whose loop has ended (or was deleted, or was stopped while the gateway was
 down) is cancelled before it is driven again — never resumed, re-provisioned or asked about. A paused
-loop has not ended, and its children go on. A restart re-arm keeps the running
+loop has not ended, and its children go on, except what the cycle its pause stopped had started:
+that ends with the cycle's turn, saying "its loop “…” was paused" (`started_work.end_turn`, the one
+rule a loop's ending, a chat turn's Stop and a workflow run's ending share).
+A restart re-arm keeps the running
 stretch's `started_at` (the trust window and deadline are measured from it), and the watchdog's
 credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor
 re-credits a cycle.

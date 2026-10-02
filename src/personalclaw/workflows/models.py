@@ -664,6 +664,14 @@ def cancelled_because(reason: str) -> str:
     return f"Stopped because {clause}." if clause else ""
 
 
+def ended_because(phrase: str, reason: str) -> str:
+    """*phrase* ("the workflow run that asked for it was cancelled"), saying why when something
+    other than its owner ended the run, from the clause its cancel carried: "… because its chat
+    turn was stopped". *phrase* alone for a Cancel its owner pressed."""
+    clause = " ".join(str(reason or "").split()).rstrip(" .")
+    return f"{phrase} because {clause}" if clause else phrase
+
+
 class OriginKind(str, Enum):
     CHAT = "chat"
     SCHEDULE = "schedule"

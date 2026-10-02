@@ -1,10 +1,10 @@
 """The best-effort consequences of a run's terminal write.
 
 `RunController._finish` is the single terminal writer and must never raise, so everything
-here is fully guarded: a failure costs a lesson, an overview line, a trigger's report, a chain or
-the next queued run's start — never this run's recorded outcome. Run-end learning capture, the
-project overview revision, the report to the trigger that started the run, the triggers waiting on
-the run and the `on_overlap: queue` drain.
+here is fully guarded: a failure costs a lesson, an overview line, a trigger's report, a chain,
+the next queued run's start or a step's batch — never this run's recorded outcome. Run-end learning
+capture, the project overview revision, the report to the trigger that started the run, the
+triggers waiting on the run, the `on_overlap: queue` drain and the end of what its steps started.
 """
 
 from __future__ import annotations
@@ -46,6 +46,29 @@ async def drain_overlap_queue(ctl: RunController) -> None:
         await overlap.drain(ctl.run.workflow_name, supervisor)
     except Exception:
         logger.debug("run %s: overlap drain failed", ctl.run.id, exc_info=True)
+
+
+async def end_what_its_steps_started(
+    ctl: RunController, status: RunStatus, *, because: str = ""
+) -> None:
+    """End what the run's steps started, now that it has ended (`started_work.end_run`).
+
+    A step's subagent can start a batch from its own session, and that batch went on after the
+    run ended: its steps kept spending and kept their approvals answerable, for a run that was
+    over. *because* is the clause the run's own cancel carried, which what it started ends with.
+    Guarded like the rest (`end_run` never raises): a batch that will not stop costs that batch,
+    never this run's recorded outcome.
+    """
+    from personalclaw import started_work
+
+    await started_work.end_run(
+        ctl.run,
+        ending=run_ending(status),
+        because=because,
+        instances=ctl.instances,
+        subagents=ctl.services.subagents,
+        supervisor=ctl.services.supervisor,
+    )
 
 
 def capture_run_end(ctl: RunController) -> None:
