@@ -60,7 +60,7 @@ class TestMcpCoreUserActions:
             "boundary": "do not modify any source file",
         }
         with patch("personalclaw.mcp_subagents._post") as mock_post:
-            mock_post.side_effect = [{"ok": True}, {"ok": True, "run_id": "run-9"}]
+            mock_post.side_effect = [{"ok": True, "run_id": "run-9"}]
             result = self._simulate_tool_call(
                 "subagent_run",
                 {
@@ -72,7 +72,7 @@ class TestMcpCoreUserActions:
             )
         assert "run-9" in result
         paths = [c.args[0] for c in mock_post.call_args_list]
-        assert paths == ["/api/workflows", "/api/workflows/runs"]
+        assert paths == ["/api/workflows/batches"]
 
     def test_spawn_default_returns_immediately(self):
         """subagent_run always returns immediately — fire-and-forget."""

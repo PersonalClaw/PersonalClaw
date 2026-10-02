@@ -96,8 +96,8 @@ def test_a_read_tier_refuses_a_write_call_at_the_handler_and_the_tool_never_runs
     _leaf(monkeypatch, read_only=True)
     result, spy = _dispatch("memory_remember")
     assert result.startswith("Error:"), result
-    assert "write-class" in result, result
-    assert "read" in result, result
+    # In the words a read-only subagent's own tier uses, which the leaf repeats to its owner.
+    assert "its tools are read-only, and memory_remember is not one of them" in result, result
     assert spy.calls == [], "the tool ran despite being refused"
 
 

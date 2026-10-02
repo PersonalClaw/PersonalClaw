@@ -155,6 +155,35 @@ def report_to_its_trigger(services: Any, run: WorkflowRun, status: RunStatus) ->
         logger.debug("run %s: could not report to its trigger", run.id, exc_info=True)
 
 
+def report_to_its_chat(services: Any, run: WorkflowRun, status: RunStatus) -> None:
+    """Tell the conversation that started a subagent batch how each of its tasks ended, now that
+    the batch has ended (`batch_start.tells_its_chat`).
+
+    A single subagent's result arrives in its chat as a completion event the agent reads on its
+    next step; a batch's tasks ran for the batch's run alone, so the chat whose agent started it
+    heard nothing. Every ending but a stop is said, a failure and a Deny too: the agent that
+    started the batch waits on it, and how it ended is its answer. Asked by every terminal write,
+    as :func:`report_to_its_trigger` is. Inert unless the gateway wired its completion delivery
+    into `EngineServices.announce`, and fully guarded: a failure costs the report, never the run's
+    terminal status.
+    """
+    announce = getattr(services, "announce", None)
+    if announce is None:
+        return
+    from personalclaw.workflows import batch_start
+
+    try:
+        if not batch_start.tells_its_chat(run, status):
+            return
+        endings = batch_start.ending_of_run(
+            run, status, subagents=getattr(services, "subagents", None)
+        )
+        if endings:
+            announce(endings)
+    except Exception:
+        logger.debug("run %s: could not tell its chat how it ended", run.id, exc_info=True)
+
+
 def chain_after_run(services: Any, run: WorkflowRun, status: RunStatus) -> None:
     """Hand the run's end to the triggers waiting on it: on this run, on any run of its workflow,
     or on the trigger that started it (`triggers.chain`). "When the research run finishes, post the

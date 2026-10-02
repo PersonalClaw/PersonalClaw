@@ -11,12 +11,15 @@ import urllib.request
 from collections.abc import Mapping
 from contextvars import ContextVar, Token
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from personalclaw import gateway_base
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
 from personalclaw.sel import sel
+
+if TYPE_CHECKING:
+    from personalclaw.subagent_tier import SubagentTier
 
 
 def config_dir() -> Path:
@@ -283,8 +286,15 @@ _LINEAGE_KEYS = ("__wf_depth", "__wf_run_id", "__wf_project_id", "__wf_node_id")
 #: second guess at it.
 LEAF_READ_ONLY_KEY = "__wf_read_only"
 
-#: Every key a leaf's tools read about the leaf they run for: its lineage and its posture.
-LEAF_KEYS: tuple[str, ...] = (*_LINEAGE_KEYS, LEAF_READ_ONLY_KEY)
+#: Env key the session of a subagent whose tier narrows what it may use carries: that tier
+#: (`subagent_tier.SubagentTier.as_env`), so the tools served to it are the ones the tier offers
+#: (:func:`offered_tools`) and a call to any other is refused (:func:`tier_call_denial`), on an
+#: agent CLI's tool server as on PersonalClaw's own loop.
+TOOL_TIER_KEY = "__tool_tier"
+
+#: Every key a leaf's tools read about the leaf they run for: its lineage and its posture, the
+#: compiled read-only flag and the tier of the subagent it runs as.
+LEAF_KEYS: tuple[str, ...] = (*_LINEAGE_KEYS, LEAF_READ_ONLY_KEY, TOOL_TIER_KEY)
 
 #: The lineage a NATIVE session's in-process tools read, bound by the native runtime around each
 #: tool call (`bind_leaf_lineage`). A tool server an agent CLI starts reads the same keys from its
@@ -371,15 +381,14 @@ def leaf_tool_denial(name: str) -> str:
 
     * ORCHESTRATION tools are denied at EVERY depth. A leaf that can spawn fans out without a
       budget, and the depth counter alone would let it happen once per level.
-    * The leaf's TOOL GRANTS decide the rest, via `guardrails.policy.tool_grant_denial`. The
-      compiled posture (`leaf_tool_posture` → the `__wf_read_only` flag) picks the tier — `read`
-      for a research-class leaf, `read_write` for a mutating one — and
-      `guardrails.policy.tool_grant_posture` intersects it with the operator CEILING, so an
-      operator's `{"scopes": {"tools": {"allow": [...]}}}` narrows this call rather than being a
-      composed value nothing reads. Whether the call is within a `read` grant is what the TOOL
-      declares (`mcp_core.own_tool`: its `annotations`, and `_meta` for a proposal), answered by
-      `guardrails.policy.declared_tool_grant_denial` — the question a research SUBAGENT and a
-      read-only room member are asked too.
+    * The leaf's TOOL GRANTS decide the rest. The compiled posture (`leaf_tool_posture` → the
+      `__wf_read_only` flag) picks the tier — `read` for a research-class leaf, `read_write` for a
+      mutating one — and `guardrails.policy.tool_grant_posture` intersects it with the operator
+      CEILING, so an operator's `{"scopes": {"tools": {"allow": [...]}}}` narrows this call rather
+      than being a composed value nothing reads. Whether the call is within a `read` grant is what
+      the TOOL declares (`mcp_core.own_tool`: its `annotations`, and `_meta` for a proposal),
+      answered by `guardrails.policy.granted_call_refusal` — the question a research SUBAGENT and a
+      read-only room member are asked too, and the sentence its tier says it in.
 
     Depth 0 is the parent: it is not a leaf and is not restricted, so the parent's own
     `subagent_run` still works.
@@ -388,7 +397,7 @@ def leaf_tool_denial(name: str) -> str:
     from personalclaw.guardrails.policy import (
         TOOL_READ,
         TOOL_READ_WRITE,
-        declared_tool_grant_denial,
+        granted_call_refusal,
         tool_grant_posture,
     )
     from personalclaw.tool_providers.base import PROPOSES_META_KEY, risk_from_annotations
@@ -414,30 +423,84 @@ def leaf_tool_denial(name: str) -> str:
             f"{name!r} is denied: the governance ceiling would not resolve, so this leaf's tool "
             "grants are unknown — fix the ceiling file and restart"
         )
-    # The FIX line names whichever layer actually refused: the leaf's own declaration when the
-    # tier is the compiled posture's, the operator ceiling when the ceiling narrowed it. Telling an
-    # author to re-declare a leaf that a ceiling refused would send them to fix the wrong file.
-    ceiling_narrowed = profile.tool_grants != (TOOL_READ if read_only else TOOL_READ_WRITE)
     # What the tool declares. A name this surface does not serve declares nothing, so it is a
-    # change as far as a `read` grant is concerned.
+    # change as far as a `read` grant is concerned. Refused in the words the tier is shown by: the
+    # leaf repeats the reason it was given to its owner.
     declared = mcp_core.own_tool(name) or {}
     raw_meta = declared.get("_meta")
     meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
-    return declared_tool_grant_denial(
+    return granted_call_refusal(
         profile,
         name,
         risk_from_annotations(declared.get("annotations"), trusted=True),
         proposes=meta.get(PROPOSES_META_KEY) is True,
-        detail=(
-            "widen the governance ceiling's tools scope if this leaf must call it"
-            if ceiling_narrowed
-            else "declare capability=mutating on the leaf if it must write"
-        ),
     )
 
 
 def _leaf_is_read_only() -> bool:
     return leaf_value(LEAF_READ_ONLY_KEY) == "1"
+
+
+def tool_tier() -> "SubagentTier | None":
+    """The tier the session these tools run for is held to (:data:`TOOL_TIER_KEY`), or ``None``
+    when its session carries none, and every tool is offered, as in the owner's own chat."""
+    raw = leaf_value(TOOL_TIER_KEY)
+    if not raw:
+        return None
+    from personalclaw.subagent_tier import tier_from_env
+
+    return tier_from_env(raw)
+
+
+def _declaration(tool: Mapping[str, Any]) -> tuple[Any, bool, Any]:
+    """What one of PersonalClaw's own tools declares: its risk, whether its only effect is a
+    proposal the owner reviews, and the arguments of a call that only tells the owner something."""
+    from personalclaw.tool_providers.base import (
+        PROPOSES_META_KEY,
+        TELLS_OWNER_META_KEY,
+        risk_from_annotations,
+    )
+
+    raw_meta = tool.get("_meta")
+    meta: Mapping[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
+    return (
+        risk_from_annotations(tool.get("annotations"), trusted=True),
+        meta.get(PROPOSES_META_KEY) is True,
+        meta.get(TELLS_OWNER_META_KEY),
+    )
+
+
+def offered_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """*tools*, as the tier of the session they are listed to offers them (:func:`tool_tier`):
+    each judged by what it declares, as that tier's model is shown its tools on PersonalClaw's own
+    loop (`SubagentTier.hold`). Every tool when no tier narrows the session."""
+    tier = tool_tier()
+    if tier is None:
+        return tools
+    shown = []
+    for tool in tools:
+        risk, proposes, notice = _declaration(tool)
+        why = tier.offer(
+            str(tool.get("name") or ""), risk, proposes=proposes, tells_owner=bool(notice)
+        )
+        if not why:
+            shown.append(tool)
+    return shown
+
+
+def tier_call_denial(name: str, args: Mapping[str, Any]) -> str:
+    """Why the tier of the session this call runs for refuses it (:func:`tool_tier`), in the
+    words the tier is shown by, or "" when it admits the call or no tier holds the session."""
+    tier = tool_tier()
+    if tier is None:
+        return ""
+    from personalclaw import mcp_core
+    from personalclaw.tool_providers.base import only_tells_the_owner
+
+    risk, proposes, notice = _declaration(mcp_core.own_tool(name) or {})
+    call = dict(args) if isinstance(args, Mapping) else {}
+    tells = isinstance(notice, list) and only_tells_the_owner(notice, call)
+    return tier.refusal(name, risk, "", call, proposes=proposes, tells_owner=tells)
 
 
 def _admission(
@@ -456,7 +519,9 @@ def _admission(
     # handler still answered the call (`leaf_tool_posture`'s own docstring says so). Denial is
     # checked BEFORE arg validation so a malformed call to a denied tool is refused as denied
     # rather than as malformed — the more specific and more security-relevant of the two answers.
-    denial = leaf_tool_denial(name)
+    # The tier of the subagent the session runs as refuses here too: an agent CLI calls these
+    # tools through its own server, whose calls its host never sees ask.
+    denial = leaf_tool_denial(name) or tier_call_denial(name, raw_args)
     if denial:
         return None, "denied", denial
     try:
@@ -615,7 +680,9 @@ def run_mcp_stdio_loop(
             pass
         elif method == "tools/list":
             excluded = _resolve_excluded_tools()
-            tools = list_tools_fn()
+            # What the tier of the subagent this server runs for offers, as its model would be
+            # shown on PersonalClaw's own loop: a read-only subagent is not handed write tools.
+            tools = offered_tools(list_tools_fn())
             if excluded:
                 tools = [t for t in tools if t.get("name") not in excluded]
             respond(req_id, {"tools": tools})

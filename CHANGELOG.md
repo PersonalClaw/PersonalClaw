@@ -208,6 +208,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An automation's Allow no longer says its agent may change files in a working folder you haven't trusted: it says the agent only reads there until you trust the folder, and a run held back that way, or by a folder you stopped trusting since, says why in its history, on its trigger and in the note it sends when it ends.**
 - **A working folder written from `~` is the folder you trust: its trust was looked up under a folder named `~` inside wherever the gateway was started, so trusting the folder never reached it.**
 - **An automation that only reads no longer asks you to trust its working folder: the request said it wanted to run project scripts.**
+- **A batch of subagent tasks where one may change things can start: it asks you once, in the chat that started it, the Inbox, your phone and your channel, naming each task and what it may change, and starts on your Allow; Deny ends it declined, and a run with nobody to ask is refused saying why.**
+- **A batch of subagent tasks tells the chat that started it how each task ended, in one turn its agent reads next, instead of leaving it to poll; its run is recorded as that chat's batch, so the Work board folds it away like other work an agent started.**
+- **An approval a chat's subagent or batch asks for can be answered from its card in that chat, with Allow or Deny.**
+- **A read-only subagent on an agent CLI is offered only its read-only tools, and a call to any other is refused in the same words a native subagent's is.**
+- **A read-only run told it may not call a tool says so in plain words, and is told which MCP servers' reads it was not shown and where you trust their read-only labels.**
 - **An automation allowed to change a file can change it: its edit of the very file its Allow named was refused, and only that file can be changed.**
 - **An automation run whose own limits refused calls it made is recorded as refused, naming the calls, instead of as a success.**
 - **A reading automation refused a tool of an MCP server whose read-only labels you have not trusted is told so, and where you trust them, and that its file tools read the folders you shared.**

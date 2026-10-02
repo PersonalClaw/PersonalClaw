@@ -151,13 +151,17 @@ def _run_compiled_batch(
     depth: int,
     cwd: str,
 ) -> str:
-    """Compile `tasks[]` into one run and start it.
+    """Compile `tasks[]` into one run and hand it to the gateway to start (`workflows.batch_start`).
 
     The persistence that makes the widget survive a restart is NOT a new store: the compiled spec
     is saved as a workflow definition and the run row references it by `workflow_name`, so a
     restarted gateway reloads both from disk and the widget rebuilds from the run record — the same
     path every other workflow run already uses. Per-branch retry is likewise the existing
     `run-from` route over the compiled node ids.
+
+    The gateway starts a batch that only reads at once. One with a task that may change things
+    waits for the owner's own Allow, which this tool never gives: the save of a step that may write
+    asks for her consent, so the gateway asks her, once, and starts it on her answer.
     """
     name = _batch_def_name()
     leaves, result = _compile(
@@ -169,39 +173,45 @@ def _run_compiled_batch(
     root = result.spec.get("root")
     if not isinstance(root, dict):
         return tool_failure("the compiler produced no root node")
-    saved = _post(
-        "/api/workflows",
-        {
-            "name": name,
-            "root": root,
-            "description": f"Compiled batch of {len(leaves)} leaf task(s) from subagent_run.",
-            # The compiled tree is machine-generated and lint-clean by construction; `strict`
-            # would reject on a convention WARNING and refuse a batch the compiler approved.
-            "strict": False,
-            # The compiler's §4.1 isolation declaration, sent EXPLICITLY. `root` alone would leave
-            # it behind: the authoring path takes named fields, so a top-level key that is not
-            # passed is a key the persisted def never sees — and the applier reads the def.
-            "workspace": result.spec.get(batch_compile.WORKSPACE_KEY) or {},
-        },
-    )
-    if saved.get("error"):
-        return tool_failure(f"could not persist the compiled batch: {saved['error']}")
-
-    body: dict[str, Any] = {"name": name, "mode": "background"}
+    body: dict[str, Any] = {
+        "name": name,
+        "root": root,
+        "description": f"Compiled batch of {len(leaves)} leaf task(s) from subagent_run.",
+        # The compiler's §4.1 isolation declaration, sent EXPLICITLY. `root` alone would leave it
+        # behind: the authoring path takes named fields, so a top-level key that is not passed is
+        # a key the persisted def never sees — and the applier reads the def.
+        "workspace": result.spec.get(batch_compile.WORKSPACE_KEY) or {},
+        # The paths each task says it will write, which its ask names to the owner.
+        "writes": {leaf.node_id(i): list(leaf.writes) for i, leaf in enumerate(leaves)},
+    }
     if cwd:
         body["inputs"] = {"cwd": cwd}
-    started = _post("/api/workflows/runs", body)
-    if started.get("error"):
-        return tool_failure(f"could not start the compiled batch: {started['error']}")
-    run_id = str(started.get("run_id", "") or "")
+    answer = _post("/api/workflows/batches", body)
+    if answer.get("error"):
+        return tool_failure(f"the batch did not start: {answer['error']}")
 
-    lines = [
-        # As JSON, the shape every workflow tool returns its run in: the chat reads the run id out
-        # of it to show the batch's live progress card, each leaf a step with how it ended.
-        json.dumps({"run_id": run_id, "status": "running"}),
-        f"Compiled {len(leaves)} tasks into one batch run ({run_id or 'pending'}); each branch "
-        "is individually retryable.",
-    ]
+    lines: list[str] = []
+    waiting = answer.get("status") == "awaiting_approval"
+    if waiting:
+        # Named by the gateway, which read them off the spec it asks about: one reading of which
+        # tasks may change things, the ask's.
+        changing = [str(label) for label in answer.get("may_change") or []]
+        lines += [
+            json.dumps({"status": "awaiting_approval", "approval": answer.get("approval", "")}),
+            f"Not started yet: {len(changing)} of its {len(leaves)} tasks may change things "
+            f"({'; '.join(changing)}), so it waits for your owner's own Allow, asked once, the way "
+            "every approval is asked. It starts when they allow it; nothing runs before. Do not "
+            "start it another way.",
+        ]
+    else:
+        run_id = str(answer.get("run_id", "") or "")
+        lines += [
+            # As JSON, the shape every workflow tool returns its run in: the chat reads the run id
+            # out of it to show the batch's live progress card, each leaf a step with how it ended.
+            json.dumps({"run_id": run_id, "status": "running"}),
+            f"Compiled {len(leaves)} tasks into one batch run ({run_id or 'pending'}); each "
+            "branch is individually retryable.",
+        ]
     for index, leaf in enumerate(leaves):
         node_id = leaf.node_id(index)
         posture = result.postures.get(node_id, {})
@@ -214,10 +224,10 @@ def _run_compiled_batch(
         lines.append(f"  [warn] {finding.code}: {finding.message}")
     if parent_session:
         lines.append(
-            "\nIts results are not sent to this conversation. Wait for it with "
-            "workflow_observe(run_id), then read each branch's outcome with "
-            "workflow_status(run_id): a branch whose every tool call was refused ends failed, "
-            "saying why."
+            "\nHow it ends arrives in this conversation, as a subagent's result does: each "
+            "task's result, or why it has none"
+            + (", or that it was not allowed to start" if waiting else "")
+            + ". Do not poll for it."
         )
     return "\n".join(lines)
 
@@ -232,9 +242,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 "at once, and its result arrives as a [Subagent completion event] message in "
                 "your conversation: WAIT for it before responding to the user. Two or more "
                 "('tasks') run in parallel as one batch run, each task a contract the batch is "
-                "checked against before it starts. A batch's results are not sent to this "
-                "conversation: wait with workflow_observe and read them with workflow_status, "
-                "on the run_id it returns. More tasks than may run at once wait their turn."
+                "checked against before it starts, and their results arrive together in your "
+                "conversation when the batch ends. A batch with a task that may change things "
+                "starts only once your owner allows it, and you hear if they do not. More tasks "
+                "than may run at once wait their turn."
             ),
             "inputSchema": {
                 "type": "object",

@@ -132,6 +132,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # 400: a typo'd knob is the client's to fix, and the detail carries `unknown_keys` +
     # `overridable` so the retry is not blind (the strict write side).
     "WF_POLICY_KEY_UNKNOWN": (400, "unknown_policy_key"),
+    # 409: the batch is well-formed; it is the session that started it that cannot ask its owner
+    # (it acts on its own, or there is nowhere to ask), and only her Allow starts a batch that
+    # may change things (`batch_start`).
+    "WF_BATCH_NOBODY_TO_ASK": (409, "nobody_to_ask"),
 }
 
 #: A validation-shaped service code we did not map explicitly still must not read as a
@@ -907,6 +911,47 @@ def _api_origin() -> Any:
     return OriginKind.API
 
 
+async def api_batch_start(request: web.Request) -> web.Response:
+    """POST /api/workflows/batches — start a batch `subagent_run` compiled (`batch_start`).
+
+    The one door a batch starts by, for the session that ran the tool (``X-Session-Key``): a batch
+    that only reads is saved and started, and answers its run; one whose tasks may change things
+    answers ``awaiting_approval`` with the ask its owner answers, and starts on her Allow alone.
+    """
+    denied = _guard(request, "workflow_batch_start")
+    if denied is not None:
+        return denied
+    from personalclaw.workflows import batch_start
+
+    body = await json_object_body(request)
+    root = body.get("root")
+    if not isinstance(root, dict):
+        return web.json_response(
+            {"error": {"code": "invalid_request", "message": "'root' must be an object"}},
+            status=400,
+        )
+    name = require_string(body, "name")
+
+    def _object(key: str) -> dict[str, Any]:
+        value = body.get(key)
+        return dict(value) if isinstance(value, dict) else {}
+
+    result = await batch_start.start(
+        request.app.get("state"),
+        _supervisor(request),
+        name=name,
+        root=root,
+        workspace=_object("workspace"),
+        inputs=_object("inputs"),
+        writes=_object("writes"),
+        session_key=request.headers.get("X-Session-Key", "") or "",
+        description=str(body.get("description", "") or ""),
+    )
+    _audit(request, "workflow_batch_start", "success" if result.get("ok") else "failure", name)
+    # Accepted either way it went well: its run starts in the background, or waits for her answer.
+    return _reply(result, status=202)
+
+
 async def api_run_status(request: web.Request) -> web.Response:
     result = service.status(request.match_info.get("run_id", ""))
     return _reply(shown_status(result) if result.get("ok") else result)
@@ -1650,6 +1695,7 @@ def register_workflow_routes(app: web.Application) -> None:
     # Runs — before the def wildcard.
     app.router.add_get("/api/workflows/runs", api_runs_list)
     app.router.add_post("/api/workflows/runs", api_run_start)
+    app.router.add_post("/api/workflows/batches", api_batch_start)
     app.router.add_get("/api/workflows/runs/{run_id}", api_run_status)
     app.router.add_delete("/api/workflows/runs/{run_id}", api_run_delete)
     app.router.add_get("/api/workflows/runs/{run_id}/events", api_run_events)

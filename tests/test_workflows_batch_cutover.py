@@ -55,9 +55,7 @@ def test_two_tasks_ROUTE_THROUGH_the_compiler_rather_than_two_spawns(monkeypatch
 
     def fake_post(path: str, body: dict) -> dict:
         posts.append((path, body))
-        if path == "/api/workflows/runs":
-            return {"ok": True, "run_id": "run-abc"}
-        return {"ok": True}
+        return {"ok": True, "run_id": "run-abc"}
 
     monkeypatch.setattr(mcp_subagents, "_post", fake_post)
     monkeypatch.setattr(mcp_subagents, "_resolve_session_key", lambda: "chat:1")
@@ -84,8 +82,11 @@ def test_two_tasks_ROUTE_THROUGH_the_compiler_rather_than_two_spawns(monkeypatch
 
     paths = [p for p, _ in posts]
     assert "/api/spawn" not in paths, f"a batch still fire-and-forget spawned: {paths}"
-    assert "/api/workflows" in paths, "the compiled spec was never persisted"
-    assert "/api/workflows/runs" in paths, "no run was started for the batch"
+    # One call hands the compiled batch to the gateway, which saves it and starts its one run
+    # (`workflows.batch_start`).
+    assert paths == ["/api/workflows/batches"], f"the batch never reached its start: {paths}"
+    (body,) = [b for _, b in posts]
+    assert len(body["root"]["children"]) == 2, "the two tasks were not compiled into one run"
     assert "run-abc" in out
 
 
@@ -266,43 +267,42 @@ def test_the_widget_rebuilds_FROM_DISK_after_a_restart(tmp_path, monkeypatch):
     assert len(set(persisted_ids)) == 2
 
 
-def test_a_FAILED_save_never_starts_a_run(monkeypatch):
+@pytest.mark.asyncio
+async def test_a_FAILED_save_never_starts_a_run(monkeypatch):
     """A run row pointing at a def that was never saved is a widget that survives as a BROKEN row —
     worse than not surviving, because the board shows recoverable work that cannot be recovered.
 
-    Two independent guards, and this asserts the first: `_run_compiled_batch` returns on a save
-    error before it POSTs the start. The second is `service.start_run`, which resolves the def via
-    `_raw_def` and answers `WF_DEF_NOT_FOUND` — so even a start that somehow raced a missing def is
-    refused rather than minting an orphan row."""
-    from personalclaw import mcp_subagents
+    Two independent guards, and this asserts the first: the gateway's start of a batch
+    (`batch_start`) returns on a save error before it starts a run. The second is
+    `service.start_run`, which resolves the def via `_raw_def` and answers `WF_DEF_NOT_FOUND` — so
+    even a start that somehow raced a missing def is refused rather than minting an orphan row."""
+    from personalclaw.workflows import batch_start, service
 
-    posts: list[str] = []
+    started: list[dict] = []
 
-    def fake_post(path: str, body: dict) -> dict:
-        posts.append(path)
-        if path == "/api/workflows":
-            return {"error": "disk full"}
+    async def failed_save(**_fields):
+        return service._service_failure("WF_DEF_SAVE_FAILED", "disk full")
+
+    async def start_run(*_args, **fields):
+        started.append(fields)
         return {"ok": True, "run_id": "should-not-happen"}
 
-    monkeypatch.setattr(mcp_subagents, "_post", fake_post)
-    monkeypatch.setattr(mcp_subagents, "_resolve_session_key", lambda: "chat:1")
+    monkeypatch.setattr(service, "author_def", failed_save)
+    monkeypatch.setattr(service, "start_run", start_run)
 
-    declared = {
-        "objective": "determine how the subsystem behaves",
-        "output_format": "a markdown list of findings",
-        "boundary": "do not modify any source file",
-    }
-    out = mcp_subagents._call_tool_inner(
-        "subagent_run",
-        {
-            "tasks": [
-                {"task": "investigate the cache subsystem", **declared},
-                {"task": "investigate the queue subsystem", **declared},
-            ]
-        },
+    compiled = batch_compile.compile_batch([leaf("cache"), leaf("queue")])
+    out = await batch_start.start(
+        None,
+        object(),
+        name="subagent-batch-cache",
+        root=compiled.spec["root"],
+        workspace={},
+        inputs={},
+        writes={},
+        session_key="dashboard:chat-1",
     )
-    assert "could not persist" in out
-    assert posts == ["/api/workflows"], "a run was started against an unsaved def"
+    assert out.get("ok") is False and "disk full" in out["message"], out
+    assert started == [], "a run was started against an unsaved def"
 
 
 def test_every_branch_is_INDIVIDUALLY_ADDRESSABLE_for_retry():

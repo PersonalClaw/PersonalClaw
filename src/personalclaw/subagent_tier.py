@@ -51,10 +51,10 @@ task is sent (:func:`refuse_unheld`).
 
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.guardrails.policy import (
@@ -308,21 +308,59 @@ class SubagentTier:
             self._said[tool_name] = why
         return why
 
+    def offer(
+        self,
+        tool_name: str,
+        declared: object = "",
+        *,
+        proposes: bool = False,
+        tells_owner: bool = False,
+    ) -> str:
+        """Why the tier's model is not SHOWN *tool_name*, or ``""``:
+        ``guardrails.policy.offer_refusal``."""
+        return offer_refusal(
+            self.profile,
+            tool_name,
+            declared,
+            proposes=proposes,
+            tells_owner=tells_owner,
+            owner_notices=self._owner_notices,
+            may_change=self._may_change,
+        )
+
+    def narrows(self) -> bool:
+        """Whether the tier offers less than every tool."""
+        return self.profile.tool_grants != TOOL_READ_WRITE
+
+    def as_env(self) -> str:
+        """The tier as the session of its run carries it to the tools served to it
+        (``mcp_shared.TOOL_TIER_KEY``), which :func:`tier_from_env` reads back. Not the files an
+        automation may change: only PersonalClaw's own file tools are held to them, and those read
+        this tier itself (:meth:`hold`); a tool served to the session writes no file, and on an
+        agent CLI the run gives them up (:func:`give_up_files_on_a_cli`)."""
+        return json.dumps(
+            {"capability": self.capability_class, "owner_notices": self._owner_notices}
+        )
+
+    def session_env(self, extra_env: Mapping[str, str]) -> dict[str, str]:
+        """*extra_env*, with the tier when it narrows: the tools served to the run, PersonalClaw's
+        own and an agent CLI's tool server alike, hold it to the tier from there
+        (``mcp_shared.TOOL_TIER_KEY``)."""
+        env = dict(extra_env)
+        if self.narrows():
+            from personalclaw.mcp_shared import TOOL_TIER_KEY
+
+            env[TOOL_TIER_KEY] = self.as_env()
+        return env
+
     def hold(self, runtime: NativeAgentRuntime) -> None:
         """Hold PersonalClaw's own loop to the tier: every call it makes is asked :meth:`refusal`
         before its own approval (it answers an ask itself while a standing grant stands, so its
         calls never reach the approval loop), and a tier that narrows is what its model is shown."""
         self._discovery = runtime.META_TOOLS
         runtime.set_tool_grants(self.refusal)
-        if self.profile.tool_grants != TOOL_READ_WRITE:
-            runtime.set_tool_offer(
-                partial(
-                    offer_refusal,
-                    self.profile,
-                    owner_notices=self._owner_notices,
-                    may_change=self._may_change,
-                )
-            )
+        if self.narrows():
+            runtime.set_tool_offer(self.offer)
 
     def refused(self, call_id: str, tool: str, why: str, *, limit: bool = False) -> None:
         """A call that asked, refused before it ran; *limit* when the run's own limits refused it
@@ -350,12 +388,36 @@ class SubagentTier:
 def tier_for(info: SubagentInfo) -> SubagentTier:
     """The tier *info*'s run is held to, from what its spawn was handed. A ceiling that will not
     resolve raises here, before the run starts, which fails the spawn CLOSED."""
-    from personalclaw.guardrails.policy import TOOL_CUSTOM, TOOL_READ, tool_grant_posture
-    from personalclaw.subagent import CAPABILITY_RESEARCH, resolve_capability_class
+    from personalclaw.subagent import resolve_capability_class
 
     capability = resolve_capability_class(
         capability_class=info.capability_class, approval_mode=info.approval_mode
     )
+    return _tier(capability, owner_notices=bool(info.trigger_id), may_change=info.may_change)
+
+
+def tier_from_env(raw: str) -> SubagentTier:
+    """The tier a session carries (:meth:`SubagentTier.as_env`), read where the tools served to
+    it run: an agent CLI's tool server, or PersonalClaw's own loop. Read fail-closed: a value that
+    does not parse is a tier that may call no tool, the narrowest there is."""
+    from personalclaw.subagent import CAPABILITY_MUTATING, CAPABILITY_RESEARCH
+
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        data = {}
+    capability = str(data.get("capability") or "")
+    if capability not in (CAPABILITY_TEXT, CAPABILITY_RESEARCH, CAPABILITY_MUTATING):
+        capability = CAPABILITY_TEXT
+    return _tier(capability, owner_notices=data.get("owner_notices") is True, may_change=())
+
+
+def _tier(capability: str, *, owner_notices: bool, may_change: tuple[str, ...]) -> SubagentTier:
+    from personalclaw.guardrails.policy import TOOL_CUSTOM, TOOL_READ, tool_grant_posture
+    from personalclaw.subagent import CAPABILITY_RESEARCH
+
     # The class expressed as a TOOL-GRANT tier (§3 ``tool_grants``), intersected with the operator
     # ceiling. `research` → `read`, `mutating` → `read_write`; a ceiling's `tools` scope may narrow
     # either to `read` or to a `custom` allowlist, which is the only thing standing between a
@@ -375,8 +437,8 @@ def tier_for(info: SubagentInfo) -> SubagentTier:
         )
     return SubagentTier(
         profile,
-        owner_notices=bool(info.trigger_id),
-        may_change=info.may_change,
+        owner_notices=owner_notices,
+        may_change=may_change,
         capability_class=capability,
     )
 

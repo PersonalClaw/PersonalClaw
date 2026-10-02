@@ -154,7 +154,8 @@ async def test_a_read_only_native_stage_cannot_write_through_an_in_process_tool(
         {"name": "x", "when": "every day at 9", "message": "y"},
         extra_env=_stage_env(capability="research"),
     )
-    assert "grants 'read' tools only" in answer, answer
+    # Refused in the words a read-only subagent's own tier uses, which the stage repeats to her.
+    assert "its tools are read-only, and automation_create is not one of them" in answer, answer
     assert TriggerStore(base_dir=home).load() == [], "the read-only stage wrote a trigger"
 
 

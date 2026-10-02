@@ -180,7 +180,7 @@ def test_the_tool_reads_the_batch_a_model_sent_as_text(monkeypatch):
 
     def fake_post(path: str, body: dict) -> dict:
         posts.append((path, body))
-        return {"ok": True, "run_id": "5e1a7c20"} if path == "/api/workflows/runs" else {"ok": True}
+        return {"ok": True, "run_id": "5e1a7c20"}
 
     monkeypatch.setattr(mcp_subagents, "_post", fake_post)
     monkeypatch.setattr(mcp_subagents, "_resolve_session_key", lambda: "dashboard:chat-1")
@@ -190,6 +190,9 @@ def test_the_tool_reads_the_batch_a_model_sent_as_text(monkeypatch):
     ]
     out = mcp_subagents._call_tool_inner("subagent_run", {"tasks": json.dumps(tasks)})
 
-    assert "/api/workflows/runs" in [p for p, _ in posts], out
+    assert [p for p, _ in posts] == ["/api/workflows/batches"], out
     assert "did not compile" not in out, out
     assert "multi_writer" not in out, out
+    # The path the mutating task said it writes reaches the ask that names it.
+    (body,) = [b for _, b in posts]
+    assert ["/tmp/review-copy"] in body["writes"].values(), body["writes"]

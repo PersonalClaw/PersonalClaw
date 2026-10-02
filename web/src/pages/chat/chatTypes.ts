@@ -73,6 +73,10 @@ export interface ApprovalSegment {
   // off the allowed hosts (`run_bounds.ask_note`). A grant never covers such a call, so the card
   // offers none. Absent on every other call.
   reach?: string
+  // Asked by work this chat started (a subagent, a batch), not by its own turn: the frame names
+  // a `source`. Only the approvals queue holds such an ask, so its card answers there, by the
+  // registry id, with Allow or Deny for that one ask (`POST /api/approvals/{id}/{action}`).
+  queued?: boolean
   // The settled outcome, as the backend persisted it. Typed as the raw wire `string`
   // (not the ApprovalResolution union) because a session persisted by another build
   // can carry an outcome this one doesn't know — approvalOutcome() maps the known set

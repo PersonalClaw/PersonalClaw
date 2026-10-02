@@ -542,6 +542,13 @@ from nothing else except a shell command's own text:
   not shown the shell (`rooms.posture.member_tool_refusal`). A subagent whose every call was
   refused did nothing it was asked, so it ends not done, naming the tools and why
   (`subagent_tier.refused_every_call`), and the workflow step it ran for fails as a refusal.
+  A subagent on an agent CLI is held to the same tier: its session hands the tier to the
+  `personalclaw-core` tool server (`mcp_shared.TOOL_TIER_KEY`, declared in the server's own
+  environment, `acp.mcp_servers.core_mcp_servers`), which lists only the tools the tier offers
+  (`mcp_shared.offered_tools`) and refuses a call to any other in the same words
+  (`tier_call_denial`). Before, such a subagent was listed every core tool. A read-only run is
+  told which servers' reads it was not shown and why: a server whose read-only labels the owner
+  has not trusted, named, with where to trust them (`policy.unshown_reads_note`).
 - **A call an ACP CLI ran without asking is said on its own card** (`dashboard/ungated_calls.py`).
   The CLI decides which of its calls ask first, so one its own settings allow runs with no approval
   request and the host learns of it when its result lands. Its card says so, live and after a reload
@@ -582,7 +589,8 @@ the ceiling did not bound.
   spawn's own `approval_mode: "auto"`, the owner's Approval mode "Auto", the hook settings and
   patterns, a listed source, the `--approval` flag, a remembered or policy-approved workflow gate,
   a workflow step's start its owner allowed before a restart cut the step off (for the same
-  request, within the step's time limit, `approval_grants.APPROVED_BEFORE_RESUME`),
+  request, within the step's time limit, `approval_grants.APPROVED_BEFORE_RESUME`), a subagent
+  batch's tasks starting on the owner's Allow of that batch (`approval_grants.BATCH_ALLOWED`),
   the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
   unattended ACP CLI approving its own calls, a session policy that never asks, and the eval
   runner's allowlist of read-only tools. Under
@@ -617,7 +625,8 @@ the ceiling did not bound.
 - **A workflow stage is a leaf to its own tools on every runtime.** A stage runs with its lineage
   and posture — its run, its depth, whether it may write (`engine.leaf_spawn_env`) — and
   `mcp_shared.leaf_tool_denial` refuses an orchestration tool to every leaf and holds a research
-  stage's in-process tools to `read`. An agent CLI's tool server gets the lineage as its
+  stage's in-process tools to `read`, refusing in the words the tier's own refusal uses
+  (`granted_call_refusal`). An agent CLI's tool server gets the lineage as its
   environment; the native runtime runs its tools in the gateway process, so it binds the stage's
   lineage around each tool call instead (`mcp_shared.bind_leaf_lineage`), and every reader goes
   through one accessor (`mcp_shared.leaf_value`). Before, a native stage read depth 0: its

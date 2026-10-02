@@ -23,7 +23,8 @@ def test_spawn_run_batch_tasks():
     This asserted three independent `/api/spawn` calls before the compile cutover. N
     fire-and-forget spawns have no run record, so they cannot render as one widget, survive a
     gateway restart, or be retried per branch — which is why the batch path now goes through
-    `compile_batch`. The two POSTs are the compiled def and the run started against it.
+    `compile_batch`. The one POST hands the compiled batch to the gateway, which saves and starts
+    it (`workflows.batch_start`).
     """
     declared = {
         "objective": "determine how the subsystem behaves",
@@ -31,7 +32,7 @@ def test_spawn_run_batch_tasks():
         "boundary": "do not modify any source file",
     }
     with patch("personalclaw.mcp_subagents._post") as mock_post:
-        mock_post.side_effect = [{"ok": True}, {"ok": True, "run_id": "run-7"}]
+        mock_post.side_effect = [{"ok": True, "run_id": "run-7"}]
 
         result = _call_tool(
             "subagent_run",
@@ -45,10 +46,7 @@ def test_spawn_run_batch_tasks():
         )
 
         assert "run-7" in result
-        assert [c.args[0] for c in mock_post.call_args_list] == [
-            "/api/workflows",
-            "/api/workflows/runs",
-        ]
+        assert [c.args[0] for c in mock_post.call_args_list] == ["/api/workflows/batches"]
 
 
 def test_spawn_run_error():
@@ -92,12 +90,13 @@ def test_spawn_run_passes_parent_session():
 
 
 def test_spawn_run_batch_partial_failure():
-    """A failed persist REPORTS the error and never starts a run against a def that is not there.
+    """A batch the gateway could not start REPORTS why, and is never reported as a run.
 
     Pre-cutover this asserted a partial success ("stops on first spawn error"), which a batch
     compiled into one run cannot have: there is a single def to save, so the save either lands or
-    the batch does not exist. Asserting the run POST was never made is the load-bearing half — a
-    run row pointing at a missing def is a widget that survives as a broken row.
+    the batch does not exist. The gateway saves and starts it in one call
+    (`workflows.batch_start`), and never starts a run against a def it did not save
+    (`test_workflows_batch_cutover.test_a_FAILED_save_never_starts_a_run`).
     """
     declared = {
         "objective": "determine how the subsystem behaves",
@@ -117,5 +116,6 @@ def test_spawn_run_batch_partial_failure():
             },
         )
 
-        assert "capacity reached" in result
-        assert [c.args[0] for c in mock_post.call_args_list] == ["/api/workflows"]
+        assert "did not start" in result and "capacity reached" in result
+        assert "run_id" not in result
+        assert [c.args[0] for c in mock_post.call_args_list] == ["/api/workflows/batches"]

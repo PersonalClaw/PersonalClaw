@@ -26,11 +26,11 @@ template; the tier vocabulary and its enforcement are already here.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, HOOK_SESSION_PREFIX
 from personalclaw.guardrails.autonomy import RUNG_AUTO_WITH_UNDO, RUNG_AUTONOMOUS, RUNG_ONE_TAP
@@ -553,6 +553,50 @@ UNTRUSTED_SERVER_REASON = (
     "read-only labels on the Tools page, and the files in the folders the owner shared are read "
     "with read_file, list_dir, glob and grep"
 )
+
+#: What a run shown fewer tools than it has is told, beside its tools, of the MCP servers whose
+#: tools say they only read and were left out for that alone: what stands between it and them, and
+#: where the owner changes it, so it can say so instead of only that it could not read.
+UNSHOWN_READS_NOTE = (
+    "[tools not shown] {servers} {have} tools that say they only read, and you were not shown "
+    "them: a tool of an MCP server counts as a read only once the owner trusts that server's "
+    "read-only labels, on the Tools page. If your task needs them, say so in your answer, naming "
+    "the server."
+)
+
+
+def shown_of(pool: Iterable[Any], offered: Callable[[str], bool]) -> tuple[list[Any], str]:
+    """The tool definitions of *pool* a run held to a narrower tier is shown, those *offered*
+    admits by name, and the note naming what it was not shown only because an MCP server's
+    read-only labels are not trusted, with where the owner trusts them (:func:`unshown_reads_note`).
+    """
+    shown: list[Any] = []
+    hidden: list[Any] = []
+    for tool in pool:
+        (shown if offered(str(getattr(tool, "name", "") or "")) else hidden).append(tool)
+    return shown, unshown_reads_note(hidden)
+
+
+def unshown_reads_note(hidden: Iterable[Any]) -> str:
+    """The note for the tools a run held to a narrower tier was not shown (*hidden*, tool
+    definitions read by their ``name`` and ``annotations``): each MCP server one of whose hidden
+    tools says it only reads (``readOnlyHint``), while the owner has not trusted the server's
+    labels. ``""`` when there is none."""
+    servers = sorted(
+        {
+            server
+            for tool in hidden
+            if (getattr(tool, "annotations", None) or {}).get("readOnlyHint") is True
+            and (server := _server_not_believed(str(getattr(tool, "name", "") or "")))
+        }
+    )
+    if not servers:
+        return ""
+    named = ", ".join(servers)
+    return UNSHOWN_READS_NOTE.format(
+        servers=f"The MCP server {named}" if len(servers) == 1 else f"The MCP servers {named}",
+        have="has" if len(servers) == 1 else "have",
+    )
 
 
 def _reads_at_most(profile: SafetyProfile) -> bool:

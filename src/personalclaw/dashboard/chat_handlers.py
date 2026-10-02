@@ -2701,9 +2701,13 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                         )
                     except Exception:
                         logger.warning("SEL audit failed for bulk approval %s", aid, exc_info=True)
-        # And the background ones (a subagent, a trigger's run) it covers.
+        # And the background ones (a subagent, a trigger's run) it covers. An ask only a decision
+        # on it answers (a batch's consent to change things, `DashboardState.answered_alone`)
+        # keeps asking: a posture switch is not that decision.
         for aid in list(state._approval_futures):
             fut = state._approval_futures[aid]
+            if state.answered_alone(aid):
+                continue
             if only is not None and state._pending_approvals.get(aid, {}).get("session") != only:
                 continue
             if not fut.done() and state.resolve_approval(aid, True, by=by):

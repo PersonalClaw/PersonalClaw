@@ -79,9 +79,11 @@ PATH_TOOLS: dict[str, tuple[str, bool, str | None]] = {
 #: The pattern each searching tool takes, written relative to the folder it searches.
 PATTERN_ARGS: dict[str, str] = {"glob": "pattern", "grep": "glob"}
 
-_ALLOWED_SETTING = "Settings › Agent defaults › Allowed working directories"
+#: Where the owner names the folders besides the workspace that the agent's file tools reach and a
+#: subagent may work in.
+ALLOWED_SETTING = "Settings › Agent defaults › Allowed working directories"
 _REACH_HINT = (
-    f"The user can add a folder in {_ALLOWED_SETTING} (read and change), or add it as a "
+    f"The user can add a folder in {ALLOWED_SETTING} (read and change), or add it as a "
     "knowledge source in Knowledge › Sources (read only)."
 )
 
@@ -297,12 +299,12 @@ class FileScope:
             return OutOfScope(
                 f"path {raw!r} is in the knowledge source {_plain(source.name)!r} "
                 f"({_plain(source.shown)}), which the file tools read and never change",
-                f"To change files there, the user adds the folder in {_ALLOWED_SETTING}.",
+                f"To change files there, the user adds the folder in {ALLOWED_SETTING}.",
             )
         return OutOfScope(
             f"path {raw!r} is outside every folder the file tools may change: the workspace and "
             "the allowed working directories",
-            f"To change files in another folder, the user adds it in {_ALLOWED_SETTING}.",
+            f"To change files in another folder, the user adds it in {ALLOWED_SETTING}.",
         )
 
     def admits(self, raw: str) -> str | None:

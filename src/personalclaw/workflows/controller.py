@@ -194,6 +194,11 @@ class EngineServices:
     #: (`run_finish.chain_after_run`). The gateway wires its trigger dispatch here; every test and
     #: CLI path leaves it None.
     run_ended: Any = None
+    #: `(infos) -> None` — hands the conversation that started a subagent batch how each of its
+    #: tasks ended, as one completion delivery of `SubagentInfo`s (`run_finish.report_to_its_chat`).
+    #: The gateway wires its subagent completion delivery here; every test and CLI path leaves it
+    #: None.
+    announce: Any = None
     #: `() -> float` — the wall clock, as a seam. The controller's scheduling decisions
     #: (`_wake_due_nodes` resolving a parked node, and the `now` a `wait` computes its deadline
     #: against) read through this rather than `time.time()` directly, so a replay can substitute
@@ -2266,6 +2271,7 @@ class RunController:
                 run_finish.revise_project_overview(self)
             run_finish.capture_run_end(self)
             run_finish.report_to_its_trigger(self.services, self.run, status)
+            run_finish.report_to_its_chat(self.services, self.run, status)
             run_finish.chain_after_run(self.services, self.run, status)
         self._publish("workflow_run_update", {"status": status.value, "error": error})
         if status in TERMINAL_RUN_STATUSES:

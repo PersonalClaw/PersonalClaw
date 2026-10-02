@@ -504,6 +504,12 @@ WF_ERROR_CODES: dict[str, str] = {
         "Preflight did not check what the named action providers themselves require, because "
         "the action-provider contract declares no requirements."
     ),
+    # ── workflows/batch_start.py — a subagent batch's one Allow ───────────
+    "WF_BATCH_NOBODY_TO_ASK": (
+        "A batch with a task that may change things starts only on its owner's own Allow, and "
+        "the session that started it has nobody to ask (it acts on its own, or nowhere can ask); "
+        "the message names those tasks and why."
+    ),
     # ── workflows/review_service.py — workspace review triage ─────────────
     "WF_TRIAGE_BAD_DECISIONS": (
         "The triage request's decisions payload could not be parsed; the message carries the "

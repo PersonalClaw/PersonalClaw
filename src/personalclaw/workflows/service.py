@@ -654,6 +654,7 @@ async def start_run(
     title: str = "",
     policy_overrides: dict[str, Any] | None = None,
     document: str = "",
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
 
@@ -670,6 +671,10 @@ async def start_run(
     are written onto the run AT CREATE — before the supervisor launches it — because the overlay
     is frozen once a run has launched (:func:`set_policy_overrides`) and the first tick must
     already see it: an unattended grant applied one tick late is one approval prompt too many.
+
+    ``extra`` is what the run's record carries from its start beside its inherited memory mode,
+    written at create for the same reason: a batch's Allow (`batch_start.CONSENT_KEY`), which its
+    first step's spawn reads.
     """
     from personalclaw.workflows.effects import START_DEDUPE
     from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
@@ -776,9 +781,9 @@ async def start_run(
     # NORMAL is left UNSTAMPED: `run_mode` reads an absent key as normal, so stamping it would add a
     # redundant string to every unrestricted run's record for no behavioural gain. Only a restricted
     # inheritance is a fact worth recording.
-    run_extra: dict[str, Any] = {}
+    run_extra: dict[str, Any] = dict(extra or {})
     if inherited is not ownership.MemoryMode.NORMAL:
-        run_extra = ownership.stamp_run_mode({}, inherited)
+        run_extra = ownership.stamp_run_mode(run_extra, inherited)
     if document:
         from personalclaw.workflows.deliverable import RUN_DOCUMENT_KEY
 

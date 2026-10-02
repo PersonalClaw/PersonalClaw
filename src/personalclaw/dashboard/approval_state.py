@@ -297,8 +297,13 @@ class DashboardApprovalState:
         risk_level: str = "",
         tool_kind: str = "",
         annotations: dict[str, Any] | None = None,
+        answered_alone: bool = False,
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
+
+        ``answered_alone`` is an ask only a decision on it answers: a Trust or YOLO switch, which
+        answers every pending approval it covers (``chat_handlers.api_chat_mode``), leaves it
+        asking. A batch's consent to change things is one (``workflows.batch_start``).
 
         ``risk_level`` is what the tool behind the call DECLARES (``AgentEvent.risk_level``;
         ``""`` when nothing does). The pending row carries the call's effective risk from it,
@@ -377,6 +382,8 @@ class DashboardApprovalState:
             risk=reading.risk if risk_level or reading.effects is not None else "",
             reach=reach_note(risk_level, tool, tool_kind, tool_input, session),
         )
+        if answered_alone:
+            self.__dict__.setdefault("_answered_alone", set()).add(approval_id)
         if asked_on_channel:
             self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
         timeout = self.approval_window_secs()
@@ -415,6 +422,12 @@ class DashboardApprovalState:
                 outcome="expired" if timed_out else "cancelled",
                 window_secs=timeout,
             )
+
+    def answered_alone(self, approval_id: str) -> bool:
+        """Whether only a decision on *approval_id* answers it (``request_approval``'s
+        ``answered_alone``): a Trust or YOLO switch, which answers every pending approval it covers,
+        leaves it asking."""
+        return approval_id in self.__dict__.get("_answered_alone", set())
 
     async def hold_session_approval(
         self,
@@ -640,6 +653,7 @@ class DashboardApprovalState:
         if entry:
             self._record_ending(approval_id, outcome)
         self.__dict__.get("_channel_asked", set()).discard(approval_id)
+        self.__dict__.get("_answered_alone", set()).discard(approval_id)
         # A prompt still open on the owner's channel is closed with how it ended — one of the four
         # outcomes, not "rejected" for all but one — so the message there says what happened
         # instead of offering buttons that answer nothing (`ChannelDelivery.request_approval`).

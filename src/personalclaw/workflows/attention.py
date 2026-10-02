@@ -271,9 +271,11 @@ def _announce_workflow_end(state: Any, run: Any, status: Any) -> str:
     user's rule for "a run needs you" (``loop/needs_input``, the pair a workflow gate rides).
 
     Said once, by whoever ends up telling the user: a run a TRIGGER started is reported on that
-    trigger's route (``run_finish.report_to_its_trigger``), and a sub-run's ending is its parent's
-    step, so neither raises a second note here. Deduped per run and ending.
+    trigger's route (``run_finish.report_to_its_trigger``), a subagent batch in the chat that
+    started it (``run_finish.report_to_its_chat``), and a sub-run's ending is its parent's step, so
+    none of them raises a second note here. Deduped per run and ending.
     """
+    from personalclaw.workflows.batch_start import reports_to_a_chat
     from personalclaw.workflows.models import OriginKind
 
     ending = str(getattr(status, "value", status))
@@ -283,7 +285,7 @@ def _announce_workflow_end(state: Any, run: Any, status: Any) -> str:
     origin = getattr(run, "origin", None)
     if getattr(origin, "kind", None) == OriginKind.HOOK and getattr(origin, "trigger_id", ""):
         return ""
-    if getattr(run, "parent_run_id", None):
+    if getattr(run, "parent_run_id", None) or reports_to_a_chat(run):
         return ""
     try:
         from personalclaw.inbox import ItemKind, emit_attention_item

@@ -217,11 +217,12 @@ class AcpClient:
         own tools and none of knowledge / tasks / inbox / artifacts / workflows /
         subagents / notify. Rebuilt per call so a ``rekey()``-ed warm process
         carries the CURRENT session key into the server's env, not the key the
-        process was first spawned with.
+        process was first spawned with. A leaf's lineage and a subagent's tier in this
+        session's environment go to the server too, declared rather than inherited.
         """
         from personalclaw.acp.mcp_servers import core_mcp_servers
 
-        return core_mcp_servers(session_key=self._session_key)
+        return core_mcp_servers(session_key=self._session_key, env=self._extra_env)
 
     # ── transport-state proxies ────────────────────────────────────────────────
     # The process + PID/child-PID + stderr + activity clock physically live on the

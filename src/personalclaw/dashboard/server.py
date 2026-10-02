@@ -531,6 +531,7 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
 INTERNAL_ROUTES: frozenset[str] = frozenset(
     {
         "POST /api/send-message",  # `notify`, and a scheduled script's ctx.notify
+        "POST /api/workflows/batches",  # `subagent_run` starts a batch it compiled
         "POST /api/session-keepalive",  # `wait`
         "GET /api/session-tool-policy",  # an MCP server's per-session tool policy
         "GET /api/chat/sessions/model-reach",  # whether an `mcp-core` tool's chat keeps nothing
@@ -563,8 +564,6 @@ MIXED_INTERNAL_ROUTES: frozenset[str] = frozenset(
         "POST /api/memory/approval-rules",  # `triage_rules` add
         "DELETE /api/memory/approval-rules/{key:.+}",  # `triage_rules` revoke
         "POST /api/prompts/{name:.+}/render",  # `prompt_render`
-        "POST /api/workflows",  # `subagent_run` saves a batch it compiled ...
-        "POST /api/workflows/runs",  # ... and starts it
         "GET /api/autonudge/session/{session_name}",  # `loop_nudge_stop` finds its loop ...
         "DELETE /api/autonudge/{loop_id}",  # ... and stops it
         "GET /api/chat/sessions/bound-project",  # the artifact tools' project, in `mcp-core`

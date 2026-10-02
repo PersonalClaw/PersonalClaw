@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -167,13 +168,21 @@ def core_tool_declaration(
     )
 
 
-def core_mcp_servers(*, session_key: str | None = None) -> list[dict[str, Any]]:
+def core_mcp_servers(
+    *, session_key: str | None = None, env: Mapping[str, str] | None = None
+) -> list[dict[str, Any]]:
     """Return the ACP ``mcpServers`` array carrying ``personalclaw-core``.
 
     ``session_key`` is the live session key (``AcpClient._session_key`` /
     ``SessionManager``'s key). It is read at call time, not at construction time,
     because the pool rekeys a warm process between sessions — a spec captured in
     ``__init__`` would pin the first session's key onto every later one.
+
+    ``env`` is the session's own environment (``AcpClient``'s ``extra_env``): what in it tells the
+    server's tools which leaf they run for and which tier holds it (``mcp_shared.LEAF_KEYS``) is
+    declared to the server as well, since a CLI is free to start it without the environment the
+    CLI itself was given, and without the tier the server would list a read-only subagent every
+    tool.
 
     Returns an empty list when the spec cannot be rendered, which reproduces the
     pre-AAP-4 behaviour rather than failing a session open.
@@ -189,7 +198,7 @@ def core_mcp_servers(*, session_key: str | None = None) -> list[dict[str, Any]]:
 
     from personalclaw.config import config_dir
 
-    env: list[dict[str, str]] = [{"name": "PERSONALCLAW_HOME", "value": str(config_dir())}]
+    declared: list[dict[str, str]] = [{"name": "PERSONALCLAW_HOME", "value": str(config_dir())}]
     # The gateway's PORT, declared rather than assumed — and asked of the ONE owner of that
     # answer (#2539). This read ``parse_dashboard_url(dashboard.url)``, which falls back to a
     # fixed 10000: a gateway started with ``--port`` (or the ``--port auto`` that
@@ -204,17 +213,20 @@ def core_mcp_servers(*, session_key: str | None = None) -> list[dict[str, Any]]:
     from personalclaw import gateway_base
 
     try:
-        env.append({"name": "PERSONALCLAW_PORT", "value": str(gateway_base.resolve_port())})
+        declared.append({"name": "PERSONALCLAW_PORT", "value": str(gateway_base.resolve_port())})
     except gateway_base.GatewayBaseUnresolved as exc:
         logger.warning("not declaring PERSONALCLAW_PORT to %s: %s", CORE_SERVER_NAME, exc)
     if session_key:
-        env.append({"name": "PERSONALCLAW_SESSION_KEY", "value": str(session_key)})
+        declared.append({"name": "PERSONALCLAW_SESSION_KEY", "value": str(session_key)})
+    from personalclaw.mcp_shared import leaf_lineage
+
+    declared.extend({"name": key, "value": value} for key, value in leaf_lineage(env).items())
 
     return [
         {
             "name": CORE_SERVER_NAME,
             "command": str(command),
             "args": [str(a) for a in spec.get("args") or []],
-            "env": env,
+            "env": declared,
         }
     ]

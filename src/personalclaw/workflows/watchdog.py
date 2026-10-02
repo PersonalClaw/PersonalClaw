@@ -95,6 +95,14 @@ class WorkflowWatchdog:
         #: fighting over the same connection.
         self._coalescer = EventCoalescer(self._raw_publish)
 
+    def announce(self, infos: list[Any]) -> None:
+        """Hand a conversation how work it started ended, through the delivery a run's own ending
+        uses (`EngineServices.announce`): a subagent batch that never started (`batch_start`) has
+        no run to end. Inert when the gateway wired none."""
+        deliver = self._services.announce
+        if deliver is not None and infos:
+            deliver(infos)
+
     # ── lifecycle ──
 
     def start(self) -> None:
@@ -179,6 +187,8 @@ class WorkflowWatchdog:
             report_to_trigger=base.report_to_trigger,
             # What waits on a run hears when it ends, whichever controller drives it.
             run_ended=base.run_ended,
+            # The chat that started a subagent batch hears how its tasks ended.
+            announce=base.announce,
         )
 
     def _publisher(self, run_id: str) -> Any:
@@ -608,6 +618,7 @@ class WorkflowWatchdog:
         # Ended without a controller, so without `_finish`: its trigger, and what waits on it,
         # hear here how it ended.
         run_finish.report_to_its_trigger(self._services, run, status)
+        run_finish.report_to_its_chat(self._services, run, status)
         run_finish.chain_after_run(self._services, run, status)
         return True
 
@@ -654,6 +665,7 @@ class WorkflowWatchdog:
         # Ended without a controller, so without `_finish`: its trigger, and what waits on it,
         # hear here that it failed and why.
         run_finish.report_to_its_trigger(self._services, run, RunStatus.FAILED)
+        run_finish.report_to_its_chat(self._services, run, RunStatus.FAILED)
         run_finish.chain_after_run(self._services, run, RunStatus.FAILED)
 
 

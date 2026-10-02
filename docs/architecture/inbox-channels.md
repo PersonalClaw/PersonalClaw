@@ -233,7 +233,13 @@ A subagent's start asks the same way a tool call does (`subagent_ask.spawn_ask`)
 `subagent_run`, `tool_purpose` says what allowing it does ("Starts a subagent on this task."),
 `tool_input` is the whole redacted task, and `risk` is `caution`. The Inbox row shows each line
 cut at a word (`textfmt.clip_words`), and the decision under it (`ApprovalDecision`) shows the
-whole input from the live entry whenever the row could not.
+whole input from the live entry whenever the row could not. A batch whose tasks may change things
+asks once for its start (`workflows.batch_start`): `tool_input` names each task and what it may
+change, and only a decision on it answers it, so a Trust or YOLO switch, which answers every
+pending approval it covers, leaves it asking (`request_approval(answered_alone=True)`). In the
+chat that started the work, the card for an ask a subagent or a batch raised answers through the
+approvals queue, with Allow or Deny for that ask alone (`ApprovalSegment.queued`): the chat's own
+approve route holds only the chat's own asks.
 
 The entry also says where the call came from, in words (`source_label`, from
 `approval_source.approval_source_label`): `chat “Trip planning”`, `loop “Fix the README”`,
@@ -407,7 +413,8 @@ There used to be a second, five-minute window for "unattended" sources, keyed by
 every approval still under `workflow:<run>:`; stopping a loop stops its worker turns; stopping a
 chat turn (`SessionManager.stop_turn`, through the hooks `DashboardState` registers) ends that
 turn's approvals and what the turn started (`started_work.end_turn`: its batch runs and
-subagents, and so what they were asking); cancelling a subagent ends its spawn and tool
+subagents, and so what they were asking, and a batch still waiting for her Allow to start, whose
+ask ends, `batch_start.end_asks`); cancelling a subagent ends its spawn and tool
 approvals, which are keyed `subagent:<id>:<request_id>` so two subagents' requests can never
 share an id. Each ends as `cancelled`, with an `approval_cancelled` SEL row. And the decision path
 checks again (`approval_owner.owner_ended`, fail-closed): an approval whose run, loop or subagent

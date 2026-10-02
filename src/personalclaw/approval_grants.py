@@ -90,6 +90,10 @@ REMEMBERED = "remembered"
 #: (`workflows.models.NodeInstance.approved_request`). It covers that one start, within the step's
 #: time limit; the agent's own calls ask as any agent's do.
 APPROVED_BEFORE_RESUME = "approved_before_resume"
+#: The owner allowed a subagent batch's start, an ask that named each of its tasks and what each
+#: may change (`workflows.batch_start`): each task starts on that yes, which her answer alone gave.
+#: It covers the starts only; each task's own calls ask as any agent's do.
+BATCH_ALLOWED = "batch_allowed"
 #: A workflow run's own gate policy for an origin nobody watches (a schedule, an event).
 GATE_POLICY = "gate_policy"
 #: An ACP agent's own permission mode that makes its CLI approve its own calls
@@ -136,6 +140,30 @@ class ToolDecision:
 
     def __bool__(self) -> bool:
         return self.approved
+
+
+def batch_allowed(parent_run: str) -> bool:
+    """Whether the run a spawn belongs to (*parent_run*, a step's ``workflow:<run_id>``) is a
+    subagent batch whose start its owner allowed (`workflows.batch_start.CONSENT_KEY`), so its
+    task starts on that Allow (:data:`BATCH_ALLOWED`). Fails closed: a record that cannot be read
+    is no Allow."""
+    from personalclaw.workflows import store
+    from personalclaw.workflows.batch_start import CONSENT_KEY
+    from personalclaw.workflows.models import OriginKind
+    from personalclaw.workflows.ownership import OWNED_PREFIX
+
+    if not parent_run.startswith(OWNED_PREFIX):
+        return False
+    try:
+        run = store.get(parent_run[len(OWNED_PREFIX) :])
+    except Exception:  # noqa: BLE001 - an unreadable record is no Allow
+        logger.debug("run of %s unreadable for its batch's Allow", parent_run, exc_info=True)
+        return False
+    return bool(
+        run is not None
+        and run.origin.kind == OriginKind.SUBAGENT_TOOL
+        and isinstance((run.extra or {}).get(CONSENT_KEY), dict)
+    )
 
 
 def decision_of(answer: object) -> ToolDecision:

@@ -467,6 +467,9 @@ class GatewayOrchestrator:
         self.workflow_watchdog: "WorkflowWatchdog | None" = None
         self.inbox_svc: "InboxService | None" = None
         self.subagent_mgr: SubagentManager | None = None
+        #: The subagent completion delivery `_init_subagents` hands its manager, kept for the
+        #: endings no subagent of its own reports: a batch's tasks (`_announce_ended_work`).
+        self._announce_subagents: Callable[[list[SubagentInfo]], Awaitable[None]] | None = None
         self._cron_injecting: dict[str, int] = {}  # parent_key → pending injection count
         self.channel_history: ChannelHistory | None = None
         self.dashboard_state: DashboardState | None = None
@@ -2052,6 +2055,23 @@ class GatewayOrchestrator:
         except Exception:  # noqa: BLE001 - see the docstring
             logger.debug("could not surface the attention card for %s", trigger, exc_info=True)
 
+    def _announce_ended_work(self, infos: list[SubagentInfo]) -> None:
+        """`EngineServices.announce`: hand the conversation that started a subagent batch how
+        each of its tasks ended, as ONE delivery of the subagent completions it reads (the
+        announce `_init_subagents` hands its manager), in the turn or thread that started it.
+
+        Scheduled rather than awaited: it is asked from a run's terminal write, which must never
+        wait on a chat's turn.
+        """
+        deliver = self._announce_subagents
+        if deliver is None or not infos:
+            return
+        task = asyncio.ensure_future(deliver(list(infos)))
+        held = getattr(self.dashboard_state, "_background_tasks", None)
+        if isinstance(held, set):
+            held.add(task)
+            task.add_done_callback(held.discard)
+
     def _report_to_its_trigger(
         self, trigger_id: str, *, error: str = "", summary: str = "", run_id: str = ""
     ) -> bool:
@@ -3522,6 +3542,8 @@ class GatewayOrchestrator:
                     report_to_trigger=self._report_to_its_trigger,
                     # What waits on a run (`run_completed`) runs when the run ends.
                     run_ended=self._chain_after_workflow_run,
+                    # The chat that started a subagent batch hears how its tasks ended.
+                    announce=self._announce_ended_work,
                 ),
             )
             self.workflow_watchdog.start()
@@ -4762,6 +4784,7 @@ class GatewayOrchestrator:
             # only what an unreadable config falls back to (`approval_grants`, rule 1).
             limits=_live_subagent_limits,
         )
+        self._announce_subagents = _subagent_done
         self.subagent_mgr.start_reaper()
 
     def _publish_runtime_base(self) -> None:

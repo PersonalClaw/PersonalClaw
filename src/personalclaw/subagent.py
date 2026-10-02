@@ -596,6 +596,7 @@ _SPAWN_GRANT_REASONS = {
     approval_grants.HOOK_SETTING: "tool_calls_gated",
     approval_grants.YOLO: "yolo",
     approval_grants.APPROVED_BEFORE_RESUME: "allowed_before_resume",
+    approval_grants.BATCH_ALLOWED: "batch_allowed",
 }
 
 
@@ -746,6 +747,8 @@ class SubagentManager:
 
             if allows_its_agent(info.trigger_id):
                 return approval_grants.TRIGGER
+        if info.parent_run and approval_grants.batch_allowed(info.parent_run):  # so is a batch's
+            return approval_grants.BATCH_ALLOWED  # task, on her Allow of the batch (`batch_start`)
         if info.parent_session_key and self._sessions.get_approval_policy(
             info.parent_session_key
         ) in ("auto", "yolo"):
@@ -2160,12 +2163,12 @@ class SubagentManager:
 
         if reads := step_reads(info.parent_run):  # its run's project tree, its batch's folder
             extra_kwargs["read_tool_roots"] = reads
-        if info.extra_env:
-            # The leaf's posture + lineage. Passed through the session's `extra_env` seam, which
-            # already forces a cold (non-pooled) session — a warm pooled worker would carry the
-            # PREVIOUS leaf's env, and inheriting a sibling's capability flag is precisely the
-            # cross-contamination this must not have.
-            extra_kwargs["extra_env"] = dict(info.extra_env)
+        if session_env := tier_for(info).session_env(info.extra_env):
+            # The leaf's posture + lineage, and the run's tier. Passed through the session's
+            # `extra_env` seam, which already forces a cold (non-pooled) session — a warm pooled
+            # worker would carry the PREVIOUS leaf's env, and inheriting a sibling's capability
+            # flag is precisely the cross-contamination this must not have.
+            extra_kwargs["extra_env"] = session_env
         client, is_new, _resumed = await self._sessions.get_or_create(
             session_key,
             agent=agent or None,

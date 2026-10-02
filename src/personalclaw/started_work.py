@@ -18,7 +18,9 @@ its steps would start agents for work that is over.
   subagents (``subagent:<id>``) started.
 
 And what an ended subagent started from its own session ends with it, so a batch a background
-subagent started does not outlive the Stop that ends the subagent.
+subagent started does not outlive the Stop that ends the subagent. So does a batch still waiting for
+its owner's Allow to start (``workflows.batch_start``): its ask ends, saying why, and it never
+starts.
 
 Each run is cancelled with the clause, which its ending says ("Stopped because its chat turn was
 stopped."), and the controller driving it stops its steps' subagents and ends what they were
@@ -42,11 +44,13 @@ TURN_STOPPED = "its chat turn was stopped"
 
 
 class Ended(NamedTuple):
-    """What an ending reached: the runs whose cancel it asked, and the subagents it stopped (a
-    cancelled run's steps still running among them, which that run's controller stops)."""
+    """What an ending reached: the runs whose cancel it asked, the subagents it stopped (a
+    cancelled run's steps still running among them, which that run's controller stops), and the
+    batches waiting to start whose ask it ended."""
 
     runs: int
     subagents: int
+    asks: int = 0
 
 
 def _agents(subagents: Any) -> list[Any]:
@@ -71,9 +75,11 @@ async def end_started(
     owns: Callable[[str], bool],
     clause: str,
     since: float = 0.0,
+    asks: Any = None,
 ) -> Ended:
     """End what the sessions *owns* claims started, and what each subagent among it started in
-    turn, as *clause* ("its chat turn was stopped").
+    turn, as *clause* ("its chat turn was stopped"). *asks* is the approval registry, which holds
+    the batches still waiting for her Allow (``workflows.batch_start.end_asks``).
 
     *since* (an epoch) keeps it to what those sessions started from then on: a turn's own work,
     not an earlier turn's. What a subagent it reaches started is that subagent's, whenever it was.
@@ -125,9 +131,28 @@ async def end_started(
             stopped = await subagents.stop_agents(going, because=clause)
         except Exception:
             logger.warning("could not stop subagents %s (%s)", going, clause, exc_info=True)
-    if runs or stopped:
-        logger.info("ended %d run(s) and %d subagent(s): %s", runs, stopped, clause)
-    return Ended(runs=runs, subagents=stopped + steps)
+    waiting = 0
+    if asks is not None:
+        from personalclaw.workflows.batch_start import end_asks
+
+        try:
+            waiting = end_asks(
+                asks,
+                lambda session, asked_at: (owns(session) or session in sessions)
+                and asked_at >= since,
+                reason=clause,
+            )
+        except Exception:
+            logger.warning("could not end the batches waiting to start (%s)", clause, exc_info=True)
+    if runs or stopped or waiting:
+        logger.info(
+            "ended %d run(s), %d subagent(s) and %d batch ask(s): %s",
+            runs,
+            stopped,
+            waiting,
+            clause,
+        )
+    return Ended(runs=runs, subagents=stopped + steps, asks=waiting)
 
 
 async def end_turn(state: Any, session_key: str) -> int:
@@ -152,6 +177,7 @@ async def end_turn(state: Any, session_key: str) -> int:
     ended = await end_started(
         subagents=getattr(state, "subagents", None),
         supervisor=getattr(state, "workflows", None),
+        asks=state,
         owns=keys.__contains__,
         clause=_turn_clause(name),
         since=float(job.started_at),

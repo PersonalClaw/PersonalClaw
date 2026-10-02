@@ -10,7 +10,8 @@ Each records the worker session it was started from: the run its ``origin.sessio
 When the loop ends, that work has nobody left to report to. Stopping a loop ends every child it
 started (:func:`end_children`, by the rule a turn's Stop and a run's ending follow too:
 ``started_work``), and so do its failing and its deletion: each workflow run is cancelled, saying
-how its loop ended, and each subagent is stopped, so an approval either of them was waiting on ends
+how its loop ended, each subagent is stopped, and a batch still waiting for its owner's Allow has
+that ask ended (``workflows.batch_start.end_asks``), so an approval any of them was waiting on ends
 with them and can no longer be allowed. What a run was asking for ends through the run (its stages'
 subagents are stopped, and each approval ends naming the loop: ``dashboard.approval_owner``).
 
@@ -119,7 +120,8 @@ async def end_children(state: Any, loop_id: str, *, why: str) -> int:
     ended = await started_work.end_started(
         subagents=getattr(state, "subagents", None),
         supervisor=getattr(state, "workflows", None),
+        asks=state,
         owns=lambda key: loop_of(key) == loop_id,
         clause=clause(loop_id, why),
     )
-    return ended.runs + ended.subagents
+    return ended.runs + ended.subagents + ended.asks

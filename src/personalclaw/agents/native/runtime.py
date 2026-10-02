@@ -1407,8 +1407,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # A host that narrowed what this run is shown (`set_tool_offer`) narrows the pool before
         # either reduction, so neither the tool block nor the catalog names a tool left out.
         narrowed = self._tool_offer is not None
-        if narrowed:
-            pool = [d for d in pool if self._offered(getattr(d, "name", "") or "")]
+        from personalclaw.guardrails.policy import shown_of
+
+        pool, unshown = shown_of(pool, self._offered) if narrowed else (pool, "")
         stub_lines = self._group_stub_lines()
         # A group change from last turn announces itself here, at the boundary
         # where the rewritten tool block actually reaches the model.
@@ -1433,9 +1434,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         )
         reduced = bool(self._tool_retriever) and len(selected_defs) < len(pool)
 
-        notes: list[str] = []
-        if pending:
-            notes.append(pending)
+        notes: list[str] = [note for note in (pending, unshown) if note]
         if not reduced:
             # No retrieval reduction: the assembled (group-filtered) schema stands.
             surfaced_defs = list(pool)

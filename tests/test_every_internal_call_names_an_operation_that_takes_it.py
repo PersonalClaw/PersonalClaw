@@ -57,8 +57,10 @@ SENDERS = {
 #: credential (docs/architecture/security.md, "Webhook auth"), and the route checks its own token.
 RELAYED = frozenset({"POST /api/hooks/agent"})
 
-#: How many calls the census read when it was written. Fewer means a reader stopped reading.
-CALL_FLOOR = 28
+#: How many calls the census reads: 28 when it was written, 27 since `subagent_run` hands a batch
+#: to the gateway in one call rather than saving and starting it in two. Fewer means a reader
+#: stopped reading.
+CALL_FLOOR = 27
 
 
 @dataclass(frozen=True)

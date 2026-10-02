@@ -47,21 +47,22 @@ def spawn_ask(request_id: str, task: str, agent: str = "") -> LLMEvent:
 _NEVER_STARTED = "so it never started"
 
 
-def spawn_refusal(decision: ToolDecision) -> str:
+def spawn_refusal(decision: ToolDecision, *, what: str = "spawn") -> str:
     """Why a spawn that asked its owner never started, in the words its failure is read in: a
     workflow step's cause, the loop's Inbox note, the background-agents list. "spawn rejected" said
-    it of every ending, and so read as the owner refusing work that nobody had answered."""
+    it of every ending, and so read as the owner refusing work that nobody had answered. *what* is
+    what never started: a spawn, or a batch of them (`workflows.batch_start`)."""
     if decision.outcome == "expired":
         minutes = round(approval_grants.approval_window_secs() / 60)
         return (
-            f"spawn not approved in time: nobody answered within {minutes} minutes "
+            f"{what} not approved in time: nobody answered within {minutes} minutes "
             f"(Settings → Agent defaults → Approval wait), {_NEVER_STARTED}"
         )
     if decision.outcome == "cancelled":
-        return f"spawn not approved: its approval ended before anyone answered, {_NEVER_STARTED}"
+        return f"{what} not approved: its approval ended before anyone answered, {_NEVER_STARTED}"
     if decision.decided_by == "approval_failed":
-        return f"spawn not approved: asking for the approval failed, {_NEVER_STARTED}"
-    return f"spawn declined, {_NEVER_STARTED}"
+        return f"{what} not approved: asking for the approval failed, {_NEVER_STARTED}"
+    return f"{what} declined, {_NEVER_STARTED}"
 
 
 def never_started(error: str) -> bool:

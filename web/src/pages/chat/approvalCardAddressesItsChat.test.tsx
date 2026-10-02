@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
     queue: [] as unknown[], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
   },
   approve: vi.fn(),
+  resolveApproval: vi.fn(),
 }))
 
 vi.mock('../../lib/api', () => {
@@ -29,6 +30,7 @@ vi.mock('../../lib/api', () => {
   const base: Record<string, unknown> = {
     chatSessionDetail: () => Promise.resolve(h.detail),
     approve: h.approve,
+    resolveApproval: h.resolveApproval,
     chatSessions: () => Promise.resolve([]),
     agents: () => Promise.resolve({ agents: [] }),
     agentProviders: () => Promise.resolve([]),
@@ -78,6 +80,7 @@ beforeEach(async () => {
   }
   FakeSocket.last = null
   h.approve.mockReset().mockResolvedValue({ ok: true })
+  h.resolveApproval.mockReset().mockResolvedValue({ ok: true })
   ;({ ChatPage } = await import('../ChatPage'))
   ;({ AppearanceProvider } = await import('../../app/appearance'))
 })
@@ -91,15 +94,25 @@ const APPROVAL = {
   grant_agent: '', agent: 'researcher', session_title: '', ts: 0,
 }
 
-async function openWithPendingApproval() {
+async function openWithPendingApproval(frame: Record<string, unknown> = APPROVAL) {
   render(
     <AppearanceProvider>
       <ChatPage sub="chat-a" navigate={() => {}} query={{}} setQuery={() => {}} />
     </AppearanceProvider>,
   )
   await waitFor(() => expect(FakeSocket.last).toBeTruthy())
-  pushFrame('approval', APPROVAL)
-  return screen.findByRole('button', { name: /^Deny bash/ })
+  pushFrame('approval', frame)
+  return screen.findByRole('button', { name: new RegExp(`^Deny ${String(frame.tool)}`) })
+}
+
+/** An ask raised for chat-a by work it started, here the batch it started asking to change
+ *  things: what `request_approval` broadcasts for a background origin. Its `request_id` is the
+ *  registry id, and only the approvals queue holds it; the chat's own approve route does not. */
+const ASKED_BY_ITS_WORK = {
+  id: 'batch:subagent-batch-1', request_id: 'batch:subagent-batch-1', session: 'chat-a',
+  source: 'subagent', tool: 'subagent_run', tool_input: '1. Raise the retry ceiling: it may change files',
+  tool_purpose: 'Starts 2 tasks at once, and 1 of them may change things, not only read.',
+  risk: 'caution', grant_agent: '', agent: '', session_title: 'chat-a', ts: 0,
 }
 
 describe('the approval card in the chat it belongs to', () => {
@@ -127,5 +140,28 @@ describe('the approval card in the chat it belongs to', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /^Deny bash/ })).toBeNull())
     expect(screen.getByText(/not run — the turn was stopped/)).toBeTruthy()
     expect(screen.queryByText(/denied/)).toBeNull()
+  })
+})
+
+describe('an ask raised by work the chat started', () => {
+  it('is answered through the approvals queue, by its registry id', async () => {
+    const user = userEvent.setup()
+    await openWithPendingApproval(ASKED_BY_ITS_WORK)
+    await user.click(screen.getByRole('button', { name: /^Allow subagent_run/ }))
+    await waitFor(() => expect(h.resolveApproval).toHaveBeenCalledWith('batch:subagent-batch-1', 'approve'))
+    expect(h.approve).not.toHaveBeenCalled()
+  })
+
+  it('is denied through the approvals queue too', async () => {
+    const user = userEvent.setup()
+    await user.click(await openWithPendingApproval(ASKED_BY_ITS_WORK))
+    await waitFor(() => expect(h.resolveApproval).toHaveBeenCalledWith('batch:subagent-batch-1', 'reject'))
+    expect(h.approve).not.toHaveBeenCalled()
+  })
+
+  it('offers Allow and Deny for that ask alone, and nothing to remember', async () => {
+    await openWithPendingApproval(ASKED_BY_ITS_WORK)
+    expect(screen.getByRole('button', { name: 'Allow subagent_run' })).toBeTruthy()
+    expect(screen.queryByText('Remember this choice')).toBeNull()
   })
 })

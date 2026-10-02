@@ -189,6 +189,14 @@ const TRANSCRIPT_FRAMES = new Set([
 // but the card no longer offers them — the card speaks only scope.)
 type ApproveAction = 'approved' | 'rejected' | 'trust' | 'trust_agent' | 'trust_reads' | 'yolo'
 
+/** Answer an ask raised by work the chat started (`ApprovalSegment.queued`) where it is held, the
+ *  approvals queue, by its registry id. Its card offers Allow and Deny alone; anything but an
+ *  Allow is a Deny. */
+function answerQueued(id: string, action: ApproveAction) {
+  api.resolveApproval(id, action === 'approved' ? 'approve' : 'reject')
+    .catch(reportActionFailure('record your decision'))
+}
+
 // Options for the chat-header segmented controls. Permission mirrors the
 // composer's approval modes; memory mirrors MEMORY_MODES — both as the canonical
 // Segmented slider rather than a menu.
@@ -4646,7 +4654,9 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     }
     if (seg.kind === 'approval') {
       const ap = seg as ApprovalSegment
-      return <ApprovalCard key={ap.id || i} seg={ap} onAct={onApprove} />
+      return ap.queued
+        ? <ApprovalCard key={ap.id || i} seg={ap} answers="once" onAct={answerQueued} />
+        : <ApprovalCard key={ap.id || i} seg={ap} onAct={onApprove} />
     }
     if (seg.kind === 'text') {
       // hide the raw [OPTIONS: …] and [SWITCH_TO_AGENT: …] markers from the prose

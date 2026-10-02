@@ -54,9 +54,11 @@ export function applyToolResultFrame(segs: Segment[], d: Frame): Segment[] {
 
 /** `approval`: the call waits on her answer. The card addresses the call by the CHAT's own id —
  *  what the transcript rehydrates as `approval_id` and what the approve route takes; `d.id` is the
- *  registry id every other surface uses, unique across chats. The risk and the radius are decoded,
- *  never cast: a frame another build sent can carry a level or a shape this one cannot read, and
- *  that must be no claim at all. */
+ *  registry id every other surface uses, unique across chats. An ask with a `source` was raised by
+ *  work this chat started (a subagent, a batch), and its `request_id` IS the registry id: only the
+ *  approvals queue holds it, so its card answers there (`queued`). The risk and the radius are
+ *  decoded, never cast: a frame another build sent can carry a level or a shape this one cannot
+ *  read, and that must be no claim at all. */
 export function applyApprovalFrame(segs: Segment[], d: Frame): Segment[] {
   const id = String(d.request_id ?? '')
   if (segs.some((sg) => sg.kind === 'approval' && sg.id === id)) return segs
@@ -65,6 +67,7 @@ export function applyApprovalFrame(segs: Segment[], d: Frame): Segment[] {
     purpose: String(d.tool_purpose ?? ''), risk: approvalRiskOf(d.risk),
     blastRadius: blastRadiusOf(d.blast_radius), grantAgent: d.grant_agent ? String(d.grant_agent) : '',
     reach: d.reach ? String(d.reach) : '',
+    ...(d.source ? { queued: true } : {}),
   }]
 }
 
