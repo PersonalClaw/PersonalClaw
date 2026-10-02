@@ -46,7 +46,11 @@ from aiohttp import web
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.chat_persistence import resolve_session
-from personalclaw.dashboard.chat_utils import _history_key_for, apply_task_mode
+from personalclaw.dashboard.chat_utils import (
+    _history_key_for,
+    apply_task_mode,
+    take_in_the_users_links,
+)
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import _safe_key
 from personalclaw.http_errors import json_error
@@ -411,6 +415,7 @@ async def api_chat_plan_comment(request: web.Request) -> web.Response:
             "step_not_awaiting_review", message="That step is not awaiting review", status=409
         )
     write(sess, binding)
+    take_in_the_users_links(request.get("app", ""), chat.key, text)
     _dispatch(state, chat, f"Revise the plan with this feedback:\n\n{text}")
     return web.json_response({"ok": True, "session": PS.wire(sess)})
 

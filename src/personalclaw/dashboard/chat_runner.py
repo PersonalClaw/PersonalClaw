@@ -60,6 +60,7 @@ from personalclaw.dashboard.chat_utils import (
     _redact_for_display,
     _say_compaction_notice,
     _validate_tool_name,
+    attached_item_source,
     chat_usage,
     model_substitution_notice,
     stream_slash_command,
@@ -1700,14 +1701,12 @@ def _inject_knowledge_content(state: "DashboardState", session: _ChatSession, me
             item = None
         if not item:
             continue
-        title = str(item.get("title") or "Untitled")
+        head = f"### Knowledge: {item.get('title') or 'Untitled'}"
+        head += attached_item_source(session.key, item)
         content = str(item.get("content") or "")
         content, _ = redact_credentials(content)
         content, _ = redact_exfiltration_urls(content)
-        if content.strip():
-            blocks.append(f"### Knowledge: {title}\n\n{content}")
-        else:
-            blocks.append(f"### Knowledge: {title}\n\n(No text content.)")
+        blocks.append(f"{head}\n\n{content if content.strip() else '(No text content.)'}")
     if not blocks:
         return message
     header = (

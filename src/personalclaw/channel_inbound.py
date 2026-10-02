@@ -336,6 +336,14 @@ async def _route_to_session(
         session = state.get_or_create_session(app=provider)
         state.link_channel(session.key, thread_key, msg.channel_id)
 
+    # The links in the message are the user's for the chat's web_fetch, as a message typed in the
+    # dashboard is — when it entered as the user's words. Text the gate fenced (someone the owner
+    # has not trusted, in a tracked group) is data, and the recorder skips what is inside a fence.
+    from personalclaw.constants import dashboard_history_key
+    from personalclaw.web.fetch import record_user_message_urls
+
+    record_user_message_urls(dashboard_history_key(session.key), text)
+
     safe, _ = redact_exfiltration_urls(text)
     safe, _ = redact_credentials(safe)
     broadcast = getattr(state, "broadcast_ws", None)

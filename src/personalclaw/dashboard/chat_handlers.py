@@ -45,6 +45,7 @@ from personalclaw.dashboard.chat_utils import (
     apply_task_mode,
     full_session_messages,
     persisted_history_key,
+    take_in_the_users_links,
 )
 from personalclaw.dashboard.state import CREATED_BY_APP_META_KEY, DashboardState, _ChatSession
 from personalclaw.http_errors import json_error
@@ -270,6 +271,12 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         from personalclaw.natural_voice import normalize_conversation_choice
 
         session.natural_voice = normalize_conversation_choice(body.get("natural_voice"))
+
+    # The user's message is taken in here, whether it runs now, steers the running turn or waits
+    # in the queue: the links written or pasted into it are the user's for this chat's web_fetch.
+    # Not a widget action's: its payload is what the agent's widget wrote, sent under a label.
+    if message and not (user_meta or {}).get("ui_label"):
+        take_in_the_users_links(request.get("app", ""), session.key, message)
 
     if session.running:
         # Cancel-and-replace: when the resolved mid-turn

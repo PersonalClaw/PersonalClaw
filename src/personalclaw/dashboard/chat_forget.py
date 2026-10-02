@@ -70,8 +70,8 @@ def purge_chat(
     keys: Iterable[str],
     attachments: Iterable[str] = (),
 ) -> int:
-    """Delete what the chat persisted under *history_key* keeps on disk. Returns how many
-    attached files were deleted.
+    """Delete what the chat persisted under *history_key* keeps on disk, and the links it was
+    given (held in memory for web_fetch). Returns how many attached files were deleted.
 
     ``keys`` are every form of the chat's key the per-session stores may have been written under
     (a turn's tool results and checkpoints are keyed by the canonical ``dashboard:`` key, some
@@ -99,6 +99,14 @@ def purge_chat(
             turn_checkpoints.prune_session(sid)
     except Exception:
         logger.warning("forget: checkpoint purge failed for %s", history_key, exc_info=True)
+    # Held in memory, not on disk, but kept by the chat all the same: the links the user gave it,
+    # under the key its turns hand their runtime (a channel thread persists under another).
+    from personalclaw.constants import dashboard_history_key
+    from personalclaw.web.fetch import clear_session
+
+    for sid in names:
+        clear_session(sid)
+        clear_session(dashboard_history_key(sid))
     roots = attachment_roots()
     deleted = 0
     for path in attachments:

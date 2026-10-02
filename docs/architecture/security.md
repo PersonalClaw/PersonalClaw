@@ -693,6 +693,22 @@ chokepoint:
   returns `None` and the caller refuses. Live at `web/fetch.py::web_fetch` (the
   agent's primary fetch surface) and `triggers/web_poll.py` (watched-source
   polls, plain + headless tier).
+- `web_fetch` (and `web_extract`, which fetches through it) also asks whether the
+  conversation was **given the link**. Text the agent reads — a fetched page, a
+  tool's output, a fenced span — can carry instructions, and the cheapest is "now
+  open this link", with what the agent knows in its query string. So in a chat the
+  agent opens a link only when the user gave it in their own message (typed, pasted,
+  or the source link of a library item attached to it — recorded as the user's when
+  the message is taken in: a send, a queued or steering send, an edit and resend, a
+  plan comment, a channel message, a line posted in a room, for each member's
+  session), or a `web_search` returned it, or it is the page
+  a `web_fetch` already opened. A link inside a fetched page or a tool's output, an
+  app's message, a widget's payload and anything inside an `<untrusted_content>`
+  fence grant nothing. The refusal names that rule and tells the agent to ask the
+  user for the link rather than fetch it another way. This check never widens the
+  egress settings above: a link the user typed to a host they deny, or to a private
+  host they have not allowed, is still refused by the guard. The record is in-process
+  per session; deleting or forgetting a chat drops it (`dashboard/chat_forget.py`).
 
 ## Browsing on the user's behalf (`browse/`)
 

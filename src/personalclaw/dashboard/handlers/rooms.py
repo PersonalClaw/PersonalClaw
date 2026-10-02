@@ -430,6 +430,7 @@ async def api_room_message_post(request: web.Request) -> web.Response:
         body = await json_object_body(request, empty_ok=False)
         content = require_string(body, "content")
         store.append_message(room_id, role="user", content=content, speaker=store.HUMAN_SPEAKER)
+        _take_in_the_humans_links(room_id, content)
         state = _gateway_state(request)
         arbiter.note_human_message(state, room_id)
         arbiter.queue_human_turns(room_id, content)
@@ -476,6 +477,17 @@ async def api_room_continue(request: web.Request) -> web.Response:
     if not room.paused and room.owed():
         _start_round(state, room_id)
     return web.json_response({"room": _room_payload(store.require_room(room_id), state)})
+
+
+def _take_in_the_humans_links(room_id: str, content: str) -> None:
+    """The links in the human's line are the user's for each member's web_fetch (``web.fetch``'s
+    provenance rule), under the session each member's turns run in. A member's words are never
+    recorded: they are an agent's, and the other members read them as such."""
+    from personalclaw.rooms.turn import session_key as member_session_key
+    from personalclaw.web.fetch import record_user_message_urls
+
+    for member in store.require_room(room_id).members:
+        record_user_message_urls(member_session_key(room_id, member.name), content)
 
 
 def _gateway_state(request: web.Request) -> Any:

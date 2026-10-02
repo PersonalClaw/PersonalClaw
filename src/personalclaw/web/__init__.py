@@ -11,7 +11,8 @@ from personalclaw.web.fetch import (
     ExtractOutcome,
     FetchOutcome,
     record_seen_urls,
-    url_has_provenance,
+    record_user_message_urls,
+    url_provenance,
     web_extract,
     web_fetch,
 )
@@ -25,7 +26,8 @@ __all__ = [
     "web_fetch",
     "web_extract",
     "record_seen_urls",
-    "url_has_provenance",
+    "record_user_message_urls",
+    "url_provenance",
     "RenderResult",
     "render_url",
 ]

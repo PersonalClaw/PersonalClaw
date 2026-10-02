@@ -169,4 +169,13 @@ describe('inputs with no object to resolve still fall through (#682)', () => {
     expect(out).toContain('Fetched page')
     expect(out).toContain('body text')
   })
+
+  it('a refused web_fetch is shown as its refusal, never as a fetched page', () => {
+    const refusal = 'Error: not fetched: web_fetch opens only a link the user wrote or pasted in their own message'
+    const seg = { ...fromHistory('web_fetch', { url: 'https://example.test/p' }, refusal), ok: false }
+    const out = html(renderToolOutput(seg))
+    expect(out).not.toContain('Fetched page')
+    expect(out).toContain('Result')
+    expect(out).toContain('not fetched: web_fetch opens only a link')
+  })
 })

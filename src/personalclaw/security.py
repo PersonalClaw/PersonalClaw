@@ -2170,6 +2170,30 @@ def is_fenced(text: str) -> bool:
     return bool(text) and bool(_OPEN_TAG_RE.search(text))
 
 
+#: A close marker, bare or attributed — where an open marker's span ends.
+_CLOSE_TAG_RE = re.compile(re.escape(UNTRUSTED_CLOSE[:-1]) + r"(?:\s[^>]*)?>", re.IGNORECASE)
+
+
+def outside_fences(text: str) -> str:
+    """*text* with every untrusted-content span taken out: what its author wrote themselves.
+
+    A span runs from an open marker to the next close marker; the fence escapes any marker inside
+    the text it wraps, so that close is the span's own. An open marker that is never closed takes
+    the rest of the text with it, so a cut-off fence never hands its contents back as the author's.
+    """
+    text = text or ""
+    kept: list[str] = []
+    pos = 0
+    while (opened := _OPEN_TAG_RE.search(text, pos)) is not None:
+        kept.append(text[pos : opened.start()])
+        closed = _CLOSE_TAG_RE.search(text, opened.end())
+        if closed is None:
+            return "".join(kept)
+        pos = closed.end()
+    kept.append(text[pos:])
+    return "".join(kept)
+
+
 #: Chat-template role/control tokens, neutralised in untrusted text (§7/R4 rule b).
 #:
 #: These are not prose — each is a wire-format marker a runtime uses to delimit turns, so untrusted

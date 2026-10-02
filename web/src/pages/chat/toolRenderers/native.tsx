@@ -145,10 +145,12 @@ function searchResultsOutput(seg: ToolSegment): ReactNode {
  *  The URL comes from the call's INPUT, so it goes through `inputOf` like every
  *  other renderer here — both dispatch paths hand the segment over untouched, so
  *  reading `seg.inputObj` would lose the URL line this card is titled by on every
- *  persisted session. */
+ *  persisted session. A call that FAILED fetched no page (a refused link, an egress
+ *  refusal, a site that did not answer), so it falls through to the plain Result block
+ *  rather than putting its refusal under a "Fetched page" label. */
 function webFetchOutput(seg: ToolSegment): ReactNode {
   const text = (seg.output ?? '').trim()
-  if (!text || text.startsWith('{') || text.startsWith('[')) return undefined as unknown as ReactNode
+  if (seg.ok === false || !text || text.startsWith('{') || text.startsWith('[')) return undefined as unknown as ReactNode
   const url = str(inputOf(seg).url)
   return (
     <RawBlock label="Fetched page">

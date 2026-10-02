@@ -506,6 +506,33 @@ def _history_key_for(session_name: str) -> str:
     return dashboard_history_key(session_name)
 
 
+def take_in_the_users_links(caller_app: str, session_name: str, text: str) -> None:
+    """The links in *text*, a message sent into chat *session_name*, become the user's for the
+    chat's web_fetch (``web.fetch``'s provenance rule), under the key the chat's turns hand
+    their runtime. *caller_app* is the app whose token made the request (``request["app"]``):
+    an app's message is the app's words, not the user's, and grants nothing."""
+    if caller_app:
+        return
+    from personalclaw.web.fetch import record_user_message_urls
+
+    record_user_message_urls(_history_key_for(session_name), text)
+
+
+def attached_item_source(session_name: str, item: dict) -> str:
+    """The ``Source:`` line for a library item attached to a message in chat *session_name*:
+    the link the item was saved from, masked as its content is. The link is part of what the
+    user attached, so it is the user's for the chat's web_fetch, as a link they pasted would be.
+    ``""`` when the item was saved from no link."""
+    source, _ = redact_credentials(str(item.get("url") or "").strip())
+    source, _ = redact_exfiltration_urls(source)
+    if not source:
+        return ""
+    from personalclaw.web.fetch import record_user_message_urls
+
+    record_user_message_urls(_history_key_for(session_name), source)
+    return f"\nSource: {source}"
+
+
 def chat_usage(session: _ChatSession) -> Attribution:
     """Whose spend a model call made for one of *session*'s turns is: the chat's, recorded as the
     chat's own turns are (``chat_runner``'s turn row), so the chat's total holds it."""

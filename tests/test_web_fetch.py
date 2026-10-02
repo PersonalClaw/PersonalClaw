@@ -12,7 +12,14 @@ import pytest
 from personalclaw.net.client import EgressBlocked, FetchResponse
 from personalclaw.net.guard import GuardDecision
 from personalclaw.web import fetch as wf
-from personalclaw.web.fetch import record_seen_urls, url_has_provenance, web_fetch
+from personalclaw.web.fetch import (
+    FROM_TOOL,
+    FROM_USER,
+    record_seen_urls,
+    record_user_message_urls,
+    url_provenance,
+    web_fetch,
+)
 
 
 def _web_tool_provider_cls():
@@ -67,10 +74,52 @@ def _patch_net(monkeypatch, resp=None, exc=None):
 
 def test_record_and_check_provenance():
     record_seen_urls("s1", ["https://a.com/x", "https://b.com/y#frag"])
-    assert url_has_provenance("s1", "https://a.com/x")
-    assert url_has_provenance("s1", "https://b.com/y")  # fragment canonicalized
-    assert url_has_provenance("s1", "https://a.com/x/")  # trailing slash canonicalized
-    assert not url_has_provenance("s1", "https://c.com/z")
+    assert url_provenance("s1", "https://a.com/x") == FROM_TOOL
+    assert url_provenance("s1", "https://b.com/y") == FROM_TOOL  # fragment canonicalized
+    assert url_provenance("s1", "https://a.com/x/") == FROM_TOOL  # trailing slash canonicalized
+    assert url_provenance("s1", "HTTPS://A.com/x") == FROM_TOOL  # scheme and host case
+    assert url_provenance("s1", "https://c.com/z") == ""
+
+
+def test_a_link_the_user_gave_stays_theirs_when_a_tool_returns_it_again():
+    record_user_message_urls("s1", "read https://a.example.com/notes please")
+    record_seen_urls("s1", ["https://a.example.com/notes"])
+    assert url_provenance("s1", "https://a.example.com/notes") == FROM_USER
+
+
+def test_a_long_search_never_pushes_out_a_link_the_user_gave(monkeypatch):
+    monkeypatch.setattr(wf, "_MAX_SEEN_PER_SESSION", 3)
+    record_user_message_urls("s1", "start from https://a.example.com/start")
+    record_seen_urls("s1", [f"https://b.example.com/{n}" for n in range(10)])
+    assert url_provenance("s1", "https://a.example.com/start") == FROM_USER
+    assert url_provenance("s1", "https://b.example.com/9") == FROM_TOOL
+    assert url_provenance("s1", "https://b.example.com/0") == ""
+    assert len(wf._seen_by_session["s1"]) == 3
+
+
+def test_only_the_users_own_words_in_a_message_grant_a_link():
+    from personalclaw.security import fence_untrusted
+
+    record_user_message_urls(
+        "s1",
+        "mine: https://a.example.com/mine. "
+        + fence_untrusted("theirs: https://b.example.com/theirs", source="channel:telegram:x")
+        + " and (https://a.example.com/also), not ftp://a.example.com/file",
+    )
+    assert url_provenance("s1", "https://a.example.com/mine") == FROM_USER
+    assert url_provenance("s1", "https://a.example.com/also") == FROM_USER
+    assert url_provenance("s1", "https://b.example.com/theirs") == ""
+    assert url_provenance("s1", "ftp://a.example.com/file") == ""
+
+
+def test_an_unclosed_fence_keeps_the_rest_of_the_text():
+    from personalclaw.security import UNTRUSTED_OPEN
+
+    record_user_message_urls(
+        "s1", f"https://a.example.com/before {UNTRUSTED_OPEN} https://b.example.com/x"
+    )
+    assert url_provenance("s1", "https://a.example.com/before") == FROM_USER
+    assert url_provenance("s1", "https://b.example.com/x") == ""
 
 
 @pytest.mark.asyncio
@@ -78,7 +127,7 @@ async def test_fetch_blocked_without_provenance(monkeypatch):
     _patch_net(monkeypatch)
     out = await web_fetch("https://evil.com/secret", session_key="s1")
     assert out.ok is False
-    assert "provenance" in out.error
+    assert "their own message" in out.error and "web_search or web_fetch" in out.error
     assert out.recovery_hints
 
 
@@ -193,7 +242,7 @@ async def test_a_page_nothing_can_sanitize_is_an_ordinary_failed_fetch(monkeypat
     assert out.error.startswith("HTML cannot be sanitized: nh3"), out.error
     assert out.recovery_hints == ["Reinstall PersonalClaw, then fetch the page again."]
     assert (out.content, out.title, out.char_count) == ("", "", 0)
-    assert not url_has_provenance("s3", "https://example.com/page")
+    assert url_provenance("s3", "https://example.com/page") == ""
 
 
 @pytest.mark.asyncio
@@ -251,8 +300,8 @@ async def test_fetched_url_becomes_provenanced(monkeypatch):
         _resp("<html><body><p>body text here</p></body></html>", url="https://example.com/page"),
     )
     await web_fetch("https://example.com/page", session_key="s2", require_provenance=False)
-    # the fetched page is now provenanced for the session (a link in it can be fetched)
-    assert url_has_provenance("s2", "https://example.com/page")
+    # the fetched page itself is now the session's, so it can be paged or fetched again
+    assert url_provenance("s2", "https://example.com/page") == FROM_TOOL
 
 
 # ── tool wiring ────────────────────────────────────────────────────────────────

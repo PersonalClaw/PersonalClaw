@@ -9,7 +9,7 @@ from aiohttp import web
 from personalclaw.artifacts import retakes
 from personalclaw.dashboard.chat_persistence import _TURN_DISPATCH_ROLES, save_session_to_history
 from personalclaw.dashboard.chat_runner import run_chat
-from personalclaw.dashboard.chat_utils import _history_key_for
+from personalclaw.dashboard.chat_utils import _history_key_for, take_in_the_users_links
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.mcp_artifacts import images_made_in
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -323,6 +323,7 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
             except (ValueError, TypeError):
                 _resend_ts = ""
         session.append("user", _bc, "msg msg-u", ts=_resend_ts)
+        take_in_the_users_links(request.get("app", ""), session.key, _bc)
         if rewind and carried_rewound:
             session.messages[-1]["rewound"] = carried_rewound
 
