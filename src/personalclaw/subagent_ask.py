@@ -1,4 +1,4 @@
-"""The permission request a subagent's start asks with.
+"""The permission request a subagent's start asks with, and how a start it did not get reads.
 
 A start asks the way a tool call asks, so every surface that shows an approval (the Inbox row and
 its notification, the decision under it, the chat card, the phone, a channel's prompt) shows this
@@ -13,6 +13,8 @@ so the person approving it read a prompt that stopped mid-word, on every surface
 
 from __future__ import annotations
 
+from personalclaw import approval_grants
+from personalclaw.approval_grants import ToolDecision
 from personalclaw.llm.base import EVENT_PERMISSION_REQUEST, LLMEvent
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.tool_providers.base import RiskLevel
@@ -39,3 +41,30 @@ def spawn_ask(request_id: str, task: str, agent: str = "") -> LLMEvent:
         tool_input=_redact(task or ""),
         risk_level=RiskLevel.CAUTION.value,
     )
+
+
+#: How every sentence :func:`spawn_refusal` writes ends: the spawn never started.
+_NEVER_STARTED = "so it never started"
+
+
+def spawn_refusal(decision: ToolDecision) -> str:
+    """Why a spawn that asked its owner never started, in the words its failure is read in: a
+    workflow step's cause, the loop's Inbox note, the background-agents list. "spawn rejected" said
+    it of every ending, and so read as the owner refusing work that nobody had answered."""
+    if decision.outcome == "expired":
+        minutes = round(approval_grants.approval_window_secs() / 60)
+        return (
+            f"spawn not approved in time: nobody answered within {minutes} minutes "
+            f"(Settings → Agent defaults → Approval wait), {_NEVER_STARTED}"
+        )
+    if decision.outcome == "cancelled":
+        return f"spawn not approved: its approval ended before anyone answered, {_NEVER_STARTED}"
+    if decision.decided_by == "approval_failed":
+        return f"spawn not approved: asking for the approval failed, {_NEVER_STARTED}"
+    return f"spawn declined, {_NEVER_STARTED}"
+
+
+def never_started(error: str) -> bool:
+    """Whether *error* is :func:`spawn_refusal`'s: the spawn was not approved, so the subagent
+    never ran a turn and left no transcript."""
+    return str(error or "").endswith(_NEVER_STARTED)

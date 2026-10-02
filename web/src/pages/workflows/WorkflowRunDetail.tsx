@@ -553,9 +553,10 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
 
             {/* A declined run's line is why it ended, not a fault: it names the approval and who
                 said no, in the informational tone its status takes (`runLook('declined')`). A run
-                that stopped at its budget is not a fault either. */}
+                that stopped at its budget is not a fault either, and nor is one whose loop's stop
+                ended it ("Stopped because its loop … was stopped."). */}
             {run.error && (
-              <p data-type="body-s" className={run.status === 'declined' || atBudget ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
+              <p data-type="body-s" className={run.status === 'declined' || run.status === 'cancelled' || atBudget ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
             )}
 
             {/* Incident mode holds a running run: its status stays `running`, so without this the

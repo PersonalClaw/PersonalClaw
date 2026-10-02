@@ -45,7 +45,7 @@ from personalclaw.sel import sel
 from personalclaw.session import SessionManager
 from personalclaw.session_workspace import result_path as _ws_result_path
 from personalclaw.stats import Stats
-from personalclaw.subagent_ask import spawn_ask
+from personalclaw.subagent_ask import spawn_ask, spawn_refusal
 from personalclaw.subagent_persistence import (
     _agent_dir,
     create_agent_folder,
@@ -249,23 +249,6 @@ def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> s
         elapsed = info.elapsed if info.elapsed > 0 else (time.time() - info.started)
         parts.append(f"elapsed: {int(elapsed)}s")
     return " | ".join(parts)
-
-
-def _spawn_refusal(decision: ToolDecision) -> str:
-    """Why a spawn that asked its owner never started, in the words its failure is read in: a
-    workflow step's cause, the loop's Inbox note, the background-agents list. "spawn rejected" said
-    it of every ending, and so read as the owner refusing work that nobody had answered."""
-    if decision.outcome == "expired":
-        minutes = round(approval_grants.approval_window_secs() / 60)
-        return (
-            f"spawn not approved in time: nobody answered within {minutes} minutes "
-            "(Settings → Agent defaults → Approval wait), so it never started"
-        )
-    if decision.outcome == "cancelled":
-        return "spawn not approved: its approval ended before anyone answered, so it never started"
-    if decision.decided_by == "approval_failed":
-        return "spawn not approved: asking for the approval failed, so it never started"
-    return "spawn declined, so it never started"
 
 
 def _waiting_note(tool: str) -> str:
@@ -1776,7 +1759,7 @@ class SubagentManager:
 
         if not decision:
             info.done = True
-            info.error = _spawn_refusal(decision)
+            info.error = spawn_refusal(decision)
             # A person's Deny, and only that: a window nobody answered, or an approval that could
             # not be asked, is not their decision.
             info.declined = (

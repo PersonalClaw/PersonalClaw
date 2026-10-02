@@ -1,4 +1,4 @@
-import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck } from 'lucide-react'
+import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck, TimerOff } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import { isOpenStatus } from '../../lib/attentionLanes'
 import { approvalDestination } from '../../app/approvalDestination'
@@ -41,6 +41,9 @@ export const STATUSES: StatusMeta[] = [
   { key: 'sent', label: 'Replied', tone: 'var(--color-ok)', icon: Send },
   { key: 'handled', label: 'Handled', tone: 'var(--color-ok)', icon: CheckCircle2 },
   { key: 'dismissed', label: 'Dismissed', tone: 'var(--color-on-surface-low)', icon: XCircle },
+  // Expired = it ended before anyone answered it (an approval out of time, or whose work stopped
+  // first), and `refs.ended` says why. Not Handled: nobody decided anything.
+  { key: 'expired', label: 'Expired', tone: 'var(--color-on-surface-low)', icon: TimerOff },
   // Filtered = withheld by the second-opinion pass: persisted but its notification
   // suppressed because a verification check refuted the claim. Warn-toned because it may be
   // a false positive the user will want to Restore — it is held for review, not resolved.
@@ -72,11 +75,12 @@ export function verifyNote(item: Pick<InboxItem, 'status' | 'refs'>): string {
  *  marks a row SEEN — decremented the header without resolving anything. */
 export { OPEN_STATUSES, isOpenStatus as isOpen } from '../../lib/attentionLanes'
 
-/** Statuses of a row the user is done with: handled, replied (`sent`, older rows) or dismissed.
+/** Statuses of a row nothing is left to do about: handled, replied (`sent`, older rows),
+ *  dismissed, or expired before anyone answered it.
  *
  *  Not simply "not open": a filtered row is held for review behind its Restore banner, not done.
  *  The Handled filter, its count and the detail panel's settled state all read this one set. */
-export const SETTLED_STATUSES: readonly InboxItemStatus[] = ['handled', 'sent', 'dismissed']
+export const SETTLED_STATUSES: readonly InboxItemStatus[] = ['handled', 'sent', 'dismissed', 'expired']
 export function isSettled(status?: string): boolean {
   return (SETTLED_STATUSES as readonly string[]).includes(status ?? '')
 }

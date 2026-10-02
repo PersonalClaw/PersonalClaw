@@ -147,7 +147,22 @@ The loop surfaces do not care which home a loop has:
 
 For a loops-table loop, pause, stop and delete also stop the worker's turn IN FLIGHT
 (`manager.halt_worker_turns`) — disarming the nudge loop only stops the NEXT cycle — and the cycle
-driver checks the loop is still armed before each re-prompt. A restart re-arm keeps the running
+driver checks the loop is still armed before each re-prompt.
+
+Stop and delete also end what the loop STARTED (`loop/children.py`). A worker's `subagent_run` of
+two or more tasks runs as a workflow run, and one task as a background subagent; each records the
+worker session it came from (the run's `origin.session_key`, the subagent's `parent_session_key`,
+`dashboard:loop-<id>[-<task>]`), which is the exact link. `end_children` cancels each run with the
+reason "its loop “…” was stopped" (`store.request_cancel(reason=…)`, which the controller ends the run
+with: "Stopped because its loop “…” was stopped.") and stops each subagent with it, so an approval
+either was waiting on expires naming the loop, and the decision path refuses an Allow for it in the
+meantime (`approval_owner`: "the loop that started its run was stopped"). A loop that fails or finishes
+ends them the same way ("its loop “…” failed", "has finished"): a failed loop keeps its task
+workers' worktrees for a Resume, but a batch run is no worker's, and nothing would read what it
+found. The workflow supervisor asks the same question of every live run on each poll, boot included
+(`parent_ended`), so a run whose loop has ended (or was deleted, or was stopped while the gateway was
+down) is cancelled before it is driven again — never resumed, re-provisioned or asked about. A paused
+loop has not ended, and its children go on. A restart re-arm keeps the running
 stretch's `started_at` (the trust window and deadline are measured from it), and the watchdog's
 credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor
 re-credits a cycle.

@@ -101,7 +101,7 @@ _USER_CACHE_TTL = 86400  # 24 hours
 
 
 class ItemStatus(str, Enum):
-    """The attention lifecycle: PENDING → SEEN → HANDLED | DISMISSED.
+    """The attention lifecycle: PENDING → SEEN → HANDLED | DISMISSED | EXPIRED.
 
     SENT predates the others and is specific to reply-drafts (a draft was sent at the
     source); it stays because those items exist on disk and it means something the other
@@ -120,6 +120,10 @@ class ItemStatus(str, Enum):
     DISMISSED = "dismissed"
     HANDLED = "handled"  # user replied at the source (or via inbox reply routing)
     FILTERED = "filtered"  # withheld by verification; restorable to PENDING
+    #: The request ended before anyone answered it, and ``refs.ended`` says why: an approval that
+    #: ran out of time, or whose work stopped first (its loop was stopped, the gateway restarted).
+    #: Not HANDLED: nobody decided anything, and "Handled" claimed a decision nobody made.
+    EXPIRED = "expired"
 
 
 #: **The one definition of "open"** — a row that still wants the user. Every count, filter,
@@ -153,6 +157,10 @@ class ItemStatus(str, Enum):
 #: measured (a stale demand that cannot be cleared, plus a real later demand that never
 #: arrives). One constant makes resolution and re-arming the same event by construction.
 OPEN_STATUSES: frozenset[str] = frozenset({ItemStatus.PENDING.value, ItemStatus.SEEN.value})
+
+#: Why a request the previous gateway process was holding ended (``refs.ended``): an approval's
+#: answer is awaited in memory, so none outlives a restart.
+GATEWAY_RESTARTED = "the gateway restarted before anyone answered"
 
 
 class ItemKind(str, Enum):
@@ -1160,10 +1168,17 @@ def settle_verification_rows(
             (stands if decision_pending(row) else over).append(row)
     for row in over:
         row.refs.pop("verify_withheld", None)
+    # An approval no restart survives ended with nobody answering it: expired, not handled.
+    unanswered = [row for row in over if row.refs.get("approval")]
+    for row in unanswered:
+        row.refs["ended"] = GATEWAY_RESTARTED
     if interrupted:
         store.save()
     restored = restore_filtered(state, store, stands)
-    set_item_status(state, store, over, ItemStatus.HANDLED)
+    set_item_status(state, store, unanswered, ItemStatus.EXPIRED)
+    set_item_status(
+        state, store, [row for row in over if row not in unanswered], ItemStatus.HANDLED
+    )
     if state is not None:
         for row, note in interrupted:
             _announce(state, "inbox_item_updated", row)
@@ -1224,8 +1239,33 @@ def resolve_attention_items(
     Best-effort like every other attention write: whatever the caller was doing (resuming a
     loop, ending a run) matters more than the bookkeeping, and must not fail because of it.
     """
+    return _close_attention_items(state, refs, ItemStatus.HANDLED, store=store)
+
+
+def expire_attention_items(
+    state: Any, refs: dict[str, str], *, ended: str, store: "InboxStore | None" = None
+) -> int:
+    """Close every open row whose ``refs`` match ALL the given pairs as EXPIRED, saying why
+    (``refs.ended``). Returns the count.
+
+    :func:`resolve_attention_items`'s counterpart for a request that ended with NO answer: an
+    approval that ran out of time, or whose work stopped first. Closing one as HANDLED put a
+    "Handled" mark on a decision nobody made — measured on approvals a gateway's shutdown ended
+    — so the row says it expired, and why, instead. Scoped and best-effort the same way.
+    """
+    return _close_attention_items(state, refs, ItemStatus.EXPIRED, store=store, ended=ended)
+
+
+def _close_attention_items(
+    state: Any,
+    refs: dict[str, str],
+    status: ItemStatus,
+    *,
+    store: "InboxStore | None" = None,
+    ended: str = "",
+) -> int:
     if not refs or not all(refs.values()):
-        logger.debug("resolve_attention_items: refusing an unscoped resolve (%r)", refs)
+        logger.debug("refusing an unscoped close of attention rows (%r)", refs)
         return 0
     try:
         target = store or live_store(state)
@@ -1238,9 +1278,12 @@ def resolve_attention_items(
             if item.status in OPEN_STATUSES
             and all(item.refs.get(key) == value for key, value in refs.items())
         ]
-        return len(set_item_status(state, target, matching, ItemStatus.HANDLED))
+        if ended:
+            for item in matching:
+                item.refs["ended"] = ended
+        return len(set_item_status(state, target, matching, status))
     except Exception:
-        logger.debug("could not resolve the attention rows for %r", refs, exc_info=True)
+        logger.debug("could not close the attention rows for %r", refs, exc_info=True)
         return 0
 
 

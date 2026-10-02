@@ -189,6 +189,9 @@ def leaf_tool_posture(capability: Capability) -> dict[str, Any]:
 #: 1.5%. A floor that admits "x" would make the requirement satisfiable without satisfying it.
 MIN_DECLARATION_CHARS = 12
 
+#: How long a step's name (`LeafTask.label`) may run before it is cut, at a word.
+LABEL_MAX_CHARS = 60
+
 
 @dataclass
 class LintFinding:
@@ -232,6 +235,10 @@ class LeafTask:
     #: What this leaf must NOT touch. A NEGATIVE declaration for the worker — the dual of `writes`,
     #: not a restatement of it (module docstring). Rides into the prompt for the same reason.
     boundary: str
+    #: What the owner sees this leaf's step called (`label`). Its own declaration, because the
+    #: task's text is written for the worker and often opens with a path: its first words named a
+    #: step "repo_users_…_0", which says nothing to the person asked to approve it.
+    title: str = ""
     agent: str = ""
     #: Per-leaf model pin (amendment (a)): homogeneous by default, heterogeneous by MODEL. Empty
     #: means "inherit the parent's binding", which is what makes homogeneity the default rather
@@ -259,14 +266,24 @@ class LeafTask:
     #: Each refuses the compile, so a leaf is never run on a declaration it silently dropped.
     unreadable: list[LintFinding] = field(default_factory=list)
 
-    def node_id(self, index: int) -> str:
-        """A stable, readable node id.
+    def label(self, index: int) -> str:
+        """The step's name, as every surface shows it (the node's `label`): the leaf's own title,
+        else the start of its objective — what the task is for, in the author's words — else its
+        place in the batch. Never the task's text, which is written for the worker."""
+        from personalclaw.textfmt import clip_words
 
-        Derived from the task text plus the index: the text makes the progress widget
-        legible, and the
-        index guarantees uniqueness when two tasks start with the same words.
+        for text in (self.title, self.objective):
+            name = clip_words(text, LABEL_MAX_CHARS)
+            if name:
+                return name
+        return f"Task {index + 1}"
+
+    def node_id(self, index: int) -> str:
+        """A stable, readable node id, from the step's name (:meth:`label`) plus the index: the
+        name keeps the id recognisable where it is written (an approval's session, the run's
+        address), and the index keeps it unique when two names start with the same words.
         """
-        words = re.findall(r"[a-z0-9]+", (self.task or "").lower())[:4]
+        words = re.findall(r"[a-z0-9]+", self.label(index).lower())[:4]
         stem = "_".join(words) or "task"
         return f"{stem}_{index}"[:48]
 
@@ -304,6 +321,13 @@ LEAF_DECLARATIONS: dict[str, dict[str, Any]] = {
     "task": {
         "type": "string",
         "description": "What this subagent does, in full: it does not see this conversation.",
+    },
+    "title": {
+        "type": "string",
+        "description": (
+            "A short name for the task, in a few words: what the owner sees its step called. "
+            "Default: the start of its objective."
+        ),
     },
     "objective": {
         "type": "string",
@@ -362,7 +386,7 @@ def leaf_item_schema() -> dict[str, Any]:
 
 
 #: The declarations that are text.
-_TEXT_DECLARATIONS = ("task", "objective", "output_format", "boundary", "agent", "model")
+_TEXT_DECLARATIONS = ("task", "title", "objective", "output_format", "boundary", "agent", "model")
 
 
 def _type_name(value: object) -> str:
@@ -476,6 +500,7 @@ def leaf_from_item(item: object, *, agent: str = "") -> LeafTask:
 
     return LeafTask(
         task=text["task"],
+        title=text["title"],
         objective=text["objective"],
         output_format=text["output_format"],
         boundary=text["boundary"],
@@ -967,7 +992,12 @@ def compile_batch(
         contract = schema_to_contract(leaf.output_schema)
         if contract:
             config["output_contract"] = contract
-        child: dict[str, Any] = {"kind": "stage", "id": node_id, "config": config}
+        child: dict[str, Any] = {
+            "kind": "stage",
+            "id": node_id,
+            "label": leaf.label(index),
+            "config": config,
+        }
         if leaf.capability is Capability.MUTATING:
             if previous_mutator:
                 child["needs"] = [previous_mutator]

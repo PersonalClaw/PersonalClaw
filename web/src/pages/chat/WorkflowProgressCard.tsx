@@ -188,7 +188,10 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
         <p data-type="caption" className="text-danger">Stopped: {escalation.headline}</p>
       )}
 
-      {vm?.error && (atBudget
+      {/* An ending nobody has to fix reads in the run's informational tone, as the run page reads
+          it: a step you denied ("“Audit the notes” was denied by you."), a run its loop's stop
+          ended, a loop that stopped at its budget. Only a fault is an alert. */}
+      {vm?.error && (atBudget || vm.status === 'declined' || vm.status === 'cancelled'
         ? <p data-type="caption" className="text-on-surface-var">{vm.error}</p>
         : <p role="alert" data-type="caption" className="text-danger">{vm.error}</p>)}
 

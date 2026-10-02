@@ -97,6 +97,7 @@ from personalclaw.workflows.models import (
     NodeKind,
     RunStatus,
     WorkflowRun,
+    cancelled_because,
     now_stamp,
     run_ending,
     spec_path,
@@ -526,22 +527,18 @@ class RunController:
         await cancel_and_wait([self._task], what=f"workflow run {self.run.id}")
         self._task = None
 
-    def request_cancel(self) -> None:
-        """Record a STICKY cancel intent. Sticky because a cancel issued while the
-        gateway is down must still be honoured on restart, so it is a file, not memory."""
-        store.request_cancel(self.run.id)
-
     # ── the tick loop ──
 
     async def _tick_loop(self) -> None:
         try:
             if store.cancel_requested(self.run.id):
                 # A cancel that reached a loop which was NOT running — a paused run woken by
-                # `service.cancel_run` to apply it. Honoured BEFORE `_prepare`, which would flip the
-                # row back to RUNNING and journal a start for a run that is about to end.
+                # `service.cancel_run` to apply it, or a run adopted after a restart whose cancel
+                # was asked while the gateway was down (the loop that started it ended). Honoured
+                # BEFORE `_prepare`, which would flip the row back to RUNNING, provision its
+                # workspace again and journal a start for a run that is about to end.
                 async with self._lock:
-                    await self._cancel_inflight()
-                    await self._finish(RunStatus.CANCELLED)
+                    await self._honor_cancel()
                 return
             if not await self._prepare():
                 # The run was refused before any node ran (a fatal `workspace:` declaration or a
@@ -679,8 +676,7 @@ class RunController:
         lock is held and no node is mid-launch.
         """
         if store.cancel_requested(self.run.id):
-            await self._cancel_inflight()
-            await self._finish(RunStatus.CANCELLED)
+            await self._honor_cancel()
             return True
 
         # A sticky PAUSE, read at the same point as a cancel and for the same reason: an intent a
@@ -706,6 +702,13 @@ class RunController:
 
         self._wake_due_nodes()
 
+        # A dispatched stage's subagent may have finished since the last step. Settled BEFORE
+        # the watcher reap for the same reason the reap precedes the frontier: a stage
+        # finishing IS the "accompanied work complete" a watcher is reaped for, so settling it
+        # second would delay every reap by a tick. And before the gate check below, because a
+        # stage settles DECLINED when its owner denied its start, and that stops the run there.
+        stage_settlement.reconcile_dispatched_stages(self)
+
         # A gate that did not pass ENDS the run: a person's Deny ends it `declined`, an approval
         # nobody gave or a check that failed ends it `failed`, a judge that would not rule ends it
         # `escalated`. Read after the deadlines above resolve and BEFORE the frontier, so nothing
@@ -715,12 +718,6 @@ class RunController:
         if stopped is not None:
             await gate_answers.end_at_gate(self, stopped)
             return True
-
-        # A dispatched stage's subagent may have finished since the last step. Settled BEFORE
-        # the watcher reap for the same reason the reap precedes the frontier: a stage
-        # finishing IS the "accompanied work complete" a watcher is reaped for, so settling it
-        # second would delay every reap by a tick.
-        stage_settlement.reconcile_dispatched_stages(self)
 
         # Watchers are reaped BEFORE the frontier, so a reaped watcher is already terminal in
         # this step's derivation and the run completes on the same tick its work finished.
@@ -2087,9 +2084,20 @@ class RunController:
     def _save_run(self) -> None:
         store.save(self.run)
 
-    async def _cancel_inflight(self, ending: RunStatus = RunStatus.CANCELLED) -> None:
+    async def _honor_cancel(self) -> None:
+        """End the run on its sticky cancel, saying why when its cancel carried a reason
+        (`store.cancel_reason`): what stopped it, rather than its owner's Cancel."""
+        reason = store.cancel_reason(self.run.id)
+        await self._cancel_inflight(reason=reason)
+        await self._finish(RunStatus.CANCELLED, error=cancelled_because(reason))
+
+    async def _cancel_inflight(
+        self, ending: RunStatus = RunStatus.CANCELLED, *, reason: str = ""
+    ) -> None:
         """Stop every step still in flight because the run is ending as `ending` — a cancel, or a
-        decline (`gate_answers.end_at_gate`). The ending names what a stopped subagent is told."""
+        decline (`gate_answers.end_at_gate`). The ending names what a stopped subagent is told,
+        and so does *reason*, the clause a cancel carried (`store.cancel_reason`), when there is
+        one."""
         for entry in list(self._inflight.values()):
             entry.task.cancel()
             inst = self._instance(entry.ready.path)
@@ -2113,8 +2121,23 @@ class RunController:
         # `SubagentManager.cancel` cancels the waiting task, whose `finally` ends the pending
         # approval as `cancelled`, and the subagent's error names the run's ending.
         nodes = dict(walk(self.root))
-        why = f"Cancelled: the workflow run {run_ending(ending)}"
-        for path in await stage_settlement.stop_dispatched_stages(self, reason=why):
+        clause = " ".join(reason.split()).rstrip(" .")
+        why = (
+            f"Cancelled because {clause}"
+            if clause
+            else f"Cancelled: the workflow run {run_ending(ending)}"
+        )
+        stopped = await stage_settlement.stop_dispatched_stages(self, reason=why)
+        # A dispatched stage whose subagent this process does not know (the run is ending after a
+        # restart, and the restart stopped its subagent) has nothing left to settle it: the run is
+        # over, so no next step will. It ends with the run rather than reading "running" under a
+        # run that has stopped.
+        unknown = [
+            path
+            for path in stage_settlement.awaiting_out_of_band_work(self)
+            if path not in stopped and self._unknown_subagent(self._instance(path).subagent_id)
+        ]
+        for path in [*stopped, *unknown]:
             inst = self._instance(path)
             inst.state = InstanceState.CANCELLED
             inst.completed_at = now_stamp()
@@ -2125,6 +2148,17 @@ class RunController:
                 path, node.id if node else "", epoch=inst.epoch, usage=NOT_RECORDED
             )
         self._persist_state()
+
+    def _unknown_subagent(self, agent_id: str) -> bool:
+        """Whether this process's subagent manager knows nothing of *agent_id*."""
+        manager = self.services.subagents
+        getter = getattr(manager, "get", None)
+        if not callable(getter):
+            return True
+        try:
+            return getter(agent_id) is None
+        except Exception:
+            return False
 
     async def _withdraw_inflight(self, *, reason: str) -> None:
         """Withdraw the work in flight, so the run does nothing more until it goes on: a pause
@@ -2209,9 +2243,13 @@ class RunController:
             # gate in the inbox — cancel a run mid-gate and the question survives the run.
             # NEEDS_INPUT is deliberately not terminal here: that run is waiting, not finished.
             # The same for every approval still listed under it, whatever the ending.
-            attention.resolve_run_items(self.services.attention_state, self.run.id)
+            attention.expire_run_items(
+                self.services.attention_state,
+                self.run.id,
+                ended=f"the workflow run {run_ending(status)}",
+            )
             attention.cancel_run_approvals(
-                self.services.attention_state, self.run.id, run_ending(status)
+                self.services.attention_state, self.run, run_ending(status)
             )
             # A run says it ended when the ending is one to hear: a loop's the way a loops-table
             # loop does, any other run's when it failed or escalated. After the resolve above, so

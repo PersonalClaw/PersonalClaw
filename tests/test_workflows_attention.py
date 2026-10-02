@@ -331,14 +331,14 @@ class TestResolve:
         permanently unanswerable row."""
         self._seed(node_id="confirm")
         self._seed(node_id="review")
-        assert attention.resolve_run_items(None, "r1") == 2
+        assert attention.expire_run_items(None, "r1", ended="the workflow run was cancelled") == 2
 
     def test_another_runs_rows_are_untouched(self) -> None:
         from personalclaw.inbox import InboxStore
 
         mine = self._seed(run_id="r1")
         theirs = self._seed(run_id="r2")
-        attention.resolve_run_items(None, "r1")
+        attention.expire_run_items(None, "r1", ended="the workflow run was cancelled")
         store = InboxStore()
         store.load()
         assert store.items[theirs].status == "pending"
@@ -356,7 +356,8 @@ class TestResolve:
         assert store.items[item_id].status == "dismissed"
 
     def test_resolving_with_no_rows_is_a_no_op(self) -> None:
-        assert attention.resolve_run_items(None, "never-existed") == 0
+        ended = "the workflow run was cancelled"
+        assert attention.expire_run_items(None, "never-existed", ended=ended) == 0
 
 
 class TestEmitSeamRegressions:

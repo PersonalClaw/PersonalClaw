@@ -186,6 +186,7 @@ export const STATUS_OPEN: Record<InboxItemStatus, boolean> = {
   handled: false,
   dismissed: false,
   filtered: false,
+  expired: false, // ended before anyone answered it; `refs.ended` says why
 }
 
 /** The open statuses as a list, DERIVED from `STATUS_OPEN` rather than spelled out a second time. */

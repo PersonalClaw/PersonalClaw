@@ -51,6 +51,7 @@ from personalclaw.workflows.models import (
     Node,
     RunStatus,
     WorkflowRun,
+    cancelled_because,
 )
 from personalclaw.workflows.tick import frontier
 
@@ -315,6 +316,11 @@ class WorkflowWatchdog:
         # is the durable-spawn promise (`tests/test_durable_spawn.py`). What must wait for its
         # owner carries the sticky pause intent honoured below: a pause the owner asked for, and
         # a run a restore brought back working (`store.hold_restored`).
+        # A run whose loop is over is ended, not driven: first, so neither the boot sweep nor
+        # adoption takes it on again — a stopped loop's batch resumed after a restart, provisioned
+        # its workspace again and asked for the same approvals anew.
+        self._end_runs_whose_loop_ended()
+
         swept: set[str] = set()
         if not self._swept:
             swept = await self._boot_sweep()
@@ -349,6 +355,38 @@ class WorkflowWatchdog:
         # It also covers a finish whose process died between the terminal write and the
         # controller's own drain.
         await overlap.drain_all(self)
+
+    def _end_runs_whose_loop_ended(self) -> int:
+        """Ask the cancel, with its reason, of every live run whose loop is over for good.
+        Returns how many.
+
+        A loop's Stop ends its children itself (`loop.children.end_children`); this is the path
+        for one it missed: a loop that finished or was deleted while its batch ran, and a run of a
+        loop stopped while the gateway was down. The cancel is applied the way any sticky cancel
+        is — by a controller, through `_finish` — so the run closes its waits, approvals and
+        leases, and says which loop ended it.
+        """
+        from personalclaw.loop.children import parent_ended
+
+        asked = 0
+        for run in store.active_runs():
+            if store.cancel_requested(run.id):
+                continue
+            try:
+                reason = parent_ended(run)
+            except Exception:
+                # A loop that could not be read is not a loop that ended: the run goes on.
+                logger.debug("run %s: could not read its loop", run.id, exc_info=True)
+                continue
+            if not reason:
+                continue
+            store.request_cancel(run.id, reason=reason)
+            live = self._controllers.get(run.id)
+            if live is not None:
+                live.wake()
+            logger.info("workflow run %s: stopping it, because %s", run.id, reason)
+            asked += 1
+        return asked
 
     async def _boot_sweep(self) -> set[str]:
         """Decide the fate of every crash-survivor ISOLATED run, ONCE, before adoption.
@@ -390,8 +428,14 @@ class WorkflowWatchdog:
 
     def _is_crash_survivor(self, run: WorkflowRun) -> bool:
         """A run persisted RUNNING that no controller in THIS process drives — i.e. one a
-        gateway was killed in the middle of. A run with a live controller is never swept."""
-        return run.status == RunStatus.RUNNING and self._controllers.get(run.id) is None
+        gateway was killed in the middle of. A run with a live controller is never swept, and
+        nor is one whose cancel was asked: the cancel decides its fate, through a controller
+        (`_honor_cancel`), which closes what the run holds as a status written here would not."""
+        return (
+            run.status == RunStatus.RUNNING
+            and self._controllers.get(run.id) is None
+            and not store.cancel_requested(run.id)
+        )
 
     async def _sweep_one(self, run: WorkflowRun) -> bool:
         """§5.2's substrate rule for ONE crash-survivor run. Returns whether a fate was
@@ -595,6 +639,7 @@ class WorkflowWatchdog:
                 await self.launch(run, spec)
             return
         run.status = RunStatus.CANCELLED
+        run.error_message = cancelled_because(store.cancel_reason(run.id))
         run.completed_at = run.completed_at or _now()
         store.save(run)
         store.clear_cancel(run.id)

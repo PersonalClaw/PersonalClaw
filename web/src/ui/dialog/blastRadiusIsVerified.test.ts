@@ -293,7 +293,7 @@ describe('two more bodies: one corrected, one confirmed', () => {
       /filter === 'handled' \? isSettled\(it\.status\)/,
     )
     expect(web('pages/inbox/inboxMeta.ts'), 'whose set holds the dismissed').toMatch(
-      /SETTLED_STATUSES: readonly InboxItemStatus\[\] = \['handled', 'sent', 'dismissed'\]/,
+      /SETTLED_STATUSES: readonly InboxItemStatus\[\] = \['handled', 'sent', 'dismissed', 'expired'\]/,
     )
     // 🪤 A THIRD half arrived with issue 409: dismissing a proposal row also REJECTS the proposal,
     // which deletes its record — so for those rows "they stay readable under Done" is not the

@@ -312,7 +312,8 @@ def restarted(tmp_path, store):
     return state
 
 
-def test_a_filtered_approval_row_whose_approval_is_gone_is_handled(store, restarted):
+def test_a_filtered_approval_row_whose_approval_is_gone_expires(store, restarted):
+    """Nobody answered it, and no approval outlives a restart: it expires, saying so."""
     row = _row(
         store,
         "agent_request_1",
@@ -322,7 +323,8 @@ def test_a_filtered_approval_row_whose_approval_is_gone_is_handled(store, restar
 
     restarted.settle_verification_rows()
 
-    assert row.status == "handled"
+    assert row.status == "expired"
+    assert row.refs["ended"] == "the gateway restarted before anyone answered"
     assert "verify_withheld" not in row.refs, "Restore could still announce a gone approval"
     restarted.notify.assert_not_called()
 
@@ -383,7 +385,7 @@ def test_a_filtered_proposal_stays_filtered_and_settling_twice_changes_nothing(s
     restarted.settle_verification_rows()
 
     assert proposal.status == "filtered" and "verify_withheld" in proposal.refs
-    assert approval.status == "handled"
+    assert approval.status == "expired"
     assert {i.id: (i.status, dict(i.refs)) for i in store.items.values()} == once
     restarted.notify.assert_not_called()
 

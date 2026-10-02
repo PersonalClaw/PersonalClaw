@@ -159,7 +159,7 @@ class TestResume:
     @pytest.mark.parametrize("ending", [LoopStatus.COMPLETE, LoopStatus.FAILED, LoopStatus.STOPPED])
     def test_an_ended_loop_closes_its_row(self, live: _State, ending: LoopStatus) -> None:
         """A finished loop answers its own question by ending — nothing about it is actionable.
-        Same reasoning as `resolve_run_items` for a cancelled workflow run."""
+        Same reasoning as `expire_run_items` for a cancelled workflow run."""
         loop = _loop(LoopStatus.BLOCKED)
         item = _raise_row(live, loop.id)
         loop_store.update_status(loop.id, ending)
@@ -424,13 +424,14 @@ class TestTheWorkflowPathStillWorks:
         assert attention.resolve_gate_item(live, "r1", "n1") == 1
         assert store.items[n1].status == ItemStatus.HANDLED.value
         assert store.items[n2].status == ItemStatus.PENDING.value
-        assert attention.resolve_run_items(live, "r1") == 1
-        assert store.items[n2].status == ItemStatus.HANDLED.value
+        assert attention.expire_run_items(live, "r1", ended="the workflow run has finished") == 1
+        assert store.items[n2].status == ItemStatus.EXPIRED.value
+        assert store.items[n2].refs["ended"] == "the workflow run has finished"
 
     def test_a_gate_resolve_cannot_be_unscoped_by_an_empty_run_id(self, live: _State) -> None:
         """A small hardening inherited from the generic guard, stated at its measured size.
 
-        Executed against `origin/main`: `resolve_run_items(state, "")` closed exactly ONE row —
+        Executed against `origin/main`: closing a run's rows for run id "" closed exactly ONE row —
         the one whose `refs["workflow"]` was itself `""`. Real workflow and loop rows were
         untouched, because `refs.get("workflow") != ""` is true for both. So this was never the
         empty-the-inbox bug an unscoped resolve looks like; it was a lost row for whichever
@@ -447,7 +448,7 @@ class TestTheWorkflowPathStillWorks:
             refs={"workflow": ""},
             dedup_key="k-blank",
         )
-        assert attention.resolve_run_items(live, "") == 0
+        assert attention.expire_run_items(live, "", ended="the workflow run was cancelled") == 0
         assert live._inbox_svc.inbox.items[row].status == ItemStatus.PENDING.value
         assert live._inbox_svc.inbox.items[blank].status == ItemStatus.PENDING.value
 

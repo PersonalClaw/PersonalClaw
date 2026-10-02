@@ -265,12 +265,17 @@ your own sign-in. An agent's tool is refused too. A refusal leaves the approval 
 `approval_decision` row names who answered: `you`, or `channel:<provider>`.
 
 **Every end goes through `withdraw_approval`.** An answer, an expiry, a torn-down turn: the entry
-leaves the registry, its Inbox row is closed through `resolve_attention_items` on the live store,
-and one `approval_resolved` frame (`id`, `request_id`, `session`, `approved`, `outcome`) tells
-every open surface. `outcome` is how it ended (`approved`, `rejected`, `expired`, `cancelled`),
-so a card can say "cancelled" for a stopped turn instead of reading it as a Deny. No approval
-survives a restart, so `close_orphaned_approval_rows` closes, at boot, any row still asking for
-one.
+leaves the registry, its Inbox row is closed on the live store, and one `approval_resolved` frame
+(`id`, `request_id`, `session`, `approved`, `outcome`) tells every open surface. `outcome` is how it
+ended (`approved`, `rejected`, `expired`, `cancelled`), so a card can say "cancelled" for a stopped
+turn instead of reading it as a Deny. Only an answer makes the row `handled`
+(`resolve_attention_items`). One that ended with nobody answering is `expired`
+(`expire_attention_items`), and why rides on the row and the frame (`ended`): "nobody answered within
+2 hours", "the loop that started its run was stopped", "the gateway stopped before anyone
+answered" — the Inbox's `ApprovalDecision` says it in place of a decision. No approval survives a
+restart (its answer is awaited in memory), so a gateway that stops ends each one it holds that way,
+and `close_orphaned_approval_rows` expires, at boot, any row a killed process left asking for one
+("the gateway restarted before anyone answered").
 
 **Which chat channel asks.** A chat that started on a chat channel is asked in that chat, whatever
 the `approval/requested` rule says (`_asking_channels`, the channel from

@@ -32,6 +32,8 @@ from personalclaw.textfmt import clip_words
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import _ChatSession
 
+logger = logging.getLogger(__name__)
+
 
 def _mark_permission_resolved(messages: list[dict], request_id: str, decision: str) -> None:
     """Persist a resolved decision into a permission message's cls JSON.
@@ -120,12 +122,27 @@ def _who_asked(entry: dict[str, Any]) -> str:
 
     step = parse_owned(str(entry.get("session") or ""))
     if step is not None:
-        # A workflow step's agent asks under its run's key: the step is what the run page, and the
-        # Inbox's "Run this step again", call it.
-        return f"The “{step[1]}” step of a workflow run"
+        # A workflow step's agent asks under its run's key: the step is named as the run page, and
+        # the Inbox's "Run this step again", name it — by its label.
+        return f"The “{_step_name(*step)}” step of a workflow run"
     if entry.get("source") == "subagent":
         return f"A subagent of “{title}”" if title else "A subagent"
     return "A background task"
+
+
+def _step_name(run_id: str, node_id: str) -> str:
+    """A run's step as the run page names it: its label, else its id."""
+    from personalclaw.workflows import store
+    from personalclaw.workflows.models import Node, walk
+
+    try:
+        spec = store.read_spec(run_id) or {}
+        for _path, node in walk(Node.from_dict(spec.get("root") or {})):
+            if node.id == node_id:
+                return node.label or node_id
+    except Exception:  # noqa: BLE001 - a wording helper never fails the approval it describes
+        logger.debug("could not read the steps of run %s", run_id, exc_info=True)
+    return node_id
 
 
 def _background_asker(*, source: str, session: str, trigger: str) -> str:
@@ -528,7 +545,13 @@ class DashboardApprovalState:
             self._log.debug("approval inbox row failed", exc_info=True)
 
     def withdraw_approval(
-        self, approval_id: str, *, outcome: str, request_id: str = "", session: str = ""
+        self,
+        approval_id: str,
+        *,
+        outcome: str,
+        request_id: str = "",
+        session: str = "",
+        ended: str = "",
     ) -> None:
         """Take an ended approval off every surface at once, saying HOW it ended.
 
@@ -536,6 +559,10 @@ class DashboardApprovalState:
         store) and every open card and list — the ``approval_resolved`` frame is the one signal
         they all act on. Every path that ends an approval comes through here, so none of them
         can leave a surface still asking.
+
+        An answered one's Inbox row is HANDLED. One that ended unanswered (``expired``,
+        ``cancelled``) is EXPIRED, and *ended* — required then — says why ("the loop that started
+        its run was stopped"), on the row and its frame: "Handled" claimed a decision nobody made.
 
         The frame names the SESSION as well as the id: an open chat drops a frame for another
         session, and matches its card by the ``request_id`` it has always used. ``outcome`` is
@@ -549,6 +576,8 @@ class DashboardApprovalState:
         """
         if outcome not in APPROVAL_OUTCOMES:
             raise ValueError(f"unknown approval outcome {outcome!r}")
+        if outcome in UNANSWERED_OUTCOMES and not ended:
+            raise ValueError(f"an approval that ended {outcome} says why it ended")
         entry = self._pending_approvals.pop(approval_id, None) or {}
         if entry:
             self._record_ending(approval_id, outcome)
@@ -561,9 +590,12 @@ class DashboardApprovalState:
         if future is not None and not future.done():
             future.set_result(outcome)
         try:
-            from personalclaw.inbox import resolve_attention_items
+            from personalclaw.inbox import expire_attention_items, resolve_attention_items
 
-            resolve_attention_items(self, {"approval": approval_id})
+            if outcome in UNANSWERED_OUTCOMES:
+                expire_attention_items(self, {"approval": approval_id}, ended=ended)
+            else:
+                resolve_attention_items(self, {"approval": approval_id})
         except Exception:
             self._log.debug("could not close the inbox row for %s", approval_id, exc_info=True)
         if entry and outcome not in UNANSWERED_OUTCOMES:
@@ -580,6 +612,7 @@ class DashboardApprovalState:
                     "session": str(entry.get("session") or session),
                     "approved": outcome == "approved",
                     "outcome": outcome,
+                    **({"ended": ended} if outcome in UNANSWERED_OUTCOMES else {}),
                 },
             )
         except Exception:
@@ -647,24 +680,34 @@ class DashboardApprovalState:
         entry = self._pending_approvals.get(approval_id)
         if entry is None:
             return
-        self.withdraw_approval(approval_id, outcome=outcome)
-        if outcome == "cancelled":
-            self._audit_cancelled(approval_id, self._why_cancelled(entry), entry=entry)
-        else:
-            from personalclaw import auto_denials
+        from personalclaw import auto_denials
 
-            auto_denials.note_expired(
-                self,
-                entry,
-                who=_who_asked(entry),
-                window_secs=window_secs or self.approval_window_secs(),
-            )
+        window = window_secs or self.approval_window_secs()
+        why = (
+            self._why_cancelled(entry)
+            if outcome == "cancelled"
+            else f"nobody answered within {auto_denials.window_words(window)}"
+        )
+        self.withdraw_approval(approval_id, outcome=outcome, ended=why)
+        if outcome == "cancelled":
+            self._audit_cancelled(approval_id, why, entry=entry)
+        else:
+            auto_denials.note_expired(self, entry, who=_who_asked(entry), window_secs=window)
 
     def _why_cancelled(self, entry: dict[str, Any]) -> str:
-        """The audit reason for an approval whose waiter was cancelled: the owner's own record
-        of how it ended when there is one, else the plain fact that its work was stopped."""
+        """Why an approval whose waiter was cancelled ended: the gateway stopping, when it is
+        (every waiter is cancelled then, whatever its owner), else the owner's own record of how
+        it ended when there is one, else the plain fact that its work was stopped."""
+        from personalclaw import restart_request, shutdown_event
         from personalclaw.dashboard.approval_owner import UNVERIFIABLE, owner_ended
 
+        if shutdown_event.is_set():
+            verb = (
+                "restarted"
+                if restart_request.stopping_for() == restart_request.RESTARTING
+                else "stopped"
+            )
+            return f"the gateway {verb} before anyone answered"
         reason = owner_ended(entry, subagents=self.subagents)
         if reason and reason != UNVERIFIABLE:
             return reason
@@ -706,7 +749,7 @@ class DashboardApprovalState:
             if held is not None and not held.done():
                 held.set_result("cancelled")
             _mark_permission_resolved(session.messages, request_id, "cancelled")
-        self.withdraw_approval(approval_id, outcome="cancelled")
+        self.withdraw_approval(approval_id, outcome="cancelled", ended=reason)
         self._audit_cancelled(approval_id, reason, entry=entry)
         return True
 
@@ -787,11 +830,16 @@ class DashboardApprovalState:
 
         No approval survives a restart — the futures are in memory and the turns that awaited
         them are gone — so after one, a row still asking for an approval is asking for nothing:
-        opening it finds a card whose buttons can no longer deliver an answer. Run when the
-        gateway attaches its Inbox, and safe at any other time: an approval still in the
-        registry keeps its row.
+        opening it finds a card whose buttons can no longer deliver an answer. Nobody answered
+        it, so it expires saying the restart ended it. Run when the gateway attaches its Inbox,
+        and safe at any other time: an approval still in the registry keeps its row.
         """
-        from personalclaw.inbox import OPEN_STATUSES, live_store, resolve_attention_items
+        from personalclaw.inbox import (
+            GATEWAY_RESTARTED,
+            OPEN_STATUSES,
+            expire_attention_items,
+            live_store,
+        )
 
         store = live_store(self)
         if store is None:
@@ -803,7 +851,10 @@ class DashboardApprovalState:
             and item.refs.get("approval")
             and str(item.refs.get("approval")) not in self._pending_approvals
         }
-        return sum(resolve_attention_items(self, {"approval": aid}) for aid in sorted(orphaned))
+        return sum(
+            expire_attention_items(self, {"approval": aid}, ended=GATEWAY_RESTARTED)
+            for aid in sorted(orphaned)
+        )
 
     def settle_verification_rows(self) -> int:
         """Settle what the second opinion left on the previous run's Inbox. Returns the count.

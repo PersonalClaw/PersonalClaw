@@ -4189,7 +4189,7 @@ export interface KnowledgeStats { items: number; entities: number; relations: nu
 export type InboxClassification = 'needs_reply' | 'fyi' | 'noise'
 export type InboxConfidence = 'high' | 'needs_review' | 'escalate' | 'user'
 // 'seen' is the read/unread boundary: surfaced to the user but not yet resolved.
-export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled' | 'filtered'
+export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled' | 'filtered' | 'expired'
 // What kind of attention an item wants. 'message' is the default so every item written
 // before the inbox became a general attention store stays valid.
 // 'user_note' is the one kind a PERSON writes; every other member is synthesized by

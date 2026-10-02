@@ -75,8 +75,8 @@ def _findings_report(result: batch_compile.CompileResult) -> str:
     for finding in result.findings:
         lines.append(f"  [{finding.severity}] {finding.code}: {finding.message}")
     lines.append(
-        "\nPass each item of 'tasks' as an object with 'task', 'objective', 'output_format' "
-        "and 'boundary' (each declaration at least "
+        "\nPass each item of 'tasks' as an object with 'task', a short 'title' naming it for the "
+        "owner, 'objective', 'output_format' and 'boundary' (each declaration at least "
         f"{batch_compile.MIN_DECLARATION_CHARS} characters), plus 'capability' and 'writes' "
         "(a list of paths) when the leaf mutates, and 'off_limits' (a list of paths) for what "
         "it must not write."
@@ -150,7 +150,7 @@ def _run_compiled_batch(
         node_id = leaf.node_id(index)
         posture = result.postures.get(node_id, {})
         mode = "read-only" if posture.get("read_only") else "mutating"
-        lines.append(f"  {node_id} [{mode}]: {leaf.task[:70]}")
+        lines.append(f"  {node_id} [{mode}]: {leaf.label(index)}")
     if result.serialized:
         lines.append(f"\nWrite-bearing leaves run one at a time: {', '.join(result.serialized)}")
     warnings = [f for f in result.findings if f.severity == "warn"]

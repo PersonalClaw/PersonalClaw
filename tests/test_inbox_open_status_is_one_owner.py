@@ -36,6 +36,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
+from personalclaw import inbox as inbox_mod
 from personalclaw.dashboard import handlers_inbox as H
 from personalclaw.inbox import (
     OPEN_STATUSES,
@@ -43,6 +44,7 @@ from personalclaw.inbox import (
     InboxState,
     InboxStore,
     ItemStatus,
+    expire_attention_items,
     resolve_attention_items,
 )
 
@@ -63,6 +65,9 @@ RESOLVED_STATUSES = frozenset(
         # decision: re-counting a row the verifier held back would undo that hold. It has
         # its own filter and its own Restore, which is how a false positive comes back.
         "filtered",
+        # Ended before anyone answered it (an approval out of time, or whose work stopped first):
+        # nothing is left to decide, and nobody decided anything either, so it is not "handled".
+        "expired",
     }
 )
 
@@ -226,9 +231,13 @@ def test_every_consumer_reads_the_owner():
     assert (
         "resolve_attention_items" in attention_src
     ), "the workflow gate lane must delegate to the one resolve implementation, not re-implement it"
-    resolve_body = inspect.getsource(resolve_attention_items)
+    # Both ways a row closes on its request's behalf — answered (HANDLED) and ended unanswered
+    # (EXPIRED) — are the one implementation, and that one reads the one open set.
+    for closer in (resolve_attention_items, expire_attention_items):
+        assert "_close_attention_items(" in inspect.getsource(closer), closer.__name__
+    close_body = inspect.getsource(inbox_mod._close_attention_items)
     assert (
-        "OPEN_STATUSES" in resolve_body
+        "OPEN_STATUSES" in close_body
     ), "the one resolve implementation must read the one open set"
 
 

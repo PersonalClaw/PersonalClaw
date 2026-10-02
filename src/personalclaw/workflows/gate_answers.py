@@ -297,9 +297,17 @@ def decliner(by: Principal, channel: str) -> str:
 
 
 def decline(
-    ctl: RunController, path: str, inst: Any, *, who: str, record: dict[str, Any] | None = None
+    ctl: RunController,
+    path: str,
+    inst: Any,
+    *,
+    who: str,
+    record: dict[str, Any] | None = None,
+    verb: str = "declined",
 ) -> None:
-    """Record a person's NO on the step at `path` — a gate's Deny, or Deny on a parked step.
+    """Record a person's NO on the step at `path` — a gate's Deny, Deny on a parked step, or Deny
+    on the approval a stage's subagent asked before it started (`verb` "denied", the button she
+    pressed: `stage_settlement`).
 
     DECLINED, not FAILED: nothing went wrong, and `on_error` is a failure policy that must not
     walk past it. The caption under the step names who declined, and the next `_step` ends the
@@ -309,7 +317,7 @@ def decline(
     """
     inst.state = InstanceState.DECLINED
     inst.failure = None
-    inst.degraded_reason = f"declined by {who}"
+    inst.degraded_reason = f"{verb} by {who}"
     inst.completed_at = now_stamp()
     if record is not None:
         payload = {**record, "approved": False, "declined_by": who}

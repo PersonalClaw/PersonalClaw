@@ -411,22 +411,31 @@ async def stand_down(state, svc, loop_id: str) -> None:
     worktree and branch, edits its owner approved included. Resume (:func:`start`) switches the
     workers back on where they were. Only a Stop or a delete removes the worktrees
     (:func:`_teardown`), and the Stop dialog says so. No worker holds a task now, so one held in
-    progress goes back to open."""
-    from personalclaw.loop import tasks_link
+    progress goes back to open. What a worker started outside its worktree — a batch run, a
+    background subagent — is no worker's work to keep: nothing would read what it found, so it ends
+    with the failure (`children.end_children`)."""
+    from personalclaw.loop import children, tasks_link
 
     await _deactivate_workers(svc, loop_id)
+    await children.end_children(state, loop_id, why=children.ENDINGS["failed"])
     await halt_worker_turns(state, loop_id)
     await tasks_link.release_in_progress(loop_id)
 
 
 async def stop(state, svc, loop_id: str) -> Loop:
-    """Stop (terminal): tear down, drop the STOP sentinel, and stop the turn in flight. Then no
-    worker has a task any more, so each task one held in progress goes back to open."""
-    from personalclaw.loop import tasks_link
+    """Stop (terminal): tear down, drop the STOP sentinel, end everything the loop started
+    (`children.end_children`: its batch runs, its subagents and what they were waiting on), and
+    stop the turn in flight. Then no worker has a task any more, so each task one held in
+    progress goes back to open."""
+    from personalclaw.loop import children, tasks_link
 
     await _teardown(svc, loop_id)
     loop_files.write_stop_sentinel(loop_id)
     stopped = store.update_status(loop_id, LoopStatus.STOPPED, stop_reason=LoopStopReason.USER)
+    # After the status, so an answer arriving for one of its children's approvals meanwhile
+    # already finds the loop stopped (`approval_owner`); before the turns, so what a turn started
+    # ends as the loop's.
+    await children.end_children(state, loop_id, why="was stopped")
     await halt_worker_turns(state, loop_id)
     # A loop stopped while it is still planning has a planner and no workers yet.
     await halt_planner(state, svc, loop_id)
@@ -743,8 +752,11 @@ async def teardown_for_delete(state, svc, loop_id: str) -> None:
     flight AND delete the backing Tasks Project (else each create-and-delete orphans a Project
     + its lists + tasks). Must run BEFORE store.delete (reads links off the row), and before the
     worker session is reaped — a turn still running there would re-save the transcript the reap
-    just deleted."""
+    just deleted. What the loop started ends with it (`children.end_children`)."""
+    from personalclaw.loop import children
+
     await _teardown(svc, loop_id)
+    await children.end_children(state, loop_id, why=children.DELETED)
     await halt_worker_turns(state, loop_id)
     await halt_planner(state, svc, loop_id)
     try:

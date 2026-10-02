@@ -776,12 +776,14 @@ TOOL_META: dict[str, dict[str, Any]] = {
                     "tasks": [
                         {
                             "task": "List where src/app/retry.py reads its retry ceiling",
+                            "title": "Find the retry ceiling",
                             "objective": "find every place the retry ceiling is decided in it",
                             "output_format": "a numbered list of file:line, one sentence each",
                             "boundary": "read only: change no file, commit nothing",
                         },
                         {
                             "task": "Run the retry tests in a scratch copy at /tmp/retry-check",
+                            "title": "Run the retry tests",
                             "objective": "show whether the retry tests pass before the change",
                             "output_format": "each command run, with its last line of output",
                             "boundary": "work only in the scratch copy, and remove it afterward",

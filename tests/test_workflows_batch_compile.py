@@ -70,8 +70,8 @@ CONTRACT = {
 
 
 def leaf(task: str, **kw) -> LeafTask:
-    """One contract-complete leaf. `kw` overrides any contract field under test."""
-    return LeafTask(task=task, **{**CONTRACT, **kw})
+    """One contract-complete leaf, titled by its task. `kw` overrides any field under test."""
+    return LeafTask(task=task, **{"title": task, **CONTRACT, **kw})
 
 
 def leaves(n: int, **kw) -> list[LeafTask]:
@@ -791,8 +791,8 @@ def test_a_FAILED_redactor_withholds_the_view_rather_than_showing_it_raw(monkeyp
 
 
 def test_node_ids_are_readable_AND_unique():
-    """The text makes the progress widget legible; the index guarantees uniqueness when two tasks
-    start with the same words."""
+    """The step's name (its title) keeps the id recognisable; the index guarantees uniqueness when
+    two names start with the same words."""
     result = compile_batch([leaf("check the retry config"), leaf("check the retry config")])
     ids = [c["id"] for c in result.spec["root"]["children"]]
     assert ids == ["check_the_retry_config_0", "check_the_retry_config_1"]

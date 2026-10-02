@@ -1761,7 +1761,8 @@ Spawn subagent(s) to run tasks in the background. One task ('task') returns at o
       "boundary": "read only: change no file, commit nothing",
       "objective": "find every place the retry ceiling is decided in it",
       "output_format": "a numbered list of file:line, one sentence each",
-      "task": "List where src/app/retry.py reads its retry ceiling"
+      "task": "List where src/app/retry.py reads its retry ceiling",
+      "title": "Find the retry ceiling"
     },
     {
       "boundary": "work only in the scratch copy, and remove it afterward",
@@ -1772,6 +1773,7 @@ Spawn subagent(s) to run tasks in the background. One task ('task') returns at o
       ],
       "output_format": "each command run, with its last line of output",
       "task": "Run the retry tests in a scratch copy at /tmp/retry-check",
+      "title": "Run the retry tests",
       "writes": [
         "/tmp/retry-check"
       ]

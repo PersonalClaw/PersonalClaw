@@ -14,7 +14,8 @@ This module is the second line: the one question the decision path asks before a
 an answer. There is one grammar per owner kind, read off the registry entry:
 
 * a ``spawn:<id>`` / ``subagent:<id>:<request>`` id — a subagent (its start, or one of its calls);
-* a ``workflow:<run>:<node>`` session — a workflow run's stage;
+* a ``workflow:<run>:<node>`` session — a workflow run's stage, and the loop that started the
+  run, if one did (``loop.children``);
 * a ``loop-<id>`` (or ``loop-<id>-<task>``) session — a loop's worker chat.
 
 A chat's own turn needs no entry here: its future is pending exactly while its runner waits, and
@@ -85,6 +86,13 @@ def _run_ended(session_key: str) -> str:
     run = store.get(run_id)
     if run is None:
         return "the workflow run that asked for it was deleted"
+    # The loop that started the run, the broadest owner: once it is over, nothing the run does
+    # reaches anyone, and its ending is the one the owner acted on (`loop.children`).
+    from personalclaw.loop.children import ended_by
+
+    loop_over = ended_by(run)
+    if loop_over:
+        return loop_over
     if run.status in TERMINAL_RUN_STATUSES:
         return f"the workflow run that asked for it {run_ending(run.status)}"
     if store.cancel_requested(run_id):
@@ -94,18 +102,10 @@ def _run_ended(session_key: str) -> str:
     return ""
 
 
-_LOOP_ENDINGS = {
-    "stopped": "was stopped",
-    "failed": "failed",
-    "complete": "has finished",
-}
-
-
 def _loop_ended(session_key: str) -> str:
     if not session_key.startswith("loop-"):
         return ""
-    from personalclaw.loop import store as loop_store
-    from personalclaw.loop.loop import ENDED_STATUSES
+    from personalclaw.loop.children import why_over
     from personalclaw.loop.manager import worker_loop_id
 
     # A loop's stage worker or one of its task workers; a planner is not a loop's worker, so it
@@ -113,10 +113,5 @@ def _loop_ended(session_key: str) -> str:
     loop_id = worker_loop_id(session_key)
     if not loop_id:
         return ""
-    loop = loop_store.get(loop_id)
-    if loop is None:
-        return "the loop that asked for it was deleted"
-    status = str(getattr(loop.status, "value", loop.status))
-    if status in {s.value for s in ENDED_STATUSES}:
-        return f"the loop that asked for it {_LOOP_ENDINGS.get(status, f'is {status}')}"
-    return ""
+    why = why_over(loop_id)
+    return f"the loop that asked for it {why}" if why else ""

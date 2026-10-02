@@ -383,6 +383,7 @@ async def test_an_unanswered_approval_leaves_every_surface_when_its_turn_ends(wo
             "session": CHAT,
             "approved": False,
             "outcome": "cancelled",
+            "ended": "the work that asked for it was stopped",
         }
     ], resolved
 
@@ -419,7 +420,8 @@ async def test_a_turn_torn_down_mid_publication_leaves_nothing_listed(world, mon
 
 
 def test_a_restart_closes_the_rows_whose_approval_did_not_survive_it(world):
-    """No approval future survives a restart, so a row asking for one is asking for nothing."""
+    """No approval future survives a restart, so a row asking for one is asking for nothing:
+    nobody answered it, so it expires saying the restart ended it — never "handled"."""
     stale = emit_attention_item(
         world.state,
         source="system",
@@ -441,7 +443,8 @@ def test_a_restart_closes_the_rows_whose_approval_did_not_survive_it(world):
     )
 
     assert world.state.close_orphaned_approval_rows() == 1
-    assert world.store.items[stale].status == "handled"
+    assert world.store.items[stale].status == "expired"
+    assert world.store.items[stale].refs["ended"] == "the gateway restarted before anyone answered"
     assert world.store.items[live].status == "pending", "a still-pending approval lost its row"
 
 

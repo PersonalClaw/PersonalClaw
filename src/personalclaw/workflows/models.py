@@ -656,6 +656,14 @@ def run_ending(status: RunStatus) -> str:
     return _RUN_ENDING_PHRASES.get(status, f"is {status.value}")
 
 
+def cancelled_because(reason: str) -> str:
+    """The ending of a run that something other than its owner stopped, from the clause its
+    cancel carried (`store.request_cancel`): "Stopped because its loop “Release notes” was
+    stopped." "" for a Cancel its owner pressed, which needs no sentence."""
+    clause = " ".join(str(reason or "").split()).rstrip(" .")
+    return f"Stopped because {clause}." if clause else ""
+
+
 class OriginKind(str, Enum):
     CHAT = "chat"
     SCHEDULE = "schedule"

@@ -64,6 +64,7 @@ from personalclaw.workflows.models import (
     RunStatus,
     WorkflowDef,
     WorkflowRun,
+    cancelled_because,
     instance_order,
     sibling_group,
     spec_path,
@@ -1444,8 +1445,12 @@ def preview_edit(run_id: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
     return {**result.to_dict(), "run_id": run_id, "queued": False}
 
 
-def cancel_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
+def cancel_run(run_id: str, *, supervisor: Any = None, reason: str = "") -> dict[str, Any]:
     """Record a STICKY cancel intent — and, for a PRELAUNCH run, finalize it here.
+
+    *reason* is why something other than the run's owner stops it, as a clause (the loop that
+    started it ended, `loop.children`); the intent carries it to whichever controller applies it
+    (`store.request_cancel`), and the run's ending says it.
 
     The intent is written to disk rather than applied in memory, so a cancel issued while
     the gateway is down is still honoured on restart. For a run that has LAUNCHED, the
@@ -1475,16 +1480,16 @@ def cancel_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
         return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
     if run.status in TERMINAL_RUN_STATUSES:
         return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
-    store.request_cancel(run_id)
+    store.request_cancel(run_id, reason=reason)
     controller = _live(run_id, supervisor)
     if controller is not None:
-        controller.request_cancel()
         # A PAUSED run's controller has no tick loop running to read the intent, so it is woken
         # to apply it; a running loop reads it on its next step and this is a no-op.
         controller.wake()
         return _ok(run_id=run_id, cancel_requested=True)
     if RUN_PHASES[run.status] is LifecyclePhase.PRELAUNCH:
         run.status = RunStatus.CANCELLED
+        run.error_message = cancelled_because(reason)
         run.completed_at = run.completed_at or _now()
         store.save(run)
         store.clear_cancel(run_id)
@@ -1556,7 +1561,9 @@ async def delete_run(
     # The inbox rows go too: a gate that was open when the run was cancelled would otherwise
     # outlive the run entirely and be unanswerable forever. The state comes off the supervisor,
     # which is what the route has — a delete is a request path, not the engine's own.
-    attention.resolve_run_items(getattr(supervisor, "_state", None), run_id)
+    attention.expire_run_items(
+        getattr(supervisor, "_state", None), run_id, ended="the workflow run was deleted"
+    )
     deleted = store.delete(run_id)
     return _ok(run_id=run_id, deleted=deleted, teardown=torn.to_dict())
 

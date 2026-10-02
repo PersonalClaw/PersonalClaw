@@ -715,16 +715,30 @@ def read_jsonl(run_id: str, filename: str) -> list[dict[str, Any]]:
 # ── cancel intent (sticky) ───────────────────────────────────────────────────
 
 
-def request_cancel(run_id: str) -> None:
+def request_cancel(run_id: str, *, reason: str = "") -> None:
     """Persist a CANCEL *intent*. Sticky on purpose: a cancel issued while the gateway
-    is down must still be honoured on restart, so it is a file rather than memory."""
+    is down must still be honoured on restart, so it is a file rather than memory.
+
+    *reason* is why the run is being stopped, as a clause ("its loop “Release notes” was
+    stopped"), when something other than its owner's Cancel stops it. It rides the intent, so
+    the controller that applies the cancel, in this process or after a restart, says why
+    (:func:`cancel_reason`). A Cancel the owner pressed carries none."""
     path = run_dir(run_id) / "CANCEL"
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, _now())
+    atomic_write(path, json.dumps({"requested_at": _now(), "reason": reason}))
 
 
 def cancel_requested(run_id: str) -> bool:
     return (run_dir(run_id) / "CANCEL").is_file()
+
+
+def cancel_reason(run_id: str) -> str:
+    """Why the sticky cancel was asked for (:func:`request_cancel`), or "" for none."""
+    try:
+        record = json.loads((run_dir(run_id) / "CANCEL").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(record.get("reason") or "") if isinstance(record, dict) else ""
 
 
 def clear_cancel(run_id: str) -> None:

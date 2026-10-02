@@ -630,7 +630,7 @@ class TestCancellation:
         c = RunController(run, spec, services=EngineServices(completion=slow))
         await c.start()
         await asyncio.sleep(0.2)
-        c.request_cancel()
+        store.request_cancel(run.id)
         assert await c.run_to_completion(timeout=20) == RunStatus.CANCELLED
 
     async def test_the_intent_survives_with_no_controller_running(self) -> None:

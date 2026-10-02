@@ -68,6 +68,7 @@ class _FakeSubagents:
 def _leaf(task: str) -> LeafTask:
     return LeafTask(
         task=task,
+        title=task,
         objective="decide whether the change is safe for every output path",
         output_format="a numbered list of findings with file and line",
         boundary="read only; do not commit or push anything",

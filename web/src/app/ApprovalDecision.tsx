@@ -25,11 +25,14 @@ import { reportingWrite } from './reportingWrite'
  *  line is cut to fit a list, and a subagent's start carries its whole task, so the one place she
  *  decides shows the tool and its risk, what it can touch, all of what it would run a click away,
  *  and where it came from. */
-export function ApprovalDecision({ approvalId, onDecided }: {
+export function ApprovalDecision({ approvalId, onDecided, ended = '' }: {
   /** The registry id: an Inbox row's `refs.approval`, which its notification carries as `approval`. */
   approvalId: string
   /** After an answer the registry took. */
   onDecided?: () => void
+  /** Why it ended with nobody answering, when the surface knows (an expired Inbox row's
+   *  `refs.ended`: "the loop that started its run was stopped"). */
+  ended?: string
 }) {
   // undefined: not read yet · null: nothing is waiting under this id.
   const [pending, setPending] = useState<PendingApproval | null | undefined>(undefined)
@@ -86,8 +89,9 @@ export function ApprovalDecision({ approvalId, onDecided }: {
   if (pending === null) {
     return (
       <p data-type="body-s" className="text-on-surface-low">
-        Nothing is waiting on this any more: it was answered, it ran out of time, or the work that
-        asked for it stopped.
+        {ended
+          ? `Expired: ${ended}, so it did not run.`
+          : 'Nothing is waiting on this any more: it was answered, it ran out of time, or the work that asked for it stopped.'}
       </p>
     )
   }

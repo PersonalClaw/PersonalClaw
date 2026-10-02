@@ -556,6 +556,10 @@ class LoopWatchdog:
         store.update_status(loop_id, LoopStatus.COMPLETE, stop_reason=stop_reason, **fields)
         loop_files.write_status(loop_id, LoopStatus.COMPLETE, reason=reason)
         await manager.teardown_worker(self._svc, loop_id)
+        # What its workers started outside their turns ends with it: nothing reads it now.
+        from personalclaw.loop import children
+
+        await children.end_children(self._state, loop_id, why=children.ENDINGS["complete"])
         await self._reconcile_linked_tasks(loop_id)
         # P4 independent REPRODUCE: before graduating a GENUINE completion's deliverable to
         # a permanent artifact, re-confirm it with a fresh, independent ground-truth pass.

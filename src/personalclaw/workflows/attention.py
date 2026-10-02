@@ -201,8 +201,8 @@ def resolve_gate_item(state: Any, run_id: str, node_id: str = "") -> int:
     distrust the surface.
 
     Scoped by node when one is named: a run with two concurrent gates has two rows, and
-    answering one must not close the other. With no node it closes every open row for the run,
-    which is what a run ENDING means (see :func:`resolve_run_items`).
+    answering one must not close the other. A run ENDING closes what it left open without an
+    answer (:func:`expire_run_items`).
 
     The WORKFLOW ref vocabulary; the resolve itself is `inbox.resolve_attention_items`, beside
     the emitter. It was a private copy of that loop here, which is why the loop watchdog — the
@@ -219,15 +219,20 @@ def resolve_gate_item(state: Any, run_id: str, node_id: str = "") -> int:
     return resolve_attention_items(state, refs)
 
 
-def resolve_run_items(state: Any, run_id: str) -> int:
-    """Close every open attention row for a run. Returns how many were closed.
+def expire_run_items(state: Any, run_id: str, *, ended: str) -> int:
+    """Close every open attention row for a run that has ended. Returns how many were closed.
 
-    A run that failed, was cancelled or completed answers its own outstanding questions by
-    ending: nothing about it is actionable any more. Without this, cancelling a run mid-gate
-    would leave a permanently unanswerable row in the inbox — the exact dead-row problem this
-    module exists to avoid, arrived by a different path.
+    A run that failed, was cancelled or completed ends its own outstanding questions: nothing
+    about it is actionable any more. Without this, cancelling a run mid-gate would leave a
+    permanently unanswerable row in the inbox — the exact dead-row problem this module exists to
+    avoid, arrived by a different path. Nobody answered them, so they EXPIRE, saying why
+    (*ended*: "the workflow run was cancelled"): an answered gate closed its own row as handled
+    when it was answered (:func:`resolve_gate_item`), and a row the run's end closed read
+    "Handled" for a question nobody had answered.
     """
-    return resolve_gate_item(state, run_id)
+    from personalclaw.inbox import expire_attention_items
+
+    return expire_attention_items(state, {"workflow": run_id}, ended=ended)
 
 
 def announce_run_end(state: Any, run: Any, status: Any) -> str:
@@ -360,25 +365,28 @@ def _announce_loop_end(state: Any, run: Any, status: Any) -> str:
     return ""
 
 
-def cancel_run_approvals(state: Any, run_id: str, ending: str) -> int:
+def cancel_run_approvals(state: Any, run: Any, ending: str) -> int:
     """End every approval still listed for an ended run's stages. Returns how many ended.
 
-    The same promise as :func:`resolve_run_items`, for the other thing a run leaves asking: an
+    The same promise as :func:`expire_run_items`, for the other thing a run leaves asking: an
     approval under the run's key space (``workflow:<run>:<node>``) belongs to work that is over,
     and approving it would start that work anyway. *ending* is the run's own phrase ("was
-    cancelled"), worded as the decision path's owner check words it, so the audit row reads
-    the same whichever of the two ends an approval first.
+    cancelled"), worded as the decision path's owner check words it, so the audit row and the
+    expired ask read the same whichever of the two ends an approval first — and, as that check
+    does, the loop that started the run is named first when it is over (`loop.children`).
     """
     cancel = getattr(state, "cancel_approvals", None)
     if cancel is None:
         return 0
+    from personalclaw.loop.children import ended_by
+
     try:
         return int(
             cancel(
-                session_prefix=f"{ownership.OWNED_PREFIX}{run_id}:",
-                reason=f"the workflow run that asked for it {ending}",
+                session_prefix=f"{ownership.OWNED_PREFIX}{run.id}:",
+                reason=ended_by(run) or f"the workflow run that asked for it {ending}",
             )
         )
     except Exception:
-        logger.warning("run %s: ending its approvals failed", run_id, exc_info=True)
+        logger.warning("run %s: ending its approvals failed", run.id, exc_info=True)
         return 0

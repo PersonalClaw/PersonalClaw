@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.workflows import effect_boundary, loop_iteration
+from personalclaw.workflows import effect_boundary, gate_answers, loop_iteration
 from personalclaw.workflows.engine import (
     NodeResult,
     apply_judge_contract,
@@ -131,19 +131,50 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         usage = subagent_usage(info)
         inst.tokens = usage.billable()
         ctl.run.total_tokens += inst.tokens
+        if getattr(info, "declined", False) is True:
+            # She pressed Deny on the approval its start asked for: her decision, not a failure.
+            # The step is DECLINED, saying so, with no failure class and no remedy — there is
+            # nothing to fix — and the next step ends the run there (`gate_answers.end_at_gate`),
+            # which raises no failure in her Inbox. Only a person's Deny is one: an approval
+            # nobody answered, or one that could not be asked, is the never-started failure below.
+            gate_answers.decline(ctl, path, inst, who="you", verb="denied")
+            release_execution_claim(inst.claim_target, inst.claim_holder)
+            inst.claim_target = ""
+            inst.claim_holder = ""
+            inst.approved_request = ""
+            inst.approved_at = 0.0
+            ctl._publish(
+                "workflow_node_done",
+                {
+                    "node_id": node_id,
+                    "instance_path": path,
+                    "status": inst.state.value,
+                    "node_epoch": inst.epoch,
+                    "degraded_reason": inst.degraded_reason,
+                },
+            )
+            settled = True
+            continue
         if error:
+            from personalclaw.subagent_ask import never_started
             from personalclaw.subagent_tier import couldnt_do_it
 
             failure = Failure(
                 # The manager reaps on its OWN deadline, so a reaped child is a timeout. A child
                 # whose every tool call was refused did nothing it was asked, for want of tools
                 # (`subagent_tier.couldnt_do_it`): retrying it under the same tools reaches the
-                # same refusals. Anything else it reports is an execution fault: filing that as
-                # TIMEOUT would tell the user to raise a limit that was never the problem.
+                # same refusals. A spawn whose approval nobody gave never started at all
+                # (`subagent_ask.never_started`). Anything else it reports is an execution fault:
+                # filing that as TIMEOUT would tell the user to raise a limit that was never the
+                # problem.
                 failure_class=(
                     FailureClass.TIMEOUT
                     if reaped
-                    else FailureClass.PERMISSION if couldnt_do_it(error) else FailureClass.INTERNAL
+                    else (
+                        FailureClass.PERMISSION
+                        if couldnt_do_it(error) or never_started(error)
+                        else FailureClass.INTERNAL
+                    )
                 ),
                 # The manager's own sentence, verbatim — it carries the elapsed time and
                 # the deadline that was crossed, which a re-worded message would drop.
@@ -156,7 +187,12 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
                         "give this step the tools its task needs (a read-only step runs only "
                         "what reads), or narrow its task to what its tools can do"
                         if couldnt_do_it(error)
-                        else "check the subagent's transcript for the failing turn"
+                        else (
+                            # It never ran a turn, so there is no transcript to point at.
+                            "run this step again, and answer its approval when it asks"
+                            if never_started(error)
+                            else "check the subagent's transcript for the failing turn"
+                        )
                     )
                 ),
                 recoverable=True,
