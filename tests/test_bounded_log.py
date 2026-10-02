@@ -66,6 +66,18 @@ def test_rows_at_one_time_keep_their_order_and_a_row_with_none_goes_first() -> N
     assert [r["n"] for r in bounded_log.newest(rows, 3, at="ts")] == ["a", "b", "c"]
 
 
+def test_newest_first_lists_by_time_whatever_their_order() -> None:
+    rows = [{"n": 3, "ts": _ago(1).isoformat()}, {"n": 1, "ts": _ago(3).isoformat()}]
+    rows += [{"n": 4, "ts": _ago(0).isoformat()}, {"n": 2, "ts": _ago(2).isoformat()}]
+    assert [r["n"] for r in bounded_log.newest_first(rows, at="ts")] == [4, 3, 2, 1]
+
+
+def test_newest_first_lists_the_last_written_of_one_time_first_and_a_row_with_none_last() -> None:
+    same = _ago(1).isoformat()
+    rows = [{"n": "a", "ts": same}, {"n": "x"}, {"n": "b", "ts": same}, {"n": "c", "ts": same}]
+    assert [r["n"] for r in bounded_log.newest_first(rows, at="ts")] == ["c", "b", "a", "x"]
+
+
 def test_a_rows_time_can_be_read_off_an_object() -> None:
     class Take:
         def __init__(self, n: int, at: str) -> None:

@@ -436,19 +436,8 @@ describe('the Recent section — the notification feed', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Mark "Nightly sweep finished" read' })).toBeTruthy())
   })
 
-  it('🔴 shows the NEWEST notes, not the oldest', async () => {
-    // `GET /api/notifications` answers in the log's own order, oldest first. The section took
-    // the first six of that, so the phone listed a morning's six oldest notes and hid the
-    // digest that had just landed under "Showing 6 of 9".
-    fakeFeed(Array.from({ length: 9 }, (_, i) => note({
-      title: `Note ${i + 1}`, ts: `2026-08-26T0${i}:00:00Z`,
-    })))
-    render(<RecentSection />)
-    await screen.findByText('Note 9')
-    const shown = screen.getAllByText(/^Note \d$/).map((el) => el.textContent)
-    expect(shown).toEqual(['Note 9', 'Note 8', 'Note 7', 'Note 6', 'Note 5', 'Note 4'])
-    expect(screen.getByText(/Showing 6 of 9/)).toBeTruthy()
-  })
+  // Its order is the log's as the server sends it, newest first, and the bell and the
+  // Notifications page show it the same way: `notifications/everyListShowsTheNewestFirst.test.tsx`.
 
   it('announces a failed fetch instead of claiming nothing happened', async () => {
     notifications.mockRejectedValue(new Error('notifications unreachable'))

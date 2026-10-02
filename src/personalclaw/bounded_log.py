@@ -13,8 +13,11 @@ So every bounded log in core keeps ONE rule, and keeps it here:
   :func:`prune_table`). It is right whatever order the rows are in, so no writer — a merge, a
   sync, a clock that stepped back — can make it delete newer rows to keep older ones.
 * **A merge writes the log in time order** (:func:`merge_jsonl`). A reader that takes the end of
-  the file for the newest rows — the bell, the security audit, a run history page, "the last
-  verdict wins" — then reads them right.
+  the file for the newest rows — the security audit, a run history page, "the last verdict
+  wins" — then reads them right.
+* **A list of the log is newest first by the same time** (:func:`newest_first`), so a reader that
+  shows the head of one, as the notification bell and the phone's Recent list do, shows what
+  happened last whatever order the file holds.
 
 A row's time is its *at*: the name of its field, or a function that reads it. The value is an
 instant written with its offset, a zone-less date-time (read as this machine's local time, as
@@ -79,6 +82,12 @@ def time_of(row: Any, at: At) -> float:
 def in_time_order(rows: Iterable[T], *, at: At) -> list[T]:
     """*rows*, oldest first by their own time; rows at the same time keep their order."""
     return sorted(rows, key=lambda row: time_of(row, at))
+
+
+def newest_first(rows: Iterable[T], *, at: At) -> list[T]:
+    """*rows*, newest first by their own time: :func:`in_time_order` turned around, so of rows at
+    one time the one written last comes first, and a row whose time cannot be read comes last."""
+    return in_time_order(rows, at=at)[::-1]
 
 
 def newest(rows: Iterable[T], keep: int, *, at: At) -> list[T]:

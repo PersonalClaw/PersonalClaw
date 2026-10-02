@@ -5,7 +5,7 @@ import { spring, physics, stagger, listItemEnter } from '../design/motion'
 import { api, type NotificationItem } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
-import { noteMeta, relTime, firstLine, toneChipBg, newestFirst } from '../pages/notifications/notificationMeta'
+import { noteMeta, relTime, firstLine, toneChipBg } from '../pages/notifications/notificationMeta'
 import { RowHitTarget } from './RowHitTarget'
 import { UnreadRail } from '../pages/notifications/UnreadRail'
 import { rowSubject } from '../lib/rowSubject'
@@ -50,8 +50,8 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
   }, [open])
 
   const unread = items?.filter((n) => !n.acked).length ?? 0
-  // newest first, capped to the shade size
-  const recent = items ? newestFirst(items).slice(0, MAX_SHADE) : []
+  // The log comes newest first (`api.notifications`), so the shade is its head.
+  const recent = items ? items.slice(0, MAX_SHADE) : []
 
   async function ack(n: NotificationItem) {
     await api.ackNotification(n.ts).catch((e) => notify(`Couldn't mark this notification read: ${String((e as Error)?.message || e)}`, 'error'))

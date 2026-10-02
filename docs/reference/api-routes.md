@@ -752,7 +752,7 @@ The 899 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/models/waits` | the requests waiting for a busy local model, oldest first. |
 | `POST` | `/api/models/waits/{id}/move-on` | stop a wait now, so its next model answers. |
 | `DELETE` | `/api/notifications` | delete a single notification by timestamp. |
-| `GET` | `/api/notifications` | the delivery log, plus how many of ITS rows are unacked. |
+| `GET` | `/api/notifications` | the delivery log, newest first, and how many of ITS rows are unread. |
 | `POST` | `/api/notifications/ack` | mark a single notification as read. |
 | `POST` | `/api/notifications/ack-all` | mark all notifications as read. |
 | `POST` | `/api/notifications/clear` | clear all notifications. |

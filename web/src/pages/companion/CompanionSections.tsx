@@ -17,7 +17,7 @@ import { TextArea } from '../../ui/forms'
 import { useCompanionAction } from './useCompanionAction'
 import { signalPriority } from '../tasks/taskMeta'
 import { isChannelItem } from '../inbox/inboxMeta'
-import { newestFirst, noteMeta } from '../notifications/notificationMeta'
+import { noteMeta } from '../notifications/notificationMeta'
 
 /** `#/companion`'s non-approval sections (MOBILE-COMPANION `MC-6`, the former S2
  *  T2.1/T2.2 breadth deferred by the 2026-07-26 amendment).
@@ -343,10 +343,10 @@ export function InboxSection() {
 // (`POST /api/notifications/ack`) — the phone does not delete or clear, because a
 // destructive action on a list this small is all downside.
 export function RecentSection() {
-  // Newest first: the log answers oldest first, and `Section` shows the first `LIMIT` rows, so
-  // taking it as returned showed the six oldest notes and hid what had just happened.
+  // The log comes newest first (`api.notifications`), and `Section` shows its first `LIMIT` rows:
+  // what happened last.
   const query = useQuery<NotificationItem[]>('notifications-companion', () =>
-    api.notifications().then((d) => newestFirst(d.notifications)))
+    api.notifications().then((d) => d.notifications))
   const { act, view, busy } = useCompanionAction<{ acked: boolean }>(query.data)
 
   return (

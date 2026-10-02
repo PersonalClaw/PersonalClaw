@@ -8716,7 +8716,8 @@ export const api = {
     get<{ resolved: Record<string, unknown>; css: string; overrides: Record<string, unknown>; scheme: string }>(`/api/loops/${encodeURIComponent(id)}/design/tokens?scheme=${scheme}`),
 
   // notifications — items keyed by `ts` (the backend ack/unack/delete take ts,
-  // NOT job_id; the old job_id ack was a no-op for most items).
+  // NOT job_id; the old job_id ack was a no-op for most items), NEWEST FIRST: the server states
+  // the order, and every list shows the log as it comes, never turned around.
   notifications: () => get<{ notifications: NotificationItem[]; unread: number }>('/api/notifications'),
   ackNotification: (ts: string) => post('/api/notifications/ack', { ts }),
 

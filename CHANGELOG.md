@@ -161,6 +161,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Session Map is a map of your messages: one marker for each message you sent, all one length, with colour showing which are on screen.**
 
 - **Settings → Updates lists each change as one plain line, shows what an available update brings, and links the upgrade notes.**
+- **`GET /api/notifications` lists the notification log newest first, the order the bell, the Notifications page and the phone show it in.**
 
 ### Removed
 

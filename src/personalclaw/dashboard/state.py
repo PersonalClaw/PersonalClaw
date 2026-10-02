@@ -2580,7 +2580,7 @@ def _notifications_path() -> Path:
 
 def _load_notifications() -> list[dict[str, Any]]:
     """Load persisted notifications from disk, oldest first by each note's own ``ts`` whatever
-    order the file holds them in: the bell reads the log's end as its newest notes.
+    order the file holds them in. ``GET /api/notifications`` lists the log newest first.
 
     EVERY valid row loads — no cap slice. The in-memory log is the write
     authority for `_rewrite_notifications`, so a load that silently truncated

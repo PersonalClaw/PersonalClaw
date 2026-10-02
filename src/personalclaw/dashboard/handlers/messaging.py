@@ -10,7 +10,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import notification_kinds
+from personalclaw import bounded_log, notification_kinds
 from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
 from personalclaw.dashboard.chat_utils import _remove_queued_by_id
 from personalclaw.dashboard.state import (
@@ -288,7 +288,15 @@ async def api_spawn_cancel_fanout(request: web.Request) -> web.Response:
 
 
 async def api_notifications(request: web.Request) -> web.Response:
-    """GET /api/notifications — the delivery log, plus how many of ITS rows are unacked.
+    """GET /api/notifications — the delivery log, newest first, and how many of ITS rows are unread.
+
+    Newest first by each note's own ``ts`` (``bounded_log.newest_first``), never by its place in
+    the log, which is kept in time order, oldest first, as notes are appended and as a merge writes
+    it. The order is stated here, once: every list of the log shows it as served — the bell's shade,
+    the Notifications page and the phone's Recent list take its head for the newest — and none
+    turns it around. It answered oldest first, and the phone's Recent list, which shows the first
+    six, listed the six oldest notes and none of the morning's. The whole log answers: it is
+    bounded (at most twice ``_MAX_PERSISTED_NOTIFICATIONS`` rows), so there is no cursor or limit.
 
     🔴 `unread` USED TO BE `state.unread_count()` (issue #422), which counts PENDING INBOX items
     — a deliberate pivot documented on that method, and the wrong answer under this key. The two
@@ -311,7 +319,10 @@ async def api_notifications(request: web.Request) -> web.Response:
     if app:
         log = [n for n in log if state.notification_reaches(app, n)]
     return web.json_response(
-        {"notifications": log, "unread": sum(1 for n in log if not n.get("acked"))}
+        {
+            "notifications": bounded_log.newest_first(log, at="ts"),
+            "unread": sum(1 for n in log if not n.get("acked")),
+        }
     )
 
 
