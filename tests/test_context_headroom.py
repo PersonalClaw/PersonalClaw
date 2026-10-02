@@ -22,6 +22,7 @@ each test here holds:
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 
@@ -575,8 +576,11 @@ def test_the_chat_seam_branches_on_all_three_states():
     assert "HeadroomState.FITS_AFTER_COMPRESSION" in src
     # The refusal reaches the user as an error card, and the notice as an activity line.
     assert '"kind": "headroom"' in src
-    # The window is resolved ONCE, before assembly, and the check reads that same one…
-    assert src.index("await resolve_window(") < src.index("_assembled = assemble_context(")
+    # The window is resolved ONCE, before assembly (on a worker thread), and the check reads that
+    # same one…
+    assembly = re.search(r"_assembled = await asyncio\.to_thread\(\s*assemble_context,", src)
+    assert assembly is not None, "the turn no longer assembles its context through assemble_context"
+    assert src.index("await resolve_window(") < assembly.start()
     # …and it is decided before the message is handed on.
     assert src.index("check_headroom(_assembled") < src.index(
         "full_message = _apply_incognito_prefix"
