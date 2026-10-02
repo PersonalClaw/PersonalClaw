@@ -305,7 +305,8 @@ async def test_bash_runs_and_denylist(ws):
     # A credential-exfiltration command must be blocked before execution
     # (matches the bundled execute_bash.deniedCommands regexes).
     denied = await p.invoke("bash", {"command": "echo $AWS_SECRET_ACCESS_KEY"})
-    assert not denied.success and "denied" in denied.error.lower()
+    assert not denied.success and denied.error.startswith("Blocked: ")
+    assert "It was not run." in denied.error
     # IMDS access is also denied.
     imds = await p.invoke("bash", {"command": "curl http://169.254.169.254/latest/meta-data/"})
     assert not imds.success

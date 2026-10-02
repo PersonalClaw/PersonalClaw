@@ -29,6 +29,10 @@ _SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
 # value here must be a registered contract surface (asserted below).
 _CALL_SITE_SURFACES = {
     "inbox_service.py": "inbox_enrichment",
+    # Inbox sorting (auto-classify). The same floor as the rest of the Inbox's model work: with
+    # no background model bound or callable, nothing is sent and the messages wait for the next
+    # tick with the reason held for the panel, while ingestion, alerts and mute keep working.
+    "inbox_sorting.py": "inbox_enrichment",
     "after_turn_review.py": "memory_extraction",
     "knowledge/llm_pool.py": "knowledge_ingest",
     # The morning digest. Its own surface, not `knowledge_ingest` and not `research_report`:
