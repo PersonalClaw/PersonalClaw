@@ -123,17 +123,16 @@ def _decode_target(target: str) -> tuple[str, str]:
 def _evidence(run_id: str, transcript: list[dict] | None) -> str:
     """A review-only excerpt of what drove the promotion, or "".
 
-    The user turns only. The promotion's evidence is what the USER asked for and confirmed worked;
-    an assistant turn pasted here would let the model's own prose become the justification for a
-    standing procedure — the injection surface the queue's fencing exists to bound. A run needs no
-    transcript: its id is the pointer, and the ledger behind it is the evidence.
+    What the user typed only (``own_words``). The promotion's evidence is what the USER asked for
+    and confirmed worked; an assistant turn pasted here would let the model's own prose become the
+    justification for a standing procedure — the injection surface the queue's fencing exists to
+    bound — and a block they pasted or a saved prompt's text is not what they asked either. A run
+    needs no transcript: its id is the pointer, and the ledger behind it is the evidence.
     """
+    from personalclaw.own_words import own_words
+
     parts = [f"run: {run_id}"] if run_id else []
-    for message in transcript or []:
-        if isinstance(message, dict) and message.get("role") == "user":
-            text = str(message.get("content") or "").strip()
-            if text:
-                parts.append(text)
+    parts += [text for text in map(own_words, transcript or []) if text]
     return "\n".join(parts)[:_EXCERPT_MAX]
 
 

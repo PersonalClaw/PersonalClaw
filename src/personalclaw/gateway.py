@@ -3685,7 +3685,11 @@ class GatewayOrchestrator:
                         source="gateway",
                         resources=f"requested={session_name},resolved={session.key}",
                     )
-                    ran = session.enqueue_or_run_prompt(prompt, run_chat, self.dashboard_state)
+                    # A heartbeat's result, delivered into the chat for its agent to act on: no
+                    # one typed it, so it teaches nothing as a person's words.
+                    ran = session.enqueue_or_run_prompt(
+                        prompt, run_chat, self.dashboard_state, own_words=""
+                    )
                     if ran:
                         # Only push UI updates when the prompt actually started —
                         # queued prompts produce no visible change until dequeued.

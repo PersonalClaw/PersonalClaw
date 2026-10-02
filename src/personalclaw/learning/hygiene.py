@@ -28,11 +28,14 @@ cites against itself.
 **Ungrounded turns are skipped** for per-turn capture: a lesson needs both a
 decision and evidence for it, with real substance on each side.
 
-**A stated boundary, accepted deliberately.** Text the *user pasted in their own
-message* is user-trusted under single-user doctrine and CAN direct-write a lesson
-via the correction heuristic. A user pasting a hostile document and then agreeing
-with it is a self-inflicted wound the fence cannot distinguish from legitimate
-"here is the spec, follow it". Documented rather than silently mitigated.
+**What a person did not type is not theirs.** The per-turn captures read the words the
+person typed this turn (:func:`personalclaw.own_words.own_words`), never the message the
+model was sent, which also holds a saved prompt's text in place of its ``@name``, an
+attached file's text, a theme's persona and natural voice's instructions, or nothing of
+theirs at all when an automation started the turn; consolidation reads their saved rows the
+same way (``history.consolidation_line``). Text the user pasted stays trusted for the model,
+since they pasted it on purpose, but it is material for the answer and not a correction or a
+preference of theirs: no heuristic learns it as one, and consolidation is shown it as material.
 """
 
 from __future__ import annotations
@@ -129,7 +132,7 @@ class HygieneVerdict:
 _OPEN_TAG_RE = _SECURITY_OPEN_TAG_RE
 
 
-def _strip_untrusted(text: str) -> tuple[str, bool]:
+def strip_untrusted(text: str) -> tuple[str, bool]:
     """Remove every fenced span, including an unclosed trailing one.
 
     An unterminated open marker is treated as fencing the entire remainder. The
@@ -224,7 +227,7 @@ def scrub(text: str, *, require_grounding: bool = False) -> HygieneVerdict:
         return HygieneVerdict("", False, ["empty"])
 
     removed: list[str] = []
-    cleaned, had_untrusted = _strip_untrusted(text)
+    cleaned, had_untrusted = strip_untrusted(text)
     if had_untrusted:
         removed.append("untrusted_content")
 

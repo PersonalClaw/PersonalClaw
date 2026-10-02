@@ -86,6 +86,24 @@ def register_lifecycle_hooks(app: web.Application) -> None:
 
     app.on_startup.append(_settle_outside_home_startup)
 
+    async def _settle_learning_from_text_not_typed_startup(app_: web.Application) -> None:
+        """Take back what learning read out of text nobody typed, before it read only a person's
+        own words: retract the correction lessons quoted from that text, and offer what only may
+        have come from it for review (``learning.composed_text``). Changes nothing once there is
+        nothing left to take back."""
+        from personalclaw.learning import composed_text
+
+        builder = getattr(app_["state"], "context_builder", None)
+        main = getattr(getattr(builder, "memory", None), "vector_store", None)
+        try:
+            report = await asyncio.to_thread(composed_text.settle, main)
+            if report["retracted"] or report["offered"]:
+                logger.info("Took back what was learned from text nobody typed: %s", report)
+        except Exception:
+            logger.exception("Could not take back what was learned from text nobody typed")
+
+    app.on_startup.append(_settle_learning_from_text_not_typed_startup)
+
     async def _record_running_version_startup(app_: web.Application) -> None:
         """RUM-9: remember which version ran last, so a rollback has a target.
 

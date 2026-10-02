@@ -811,7 +811,7 @@ _KIND_LABELS = {
     Kind.LESSON_BATCH.value: "Lessons to review",
     Kind.TEMPLATE.value: "New template proposed",
     Kind.TEMPLATE_DIFF.value: "Template change proposed",
-    Kind.RETIREMENT.value: "Retire something unused",
+    Kind.RETIREMENT.value: "Something to retire",
     Kind.TIER_MIGRATION.value: "Move to a different tier",
     Kind.PROJECT_INSTRUCTION.value: "Project instruction proposed",
     Kind.PROJECT_FILE.value: "Project context update proposed",

@@ -1,9 +1,10 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Sparkles, ChevronRight, ChevronDown } from 'lucide-react'
+import { Sparkles, ChevronRight, ChevronDown, FileText } from 'lucide-react'
 import { messageEnter, spring } from '../../design/motion'
 import { MessageBody, type TurnPaste } from '../../pages/chat/PasteChip'
+import type { RanPrompt } from '../../pages/chat/chatTypes'
 
 /** Entrance for the JUST-SENT bubble: it travels UP from near the composer into
  *  its transcript slot (rise + slight grow), so the message visibly leaves the
@@ -39,9 +40,12 @@ export function isLongUserMessage(text: string): boolean {
  *  max-width 452px). The ONLY bubbled side in NE chat. Content renders as
  *  markdown (same renderer as assistant turns), with first/last-child margins
  *  collapsed so a one-line message sits snug. `fromComposer` makes the newest
- *  sent bubble travel up from the composer. */
-export function MessageUser({ children, fromComposer = false, onFileClick, pastes, optimized, onExpand }: {
+ *  sent bubble travel up from the composer. `ranPrompt` is the saved prompt the message ran:
+ *  the bubble keeps what she typed, and the prompt's text sits folded under it, labelled as the
+ *  prompt's. */
+export function MessageUser({ children, fromComposer = false, onFileClick, pastes, optimized, ranPrompt, onExpand }: {
   children: string; fromComposer?: boolean; onFileClick?: (path: string) => void; pastes?: TurnPaste[]; optimized?: string
+  ranPrompt?: RanPrompt
   /** Called when the reader unfolds a long message — a decision to read it, which the host
    *  uses to stop following a turn that is still arriving below it. */
   onExpand?: () => void
@@ -81,30 +85,44 @@ export function MessageUser({ children, fromComposer = false, onFileClick, paste
               : `Show full message · ${lines > 1 ? `${lines.toLocaleString()} lines` : `${children.length.toLocaleString()} characters`}`}
           </button>
         )}
-        {optimized && <OptimizedDisclosure optimized={optimized} onFileClick={onFileClick} />}
+        {ranPrompt && (
+          <SentTextDisclosure text={ranPrompt.text} onFileClick={onFileClick}
+            icon={<FileText size={12} className="shrink-0" />}
+            closedLabel={`Ran the prompt @${ranPrompt.name}`}
+            openLabel={`Text of the prompt @${ranPrompt.name}, as the agent received it`} />
+        )}
+        {optimized && (
+          <SentTextDisclosure text={optimized} onFileClick={onFileClick}
+            icon={<Sparkles size={12} className="shrink-0" />}
+            closedLabel="Sent an optimized version"
+            openLabel="Optimized prompt sent to the model" />
+        )}
       </div>
     </motion.div>
   )
 }
 
-/** Collapsed "optimized" section shown under a user bubble whose prompt was
- *  optimized before sending: the bubble shows the ORIGINAL text; this reveals the
- *  optimized version the model actually received. Closed by default. */
-function OptimizedDisclosure({ optimized, onFileClick }: { optimized: string; onFileClick?: (path: string) => void }) {
+/** A section folded under a user bubble holding text the model received that she did not type:
+ *  the optimized version of her prompt, or the text of a saved prompt she ran. The bubble keeps
+ *  what she typed as primary, and this says what the extra text is. Closed by default. */
+function SentTextDisclosure({ text, icon, closedLabel, openLabel, onFileClick }: {
+  text: string; icon: ReactNode; closedLabel: string; openLabel: string; onFileClick?: (path: string) => void
+}) {
   const [open, setOpen] = useState(false)
+  const bodyId = useId()
   return (
     <div className="mt-2.5 border-t border-outline-variant/40 pt-2">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-controls={bodyId}
         data-type="caption"
-        className="flex items-center gap-1 text-on-surface-low hover:text-on-surface-var transition-colors"
+        className="flex items-center gap-xs text-on-surface-low hover:text-on-surface-var transition-colors"
         style={fvs(500)}>
         <ChevronRight size={13} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
-        <Sparkles size={12} className="shrink-0" />
-        {open ? 'Optimized prompt sent to the model' : 'Sent an optimized version'}
+        {icon}
+        {open ? openLabel : closedLabel}
       </button>
       {open && (
-        <div data-type="body-m" className="mt-2 rounded-lg bg-surface/60 px-3 py-2 [&_>*:first-child]:mt-0 [&_>*:last-child]:mb-0">
-          <MessageBody text={optimized} onFileClick={onFileClick} />
+        <div id={bodyId} data-type="body-m" className="mt-s rounded-lg bg-surface/60 px-m py-s [&_>*:first-child]:mt-0 [&_>*:last-child]:mb-0">
+          <MessageBody text={text} onFileClick={onFileClick} />
         </div>
       )}
     </div>

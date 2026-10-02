@@ -7,6 +7,7 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
+import { withoutFence } from '../../lib/untrustedFence'
 import { api, isSwitchedOff, type AblationView, type AttentionScope, type BenchmarkView, type SwitchedOffView, type FieldMetricsRow, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type NotRunView, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { AblationPanel } from './AblationPanel'
 import { AttentionPanel } from './AttentionPanel'
@@ -443,9 +444,11 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
           <div className="mt-1 text-on-surface-low text-[0.8125rem]">
             {replayLabel(row)}
           </div>
+          {/* What the proposal rests on, as the text it is and line by line: the fence that tells a
+              model the excerpt is data is not for a person to read. */}
           {row.source_excerpt && (
-            <p className="mt-2 rounded-md bg-surface-high px-m py-2 text-on-surface-var text-[0.75rem] break-words">
-              {row.source_excerpt}
+            <p className="mt-s whitespace-pre-line rounded-md bg-surface-high px-m py-s text-on-surface-var text-[0.75rem] break-words">
+              {withoutFence(row.source_excerpt)}
             </p>
           )}
           {blocked && (

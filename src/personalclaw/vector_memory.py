@@ -3907,17 +3907,59 @@ class VectorMemoryStore(MemoryProvider):
         for e in self.get_lessons():
             val = json.loads(e["value_json"])
             if rule_substring.lower() in str(val).lower():
-                self.delete_semantic(e["key"], "user_explicit")
-                # An explicit forget is the truest "a correction reversed it" signal
-                # there is, so it VOIDS the accumulated observations rather than being
-                # invisible to them (`learning.lesson_confidence`'s precedence rule,
-                # step 1). It matters because the lesson key is deterministic: writing
-                # the same rule again un-tombstones this very row, and without the
-                # reversal it would return at the confidence it had when the user threw
-                # it away.
-                self._reverse_lesson(str(e["key"]))
-                deleted = True
+                deleted = self.retract_lesson(str(e["key"]), "user_explicit") or deleted
         return deleted
+
+    def retract_lesson(self, key: str, source: str) -> bool:
+        """Tombstone the lesson ``key`` and void its evidence. Returns False when it isn't there.
+
+        A retraction is the truest "a correction reversed it" signal there is, so it VOIDS the
+        accumulated observations rather than being invisible to them
+        (`learning.lesson_confidence`'s precedence rule, step 1). It matters because the lesson key
+        is deterministic: writing the same rule again un-tombstones this very row, and without the
+        reversal it would return at the confidence it had when it was retracted.
+        """
+        if not self.delete_semantic(key, source):
+            return False
+        self._reverse_lesson(key)
+        return True
+
+    def deletion_undone(self, key: str, source: str) -> bool:
+        """Whether a deletion of ``key`` that ``source`` made was undone (Memory → History).
+
+        Someone took it back, so ``source`` must not delete it again on its own."""
+        row = self.db.execute(
+            "SELECT 1 FROM memory_events WHERE event_type = 'delete' AND memory_key = ? "
+            "AND source = ? AND undone_at IS NOT NULL LIMIT 1",
+            (key, source),
+        ).fetchone()
+        return row is not None
+
+    def restore_displaced_by(self, key: str, *, keep: Callable[[str], bool]) -> list[str]:
+        """Undo each supersession of a lesson BY ``key`` whose displaced text ``keep`` accepts.
+
+        The inverse of :meth:`write_lesson`'s newer-replaces-older, for a lesson about to be
+        retracted that should never have displaced anything: each displaced lesson comes back as
+        it was (:meth:`undo_event`), and the first gets back the evidence it carried into ``key``.
+        Returns the restored keys.
+        """
+        rows = self.db.execute(
+            "SELECT id, memory_key, old_value FROM memory_events WHERE event_type = 'supersede' "
+            "AND new_value = ? AND undone_at IS NULL ORDER BY id",
+            (key,),
+        ).fetchall()
+        restored: list[str] = []
+        for row in rows:
+            try:
+                text = str(json.loads(row["old_value"] or '""'))
+            except (TypeError, ValueError):
+                continue
+            if not keep(text) or not self.undo_event(int(row["id"]))[0]:
+                continue
+            if not restored:
+                self._carry_lesson_evidence(key, str(row["memory_key"]))
+            restored.append(str(row["memory_key"]))
+        return restored
 
     def get_lessons_context(
         self, workspace: str | None = None, *, citations_out: list[dict] | None = None

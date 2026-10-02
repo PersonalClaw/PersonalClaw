@@ -85,7 +85,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
@@ -1490,6 +1490,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           })
           break
         }
+        // The saved prompt her message ran, announced as it expands: its text folds under her
+        // bubble, labelled as the prompt's, while the bubble keeps what she typed.
+        if (kind === 'prompt') {
+          const ran = ranPromptOf(d.prompt)
+          if (ran) setTurns((prev) => {
+            const i = prev.map((t) => t.role).lastIndexOf('user')
+            return i < 0 ? prev : prev.map((t, j) => (j === i ? { ...t, ranPrompt: ran } : t))
+          })
+          break
+        }
         if (kind === 'status' || kind === 'session' || !text) break
         setLatestActivity(text)
         // Which learning path emitted a `learned` event. Absent on every other
@@ -1663,6 +1673,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             const i = prev.map((t) => t.role).lastIndexOf('user')
             if (i < 0 || !prev[i].files?.length) return prev
             return prev.map((t, j) => (j === i ? { ...t, imageDelivery: delivered } : t))
+          })
+          // The prompt that message ran, for a page that missed its live announcement.
+          const ran = ranPromptOf(lastUser?.meta?.ran_prompt)
+          if (ran) setTurns((prev) => {
+            const i = prev.map((t) => t.role).lastIndexOf('user')
+            if (i < 0 || prev[i].ranPrompt) return prev
+            return prev.map((t, j) => (j === i ? { ...t, ranPrompt: ran } : t))
           })
         }).catch(() => {})
         break
@@ -3822,7 +3839,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               failure={editFailure} onSubmit={(v) => editResend(i, v)} />
                           ) : (
                             <div className="group/msg">
-                              <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized}
+                              <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized} ranPrompt={turn.ranPrompt}
                                 onExpand={() => { followTurnRef.current = false }}>{turnTextOf(turn)}</MessageUser>
                               {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} delivery={turn.imageDelivery} onOpenFile={setOpenFile} />}
                               {turn.rewound && turn.rewound.length > 0 && (

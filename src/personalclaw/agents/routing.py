@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass
 
 from personalclaw.agents.defaults import is_reserved_agent
+from personalclaw.own_words import typed_text
 
 logger = logging.getLogger(__name__)
 
@@ -90,28 +91,6 @@ def _keyword_score(query: str, route_hints: str) -> float:
             score = len(unique & qwords) / len(unique)
         best = max(best, score)
     return best
-
-
-def pasted_blocks(meta: object) -> list[str]:
-    """The blocks a send pasted, as the composer sent them (``meta.pastes[].content``)."""
-    pastes = meta.get("pastes") if isinstance(meta, dict) else None
-    if not isinstance(pastes, list):
-        return []
-    return [
-        p["content"] for p in pastes if isinstance(p, dict) and isinstance(p.get("content"), str)
-    ]
-
-
-def typed_text(message: str, pasted: list[str] | tuple[str, ...] = ()) -> str:
-    """*message* without the blocks that were pasted into it — the words the person typed.
-
-    The composer expands each ``[Paste #N]`` marker to its block before sending, so each block is
-    taken out once, longest first: a block that contains another is removed whole."""
-    for block in sorted((b for b in pasted if b), key=len, reverse=True):
-        at = message.find(block)
-        if at != -1:
-            message = f"{message[:at]} {message[at + len(block):]}"
-    return message
 
 
 def eligible_candidates(cfg) -> list[tuple[str, str, str]]:
@@ -362,8 +341,8 @@ def suggest_for_send(
     """The api_chat hook: gate → classify → SEL log → return a suggestion (the caller
     broadcasts it). Best-effort; never raises into the send path.
 
-    *pasted* is the send's pasted blocks (:func:`pasted_blocks`); the classifier reads the
-    message without them (:func:`typed_text`).
+    *pasted* is the send's pasted blocks (``own_words.pasted_blocks``); the classifier reads the
+    message without them (``own_words.typed_text``).
 
     Gates (any fail → None, no event): routing disabled; session not default-agent;
     ``memory_mode != "persistent"``; per-session frequency cap not elapsed; the matched

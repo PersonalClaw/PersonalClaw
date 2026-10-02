@@ -93,18 +93,14 @@ def _decode_target(target: str) -> tuple[str, str]:
 def _excerpt(transcript: list[dict] | None) -> str:
     """A review-only excerpt of the conversation, or "".
 
-    The user turns only: the review is about what the USER established for the project, and an
-    assistant turn pasted here would let the model's own words become the evidence for a standing
-    instruction — the injection surface the queue's fencing exists to bound.
+    What the user typed only (``own_words``): the review is about what the USER established for the
+    project, and an assistant turn pasted here would let the model's own words become the evidence
+    for a standing instruction — the injection surface the queue's fencing exists to bound — and a
+    block they pasted or a saved prompt's text is not something they established either.
     """
-    if not transcript:
-        return ""
-    parts = [
-        str(m.get("content") or "").strip()
-        for m in transcript
-        if isinstance(m, dict) and m.get("role") == "user"
-    ]
-    return "\n".join(p for p in parts if p)[:_EXCERPT_MAX]
+    from personalclaw.own_words import own_words
+
+    return "\n".join(text for text in map(own_words, transcript or []) if text)[:_EXCERPT_MAX]
 
 
 def project_context_review(

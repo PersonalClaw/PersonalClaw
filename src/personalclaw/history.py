@@ -1249,6 +1249,40 @@ _SENSITIVE_TOOL_PATTERNS: tuple[str, ...] = (
 )
 
 
+def consolidation_line(m: dict) -> str:
+    """One transcript row as consolidation reads it.
+
+    Consolidation learns a person's corrections and preferences from these lines, so a person's row
+    gives the words they typed as theirs (``own_words``) and what else it holds as material that is
+    not: each block they pasted, and the whole text of a row sent in their turn with nothing of
+    theirs in it (an automation's result, plan mode carrying an approved plan back). What else the
+    platform put into their row (the dictation note, a merge's header, plan mode's wrapper around
+    their feedback) is left out, and a saved prompt they ran is named, not quoted."""
+    from personalclaw.own_words import RAN_PROMPT, own_words, pasted_blocks
+
+    stamp = f"[{str(m.get('ts', '?'))[:16]}]"
+    tools = f" [tools: {', '.join(m['tools'])}]" if m.get("tools") else ""
+    if m.get("role") != "user":
+        return f"{stamp} {str(m.get('role', '')).upper()}{tools}: {m.get('content', '')}"
+    raw_meta = m.get("meta")
+    meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
+    typed = own_words(m)
+    ran = meta.get(RAN_PROMPT) if isinstance(meta.get(RAN_PROMPT), dict) else None
+    lines: list[str] = []
+    if ran:
+        said = f": {typed}" if typed else ""
+        lines.append(f"{stamp} USER{tools} ran the saved prompt @{ran.get('name', '')}{said}")
+    elif typed:
+        lines.append(f"{stamp} USER{tools}: {typed}")
+    lines += [
+        f"{stamp} PASTED BY THE USER (material, not their words): {block}"
+        for block in pasted_blocks(meta)
+    ]
+    if not lines:
+        lines.append(f"{stamp} SENT IN THE USER'S TURN, NOT TYPED BY THEM: {m.get('content', '')}")
+    return "\n".join(lines)
+
+
 _TOOL_ROLES: frozenset[str] = frozenset({"tool", "tool_call", "tool_result"})
 
 
@@ -1627,11 +1661,7 @@ class HistoryConsolidator:
             else:
                 memory = self._memory
 
-            def _fmt(m: dict) -> str:
-                tools = f" [tools: {', '.join(m['tools'])}]" if m.get("tools") else ""
-                return f"[{m.get('ts', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}"
-
-            conversation = "\n".join(_fmt(m) for m in unconsolidated)
+            conversation = "\n".join(consolidation_line(m) for m in unconsolidated)
 
             current_prefs = memory.read_preferences()
             current_projects = memory.read_projects()

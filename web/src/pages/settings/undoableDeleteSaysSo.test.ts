@@ -139,9 +139,13 @@ describe('VACUITY: the undo this copy promises actually exists', () => {
   it('a lesson delete routes through it, which is why it shares the undo', () => {
     const fn = vm.match(/def delete_lesson\(self[\s\S]*?(?=\n    def )/)?.[0] ?? ''
     expect(fn, 'found delete_lesson').not.toBe('')
-    expect(fn, 'it delegates to the semantic tombstone').toMatch(/self\.delete_semantic\(/)
+    // A delete is a lesson's retraction, the one path every removal of a lesson takes.
+    expect(fn, 'it retracts the lesson').toMatch(/self\.retract_lesson\(/)
+    const retract = vm.match(/def retract_lesson\(self[\s\S]*?(?=\n    def )/)?.[0] ?? ''
+    expect(retract, 'found retract_lesson').not.toBe('')
+    expect(retract, 'which is the semantic tombstone').toMatch(/self\.delete_semantic\(/)
     // The caveat's source. If this call ever goes, the "confidence reset" clause becomes wrong.
-    expect(fn, 'and it voids the earned observations').toMatch(/self\._reverse_lesson\(/)
+    expect(retract, 'and it voids the earned observations').toMatch(/self\._reverse_lesson\(/)
   })
 
   it('the UI really offers Undo for a semantic delete', () => {

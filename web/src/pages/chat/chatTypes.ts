@@ -315,6 +315,11 @@ export interface ChatTurn {
   // turn's text segment keeps the ORIGINAL the user typed. The bubble shows the
   // original with the optimized in a collapsed, expandable section.
   optimized?: string
+  // The saved prompt this USER turn ran (`@name` or `/prompts get name`) and the text the agent
+  // was sent in its place, from the message's `meta.ran_prompt` — live, from the
+  // `activity_event {kind: "prompt"}` the expansion announces. The bubble keeps what she typed;
+  // the prompt's text sits folded under it, labelled as the prompt's.
+  ranPrompt?: RanPrompt
   // Regenerated answer variants for an ASSISTANT turn. When a reply is regenerated
   // the backend keeps the prior answer(s) and appends the new one, storing every
   // version on the message. The UI only needs how MANY there are (`variantCount`)
@@ -360,6 +365,17 @@ export interface ChatTurn {
  */
 export function markCoordOf(turn: Pick<ChatTurn, 'visibleIndex'>, arrayIndex: number): number {
   return turn.visibleIndex ?? arrayIndex
+}
+
+/** The saved prompt a message ran, and the text the agent was sent in its place. */
+export interface RanPrompt { name: string; text: string }
+
+/** The saved prompt a message ran (`meta.ran_prompt`, or the live announcement's `prompt`), or
+ *  undefined when there is none or it is not the shape the turn builder records. */
+export function ranPromptOf(raw: unknown): RanPrompt | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const { name, text } = raw as { name?: unknown; text?: unknown }
+  return typeof name === 'string' && name && typeof text === 'string' && text ? { name, text } : undefined
 }
 
 /** A user message's persisted image delivery (`meta.image_delivery`), or undefined. */
@@ -465,7 +481,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; learned?: LearnedRecord[]; ungated?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; learned?: LearnedRecord[]; ungated?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -593,6 +609,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       if (Array.isArray(m.rewound) && m.rewound.length) ut.rewound = m.rewound
       const delivery = imageDeliveryOf(m.meta)
       if (delivery) ut.imageDelivery = delivery
+      const ran = ranPromptOf(m.meta?.ran_prompt)
+      if (ran) ut.ranPrompt = ran
       joinedSkills = joinedSkillsOf(m)
       ut.visibleIndex = visible
       turns.push(ut)

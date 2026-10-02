@@ -60,6 +60,7 @@ PROMPT_CARD = "prompt_card"
 PROJECT_CONTEXT = "project_context"
 SKILL = "skill"
 SELF_MODEL = "self_model"
+LEARNED_FROM_TEXT_NOT_TYPED = "learned_from_text_not_typed"
 #: Claimed, and writing nothing is the CORRECT outcome — see :data:`NOTHING_TO_INSTALL`.
 NOTHING = "nothing"
 
@@ -88,6 +89,8 @@ def branch_for(data: dict[str, Any]) -> str:
 
     * the prompt-card branch is FIRST because it claims by TAG, and a card that mapped onto a
       ``template`` would otherwise fall through to a branch that cannot write it;
+    * the review of what may have been learned from text nobody typed claims a ``retirement``
+      by its tag too (``learning.composed_text``), the one retirement anything installs;
     * the self-model branch is checked before :data:`NOTHING_TO_INSTALL` because a promoted
       principle IS a ``lesson_batch`` and would otherwise be read as "nothing to write".
 
@@ -95,13 +98,20 @@ def branch_for(data: dict[str, Any]) -> str:
     the route needs to know a kind is unsupported, and a predicate is cheaper to test than a
     write it has to undo.
     """
-    from personalclaw.learning import project_context_review, self_model_observer, skill_promotion
+    from personalclaw.learning import (
+        composed_text,
+        project_context_review,
+        self_model_observer,
+        skill_promotion,
+    )
     from personalclaw.packs import prompt_cards
 
     if not isinstance(data, dict):
         return ""
     if prompt_cards.is_prompt_card_proposal(data):
         return PROMPT_CARD
+    if composed_text.is_review_proposal(data):
+        return LEARNED_FROM_TEXT_NOT_TYPED
     if project_context_review.is_project_context_proposal(data):
         return PROJECT_CONTEXT
     if skill_promotion.is_skill_promotion_proposal(data):
@@ -146,6 +156,17 @@ def install(prop: Any, *, service: Any = None) -> str:
         from personalclaw.learning import skill_promotion
 
         skill_promotion.install_accepted_skill(data)
+    elif branch == LEARNED_FROM_TEXT_NOT_TYPED:
+        from personalclaw.learning import composed_text
+
+        # The items live in the memory stores, reached from the gateway's own: with none reachable
+        # nothing could be removed, so the accept is refused rather than recorded.
+        main = getattr(service, "provider", None)
+        if main is None:
+            raise proposals.AcceptError(
+                "nothing was removed (no memory store is reachable): the review is still pending"
+            )
+        composed_text.install_accepted_review(data, main)
     elif branch == SELF_MODEL:
         from personalclaw.learning import self_model_observer
 

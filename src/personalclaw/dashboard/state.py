@@ -21,11 +21,13 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
 from personalclaw.dashboard.approval_state import DashboardApprovalState
+from personalclaw.dashboard.chat_queue import ChatQueue
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
 from personalclaw.dashboard.sse import SseRegistry
 from personalclaw.dashboard.ws_state import DashboardWebSocketState
 from personalclaw.guardrails.loop_breaker import LoopBreaker
 from personalclaw.knowledge.store import KnowledgeStore
+from personalclaw.own_words import OWN_WORDS
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
     is_read_only_bash,
@@ -193,7 +195,7 @@ def _parse_options(text: str) -> list[str]:
 VALID_MEMORY_MODES = ("persistent", "incognito", "temporary")
 
 
-class _ChatSession:
+class _ChatSession(ChatQueue):
     """Independent chat session that runs server-side."""
 
     __slots__ = (
@@ -721,78 +723,9 @@ class _ChatSession:
         self.event.clear()
         return out
 
-    # ── Queue helpers (dict-based queue items) ──
-
-    def queue_append(
-        self, content: str, *, channel: str = "", files: list[str] | None = None
-    ) -> str:
-        """Append a message to the queue. Returns the generated queue ID.
-
-        ``channel`` names the chat channel the message came from, when it came from one. That
-        channel already shows it, so the turn that runs it does not send it back there.
-        ``files`` are its attached files, which the message carries when it runs.
-        """
-        qid = uuid.uuid4().hex[:12]
-        item: dict[str, Any] = {"id": qid, "content": content}
-        if channel:
-            item["channel"] = channel
-        if files:
-            item["files"] = list(files)
-        self._queue.append(item)
-        return qid
-
-    def queue_retry(
-        self, content: str, *, from_channel: bool = False, regenerate_hint: str = ""
-    ) -> str:
-        """Queue the turn that just ended to run again, ahead of everything. Returns the queue ID.
-
-        A retry is the SAME message, not a new one: *content* is the text it was sent as, whose row
-        is already in the transcript. So its drain adds no row and no bubble, it is never merged
-        with a message queued behind it, and it runs as the same turn (`run_chat(_retry=True)`).
-        ``retry`` records where the message came from (``channel``: the chat channel the session is
-        linked to, which already shows it; ``here``: anywhere else), and ``hint`` a regenerate's
-        hint, so the retry is asked the same way.
-        """
-        qid = uuid.uuid4().hex[:12]
-        item = {"id": qid, "content": content, "retry": "channel" if from_channel else "here"}
-        if regenerate_hint:
-            item["hint"] = regenerate_hint
-        self._queue.insert(0, item)
-        return qid
-
-    def queue_pop(self, index: int = 0) -> dict[str, Any]:
-        """Pop a queue item by index. Returns {"id": ..., "content": ...}."""
-        return self._queue.pop(index)
-
-    def queue_remove_by_id(self, queue_id: str) -> str | None:
-        """Remove a queue item by ID. Returns the content or None if not found."""
-        for i, item in enumerate(self._queue):
-            if item["id"] == queue_id:
-                del self._queue[i]
-                return item["content"]
-        return None
-
-    def queue_promote(self, queue_id: str) -> bool:
-        """Move a queued item to the front, preserving its id. Returns True if found.
-
-        Used by /interrupt's optional ``queue_id`` so the promoted message runs
-        next without re-minting its id (the frontend queue card keys off id).
-        """
-        for i, item in enumerate(self._queue):
-            if item["id"] == queue_id:
-                if i > 0:
-                    self._queue.insert(0, self._queue.pop(i))
-                return True
-        return False
-
     @property
     def running(self) -> bool:
         return self.task is not None and not self.task.done()
-
-    @property
-    def queue_depth(self) -> int:
-        """Number of prompts currently queued behind the active turn."""
-        return len(self._queue)
 
     @property
     def is_restricted(self) -> bool:
@@ -809,12 +742,16 @@ class _ChatSession:
         prompt: str,
         run_chat_coro: "Callable[[DashboardState, _ChatSession, str], Coroutine[Any, Any, None]]",
         state: "DashboardState",
+        *,
+        own_words: str | None = None,
     ) -> bool:
         """Queue *prompt* if busy, otherwise start an agent turn.
 
         Encapsulates the queue-vs-run decision so callers don't need to
         touch ``_queue``, ``task``, or ``_background_tasks`` directly.
         Always registers :func:`_log_task_exception` to prevent silent failures.
+        ``own_words`` says which of *prompt*'s words a person typed, when the caller composed
+        more around them (``""`` when nobody did), so no learning path reads the rest as theirs.
 
         Returns ``True`` if the prompt started an agent turn, ``False`` if
         it was queued. Lets callers gate UI-visible side-effects (notifications,
@@ -826,9 +763,10 @@ class _ChatSession:
         ``running == False`` within a single loop iteration.
         """
         if self.running:
-            self.queue_append(prompt)
+            self.queue_append(prompt, own_words=own_words)
             return False
-        self.append("user", prompt, "msg msg-u")
+        meta = None if own_words is None else {OWN_WORDS: own_words}
+        self.append("user", prompt, "msg msg-u", meta=meta)
         task = asyncio.create_task(run_chat_coro(state, self, prompt))
         self.task = task
         state._background_tasks.add(task)

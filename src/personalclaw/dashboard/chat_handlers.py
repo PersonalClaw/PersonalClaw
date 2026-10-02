@@ -50,6 +50,7 @@ from personalclaw.dashboard.chat_utils import (
 from personalclaw.dashboard.state import CREATED_BY_APP_META_KEY, DashboardState, _ChatSession
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
+from personalclaw.own_words import OWN_WORDS, RAN_PROMPT, pasted_blocks, typed_text
 from personalclaw.request_validation import json_object_body
 
 # The `room:` session-key prefix, imported rather than spelled out: the filter below and the
@@ -168,8 +169,15 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 client_ts = _raw_ts
             except (ValueError, TypeError):
                 client_ts = ""  # malformed → fall back to server-stamped ts
+        # Which of a row's words its sender typed, and the saved prompt that ran in their place,
+        # are said by the code that composes the row, never by the send: from a client they would
+        # let a message teach what it does not say, or show a prompt that never ran.
+        user_meta.pop(OWN_WORDS, None)
+        user_meta.pop(RAN_PROMPT, None)
         if not user_meta:
             user_meta = None
+    # The words she typed or said, before the dictation note below is added to them.
+    said = message
     # A dictated turn is honest about where it came from.
     # ``input_origin`` is a closed set of one: anything else is treated as typed.
     # The disclaimer goes on the message the runner sees (so the model
@@ -278,6 +286,14 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     if message and not (user_meta or {}).get("ui_label"):
         take_in_the_users_links(request.get("app", ""), session.key, message)
 
+    # The pasted blocks as the message holds them — read before the redaction below rewrites
+    # the meta copy — so routing and learning can tell what was typed from what was pasted.
+    _pasted = pasted_blocks(user_meta)
+    # Her own words, recorded on the turn's row only when the message holds more than them (a
+    # pasted block, the dictation note): what every learning path reads of it (``own_words``).
+    _own = typed_text(said, _pasted)
+    _own_recorded = _own if _own != message else None
+
     if session.running:
         # Cancel-and-replace: when the resolved mid-turn
         # policy is cancel_and_replace, a rapid follow-up to this interactive session
@@ -287,7 +303,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         # + a debounce guard (a burst produces ONE cancel + the last message). Returns
         # a response when it handled the message; None to fall through to steer/queue.
         if message:
-            _cr = await _maybe_cancel_and_replace(state, session, message)
+            _cr = await _maybe_cancel_and_replace(state, session, message, _own_recorded)
             if _cr is not None:
                 return _cr
         # Mid-run handling (#37) — 4 modes:
@@ -318,7 +334,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             return web.json_response({"ok": True, "steered": True})
         # followup / collect / steer-when-not-native → queue as before.
         if message:
-            qid = session.queue_append(message)
+            qid = session.queue_append(message, own_words=_own_recorded)
             _c, _ = redact_exfiltration_urls(message)
             _c, _ = redact_credentials(_c)
             _redacted = _redact_for_display(_c)
@@ -340,13 +356,10 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     ws_mode = request.query.get("ws") == "1"
 
     session._has_reader = not ws_mode  # Only block SSE broadcast if HTTP SSE reader
-    # The pasted blocks as the message holds them — read before the redaction below rewrites
-    # the meta copy — so routing can tell what was typed from what was pasted.
-    from personalclaw.agents.routing import pasted_blocks
-
-    _pasted = pasted_blocks(user_meta)
     if user_meta:
         user_meta = _redact_meta(user_meta)
+    if _own_recorded is not None:
+        user_meta = {**(user_meta or {}), OWN_WORDS: _own_recorded}
     session.append("user", message, "msg msg-u", ts=client_ts, meta=user_meta)
 
     # ── AutoNudge: user input defers any pending nudge (user wins). Lazy import + fail-open
@@ -473,7 +486,7 @@ def _default_mid_turn_mode() -> str:
 
 
 async def _maybe_cancel_and_replace(
-    state: "DashboardState", session: "_ChatSession", message: str
+    state: "DashboardState", session: "_ChatSession", message: str, own_words: str | None
 ) -> "web.Response | None":
     """Cancel-and-replace decision for a follow-up sent mid-turn (PLATFORM-RESILIENCE
     §6.3). Returns a JSON response when it HANDLED the message (cancelled the in-flight
@@ -484,6 +497,9 @@ async def _maybe_cancel_and_replace(
     in-flight turn is an interactive origin (webui) AND the per-session debounce window
     has elapsed. Everything is best-effort — any failure returns ``None`` (queue), so a
     broken check never blocks a message.
+
+    ``own_words`` are the words of the message its sender typed when it holds more than them
+    (``None`` when it is all theirs), queued with it as the queue path queues them.
     """
     import time as _time
 
@@ -518,7 +534,7 @@ async def _maybe_cancel_and_replace(
         outcome = await state.sessions.stop_turn(
             _history_key_for(session.key), force=False, preserve_queue=True
         )
-        qid = session.queue_append(message)
+        qid = session.queue_append(message, own_words=own_words)
         # The superseded turn was stopped by the message that replaced it.
         state.broadcast_ws(
             "chat_done",

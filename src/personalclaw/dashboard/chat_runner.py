@@ -131,6 +131,7 @@ from personalclaw.llm_helpers import (
     is_model_call_failure,
 )
 from personalclaw.loop import posture as loop_posture
+from personalclaw.own_words import OWN_WORDS, own_words, queued_words, record_prompt_run
 from personalclaw.restart_request import RESTARTING, SHUTTING_DOWN
 from personalclaw.security import (
     is_sensitive_path,
@@ -413,7 +414,8 @@ def say_how_an_unanswered_turn_ended(
 def learning_decision_for_turn(session, user_message: str, tool_calls: int, cfg=None):
     """The turn's single gate decision, for every capture path to share.
 
-    Exists as its own function so the two reviews in one turn consume ONE object.
+    ``user_message`` is what the person typed this turn (``own_words``), not the message the model
+    was sent. Exists as its own function so the two reviews in one turn consume ONE object.
     Threaded as an argument rather than stashed on the session: ``_ChatSession``
     defines ``__slots__``, so an attribute would raise at runtime — and passing it
     explicitly makes the sharing visible at the call site instead of implicit in
@@ -473,7 +475,8 @@ def _maybe_after_turn_review(
 ) -> bool:
     """Run the after-turn self-improvement review when the turn warrants it.
 
-    Eligibility comes from ONE :class:`LearningGate` decision, computed by
+    ``user_message`` is what the person typed this turn (``own_words``): every capture below reads
+    only that. Eligibility comes from ONE :class:`LearningGate` decision, computed by
     :func:`learning_decision_for_turn` and consumed by both the cheap facet capture
     and the expensive review — and by the skill-ladder review, which is handed the
     same object. Two independent computations of one rule is how they drift.
@@ -722,6 +725,7 @@ def _maybe_skill_ladder_review(
 ) -> None:
     """Schedule the forked-LLM 4-tier skill-ladder review (learn-after-turn-review
     skill axis) as a background task — non-blocking, never delays the next turn.
+    ``user_message`` is what the person typed this turn (``own_words``).
 
     Consumes the SAME gate ``decision`` the memory review used (passed in by the
     caller; recomputed only if this runs standalone), plus its own ``skill_ladder``
@@ -1317,6 +1321,9 @@ def _expand_prompt_mention(
     message: str,
     state: DashboardState,
     session: _ChatSession,
+    *,
+    turn_row: dict | None = None,
+    invocation_words: int = 1,
 ) -> tuple[str, str]:
     """Expand ``@prompt-name [key=value ...] rest`` into rendered template + user text.
 
@@ -1327,6 +1334,9 @@ def _expand_prompt_mention(
     when it declares them (:func:`_bind_trailing_text`) and is otherwise passed along as
     context. Required variables that are missing produce a block with a helpful system
     message — the user can re-issue with the missing bindings.
+
+    *turn_row*, the message that started the turn, is told the prompt ran in place of its first
+    *invocation_words* words and what the agent was sent (``own_words.record_prompt_run``).
 
     Returns ``(expanded_message, "ok")`` on success,
     ``(original_message, "blocked")`` on render failure,
@@ -1401,6 +1411,11 @@ def _expand_prompt_mention(
         f"Loaded prompt **@{tpl.name}** ({len(content):,} chars rendered)",
         "msg msg-info",
     )
+    if turn_row is not None:
+        ran = record_prompt_run(turn_row, name=tpl.name, text=expanded, words=invocation_words)
+        state.broadcast_ws(
+            "activity_event", {"session": session.key, "kind": "prompt", "prompt": ran}
+        )
     state.push_sessions_update()
     return expanded, "ok"
 
@@ -2309,7 +2324,9 @@ async def run_chat(
     # subagent's report or an auto-nudge dispatched it with: a turn with no answer says how to
     # retry it (`no_answer_notice`). A turn with no row of its own was asked for directly.
     _started_at = in_flight_index(session, _in_flight_text, nested=_prompt_depth > 0)
-    _asked_by_person = _started_at is None or session.messages[_started_at].get("role") == "user"
+    # That row itself: what its sender typed is read off it once the turn is done (`own_words`).
+    _turn_row = session.messages[_started_at] if _started_at is not None else None
+    _asked_by_person = _turn_row is None or _turn_row.get("role") == "user"
     # What this attempt takes from the session that rides one turn only, as the way to put each
     # back: a retry of the turn (`_send_again`) is handed the same context the first attempt was.
     _taken_once: list[Callable[[], None]] = []
@@ -2575,7 +2592,9 @@ async def run_chat(
         if sub == "get" and len(args) > 2:
             # /prompts get <name> — invoke the prompt in this chat
             name = args[2]
-            expanded, status = _expand_prompt_mention(f"@{name}", state, session)
+            expanded, status = _expand_prompt_mention(
+                f"@{name}", state, session, turn_row=_turn_row, invocation_words=3
+            )
             if status == "ok":
                 sel().log_tool_invocation(
                     session_key="",
@@ -3050,7 +3069,7 @@ async def run_chat(
         # ── @prompt expansion: resolve @name to SOP/prompt content ──
         if message.startswith("@") and not is_slash and _prompt_depth < 1:
             original = message
-            message, _status = _expand_prompt_mention(message, state, session)
+            message, _status = _expand_prompt_mention(message, state, session, turn_row=_turn_row)
             if _status == "ok":
                 sel().log_tool_invocation(
                     session_key=session_key,
@@ -5373,8 +5392,11 @@ async def run_chat(
             # ONE gate decision for this turn, shared by both reviews below. If they
             # each computed their own, the two copies of the rule could disagree —
             # which is exactly the drift the LearningGate exists to prevent.
+            # Both read what she typed (`own_words`), not the message the model was sent: a saved
+            # prompt's body, a file's text, a persona, or an automation's message with none of hers.
+            _typed = own_words(_turn_row)
             try:
-                _turn_learning = learning_decision_for_turn(session, message, _turn_tool_call_count)
+                _turn_learning = learning_decision_for_turn(session, _typed, _turn_tool_call_count)
             except Exception:
                 logger.debug("learning gate evaluation failed", exc_info=True)
                 _turn_learning = None
@@ -5384,7 +5406,7 @@ async def run_chat(
                 if _maybe_after_turn_review(
                     state,
                     session,
-                    message,
+                    _typed,
                     assistant_text,
                     _turn_tool_call_count,
                     provider=client,
@@ -5399,7 +5421,7 @@ async def run_chat(
                 _maybe_skill_ladder_review(
                     state,
                     session,
-                    message,
+                    _typed,
                     assistant_text,
                     _turn_tool_call_count,
                     decision=_turn_learning,
@@ -5711,11 +5733,15 @@ async def run_chat(
                 cron_label, _ = redact_credentials(cron_label)
                 # The files the queued messages came with, which the turn carries as its own.
                 queued_files = [p for item in consumed for p in item.get("files") or []]
+                queued_meta: dict[str, Any] = {"files": queued_files} if queued_files else {}
+                # And which of the row's words their senders typed (`queued_words`).
+                if (_queued_own := queued_words(consumed)) is not None:
+                    queued_meta[OWN_WORDS] = _queued_own
                 session.append(
                     "subagent" if is_subagent else "inject" if is_cron else "user",
                     next_msg,
                     json.dumps({"cronLabel": cron_label}) if is_cron else "msg msg-u",
-                    meta={"files": queued_files} if queued_files else None,
+                    meta=queued_meta or None,
                 )
                 # A queued user message is persisted here but session.append suppresses
                 # the SSE echo for role="user" (the live page normally adds the user

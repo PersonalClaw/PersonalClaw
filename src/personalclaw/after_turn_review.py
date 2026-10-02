@@ -38,6 +38,11 @@ from personalclaw.security import fence_untrusted
 
 logger = logging.getLogger(__name__)
 
+#: How a correction lesson opens: the words that follow are the user's message, quoted. Named so the
+#: cleanup that takes back a lesson quoted from text the user never typed
+#: (``learning.composed_text``) reads the same framing this module writes.
+CORRECTION_PREFIX = "User correction to honor: "
+
 # Strong correction signals — these read as a correction of the prior turn
 # wherever they appear (a user rarely writes "wrong"/"that's not"/"why did you"
 # except to push back on what the assistant just did).
@@ -592,7 +597,7 @@ def run_after_turn_review(
         logger.info("after-turn review: skipped env-failure claim (guardrail)")
         return None
     # Frame the correction as a forward-looking lesson.
-    rule = f"User correction to honor: {correction_text[:240]}"
+    rule = f"{CORRECTION_PREFIX}{correction_text[:240]}"
     try:
         if judge is not None:
             service.set_contradiction_judge(judge)

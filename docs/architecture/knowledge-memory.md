@@ -459,6 +459,32 @@ item vector).
   content is `security.py::fence_untrusted` — see [security.md](security.md).)
 - The after-turn learning path (`after_turn_review.py`) is gated on
   `session.is_restricted` — restricted sessions never write lessons.
+- Learning reads only what the person typed. Every per-turn capture (the
+  correction lesson, preference facets and vetoes, the glossary slot, the
+  self-model observer, stumble refinement and the skill ladder) is handed
+  `own_words.own_words(row)` of the row that started the turn, never the
+  message the model was sent: that message also holds a saved prompt's text in
+  place of its `@name`, an attached file's or a referenced item's text, a
+  theme's persona and natural voice's instructions, and a turn an automation, a
+  subagent's report or a heartbeat started holds no words of hers at all. A
+  pasted block and a fenced span are left out too. The code that composes a row
+  records which of its words were typed (`meta.own_words`: the send, a queued
+  or merged send, plan mode's prompts, a heartbeat's delivery), and a saved
+  prompt's expansion records `meta.ran_prompt {name, text}`, which the chat
+  shows folded under her message as the prompt's. A send cannot set either.
+  Consolidation reads a person's saved rows the same way
+  (`history.consolidation_line`): what they typed as theirs, each pasted block
+  and a row sent in their turn as material that is not, and a prompt they ran
+  by its name; a promoted skill's and a project review's proposals quote only
+  what they typed.
+- What learning took from such text before is settled at each gateway start
+  (`learning/composed_text.settle`, over every memory store in the home): a
+  correction lesson that quoted the platform's own opening is retracted through
+  the memory log, so Memory → History can undo it, and a lesson it had
+  displaced is restored; a veto, preference or glossary line that matches a
+  saved prompt's or a theme's text is offered as one proposal (Learning →
+  Proposals lists each item and the text it matches, and the Inbox notes it),
+  whose Accept removes them and whose Reject keeps them for good.
 
 ### Lexicon
 

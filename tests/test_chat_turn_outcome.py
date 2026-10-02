@@ -352,7 +352,9 @@ async def test_a_superseded_turn_ends_stopped(tmp_path, monkeypatch):
     session = state.get_or_create_session("superseded-turn")
 
     with patch.object(chat_handlers, "sel", MagicMock()):
-        resp = await chat_handlers._maybe_cancel_and_replace(state, session, "do this instead")
+        resp = await chat_handlers._maybe_cancel_and_replace(
+            state, session, "do this instead", None
+        )
 
     assert resp is not None
     [done] = _frames(state, "chat_done")

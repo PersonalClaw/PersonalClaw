@@ -54,6 +54,7 @@ from personalclaw.dashboard.chat_utils import (
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import _safe_key
 from personalclaw.http_errors import json_error
+from personalclaw.own_words import OWN_WORDS
 from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
 from personalclaw.request_validation import json_object_body
@@ -416,7 +417,7 @@ async def api_chat_plan_comment(request: web.Request) -> web.Response:
         )
     write(sess, binding)
     take_in_the_users_links(request.get("app", ""), chat.key, text)
-    _dispatch(state, chat, f"Revise the plan with this feedback:\n\n{text}")
+    _dispatch(state, chat, f"Revise the plan with this feedback:\n\n{text}", own_words=text)
     return web.json_response({"ok": True, "session": PS.wire(sess)})
 
 
@@ -456,7 +457,7 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
         if binding.pop("parked", False):
             binding.pop("parked_at", None)
             binding.pop("parked_messages", None)
-            _dispatch(state, chat, _resume_prompt(markdown))
+            _dispatch(state, chat, _resume_prompt(markdown), own_words="")
             resumed = True
     write(sess, binding)
     try:
@@ -500,7 +501,7 @@ async def api_chat_plan_cancel(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "task_mode": restored})
 
 
-def _dispatch(state: DashboardState, chat: _ChatSession, prompt: str) -> None:
+def _dispatch(state: DashboardState, chat: _ChatSession, prompt: str, *, own_words: str) -> None:
     """Run one more turn in this chat, appending ``prompt`` as the user message.
 
     Deliberately the same dispatch shape as the edit-resend path
@@ -508,10 +509,14 @@ def _dispatch(state: DashboardState, chat: _ChatSession, prompt: str) -> None:
     import is local (and resolved per call) both to break the import cycle with
     ``chat_runner`` — which calls this module's turn-end hook — and so a test can
     substitute ``chat_runner.run_chat``.
+
+    ``own_words`` are the words of ``prompt`` the user typed (her feedback, or none for the
+    plan carried back once approved): the rest is this module's, and no learning path reads it
+    as hers (``own_words.own_words``).
     """
     from personalclaw.dashboard.chat_runner import run_chat
 
-    chat.append("user", prompt, "msg msg-u")
+    chat.append("user", prompt, "msg msg-u", meta={OWN_WORDS: own_words})
     task = asyncio.create_task(run_chat(state, chat, prompt))
     chat.task = task
     state._background_tasks.add(task)

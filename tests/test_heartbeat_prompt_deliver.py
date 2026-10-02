@@ -59,6 +59,8 @@ class TestPromptDashboardDeliver:
         # run_chat coro and state are passed through in the documented positional order
         assert call_args.args[1] is run_chat
         assert call_args.args[2] is state
+        # Nobody typed the heartbeat's result, so no learning path may read it as their words.
+        assert call_args.kwargs == {"own_words": ""}
 
     @pytest.mark.asyncio()
     async def test_prompt_warns_on_missing_session(
