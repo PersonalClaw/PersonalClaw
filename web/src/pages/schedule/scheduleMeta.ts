@@ -1,4 +1,4 @@
-import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff, Ban } from 'lucide-react'
+import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff, Ban, TriangleAlert } from 'lucide-react'
 import { epochSeconds, localDateTimeSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
@@ -137,6 +137,10 @@ export function statusMeta(s?: string | null): StatusMeta {
   // run 40 minutes after its slot is a different story from one on time.
   if (s === 'ran') return { label: 'ran', tone: 'var(--color-ok)', icon: CheckCircle2 }
   if (s === 'ran_late') return { label: 'ran late', tone: 'var(--color-warning)', icon: Clock, noFault: true }
+  // A run that did its work at its no-model floor — a digest whose synthesis was unavailable still
+  // arrived (`Outcome.DEGRADED`). Warning, not ok: it did less than it is for, and the trigger's
+  // `last_error` beside it says what it went without. A run's word and its outcome's are the same.
+  if (s === 'degraded') return { label: 'degraded', tone: 'var(--color-warning)', icon: TriangleAlert }
   if (s === 'failed') return { label: 'failed', tone: 'var(--color-danger)', icon: XCircle }
   if (s === 'timeout') return { label: 'timed out', tone: 'var(--color-danger)', icon: Clock }
   // A run a gateway restart cut off (`reaper.RESTART_INTERRUPTED_STATUS`). It was recorded as

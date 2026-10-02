@@ -83,7 +83,7 @@ class ActionResult:
     #               would claim work that has not begun. Every reader of this
     #               field maps it to `Outcome.DEFERRED` — a status this
     #               vocabulary does not recognise is recorded as FAILED
-    #               (`triggers.executor._record_fire_outcome`), so adding a
+    #               (`triggers.executor.classify`), so adding a
     #               member here means adding it to those maps in the same change.
     #   "needs_input" — the action stopped on something only a person can lift
     #               (BROWSE-AUTOMATION §5.2/§7.2: a sign-in page, max_steps, the
@@ -102,6 +102,12 @@ class ActionResult:
     #               again with the answer set. `triggers.executor.STATUS_TO_OUTCOME`
     #               maps it to `Outcome.DEFERRED` — both readers exist, per the rule
     #               above.
+    #   "degraded"— the action did its work at its no-model floor
+    #               (`resilience/degraded.py`): something it needs was unavailable, so it
+    #               delivered less — a digest without its synthesis — and `summary` says
+    #               what it went without. A trigger's run records `degraded`
+    #               (`Outcome.DEGRADED`), and a workflow step is DEGRADED, a success with
+    #               that reason: neither a plain success nor a failure a retry would repeat.
     outcome: str = ""
     # The WHAT/WHY/FIX envelope for a failed action. The
     # three dispatch seams wrap an uncaught provider exception into one, so

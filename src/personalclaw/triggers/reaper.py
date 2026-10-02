@@ -361,7 +361,8 @@ def record_stopped_run(
     it: the `interrupted` row, the trigger's health (`_mark_degraded`), the audit, and the card on
     the review (`triggers/review.py`), where the user runs it again or dismisses it. A run started
     *by_hand* (Run now, the review's Run now) is recorded as the hand run it was — its row is
-    `manual`, and it leaves the trigger's health alone, as `_record_manual_run` does.
+    `manual`, and it leaves the trigger's health alone, as a hand run's record does
+    (`run_record.record_run`).
 
     Returns the record in the boot pass's shape. Synchronous, awaiting nothing: it runs inside the
     cancellation it records, where any await can be cancelled again.
@@ -431,8 +432,8 @@ def _write_interrupted_row(
             ScheduleRun(
                 run_id=f"interrupted-{int(now * 1000)}",
                 job_id=trigger_id,
-                # `manual` for a hand run, the tag `_record_manual_run` gives one: the hourly cap
-                # and the failure streak both pass over it.
+                # `manual` for a hand run, the tag its record gives one (`run_record.record_run`):
+                # the hourly cap and the failure streak both pass over it.
                 trigger=run_trigger,
                 started_at=started_at,
                 finished_at=now,

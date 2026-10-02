@@ -362,6 +362,9 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     "family here would make a pill accuse a working control every time it fires": (
         "bounded",
         "default",
+        # An action that did its work at its no-model floor (`ActionResult.outcome`): the run's
+        # shape, recorded `degraded` in its history, and neither a refusal nor a fault.
+        "degraded",
         "downgraded",
         "halted_on_budget",
         "hard",

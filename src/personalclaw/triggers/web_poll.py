@@ -899,7 +899,12 @@ def poll_all(
 
     `renderer`/`knowledge_store` are the escalation and digest-routing seams, forwarded to
     `poll_one`; both default to the production tiers and are injected only by tests.
+
+    Each fire is counted here, where it is decided (`run_record.note_fire`), as an admission
+    counts a clock fire: nothing else would, and a watch that had run read as never fired.
     """
+    from personalclaw.triggers.run_record import note_fire
+
     payloads: list[dict[str, Any]] = []
     checks: list[tuple[Any, PollOutcome]] = []
     for trigger in web_watch_triggers(store):
@@ -929,6 +934,7 @@ def poll_all(
             continue
         checks.append((trigger, outcome))
         if outcome.payload is not None:
+            note_fire(store, trigger.id, at=now)
             payloads.append(outcome.payload)
     return payloads, checks
 

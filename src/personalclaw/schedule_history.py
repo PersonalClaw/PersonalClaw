@@ -99,6 +99,8 @@ class ScheduleRun:
     #   is recorded by ITS own run, not this one. Honest "started ≠ succeeded"
     #   status (T7) — a green "ran" must not imply the work succeeded.
     # "skipped_noop": the action ran and had nothing to do (`status_for_result`).
+    # "degraded": the action did its work at its no-model floor and its summary says what it went
+    #   without — a digest with no synthesis (`status_for_result`). Not a plain success.
     # "declined": the work a launched run started asked its owner to start and they declined it
     #   (`ScheduleRunStore.settle_sync`). Their own decision, not a failure.
     # "refused": the agent a launched run started had calls refused by its own limits
@@ -159,6 +161,9 @@ _RESULT_STATUS: dict[str, str] = {
     # The action stopped for a person — browse at a sign-in page. Not `success`: nothing it was
     # asked to do happened yet, and the trigger's question is open (`triggers.parks`).
     "needs_input": "waiting",
+    # The action did its work at its no-model floor: the digest arrived without its synthesis. Not
+    # `success`, which would say it delivered all it is for; its summary says what it went without.
+    "degraded": "degraded",
 }
 
 #: Every status `status_for_result` can return: the closed vocabulary `triggers/history.py`'s
@@ -169,10 +174,9 @@ RESULT_STATUSES: frozenset[str] = frozenset({"success", "failure", *_RESULT_STAT
 def status_for_result(result: Any) -> str:
     """The `ScheduleRun.status` a finished action records: `failure`, a refinement, or `success`.
 
-    ONE answer for both recorders — the autonomous fire (`gateway._record_fire_outcome`) and the
-    Run button (`dashboard/handlers/trigger_runs._record_manual_run`) — so a fire and a hand-run of
-    the same action cannot record different statuses for the same result. The autonomous one
-    recorded every successful result as `success`, so a fire that only launched a workflow read as
+    The one answer every run's record takes (`triggers.run_record.record_run`), a fire's and a
+    hand run's alike, so the two cannot record different statuses for the same result. A fire used
+    to record every successful result as `success`, so one that only launched a workflow read as
     one whose work had succeeded.
     """
     if result is None:
@@ -186,9 +190,9 @@ def summary_for_result(result: Any) -> str:
     """The history row's line for an action that did not fail: the sentence the action wrote for
     a person (`ActionResult.summary`), else what it printed.
 
-    ONE answer for both recorders, as `status_for_result` is. A browse run prints its whole
-    account as JSON, and its row showed that JSON (ledger 295): the row's TRACE is what an action
-    printed, and its summary is what a person reads.
+    ONE answer for every run's record, as `status_for_result` is. A browse run prints its whole
+    account as JSON, and its row showed that JSON: the row's TRACE is what an action printed, and
+    its summary is what a person reads.
     """
     if result is None:
         return ""
@@ -228,10 +232,11 @@ def failure_for_result(result: Any) -> str:
 def late_summary(late: str, summary: str) -> str:
     """The history row's line for a run that ran late: why, as its own sentence, then what it did.
 
-    ONE answer for both recorders, as :func:`summary_for_result` is: a scheduled fire the clock
-    reached well after its slot (`missed.late_outcome`) and the review's Run now standing in for a
-    slot that did not run (`missed.resolve_missed`). Such a run records `ran_late` when it
-    succeeded; this is what its row then says.
+    ONE answer for both kinds of late run, as :func:`summary_for_result` is: a scheduled fire the
+    clock reached well after its slot (`missed.late_outcome`) and the review's Run now standing in
+    for a slot that did not run (`missed.resolve_missed`). Such a run records `ran_late` when it
+    succeeded; this is what its row then says, and what any other row of it that did not fail says
+    first.
     """
     return f"{late[:1].upper()}{late[1:]}." + (f" {summary}" if summary else "")
 

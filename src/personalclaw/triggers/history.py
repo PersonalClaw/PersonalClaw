@@ -72,9 +72,14 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # which is `FAILED`'s meaning in this vocabulary; the row's own status and `error` say it was
     # the restart, and it waits on the review for the user to run it again or dismiss it.
     "interrupted": Outcome.FAILED.value,
-    # The review's Run now (`dashboard/handlers/trigger_runs._record_manual_run`): a run standing
-    # in for a slot that did not run, which `missed.resolve_missed` records as late.
+    # A run standing in for a slot that did not run on time (`triggers.run_record`): the review's
+    # Run now, which `missed.resolve_missed` records as late, or a fire the tick reached late.
     "ran_late": Outcome.RAN_LATE.value,
+    # An action that did its work at its no-model floor (`schedule_history.status_for_result`): a
+    # digest whose synthesis was unavailable still arrives, without its summary. Its own outcome:
+    # not `RAN`, since it did less than it is for and its row says what it went without, and not
+    # `FAILED`, since it did its work and a retry would spend the same outage again.
+    "degraded": Outcome.DEGRADED.value,
     # See the module docstring: started ≠ succeeded.
     "launched": Outcome.DEFERRED.value,
     # A launched run whose agent asked its owner to start and was declined

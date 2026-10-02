@@ -272,7 +272,34 @@ no run row, no `last_run_ts` move, so the panel renders it instead of waiting
 for one. `supports_dry_run` (run-prompt, run-workflow) is a provider's own
 observe-mode capability, reported by the Doctor's would-execute simulator.
 
-**A run's history row says what the action did.** Both recorders write the
+**A run's history row says when it ran, for how long, and how it went, and its
+trigger keeps count.** Every run that reached its action is recorded by one
+recorder (`triggers/run_record.py`, `record_run`), a fire from the clock, an
+event, a watched file or page, a chain or a quiet session, and a run by hand
+(Run now, the review's Run now, a webhook, a view's refresh) alike. The row
+carries `started_at` (when the action started), `finished_at` (when it
+returned) and `duration_ms`; a scheduled fire's row used to be written at
+record time with both times the same and 0 ms. In the same write the trigger's
+`last_run_id` names that row (what **Open as chat** opens) and its outcome's
+stamp moves: `last_success_at`, `last_failure_at` with the reason in
+`last_error_summary`, or `last_waiting_at`. A fire also walks the autopause
+decision; a run by hand is tagged `manual` and leaves the trigger's health
+alone. A fire's `run_count` and `last_fired_at` move where the fire is decided,
+before its action runs (`run_record.count_fire`): at the admission for the
+clock and events; in the file poll, the web poll, the chain and the
+quiet-session poll for the kinds no admission walks, which used to leave
+`run_count` at 0 so the panel read "never run"; and where a webhook is
+accepted or a view starts its refresh. A chain its guards refuse is not
+counted; its `skipped_gate` row says why. Run now and the review's Run now
+spend neither.
+An action that did its work at its no-model floor returns `outcome="degraded"`
+and its run records `degraded` (the runs feed reads `Outcome.DEGRADED`, shown
+in warning tone): the morning digest whose synthesis was unavailable still
+arrives with its items, and its row and the trigger's `last_error_summary` say
+the synthesis was missing. A workflow step that does so is DEGRADED, a success
+with that reason.
+
+**A run's history row says what the action did.** The recorder writes the
 row's summary as the sentence the action wrote for a person
 (`ActionResult.summary`, `schedule_history.summary_for_result`), else what it
 printed, which stays the row's trace. A browse run prints its whole account as
@@ -780,14 +807,14 @@ page returns `outcome="needs_input"` with the card its handoff composes ("Sign
 in to example.com, then confirm", and what it tried). Inside a workflow run
 the engine parks the step and asks through the run
 ([workflows.md](workflows.md#waiting-on-a-person)); from a trigger,
-`triggers/parks.py` asks. Both recorders — the fire path
-(`gateway._record_fire_outcome`) and the Run button (`_record_manual_run`) —
-record the run `waiting` (`schedule_history.status_for_result`; the runs feed
+`triggers/parks.py` asks. The run recorder (`triggers.run_record.record_run`),
+for a fire and for the Run button alike,
+records the run `waiting` (`schedule_history.status_for_result`; the runs feed
 reads it as `deferred`), with the summary "Waiting for you." and the question,
 and stamp the trigger's `last_waiting_at` rather than `last_success_at`: the
 action did nothing it was asked yet. `last_run_ts` is the newest of the
 success, failure and waiting stamps, so a Run button still clears when its run
-stops for you. Then both call `parks.settle`:
+stops for you. Then it calls `parks.settle`:
 
 - **A park raises one question.** One park file per trigger
   (`trigger_parks/` in the home) holds a single-use token and the card; its

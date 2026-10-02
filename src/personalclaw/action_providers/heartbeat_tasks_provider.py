@@ -9,7 +9,7 @@ place a user manages automations did not list it. It is a system trigger now, li
 its switch — off means the queue is not read.
 
 Nothing here re-implements scheduling, overlap or ledgering: the clock tick arms the interval,
-`overlap: skip` keeps a long pass from stacking a second one, and `_record_fire_outcome` writes
+`overlap: skip` keeps a long pass from stacking a second one, and `run_record.record_run` writes
 each pass's run. The TASKS still run through the gateway's heartbeat turn (`heartbeat
 .task_runner`): the background prompt, the unattended approval policy, and delivery of each
 finished task's result to its `<!-- deliver:… -->` target. A task runs only once the owner

@@ -1284,6 +1284,15 @@ async def dispatch_action(
             degraded_reason=question,
             ask=Ask(prompt=question, node_id=node.id, rerun=True).to_dict(),
         )
+    if getattr(result, "outcome", "") == "degraded":
+        # The action did its work at its no-model floor (a digest without its synthesis): a
+        # success with the reason it says, so the step does not read as having delivered it all.
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=output,
+            degraded_reason=str(getattr(result, "summary", "") or "")
+            or "the action ran without something it needs",
+        )
     if getattr(result, "outcome", "") == "skip":
         return NodeResult(state=InstanceState.NO_CHANGE, output=output)
     return NodeResult(state=InstanceState.DONE, output=output)

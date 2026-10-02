@@ -41,7 +41,6 @@ import personalclaw.config.loader as loader
 from personalclaw.action_providers.base import ActionResult
 from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
-from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
@@ -424,9 +423,11 @@ def test_an_expired_session_asks_once_and_raises_no_row_of_its_own(home, browse)
 
 
 def _fire(trigger: Trigger, result: ActionResult) -> None:
-    orch = object.__new__(GatewayOrchestrator)
-    orch.dashboard_state = None
-    asyncio.run(orch._record_fire_outcome(trigger, result=result))
+    import time
+
+    from personalclaw.triggers.run_record import record_run
+
+    asyncio.run(record_run(trigger, started_at=time.time(), result=result))
 
 
 def _parked_result(home: Path, trigger: Trigger) -> ActionResult:

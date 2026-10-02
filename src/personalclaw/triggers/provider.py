@@ -141,9 +141,9 @@ def armable(store: Any) -> list["Trigger"]:
     :func:`personalclaw.triggers.routing.routed` for their store before calling this, which is how a
     provider's row gets here at all, and :meth:`personalclaw.triggers.store.TriggerStore.upsert`
     routes that row's write back to the provider that served it — at the store, not at the arm
-    sites, because the gateway's fire-outcome recorder writes a fired row back too. Handed a native
-    store — every poll loop, every chain lookup, every test double — this returns exactly the local
-    rows it always did.
+    sites, because the run recorder (`run_record.record_run`) writes a fired row back too. Handed a
+    native store — every poll loop, every chain lookup, every test double — this returns exactly the
+    local rows it always did.
     """
     return owner_authored(_ok_triggers(store.load()))
 

@@ -657,9 +657,9 @@ def test_a_manual_run_APPENDS_a_history_row_tagged_manual_and_advances_last_run(
     `GET .../history` gained no row and the trigger's last-run stamp never moved, so the completion
     watcher waited on a `last_run_ts` that would never change and the "Running…" pill stuck forever.
 
-    The autonomous fire path records via `gateway._record_fire_outcome` — a `ScheduleRun` in
+    The autonomous fire path records via `run_record.record_run` — a `ScheduleRun` in
     `ScheduleRunStore` plus a `last_success_at` stamp. This asserts a manual run now leaves the SAME
-    evidence, tagged `manual`, reusing that ledger rather than a parallel one.
+    evidence, tagged `manual`, through that same recorder rather than a parallel one.
     """
     from personalclaw.action_providers import ActionResult
     from personalclaw.triggers.models import Trigger
@@ -749,7 +749,7 @@ def test_a_manual_run_does_NOT_spend_the_max_fires_budget(home, state, monkeypat
 
 def test_a_FAILED_manual_run_is_recorded_as_a_failure_not_swallowed(home, state, monkeypatch):
     """A provider returning `success=False` must record a FAILED run and answer `ok: false` — not a
-    silent success. Mirrors `_record_fire_outcome`'s classification of a non-raising failure."""
+    silent success. The fire's classification of a non-raising failure (`run_record.record_run`)."""
     from personalclaw.action_providers import ActionResult
     from personalclaw.triggers.models import Trigger
 
@@ -818,7 +818,7 @@ def test_a_RAISING_provider_is_recorded_as_a_failure_not_a_500(home, state, monk
 
 def test_recording_a_manual_run_never_fails_the_request(home, state, monkeypatch):
     """A ledger write failure must not turn a completed run into a crashed request — the same
-    best-effort contract `_record_fire_outcome` holds."""
+    best-effort contract `run_record.record_run` holds."""
     from personalclaw.action_providers import ActionResult
     from personalclaw.triggers.models import Trigger
 
@@ -2090,7 +2090,7 @@ async def test_a_STORE_trigger_SERVES_its_run_history(home, monkeypatch):
     `web_watch`, `file`, `idle`, `run_completed`, `view`, `webhook` — was told `supported: false`
     with a reason naming LIFECYCLE triggers, a kind it is not.
 
-    But a store trigger DOES have run records: `_record_fire_outcome` has written them to
+    But a store trigger DOES have run records: the fire's recorder has written them to
     `ScheduleRunStore` under `job_id=trigger.id`. Three fires persisted three
     rows and the endpoint reported none, so the detail panel read "No runs recorded yet" for an
     automation that had run three times.
@@ -2099,10 +2099,11 @@ async def test_a_STORE_trigger_SERVES_its_run_history(home, monkeypatch):
     for a store trigger — so the schedule branch's own `list_for_job(raw, …)` already worked.
     The branch was simply written before store triggers had a run store.
     """
+    import time as _time
     import types as _types
 
-    from personalclaw.gateway import GatewayOrchestrator
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.run_record import record_run
     from personalclaw.triggers.store import TriggerStore
 
     store = TriggerStore(base_dir=home)
@@ -2117,11 +2118,10 @@ async def test_a_STORE_trigger_SERVES_its_run_history(home, monkeypatch):
             workflow={"inline": {"provider": "notify", "config": {}}},
         )
     )
-    orch = object.__new__(GatewayOrchestrator)
-    orch.dashboard_state = None
     for _ in range(3):
-        await orch._record_fire_outcome(
+        await record_run(
             store.get("web_watch:feed").trigger,
+            started_at=_time.time(),
             result=_types.SimpleNamespace(success=True, error=""),
         )
 
@@ -2194,10 +2194,11 @@ async def test_a_STORE_trigger_RUN_can_be_OPENED(home, monkeypatch):
     against a real `file:notes` row), so the gate was the entire defect — the same shape as S166,
     which is why sweeping the SIBLING route mattered rather than stopping at the first fix.
     """
+    import time as _time
     import types as _types
 
-    from personalclaw.gateway import GatewayOrchestrator
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.run_record import record_run
     from personalclaw.triggers.store import TriggerStore
 
     store = TriggerStore(base_dir=home)
@@ -2212,10 +2213,9 @@ async def test_a_STORE_trigger_RUN_can_be_OPENED(home, monkeypatch):
             workflow={"inline": {"provider": "notify", "config": {}}},
         )
     )
-    orch = object.__new__(GatewayOrchestrator)
-    orch.dashboard_state = None
-    await orch._record_fire_outcome(
+    await record_run(
         store.get("web_watch:feed").trigger,
+        started_at=_time.time(),
         result=_types.SimpleNamespace(success=True, error=""),
     )
 

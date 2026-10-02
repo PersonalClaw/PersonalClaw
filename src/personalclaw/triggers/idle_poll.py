@@ -402,9 +402,14 @@ async def poll(
     `sessions is None` (an API-only process) is reported, not treated as a delivery: the state
     stays un-advanced so the fire retries once a session manager exists, rather than counting a
     cycle nobody received.
+
+    A delivered fire is counted on its trigger here, where it is decided (`run_record.note_fire`),
+    as an admission counts a clock fire: the clock's runner it is drained into counts nothing, and
+    an idle trigger that had run read as never fired.
     """
     from personalclaw.triggers import executor as ex
     from personalclaw.triggers import wakeup as wk
+    from personalclaw.triggers.run_record import note_fire
 
     now = now or time.time()
     fires, skipped = due_fires(store, now=now, base_dir=base_dir)
@@ -473,6 +478,7 @@ async def poll(
             skipped.append({"trigger_id": fire.trigger.id, "reason": reason})
             continue
         delivered_count += 1
+        note_fire(store, fire.trigger.id, at=now)
         key = wk.session_key_for(fire.trigger.id, session=str(getattr(fire.trigger, "session", "")))
         try:
             await ex.drain(sessions, key, runner, now=now, base_dir=base_dir)

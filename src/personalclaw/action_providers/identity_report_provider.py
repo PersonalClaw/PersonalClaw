@@ -9,7 +9,7 @@ drives.
 
 **Nothing here re-implements scheduling.** The trigger tick arms the clock,
 `triggers/screen.py` freezes the grant, `guardrails/rungs.py` classifies the action,
-`_record_fire_outcome` writes the run record and `delivery.report_run` routes the outcome.
+`run_record.record_run` writes the run record and `delivery.report_run` routes the outcome.
 This module owns exactly two things a scheduler cannot know: which cron expression each cadence
 means, and that `off` means do not run.
 

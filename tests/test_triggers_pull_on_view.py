@@ -200,6 +200,21 @@ def test_renders_returns_BOTH_refreshes_and_cache_hits(store, tmp_path):
     assert payloads2 == [] and len(cached2) == 2
 
 
+def test_a_refresh_is_counted_as_its_triggers_fire_and_a_cache_hit_is_not(store, tmp_path):
+    """A refresh is the trigger firing, so its run count and last-fired time move where the render
+    decides it; a render served from cache fired nothing and moves neither."""
+    from personalclaw.triggers.service import to_iso
+
+    _view(store, tid="view:a", ttl_secs=300)
+    V.renders(store, surface="dashboard.inbox", now=NOW, base_dir=tmp_path)
+    fired = store.get("view:a").trigger
+    assert fired.run_count == 1
+    assert fired.last_fired_at == to_iso(NOW)
+
+    V.renders(store, surface="dashboard.inbox", now=NOW + 10, base_dir=tmp_path)
+    assert store.get("view:a").trigger.run_count == 1
+
+
 def test_ONE_bad_binding_does_not_break_the_RENDER(store, tmp_path, monkeypatch):
     """A render is a user looking at a page. One broken binding must not blank it."""
     _view(store, tid="view:a")

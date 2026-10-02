@@ -242,8 +242,12 @@ def renders(
     A binding whose action it is not allowed to run (`triggers.grants`) is not refreshed: it serves
     what it last rendered, and the reason says what is missing. Asked before `on_render`, which
     would otherwise spend the refresh window on a refresh that cannot happen.
+
+    Each refresh is the trigger firing, and is counted here, where it is decided
+    (`run_record.note_fire`), as an admission counts a clock fire.
     """
     from personalclaw.triggers import grants
+    from personalclaw.triggers.run_record import note_fire
 
     payloads: list[dict[str, Any]] = []
     cached: list[dict[str, str]] = []
@@ -259,6 +263,7 @@ def renders(
             cached.append({"trigger_id": trigger.id, "reason": "the binding raised"})
             continue
         if decision.refresh and decision.payload is not None:
+            note_fire(store, trigger.id, at=now)
             payloads.append(decision.payload)
         else:
             cached.append({"trigger_id": trigger.id, "reason": decision.reason})

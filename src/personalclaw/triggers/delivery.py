@@ -913,8 +913,8 @@ def repeats_last_failure(trigger: Any, *, error: str) -> bool:
         # driving it: the fire path hands `report_run` the in-memory row the TICK built, and this
         # writes the hash back to disk — so the object the next fire arrives with is stale, its
         # `last_alert_hash` still empty, and nothing ever matched. A dedup control whose state the
-        # reader cannot see is the inert shape again, one layer in. `_record_fire_outcome`
-        # re-reads the store for exactly this reason.
+        # reader cannot see is the inert shape again, one layer in. The run's recorder
+        # (`run_record.record_run`) re-reads the store for exactly this reason.
         store = TriggerStore(base_dir=config_dir())
         row = store.get(trigger_id)
         live = row.trigger if row is not None else trigger

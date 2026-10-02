@@ -99,6 +99,10 @@ STATUS_TO_OUTCOME: dict[str, str] = {
     # machinery to re-pay for the whole task), and not `SKIPPED_NOOP` (something durable WAS
     # produced — the notes are the deliverable so far).
     "needs_input": Outcome.DEFERRED.value,
+    # `degraded` → `DEGRADED`: the action did its work at its no-model floor (a digest whose
+    # synthesis was unavailable still arrived). It ran, so it is neither `FAILED` nor `DEFERRED`,
+    # and it did less than it is for, so it is not a plain `RAN`.
+    "degraded": Outcome.DEGRADED.value,
     "error": Outcome.FAILED.value,
     "failure": Outcome.FAILED.value,
     "timeout": Outcome.FAILED.value,
@@ -266,6 +270,8 @@ def classify(reported: str, exception: BaseException | None = None) -> tuple[str
             # folds out of the default view — so the reason is the only thing that will ever explain
             # why. "runner reported skip" restates the status; this says what it MEANS.
             reason = "the action ran and had nothing to do; nothing durable changed"
+        elif outcome == Outcome.DEGRADED.value:
+            reason = "the action did its work without something it needs, at its reduced tier"
         return outcome, reason
     return Outcome.FAILED.value, f"unrecognized runner status {status!r}"
 

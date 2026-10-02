@@ -149,13 +149,6 @@ _MAX_INJECT_ATTEMPTS = 2
 # its build-backend grandchild).
 _AUTOUPDATE_PIP_TIMEOUT = 400.0  # `pip install -e .` — forks build backends
 
-# Max chars persisted/delivered for a fire's error summary. Sized to fit a rendered
-# AgentError envelope (WHAT/WHY/FIX, ~250 chars) so the FIX line — the actionable
-# remediation PLATFORM-LEGIBILITY §2 adds over a bare ``TypeName: msg`` — survives into
-# the run-ledger row, ``last_error_summary``, and the delivered notification, instead of
-# being cut mid-word (as the old 200-char slice did, dropping FIX from every sink).
-_ERROR_SUMMARY_MAX = 512
-
 
 def _delivery_owning(channel_id: str) -> Any:
     """The connected channel that issued *channel_id* (`channel_delivery.channel_of_id`), or None
@@ -1768,8 +1761,15 @@ class GatewayOrchestrator:
                 )
             # The tick's word on lateness rides the fire (`DueFire.late`); only the run's record
             # knows whether it then ran, so that is where it becomes `ran_late`.
-            await self._record_fire_outcome(
-                trigger, result=result, late=str(payload.get("late") or "")
+            from personalclaw.triggers import run_record
+
+            await run_record.record_run(
+                trigger,
+                started_at=fire_started,
+                result=result,
+                late=str(payload.get("late") or ""),
+                state=getattr(self, "dashboard_state", None),
+                on_attention=self._surface_attention_card,
             )
             fired_ok = bool(getattr(result, "success", True))
             # An action that only STARTED its work (an agent task, a workflow run) or parked it
@@ -1819,7 +1819,16 @@ class GatewayOrchestrator:
 
             logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
             rendered = provider_failure(provider_name, exc).render()
-            await self._record_fire_outcome(trigger, exc=exc, error=rendered)
+            from personalclaw.triggers import run_record
+
+            await run_record.record_run(
+                trigger,
+                started_at=fire_started,
+                exc=exc,
+                error=rendered,
+                state=getattr(self, "dashboard_state", None),
+                on_attention=self._surface_attention_card,
+            )
             from personalclaw.triggers import delivery as _delivery
 
             _delivery.report_run(
@@ -2119,217 +2128,6 @@ class GatewayOrchestrator:
             except Exception:  # noqa: BLE001 - the report is out; a failed retire leaves the row
                 logger.debug("could not retire trigger %s after its run", trigger_id, exc_info=True)
         return told
-
-    async def _record_fire_outcome(
-        self,
-        trigger: Any,
-        *,
-        result: Any = None,
-        exc: BaseException | None = None,
-        error: str = "",
-        late: str = "",
-    ) -> None:
-        """Record a fire's outcome and autopause a failing trigger (§3.7 / crit 3 — S139).
-
-        ``late`` is why the tick counted this fire as late (`missed.late_outcome`): a fire that
-        then did its work records ``ran_late`` and says why, as the review's Run now does.
-
-        On the raise path the caller passes the pre-rendered WHAT/WHY/FIX envelope as
-        ``error`` (PLATFORM-LEGIBILITY §2); ``exc`` is still passed because the autopause
-        exit is classified by exception TYPE, independent of the human-facing text. So
-        ``error`` is the persisted evidence and ``exc`` is the classification signal — one
-        envelope, built once at the seam, rather than this method re-deriving a bare
-        ``TypeName: msg`` of its own.
-
-        🔴 WHY THIS EXISTS. `triggers/autopause.py` ships 13 functions implementing criterion 3 —
-        typed exits, a 5-failure budget, parking for transport outages, immediate pause for config
-        errors, the attention card — and **not one production module imported it**. Driven before
-        writing: six failing provider runs left the trigger `enabled`, `health_status: 'ok'`, and
-        an empty `last_failure_at`. The decision engine was complete and unreachable.
-
-        The counter is DERIVED from the run ledger, not stored on the row, because
-        `LEGACY_FIELD_MAP` says exactly that: *"autopause counter is derived from fire records"*. A
-        copy on the trigger would be a second truth that can disagree with the ledger it summarises.
-
-        Never raises. A bookkeeping failure must not turn a completed fire into a crashed one — the
-        outcome already happened, and losing the record is strictly better than losing the loop.
-        """
-        try:
-            from personalclaw.config.loader import config_dir
-            from personalclaw.schedule_history import (
-                ScheduleRun,
-                failure_for_result,
-                late_summary,
-                status_for_result,
-                summary_for_result,
-            )
-            from personalclaw.triggers import autopause
-            from personalclaw.triggers.models import TriggerState
-            from personalclaw.triggers.routing import routed
-            from personalclaw.triggers.service import retire_after_run
-            from personalclaw.triggers.store import TriggerStore
-
-            trigger_id = str(getattr(trigger, "id", "") or "")
-            if not trigger_id:
-                return
-
-            if exc is not None:
-                # A RAISING provider is classified by exception type: auth → transport → config →
-                # failed, so a credential outage PARKS rather than spending the failure budget.
-                exit_type = autopause.classify_exception(exc)
-            elif result is not None and not bool(getattr(result, "success", True)):
-                # A provider that returned `success=False` without raising carries no exception to
-                # classify, so it reads as a plain FAILED — the fail-safe direction the module's own
-                # `classify_exception(None)` takes for an unrecognised error.
-                exit_type = autopause.ExitType.FAILED.value
-            else:
-                exit_type = autopause.ExitType.OK.value
-
-            # 🔴 WRITE THE ROW FIRST, then count. The counter reads the run
-            # ledger, and the store-backed fire path wrote NO row per fire — so the count was
-            # permanently 0 and a trigger could fail forever. `_record_run` died with
-            # `ScheduleService` and nothing replaced it on this path, which is why parking
-            # (stateless, from the exception type) worked while the BUDGET (stateful) did not.
-            store_runs = ScheduleRunStore(config_dir())
-            now = time.time()
-            # What the action REPORTED, recorded as the Run button records it
-            # (`_record_manual_run`): its status refinement (a fire that only launched a workflow
-            # is `launched`, one with nothing to do the inert `skipped_noop`), its output as the
-            # summary, and on a failure its own error. This row carried none of it: every fire
-            # read `success` or `failure`, and a provider's returned failure left the row with no
-            # reason at all.
-            ok_exit = exit_type == autopause.ExitType.OK.value
-            run_error = error or ("" if ok_exit else failure_for_result(result))
-            output = str(getattr(result, "stdout", "") or "") if result is not None else ""
-            # What a person reads on the row: the sentence the action wrote, else what it printed,
-            # which stays the trace — a browse run's JSON account.
-            line = summary_for_result(result)
-            from personalclaw.triggers import parks
-
-            if ok_exit and parks.parked(result):
-                # A park's row says it waits on you and on what, not the payload it parked with.
-                output = line = parks.waiting_line(result)
-            status = status_for_result(result) if ok_exit else "failure"
-            if late and status == "success":
-                status = "ran_late"
-                line = late_summary(late, line)
-            await store_runs.append(
-                ScheduleRun(
-                    run_id=f"fire-{int(now * 1000)}",
-                    job_id=trigger_id,
-                    job_name=str(getattr(trigger, "name", "") or ""),
-                    trigger=exit_type,
-                    started_at=now,
-                    finished_at=now,
-                    status=status,
-                    summary=line if ok_exit else run_error,
-                    trace=(output or line) if ok_exit else run_error,
-                    error=run_error[:_ERROR_SUMMARY_MAX],
-                    # The agent a launched fire started, so the row says how it went when it ends
-                    # (`triggers.settle`).
-                    work_id=str(getattr(result, "work_id", "") or "") if ok_exit else "",
-                )
-            )
-            if ok_exit:
-                # A park asks you, once, with the action's own card; a fire that went through
-                # withdraws the question an earlier one asked.
-                parks.settle(trigger, result, state=getattr(self, "dashboard_state", None))
-            # 🔴 The count must be the streak BEFORE this fire: `evaluate` adds its own unit
-            # (`count = consecutive_failures + 1`, then pauses at the threshold). Counting the row
-            # just written would double-count and pause after FOUR failures — caught by driving the
-            # 4-then-success-then-1 sequence, which paused on the fourth.
-            runs, _total = await store_runs.list_for_job(trigger_id, 0, 20)
-            prior = max(0, autopause.consecutive_failures_from(runs) - 1)
-
-            decision = autopause.evaluate(
-                exit_type=exit_type,
-                consecutive_failures=prior,
-                now=time.time(),
-                # 🔴 The PER-TRIGGER budget (R7). `evaluate` has always accepted `budget=` and
-                # this call never passed one, so `failure_policy.autopause_after` had zero readers:
-                # a trigger declaring `{"autopause_after": 2}` ran to the hardcoded 5. A
-                # control that silently WIDENS a tolerance its author narrowed, and so is
-                # invisible — the trigger
-                # keeps running, exactly as a healthy one does.
-                budget=autopause.budget_for(trigger),
-                quarantined=str(getattr(trigger, "state", "")) == TriggerState.QUARANTINED.value,
-            )
-
-            # Routed, as the tick is: a row an app serves has its health and stamps kept where it
-            # lives, and a plain lookup in the local file found none of them.
-            store = routed(TriggerStore(base_dir=config_dir()))
-            row = store.get(trigger_id)
-            if row is None:
-                return
-            live = row.trigger
-            live.health_status = decision.health
-            live.state = decision.state
-            from datetime import datetime, timezone
-
-            stamp = datetime.now(timezone.utc).isoformat()
-            if ok_exit and parks.parked(result):
-                # A fire that stopped for you is not a success: it did nothing it was
-                # asked yet. It stamps its own outcome, which `last_run_ts` reads as a run.
-                live.last_waiting_at = stamp
-            elif ok_exit:
-                live.last_success_at = stamp
-            else:
-                live.last_failure_at = stamp
-                # 🔴 THE ERROR, not the lifecycle reason (§3.7 / decision 9). This stored
-                # `decision.reason`, so `last_error_summary` held "failure 3 of 5" — and the
-                # attention card, which passes that field into its `last_error` slot, rendered
-                # **"paused after 5 consecutive failures. Last error: paused after 5 consecutive
-                # failures."** The one field carrying evidence repeated the sentence beside it, so
-                # the actual exception never reached the user. `attention_card`'s own docstring
-                # says why the slot exists: "'paused after 5 consecutive failures' without the
-                # error is an alert the user has to go digging to act on."
-                #
-                # On the raise path `error` is the seam's pre-rendered WHAT/WHY/FIX envelope
-                # (PLATFORM-LEGIBILITY §2), whose WHAT line still carries the concrete
-                # ``TypeName: msg`` — so the evidence is richer, not lost. It falls back to why the
-                # result says it failed (`failure_for_result`: its error, else what a command wrote
-                # to its error output, else its exit code), then to the lifecycle reason — an empty
-                # evidence line would be worse than a redundant one.
-                detail = error or (failure_for_result(result) if result is not None else "")
-                live.last_error_summary = (detail or decision.reason)[:_ERROR_SUMMARY_MAX]
-            # 🔴 The PAUSE itself, which is the whole point: a state the module classifies as
-            # needing attention must stop firing. Leaving `enabled` True while labelling the row
-            # "autopaused" would be the inert control this program keeps finding.
-            if autopause.needs_attention(decision.state):
-                live.enabled = False
-                logger.warning(
-                    "trigger %s autopaused: %s", trigger_id, decision.reason or decision.state
-                )
-            # 🔴 PERSIST THE PARK COOLDOWN (§3.7 / decision 9). `evaluate` has always returned
-            # `retry_after=now + PARK_COOLDOWN_SECS` on a parking exit and this path DROPPED it, so
-            # `unpark_due` — the clock decision that brings a parked trigger back — had nothing to
-            # read and no caller. One transport outage parked a working trigger,
-            # which then fired 0 times over the next 5 slots and stayed `parked`. A 30-second
-            # network blip permanently disabled the automation.
-            #
-            # Cleared on any NON-parking outcome so a recovered trigger does not carry a stale
-            # cooldown into its next outage.
-            live.park_retry_after = (
-                float(decision.retry_after) if decision.state == TriggerState.PARKED.value else 0.0
-            )
-            store.upsert(live)
-            if autopause.needs_attention(decision.state):
-                # A report's automation the clock paused is its report paused: the Reports page
-                # must not say it runs (`knowledge.report_schedules.adopt`).
-                from personalclaw.knowledge import report_schedules
-
-                report_schedules.adopt(live)
-            # 🔴 Criterion 3's SECOND clause — "and surfaces in the Runs inbox".
-            # `attention_card`, `inbox_fingerprint` and `is_duplicate_card` were all dead: an
-            # autopaused automation stopped silently, and a trigger that stops without saying so is
-            # indistinguishable from one that finished. The card is what turns the state change into
-            # something the user can act on.
-            self._surface_attention_card(live, decision)
-            # A one-shot that retires after its run goes now, its run recorded: last, so no write
-            # above can put it back. One whose run did not do its work stays, switched off.
-            retire_after_run(store, live, status=status)
-        except Exception:  # noqa: BLE001 - see the docstring
-            logger.debug("could not record the fire outcome for %s", trigger, exc_info=True)
 
     async def _record_blocked_fire(self, trigger: Any, groups: str) -> None:
         """Write the `blocked_injection` ledger row for a screened payload (§7 crit 8 — S136).

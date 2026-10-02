@@ -230,7 +230,7 @@ def test_the_fire_path_RECORDS_the_outcome():
     import inspect
 
     src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
-    assert "_record_fire_outcome" in src
+    assert "run_record.record_run" in src
     assert "result = await provider.execute" in src, "the result must be CAPTURED, not discarded"
 
 
@@ -375,7 +375,7 @@ def test_the_PAUSE_still_happens_without_a_dashboard(tmp_path, monkeypatch):
 
 
 def test_last_error_summary_holds_the_ERROR_not_the_LIFECYCLE_REASON(tmp_path, monkeypatch):
-    """🔴 THE DEFECT. `_record_fire_outcome` stored `decision.reason` in `last_error_summary`, so
+    """🔴 THE DEFECT. The fire's recorder stored `decision.reason` in `last_error_summary`, so
     the field held "failure 3 of 5" — and `_surface_attention_card` passes that same field into
     `attention_card`'s `last_error` slot, producing:
 

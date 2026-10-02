@@ -51,6 +51,7 @@ key the entity does not carry would be a fence nobody can author.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from personalclaw.triggers.provider import armable
@@ -92,7 +93,7 @@ def chain_triggers(store: Any, *, source_id: str) -> list[Any]:
     Reads a :func:`~personalclaw.triggers.routing.routed` store (TSE-5) so a shared/team ``trigger``
     provider can contribute the "when the team brief finishes, notify me" half of a cascade. Safe
     here, unlike the poll loops: a ``run_completed`` row holds no schedule to advance,
-    and the write its fire produces (the gateway's outcome recorder) is routed back to the serving
+    and the writes its fire produces (its count and its run's record) are routed back to the serving
     store by :meth:`personalclaw.triggers.store.TriggerStore.upsert`.
     """
     out: list[Any] = []
@@ -286,7 +287,13 @@ def next_fires(
     `{trigger_id, trigger_name, reason}` for `record_refusals`, which writes the rows criterion 8
     requires. Both are returned rather than the caller re-deriving refusals, because a chain that
     stopped with no row is indistinguishable from one that was never configured.
+
+    Each fire is counted here, where it is decided (`run_record.note_fire`), as an admission
+    counts a clock fire: nothing else would, and a chained trigger that had run read as never fired.
+    A refused one is not counted: it did not fire, and its row says why.
     """
+    from personalclaw.triggers.run_record import note_fire
+
     payload = dict(source_payload or {})
     candidates: list[Any] = []
     for found in (
@@ -307,6 +314,7 @@ def next_fires(
                 {"trigger_id": trigger.id, "trigger_name": trigger.name or "", "reason": reason}
             )
             continue
+        note_fire(routed(store), trigger.id, at=time.time())
         fires.append((trigger, chain_payload(payload, source_id=source_id, trigger=trigger)))
     return fires, refused
 
@@ -321,8 +329,6 @@ async def record_refusals(refused: list[dict[str, str]], *, base_dir: Any = None
     and the reason says which guard held it. Through `service.persist_suppression`, the one writer
     of a suppressed fire's row, so these read exactly as those do. Never raises.
     """
-    import time
-
     from personalclaw.triggers.models import Outcome
     from personalclaw.triggers.service import persist_suppression
 

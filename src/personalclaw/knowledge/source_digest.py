@@ -79,6 +79,9 @@ class DigestResult:
     cursor: int = 0
     skipped_reason: str = ""
     prompt: str = field(default="", repr=False)
+    #: False when no narrative could be produced, so the digest went out at its no-model floor
+    #: (`UNSYNTHESISED_BODY`): the run that wrote it is a degraded one, not a plain success.
+    synthesised: bool = True
 
 
 def cursor_path() -> Path:
@@ -271,6 +274,7 @@ async def run_morning_digest(
         notified=notified,
         cursor=highest,
         prompt=prompt,
+        synthesised=body != UNSYNTHESISED_BODY,
     )
 
 

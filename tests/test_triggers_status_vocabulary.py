@@ -98,19 +98,20 @@ WRITERS: tuple[Writer, ...] = (
         min_values=9,
     ),
     Writer(
-        label="gateway.py records a fire's ScheduleRun",
+        label="gateway.py records a refused fire's ScheduleRun",
         path="gateway.py",
         table=H.SCHEDULE_STATUS_TO_OUTCOME,
         table_name="SCHEDULE_STATUS_TO_OUTCOME",
         kind="kwarg",
         name="status",
         call="ScheduleRun",
-        min_sites=2,
-        # Raised from 3 when AG-7 added the rung ladder's `skipped_gate` refusal: both refusal
-        # statuses now arrive through `_record_refused_fire`, pinned by its `_REFUSAL_STATUSES`
-        # guard, so the floor tightens rather than staying where a lost status would fit.
-        # Raised to 5 when AG-2 added the day-budget pause's `needs_input` to that same guard.
-        min_values=5,
+        # The writer GENUINELY SHRANK: a fire that ran is recorded by `triggers/run_record.py`
+        # (below), the one recorder a hand run shares, so the gateway keeps only the refusal row
+        # `_record_refused_fire` writes. Its statuses arrive pinned by the `_REFUSAL_STATUSES`
+        # guard: `blocked_injection`, the rung ladder's `skipped_gate` and the day-budget pause's
+        # `needs_input`, so the floor is all three and a lost one reds here.
+        min_sites=1,
+        min_values=3,
     ),
     Writer(
         label="triggers/service.py records a suppressed fire's ScheduleRun",
@@ -124,15 +125,18 @@ WRITERS: tuple[Writer, ...] = (
         min_values=6,
     ),
     Writer(
-        label="dashboard/handlers/trigger_runs.py records a manual run's ScheduleRun",
-        path="dashboard/handlers/trigger_runs.py",
+        # Every run that reached its action, a fire's and a hand run's: a failure, what
+        # `status_for_result` reads off the result (the closed `RESULT_STATUSES`, `degraded`
+        # included), and `ran_late` for a late run that did its work.
+        label="triggers/run_record.py records a run's ScheduleRun",
+        path="triggers/run_record.py",
         table=H.SCHEDULE_STATUS_TO_OUTCOME,
         table_name="SCHEDULE_STATUS_TO_OUTCOME",
         kind="kwarg",
         name="status",
         call="ScheduleRun",
         min_sites=1,
-        min_values=4,
+        min_values=8,
     ),
     Writer(
         # The ending of the agent a launched run started, written onto that run's row: `success`,
@@ -494,7 +498,7 @@ def test_the_writer_file_census_is_pinned() -> None:
     assert call_files == {
         "gateway.py",
         "triggers/service.py",
-        "dashboard/handlers/trigger_runs.py",
+        "triggers/run_record.py",
         # The boot sweep. Named here rather than added to `WRITERS` because it is the one
         # writer with nothing for the table floors to catch: it writes a single module-level
         # constant, `reaper.RESTART_INTERRUPTED_STATUS = "interrupted"`, which is a key of

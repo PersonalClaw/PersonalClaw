@@ -483,6 +483,19 @@ class TestAction:
         assert r.state == InstanceState.DEGRADED
         assert r.degraded_reason
 
+    async def test_degraded_is_a_success_that_says_what_it_went_without(self) -> None:
+        """An action at its no-model floor (a digest with no synthesis) did its work, so the step
+        is not FAILED, and did less than it is for, so it is not a plain DONE either."""
+        result = self._Result(outcome="degraded")
+        result.summary = "Digest synthesis was unavailable."
+        r = await dispatch_action(
+            _n({"kind": "action", "id": "a", "config": {"provider": "source-digest"}}),
+            _ctx(),
+            get_provider=self._provider(result),
+        )
+        assert r.state == InstanceState.DEGRADED
+        assert r.degraded_reason == "Digest synthesis was unavailable."
+
     async def test_skip_maps_to_no_change(self) -> None:
         r = await dispatch_action(
             _n({"kind": "action", "id": "a", "config": {"provider": "run-script"}}),

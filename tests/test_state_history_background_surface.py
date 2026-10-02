@@ -256,10 +256,11 @@ def test_the_surface_still_holds_when_the_OUTCOME_is_recorded(probe, monkeypatch
     orch = _orch()
     at_record: list[str] = []
 
-    async def _record(trigger, *, result=None, exc=None, **_kw):  # noqa: ANN001, ARG001
+    async def _record(trigger, **_kw):  # noqa: ANN001, ARG001
         at_record.append(sh.current_surface())
+        return ""
 
-    orch._record_fire_outcome = _record
+    monkeypatch.setattr("personalclaw.triggers.run_record.record_run", _record)
     monkeypatch.setattr(
         "personalclaw.triggers.delivery.report_run", lambda *a, **k: None, raising=True
     )

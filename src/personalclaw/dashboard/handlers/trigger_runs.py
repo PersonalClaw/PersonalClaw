@@ -9,7 +9,8 @@ answer to a question a run stopped on, a render surface refreshing its ``view`` 
 lifecycle hook's rehearsal, and opening a schedule's last result as a chat. Every one that runs a
 store trigger's action (run, fire, answer, the view refresh, and the restart review's Run now in
 ``triggers``) goes through ONE dispatch, :func:`_dispatch_store_action`, which checks the trigger's
-grant and records the run the way an autonomous fire does (:func:`_record_manual_run`).
+grant and records the run through the recorder an autonomous fire uses
+(:func:`personalclaw.triggers.run_record.record_run`, as a run by hand).
 
 Split out of :mod:`personalclaw.dashboard.handlers.triggers`, which keeps the list, create, edit,
 toggle and history routes and registers these beside them. The helpers they share (the store
@@ -65,7 +66,7 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     # every store trigger — web_watch, file, idle, run_completed, view, webhook — was told
     # `supported: false` with a reason naming LIFECYCLE triggers, a kind it is not. Three
     # fires of a `web_watch` trigger persisted three rows under `job_id="web_watch:feed"` via
-    # `_record_fire_outcome`, and the endpoint reported none, so the detail panel showed "no
+    # the fire's recorder, and the endpoint reported none, so the detail panel showed "no
     # runs recorded yet" for an automation that had run three times.
     #
     # The store key is the FULL trigger id, which is exactly what `_split_id` returns as `raw` for a
@@ -294,6 +295,14 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
         caps=caps,
     )
     payload = {"trigger_id": raw, "body": fenced, "source": "webhook.fire"}
+
+    # A webhook's fire is its trigger firing, as a clock's is, so it is counted where it is
+    # decided (`run_record.note_fire`); its run is recorded through the hand-run dispatch below.
+    import time as _time
+
+    from personalclaw.triggers.run_record import note_fire
+
+    note_fire(store, raw, at=_time.time())
 
     # Fire-and-forget: a webhook sender must not block on an LLM turn. Tracked on
     # `state._background_tasks` so the task is not garbage-collected mid-run — the idiom
@@ -587,14 +596,12 @@ async def _dispatch_store_action(
     # recorded NOTHING — no `ScheduleRunStore` row, no `last_run_ts` stamp. So the action ran while
     # `GET .../history` gained no row and the trigger's last-run stamp never moved, and the UI's
     # completion watcher (`ScheduleDetail`/`StoreTriggerDetail`) waited on a `last_run_ts` that
-    # would never change — the "Running…" pill stuck forever. The autonomous fire path records via
-    # `gateway._record_fire_outcome`; the docstring above claims the two "share one dispatch so
-    # their behaviour cannot drift", and recording is exactly where it had drifted.
-    # `_record_manual_run` reuses the SAME `ScheduleRunStore` ledger and the SAME
-    # `last_success_at`/`last_failure_at`/`last_waiting_at` stamps, tagged `manual` — see its
-    # docstring for why `run_count` (the fire budget) is not spent. A `view.rendered` refresh
-    # flows through this same recorder, so a pull-on-view fire leaves the same run
-    # evidence a manual Run does.
+    # would never change — the "Running…" pill stuck forever. It is recorded by the one recorder a
+    # fire is recorded by (`run_record.record_run`), as a run by hand: tagged `manual`, its stamps
+    # moved, and neither the fire meters (`run_count`, the `max_fires` budget a Run button must not
+    # spend, or a user testing an automation could lock themselves out of it) nor its health. A
+    # `view.rendered` refresh and a webhook's fire flow through this same dispatch, so they leave
+    # the same run evidence a Run now does.
     from personalclaw.triggers import delivery, fire_facts
     from personalclaw.triggers.delivery import status_url
 
@@ -636,13 +643,13 @@ async def _dispatch_store_action(
         _record_stopped_run(trigger_id, started=started)
         raise
     except Exception as exc:  # noqa: BLE001 - a failed manual run is RECORDED, not raised (#308)
-        await _record_manual_run(trigger, started=started, exc=exc)
+        await _record_hand_run(trigger, started=started, exc=exc, state=state)
         delivery.report_run(state, trigger, ok=False, error=f"{type(exc).__name__}: {exc}")
         return False, f"failed: {type(exc).__name__}: {exc}"
     finally:
         if claimed is not None:
             _give_back_claim(trigger_id, holder=holder, root=claimed)
-    await _record_manual_run(trigger, started=started, result=result, late=late)
+    await _record_hand_run(trigger, started=started, result=result, late=late, state=state)
     from personalclaw.schedule_history import failure_for_result, summary_for_result
 
     ok = result is None or bool(getattr(result, "success", True))
@@ -711,8 +718,9 @@ def _give_back_claim(trigger_id: str, *, holder: str, root: Any) -> None:
 def _record_stopped_run(trigger_id: str, *, started: float) -> None:
     """Record a hand run a stop or a restart cut off (`reaper.record_stopped_run`). Never raises.
 
-    The row is the hand run's (`manual`) and the trigger's health is left alone, as
-    `_record_manual_run` leaves it; the card waits on the review like any interrupted run's.
+    The row is the hand run's (`manual`) and the trigger's health is left alone, as a hand run's
+    record leaves it (`run_record.record_run`); the card waits on the review like any interrupted
+    run's.
     """
     try:
         from personalclaw import restart_request
@@ -730,150 +738,37 @@ def _record_stopped_run(trigger_id: str, *, started: float) -> None:
         logger.warning("could not record a hand run a stop cut off: %s", trigger_id, exc_info=True)
 
 
-async def _record_manual_run(
+async def _record_hand_run(
     trigger: Any,
     *,
     started: float,
     result: Any = None,
     exc: BaseException | None = None,
     late: str = "",
+    state: Any = None,
 ) -> None:
-    """Append a MANUAL run record and advance the trigger's last-run stamp (#308).
+    """Record a run by hand through the one recorder, in the home the handlers read: their trigger
+    store and run history (`triggers._trigger_store`, `triggers._runs_store`). Never raises, as the
+    recorder does not: losing a run record is recoverable, losing the response is not."""
+    from personalclaw.dashboard.handlers.triggers import _runs_store, _trigger_store
+    from personalclaw.triggers.run_record import record_run
 
-    Reuses the SAME ledger the autonomous fire path appends to — `ScheduleRunStore`, keyed by the
-    trigger id (via `triggers._runs_store()`) — and the SAME outcome stamps
-    `gateway._record_fire_outcome` writes (`last_success_at`, `last_failure_at`, and
-    `last_waiting_at` for a run that stopped for you), so a Run button and an autonomous tick leave
-    the same evidence that a run happened. This is not a parallel
-    recorder: it writes the identical `ScheduleRun` shape to the identical store, and stamps the
-    identical trigger fields. The read surfaces (`/history`, `_last_run_ts`, the completion watcher)
-    already work — they were simply reading a store nothing wrote to on this path.
-
-    Tagged `trigger="manual"`, not the autonomous exit type, for two behaviours the run store
-    already depends on: `ScheduleRunStore.count_since` excludes `manual` rows from the hourly cap (a
-    person clicking Run is not the machine running away), and `autopause.consecutive_failures_from`
-    treats a `manual` exit as transparent — so testing a broken automation by hand can neither
-    autopause it nor reset a real failure streak.
-
-    🔴 `run_count` is deliberately NOT incremented and the autopause engine is deliberately NOT run
-    — this records the run HISTORY the manual path was missing, never the fire ALLOWANCE it
-    correctly skips. `Trigger.run_count` is the `max_fires` fire-budget meter
-    (`service._budget_remaining` reads it, written only at the autonomous fire-GRANT in
-    `service.admit_fire`), and `tools.MANUAL_NEVER_BYPASSES` pins `budget` among the gates a manual
-    fire never spends — the same reason `count_since` excludes manual rows. Spending the budget
-    from a Run button would let a user lock themselves out of their own automation by testing it.
-    Likewise a manual run must not drive `state`/`health`/`enabled`: a
-    hand-run of a healthy trigger that fails once is not the machine deciding to autopause itself.
-
-    Never raises: a bookkeeping failure must not turn a completed manual run into a crashed request,
-    the same contract `_record_fire_outcome` holds. Losing a run record is recoverable; losing the
-    response is not.
-    """
     try:
-        import time
-        from datetime import datetime, timezone
-
-        from personalclaw.dashboard.handlers.triggers import _runs_store, _trigger_store
-        from personalclaw.schedule_history import (
-            ScheduleRun,
-            failure_for_result,
-            late_summary,
-            status_for_result,
-            summary_for_result,
-        )
-        from personalclaw.triggers import parks
-        from personalclaw.triggers.service import retire_after_run
-
-        trigger_id = str(getattr(trigger, "id", "") or "")
-        if not trigger_id:
-            return
-        finished = time.time()
-
-        trace = ""
-        if exc is not None:
-            status = "failure"
-            error = f"{type(exc).__name__}: {exc}"
-            summary = error
-        elif result is not None and not bool(getattr(result, "success", True)):
-            status = "failure"
-            # The same reading the autonomous recorder takes (`failure_for_result`).
-            error = failure_for_result(result)
-            summary = error
-        else:
-            # What the action reported, the same answer `_record_fire_outcome` records for a fire
-            # (`status_for_result`): T7's `launched` when it only STARTED background work whose
-            # real outcome is its OWN run's, `queued` when it is held behind a run in
-            # flight, and the inert `skipped_noop` when it had nothing to do.
-            status = status_for_result(result)
-            # A run standing in for a slot that did not run (the review's Run now) finished late,
-            # and the row says so: `missed.resolve_missed` names the outcome and the reason.
-            if late and status == "success":
-                status = "ran_late"
-            error = ""
-            # The row says what the action did in the sentence it wrote for a person, and keeps
-            # what it printed as the trace — a browse run's JSON account.
-            summary = summary_for_result(result)
-            trace = str(getattr(result, "stdout", "") or "") if result is not None else ""
-            if status == "waiting":
-                # A park's row says it waits on you and on what, not the payload it parked with.
-                summary = trace = parks.waiting_line(result)
-        if late and status != "failure":
-            summary = late_summary(late, summary)
-
-        run_id = f"manual-{int(finished * 1000)}"
-        # The same store the autonomous recorder appends to; `append_sync` credential-redacts
-        # summary/trace/error on write, so no redaction is owed here.
-        await _runs_store().append(
-            ScheduleRun(
-                run_id=run_id,
-                job_id=trigger_id,
-                job_name=str(getattr(trigger, "name", "") or ""),
-                trigger="manual",
-                started_at=started,
-                finished_at=finished,
-                duration_ms=int(max(0.0, finished - started) * 1000),
-                status=status,
-                summary=summary,
-                trace=trace or summary,
-                error=error,
-                # The agent a launched run started, so the row says how it went when it ends
-                # (`triggers.settle`).
-                work_id=str(getattr(result, "work_id", "") or "") if status == "launched" else "",
-            )
-        )
-        # A park asks you, once, with the action's own card; a run that went through withdraws the
-        # question an earlier one asked.
-        parks.settle(trigger, result)
-
-        # Advance the SAME last-run stamp the autonomous recorder writes, so `_last_run_ts` moves
-        # and the completion watcher clears the pill. `state`/`health`/`enabled` are left untouched
-        # — a manual run reports that it ran; it does not drive the lifecycle the autonomous path
-        # does.
-        store = _trigger_store()
-        row = store.get(trigger_id)
-        if row is None:
-            return
-        live = row.trigger
-        live.last_run_id = run_id
-        stamp = datetime.now(timezone.utc).isoformat()
-        if status == "failure":
-            live.last_failure_at = stamp
-            # Serializers redact this on the way out (`_serialize_store` / `_schedule_row_for`),
-            # exactly as `_record_fire_outcome` relies on.
-            live.last_error_summary = (error or "manual run failed")[:200]
-        elif status == "waiting":
-            # A run that stopped for you did nothing it was asked yet: not a success.
-            # Its own stamp still moves `last_run_ts`, so the Run button clears all the same.
-            live.last_waiting_at = stamp
-        else:
-            live.last_success_at = stamp
-        store.upsert(live)
-        # A one-shot whose own fire was cut off, or whose slot was missed, run from the review
-        # (`late` is the review's word): once this run has done its work it leaves the list, as its
-        # scheduled run would have (`retire_after_run`).
-        retire_after_run(store, live, status=status, from_review=bool(late))
-    except Exception:  # noqa: BLE001 - see the docstring: recording must never fail the run
-        logger.debug("could not record the manual run for %s", trigger, exc_info=True)
+        store, runs = _trigger_store(), _runs_store()
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("could not open the stores to record a hand run of %s", trigger, exc_info=True)
+        return
+    await record_run(
+        trigger,
+        started_at=started,
+        result=result,
+        exc=exc,
+        late=late,
+        by_hand=True,
+        store=store,
+        runs=runs,
+        state=state,
+    )
 
 
 async def api_trigger_view_render(request: web.Request) -> web.Response:

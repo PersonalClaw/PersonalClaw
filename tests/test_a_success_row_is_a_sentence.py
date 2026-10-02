@@ -348,18 +348,18 @@ def test_inbox_op_names_a_message_in_one_short_line_and_never_quotes_it(inbox) -
 
 def _row(home: Path, result: ActionResult, trigger_id: str) -> dict[str, Any]:
     """Record one fire through the real recorder, and read its row back with its trace."""
-    from personalclaw.gateway import GatewayOrchestrator
+    import time
+
     from personalclaw.schedule_history import ScheduleRunStore
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.run_record import record_run
     from personalclaw.triggers.store import TriggerStore
 
     trigger = Trigger(
         id=trigger_id, name=trigger_id, kind="clock", spec={"kind": "cron", "expr": "0 9 * * *"}
     )
     TriggerStore(base_dir=home).upsert(trigger)
-    orch = object.__new__(GatewayOrchestrator)
-    orch.dashboard_state = None
-    asyncio.run(orch._record_fire_outcome(trigger, result=result))
+    asyncio.run(record_run(trigger, started_at=time.time(), result=result))
     runs = ScheduleRunStore(home)
     (row,), _total = asyncio.run(runs.list_for_job(trigger_id, 0, 5))
     full = asyncio.run(runs.get_run(trigger_id, row["run_id"]))

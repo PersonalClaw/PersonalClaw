@@ -114,6 +114,40 @@ async def test_a_scoped_token_fires_the_webhook(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_an_accepted_fire_is_counted_on_its_trigger_and_a_refused_one_is_not(
+    tmp_path, monkeypatch
+):
+    """A webhook's fire is its trigger firing: its run count and last-fired time move where the
+    fire is accepted, as a clock fire's do at its admission. A refused one fired nothing."""
+    trigger_id = _make_webhook(tmp_path)
+    refused_id = _make_webhook(tmp_path, slug="not-allowed", capabilities={})
+
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
+        return True, "ran"
+
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
+    _rec, token = clients_mod.create_client(
+        "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
+    )
+    _rec, refused_token = clients_mod.create_client(
+        "wh-2", surfaces=["webhook"], scope={"trigger": refused_id}
+    )
+    state = _State()
+    client = await _client(state)
+    try:
+        assert (await _fire(client, trigger_id, token)).status == 202
+        assert (await _fire(client, refused_id, refused_token)).status == 403
+        await asyncio.gather(*state._background_tasks)
+    finally:
+        await client.close()
+    store = TriggerStore(base_dir=tmp_path)
+    fired = store.get("webhook:my-hook").trigger
+    assert fired.run_count == 1 and fired.last_fired_at
+    refused = store.get("webhook:not-allowed").trigger
+    assert refused.run_count == 0 and refused.last_fired_at == ""
+
+
+@pytest.mark.asyncio
 async def test_the_inbound_body_reaches_the_action_fenced(tmp_path, monkeypatch):
     """The untrusted body is wrapped as data before it reaches the agent — never as instructions."""
     trigger_id = _make_webhook(tmp_path)

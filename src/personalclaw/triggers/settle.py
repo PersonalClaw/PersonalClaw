@@ -18,8 +18,8 @@ The row now names the agent (`ActionResult.work_id`), and when the agent ends
   row says they declined it, and no note calls it one (`SubagentInfo.declined`).
 
 A failure or a refusal is also stamped on the trigger (`last_failure_at`, `last_error_summary`),
-and a success moves `last_success_at`, as the fire's own recorders stamp a run that ended when its
-action did, so the Triggers list's last run says what the history says, and why.
+and a success moves `last_success_at`, through the stamps a run that ended with its action takes
+(`run_record.stamp_run`), so the Triggers list's last run says what the history says, and why.
 
 A run that may do less than the step that started it asks (`SubagentInfo.held_back`: a working
 folder its owner has not trusted, an agent CLI no files to change can be held to) leads its row, its
@@ -32,7 +32,6 @@ to settle for one.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -119,21 +118,18 @@ def settle_agent_run(info: Any, *, base_dir: Path | None = None) -> bool:
         )
         if taken and not declined:
             why = refused_line(refused) if status == "refused" else error
-            _stamp(
-                trigger_id,
-                failed=status != "success",
-                error=with_why_it_was_held_back(info, why),
-                home=home,
-            )
+            _stamp(trigger_id, status=status, why=with_why_it_was_held_back(info, why), home=home)
         return taken
     except Exception:  # noqa: BLE001 - see the docstring: the row is bookkeeping about the run
         logger.warning("could not settle the run of trigger %s", trigger_id, exc_info=True)
         return False
 
 
-def _stamp(trigger_id: str, *, failed: bool, error: str, home: Path) -> None:
-    """Move the trigger's last-run stamps for a run that has now ended, as the recorders do for a
-    run that ended with its action (`gateway._record_fire_outcome`, `_record_manual_run`)."""
+def _stamp(trigger_id: str, *, status: str, why: str, home: Path) -> None:
+    """Move the trigger's stamps for a run whose work has now ended as *status*, as a run that
+    ended with its action moves them (`run_record.stamp_run`). Its row is still the last one, so
+    `last_run_id` stays as it is."""
+    from personalclaw.triggers.run_record import stamp_run
     from personalclaw.triggers.store import TriggerStore
 
     store = TriggerStore(base_dir=home)
@@ -141,11 +137,5 @@ def _stamp(trigger_id: str, *, failed: bool, error: str, home: Path) -> None:
     if row is None:
         return
     live = row.trigger
-    stamp = datetime.now(timezone.utc).isoformat()
-    if failed:
-        live.last_failure_at = stamp
-        # Serializers redact it on the way out (`_serialize_store`), as they do the recorders'.
-        live.last_error_summary = (error or "the agent failed")[:200]
-    else:
-        live.last_success_at = stamp
+    stamp_run(live, status=status, why=why)
     store.upsert(live)

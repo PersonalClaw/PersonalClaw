@@ -679,6 +679,41 @@ class TestTheCallSites:
         assert [r.rule for r in called[0]["rules"]] == ["skip dependabot"]
         assert json.loads(result.stdout)["collected"] == _FIXTURE_SIZE
 
+    async def test_a_digest_with_no_proposals_it_could_use_is_a_degraded_run(
+        self, monkeypatch: Any
+    ) -> None:
+        """The digest still goes out, at its floor (the items, no proposals), and its run says it
+        was degraded rather than reading as a plain success."""
+        import personalclaw.proactive.pipeline as pipeline_mod
+        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.action_providers.triage_digest_provider import (
+            TriageDigestActionProvider,
+        )
+        from personalclaw.proactive.pipeline import TriageResult
+        from personalclaw.proactive.proposals import ProposalBatch
+
+        degraded = {"batch": ProposalBatch(degraded=True)}
+
+        async def fake_run_triage(items: Any, **_kw: Any) -> TriageResult:
+            return TriageResult(manifest=build_manifest(_items()), **degraded)
+
+        monkeypatch.setattr(pipeline_mod, "run_triage", fake_run_triage)
+        monkeypatch.setattr(
+            "personalclaw.action_providers.triage_digest_provider._proactive_config",
+            lambda: type("C", (), {"triage_enabled": True, "classifier_gate_enabled": True})(),
+        )
+        provider = TriageDigestActionProvider()
+
+        result = await provider.execute({}, ActionContext(event="clock", payload={}))
+        assert result.success is True
+        assert result.outcome == "degraded"
+        assert "without proposals" in result.summary
+        assert json.loads(result.stdout)["degraded"] is True
+
+        degraded["batch"] = ProposalBatch()
+        result = await provider.execute({}, ActionContext(event="clock", payload={}))
+        assert result.outcome == "" and result.summary == ""
+
     async def test_the_provider_fails_closed_when_the_switch_is_off(self, monkeypatch: Any) -> None:
         from personalclaw.action_providers.base import ActionContext
         from personalclaw.action_providers.triage_digest_provider import (

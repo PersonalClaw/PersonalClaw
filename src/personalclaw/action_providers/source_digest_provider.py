@@ -120,14 +120,25 @@ class SourceDigestActionProvider(ActionProvider):
             return ActionResult(
                 success=True, exit_code=0, stdout=f"source digest: {result.skipped_reason}"
             )
-        return ActionResult(
-            success=True,
-            exit_code=0,
-            stdout=(
-                f"source digest: created {result.item_id} from {result.item_count} items "
-                f"(notified={result.notified})"
-            ),
+        stdout = (
+            f"source digest: created {result.item_id} from {result.item_count} items "
+            f"(notified={result.notified})"
         )
+        if not result.synthesised:
+            # The digest still went out, at its no-model floor: its items, and a body saying the
+            # synthesis was unavailable. Its run is degraded, and says so, not a plain success.
+            return ActionResult(
+                success=True,
+                exit_code=0,
+                stdout=stdout,
+                outcome="degraded",
+                summary=(
+                    "Digest synthesis was unavailable, so the digest of "
+                    f"{result.item_count} item{'' if result.item_count == 1 else 's'} has no "
+                    "summary. The items are in your library."
+                ),
+            )
+        return ActionResult(success=True, exit_code=0, stdout=stdout)
 
 
 def _open_store():

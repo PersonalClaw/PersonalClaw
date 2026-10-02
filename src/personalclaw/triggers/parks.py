@@ -7,8 +7,8 @@ run's gate (`workflows.gate_answers`). A trigger's action had no such seam: its 
 `success` in the trigger's history, and nothing anyone could answer was raised — or, for a session
 that had expired, a site-level row that resumed nothing. This is that seam for a trigger.
 
-* :func:`settle` — called by BOTH run recorders, the autonomous fire
-  (`gateway._record_fire_outcome`) and the Run button (`_record_manual_run`), once the run's row is
+* :func:`settle` — called by the run recorder (`run_record.record_run`), for an autonomous fire
+  and for the Run button alike, once the run's row is
   written. A result that parked raises the park (:func:`raise_park`): one per trigger, and ONE
   Inbox row carrying the action's own card and the park's token — deduped per trigger while it is
   open, with the same token while it is, so a trigger that fires again before anyone answers asks

@@ -116,6 +116,11 @@ class Outcome(str, Enum):
     RAN = "ran"
     #: It ran, later than scheduled — `scheduled_for` is recorded alongside `started_at`.
     RAN_LATE = "ran_late"
+    #: It ran and did its work at a reduced tier: something it needs was unavailable (a model that
+    #: answered nothing), so it delivered its declared floor (`resilience/degraded.py`) and its
+    #: reason says what it went without. Not a failure, which a retry would spend on the same
+    #: outage, and not a plain run either.
+    DEGRADED = "degraded"
     #: The overlap claim lock was held by a run already in flight.
     SKIPPED_OVERLAP = "skipped_overlap"
     #: A cost/action cap was breached BEFORE the claim, so nothing was spent.
@@ -950,7 +955,7 @@ class Trigger:
     #:
     #: 🔴 `autopause.evaluate` has always RETURNED `retry_after=now + PARK_COOLDOWN_SECS` on a
     #: parking exit, and `unpark_due` has always implemented the clock decision — and this
-    #: entity had nowhere to keep the number, so `_record_fire_outcome` dropped it and it had no
+    #: entity had nowhere to keep the number, so the fire's recorder dropped it and it had no
     #: caller. One transport outage parked a working trigger and it fired **0 times
     #: over the next 5 slots and stayed `parked` indefinitely** — a 30-second network blip
     #: permanently disabling an automation.

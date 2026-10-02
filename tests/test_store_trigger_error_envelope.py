@@ -11,7 +11,7 @@ run record.
 
 This pins the fix at the SEAM: a provider that raises must surface the coded envelope in
 BOTH sinks the handler feeds — the delivered outcome (`delivery.report_run`) and the
-recorded outcome (`_record_fire_outcome` → the run-ledger row + `last_error_summary`) —
+recorded outcome (`run_record.record_run` → the run-ledger row + `last_error_summary`) —
 never a bare ``TypeName: msg``. It fails if the wrap is removed: the delivered/recorded
 error would collapse back to ``"RuntimeError: boom"`` with no WHY/FIX, which is exactly the
 regression it guards.
@@ -106,7 +106,7 @@ def test_the_RECORDED_error_carries_the_envelope_in_both_persisted_sinks(tmp_pat
     # line, which renders LAST (~char 250) and was silently cut mid-word by the old 200-char
     # slice (its `FIX: ` label sat under 200, so a substring check would have missed the cut).
     # Equality also pins the S162 "error, not the lifecycle reason" contract: no "consecutive
-    # failures" restatement leaks in. Lower `_ERROR_SUMMARY_MAX` back below the envelope and
+    # failures" restatement leaks in. Lower `run_record.ERROR_MAX` back below the envelope and
     # both equalities fail.
     from personalclaw.action_providers import provider_failure
 

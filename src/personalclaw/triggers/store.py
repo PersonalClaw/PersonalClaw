@@ -276,12 +276,11 @@ class TriggerStore(TriggerStoreProvider):
         (TSE-5). Writing it here instead would put one trigger id in two stores, and since a local
         row WINS every later read, the team's row would silently fork into a local copy and the
         shared file would stop describing what actually runs. The check belongs at this one funnel
-        rather than at the arm sites because the arm path is not the only writer: the gateway's
-        fire-outcome recorder, its failure-dedup path and its autopause path each build their own
-        `TriggerStore` and write a fired row back through it. `routing.route_upsert` returns None
-        on every single-user install (one dict emptiness check, no I/O) and for every id no
-        provider serves, which is why this
-        costs nothing when nothing is installed.
+        rather than at the arm sites because the arm path is not the only writer: the run recorder
+        (`run_record.record_run`), the failure-dedup path and the autopause it applies each build
+        their own `TriggerStore` and write a fired row back through it. `routing.route_upsert`
+        returns None on every single-user install (one dict emptiness check, no I/O) and for every
+        id no provider serves, which is why this costs nothing when nothing is installed.
         """
         from personalclaw.triggers import routing
 

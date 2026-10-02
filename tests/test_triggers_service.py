@@ -713,9 +713,9 @@ def test_the_park_cooldown_is_PERSISTED_by_the_outcome_path():
     dropped it, so even a caller that asked `unpark_due` had nothing to read."""
     import inspect
 
-    from personalclaw import gateway
+    from personalclaw.triggers import run_record
 
-    source = inspect.getsource(gateway)
+    source = inspect.getsource(run_record)
     assert "live.park_retry_after = (" in source
     assert "float(decision.retry_after)" in source
 
@@ -845,7 +845,7 @@ def test_a_DRY_RUN_persists_nothing(store, tmp_path, monkeypatch):
 
 
 def test_a_GRANTED_fire_is_NOT_written_here(store, tmp_path, monkeypatch):
-    """`gateway._record_fire_outcome` owns the row for a fire that actually ran, once it settles.
+    """`run_record.record_run` owns the row for a fire that actually ran, once it settles.
     Writing one here too would double-count every success in `count_since` — the rate meter S152
     built, which reads this very store."""
     from personalclaw.triggers import claims

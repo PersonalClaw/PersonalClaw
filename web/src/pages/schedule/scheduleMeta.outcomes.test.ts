@@ -57,6 +57,16 @@ describe('statusMeta — the typed outcome vocabulary', () => {
     expect(m.tone).not.toBe('var(--color-danger)')
   })
 
+  it('renders a degraded run as degraded, not as a plain success', () => {
+    // A digest whose synthesis was unavailable still arrived: it ran, at its reduced tier. Neither
+    // the ok-green of a run that did all it is for nor the red of one that broke.
+    const m = statusMeta('degraded')
+    expect(m.label).toBe('degraded')
+    expect(m.tone).toBe('var(--color-warning)')
+    expect(m.tone).not.toBe(statusMeta('success').tone)
+    expect(m.tone).not.toBe(statusMeta('failure').tone)
+  })
+
   it('keeps the PRE-EXISTING labels unchanged', () => {
     // The shipped UI renders these; adding branches must not move them.
     expect(statusMeta('ok').label).toBe('ok')

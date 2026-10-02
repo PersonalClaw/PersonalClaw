@@ -711,15 +711,17 @@ async def admit_fire(
     Everything a gate reads is gathered UP FRONT into `FireContext`, so `firepath.evaluate` stays
     pure. On a suppression the typed row is persisted (§7 crit 8 — S171: "every suppressed fire
     appears as a typed ledger row with a reason — zero silent drops"). On a grant the claim is
-    written — the CALLER releases it when the run settles — and the two meters are advanced:
+    written — the CALLER releases it when the run settles — and the two meters are advanced
+    (`run_record.count_fire`, their one writer):
 
     * `run_count`, which the budget reads. Incremented on a GRANTED fire, before dispatch:
       `max_fires` bounds attempts the substrate authorised, and deferring the increment to
       completion would let a storm of in-flight fires all pass a cap of one.
-    * `last_fired_at`, which the SPACING gate reads (S151). Written here and nowhere else, for the
-      same reason: this is the one point a fire is GRANTED. Writing it at completion would let a
-      burst of in-flight fires all see the same stale timestamp and every one pass a debounce;
-      writing it on a SUPPRESSED fire would make a blocked fire space out the next real one.
+    * `last_fired_at`, which the SPACING gate reads. Written at the grant for the same
+      reason: writing it at completion would let a burst of in-flight fires all see the same stale
+      timestamp and every one pass a debounce, and writing it on a SUPPRESSED fire would make a
+      blocked fire space out the next real one. A fire no admission walks (a watched file or page,
+      a chain, a quiet session) is counted where it is decided instead (`run_record.note_fire`).
 
     `persist=False` is the dry run (`automation doctor`): the walk runs and nothing is written.
 
@@ -795,8 +797,9 @@ async def admit_fire(
     # API read the same store) can see this run in flight.
     if persist and decision.claim is not None:
         claims.write_claim(decision.claim, base_dir=base_dir)
-    trigger.run_count = int(getattr(trigger, "run_count", 0) or 0) + 1
-    trigger.last_fired_at = to_iso(now)
+    from personalclaw.triggers.run_record import count_fire
+
+    count_fire(trigger, at=now)
     if persist:
         store.upsert(trigger)
     return Admission(decision=decision, row=row)
@@ -861,7 +864,7 @@ async def persist_suppression(
     in `trigger` and `status`. Reusing the shape means the runs feed projects these exactly
     as it already projects a blocked one, instead of needing a second reader.
 
-    Only SUPPRESSIONS. A granted fire's row is written by `gateway._record_fire_outcome`
+    Only SUPPRESSIONS. A granted fire's row is written by `run_record.record_run`
     once the run settles; writing one here too would double-count every success in
     `count_since` — the rate meter S152 built, which reads this very store.
 
@@ -1090,9 +1093,14 @@ def _own_time(trigger: Any) -> float:
 
 
 #: What a run must be recorded as for a one-shot that retires after its run to go: it did its work,
-#: on time or late, or had nothing to do.
+#: on time or late, at its reduced tier, or had nothing to do.
 _DID_ITS_WORK: frozenset[str] = frozenset(
-    {Outcome.RAN.value, Outcome.RAN_LATE.value, Outcome.SKIPPED_NOOP.value}
+    {
+        Outcome.RAN.value,
+        Outcome.RAN_LATE.value,
+        Outcome.DEGRADED.value,
+        Outcome.SKIPPED_NOOP.value,
+    }
 )
 
 
@@ -1102,10 +1110,10 @@ def retire_after_run(store: Any, trigger: Any, *, status: str, from_review: bool
     ``status`` is what the caller just recorded for that run (`ScheduleRun.status`), and
     ``trigger`` the stored row it read to record it. True when the row went.
 
-    Called by the recorders, after they write the run: the scheduled fire's
-    (`gateway._record_fire_outcome`), the end of work a fire only started
-    (`gateway._report_to_its_trigger`), and a Run now's (`_record_manual_run`), which is how the
-    review runs an interrupted one or a missed one. The row goes only for a one-shot whose slot the
+    Called once a run is recorded: by the one recorder (`triggers.run_record.record_run`) for a
+    fire and for a Run now, which is how the review runs an interrupted one or a missed one, and
+    for the end of work a fire only started (`gateway._report_to_its_trigger`). The row goes only
+    for a one-shot whose slot the
     clock took (switched off, no next fire) and whose own fire it granted (`last_fired_at` at or
     after its time) — or, *from_review*, whose missed slot the review just ran in its place: a
     missed one-shot's slot is taken without a grant (`recover`), and its Run now is its run. Never

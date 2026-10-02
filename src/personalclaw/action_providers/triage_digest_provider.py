@@ -391,6 +391,19 @@ class TriageDigestActionProvider(ActionProvider):
         summary["window_start"] = since_iso
         summary["ledger_rows"] = _record(result, ctx)
         summary["notes"] = list(result.notes)
+        if result.batch.degraded:
+            # The digest went out at its floor: the items, the gate applied, and no proposals,
+            # which its body says. A run that did that is degraded, and says so, not a success.
+            return ActionResult(
+                success=True,
+                exit_code=0,
+                stdout=json.dumps(summary),
+                outcome="degraded",
+                summary=(
+                    "The triage digest went out without proposals: the proposal step gave none it "
+                    "could use."
+                ),
+            )
         return ActionResult(success=True, exit_code=0, stdout=json.dumps(summary))
 
 

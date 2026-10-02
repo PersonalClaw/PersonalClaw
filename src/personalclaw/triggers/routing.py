@@ -17,8 +17,8 @@ This module closes both. Two pieces, and the split is the design:
 
 1. :func:`route_upsert` / :func:`route_delete` — the WRITE decision, called from
    :class:`personalclaw.triggers.store.TriggerStore`'s own ``upsert``/``delete``. It lives there
-   rather than at the arm sites because the arm path is not the only writer: the gateway's fire-
-   outcome recorder, the failure-dedup path and the autopause path each construct their OWN
+   rather than at the arm sites because the arm path is not the only writer: the run recorder
+   (`run_record.record_run`), the failure-dedup path and the autopause path each construct their OWN
    ``TriggerStore`` and write a fired row back through it. Routing at seven arm sites would have
    left every one of those minting the duplicate id this exists to prevent. Funnelling through the
    native store's write path means there is no second spelling of "persist a trigger" to forget.

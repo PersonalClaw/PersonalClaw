@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -138,7 +139,12 @@ def poll_all(store: Any, *, base_dir: Path | str | None = None) -> list[dict[str
     One trigger's failure (a glob over an unreadable tree, a vanished mount) must not strand the
     rest: each poll is isolated, because a poll loop that died on one bad watch would silently stop
     firing every other file automation the user has.
+
+    Each fire is counted here, where it is decided (`run_record.note_fire`), as an admission
+    counts a clock fire: nothing else would, and a file trigger that had run read as never fired.
     """
+    from personalclaw.triggers.run_record import note_fire
+
     fires: list[dict[str, Any]] = []
     for trigger in file_triggers(store):
         try:
@@ -147,5 +153,6 @@ def poll_all(store: Any, *, base_dir: Path | str | None = None) -> list[dict[str
             logger.warning("file-watch poll failed for %s", trigger.id, exc_info=True)
             continue
         if payload is not None:
+            note_fire(store, trigger.id, at=time.time())
             fires.append(payload)
     return fires
