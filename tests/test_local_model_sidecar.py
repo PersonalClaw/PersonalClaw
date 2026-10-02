@@ -447,9 +447,9 @@ def test_every_spawn_in_sidecar_py_is_ceiling_wrapped():
 
     ``test_spawn_ceiling_audit`` checks that each site is *described* as ceiling-wrapped in
     an allowlist; a description can be wrong. This walks the AST and requires the first
-    positional argument of every ``Popen``/``run`` in this module to be a
-    ``spawn_shim_argv(...)`` result, so a raw argv reds here even if the allowlist still
-    says otherwise.
+    positional argument of every ``Popen``/``run`` in this module, and the argv an async
+    ``create_subprocess_exec`` is handed (``*launch``), to be a ``spawn_shim_argv(...)``
+    result, so a raw argv reds here even if the allowlist still says otherwise.
     """
     source = Path(sidecar.__file__).read_text(encoding="utf-8")
     spawns = 0
@@ -457,14 +457,16 @@ def test_every_spawn_in_sidecar_py_is_ceiling_wrapped():
         if not isinstance(node, ast.Call):
             continue
         callee = getattr(node.func, "attr", getattr(node.func, "id", ""))
-        if callee not in ("Popen", "run"):
+        if callee not in ("Popen", "run", "create_subprocess_exec"):
             continue
         spawns += 1
         first = node.args[0] if node.args else None
+        if callee == "create_subprocess_exec" and isinstance(first, ast.Starred):
+            first = first.value
         assert (
             isinstance(first, ast.Name) and first.id == "launch"
         ), f"spawn at line {node.lineno} does not pass a spawn_shim_argv-wrapped argv"
-    assert spawns == 2, f"expected the child spawn + the install spawn, found {spawns}"
+    assert spawns == 3, f"expected the child, the one-call child and the install, found {spawns}"
 
 
 def test_the_child_harness_imports_no_core_package():
@@ -1089,10 +1091,12 @@ def test_the_sdk_facade_is_the_lmmv_machinery_unchanged():
         SidecarWorkerError,
         get_runner,
         register_runner,
+        run_once,
         sidecar_venv_dir,
         unregister_runner,
     )
 
+    assert run_once is sidecar.run_once
     assert SidecarRunner is sidecar.SidecarRunner
     assert SidecarCrashed is sidecar.SidecarCrashed
     assert SidecarWorkerError is sidecar.SidecarWorkerError

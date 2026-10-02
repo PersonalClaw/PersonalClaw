@@ -8,8 +8,11 @@ only** and is executed by path::
     <venv>/bin/python -m personalclaw.local_models._sidecar_child  # never — see below
     <venv>/bin/python <this file> --worker /path/to/app/worker.py
 
-The parent (:class:`~personalclaw.local_models.sidecar.SidecarRunner`) passes the
-absolute path of this file, so the child never needs the core package on ``sys.path``.
+The parent (:class:`~personalclaw.local_models.sidecar.SidecarRunner`, or
+:func:`~personalclaw.local_models.sidecar.run_once` for one call) passes the absolute path of
+this file, so the child never needs the core package on ``sys.path``. An app with no venv of its
+own runs here under the gateway's interpreter, and then the packages apps declare are appended to
+the import path first (:data:`APP_PYTHON_PATH_ENV`), as they are in the gateway.
 
 **The protocol.** One JSON object per line, both directions, five verbs and no more
 (the scope fence — anything richer is an app backend, not a sidecar):
@@ -43,6 +46,7 @@ from __future__ import annotations
 
 import json
 import os
+import site
 import sys
 import traceback
 from typing import Any
@@ -50,6 +54,20 @@ from typing import Any
 #: The five verbs. A request naming anything else is refused with
 #: ``reason="unknown_verb"`` rather than guessed at.
 VERBS = ("ping", "load", "call", "stat", "unload")
+
+#: The directories of the packages apps declare (``<home>/app-python``), ``os.pathsep``-separated,
+#: when the parent runs this under the gateway's own interpreter. Named here rather than imported
+#: (this file imports no core package): it is ``personalclaw._app_python_child.PATH_ENV``.
+APP_PYTHON_PATH_ENV = "PERSONALCLAW_APP_PYTHON_PATH"
+
+
+def _add_app_packages() -> None:
+    """Append the app packages to the import path, AFTER the interpreter's own, as the gateway
+    does (``site.addsitedir``, so their ``.pth`` files are honoured): a worker can import a
+    package its app declared, and no app package can replace a module the interpreter has."""
+    for directory in os.environ.get(APP_PYTHON_PATH_ENV, "").split(os.pathsep):
+        if directory:
+            site.addsitedir(directory)
 
 
 def _rss_mb() -> float:
@@ -156,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         protocol.write(json.dumps(obj, default=str) + "\n")
         protocol.flush()
 
+    _add_app_packages()
     dispatcher = _Dispatcher(worker_path)
     for raw in sys.stdin:
         if not raw.endswith("\n"):

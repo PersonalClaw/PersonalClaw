@@ -9,7 +9,8 @@ skipped step could run now (``ready``).
 Four statuses, kept apart because each asks something different of the reader:
 
 * ``done`` — the step ran and did its work.
-* ``failed`` — it ran and went wrong; ``reason`` is the error.
+* ``failed`` — it ran and went wrong; ``reason`` is the error. A step stopped before it finished
+  (its time ran out) is failed too, and carries ``retry``: running the item again may finish it.
 * ``skipped`` — it could not run for want of something the owner can add: a model, an engine.
   ``fix`` says what, and ``needs`` names the capability (a use case, or :data:`OCR_ENGINE`) so a
   later read can tell whether it is there now. A step that waited on a skipped or failed one is
@@ -68,6 +69,9 @@ class PhaseOutcome:
     #: The sentences saying what was missing at the ROOT of a skip, kept so a step that waited
     #: on this one can say it too. Not persisted: a step's own reason already carries them.
     causes: tuple[str, ...] = field(default=(), compare=False)
+    #: A failed step that was stopped before it finished, rather than one that went wrong: running
+    #: the item again may let it finish, so the item page offers that.
+    retry: bool = False
 
     def to_dict(self) -> dict:
         out: dict = {"status": self.status}
@@ -77,6 +81,8 @@ class PhaseOutcome:
             out["fix"] = [f.to_dict() for f in self.fix]
         if self.needs:
             out["needs"] = list(self.needs)
+        if self.retry:
+            out["retry"] = True
         return out
 
 
@@ -86,6 +92,11 @@ def done() -> PhaseOutcome:
 
 def failed(reason: str) -> PhaseOutcome:
     return PhaseOutcome(FAILED, _sentence(reason))
+
+
+def stopped(reason: str) -> PhaseOutcome:
+    """A step stopped before it finished (its time ran out): failed, and worth running again."""
+    return PhaseOutcome(FAILED, _sentence(reason), retry=True)
 
 
 def not_applicable(reason: str) -> PhaseOutcome:

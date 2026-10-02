@@ -6,12 +6,18 @@ left the embedding store unsearchable is the motivating case) can declare
 **child process with its own venv**, so a native-lib crash kills the child and raises a
 typed :class:`SidecarCrashed` in the caller instead of taking the gateway down with it.
 
-Three things live here:
+Four things live here:
 
 :class:`SidecarRunner`
     The supervisor: a dedicated venv at ``~/.personalclaw/apps/{app}/venv/``, one child
     speaking the newline-JSON protocol of :mod:`._sidecar_child` (five verbs), a
     **process-generation counter**, a restart budget, and an inspectable watchdog.
+
+:func:`run_once`
+    One call in a child of its own, which exits once it has answered: for native inference
+    that holds the interpreter lock, which in any thread of the gateway stops its event loop.
+    The same child harness and protocol, the same interpreter and environment rule; no
+    supervision, because nothing outlives the call, and a cancelled call kills the child.
 
 :class:`SidecarInstall`
     The resumable install job: venv → pip deps → weights, each step
@@ -43,6 +49,7 @@ access as the gateway.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -79,6 +86,13 @@ _MARKER = ".personalclaw-sidecar.json"
 
 #: Sentinel the reader thread enqueues when the child's stdout reaches EOF.
 _EOF = {"__eof__": True}
+
+#: The child harness. Executed by path in the child, so it never needs the core package.
+_CHILD_HARNESS = Path(__file__).with_name("_sidecar_child.py")
+
+#: How much of a one-shot child's log (anything it wrote that is not a frame) is kept to say why
+#: it died. Bounded: a native library's progress output can run to megabytes on one line.
+_ONCE_LOG_BYTES = 8192
 
 
 class SidecarCrashed(RuntimeError):
@@ -123,6 +137,34 @@ def venv_python(venv: Path) -> Path:
     if os.name == "nt":  # pragma: no cover — POSIX is the tested path
         return venv / "Scripts" / "python.exe"
     return venv / "bin" / "python"
+
+
+def _child_python(venv: Path) -> Path:
+    """The interpreter a child runs under: *venv*'s when it has one, else the gateway's own.
+
+    A provider whose packages are the ones apps declare (``<home>/app-python``) has no venv of its
+    own, and runs under the gateway's interpreter with those packages loaded as the gateway loads
+    them (:func:`_sidecar_child_env`)."""
+    candidate = venv_python(venv)
+    return candidate if candidate.is_file() else Path(sys.executable)
+
+
+def _sidecar_child_env(python: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment of a child started under *python*: the child allowlist, never the
+    gateway's own environment and the secrets in it, with *extra* over it.
+
+    Under the gateway's interpreter the child also gets the packages apps declare, which the child
+    harness appends to its import path, after the interpreter's own, exactly as the gateway does
+    (``_sidecar_child.APP_PYTHON_PATH_ENV``). They are built for that interpreter, so a child in
+    an app's own venv gets none of them."""
+    from personalclaw.sandbox import build_child_env
+
+    layered = dict(extra or {})
+    if python == Path(sys.executable):
+        from personalclaw.apps import app_python
+
+        layered = {**app_python.child_env(), **layered}
+    return build_child_env(site="model-sidecar", extra=layered)
 
 
 def _restart_max_default() -> int:
@@ -230,8 +272,7 @@ class SidecarRunner:
         """
         if self._python_override is not None:
             return self._python_override
-        candidate = venv_python(self.venv)
-        return candidate if candidate.is_file() else Path(sys.executable)
+        return _child_python(self.venv)
 
     def health(self) -> dict[str, Any]:
         """The runner's state as data — what the watchdog decided and why.
@@ -288,22 +329,17 @@ class SidecarRunner:
         return self._generation
 
     def _spawn(self, generation: int) -> _Child:
-        from personalclaw.sandbox import PROFILE_TOOL, build_child_env, spawn_shim_argv
+        from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
 
-        child_harness = Path(__file__).with_name("_sidecar_child.py")
-        argv = [
-            str(self.python_executable()),
-            str(child_harness),
-            "--worker",
-            str(self.worker),
-        ]
+        python = self.python_executable()
+        argv = [str(python), str(_CHILD_HARNESS), "--worker", str(self.worker)]
         # Resource ceiling: a sidecar runs third-party native code, so it is
         # agent-influenced and carries the ``tool`` profile — which also gives it the
         # OOM-first bias, exactly the disposition wanted for a process holding a model.
         # argv-prepend (never preexec_fn): this can run off a watchdog thread while the
         # loop holds locks, and a fork there is the documented gateway hazard.
         launch = spawn_shim_argv(argv, PROFILE_TOOL)
-        env = build_child_env(site="model-sidecar", extra=self._env_extra)
+        env = _sidecar_child_env(python, self._env_extra)
         try:
             proc = subprocess.Popen(  # noqa: S603 — argv is core-built; worker is app code
                 launch,
@@ -532,8 +568,6 @@ class SidecarRunner:
         self, verb: str, payload: dict[str, Any] | None = None, *, timeout: float | None = None
     ) -> Any:
         """:meth:`call` off the event loop — what an async provider proxy awaits."""
-        import asyncio
-
         return await asyncio.to_thread(self.call, verb, payload, timeout=timeout)
 
     def stat(self) -> dict[str, Any]:
@@ -578,6 +612,137 @@ class SidecarWorkerError(RuntimeError):
     def __init__(self, message: str, *, reason: str = "worker_error") -> None:
         self.reason = reason
         super().__init__(message)
+
+
+# ---------------------------------------------------------------------------
+# One call in a child of its own
+# ---------------------------------------------------------------------------
+
+
+async def run_once(
+    app: str,
+    worker: Path | str,
+    method: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    env_extra: dict[str, str] | None = None,
+) -> Any:
+    """Run one ``call(method, payload)`` of *worker* in a child process of its own, and return
+    what the call returned. The child exits once it has answered.
+
+    For native inference that holds the interpreter lock while it works. A worker thread does not
+    help with that: a library call that never lets the lock go stops every thread of its process,
+    the event loop included, so the gateway answers nothing until the call returns (a speaker
+    diarization held every request for two minutes). In a child, the lock it holds is the
+    child's.
+
+    The child is the sidecar child (``_sidecar_child.py``) running *worker*: under the app's own
+    venv when it has one (:func:`sidecar_venv_dir`), else under the gateway's interpreter with the
+    packages apps declare loaded after its own, as in the gateway. It gets the child allowlist
+    environment, the ``tool`` resource ceiling, and a process group of its own.
+
+    No deadline of its own: the caller's bound decides how long it may take. A cancelled call (a
+    knowledge step out of its time, the gateway stopping) kills the child and every program it
+    started, rather than leaving them to run for nobody.
+
+    The two speak the sidecar protocol: one JSON line each way, so nothing the child writes back
+    is ever more than data. Raises :class:`SidecarWorkerError` when the worker raised (the child
+    answered), and :class:`SidecarCrashed` when the child could not start, or died before it
+    answered.
+    """
+    from personalclaw.cancellation import kill_timed_out
+    from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
+
+    python = _child_python(sidecar_venv_dir(app))
+    argv = [str(python), str(_CHILD_HARNESS), "--worker", str(Path(worker))]
+    launch = spawn_shim_argv(argv, PROFILE_TOOL)
+    env = _sidecar_child_env(python, env_extra)
+    request_id = "1:1"  # one child, one request: the first of the first generation
+    request = {
+        "id": request_id,
+        "verb": "call",
+        "payload": {"method": method, "payload": dict(payload or {})},
+    }
+    try:
+        # Its own group, so a kill reaches what the worker starts (ffmpeg decoding a recording).
+        proc = await asyncio.create_subprocess_exec(
+            *launch,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        logger.warning("%s: its child process could not start: %s", app, exc)
+        raise SidecarCrashed("spawn_failed", generation=1, detail=str(exc)) from exc
+    try:
+        out, log = await _exchange(proc, request)
+    except BaseException:
+        # Cancelled (or anything else that leaves the call unanswered): nothing waits for the
+        # child any more, so it goes, with what it started.
+        await kill_timed_out(proc)
+        logger.debug("%s: the call ended unanswered, and its child process stopped", app)
+        raise
+    reply = _reply(out, request_id)
+    if reply is None:
+        code = proc.returncode
+        reason = "eof" if code is None else f"signal_{-code}" if code < 0 else f"exit_{code}"
+        logger.warning("%s: its child process ended before it answered (%s)", app, reason)
+        raise SidecarCrashed(reason, generation=1, detail="; ".join(log[-3:]))
+    if reply.get("ok"):
+        return reply.get("result")
+    raise SidecarWorkerError(
+        str(reply.get("error") or "the call failed"),
+        reason=str(reply.get("reason") or "worker_error"),
+    )
+
+
+async def _exchange(proc: Any, request: dict[str, Any]) -> tuple[bytes, list[str]]:
+    """Send *request*, close the child's stdin, and read until the child exits: everything it
+    wrote to stdout, and the last lines of its log (stderr)."""
+    from personalclaw.cancellation import cancel_and_wait
+
+    log = bytearray()
+
+    async def _read_log() -> None:
+        while chunk := await proc.stderr.read(65536):
+            log.extend(chunk)
+            del log[: max(0, len(log) - _ONCE_LOG_BYTES)]
+
+    logs = asyncio.ensure_future(_read_log())
+    try:
+        try:
+            proc.stdin.write((json.dumps(request) + "\n").encode("utf-8"))
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the child is already gone: its exit status says why
+        proc.stdin.close()
+        out = await proc.stdout.read()
+        await proc.wait()
+        await logs
+    finally:
+        # Ended early (cancelled, or a failure above): the log reader is stopped too, and a
+        # reader that does not leave is given up after the stop's bound.
+        await cancel_and_wait([logs], what="a one-call child's log")
+    lines = [line.strip()[:200] for line in log.decode("utf-8", "replace").splitlines()]
+    return out, [line for line in lines if line]
+
+
+def _reply(out: bytes, request_id: str) -> dict[str, Any] | None:
+    """The reply frame to *request_id* in what the child wrote, or None.
+
+    Only COMPLETE lines count: a child killed mid-write leaves a final line with no newline,
+    and a half-written frame is never read as an answer. A line that is not a frame (a native
+    library's stray print) is passed over."""
+    for line in out.decode("utf-8", "replace").split("\n")[:-1]:
+        try:
+            frame = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(frame, dict) and frame.get("id") == request_id:
+            return frame
+    return None
 
 
 # ---------------------------------------------------------------------------

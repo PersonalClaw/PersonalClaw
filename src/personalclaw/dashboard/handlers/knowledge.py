@@ -906,7 +906,7 @@ async def delete_item(request: web.Request) -> web.Response:
     # dir (defense-in-depth, matching the serve guard) so a corrupt path can never unlink
     # something outside it. Two sources: (1) the tracked source + thumbnail columns, and
     # (2) DERIVED media-pipeline artifacts, which the av_split/frame_extract nodes write
-    # as "<item_id>.audio.wav" / "<item_id>.frame_NNN.jpg" / "<item_id>.dense*" straight
+    # as "<item_id>.audio.wav" / "<item_id>.frame_<ms>.jpg" straight
     # into the files dir and are tracked in NO column — so a plain file_path unlink leaked
     # a video's frames + split audio on every delete. Sweep by the "<item_id>." prefix.
     from personalclaw.knowledge import knowledge_files_dir

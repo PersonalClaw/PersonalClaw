@@ -8381,6 +8381,17 @@
   ],
   "returns": "None"
  },
+ "personalclaw.sdk.sidecar.run_once": {
+  "kind": "async function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "app"},
+   {"annotation": "Path | str", "kind": "positional_or_keyword", "name": "worker"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "method"},
+   {"annotation": "dict[str, Any] | None", "default": "None", "kind": "positional_or_keyword", "name": "payload"},
+   {"annotation": "dict[str, str] | None", "default": "None", "kind": "keyword_only", "name": "env_extra"}
+  ],
+  "returns": "Any"
+ },
  "personalclaw.sdk.sidecar.sidecar_venv_dir": {
   "kind": "function",
   "params": [

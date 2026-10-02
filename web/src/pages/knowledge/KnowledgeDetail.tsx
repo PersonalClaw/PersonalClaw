@@ -14,6 +14,7 @@ import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { ReadingView } from './ReadingView'
 import { readingTimeLabel } from './readingTime'
 import { queueSentence } from './queueStanding'
+import { framesSampled } from './framesSampled'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES, journalDayHasPassed } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
@@ -225,6 +226,8 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   const [genning, setGenning] = useState(false)
   // Generated insights only make sense for items carrying authored/extracted text.
   const canGenerate = !!(full.content || '').trim()
+  // Where a video's frames came from, for its metadata row (`framesSampled`).
+  const frames = framesSampled(full.file_metadata)
   // Same test drives reading mode: a reader needs a body. A bookmark, a bare image or an
   // item still being ingested has nothing to read, so the toggle goes soft-off with a
   // reason rather than opening an empty reader.
@@ -651,6 +654,17 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
               className="rounded-pill bg-surface-high px-s h-6 inline-flex items-center text-on-surface-var"
             >
               No speech found
+            </span>
+          )}
+          {/* A video says which part of it was looked at: how many frames, and across what. Its
+              frames were once only its first 70 seconds, and nothing here said so. */}
+          {frames && (
+            <span
+              data-type="caption"
+              title={frames.title}
+              className="rounded-pill bg-surface-high px-s h-6 inline-flex items-center text-on-surface-var"
+            >
+              {frames.label}
             </span>
           )}
           {typeof full.file_metadata?.sheet_count === 'number' && <span>{full.file_metadata.sheet_count} sheet{full.file_metadata.sheet_count === 1 ? '' : 's'}</span>}

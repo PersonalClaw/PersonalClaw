@@ -9,6 +9,7 @@ can show live ingestion transparency.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -265,9 +266,12 @@ async def ingest_item(
             )
             _emit("node", node="intents", phase=intents_phase.status)
 
-        # Terminal: embed (title + summary), reusing the existing embedder path.
+        # Terminal: embed (title + summary), reusing the existing embedder path. In a worker
+        # thread, with the dedup below, as the embedding re-index runs the same code: a bound
+        # model's answer is waited for in the calling thread (``run_embed_sync``), and on the
+        # event loop that wait stopped every request for as long as the model took.
         _emit("node", node="embed", phase="running")
-        embed_phase = _embed(store, item_id, embedder)
+        embed_phase = await asyncio.to_thread(_embed, store, item_id, embedder)
         _emit("node", node="embed", phase=embed_phase.status)
 
         # P12 TIER-2 semantic dedup — must run AFTER embed (the vector doesn't exist at
@@ -275,7 +279,7 @@ async def ingest_item(
         # cosine + date-gate) and archives the format-recall loser on a confirmed dup.
         # Inert when no embedder / no vector (behaves as pre-P12); never fails the ingest.
         _emit("node", node="dedup", phase="running")
-        dedup_phase, dedup_result = _dedup(store, item_id, embedder)
+        dedup_phase, dedup_result = await asyncio.to_thread(_dedup, store, item_id, embedder)
         _emit("node", node="dedup", phase=dedup_phase.status)
         if dedup_result:
             _emit("dedup", **dedup_result)
@@ -429,6 +433,15 @@ async def ingest_item(
         if heard is not None and heard.success and (heard.metadata or {}).get("no_speech")
         else None
     )
+    # A video says which part of it was looked at, for the same reason: frame extraction is
+    # structural, so where its frames came from reached no surface, and a walkthrough seen only
+    # through its first 70 seconds read like one seen whole. `video_seconds` is the length the
+    # frames were spread across; without it they were taken from the start (`FrameExtractNode`).
+    shots = result.outputs.get("frame_extract")
+    shot_meta = (shots.metadata or {}) if (shots and shots.success) else {}
+    meta_updates["frames_sampled"] = shot_meta.get("frame_count") or None
+    meta_updates["frame_times"] = shot_meta.get("frame_times") or None
+    meta_updates["video_seconds"] = shot_meta.get("duration") or None
     _merge_file_metadata(store, item_id, meta_updates)
 
     store.update_item(item_id, processing_status=status, processing_error=proc_error, touch=False)
@@ -490,7 +503,7 @@ def _structural_descriptor(item: dict) -> str:
 
 def _cleanup_orphaned_artifacts(item_id: str) -> None:
     """Delete any derived files this item's pipeline wrote (``<item_id>.audio.wav`` /
-    ``<item_id>.frame_NNN.jpg`` / ``<item_id>.dense*``) when the item was deleted while
+    ``<item_id>.frame_<ms>.jpg``) when the item was deleted while
     processing — the delete handler's sweep ran before these late-written files existed.
     Mirrors the delete handler's guard: only inside the knowledge files dir, item_id is a
     UUID so the glob has no metacharacters."""

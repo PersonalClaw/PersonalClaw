@@ -374,25 +374,41 @@ async def cancel_and_wait(
     return left
 
 
-#: How often :func:`wait_for_unpaused` reads whether its clock is paused.
-PAUSED_CLOCK_TICK_SECS = 5.0
+#: How often :func:`wait_for_unpaused` reads its clock. Short, because a tick is also how it sees
+#: time the event loop could not run: a freeze that begins inside a tick is charged to the work
+#: for at most the rest of that tick.
+PAUSED_CLOCK_TICK_SECS = 0.25
+
+
+class OutOfTime(asyncio.TimeoutError):
+    """The work used all of its own time and was stopped (:func:`wait_for_unpaused`).
+
+    A ``TimeoutError``, so a caller that catches that still catches this, and a separate class, so
+    a caller can tell its bound running out from the work's own ``TimeoutError`` (a request inside
+    it that timed out), which is the work's failure, not the bound's."""
 
 
 async def wait_for_unpaused(
     awaitable: Awaitable[Any],
     timeout: float,
     *,
-    paused: Callable[[], bool],
+    paused: Callable[[], bool] | None = None,
     what: str,
 ) -> Any:
-    """``asyncio.wait_for``, with a clock that stops while *paused* says so.
+    """``asyncio.wait_for`` on the work's own clock: it runs only while the work could run.
 
-    For work that may wait on a person: a loop worker's turn is bounded so a wedged one cannot
-    hold its session forever, and an Attended worker's turn waits on its owner for each call it
-    asks about, for as long as the approval window says. That wait is not the turn running long.
-    *paused* is read every :data:`PAUSED_CLOCK_TICK_SECS`; a slice it reads paused is not
-    counted. Out of time, the work is cancelled (:func:`cancel_and_wait`, bounded) and
-    ``asyncio.TimeoutError`` is raised, as ``asyncio.wait_for`` raises it.
+    Two kinds of time are not the work's. Time the event loop could not run at all: the process
+    was frozen (a library call holding the interpreter lock in another thread), or the loop was
+    busy with other work. A wall-clock bound counted that, and failed a frame extraction whose
+    ffmpeg had finished in 13 seconds as "did not finish within 2 minutes" because another step
+    froze the process for two. And time *paused* says the work is waiting on a person: a loop
+    worker's turn is bounded so a wedged one cannot hold its session forever, and an Attended
+    worker's turn waits on its owner for each call it asks about, for as long as the approval
+    window says. That wait is not the turn running long.
+
+    The clock is read every :data:`PAUSED_CLOCK_TICK_SECS`: a tick that wakes late counts as one
+    tick (the rest is the loop's), and a tick *paused* reads paused counts as none. Out of time,
+    the work is cancelled (:func:`cancel_and_wait`, bounded) and :class:`OutOfTime` is raised.
 
     Cancelled itself, it cancels the work and waits for it to end (bounded the same way) before
     the cancel goes on, as ``asyncio.wait_for`` does: a caller that cancels a turn and then acts
@@ -404,19 +420,18 @@ async def wait_for_unpaused(
     spent = 0.0
     try:
         while spent < timeout:
+            tick = min(PAUSED_CLOCK_TICK_SECS, timeout - spent)
             began = clock.time()
-            done, _pending = await asyncio.wait(
-                {task}, timeout=min(PAUSED_CLOCK_TICK_SECS, timeout - spent)
-            )
+            done, _pending = await asyncio.wait({task}, timeout=tick)
             if task in done:
                 return task.result()
-            if not paused():
-                spent += clock.time() - began
+            if paused is None or not paused():
+                spent += min(clock.time() - began, tick)
     except asyncio.CancelledError:
         await cancel_and_wait([task], what=what)
         raise
     await cancel_and_wait([task], what=what)
-    raise asyncio.TimeoutError
+    raise OutOfTime
 
 
 def _task_label(task: asyncio.Future[Any]) -> str:

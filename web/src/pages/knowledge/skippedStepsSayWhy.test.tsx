@@ -102,6 +102,28 @@ describe('the processing strip of an item whose steps were skipped', () => {
     await waitFor(() => expect(screen.queryByRole('list', { name: 'Steps that did not run' })).toBeNull())
   })
 
+  it('🔴 offers to run the item again when a step ran out of time before it finished', async () => {
+    const g = graph({
+      frame_extract: { status: 'failed', reason: 'It did not finish within 2 minutes, so it was stopped.', retry: true },
+    })
+    const run = vi.spyOn(api, 'generateKnowledgeIntelligence').mockResolvedValue({ ...videoItem(), processing_status: 'queued' })
+    // A queued item opens its progress stream; jsdom has none, so a silent one stands in.
+    vi.stubGlobal('EventSource', class { addEventListener() {} close() {} onerror = null })
+    mount(g)
+    const button = await waitFor(() => screen.getByRole('button', { name: 'Run again' }))
+    expect(screen.getByText('A step ran out of time before it finished.')).toBeTruthy()
+    fireEvent.click(button)
+    await waitFor(() => expect(run).toHaveBeenCalledWith('k-video-1'))
+    // While it runs again, the stopped run's lines are not shown as if they were this run's.
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Steps that did not run' })).toBeNull())
+  })
+
+  it('a step that failed for another reason offers no run-again', async () => {
+    mount(graph({ transcription: { status: 'failed', reason: 'The speech-to-text model could not read this audio.' } }))
+    await waitFor(() => screen.getByRole('list', { name: 'Steps that did not run' }))
+    expect(screen.queryByRole('button', { name: 'Run again' })).toBeNull()
+  })
+
   it('offers no run-again while nothing a skipped step needed has been set up', async () => {
     mount(graph())
     await waitFor(() => screen.getByRole('list', { name: 'Steps that did not run' }))

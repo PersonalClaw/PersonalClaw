@@ -359,8 +359,13 @@ async def _transcribe_part(call, index: int, total: int):
 
 async def _segment(ffmpeg: str, audio_path: str, work: str) -> list[str]:
     """Re-encode *audio_path* into uniform mono 16 kHz WAV parts of ``_STT_SEGMENT_SECONDS``
-    (what Whisper wants) under *work*; the part files in order, or ``[]`` when ffmpeg failed."""
+    (what Whisper wants) under *work*; the part files in order, or ``[]`` when ffmpeg failed.
+
+    A cancelled transcription (its knowledge step out of time, the gateway stopping) kills the
+    ffmpeg before the cancel goes on, rather than leaving it cutting a recording for nobody."""
     import asyncio
+
+    from personalclaw.cancellation import kill_timed_out
 
     cmd = [
         ffmpeg,
@@ -380,10 +385,15 @@ async def _segment(ffmpeg: str, audio_path: str, work: str) -> list[str]:
     ]
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    rc = await proc.wait()
+    try:
+        rc = await proc.wait()
+    except asyncio.CancelledError:
+        await kill_timed_out(proc)
+        raise
     parts = sorted(os.path.join(work, f) for f in os.listdir(work) if f.startswith("seg_"))
     if rc != 0:
         logger.warning("STT segmentation failed (rc=%s); single call", rc)

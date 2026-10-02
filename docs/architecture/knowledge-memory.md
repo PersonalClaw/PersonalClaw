@@ -91,6 +91,27 @@ one case the label exists for. A push never fails the local write.
     `file_metadata`, which the detail view shows beside the step.
     Transcription and diarization get the duration-scaled node budget, and a
     budget that runs out says how long it was.
+  - **A node's budget is on its own time** (`cancellation.wait_for_unpaused`):
+    time the event loop could not run is not counted. A wall-clock bound failed a
+    frame extraction whose ffmpeg finished in 13 seconds as "did not finish within
+    2 minutes", because another step's engine had frozen the process. A node out
+    of its budget is cancelled, and the cancel kills the program it started
+    (`media_nodes._run_cmd`'s ffmpeg, a model's child process); the executor logs
+    one line naming the node and the item, and the step fails with `retry`, so the
+    item page offers to run the item again. A node's own `TimeoutError` (a request
+    inside it that timed out) is its failure, not its budget's. A run cancelled
+    from outside (the gateway stopping) says which node it stopped.
+  - **A video is seen across its whole length.** `frame_extract` takes up to 8
+    frames, one in the middle of each of 8 equal slots of the length ffprobe reads
+    (a slot whose middle has no frame to seek to takes the one at its start), and
+    each denser pass the classifier asks for adds frames between them. The steps
+    that read frames (`video_classify`, `vision`, and `ocr` for a text-heavy
+    video) take theirs spread across all of them, in time order; `ocr` reads an
+    image or a page on its own. The runner promotes `frames_sampled`,
+    `frame_times` and `video_seconds` onto `file_metadata`, and the detail view
+    says how many frames were taken across how long, and when. A video whose
+    length cannot be read gets a frame every 10 seconds from its start, and the
+    view says that instead.
   - **An item's text is what its graph's last step made** (`_item_text`):
     `consolidate` for a document or an image, `video_consolidate` for a video
     (it reads the narration through `lexicon_correction`, the last step that
@@ -102,7 +123,12 @@ one case the label exists for. A push never fails the local write.
 - **Terminal stages are not graph nodes**: after a graph completes,
   `pipeline/runner.py` runs consolidate-pool → insights → chunk+embed once
   over the whole extracted-content bundle (they operate on the item bundle,
-  not a single node's input).
+  not a single node's input). Embed and the dedup after it run in a worker
+  thread, as the embedding re-index does, and so does the ingest queue's
+  building of each item's embedder (`create_embedder_from_config` asks a bound
+  model for one vector, to learn its width): a bound model's answer is waited
+  for in the calling thread (`run_embed_sync`), so on the event loop each
+  answer stopped every request the gateway had.
 - **`knowledge/insights.py`** produces `{summary, key_points, topics,
   action_items}`; entity and intent extraction follow. The AI title replaces
   only a placeholder no person set — an upload's file name, a note's opening

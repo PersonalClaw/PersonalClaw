@@ -246,8 +246,11 @@ class KnowledgeIngestQueue:
 
         embedder = None
         if self._embedder_factory:
+            # In a worker thread: building the embedder asks a bound model for a vector to learn
+            # its width, and that answer is waited for in the calling thread, which on the event
+            # loop stopped every request until it came.
             try:
-                embedder = self._embedder_factory()
+                embedder = await asyncio.to_thread(self._embedder_factory)
             except Exception:
                 embedder = None
         await ingest_item(

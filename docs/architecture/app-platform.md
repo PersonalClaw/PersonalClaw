@@ -166,6 +166,21 @@ backend**.
   of the app answers 409 `engine_installing`: pip is writing into the folder those replace or
   delete. **Remove engine** deletes an environment PersonalClaw made, never one someone else
   did.
+- **One call in a child of its own** — `sdk.sidecar.run_once(app, worker, method, payload)` runs
+  one `call(method, payload)` of an app's worker module in a child that exits once it has
+  answered, for an in-process provider whose engine holds Python's interpreter lock while it
+  works. In any thread of the gateway such a call stops the event loop, so every request waits
+  for it: Diarization (ONNX)'s sherpa-onnx held the lock for the whole of a two-minute
+  diarization, and Diarization (pyannote)'s clustering (scipy) holds it for a second or more at
+  a time on a long recording. Both run their engine this way. The child is the sidecar child
+  under the app's own `venv` when it has one, else
+  under the gateway's interpreter with `app-python` appended to its import path, after the
+  interpreter's own packages; it gets the child allowlist environment, the `tool` ceiling and a
+  process group of its own. It has no deadline of its own (the caller's bound governs), and a
+  cancelled call kills the child and what it started. The two speak one JSON line each way.
+  Measured on this rule: faster-whisper, RapidOCR and torch release the lock in their heavy
+  kernels (an event loop beside a 200-second transcription went at most 60 ms without a turn),
+  so they stay in-process.
 - **Backups leave the engine behind.** `apps/<app>/venv` is gigabytes built for this machine's
   OS, CPU and Python, so the `apps` inventory entry declares `*/venv` `derived_within`: a
   snapshot, an export and the hourly shard export leave it out. A restore or an import never

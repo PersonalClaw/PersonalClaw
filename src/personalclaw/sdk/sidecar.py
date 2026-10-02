@@ -1,4 +1,4 @@
-"""SDK: the sidecar runner surface for ``execution: "sidecar"`` provider apps.
+"""SDK: an app's heavy native work, run in a child process instead of the gateway's.
 
 Stable re-export of the sidecar machinery — an app whose
 manifest declares ``provider.execution: "sidecar"`` drives its torch-heavy work through
@@ -7,6 +7,11 @@ of importing the engine into the gateway process. The app ships a **worker modul
 (``load(**kwargs)`` / ``call(method, payload)`` / optional ``unload()``) and passes its
 absolute path as ``worker=``; :func:`register_runner` hands the child to core's
 watchdog and memory-pressure surfaces.
+
+``run_once`` runs ONE call of such a worker in a child of its own that exits once it has
+answered, for an app whose engine holds the interpreter lock while it works: in any thread of the
+gateway that stops the event loop, and every request with it, until the call returns. The child
+loads the packages the app declared, a cancelled call kills it, and it has no deadline of its own.
 
 Crash honesty is the point of the boundary: a child killed mid-call raises
 :class:`SidecarCrashed`, whose ``typed_reason`` (``sidecar_crashed:signal_11``,
@@ -24,6 +29,7 @@ from personalclaw.local_models.sidecar import (  # noqa: F401
     SidecarWorkerError,
     get_runner,
     register_runner,
+    run_once,
     sidecar_venv_dir,
     unregister_runner,
 )
@@ -34,6 +40,7 @@ __all__ = [
     "SidecarWorkerError",
     "get_runner",
     "register_runner",
+    "run_once",
     "sidecar_venv_dir",
     "unregister_runner",
 ]

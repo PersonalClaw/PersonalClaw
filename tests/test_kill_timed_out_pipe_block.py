@@ -502,8 +502,16 @@ _NO_TIMEOUT_PATH: dict[str, str] = {
     "sandbox_providers/none.py::_NoneHandle.exec::<unassigned>": "provider handle — caller waits",
     "sandbox_providers/docker.py::_DockerHandle.exec::<unassigned>": "provider — caller waits",
     "sandbox_providers/lima.py::_LimaHandle.exec::<unassigned>": "provider — caller waits",
-    "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::proc": "ffmpeg: awaited with no deadline",
-    "transcribe.py::_segment::proc": "ffmpeg: awaited with no deadline",
+    "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::proc": (
+        "ffmpeg: no deadline of its own (its step's bound); a cancel kills it"
+    ),
+    "transcribe.py::_segment::proc": (
+        "ffmpeg: no deadline of its own (its step's bound); a cancel kills it"
+    ),
+    "local_models/sidecar.py::run_once::proc": (
+        "one model call in a child: no deadline of its own (the caller's bound); a cancel "
+        "kills its group"
+    ),
     "dashboard/handlers/terminal.py::api_terminal_ws::proc": (
         "long-lived interactive PTY — torn down by `_kill_pty_session` on close, not by a "
         "per-command deadline"

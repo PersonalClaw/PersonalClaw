@@ -9,7 +9,10 @@ graph continues wherever its dependencies are still met, and the item ends
 ``done`` (all ran), ``partial`` (some skipped/failed), or ``failed`` (nothing ran).
 
 Concurrency: nodes whose dependencies are all satisfied at the same wave run
-concurrently (``asyncio.gather``). Per-node timeout from the node spec.
+concurrently (``asyncio.gather``). Each node has a budget (the node spec's, or one scaled to the
+media's length) on its OWN time: time the event loop could not run is not counted. A node out of
+its budget is cancelled, which kills any program it started, and fails saying so, marked to run
+again; a cancelled run (the gateway stopping) says which node it stopped.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from personalclaw.cancellation import OutOfTime, wait_for_unpaused
 from personalclaw.knowledge.pipeline import outcomes as oc
 from personalclaw.knowledge.pipeline.graph import PipelineGraph
 from personalclaw.knowledge.pipeline.outcomes import PhaseOutcome
@@ -89,6 +93,8 @@ class PipelineExecutor:
         self._graph = graph
         self._params_for: Callable[[str], dict] = params_for or (lambda nt: {})
         self._on_node = on_node
+        #: The source media's length in seconds, probed once per run for the budgets.
+        self._dur_cache: float | None = None
 
     async def run(self, ctx: NodeContext) -> ExecutionResult:
         result = ExecutionResult()
@@ -249,10 +255,16 @@ class PipelineExecutor:
         result.outcomes[node_type] = outcome
         self._notify(node_type, outcome.status)
 
-    def _fail(self, node_type: str, result: ExecutionResult, out: NodeOutput) -> None:
+    def _fail(
+        self,
+        node_type: str,
+        result: ExecutionResult,
+        out: NodeOutput,
+        outcome: PhaseOutcome | None = None,
+    ) -> None:
         result.outputs[node_type] = out
         result.failed.append(node_type)
-        result.outcomes[node_type] = oc.failed(out.error or "It did not finish.")
+        result.outcomes[node_type] = outcome or oc.failed(out.error or "It did not finish.")
         self._notify(node_type, "failed")
 
     async def _run_one(self, node_type: str, ctx: NodeContext, result: ExecutionResult) -> None:
@@ -337,26 +349,45 @@ class PipelineExecutor:
         if "timeout_s" in params:
             timeout_s = float(params["timeout_s"])
         else:
+            if node_type in self._DURATION_SCALED_NODES:
+                await self._probe_media(ctx)
             timeout_s = self._scaled_timeout(node_type, spec, use_case, ctx)
         try:
-            out = await asyncio.wait_for(node.run(inputs, ctx), timeout=timeout_s)
-        except asyncio.TimeoutError:
+            # On the step's own clock: time the event loop could not run (another step's engine
+            # holding the interpreter lock) is not the step's. Out of time, the step is cancelled,
+            # and the cancel kills a program it started (`_run_cmd`, a model's child process).
+            out = await wait_for_unpaused(
+                node.run(inputs, ctx), timeout_s, what=f"knowledge step {node_type}"
+            )
+        except OutOfTime:
             # A sentence, because it is what the item's status line reads ("transcription:
             # …"); the bare word "timeout" said neither how long nor that the step was stopped.
+            # Marked to run again: a step stopped for its time may finish on another run.
+            budget = _spoken_duration(timeout_s)
+            logger.warning(
+                "knowledge step %s of item %s was stopped: it did not finish within %s",
+                node_type,
+                ctx.item_id,
+                budget,
+            )
+            stopped = f"It did not finish within {budget}, so it was stopped."
             self._fail(
                 node_type,
                 result,
-                NodeOutput(
-                    node_type=node_type,
-                    backend=backend,
-                    success=False,
-                    error=(
-                        f"It did not finish within {_spoken_duration(timeout_s)}, "
-                        "so it was stopped."
-                    ),
-                ),
+                NodeOutput(node_type=node_type, backend=backend, success=False, error=stopped),
+                oc.stopped(stopped),
             )
             return
+        except asyncio.CancelledError:
+            # The whole run was cancelled (the gateway stopping): the step's program is already
+            # gone with it; this says which step it was.
+            logger.warning(
+                "knowledge step %s of item %s was stopped before it finished: its run was "
+                "cancelled",
+                node_type,
+                ctx.item_id,
+            )
+            raise
         except Exception as exc:  # a node bug must not abort the item
             logger.exception("knowledge node %s failed", node_type)
             self._fail(
@@ -387,51 +418,25 @@ class PipelineExecutor:
     _MAX_NODE_TIMEOUT_S = 3600.0  # hard ceiling — a genuinely stuck node still dies
 
     def _scaled_timeout(self, node_type: str, spec, use_case, ctx: NodeContext) -> float:
+        """The node's budget: the spec's, grown with the media's length (:meth:`_probe_media`)
+        for a node whose work scales with it."""
         base = float(spec.timeout_s)
         if node_type not in self._DURATION_SCALED_NODES:
             return base
-        dur = self._media_duration(ctx)
+        dur = self._dur_cache or 0.0
         if dur <= 0:
             return base
         scaled = base + dur * self._BUDGET_PER_MEDIA_SEC
         return min(self._MAX_NODE_TIMEOUT_S, max(base, scaled))
 
-    def _media_duration(self, ctx: NodeContext) -> float:
-        """Probe the source media's duration in seconds via ffprobe (cached per run).
-        Returns 0 when unavailable (no ffprobe / not media / probe failure)."""
-        cached = getattr(self, "_dur_cache", None)
-        if cached is not None:
-            return cached
-        dur = 0.0
-        path = ctx.file_path or ""
-        if path:
-            import subprocess
+    async def _probe_media(self, ctx: NodeContext) -> None:
+        """Read the source media's length once per run, off the event loop (``media_seconds``:
+        0 when there is no ffprobe, or nothing it can read). The blocking probe this replaces
+        held the loop, and every request with it, for as long as ffprobe took."""
+        if self._dur_cache is None:
+            from personalclaw.knowledge.pipeline.nodes.media_nodes import media_seconds
 
-            from personalclaw.ffmpeg_binary import find_ffprobe
-
-            ffprobe = find_ffprobe()
-            if ffprobe:
-                try:
-                    out = subprocess.run(
-                        [
-                            ffprobe,
-                            "-v",
-                            "error",
-                            "-show_entries",
-                            "format=duration",
-                            "-of",
-                            "default=noprint_wrappers=1:nokey=1",
-                            path,
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                    )
-                    dur = float((out.stdout or "").strip() or 0)
-                except (ValueError, OSError, subprocess.SubprocessError):
-                    dur = 0.0
-        self._dur_cache = dur
-        return dur
+            self._dur_cache = await media_seconds(ctx.file_path or "")
 
     def _notify(self, node_type: str, phase: str) -> None:
         if self._on_node:

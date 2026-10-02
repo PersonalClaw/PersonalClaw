@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import subprocess
 
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.ffmpeg_binary import ffmpeg_not_found, find_ffmpeg, find_ffprobe
 from personalclaw.knowledge.pipeline.nodes._llm import complete_text
 from personalclaw.knowledge.pipeline.registry import register_node
@@ -27,7 +29,80 @@ from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput
 
 logger = logging.getLogger(__name__)
 
-_FRAME_CAP = 8  # max frames sampled from a video (bounds cost)
+_FRAME_CAP = 8  # max frames one sampling pass takes from a video (bounds cost)
+#: How far apart frames are taken when a video's length cannot be read: from its start, since
+#: there is no length to spread them over.
+_FALLBACK_STEP_S = 10.0
+#: Where each denser pass puts its frames inside the slots the first pass spread across the
+#: span, as a fraction of a slot: the first pass takes the middle of each (0.5), and the denser
+#: ones its start and its quarters, so after all of them the frames sit a quarter-slot apart.
+_DENSER_OFFSETS = (0.0, 0.25, 0.75)
+#: How many sampled frames the classifier, the description and the text reader are made from.
+_CLASSIFY_FRAMES = 6
+_VISION_FRAMES = 4
+_OCR_FRAMES = 4
+#: How long ffprobe may take to read a file's length before it is stopped.
+_PROBE_TIMEOUT_S = 15.0
+
+
+async def media_seconds(path: str) -> float:
+    """How long the media file at *path* runs, in seconds, as its container says; 0.0 when there
+    is no ffprobe, no file, or no length to read (a stream that does not record one).
+
+    A child whose wait yields to the event loop: the blocking probes this replaces held the loop,
+    and every request the gateway was serving, for as long as ffprobe took."""
+    ffprobe = find_ffprobe()
+    if not path or not ffprobe:
+        return 0.0
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        logger.debug("ffprobe could not start for %s", path, exc_info=True)
+        return 0.0
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        await kill_timed_out(proc)
+        logger.warning("ffprobe did not read the length of %s within %ss", path, _PROBE_TIMEOUT_S)
+        return 0.0
+    except asyncio.CancelledError:
+        await kill_timed_out(proc)
+        raise
+    try:
+        seconds = float((out or b"").decode("utf-8", "replace").strip() or 0)
+    except ValueError:  # "N/A": the container does not say
+        return 0.0
+    return seconds if math.isfinite(seconds) and seconds > 0 else 0.0
+
+
+def _spread(start: float, span: float, count: int, offset: float) -> list[tuple[float, float]]:
+    """*count* equal slots across [start, start + span): for each, the time *offset* of the way
+    through it, and the time it starts."""
+    slot = span / count
+    return [
+        (round(start + (i + offset) * slot, 3), round(start + i * slot, 3)) for i in range(count)
+    ]
+
+
+def _evenly(items: list, count: int) -> list:
+    """*count* of *items*, spread across the whole list in its order (all of them when there are
+    no more than that): what a step that reads a few of a video's frames reads, so they cover the
+    video rather than its opening."""
+    if len(items) <= count:
+        return list(items)
+    return [items[int((i + 0.5) * len(items) / count)] for i in range(count)]
 
 
 def _cannot_read(node_type: str, backend: str, ctx: NodeContext) -> NodeOutput:
@@ -120,11 +195,20 @@ class OcrNode:
         accepted, rejected = partition_images(images)
         if not accepted:
             return ocr_rejection(self.node_type, self.backend, rejected)
-        text = await complete_text(
-            self.uses_use_case,
-            "Transcribe ALL text visible in this image verbatim. Output only the text, no commentary.",  # noqa: E501
-            images=accepted[:1],
-        )
+        # A video hands its sampled frames: their words are read from frames spread across all
+        # of them, in time order, as the description reads its scene. The first frame alone was
+        # one moment of the video, and the words on every later slide never reached the item.
+        if ctx.item_type == "video" and len(accepted) > 1:
+            prompt = (
+                "These are frames sampled in time order from a video. Transcribe ALL text visible "
+                "in them verbatim, in time order, writing text that stays on screen across frames "
+                "once. Output only the text, no commentary."
+            )
+            read = _evenly(accepted, _OCR_FRAMES)
+        else:
+            prompt = "Transcribe ALL text visible in this image verbatim. Output only the text, no commentary."  # noqa: E501
+            read = accepted[:1]
+        text = await complete_text(self.uses_use_case, prompt, images=read)
         meta: dict = {"ocr_rejected": rejected} if rejected else {}
         return NodeOutput(
             node_type=self.node_type,
@@ -147,8 +231,9 @@ class VisionNode:
                 node_type=self.node_type, backend=self.backend, success=False, error="no image"
             )
         # A single-image item → describe the one image. A video hands several sampled
-        # frames → describe them together as one scene (up to 4, in time order) so the
-        # description reflects the whole clip, not just its first frame.
+        # frames → describe them together as one scene (up to 4, in time order, spread across
+        # the frames it has) so the description reflects the whole clip: its first 4 frames
+        # were the first half of it.
         multi = len(images) > 1
         prompt = (
             "These are frames sampled in time order from a video. Describe what the video "
@@ -156,7 +241,9 @@ class VisionNode:
             if multi
             else "Describe this image in detail: subjects, setting, notable objects, any text, and overall meaning."  # noqa: E501
         )
-        text = await complete_text(self.uses_use_case, prompt, images=images[:4])
+        text = await complete_text(
+            self.uses_use_case, prompt, images=_evenly(images, _VISION_FRAMES)
+        )
         return NodeOutput(node_type=self.node_type, backend=self.backend, text=text)
 
 
@@ -509,11 +596,20 @@ class AvSplitNode:
 
 
 class FrameExtractNode:
-    """Sample frames from the video (ffmpeg). By default up to _FRAME_CAP evenly-
-    spaced frames (fps=1/10). When the adaptive loop hands back ``dense_regions``
-    (timestamp ranges the classifier flagged as content-heavy), those ranges are
-    RE-SAMPLED densely (higher fps) while the rest stays coarse — so a 1 h video with
-    10 min of screen-share gets tight sampling only around those 10 min."""
+    """Sample frames from the video (ffmpeg): up to :data:`_FRAME_CAP` at even points across its
+    whole length, one in the middle of each of that many equal slots, so a 6-minute walkthrough
+    is seen through all six minutes. It used to take one every 10 seconds from the start, and
+    the 8 frames were the video's first 70 seconds. A video whose length cannot be read still
+    gets frames every 10 seconds from its start, and its ``duration`` of 0 says so.
+
+    When the adaptive loop hands back ``dense_regions`` (timestamp ranges the classifier flagged
+    as content-heavy), each pass adds a frame between those already taken in every slot of the
+    region, so a 1 h video with 10 min of screen-share gets tight sampling only around those 10
+    min, spread across them rather than bunched at their start.
+
+    A frame is named for the millisecond it was taken at, so the frames sort in time order, and
+    ``frame_times`` is read back from what is on disk: what the item says it looked at is what
+    there is."""
 
     node_type = "frame_extract"
     backend = "ffmpeg"
@@ -527,78 +623,108 @@ class FrameExtractNode:
         params = ctx.params or {}
         dense_regions = params.get("dense_regions") or []
         iteration = int(params.get("loop_iteration", 0))
+        duration = await media_seconds(ctx.file_path)
 
+        meta: dict = {}
         if dense_regions:
-            # Adaptive iteration: sample the flagged regions densely (an extra frame
-            # set per region at a tighter fps). Denser each iteration.
-            dense_fps = min(2.0, 0.3 * (2**iteration))  # 0.6 → 1.2 → 2.0 fps, capped
-            frames = list(self._existing_frames(work, ctx.item_id))  # keep the coarse set
-            for ri, region in enumerate(dense_regions):
-                start = float(region.get("start", 0))
-                end = float(region.get("end", 0))
-                pat = os.path.join(work, f"{ctx.item_id}.dense{iteration}_{ri}_%03d.jpg")
-                # end<=start → sample from `start` to the end of the clip (no -to).
-                span = ["-to", str(end)] if end > start else []
-                cmd = [
-                    ff,
-                    "-y",
-                    "-ss",
-                    str(start),
-                    *span,
-                    "-i",
-                    ctx.file_path,
-                    "-vf",
-                    f"fps={dense_fps}",
-                    "-frames:v",
-                    str(_FRAME_CAP),
-                    pat,
-                ]
-                await _run_cmd(cmd)
-            frames = sorted(self._existing_frames(work, ctx.item_id))
-            return NodeOutput(
-                node_type=self.node_type,
-                backend=self.backend,
-                pooled=False,
-                artifacts=frames,
-                metadata={
-                    "frame_count": len(frames),
-                    "dense_iteration": iteration,
-                    "dense_regions": dense_regions,
-                },
-            )
-
-        # Initial coarse pass.
-        pattern = os.path.join(work, f"{ctx.item_id}.frame_%03d.jpg")
-        cmd = [
-            ff,
-            "-y",
-            "-i",
-            ctx.file_path,
-            "-vf",
-            "fps=1/10",
-            "-frames:v",
-            str(_FRAME_CAP),
-            pattern,
-        ]
-        await _run_cmd(cmd)
-        frames = sorted(self._existing_frames(work, ctx.item_id))
+            offset = _DENSER_OFFSETS[min(max(iteration, 1), len(_DENSER_OFFSETS)) - 1]
+            plan = [t for region in dense_regions for t in _denser(region, duration, offset)]
+            meta = {"dense_iteration": iteration, "dense_regions": dense_regions}
+        else:
+            # A first pass starts clean, so frames another run of this item took are not
+            # counted as this one's.
+            for stale in self._existing_frames(work, ctx.item_id):
+                try:
+                    os.unlink(stale)
+                except OSError:
+                    logger.debug("could not remove an earlier frame %s", stale, exc_info=True)
+            if duration > 0:
+                plan = _spread(0.0, duration, max(1, min(_FRAME_CAP, int(duration))), 0.5)
+            else:
+                plan = [(i * _FALLBACK_STEP_S,) * 2 for i in range(_FRAME_CAP)]
+        for at, slot_start in plan:
+            # ffmpeg gives the first frame AT or after a time, so a slot's middle that falls
+            # inside a video's last frame (one frame a second, a still picture) finds none: the
+            # frame at the start of that slot is taken instead.
+            if not await _take_frame(ff, ctx.file_path, work, ctx.item_id, at) and slot_start < at:
+                await _take_frame(ff, ctx.file_path, work, ctx.item_id, slot_start)
+        frames = self._existing_frames(work, ctx.item_id)
         return NodeOutput(
             node_type=self.node_type,
             backend=self.backend,
             pooled=False,
             artifacts=frames,
-            metadata={"frame_count": len(frames)},
+            metadata={
+                "frame_count": len(frames),
+                "frame_times": [_frame_time(frame) for frame in frames],
+                "duration": round(duration, 3),
+                **meta,
+            },
         )
 
     @staticmethod
     def _existing_frames(work: str, item_id: str) -> list[str]:
+        """This item's frames in *work*, in time order (their names are their times)."""
         if not os.path.isdir(work):
             return []
-        return [
+        prefix = f"{item_id}.frame_"
+        return sorted(
             os.path.join(work, f)
             for f in os.listdir(work)
-            if f.startswith(f"{item_id}.frame_") or f.startswith(f"{item_id}.dense")
+            if f.startswith(prefix) and f.endswith(".jpg")
+        )
+
+
+async def _take_frame(ff: str, video: str, work: str, item_id: str, at: float) -> bool:
+    """Take the frame at *at* seconds into *video*: whether there was one to take. Seeking
+    first, ffmpeg decodes from the keyframe before *at*, not the whole video up to it."""
+    out = _frame_path(work, item_id, at)
+    await _run_cmd(
+        [
+            ff,
+            "-y",
+            "-nostdin",
+            "-v",
+            "error",
+            "-ss",
+            f"{at:.3f}",
+            "-i",
+            video,
+            "-frames:v",
+            "1",
+            "-an",
+            out,
         ]
+    )
+    return os.path.isfile(out)
+
+
+def _denser(region: dict, duration: float, offset: float) -> list[tuple[float, float]]:
+    """One denser pass over *region* ``{start, end}``: a frame at *offset* of each slot. An end
+    at or before the start means the rest of the clip; with no length to know that by, the slots
+    are the 10-second ones a video of unknown length was sampled on."""
+    start = max(0.0, float(region.get("start", 0) or 0))
+    end = float(region.get("end", 0) or 0)
+    if end <= start:
+        end = duration
+    if end > start:
+        return _spread(start, end - start, _FRAME_CAP, offset)
+    return _spread(start, _FRAME_CAP * _FALLBACK_STEP_S, _FRAME_CAP, offset)
+
+
+def _frame_path(work: str, item_id: str, at: float) -> str:
+    """Where the frame taken at *at* seconds goes: named for its millisecond, zero-padded, so the
+    names sort in time order."""
+    return os.path.join(work, f"{item_id}.frame_{int(round(at * 1000)):09d}.jpg")
+
+
+def _frame_time(frame: str) -> float:
+    """The second a frame was taken at, read back from its name (:func:`_frame_path`)."""
+    stem = os.path.basename(frame).rsplit(".frame_", 1)[-1].split(".", 1)[0]
+    try:
+        return int(stem) / 1000
+    except ValueError:
+        return 0.0
 
 
 # ── video: model-backed ──
@@ -641,7 +767,10 @@ class VideoClassifyNode:
             "would miss (screen-share, whiteboard, diagrams, rapidly-changing slides), say so.\n"
             "Reply as: '<verdict>; dense=<yes|no>'. Example: 'text-heavy; dense=yes'."
         )
-        raw = await complete_text(self.uses_use_case, prompt, images=frames[:6])
+        # Frames spread across all of them, in time order: the first 6 were the opening only.
+        raw = await complete_text(
+            self.uses_use_case, prompt, images=_evenly(frames, _CLASSIFY_FRAMES)
+        )
         v = (raw or "").strip().lower()
         content_cls = (
             "text-heavy" if "text" in v else "talking-head" if "talking" in v else "visual"
@@ -649,14 +778,13 @@ class VideoClassifyNode:
         wants_dense = "dense=yes" in v or ("dense" in v and "yes" in v)
 
         # Content-heavy AND flagged dense AND still within the loop budget → request a
-        # denser pass. dense_regions defaults to the whole timeline on the first ask;
-        # a real duration probe refines it (region-aware: only the flagged span).
+        # denser pass, over the whole timeline (`_dense_regions`).
         if (
             wants_dense
             and content_cls in ("text-heavy", "visual")
             and iteration < self._MAX_DENSE_ITERS
         ):
-            regions = self._dense_regions(ctx, frames)
+            regions = self._dense_regions(inputs)
             return NodeOutput(
                 node_type=self.node_type,
                 backend=self.backend,
@@ -685,35 +813,10 @@ class VideoClassifyNode:
             pooled=False,
         )
 
-    def _dense_regions(self, ctx: NodeContext, frames: list) -> list[dict]:
-        """Timestamp ranges to resample densely. Region-aware: uses the media duration
-        (ffprobe) to target the content-heavy span. Without a probe, targets the whole
-        clip (still bounded by max_iters)."""
-        dur = 0.0
-        ffprobe = find_ffprobe()
-        if ffprobe and ctx.file_path:
-            try:
-                out = subprocess.run(
-                    [
-                        ffprobe,
-                        "-v",
-                        "error",
-                        "-show_entries",
-                        "format=duration",
-                        "-of",
-                        "default=noprint_wrappers=1:nokey=1",
-                        ctx.file_path,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                )
-                dur = float((out.stdout or "").strip() or 0)
-            except (ValueError, OSError, subprocess.SubprocessError):
-                dur = 0.0
-        if dur <= 0:
-            return [{"start": 0, "end": 0}]  # 0 end → sampler treats as whole clip
-        return [{"start": 0, "end": dur}]
+    def _dense_regions(self, inputs: dict) -> list[dict]:
+        """Timestamp ranges to resample densely: the whole clip, by the length the frame step
+        read (an end of 0, when it read none, means to the end of the clip)."""
+        return [{"start": 0, "end": _frames_duration(inputs)}]
 
 
 class VideoConsolidateNode:
@@ -768,6 +871,14 @@ def _images_from(inputs: dict, ctx: NodeContext) -> list[str]:
     return [ctx.file_path] if ctx.file_path else []
 
 
+def _frames_duration(inputs: dict) -> float:
+    """The length of the video, in seconds, as the frame step read it; 0.0 when it read none."""
+    for o in inputs.values():
+        if o and o.node_type == "frame_extract" and isinstance(o.metadata, dict):
+            return float(o.metadata.get("duration") or 0.0)
+    return 0.0
+
+
 def _frames_from(inputs: dict) -> list[str]:
     for o in inputs.values():
         if o and o.artifacts and o.node_type in ("frame_extract",):
@@ -795,17 +906,27 @@ def _audio_from(inputs: dict, ctx: NodeContext) -> str:
 
 
 async def _run_cmd(cmd: list[str]) -> int:
+    """Run an ffmpeg command to its end: its exit status, or 1 when it could not start.
+
+    A cancelled run (its step out of time, or the gateway stopping) kills the ffmpeg before the
+    cancel goes on: it used to run on after its step was given up on. ffmpeg starts no programs of
+    its own, so killing it leaves nothing behind. Its stdin is closed, so it never reads the
+    gateway's terminal for keys."""
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        await proc.wait()
-        return proc.returncode or 0
-    except Exception:
-        logger.debug("ffmpeg command failed: %s", cmd[:2], exc_info=True)
+    except OSError:
+        logger.debug("ffmpeg command could not start: %s", cmd[:2], exc_info=True)
         return 1
+    try:
+        return await proc.wait()
+    except asyncio.CancelledError:
+        await kill_timed_out(proc)
+        raise
 
 
 def register() -> None:

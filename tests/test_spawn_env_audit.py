@@ -71,6 +71,9 @@ _BUILT: dict[str, str] = {
     "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen": "an app's backend",
     "apps/worker_runtime.py::WorkerSupervisor._spawn::subprocess.Popen": "an app's worker",
     "local_models/sidecar.py::SidecarRunner._spawn::subprocess.Popen": "a model sidecar",
+    "local_models/sidecar.py::run_once::asyncio.create_subprocess_exec": (
+        "one model call in a child of its own"
+    ),
     "local_models/sidecar.py::SidecarInstall._run::subprocess.Popen": (
         "a model sidecar's venv and pip install"
     ),
@@ -230,9 +233,8 @@ _GATEWAY_ENV: dict[str, str] = {
     ),
     "sandbox_providers/lima.py::_probe::subprocess.run": "lima instance status probe",
     "computer_use/macos_tcc.py::_probe::subprocess.run": "`log show` TCC probe",
-    "knowledge/pipeline/executor.py::PipelineExecutor._media_duration::subprocess.run": "ffprobe",
-    "knowledge/pipeline/nodes/media_nodes.py::VideoClassifyNode._dense_regions::subprocess.run": (
-        "ffprobe scene detect"
+    "knowledge/pipeline/nodes/media_nodes.py::media_seconds::asyncio.create_subprocess_exec": (
+        "ffprobe reads a video's length"
     ),
     "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::asyncio.create_subprocess_exec": "ffmpeg",
     "transcribe.py::_segment::asyncio.create_subprocess_exec": "ffmpeg",
@@ -277,6 +279,8 @@ _MUST_STAY_BUILT = {
     "apps/app_python.py::_pip_install::subprocess.run",
     "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen",
     "apps/worker_runtime.py::WorkerSupervisor._spawn::subprocess.Popen",
+    "local_models/sidecar.py::SidecarRunner._spawn::subprocess.Popen",
+    "local_models/sidecar.py::run_once::asyncio.create_subprocess_exec",
     "knowledge_providers/pack_parse.py::run_parse_script::subprocess.run",
     "apps/catalog.py::_read_git_registry::subprocess.run",
     "apps/catalog.py::_scan_git_source::subprocess.run",

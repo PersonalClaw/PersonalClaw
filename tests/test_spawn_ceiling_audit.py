@@ -203,6 +203,11 @@ _CEILING_WRAPPED: dict[str, str] = {
     "local_models/sidecar.py::SidecarRunner._spawn::subprocess.Popen": (
         "model sidecar child → tool ceiling via spawn_shim_argv (argv-prepend)"
     ),
+    # One model call in a child of its own (`run_once`): the same child harness running the
+    # app's worker, so the same disposition as the sidecar child above.
+    "local_models/sidecar.py::run_once::asyncio.create_subprocess_exec": (
+        "one model call in a child of its own → tool ceiling via spawn_shim_argv (argv-prepend)"
+    ),
     # Sidecar install (venv + pip) — user-initiated but runs third-party setup code, so it
     # carries the ``build`` profile (NOFILE raised; a pip install opens many fds). A Popen, so
     # its output reaches the install's log as pip writes it and a cancel can stop it.
@@ -472,11 +477,8 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     ),
     "gateway.py::_wslview_open::subprocess.run": "operator: open browser on WSL",
     # Knowledge media pipeline — ffprobe/ffmpeg on operator-ingested media (host tools).
-    "knowledge/pipeline/executor.py::PipelineExecutor._media_duration::subprocess.run": (
-        "host tool: ffprobe"
-    ),
-    "knowledge/pipeline/nodes/media_nodes.py::VideoClassifyNode._dense_regions::subprocess.run": (
-        "host tool: ffprobe scene detect"
+    "knowledge/pipeline/nodes/media_nodes.py::media_seconds::asyncio.create_subprocess_exec": (
+        "host tool: ffprobe reads a video's length"
     ),
     "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::asyncio.create_subprocess_exec": (
         "host tool: ffmpeg"
