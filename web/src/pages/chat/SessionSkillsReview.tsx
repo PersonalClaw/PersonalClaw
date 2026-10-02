@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { GraduationCap, Check, X, Pencil } from 'lucide-react'
 import { api, type EphemeralDraft } from '../../lib/api'
+import { useLatestRead } from '../../lib/useLatestRead'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -22,12 +23,14 @@ export function SessionSkillsReview({ sessionKey, agent, refreshKey }: {
   const [drafts, setDrafts] = useState<EphemeralDraft[]>([])
   const [open, setOpen] = useState(false)
 
-  const load = () => {
-    if (!sessionKey) return
-    api.ephemeralSkills(sessionKey).then(setDrafts).catch(() => setDrafts([]))
-  }
-  // Re-check after each settled turn (refreshKey bumps when streaming ends).
-  useEffect(load, [sessionKey, refreshKey])
+  // Re-check after each settled turn (refreshKey bumps when streaming ends) and after each review,
+  // one read at a time: a newer one aborts the read that is out (`useLatestRead`).
+  const load = useLatestRead(
+    sessionKey ? `${sessionKey}#${refreshKey}` : null,
+    (signal) => api.ephemeralSkills(sessionKey, { signal }),
+    setDrafts,
+    () => setDrafts([]),
+  )
 
   if (drafts.length === 0) return null
 

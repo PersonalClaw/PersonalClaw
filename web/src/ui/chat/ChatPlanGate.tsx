@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Check, MessageSquarePlus, Pencil, X } from 'lucide-react'
 import { Button } from '../Button'
 import { Markdown } from '../Markdown'
 import { StaleWriteNotice } from '../StaleWriteNotice'
 import { api, type PlanStep, type TaskMode } from '../../lib/api'
 import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useLatestRead } from '../../lib/useLatestRead'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -58,17 +59,21 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  const load = useCallback(() => {
-    api.chatPlanSession(session).then((d) => {
+  // Re-read after every turn and every action, one read at a time: a newer one aborts the read
+  // that is out (`useLatestRead`), so no turn leaves a read holding a connection behind it.
+  const load = useLatestRead(
+    `${session}#${refreshKey}`,
+    (signal) => api.chatPlanSession(session, { signal }),
+    (d) => {
       const steps = d.session?.steps ?? []
       // The step the walkthrough is ON = the first not-yet-approved one, the same
       // definition as planning.session.current_step.
       setStep(steps.find((s) => s.status !== 'approved') ?? null)
       setAwaiting(d.awaiting_step_id)
       setParked(!!d.binding?.parked)
-    }).catch(() => { setStep(null); setAwaiting('') })
-  }, [session])
-  useEffect(load, [load, refreshKey])
+    },
+    () => { setStep(null); setAwaiting('') },
+  )
   // A new draft replaces whatever was being written about the old one.
   useEffect(() => { setComment(''); setEditText(null); setErr('') }, [awaiting])
 

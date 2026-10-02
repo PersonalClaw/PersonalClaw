@@ -333,7 +333,7 @@ The 898 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/chat/sessions/{session}/map` | the durable session-map marks. |
 | `POST` | `/api/chat/sessions/{session}/model` | set model for a chat session. |
 | `PATCH` | `/api/chat/sessions/{session}/natural-voice` | set the per-conversation scope. |
-| `GET` | `/api/chat/sessions/{session}/organize` | the proposal, or ``{"proposal": null}``. |
+| `GET` | `/api/chat/sessions/{session}/organize` | the chat's proposal now, without waiting. |
 | `POST` | `/api/chat/sessions/{session}/organize/accept` | apply the proposal. |
 | `POST` | `/api/chat/sessions/{session}/organize/decline` | remember the refusal. |
 | `PATCH` | `/api/chat/sessions/{session}/pin` | toggle pinned state. |
@@ -921,7 +921,7 @@ The 898 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/status` | _(no summary)_ |
 | `GET` | `/api/stt/ffmpeg` | the ffmpeg transcription runs, or why there is none. |
 | `POST` | `/api/stt/transcribe` | transcribe uploaded audio via the active STT model. |
-| `GET` | `/api/suggestions` | return pre-computed contextual suggestions. |
+| `GET` | `/api/suggestions` | the suggestions there are now, at once. |
 | `GET` | `/api/surfaces/overlays` | the user/agent (L2) overlays, plus named refusals. |
 | `GET` | `/api/system` | System information endpoint with live CPU, memory, network metrics. |
 | `POST` | `/api/system/restart` | bounce the gateway to apply committed backend |

@@ -100,7 +100,7 @@ import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneF
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
 import { api, ApiError, hasApiCode, isSwitchedOff, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
-import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
 import { findSegments } from './chat/findSegments'
@@ -236,14 +236,17 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
   // hides on failure, which is honest — a decoration that quietly does not appear claims nothing.
   const { data, loading } = useQuery('chat:suggestions', () => api.suggestions().then((r) => r.suggestions), { persist: true })
   const items = (data ?? []).slice(0, 6)
+  // The read answers at once with the list there is; a new one is written in the background and
+  // lands as a `suggestions` refresh hint, so the strip re-reads then.
+  useChatSocket((m) => { if (refreshKinds(m).includes('suggestions')) invalidateKeys('chat:suggestions') },
+    () => invalidateKeys('chat:suggestions'))
   // 🪤 "STILL ASKING" IS NOT "NONE AVAILABLE", and this strip used to render `null` for both. The
   // docstring's "silent when none are available" is a deliberate product choice about the EMPTY
   // answer; it was never meant to cover the pending one. Collapsing the two is expensive here for a
   // reason specific to this hero: it is vertically CENTERED, so the strip arriving does not push
   // content down, it moves the mark, the greeting and the composer ALL of them, by half the strip's
-  // height. And on a fresh install `/api/suggestions` can await its generation for up to 45s
-  // (`suggestions.py`), so the arrival lands arbitrarily late while nothing on screen says a read is
-  // open.
+  // height. `/api/suggestions` answers at once now, but a busy gateway can still answer late, and
+  // nothing on screen would say a read is open.
   //
   // Measured on the e2e harness at 398e6b7a6: ONE `toHaveScreenshot` call on `#/chat` produced two
   // consecutive screenshots differing by 501,409 pixels — 54% of the image — so the route never
@@ -678,9 +681,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // load + after each chat_done. `priced=false` ⇒ the total mixes an unpriced model,
   // so we show a "~" prefix rather than a confidently-complete figure.
   const [sessionCost, setSessionCost] = useState<{ cost: number; tokens: number; priced: boolean } | null>(null)
-  const refreshSessionCost = useCallback((key: string | null) => {
+  const refreshSessionCost = useCallback((key: string | null, signal?: AbortSignal) => {
     if (!key) { setSessionCost(null); return }
-    api.usageTotals({ session: key }).then((d) => {
+    api.usageTotals({ session: key }, { signal }).then((d) => {
       const t = d.totals
       const tokens = (t.input_tokens || 0) + (t.output_tokens || 0)
       // Show the chip only once the session has recorded real usage.
@@ -1033,6 +1036,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // and goes silent, so if a lost/early `approval` frame left no card, the stream
   // just stalls. When streaming stays quiet, we reconcile from session detail.
   const lastWsActivityRef = useRef<number>(0)
+  // The reads a finished turn starts (its cost, its snapshot), so the next turn's abort them.
+  const turnDoneReads = useRef<AbortController | null>(null)
   const [selection, setSelection] = useState<ComposerValue>({ agent: initialAgent, model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: '' })
   // the resumed session's agent/model binding (from detail), restored into the
   // composer selection once discovered agents load. bindingNonce re-fires the
@@ -1348,7 +1353,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // frames a read held when the chat closed were applied to it, and a `chat_done` among them read
   // the session again for a chat no longer on screen. (StrictMode's rehearsal remount opens it again:
   // the load effect above sets the session.)
-  useEffect(() => () => { sessionRef.current = null }, [])
+  useEffect(() => () => { sessionRef.current = null; turnDoneReads.current?.abort() }, [])
 
   // Restore the composer selection from the resumed session's binding, once both
   // the binding (from detail) and the discovered-agent catalog have loaded. ACP
@@ -1608,9 +1613,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // skeleton, no visible reload) — the open tab already shows the right
         // content from streaming; we only bring the cached snapshot up to date.
         const sk = sessionRef.current
+        // One pair of these reads at a time: the next turn's supersede this turn's, so they abort
+        // it, and so does leaving the chat. A read nobody waits for keeps a connection otherwise.
+        turnDoneReads.current?.abort()
+        const reads = new AbortController()
+        turnDoneReads.current = reads
         // Refresh the session cost chip now the turn's ledger row has landed.
-        refreshSessionCost(sk)
-        if (sk) api.chatSessionDetail(sk).then((d) => {
+        refreshSessionCost(sk, reads.signal)
+        if (sk) api.chatSessionDetail(sk, { signal: reads.signal }).then((d) => {
           writeCachedDetail(sk, d)
           // Episodic citations live on the persisted assistant message's meta,
           // not in the WS stream — so the just-streamed turn shows plain `[Memory N]`

@@ -51,9 +51,13 @@ class FakeState:
         self._tags = tags or []
         self.pushes = 0
         self.saved = 0
+        self.frames: list[tuple[str, object]] = []
 
     def push_sessions_update(self):
         self.pushes += 1
+
+    def broadcast_ws(self, kind, data):
+        self.frames.append((kind, data))
 
 
 @pytest.fixture()
@@ -162,6 +166,31 @@ def test_no_title_is_not_ambiguous():
     assert not so.is_ambiguous(FakeSession(title=""), FOLDERS, TAGS)
 
 
+def test_an_untitled_chat_is_not_ambiguous():
+    """An untitled chat carries its key as its title, and a key names no topic: its digits read
+    as a keyword, which put a question about the KEY to the background model."""
+    s = FakeSession(key="chat-4-1790940644", title="chat-4-1790940644")
+    s._titled = False
+    assert not so.is_ambiguous(s, FOLDERS, TAGS)
+    s._titled = True
+    assert not so.is_ambiguous(s, FOLDERS, TAGS), "a title that IS the key is still no title"
+    s.title = "quarterly planning cadence"
+    assert so.is_ambiguous(s, FOLDERS, TAGS), "the positive control: a real title is sorted"
+
+
+@pytest.mark.asyncio
+async def test_an_untitled_chat_is_never_put_to_the_model(home, monkeypatch):
+    async def boom(prompt, *, usage, validate=None, memory_mode=None):
+        raise AssertionError(f"the model was asked about an untitled chat: {prompt[:80]}")
+
+    monkeypatch.setattr("personalclaw.chores.run_chore", boom)
+    state = FakeState(FOLDERS, TAGS)
+    s = FakeSession(key="chat-4-1790940644", title="chat-4-1790940644")
+    s._titled = False
+    assert so.proposal_now(state, s) is None
+    assert not so.is_asking(s)
+
+
 def test_a_deterministic_match_is_not_ambiguous():
     assert not so.is_ambiguous(FakeSession(title="Research stuff"), FOLDERS, TAGS)
 
@@ -181,8 +210,10 @@ async def test_deterministic_path_never_calls_the_model(home, monkeypatch):
 
     monkeypatch.setattr("personalclaw.chores.run_chore", spy)
     state = FakeState(FOLDERS, TAGS)
-    p = await so.propose_for_session(state, FakeSession(title="Research plan"))
+    session = FakeSession(title="Research plan")
+    p = so.proposal_now(state, session)
     assert p is not None and p.source == "title"
+    assert not so.is_asking(session)
     assert calls == [], "a title that matched the vocabulary still paid for a model call"
 
 
@@ -196,9 +227,33 @@ async def test_ambiguous_path_consults_the_model(home, monkeypatch):
 
     monkeypatch.setattr("personalclaw.chores.run_chore", fake)
     state = FakeState(FOLDERS, TAGS)
-    p = await so.propose_for_session(state, FakeSession(title="quarterly planning cadence"))
+    session = FakeSession(title="quarterly planning cadence")
+    assert so.proposal_now(state, session) is None, "the read waited for the model"
+    assert so.is_asking(session)
+    await so._ASKS[session].task
+    assert state.frames == [("chat_organize", {"session": "s1"})]
+    p = so.proposal_now(state, session)
     assert p is not None and p.source == "llm"
     assert p.folder_id == "f-res" and p.tag_names == ["bug"]
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_sorts_nothing_is_not_asked_again(home, monkeypatch):
+    """NONE is an answer: the chat hears nothing, and the same question is not put again."""
+    calls = []
+
+    async def none(prompt, *, usage, validate=None, memory_mode=None):
+        calls.append(prompt)
+        return "NONE"
+
+    monkeypatch.setattr("personalclaw.chores.run_chore", none)
+    state = FakeState(FOLDERS, TAGS)
+    session = FakeSession(title="quarterly planning cadence")
+    assert so.proposal_now(state, session) is None
+    await so._ASKS[session].task
+    assert so.proposal_now(state, session) is None
+    assert not so.is_asking(session)
+    assert len(calls) == 1 and state.frames == []
 
 
 @pytest.mark.asyncio
@@ -211,7 +266,8 @@ async def test_allow_llm_false_stays_deterministic(home, monkeypatch):
     monkeypatch.setattr("personalclaw.chores.run_chore", boom)
     state = FakeState(FOLDERS, TAGS)
     s = FakeSession(title="quarterly planning cadence")
-    assert await so.propose_for_session(state, s, allow_llm=False) is None
+    assert so.proposal_now(state, s, allow_llm=False) is None
+    assert not so.is_asking(s), "allow_llm=False still put the question to the model"
 
 
 def test_llm_reply_cannot_invent_a_folder():
@@ -241,23 +297,21 @@ def test_llm_reply_is_capped_at_max_tags():
 # ── NEVER auto-applies ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_proposing_does_not_touch_the_session(home):
+def test_proposing_does_not_touch_the_session(home):
     """🔴 The hard rule. Proposing must leave folder/tags byte-identical."""
     state = FakeState(FOLDERS, TAGS)
     s = FakeSession(title="Research on indexes")
     before = (s.folder_id, list(s.tags))
-    p = await so.propose_for_session(state, s)
+    p = so.proposal_now(state, s)
     assert p is not None, "precondition: this session must actually get a proposal"
     assert (s.folder_id, list(s.tags)) == before == ("", [])
 
 
-@pytest.mark.asyncio
-async def test_surfacing_does_not_touch_the_session(home):
+def test_surfacing_does_not_touch_the_session(home):
     """Nor does raising the inbox row — the row is the proposal's only side effect."""
     state = FakeState(FOLDERS, TAGS)
     s = FakeSession(title="Research on indexes")
-    p = await so.propose_for_session(state, s)
+    p = so.proposal_now(state, s)
     so.surface_proposal(None, p)
     assert s.folder_id == "" and s.tags == []
 
@@ -416,26 +470,42 @@ def test_surfacing_twice_raises_one_inbox_row(home):
     assert rows[0].item_kind == ItemKind.PROPOSAL.value
 
 
-@pytest.mark.asyncio
-async def test_a_declined_proposal_never_returns(home):
+def test_a_declined_proposal_never_returns(home):
     """The persisted tier: covers the case the inbox dedup cannot, because a dismissed row
     is no longer 'open' and would otherwise be re-raised on the next scan."""
     state = FakeState(FOLDERS, TAGS)
     s = FakeSession(title="Research on indexes")
-    p = await so.propose_for_session(state, s)
+    p = so.proposal_now(state, s)
     assert p is not None
     so.record_decline(p)
     assert so.is_declined(p)
-    assert await so.propose_for_session(state, s) is None
+    assert so.proposal_now(state, s) is None
 
 
 @pytest.mark.asyncio
-async def test_declining_one_value_does_not_silence_a_different_one(home):
+async def test_a_declined_model_proposal_is_not_announced(home, monkeypatch):
+    """The decline memory holds for the model's answer too: one the user already declined
+    lands without a frame, and reads as nothing."""
+
+    async def fake(prompt, *, usage, validate=None, memory_mode=None):
+        return "FOLDER: Research  TAGS: bug"
+
+    monkeypatch.setattr("personalclaw.chores.run_chore", fake)
+    so.record_decline(so.OrganizeProposal(session_key="s1", folder_id="f-res", tag_names=["bug"]))
+    state = FakeState(FOLDERS, TAGS)
+    session = FakeSession(key="s1", title="quarterly planning cadence")
+    assert so.proposal_now(state, session) is None
+    await so._ASKS[session].task
+    assert state.frames == []
+    assert so.proposal_now(state, session) is None
+
+
+def test_declining_one_value_does_not_silence_a_different_one(home):
     """Declining "file this in Research" is not consent to never be asked anything again."""
     state = FakeState(FOLDERS, TAGS)
     so.record_decline(so.OrganizeProposal(session_key="s1", folder_id="f-inf"))
     s = FakeSession(key="s1", title="Research on indexes")
-    p = await so.propose_for_session(state, s)
+    p = so.proposal_now(state, s)
     assert p is not None and p.folder_id == "f-res"
 
 

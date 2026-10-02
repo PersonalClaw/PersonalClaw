@@ -171,13 +171,19 @@ export function invalidateSpecs(specs: readonly CacheKeySpec[]): void {
  */
 export const REQUEST_DEADLINE_MS = 8000
 
-/** The reader's wait ran out. A distinct type so a surface can say "not responding" rather than
+/** The reader's wait ran out. A distinct type so a surface can say "no answer yet" rather than
  *  inventing a cause, and so `dataLayer.test.ts` can assert the deadline fired rather than
- *  matching on a sentence. */
+ *  matching on a sentence.
+ *
+ *  🔴 The sentence names both causes because the page cannot tell them apart. A browser sends at
+ *  most six requests at a time to the gateway, for every tab together, and queues the rest
+ *  itself; `fetch` says nothing about a request it has not sent yet. It read "The server did not
+ *  respond within 8s" over a gateway that answered the same read in 80 ms once it arrived, after
+ *  17 requests had waited in the browser behind slow ones. */
 export class RequestDeadlineError extends Error {
   key: string
   constructor(key: string) {
-    super(`The server did not respond within ${Math.round(REQUEST_DEADLINE_MS / 1000)}s.`)
+    super(`No answer within ${Math.round(REQUEST_DEADLINE_MS / 1000)}s. The gateway may be busy, or this browser may still be waiting to send the request.`)
     this.name = 'RequestDeadlineError'
     this.key = key
   }

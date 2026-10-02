@@ -72,7 +72,7 @@ CHORES: dict[tuple[str, str], str] = {
     ("dashboard/chat_title.py", "_title_once"): "a chat's title and tags",
     ("dashboard/chat_title.py", "_generate_title_via_provider"): "a title asked for again",
     ("dashboard/chat_followups.py", "_generate_followups"): "a chat's follow-up chips",
-    ("session_organize.py", "_llm_proposal"): "a chat's organize proposal",
+    ("session_organize.py", "_ask_model"): "a chat's organize proposal",
     ("suggestions.py", "generate_suggestions"): "the dashboard's suggestions",
     ("dashboard/chat_folders.py", "_generate_folder_icon"): "a folder's icon",
     ("context.py", "compress_thread_history"): "a reopened chat's condensed history",

@@ -101,7 +101,14 @@ async function j<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>
 }
 
-const get = <T>(p: string) => refuseIfSignedOut() ?? fetch(p, { headers: { ...SK } }).then(j<T>)
+/** A read a page may abandon: aborting `signal` cancels the request, connection and all. A page that
+ *  re-reads on its own schedule (after every turn, on a socket frame) aborts the read before it
+ *  (`lib/useLatestRead`), so no read it no longer waits for keeps one of the browser's six
+ *  connections to the gateway. */
+export interface ReadOptions { signal?: AbortSignal }
+
+const get = <T>(p: string, opts: ReadOptions = {}) =>
+  refuseIfSignedOut() ?? fetch(p, { headers: { ...SK }, ...(opts.signal ? { signal: opts.signal } : {}) }).then(j<T>)
 // `extra` carries a write's precondition — `basedOn(revision)` for a whole-document write
 // (`lib/staleWrite.ts`) — and nothing else rides it.
 const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
@@ -5785,6 +5792,10 @@ export interface ResidencySnapshot {
 /** `GET /api/attachment-extract` — what extraction got from one uploaded attachment. */
 export interface AttachmentExtract {
   name: string
+  /** Still being read: the reading (an image or a recording is a model reading it) has not finished,
+   *  and `text`, `read` and `unread` say nothing yet. The gateway sends an `attachments` refresh hint
+   *  when it does. */
+  pending: boolean
   /** What the model is handed for the file: its text, or — when nothing was read — a one-line
    *  size-and-format descriptor. */
   text: string
@@ -7414,7 +7425,7 @@ export const api = {
   // counts (the Usage panel's Today/7d/30d); `since`/`until` bound any other span.
   // `priced=false` ⇒ the window mixes a model with no price row, so the total is a
   // partial (render "unpriced" / a partial marker — never a confidently-complete $).
-  usageTotals: (opts?: { session?: string; window?: UsageWindow; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
+  usageTotals: (opts?: { session?: string; window?: UsageWindow; since?: string; until?: string }, read: ReadOptions = {}) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`, read),
   usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; window?: UsageWindow; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
   // Today's spend as the daily cap counts it, beside that cap: the only numbers the Usage page
   // may set side by side (the ledger totals above include chat turns, which no cap covers).
@@ -8019,7 +8030,9 @@ export const api = {
     post<{ ok: boolean; workspace_dir?: string }>(`/api/chat/sessions/${encodeURIComponent(key)}/workspace-dir`, { workspace_dir }),
 
   // ── Contextual prompt starters (background-computed from memory + recent activity) ──
-  suggestions: (force = false) => get<{ suggestions: string[]; generated_at: number; stale: boolean }>(`/api/suggestions${force ? '?force=1' : ''}`),
+  // Answers at once. `refreshing`: a new list is being written in the background, and every page
+  // hears a `suggestions` refresh hint when it lands (`force` starts one whatever the list's age).
+  suggestions: (force = false) => get<{ suggestions: string[]; generated_at: number; stale: boolean; refreshing: boolean }>(`/api/suggestions${force ? '?force=1' : ''}`),
 
   // ── Discover: a curated tour of the system, grouped by area. Tips only
   // point (deep link), never enable; dismissals persist server-side per tip. ──
@@ -8365,9 +8378,11 @@ export const api = {
   editSessionTags: (session: string, edit: { add?: string[]; remove?: string[] }) =>
     put<{ ok: boolean; tags: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/tags`, edit),
   // Suggested organization (SM T2.1). The GET only READS — a suggestion never applies
-  // itself; organizeAccept is the sole path that writes folder/tags from a proposal.
-  organizeSuggestion: (session: string, opts: { llm?: boolean } = {}) =>
-    get<{ proposal: OrganizeProposal | null }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize${opts.llm === false ? '?llm=0' : ''}`),
+  // itself; organizeAccept is the sole path that writes folder/tags from a proposal. It answers at
+  // once: `pending` while the model is still sorting the chat, whose answer then arrives as a
+  // `chat_organize` frame naming the chat.
+  organizeSuggestion: (session: string, opts: ReadOptions & { llm?: boolean } = {}) =>
+    get<{ proposal: OrganizeProposal | null; pending: boolean }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize${opts.llm === false ? '?llm=0' : ''}`, { signal: opts.signal }),
   organizeAccept: (session: string, p: OrganizeProposal) =>
     post<{ ok: boolean; folder_id: string; tags: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize/accept`, { folder_id: p.folder_id, folder_name: p.folder_name, tags: p.tags, source: p.source }),
   organizeDecline: (session: string, p: OrganizeProposal) =>
@@ -8383,7 +8398,7 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; steerable?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | 'interrupted' | null; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; steerable?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | 'interrupted' | null; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
     /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
@@ -8403,7 +8418,7 @@ export const api = {
     /** Present only on a conversation an APP started (`AppStarted`). A turn in it runs under
      *  that app's permissions, whoever sends the message: your approval switches never reach it,
      *  and the app approves none of its calls, so each one that needs approval asks you. */
-  } & AppStarted>(`/api/chat/sessions/${encodeURIComponent(key)}`),
+  } & AppStarted>(`/api/chat/sessions/${encodeURIComponent(key)}`, read),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
   /** Set the per-conversation natural-voice scope. `''` clears the override so
    *  the conversation inherits the bound agent's preference again. The response is the
@@ -8455,8 +8470,8 @@ export const api = {
   // only: `chatPlanActivate` is the sole way a chat acquires one, so a quick task never
   // grows a review gate. While a step awaits review the session sits in the `plan` task
   // mode and the backend's tool gate — not a prompt — is what refuses to execute.
-  chatPlanSession: (session: string) =>
-    get<ChatPlanWire>(`/api/chat/sessions/${encodeURIComponent(session)}/plan-session`),
+  chatPlanSession: (session: string, opts: ReadOptions = {}) =>
+    get<ChatPlanWire>(`/api/chat/sessions/${encodeURIComponent(session)}/plan-session`, opts),
   /** Open (or, mid-conversation, extend) the walkthrough. `parked: true` means a turn
    *  was in flight and has been asked to stop — the transcript is left intact. */
   chatPlanActivate: (session: string) =>
@@ -9083,8 +9098,8 @@ export const api = {
    *  would claim nothing was learned when the truthful answer is "not being tracked". */
   learningSummary: (days?: number) => get<LearningSummary | SwitchedOffView>(`/api/learning/summary${days ? `?days=${days}` : ''}`),
   // Ephemeral session-skill drafts (skill-ephemeral-promotion).
-  ephemeralSkills: (session: string) =>
-    get<{ drafts: EphemeralDraft[] }>(`/api/skills/ephemeral/${encodeURIComponent(session)}`).then((d) => d.drafts),
+  ephemeralSkills: (session: string, opts: ReadOptions = {}) =>
+    get<{ drafts: EphemeralDraft[] }>(`/api/skills/ephemeral/${encodeURIComponent(session)}`, opts).then((d) => d.drafts),
   promoteEphemeralSkill: (session: string, payload: { slug: string; scope: 'agent' | 'global'; agent?: string; title?: string; body?: string }) =>
     post<{ ok: boolean; name: string; scope: string }>(`/api/skills/ephemeral/${encodeURIComponent(session)}/promote`, payload),
   discardEphemeralSkill: (session: string, slug: string) =>
@@ -9952,7 +9967,7 @@ export const api = {
   // (an image is read only when this asks).
   /** What extraction got from an uploaded attachment. `read` is false when `text` is only the
    *  file's size and format — nothing could read its content. */
-  attachmentExtract: (path: string) => get<AttachmentExtract>(`/api/attachment-extract?path=${encodeURIComponent(path)}`),
+  attachmentExtract: (path: string, opts: ReadOptions = {}) => get<AttachmentExtract>(`/api/attachment-extract?path=${encodeURIComponent(path)}`, opts),
   uploadFiles: async (
     files: File[],
     onProgress?: (fileIndex: number, p: { loaded: number; total: number; pct: number }) => void,

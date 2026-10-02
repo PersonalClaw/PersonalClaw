@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ExternalLink, FileText, Image as ImageIcon, Loader2, Paperclip, X } from 'lucide-react'
-import { api, type ChatImageInput } from '../../lib/api'
-import { useQuery } from '../../lib/data'
+import { api, type AttachmentExtract, type ChatImageInput } from '../../lib/api'
+import { invalidateKeys, useQuery } from '../../lib/data'
+import { refreshKinds, useChatSocket } from '../../lib/useChatSocket'
+import { useLatestRead } from '../../lib/useLatestRead'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { IconButton } from '../../ui/IconButton'
@@ -52,21 +54,28 @@ function ImageAttachmentChips({ paths, images, session, agent, model, runtime, o
  *  nothing could read one — only its size and format, and when that is because no image model is
  *  set up, where to set one up. Read from the images' own extraction, which this asking starts (an
  *  image is read only when its text is wanted, `AttachmentExtractor.start`), so
- *  the sentence is about these files, not about what might be installed. */
+ *  the sentence is about these files, not about what might be installed.
+ *
+ *  The read answers at once, `pending` while an image model is still reading: the note waits for
+ *  every image (`imagesAsTextNote` says only the reason meanwhile) and reads again on the
+ *  `attachments` hint the gateway sends when a reading finishes. */
 function ImagesAsTextNote({ input, images }: { input: ChatImageInput; images: string[] }) {
   const { data, error } = useQuery(
     `chat:attachment-extract:${images.join('|')}`,
     () => Promise.all(images.map((p) => api.attachmentExtract(p))),
   )
+  const waiting = !data || data.some((x) => x.pending)
+  useChatSocket((m) => { if (waiting && refreshKinds(m).includes('attachments')) invalidateKeys('chat:attachment-extract:', true) },
+    () => invalidateKeys('chat:attachment-extract:', true))
   if (data === undefined && error) {
     return (
       <FieldError className="-mt-1 mb-2">{input.reason} Couldn't read what it would get from {images.length === 1 ? 'the image' : 'the images'} — {(error as Error)?.message || 'the server did not respond'}</FieldError>
     )
   }
-  const got = data && {
+  const got = data && data.every((x) => !x.pending) ? {
     read: data.every((x) => x.read),
     noImageModel: data.every((x) => !x.read && x.unread === UNREAD_NO_IMAGE_MODEL),
-  }
+  } : undefined
   const note = imagesAsTextNote(input, images.length, got)
   if (!note) return null
   return (
@@ -147,27 +156,29 @@ export function TurnAttachments({ paths, delivery, onOpenFile }: { paths: string
 }
 
 /** Preview an attachment: its extracted text content (what the agent saw) +
- *  open-original. Extraction is fetched on open (it awaits the job already running, or starts it). */
+ *  open-original. Extraction is read on open (it reports the job already running, or starts it):
+ *  the read answers at once, `pending` while the reading runs, and is read again on the
+ *  `attachments` hint the gateway sends when it finishes. Closing aborts a read that is out. */
 function AttachmentPeekModal({ path, name, delivery, reason, onOpenFile, onClose }: { path: string; name: string; delivery?: 'image' | 'text'; reason?: string; onOpenFile: (p: string) => void; onClose: () => void }) {
   const [text, setText] = useState<string | null>(null)
   const [read, setRead] = useState(true)
   const [unread, setUnread] = useState('')
   const [readErr, setReadErr] = useState<unknown>(null)
   const [loading, setLoading] = useState(delivery !== 'image')
-  useEffect(() => {
-    // An image the model was SHOWN has no "what the agent saw" text: the text read from it was
-    // never sent, so presenting it under that heading would be a false record of the turn.
-    if (delivery === 'image') return
-    let alive = true
-    setLoading(true)
-    setReadErr(null)
-    api.attachmentExtract(path)
-      .then((r) => { if (alive) { setText(r.text || ''); setRead(r.read); setUnread(r.unread) } })
-      // A failed read is not "no extractable text": that sentence would describe the file.
-      .catch((e) => { if (alive) setReadErr(e) })
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [path, delivery])
+  // An image the model was SHOWN has no "what the agent saw" text: the text read from it was
+  // never sent, so presenting it under that heading would be a false record of the turn.
+  const reread = useLatestRead(
+    delivery === 'image' ? null : path,
+    (signal) => api.attachmentExtract(path, { signal }),
+    (r: AttachmentExtract) => {
+      setReadErr(null)
+      if (r.pending) return
+      setText(r.text || ''); setRead(r.read); setUnread(r.unread); setLoading(false)
+    },
+    // A failed read is not "no extractable text": that sentence would describe the file.
+    (e) => { setReadErr(e); setLoading(false) },
+  )
+  useChatSocket((m) => { if (loading && refreshKinds(m).includes('attachments')) reread() }, reread)
   return (
     <Modal title={name} icon={<Paperclip size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-m">

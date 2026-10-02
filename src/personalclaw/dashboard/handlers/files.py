@@ -975,10 +975,13 @@ async def api_upload_file(request: web.Request) -> web.Response:
 
 async def api_attachment_extract(request: web.Request) -> web.Response:
     """GET /api/attachment-extract?path=... — the extracted text content for an
-    uploaded attachment, so the chat UI can preview what the agent saw. Awaits
-    the extraction kicked off at upload, or runs it now (an image is only ever read
-    when this, or its turn, asks). Restricted to the
+    uploaded attachment, so the chat UI can preview what the agent saw. Restricted to the
     uploads dir to prevent reading arbitrary files through this surface.
+
+    Never waits on the extraction, which for an image or a recording is a model reading it:
+    ``pending`` is true while it runs (this read starts it when nothing has; an image is only
+    ever read when this, or its turn, asks), and every page hears an ``attachments`` refresh
+    hint when it finishes.
 
     ``read`` says whether the text was read from the file's content, or is only its
     structural descriptor (size and format) — the attachment chip's sentence depends on it.
@@ -1006,7 +1009,14 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.dashboard.attachment_extract import display_name, get_extractor
 
-    got = await get_extractor().get(path, _mt.guess_type(path)[0])
+    app = request.app
+    got = get_extractor().peek(
+        path, _mt.guess_type(path)[0], lambda: app["state"].push_refresh("attachments")
+    )
+    if got is None:
+        return web.json_response(
+            {"name": display_name(path), "pending": True, "text": "", "read": False, "unread": ""}
+        )
     _sel().log_api_access(
         caller=caller,
         operation="attachment_extract",
@@ -1014,7 +1024,13 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
         resources=f"name={display_name(path)} chars={len(got.text)}",
     )
     return web.json_response(
-        {"name": display_name(path), "text": got.text, "read": got.read, "unread": got.unread}
+        {
+            "name": display_name(path),
+            "pending": False,
+            "text": got.text,
+            "read": got.read,
+            "unread": got.unread,
+        }
     )
 
 

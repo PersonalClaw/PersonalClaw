@@ -315,7 +315,11 @@ async def test_the_attachment_extract_route_says_why_an_image_was_not_read(tmp_p
     )
 
     async with _home(chat=[f"{ENTRY}:{TEXT_ONLY}"]):
+        # The first read starts the reading and answers at once; the second reads its result.
         request = make_mocked_request("GET", f"/api/attachment-extract?path={shot}")
+        first = json.loads((await files.api_attachment_extract(request)).body)
+        assert first["pending"] is True, first
+        await extractor.get(str(shot))
         response = await files.api_attachment_extract(request)
 
     body = json.loads(response.body)

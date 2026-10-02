@@ -7,7 +7,10 @@ import { fvs } from '../../design/fontWeight'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { api, type OrganizeProposal } from '../../lib/api'
+import { useChatSocket } from '../../lib/useChatSocket'
+import { useLatestRead } from '../../lib/useLatestRead'
 import { notify } from '../../app/appSdk'
+import { deliverableToOpenSession } from './sessionDelivery'
 
 /** Suggested-organization chip — a non-blocking pill above the
  *  composer proposing a folder and/or tags for a chat the user never organized.
@@ -20,7 +23,13 @@ import { notify } from '../../app/appSdk'
  *
  *  Suggestions come from deterministic signals (title keywords against the user's own
  *  folder/tag vocabulary, the workspace directory, channel origin); the backend consults a
- *  model only for genuinely ambiguous chats. */
+ *  model only for genuinely ambiguous chats.
+ *
+ *  ONE read per chat at a time, and it answers at once. A newer turn, the model's answer or leaving
+ *  the chat aborts the read that is out (`useLatestRead`). For an ambiguous chat the read says
+ *  `pending`, and the model's answer arrives later as a `chat_organize` frame naming the chat, which
+ *  reads again: it used to be the read that waited for the model, after every turn, until seven of
+ *  them held all six of the browser's connections to the gateway. */
 export function OrganizeChip({ sessionKey, refreshKey, onApplied }: {
   sessionKey: string
   /** Bump to re-ask (e.g. after a turn completes and the title finally exists). */
@@ -30,14 +39,20 @@ export function OrganizeChip({ sessionKey, refreshKey, onApplied }: {
   const [proposal, setProposal] = useState<OrganizeProposal | null>(null)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    if (!sessionKey) { setProposal(null); return }
-    let live = true
-    api.organizeSuggestion(sessionKey)
-      .then((r) => { if (live) setProposal(r?.proposal ?? null) })
-      .catch(() => { if (live) setProposal(null) })
-    return () => { live = false }
-  }, [sessionKey, refreshKey])
+  // Another chat's proposal never shows while this one's read is out.
+  useEffect(() => { setProposal(null) }, [sessionKey])
+  const reread = useLatestRead(
+    sessionKey ? `${sessionKey}#${refreshKey ?? 0}` : null,
+    (signal) => api.organizeSuggestion(sessionKey, { signal }),
+    (r) => setProposal(r?.proposal ?? null),
+    () => setProposal(null),
+  )
+  // Read again when the model has sorted this chat (`chat_organize`), and when it is titled
+  // (`session_title`, which names the chat in `key`): an untitled chat has nothing to be sorted by.
+  useChatSocket((m) => {
+    const named = m.type === 'session_title' ? m.data?.key : m.type === 'chat_organize' ? m.data?.session : undefined
+    if (named !== undefined && deliverableToOpenSession(named, sessionKey)) reread()
+  }, reread)
 
   if (!proposal) return null
 

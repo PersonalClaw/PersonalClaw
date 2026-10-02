@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Sparkles, RefreshCw, ArrowUpRight } from 'lucide-react'
 import { api } from '../../../lib/api'
+import { refreshKinds, useChatSocket } from '../../../lib/useChatSocket'
 import { SlotEmptyState } from './kit'
 import { InlineLoadError } from '../../../ui/ListScaffold'
 import { spring } from '../../../design/motion'
@@ -9,7 +10,8 @@ import type { RouteProps } from '../../../app/useQueryState'
 
 /** Today's Suggestions — LLM prompt-starter cards personalized from memory +
  *  recent activity. One tap launches the suggestion as a fresh chat; a refresh
- *  regenerates (force=1).
+ *  regenerates (force=1). The read answers at once: a new list is written in the background
+ *  (`refreshing`, which spins the Refresh glyph) and lands as a `suggestions` refresh hint.
  *
  *  🪤 THE CAP IS SIX, AND IT IS SIX BECAUSE THE PRODUCER SAYS SO — not because six rows happen to
  *  look right. It read `slice(0, 5)` and quietly dropped one suggestion every render, with no
@@ -31,17 +33,19 @@ export function Suggestions({ navigate }: RouteProps) {
   // into an empty list, and the branch below then told the user "No suggestions yet — they build
   // from your activity." — an explanation of a state the server never reported.
   const [err, setErr] = useState<unknown>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   const load = useCallback((force = false) => {
     setLoading(true)
     setErr(null)
     api.suggestions(force)
-      .then((d) => setItems(d.suggestions ?? []))
+      .then((d) => { setItems(d.suggestions ?? []); setRefreshing(!!d.refreshing) })
       .catch(setErr)
       .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { load(false) }, [load])
+  useChatSocket((m) => { if (refreshKinds(m).includes('suggestions')) load(false) }, () => load(false))
 
   if (loading && items.length === 0) {
     return (
@@ -83,7 +87,7 @@ export function Suggestions({ navigate }: RouteProps) {
         className="mt-xs inline-flex items-center gap-xs self-start rounded-pill px-m py-xs text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface"
         data-type="label-m"
       >
-        <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
+        <RefreshCw size={12} className={loading || refreshing ? 'animate-spin' : ''} /> Refresh
       </button>
     </div>
   )

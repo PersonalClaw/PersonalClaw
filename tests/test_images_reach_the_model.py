@@ -548,7 +548,7 @@ async def test_the_extraction_route_says_when_it_read_nothing(tmp_path, monkeypa
     monkeypatch.setattr("personalclaw.dashboard.handlers.files._upload_dir", lambda: uploads)
     descriptor = "Image: shot.png (4×3, PNG, 1 KB) — no extractable text content."
     extractor = MagicMock()
-    extractor.get = AsyncMock(return_value=_extracted(descriptor, False))
+    extractor.peek = MagicMock(return_value=_extracted(descriptor, False))
     app = web.Application()
     app.router.add_get("/api/attachment-extract", api_attachment_extract)
     with (
@@ -557,4 +557,10 @@ async def test_the_extraction_route_says_when_it_read_nothing(tmp_path, monkeypa
     ):
         async with TestClient(TestServer(app)) as client:
             body = await (await client.get(f"/api/attachment-extract?path={img}")).json()
-    assert body == {"name": "shot.png", "text": descriptor, "read": False, "unread": ""}
+    assert body == {
+        "name": "shot.png",
+        "pending": False,
+        "text": descriptor,
+        "read": False,
+        "unread": "",
+    }

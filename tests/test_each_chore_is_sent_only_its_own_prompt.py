@@ -208,9 +208,16 @@ async def _title(state, session) -> None:
 
 
 async def _organize(state, session) -> None:
-    from personalclaw.session_organize import propose_for_session
+    """The chat's organize question, put as the chip's read puts it: the read answers at once and
+    asks the model in the background (``session_organize.proposal_now``), and this waits for that
+    ask to land. A chat with no title yet is asked nothing, and a question it was answered is not
+    asked again."""
+    from personalclaw import session_organize
 
-    await propose_for_session(state, session)
+    session_organize.proposal_now(state, session)
+    ask = session_organize._ASKS.get(session)
+    if ask is not None and ask.task is not None:
+        await ask.task
 
 
 async def _follow_ups(state, session) -> None:
@@ -262,7 +269,13 @@ def test_a_chats_chore_is_sent_only_its_own_prompt(world, state, earlier, later)
     then, then_head = CHORES[later]
 
     async def scenario() -> None:
+        if earlier == "organize":
+            # An organize question is about the chat's title, so the chat carries the one its
+            # title chore gives it; its title is then asked for again.
+            chat.title, chat._titled = "Lighthouse walk plan", True
         await first(state, chat)
+        if later == "title":
+            chat._titled = False
         await then(state, chat)
 
     asyncio.run(scenario())
@@ -325,7 +338,8 @@ def test_a_consolidation_holds_nothing_of_another_chats_chores(world, state, tmp
 
 def test_every_chore_of_two_chats_is_sent_one_message(world, state, tmp_path):
     """However many chores ran before, each request is one message: the requests no longer grow
-    with the day."""
+    with the day. Each round asks the chat's title again; its organize question, the same each
+    time, is asked once."""
     walk = _chat(state, WALK_KEY, WALK)
     bread = _chat(state, BREAD_KEY, BREAD)
     consolidators = {
@@ -335,16 +349,17 @@ def test_every_chore_of_two_chats_is_sent_one_message(world, state, tmp_path):
 
     async def scenario() -> None:
         for chat in (walk, bread, walk, bread):
+            chat._titled = False
             for chore, _head in CHORES.values():
-                chat._titled = False
                 await chore(state, chat)
         for key, consolidator in consolidators.items():
             await consolidator.consolidate_now(f"dashboard:{key}")
 
     asyncio.run(scenario())
 
-    assert len(world.requests) == 14, [r[-1]["content"][:40] for r in world.requests]
-    assert [len(r) for r in world.requests] == [1] * 14, [len(r) for r in world.requests]
+    assert len(world.requests) == 12, [r[-1]["content"][:40] for r in world.requests]
+    assert len(world.asked(ORGANIZE)) == 2, "each chat's one organize question, asked once"
+    assert [len(r) for r in world.requests] == [1] * 12, [len(r) for r in world.requests]
 
 
 def test_a_channels_chores_through_the_sdk_are_each_sent_only_their_own_prompt(world):

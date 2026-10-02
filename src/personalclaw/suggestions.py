@@ -279,19 +279,34 @@ async def refresh_suggestions(state: "DashboardState", cache: SuggestionsCache) 
                 logger.warning("Suggestions generation failed", exc_info=True)
 
 
-async def maybe_refresh(state: "DashboardState", cache: SuggestionsCache) -> None:
-    """Trigger a background refresh if suggestions are stale."""
-    now = time.time()
-    if now - cache.generated_at < _REFRESH_INTERVAL_SECS:
-        return
-    if cache._lock.locked():
-        return
+def start_refresh(state: "DashboardState", cache: SuggestionsCache, *, force: bool = False) -> bool:
+    """Start a background refresh when the suggestions are owed one; whether one is running.
 
-    # Fire and forget
-    task = asyncio.create_task(refresh_suggestions(state, cache))
+    They are owed one when none was generated in this process, when the last is older than the
+    refresh interval, and when one is asked for (*force*: the widget's Refresh). One refresh at a
+    time: a read while one runs starts nothing, and every page hears a ``suggestions`` refresh
+    hint when it lands (:func:`_refresh_and_announce`), so no read waits for it.
+    """
+    if cache._task is not None and not cache._task.done():
+        return True
+    if not force and time.time() - cache.generated_at < _REFRESH_INTERVAL_SECS:
+        return False
+    task = asyncio.create_task(_refresh_and_announce(state, cache))
     cache._task = task
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
+    return True
+
+
+async def _refresh_and_announce(state: "DashboardState", cache: SuggestionsCache) -> None:
+    """:func:`refresh_suggestions`, then the refresh hint the pages that show them re-read on.
+
+    Said whatever came of it: a page showing a refresh in progress re-reads and stops showing
+    one, and a refresh no model answered kept the suggestions there were."""
+    try:
+        await refresh_suggestions(state, cache)
+    finally:
+        state.push_refresh("suggestions")
 
 
 def get_suggestions_cache(state: "DashboardState") -> SuggestionsCache:
@@ -305,35 +320,20 @@ def get_suggestions_cache(state: "DashboardState") -> SuggestionsCache:
 
 
 async def api_suggestions(request: web.Request) -> web.Response:
-    """GET /api/suggestions — return pre-computed contextual suggestions.
+    """GET /api/suggestions — the suggestions there are now, at once.
 
     Query params:
-        force=1  — force a fresh generation (ignores cache age)
+        force=1  — start a fresh generation whatever the cache's age (the widget's Refresh)
+
+    Never waits on the model: a generation this read starts (:func:`start_refresh`) runs in
+    the background, ``refreshing`` says one is running, and every page hears a ``suggestions``
+    refresh hint when it lands. Until a first one lands they are the fallback list the cache
+    starts with. This used to wait up to 45s for a first generation and for every ``force``,
+    holding one of the browser's six connections to the gateway for as long.
     """
     state: "DashboardState" = request.app["state"]
     cache = get_suggestions_cache(state)
-    force = request.query.get("force") == "1"
-
-    if force:
-        try:
-            await asyncio.wait_for(refresh_suggestions(state, cache), timeout=45)
-        except (asyncio.TimeoutError, Exception):
-            pass
-    elif cache.generated_at == 0:
-        # Never generated yet — wait for result
-        if cache._lock.locked() and cache._task is not None:
-            try:
-                await asyncio.wait_for(asyncio.shield(cache._task), timeout=45)
-            except (asyncio.TimeoutError, Exception):
-                pass
-        if cache.generated_at == 0 and not cache._lock.locked():
-            try:
-                await asyncio.wait_for(refresh_suggestions(state, cache), timeout=45)
-            except (asyncio.TimeoutError, Exception):
-                pass
-    else:
-        await maybe_refresh(state, cache)
-
+    refreshing = start_refresh(state, cache, force=request.query.get("force") == "1")
     return web.json_response(
         {
             "suggestions": cache.suggestions,
@@ -343,5 +343,6 @@ async def api_suggestions(request: web.Request) -> web.Response:
                 if cache.generated_at
                 else True
             ),
+            "refreshing": refreshing,
         }
     )

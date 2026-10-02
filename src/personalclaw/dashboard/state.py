@@ -284,6 +284,7 @@ class _ChatSession(ChatQueue):
         "_extra_tool_roots",
         "_unattended",
         "_spend_metered",
+        "__weakref__",  # per-chat state kept beside the chat, e.g. session_organize._ASKS
     )
 
     def __init__(
@@ -2527,6 +2528,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         ``workflows/watchdog``), ``history`` (the chat list), ``agents``, ``lessons``,
         ``artifacts`` (an artifact was written or removed — :meth:`announce_artifact_change`),
         ``mcp`` (what an MCP server's card says may have changed — ``mcp_status.announce``),
+        ``suggestions`` / ``attachments`` (a suggestions refresh landed, an attachment was read),
         and the self-update's ``update_available`` / ``updating`` / ``update_failed``.
         """
         self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})

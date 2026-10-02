@@ -194,6 +194,17 @@ named inside the call (`one_shot_completion(output_type=…, validate=…)`, or 
 around a call made through a completion function the caller was handed): the chain asks its next
 model either way, and only the last model is reminded of the shape and asked again.
 
+No page read waits for a model. A browser keeps six connections to the gateway for every tab
+together, and a GET that waited on a busy background model held one of them until the model
+answered; a chat's organize chip, re-reading after every turn, once held all six. So a GET answers
+at once with what is already known, and the model work a page asked for runs in the background, one
+ask at a time, and is announced over the socket when it lands: a chat's organize proposal as a
+`chat_organize` frame naming the chat (the chip reads it back through the GET, which decides what
+an app may see), the suggestions and an attachment's reading as `refresh` frames naming
+`suggestions` and `attachments`. A page re-reads on that frame, and aborts a read it no longer
+waits for (`web/src/lib/useLatestRead.ts`). `tests/test_no_get_route_waits_on_a_model_rail.py`
+holds every GET route to this.
+
 ## Subsystem index
 
 | Subsystem | Doc | Core modules |

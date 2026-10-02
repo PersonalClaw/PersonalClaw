@@ -9,10 +9,11 @@ calendar:
     "Wednesday, September 02 2026 at 07:30" -> 53 chars  -> passes the guard, calls the LLM
 
 Counted over 2026: 253 days fell back and **113 days did not** — a third of the year spent asking a
-model for suggestions from a context containing nothing but a timestamp. And the first
-`/api/suggestions` call AWAITS that generation for up to 45s (`api_suggestions` blocks while
-`generated_at == 0`), so a new user's chat chips appeared either instantly or after most of a minute
-depending on the day of the week.
+model for suggestions from a context containing nothing but a timestamp. The first
+`/api/suggestions` call then awaited that generation for up to 45s, so a new user's chat chips
+appeared either instantly or after most of a minute depending on the day of the week. (No read
+waits on it any more: `api_suggestions` answers at once and the generation runs in the
+background.)
 
 🪤 THE DATES HERE ARE THE POINT, NOT DECORATION. A single frozen date would pass against the buggy
 code roughly two days in three, which is the worst kind of test — green on most CI runs and red on
@@ -102,11 +103,11 @@ async def test_empty_instance_returns_the_fallback_without_an_llm_turn(empty_sta
         got = await suggestions.generate_suggestions(empty_state)
 
     assert got == suggestions._FALLBACK_SUGGESTIONS, f"{label}: expected the canned list"
-    # The real assertion. Reaching the prompt means asking a model, and a wait of up to a minute
-    # on the very first /api/suggestions call.
+    # The real assertion. Reaching the prompt means asking a model about a context that holds
+    # nothing.
     assert not render.called, (
         f"{label}: an empty instance rendered the suggestions prompt, which means it asked a "
-        f"model and blocked the first request while it answered."
+        f"model about a context that holds nothing but a timestamp."
     )
 
 

@@ -56,8 +56,14 @@ describe('the request deadline', () => {
     expect(result.current.loading).toBe(false)
     expect(result.current.error).toBeInstanceOf(RequestDeadlineError)
     // The message is what `LoadError` prints under its headline, so it has to be a sentence a
-    // person can act on rather than an engine string.
-    expect(String((result.current.error as Error).message)).toMatch(/did not respond/i)
+    // person can act on rather than an engine string. And a TRUE one: the browser queues the
+    // requests it has not sent yet, and `fetch` cannot say whether this one left. It said "The
+    // server did not respond" while 17 reads waited inside the browser, over a gateway that
+    // answered the same read in 80 ms once it arrived.
+    const said = String((result.current.error as Error).message)
+    expect(said).toMatch(/^No answer within \d+s\. The gateway may be busy/)
+    expect(said).toMatch(/this browser may still be waiting to send the request\.$/)
+    expect(said).not.toMatch(/did ?n[o']t respond/i)
   })
 
   it('leaves a fetch that REJECTS exactly as it was — the deadline adds a path, it does not replace one', async () => {

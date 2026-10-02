@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
 
 // ── An attached image says how it reaches the model ───────────────────────────────────────────
 //
@@ -11,6 +11,8 @@ import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/re
 const h = vi.hoisted(() => ({
   imageInput: vi.fn(),
   attachmentExtract: vi.fn(),
+  // The tab's socket: the gateway says a reading finished with an `attachments` refresh hint.
+  hears: [] as Array<(m: { type: string; data: Record<string, unknown> }) => void>,
 }))
 
 vi.mock('../../lib/api', async (orig) => {
@@ -27,6 +29,11 @@ vi.mock('../../lib/api', async (orig) => {
   }
 })
 
+vi.mock('../../lib/useChatSocket', async (orig) => ({
+  ...(await orig<typeof import('../../lib/useChatSocket')>()),
+  useChatSocket: (onMessage: (m: { type: string; data: Record<string, unknown> }) => void) => { h.hears.push(onMessage) },
+}))
+
 import { AttachmentChips, TurnAttachments } from './AttachmentChips'
 import { hydrateTurns, type HistMsg } from './chatTypes'
 import { isImagePath, imagesAsTextNote } from './imageAttachments'
@@ -41,7 +48,10 @@ function chips(session = 's1', key = Math.random().toString(36)) {
   )
 }
 
-beforeEach(() => { h.imageInput.mockReset(); h.attachmentExtract.mockReset() })
+beforeEach(() => { h.imageInput.mockReset(); h.attachmentExtract.mockReset(); h.hears.length = 0 })
+
+/** The gateway's word that an attachment's reading finished, to every listener on the page. */
+const readingFinished = () => act(() => { for (const hear of [...h.hears]) hear({ type: 'refresh', data: { kinds: ['attachments'] } }) })
 afterEach(() => cleanup())
 
 describe('the composer chip for an attached image', () => {
@@ -81,6 +91,18 @@ describe('the composer chip for an attached image', () => {
     h.attachmentExtract.mockReturnValue(new Promise(() => {}))
     chips()
     await waitFor(() => expect(screen.getByRole('note').textContent).toBe("gemma3:1b can't take images."))
+  })
+
+  it('waits while an image model is still reading, and says what it read once it has', async () => {
+    h.imageInput.mockResolvedValue({ accepted: false, reason: "gemma3:1b can't take images.", model: 'gemma3:1b' })
+    h.attachmentExtract.mockResolvedValueOnce({ name: 'shot.png', pending: true, text: '', read: false, unread: '' })
+    chips()
+    await waitFor(() => expect(screen.getByRole('note').textContent).toBe("gemma3:1b can't take images."))
+    h.attachmentExtract.mockResolvedValueOnce({ name: 'shot.png', pending: false, text: 'INVOICE 42', read: true, unread: '' })
+    readingFinished()
+    await waitFor(() => expect(screen.getByRole('note').textContent).toBe(
+      "gemma3:1b can't take images. It gets the text read from the image instead."))
+    expect(h.attachmentExtract).toHaveBeenCalledTimes(2)
   })
 
   it('makes no claim when the model takes images', async () => {
@@ -134,6 +156,32 @@ describe('the chip on a sent turn', () => {
     expect(link.closest('p')?.textContent).toBe(
       "gemma3:1b can't take images. No image model is set up, so only its size and format were sent. Choose one in Settings → Models.",
     )
+  })
+
+  it('shows the reading in progress, and the text once it lands', async () => {
+    h.attachmentExtract
+      .mockResolvedValueOnce({ name: 'notes.md', pending: true, text: '', read: false, unread: '' })
+      .mockResolvedValueOnce({ name: 'notes.md', pending: false, text: 'Ship the beta on Friday.', read: true, unread: '' })
+    render(<TurnAttachments paths={[DOC]} onOpenFile={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /notes\.md/ }))
+    expect(await screen.findByText('Extracting…')).toBeTruthy()
+    readingFinished()
+    expect(await screen.findByText('Ship the beta on Friday.')).toBeTruthy()
+    expect(h.attachmentExtract).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves no read out once the preview is gone', () => {
+    const signals: Array<AbortSignal | undefined> = []
+    h.attachmentExtract.mockImplementation((_path: string, opts: { signal?: AbortSignal } = {}) => {
+      signals.push(opts.signal)
+      return new Promise(() => {})
+    })
+    render(<TurnAttachments paths={[DOC]} onOpenFile={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /notes\.md/ }))
+    expect(signals).toHaveLength(1)
+    expect(signals[0]?.aborted).toBe(false)
+    cleanup()
+    expect(signals[0]?.aborted, 'a closed preview still holds a connection').toBe(true)
   })
 
   it('says a failed read failed, not that the file has no text', async () => {

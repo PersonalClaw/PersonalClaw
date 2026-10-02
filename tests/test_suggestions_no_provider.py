@@ -54,7 +54,9 @@ def state_with_context(tmp_path, monkeypatch):
         read_recent_history=lambda days=2: "",
     )
     with patch("personalclaw.context.ContextBuilder.get_memory_for", return_value=memory):
-        yield SimpleNamespace(conversation_log=None, _background_tasks=set())
+        yield SimpleNamespace(
+            conversation_log=None, _background_tasks=set(), push_refresh=lambda *kinds: None
+        )
 
 
 @pytest.mark.asyncio
@@ -129,7 +131,9 @@ async def test_refresh_logs_no_traceback_and_advances_generated_at(
 @pytest.mark.parametrize("exc_cls", _ERROR_CLASSES)
 async def test_endpoint_does_not_regenerate_on_every_poll(state_with_context, exc_cls, monkeypatch):
     """End to end through ``api_suggestions``: with no provider bound, generation runs at most
-    once across two consecutive polls — not once per poll. Counted at the model call."""
+    once across consecutive polls — not once per poll. Counted at the model call. The first poll
+    starts it in the background, a poll while it runs starts nothing beside it, and a poll after
+    it landed finds ``generated_at`` advanced."""
     calls = {"n": 0}
 
     async def _raise(*a, **k):
@@ -142,11 +146,13 @@ async def test_endpoint_does_not_regenerate_on_every_poll(state_with_context, ex
     with patch(
         "personalclaw.prompt_providers.runtime.render_use_case_prompt", return_value="PROMPT"
     ):
-        await suggestions.api_suggestions(request)  # first poll — generation may run once
-        await suggestions.api_suggestions(request)  # second poll — must NOT re-generate
+        await suggestions.api_suggestions(request)  # first poll — starts the one generation
+        await suggestions.api_suggestions(request)  # second poll — one is running already
+        await suggestions.get_suggestions_cache(state_with_context)._task
+        await suggestions.api_suggestions(request)  # third poll — must NOT re-generate
 
     assert calls["n"] == 1, (
-        f"generation ran {calls['n']} times across two polls; the second poll re-ran it because "
+        f"generation ran {calls['n']} times across three polls; a later poll re-ran it because "
         "generated_at was never advanced off zero on the fallback path"
     )
     cache = suggestions.get_suggestions_cache(state_with_context)

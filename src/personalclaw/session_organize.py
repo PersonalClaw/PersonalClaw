@@ -6,16 +6,24 @@ untagged and the folder/tag machinery — board columns, folder groups, the sear
 degrades into one giant undifferentiated pile. This module proposes the organization the
 user would have chosen, and stops there.
 
-Three rules are load-bearing:
+Four rules are load-bearing:
 
 * **Deterministic first.** Three signals decide the proposal without a model: title
   keywords against the existing tag/folder vocabulary, the session's ``workspace_dir``
   basename, and channel origin. A model runs ONLY when those produce nothing usable
-  (:func:`propose_for_session` with ``allow_llm=True``), because the easy cases are the
+  (:func:`proposal_now` with ``allow_llm=True``), because the easy cases are the
   overwhelming majority and paying a roundtrip for them would be both slow and expensive.
 
+* **A read never waits on a model.** :func:`proposal_now` answers at once with what is
+  already known. The model's answer for an ambiguous chat is asked for in the background,
+  once per question and one ask per chat at a time, and the chat hears a ``chat_organize``
+  frame when it lands. The chip re-reads on every turn, and the background model answers
+  one chore at a time in tens of seconds on a busy local machine. So a read that waited
+  held one of the browser's six connections to the gateway for minutes. Seven of them held
+  every one: the chat's own send and every other panel queued inside the browser.
+
 * **Never auto-applies.** Nothing in this module writes ``folder_id`` or ``tags``.
-  :func:`propose_for_session` returns a proposal and :func:`surface_proposal` raises an
+  :func:`proposal_now` returns a proposal and :func:`surface_proposal` raises an
   inbox row for it; the mutation happens in :func:`apply_proposal`, which is reachable
   only from an explicit user action and which delegates to the SAME endpoints the UI's own
   folder/tag controls use. A second writer for either field is the drift this project
@@ -30,9 +38,11 @@ Three rules are load-bearing:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
+import weakref
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -241,6 +251,20 @@ def is_unorganized(session: Any) -> bool:
 # ── Deterministic signals ───────────────────────────────────────────────────────
 
 
+def _title_of(session: Any) -> str:
+    """The chat's title, or ``""`` while it has none.
+
+    An untitled chat carries its key in place of a title (``_ChatSession.title = title or key``),
+    and its ``_titled`` says so. A key names no topic, and its digits read as a keyword: the chat's
+    first read put "Chat title: chat-4-1790940644" to the background model, which every other
+    chore then waited behind, and asked again once the real title landed.
+    """
+    title = str(getattr(session, "title", "") or "")
+    if not getattr(session, "_titled", True) or title == str(getattr(session, "key", "")):
+        return ""
+    return title
+
+
 def _keywords(text: str) -> list[str]:
     """Topic-bearing lowercase words in *text*, longest first.
 
@@ -276,7 +300,7 @@ def _from_title(session: Any, folders: list[dict], tags: list[dict]) -> Organize
     about which of the user's own categories a chat belongs to; it is not evidence that a
     new category should exist.
     """
-    words = _keywords(str(getattr(session, "title", "") or ""))
+    words = _keywords(_title_of(session))
     if not words:
         return None
     folder_hits = _match_vocabulary(words, folders)
@@ -287,7 +311,7 @@ def _from_title(session: Any, folders: list[dict], tags: list[dict]) -> Organize
     tag_names = [str(t.get("name") or "") for t in tag_hits[:MAX_TAGS] if t.get("name")]
     return OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
-        session_title=str(getattr(session, "title", "") or ""),
+        session_title=_title_of(session),
         folder_id=str(folder.get("id") or ""),
         folder_name=str(folder.get("name") or ""),
         tag_names=tag_names,
@@ -315,7 +339,7 @@ def _from_workspace(session: Any, folders: list[dict]) -> OrganizeProposal | Non
     folder = hits[0]
     return OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
-        session_title=str(getattr(session, "title", "") or ""),
+        session_title=_title_of(session),
         folder_id=str(folder.get("id") or ""),
         folder_name=str(folder.get("name") or ""),
         source="workspace",
@@ -342,7 +366,7 @@ def _from_channel(session: Any, tags: list[dict]) -> OrganizeProposal | None:
         return None
     return OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
-        session_title=str(getattr(session, "title", "") or ""),
+        session_title=_title_of(session),
         tag_names=[str(hits[0].get("name") or "")],
         source="channel",
         reason=f"this chat came from {channel}",
@@ -386,7 +410,7 @@ def is_ambiguous(session: Any, folders: list[dict], tags: list[dict]) -> bool:
         return False
     if not folders and not tags:
         return False
-    return bool(_keywords(str(getattr(session, "title", "") or "")))
+    return bool(_keywords(_title_of(session)))
 
 
 def build_llm_prompt(session: Any, folders: list[dict], tags: list[dict]) -> str:
@@ -398,7 +422,7 @@ def build_llm_prompt(session: Any, folders: list[dict], tags: list[dict]) -> str
     """
     folder_list = ", ".join(str(f.get("name") or "") for f in folders if f.get("name"))
     tag_list = ", ".join(str(t.get("name") or "") for t in tags if t.get("name"))
-    title = str(getattr(session, "title", "") or "")
+    title = _title_of(session)
     return (
         "Classify one chat into an existing organization scheme.\n\n"
         f"Chat title: {title}\n"
@@ -441,7 +465,7 @@ def parse_llm_reply(
                 tag_names.append(name)
     proposal = OrganizeProposal(
         session_key=str(getattr(session, "key", "")),
-        session_title=str(getattr(session, "title", "") or ""),
+        session_title=_title_of(session),
         folder_id=str(folder.get("id") or ""),
         folder_name=str(folder.get("name") or ""),
         tag_names=tag_names,
@@ -451,24 +475,30 @@ def parse_llm_reply(
     return None if proposal.is_empty else proposal
 
 
-async def propose_for_session(
-    state: Any, session: Any, *, allow_llm: bool = True
-) -> OrganizeProposal | None:
-    """The proposal for *session*, or None. **Applies nothing.**
+def _vocabulary(state: Any) -> tuple[list[dict], list[dict]]:
+    """The folders and tags *state* holds: the vocabulary every proposal sorts into."""
+    folders = [f for f in (getattr(state, "_folders", None) or []) if isinstance(f, dict)]
+    tags = [t for t in (getattr(state, "_tags", None) or []) if isinstance(t, dict)]
+    return folders, tags
 
-    Deterministic signals run first and short-circuit; the model is consulted only when
-    :func:`is_ambiguous` says there is a vocabulary to sort into and no literal match.
+
+def proposal_now(state: Any, session: Any, *, allow_llm: bool = True) -> OrganizeProposal | None:
+    """The proposal *session* has now, or None. **Applies nothing, and never waits.**
+
+    Deterministic signals run first and short-circuit. When only a model could sort the chat
+    (:func:`is_ambiguous`), the proposal is the model's answer to the chat's question as it
+    stands (:func:`build_llm_prompt`). A question it has not answered yet is put to it in the
+    background (:func:`_model_answer`) and reads as None until the answer lands.
     A previously declined proposal is dropped here rather than at the surfacing boundary,
     so no caller can accidentally route around the decline memory.
     """
     if not is_unorganized(session):
         return None
-    folders = [f for f in (getattr(state, "_folders", None) or []) if isinstance(f, dict)]
-    tags = [t for t in (getattr(state, "_tags", None) or []) if isinstance(t, dict)]
+    folders, tags = _vocabulary(state)
 
     proposal = deterministic_proposal(session, folders, tags)
     if proposal is None and allow_llm and is_ambiguous(session, folders, tags):
-        proposal = await _llm_proposal(session, folders, tags)
+        proposal = _model_answer(state, session, build_llm_prompt(session, folders, tags))
     if proposal is None or proposal.is_empty:
         return None
     if is_declined(proposal):
@@ -477,23 +507,105 @@ async def propose_for_session(
     return proposal
 
 
-async def _llm_proposal(
-    session: Any, folders: list[dict], tags: list[dict]
-) -> OrganizeProposal | None:
-    """Ask the Background model to classify an ambiguous chat. Failure ⇒ no proposal.
+@dataclass
+class ModelAsk:
+    """One chat's question to the background model (:func:`build_llm_prompt`) and its answer.
+
+    Held beside the chat in :data:`_ASKS`, so it lasts while the chat is resident and leaves
+    with it.
+    """
+
+    question: str
+    #: The background task asking it, until it lands.
+    task: asyncio.Task[None] | None = None
+    answered: bool = False
+    answer: OrganizeProposal | None = None
+
+
+#: Each resident chat's ask, keyed by the chat itself: the organize chip's business, kept here
+#: rather than on ``_ChatSession``, and dropped when the chat is.
+_ASKS: weakref.WeakKeyDictionary[Any, ModelAsk] = weakref.WeakKeyDictionary()
+
+
+def is_asking(session: Any) -> bool:
+    """Whether the model is being asked about *session* now: its answer is still to come."""
+    ask = _ASKS.get(session)
+    return ask is not None and not ask.answered
+
+
+def _model_answer(state: Any, session: Any, question: str) -> OrganizeProposal | None:
+    """The model's answer to *question* about *session*, or None while it has none.
+
+    One ask per chat at a time. A read while an ask is out starts nothing: the ask in flight
+    sees, when it lands, whether the chat's question moved on, and asks the new one if so
+    (:func:`_ask_in_background`), so any number of reads during one ask cost one more ask at
+    most. An answered question is not asked again. Its answer stands, and so does a failure,
+    until the chat's title or the vocabulary changes the question: asking again would put the
+    same question to the same busy model, which every other background chore waits behind.
+    """
+    ask = _ASKS.get(session)
+    if ask is not None and ask.answered and ask.question == question:
+        return ask.answer
+    if ask is None or ask.answered:
+        ask = _ASKS[session] = ModelAsk(question)
+        ask.task = asyncio.get_running_loop().create_task(_ask_in_background(state, session, ask))
+    return None
+
+
+async def _ask_in_background(state: Any, session: Any, ask: ModelAsk) -> None:
+    """Put *ask*'s question to the model, keep the answer, and tell the chat it has one.
+
+    The ``chat_organize`` frame names the chat and nothing else, and the chip reads the
+    proposal back through the GET, which decides whether an app may see it. A frame carrying
+    the proposal would hand your folder and tag names to every app socket that started the
+    chat, whether or not that app may ask for a proposal at all.
+    """
+    try:
+        while True:
+            text = await _ask_model(session, ask.question)
+            folders, tags = _vocabulary(state)
+            question = build_llm_prompt(session, folders, tags)
+            if (
+                question != ask.question
+                and is_unorganized(session)
+                and is_ambiguous(session, folders, tags)
+            ):
+                # The title or the vocabulary changed while the model thought, so what it
+                # answered is no longer this chat's question: ask the one it has now.
+                ask.question = question
+                continue
+            ask.answer = parse_llm_reply(text, session, folders, tags)
+            ask.answered = True
+            break
+    except Exception:
+        # A defect, not a model's failure (`_ask_model` answers those with ""): asking again
+        # would fail the same way, so the question stands answered with nothing.
+        logger.warning("session-organize: a background ask failed", exc_info=True)
+        ask.answer, ask.answered = None, True
+    finally:
+        ask.task = None
+        if not ask.answered and _ASKS.get(session) is ask:
+            # Cancelled before any answer (the gateway stopping): nothing was learned, so the
+            # next read asks again.
+            del _ASKS[session]
+    if ask.answer is not None and is_unorganized(session) and not is_declined(ask.answer):
+        state.broadcast_ws("chat_organize", {"session": str(getattr(session, "key", ""))})
+
+
+async def _ask_model(session: Any, question: str) -> str:
+    """The Background model's answer to *question* about *session*; ``""`` when none answered.
 
     A chore of the chat's, as its title is (``chat_title.chat_chore``): a call of its own that is
     sent this question and nothing else, so it cannot occupy a user-facing session or read
     another chore's exchange, and it is the chat's spend.
     """
-    try:
-        from personalclaw.dashboard.chat_title import chat_chore
+    from personalclaw.dashboard.chat_title import chat_chore
 
-        text = await chat_chore(session, build_llm_prompt(session, folders, tags))
+    try:
+        return await chat_chore(session, question)
     except Exception:
         logger.debug("session-organize: LLM classification failed", exc_info=True)
-        return None
-    return parse_llm_reply(text, session, folders, tags)
+        return ""
 
 
 # ── Surfacing ───────────────────────────────────────────────────────────────────

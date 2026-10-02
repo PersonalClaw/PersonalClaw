@@ -270,28 +270,65 @@ function swallowSites(src: string): number[] {
   // no members yet is cheaper to model than the same form after someone writes twelve of them.
   for (const m of src.matchAll(/\.catch\(\s*(?:\((\s*\w*\s*)\)|(\w+))\s*=>\s*/g)) {
     const at = (m.index ?? 0) + m[0].length
-    const param = (m[1] ?? m[2] ?? '').trim()
-    let hit: boolean
-    if (src[at] === '{') {
-      let depth = 1
-      let i = at + 1
-      while (i < src.length && depth > 0) {
-        if (src[i] === '{') depth++
-        else if (src[i] === '}') depth--
-        i++
-      }
-      const body = src.slice(at + 1, i - 1)
-      hit = FABRICATES_IN_BLOCK.test(body) && !RECORDS_THE_ERROR.test(body)
-    } else {
-      // A bare expression body that fabricates is only form A when the handler ignored the
-      // rejection — `(e) => e.message` is a transform, not a substitute. And the 64-char slice is
-      // safe where this file's old 220-char window was not: `FABRICATES` is `^`-anchored, so it can
-      // only ever read the expression that starts right here.
-      hit = param === '' && FABRICATES.test(src.slice(at, at + 64))
-    }
-    if (hit) lines.push(src.slice(0, m.index).split('\n').length)
+    if (fabricates(src, at, (m[1] ?? m[2] ?? '').trim())) lines.push(src.slice(0, m.index).split('\n').length)
   }
-  return lines
+  // 🪤 AND THE REJECTION HANDLER A HOOK IS HANDED. `useLatestRead(key, read, apply, fail)` runs `fail`
+  // where a `.catch` would, on the read's rejection, so it is held to the same two forms. Moving three
+  // per-turn reads into it took their swallows out of the `.catch` matcher's sight, and the census
+  // read them as three fixed sites: the scanner, not the code, had changed.
+  for (const m of src.matchAll(/\buseLatestRead\(/g)) {
+    const fail = (callArgs(src, (m.index ?? 0) + m[0].length - 1)[3] ?? '').trim()
+    const arrow = /^(?:\((\s*\w*\s*)\)|(\w+))\s*=>\s*/.exec(fail)
+    if (arrow && fabricates(fail, arrow[0].length, (arrow[1] ?? arrow[2] ?? '').trim())) {
+      lines.push(src.slice(0, m.index).split('\n').length)
+    }
+  }
+  return lines.sort((a, b) => a - b)
+}
+
+/** Whether the rejection handler whose body starts at `at` (its parameter `param`, `''` when it takes
+ *  none) fabricates an answer: form A or form B above. */
+function fabricates(src: string, at: number, param: string): boolean {
+  if (src[at] === '{') {
+    let depth = 1
+    let i = at + 1
+    while (i < src.length && depth > 0) {
+      if (src[i] === '{') depth++
+      else if (src[i] === '}') depth--
+      i++
+    }
+    const body = src.slice(at + 1, i - 1)
+    return FABRICATES_IN_BLOCK.test(body) && !RECORDS_THE_ERROR.test(body)
+  }
+  // A bare expression body that fabricates is only form A when the handler ignored the
+  // rejection — `(e) => e.message` is a transform, not a substitute. And the 64-char slice is
+  // safe where this file's old 220-char window was not: `FABRICATES` is `^`-anchored, so it can
+  // only ever read the expression that starts right here.
+  return param === '' && FABRICATES.test(src.slice(at, at + 64))
+}
+
+/** The top-level arguments of the call whose `(` is at `open`, as source slices: nesting and the
+ *  insides of string and template literals are stepped over. */
+function callArgs(src: string, open: number): string[] {
+  const args: string[] = []
+  let depth = 0
+  let start = open + 1
+  let quote = ''
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i]
+    if (quote) {
+      if (ch === '\\') i++
+      else if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch
+    else if (ch === '(' || ch === '[' || ch === '{') depth++
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      depth--
+      if (depth === 0) { args.push(src.slice(start, i)); break }
+    } else if (ch === ',' && depth === 1) { args.push(src.slice(start, i)); start = i + 1 }
+  }
+  return args
 }
 
 /** Every `useQuery(…)` call in a file, as `{ key, args, line }` — `args` is the call's own argument
@@ -1041,6 +1078,10 @@ describe('§B no fetcher swallows its own rejection, tree-wide and by COUNT', ()
     expect(counts('api.x().catch(() => ({}))'), 'the parenthesised object body').toBe(1)
     expect(counts(".catch(() => '')"), 'the fabricated empty string').toBe(1)
     expect(counts('.catch(() => { if (alive) setRows([]) })'), 'the braced setter form').toBe(1)
+    // A hook's rejection handler is the same handler in another place, held to both forms.
+    expect(counts('useLatestRead(`${k}#${n}`, (s) => api.x(k, { s }), setRows, () => setRows([]))'), 'a hook handed the inline setter').toBe(1)
+    expect(counts("useLatestRead(k, (s) => api.x(s), apply, () => { setRow(null); setTag('') })"), 'a hook handed the braced form').toBe(1)
+    expect(counts('useLatestRead(k, (s) => api.x(s), apply, (e) => { setLoadErr(e); setRows([]) })'), 'a hook whose handler records the failure').toBe(0)
     // CAST TOLERANCE, the selector hazard #532 names explicitly: 21 of the tree's 30 array-form
     // sites are `catch(() => [] as Foo[])`, so a selector that closes on `\)` scores 9 of 30 — a 70%
     // false negative on the commonest shape in the class. Both spellings must count the same.

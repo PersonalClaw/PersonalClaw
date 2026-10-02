@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 
 from personalclaw import memory_writes
 from personalclaw.knowledge.extract import Extracted
@@ -38,6 +39,8 @@ class AttachmentExtractor:
 
     def __init__(self) -> None:
         self._tasks: dict[str, asyncio.Task[Extracted]] = {}
+        #: The paths whose running extraction already says when it finishes (:meth:`peek`).
+        self._announcing: set[str] = set()
 
     def start(self, path: str, mime: str | None = None) -> None:
         """Begin reading *path* ahead of its turn (idempotent). Returns immediately.
@@ -83,6 +86,33 @@ class AttachmentExtractor:
             logger.warning("attachment extract failed for %s", path, exc_info=True)
             return Extracted("", False)
         return Extracted(got.text[:_MAX_TEXT_CHARS], got.read, got.unread)
+
+    def peek(self, path: str, mime: str | None, on_done: Callable[[], None]) -> Extracted | None:
+        """What extraction got from *path* when it has finished, else None. Never waits.
+
+        Starts the extraction when nothing has, as :meth:`get` does, and calls *on_done* once
+        when it finishes, however many reads asked while it ran. A read is a page's question
+        (the composer's note, a sent turn's preview), and a read that waited held one of the
+        browser's six connections to the gateway while an image model read the file.
+        """
+        if path not in self._tasks:
+            self._begin(path, mime)
+        task = self._tasks.get(path)
+        if task is None:
+            return None
+        if task.done():
+            if task.cancelled() or task.exception() is not None:
+                return Extracted("", False)
+            return task.result()
+        if path not in self._announcing:
+            self._announcing.add(path)
+
+            def _finished(_task: asyncio.Task[Extracted]) -> None:
+                self._announcing.discard(path)
+                on_done()
+
+            task.add_done_callback(_finished)
+        return None
 
     async def get(self, path: str, mime: str | None = None) -> Extracted:
         """Await + return what extraction got from *path*. Starts extraction if it

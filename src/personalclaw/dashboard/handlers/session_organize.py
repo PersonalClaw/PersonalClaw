@@ -27,19 +27,27 @@ logger = logging.getLogger(__name__)
 
 
 async def api_session_organize_suggest(request: web.Request) -> web.Response:
-    """GET /api/chat/sessions/{session}/organize — the proposal, or ``{"proposal": null}``.
+    """GET /api/chat/sessions/{session}/organize — the chat's proposal now, without waiting.
 
-    Read-only by construction: it calls ``propose_for_session``, which computes and returns
-    a proposal and writes nothing. ``llm=0`` restricts it to the deterministic signals,
-    which is what a list-view caller wants — no model roundtrip per row.
+    Answers ``{"proposal": {…} | null, "pending": bool}``. Read-only by construction: it calls
+    ``proposal_now``, which returns the proposal the chat has now and writes nothing. It never
+    waits on a model. When only the model could sort the chat and has not answered yet,
+    ``pending`` is true and the chat hears a ``chat_organize`` frame once it has
+    (``session_organize._ask_in_background``). ``llm=0`` restricts it to the deterministic
+    signals, which is what a list-view caller wants: no model ask per row.
     """
     state: DashboardState = request.app["state"]
     session = resolve_session(state, request.match_info["session"])
     if not session:
         return json_error("not_found", message="session not found", status=404)
     allow_llm = request.query.get("llm", "1") not in ("0", "false", "no")
-    proposal = await session_organize.propose_for_session(state, session, allow_llm=allow_llm)
-    return web.json_response({"proposal": proposal.to_dict() if proposal else None})
+    proposal = session_organize.proposal_now(state, session, allow_llm=allow_llm)
+    return web.json_response(
+        {
+            "proposal": proposal.to_dict() if proposal else None,
+            "pending": session_organize.is_asking(session),
+        }
+    )
 
 
 def _proposal_from_body(
