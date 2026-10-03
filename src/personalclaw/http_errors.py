@@ -293,6 +293,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "step_not_awaiting_review": "That plan step is not awaiting review.",
     "markdown_required": "A non-empty markdown body is required.",
     "comment_text_required": "A non-empty comment body is required.",
+    # ── an agent's question to its owner (dashboard/chat_questions.py) ──
+    "question_not_found": "This chat has no question with that id.",
+    "question_answered": "This question has already been answered.",
+    "question_ended": "The agent is no longer waiting for an answer to this question.",
+    "question_answer_invalid": "The answer does not fit the question it answers.",
     # ── reasoning effort (dashboard/chat_handlers.py) ──
     "invalid_reasoning_effort": "The reasoning effort is not a short lowercase token.",
     "reasoning_effort_not_declared": (

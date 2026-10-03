@@ -16,7 +16,7 @@ there is no second translation path.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -184,6 +184,16 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
 
     def undelivered_steers(self) -> list[str]:
         return self._session.undelivered_steers()
+
+    # ── the agent's questions to the user ───────────────────────────────────────────
+    @property
+    def asks_through_elicitation(self) -> bool:
+        """Never on this door: the shared connection's ``initialize`` advertises no form
+        elicitation, so its agent keeps its question tool to itself."""
+        return False
+
+    def set_question_handler(self, handler: "Callable[[dict], Awaitable[dict]] | None") -> None:
+        self._session.set_question_handler(handler)
 
     # ── status / control ────────────────────────────────────────────────────────
     def context_usage_pct(self) -> float | None:

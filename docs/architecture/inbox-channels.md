@@ -487,6 +487,56 @@ decision stands (an approval still in the registry, a folder not yet trusted, a 
 handled if not. Before this the emit waited for the model from whatever thread raised the item,
 so on the gateway's loop a one-second model stopped the gateway for a second.
 
+## An agent's question to its owner
+
+An agent that needs her decision to go on (which of two approaches, which of several things she
+meant) asks it as a question with options, and its call waits for the answer. Whichever runtime
+asks, the question goes through one registry, `OwnerQuestions` (`owner_questions.py`, held as
+`DashboardState.owner_questions`):
+
+| Runtime | Its question tool | How the question reaches PersonalClaw |
+|---|---|---|
+| PersonalClaw's own | `ask_user` (the bundled Questions for you app) | the call waits on the registry |
+| Claude Code over ACP | `AskUserQuestion` | ACP's form elicitation. PersonalClaw advertises it at `initialize` for a chat's own attended session (its key in the `dashboard:` namespace) of a backend that asks this way (`ACPDialect.asks_through_elicitation`, `AcpClient._owner_answers`), and the adapter then turns the tool on and asks each question with `elicitation/create` (`acp/elicitation.py`). Without the advertisement the adapter keeps the tool off |
+| Codex, kiro-cli, any other ACP agent | its own, or none | not at all: no elicitation is advertised to them, so none of their questions waits on her. A call whose tool is option-prompt-shaped by its name and whose input reads as questions is shown as a card that says she cannot answer it here, and the agent's own tool goes on without her (`OwnerQuestions.show_unanswerable`) |
+
+Where she sees it:
+
+- **The chat that asked**: a card with each question's header, its words, its options (one or
+  several to choose), a box for her own words where the tool takes them, Send and Skip (the
+  `question_card` frame; `pending_questions` on session detail for a page that opens or reloads
+  while it waits). Nothing is chosen for her and nothing is sent by arriving, focus or Enter.
+- **The Inbox**: a "Needs you" row (`needs_input`, `refs = {question, session, source_label}`, on
+  the `system/agent_request` notification), which Home's To triage and Mission Control's Your turn
+  list by who asks, in which chat, with a link to answer it there.
+- The turn waits on her, so it is not running long: its clock stops (`waiting_on_owner`).
+
+Her answer, `POST /api/chat/sessions/{session}/questions/{question}/answer` with
+`{"answers": [{"selected": [option index…], "other": "her own words"}]}` (one per question) or
+`{"skip": true}`, reaches the waiting call once. Only she answers: no app may. A second answer is
+`409 question_answered`, one after the call stopped waiting `409 question_ended` saying why, and one
+the question cannot take `400 question_answer_invalid`. How it ends, on every surface at once:
+answered or skipped (the row is handled), nobody answering within her window
+(`agent.approval_timeout_minutes`, the one every wait on her has), her Stop ("its turn was
+stopped"), or a restart (the row expires saying so). Each ending sends `question_resolved` and
+keeps how it went on the asking call's transcript row (`meta.question`), so a reload shows the card
+she saw.
+
+The card is the asking call's gate. An agent CLI's question tool runs with no permission request,
+so its result would otherwise read as a call the CLI ran without asking her (`ungated_calls.py`):
+marked so on its row, audited `ungated`, and, in Ask or Plan mode, a reason to stop the very turn
+her answer was for. A call whose own input asks what she was asked for that call
+(`OwnerQuestions.was_put`) is none of those. A form asked for any other tool's call excuses nothing,
+whatever its shape.
+
+Only the owner of an open chat is asked. Work nobody watches never gets the tool (`ask_user` is
+`interactive`, and an ACP session that is not a chat's own attended one is not told it may ask). A call from anywhere else (a
+background task, a loop's or a workflow's step, a chat carried on a chat channel) is told to ask in
+its reply instead, and an agent CLI's question there is answered `cancel` at once. Any other form an
+agent CLI asks over elicitation (a tool server's own form, a model switch) is answered `cancel` too:
+she is never asked, so no answer or refusal is claimed for her. A request the ACP client does not
+serve at all is refused with method-not-found, so no turn waits on an answer that never comes.
+
 ## Notifications
 
 `DashboardState.notify()` (`dashboard/state.py`) is the **single choke point**

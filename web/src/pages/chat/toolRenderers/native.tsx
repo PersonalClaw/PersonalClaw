@@ -11,7 +11,7 @@ import { type ReactNode } from 'react'
 import {
   Wrench, Terminal, FileText, FilePen, FilePlus, Search, Globe, Bot, List,
   Trash2, FolderInput, Brain, BookOpen, ListChecks, Database, GitBranch,
-  MessageSquare, Inbox, CalendarDays, type LucideIcon,
+  MessageSquare, Inbox, CalendarDays, MessageCircleQuestion, type LucideIcon,
 } from 'lucide-react'
 import { Markdown } from '../../../ui/Markdown'
 import { fvs } from '../../../design/fontWeight'
@@ -271,6 +271,8 @@ const ICON_BY_NAME: Record<string, LucideIcon> = {
   tool_result_get: FileText, post_to_inbox: MessageSquare, inbox_list: Inbox,
   // calendars
   calendar_events: CalendarDays,
+  // a question to her
+  ask_user: MessageCircleQuestion,
 }
 
 const _BY_KIND: Record<string, LucideIcon> = {
@@ -326,6 +328,8 @@ const LABEL_BY_NAME: Record<string, string> = {
   post_to_inbox: 'Notify', inbox_list: 'Read the Inbox',
   // calendars
   calendar_events: 'Read the calendar',
+  // a question to her
+  ask_user: 'Ask you',
 }
 export function labelForTool(seg: ToolSegment): string {
   const raw = seg.tool || ''

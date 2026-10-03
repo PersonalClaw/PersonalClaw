@@ -58,6 +58,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **personalclaw-memory** — type `tool` / ``; capabilities: memory
 - **personalclaw-project-tools** — type `tool` / ``; capabilities: projects
 - **personalclaw-prompts** — type `tool` / ``; capabilities: prompts
+- **personalclaw-question-tools** — type `tool` / ``; capabilities: questions
 - **personalclaw-subagents** — type `tool` / ``; capabilities: subagents
 - **personalclaw-tasks-tools** — type `tool` / ``; capabilities: task
 - **personalclaw-tools** — type `tool` / ``; capabilities: skills, notification, system

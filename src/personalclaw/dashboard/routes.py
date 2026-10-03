@@ -15,7 +15,7 @@ import os
 from aiohttp import web
 
 from personalclaw.config import config_dir
-from personalclaw.dashboard import chat, handlers, handlers_inbox, ws
+from personalclaw.dashboard import chat, chat_questions, handlers, handlers_inbox, ws
 from personalclaw.suggestions import api_suggestions
 
 
@@ -799,6 +799,10 @@ def register_dashboard_routes(app: web.Application) -> None:
     )
     app.router.add_post("/api/chat/sessions/{session}/resume", chat.api_chat_session_resume)
     app.router.add_post("/api/chat/sessions/{session}/approve", chat.api_chat_session_approve)
+    app.router.add_post(
+        "/api/chat/sessions/{session}/questions/{question}/answer",
+        chat_questions.api_chat_question_answer,
+    )
     app.router.add_post("/api/chat/mode", chat.api_chat_mode)
     app.router.add_post("/api/chat/task-mode", chat.api_chat_task_mode)
     # Chat plan mode — the composer affordance + the shared planning

@@ -262,6 +262,7 @@ class DashboardApprovalState:
     _log: logging.Logger
     sessions: Any
     subagents: Any
+    owner_questions: Any
     broadcast_ws: Callable[..., None]
     enable_yolo: Callable[..., None]
     push_sessions_update: Callable[[], None]
@@ -290,14 +291,18 @@ class DashboardApprovalState:
     def waiting_on_owner(self, session: str) -> bool:
         """Whether a call *session* made is waiting on its owner's answer right now.
 
-        True while a pending approval names the session: an ask of its own turn, or of a subagent
-        it started. A loop's worker in that state is waiting on a person, not stuck, so neither the
-        bound on its turn nor the loop's watchdog counts the wait against it; the approval window
+        True while a pending approval names the session (an ask of its own turn, or of a subagent
+        it started), or its turn waits on her answer to a question (``owner_questions``). A loop's
+        worker in that state is waiting on a person, not stuck, so neither the bound on its turn
+        nor the loop's watchdog counts the wait against it; the approval window
         (:meth:`approval_window_secs`) is what bounds it.
         """
         key = str(session or "")
-        return bool(key) and any(
-            str(entry.get("session") or "") == key for entry in self._pending_approvals.values()
+        return bool(key) and (
+            any(
+                str(entry.get("session") or "") == key for entry in self._pending_approvals.values()
+            )
+            or self.owner_questions.waiting(key)
         )
 
     async def request_approval(
@@ -871,7 +876,8 @@ class DashboardApprovalState:
         return True
 
     def cancel_turn_approvals(self, session_key: str) -> int:
-        """A turn is being stopped: every approval it is waiting on is over. Returns the count.
+        """A turn is being stopped: every approval and question it is waiting on is over. Returns
+        how many approvals.
 
         Called by ``SessionManager.stop_turn`` BEFORE it cancels the provider, so it reaches
         every stop path there is (the stop button, a cancel-and-replace follow-up, the plan
@@ -881,6 +887,7 @@ class DashboardApprovalState:
         the Inbox for its full two-hour window, and answering it resumed the stopped turn.
         """
         name = session_key.removeprefix(DASHBOARD_SESSION_PREFIX)
+        self.owner_questions.end_turn(name)
         session = self._sessions.get(name)
         if session is None:
             return 0

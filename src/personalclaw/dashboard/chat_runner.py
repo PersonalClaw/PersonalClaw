@@ -34,7 +34,13 @@ from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
 from personalclaw.context_headroom import HeadroomState, resolve_window
-from personalclaw.dashboard import chat_refusals, running_turn, turn_deadline, turn_endings
+from personalclaw.dashboard import (
+    chat_questions,
+    chat_refusals,
+    running_turn,
+    turn_deadline,
+    turn_endings,
+)
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
@@ -157,7 +163,6 @@ from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.usage_ledger import Attribution, recorder, spent_rows
-from personalclaw.validation import ValidationError, validate_ask_user_question
 
 if TYPE_CHECKING:
     from personalclaw.providers.image_input import ImageInput
@@ -775,37 +780,6 @@ def _redact_tool_input_obj(tool_input: object) -> dict | None:
     except (TypeError, ValueError):
         return None
     return obj
-
-
-def _emit_question_card(
-    state: DashboardState, session_key: str, tool_input: object, tool_call_id: str | None
-) -> None:
-    """Broadcast a ``question_card`` frame for an ``AskUserQuestion`` tool call.
-
-    Validates + normalizes the raw tool input, redacts every user-facing string,
-    then broadcasts. A malformed payload is logged and skipped (no frame) so a
-    garbled tool call can never break the turn or the card UI. The card is
-    additive to the tool-call pill — it does not gate the tool's own result.
-    """
-    if not tool_input:
-        return
-    try:
-        # tool_input is Any (ACP → JSON str; native loop → dict). Accept either.
-        raw = tool_input if isinstance(tool_input, dict) else json.loads(str(tool_input))
-        questions = validate_ask_user_question(raw)
-    except (json.JSONDecodeError, TypeError, ValidationError) as exc:
-        logger.warning("AskUserQuestion card skipped: %s", exc)
-        return
-    for q in questions:
-        q["question"] = _redact_text(q["question"])
-        q["header"] = _redact_text(q["header"])
-        for opt in q["options"]:
-            opt["label"] = _redact_text(opt["label"])
-            opt["description"] = _redact_text(opt["description"])
-    state.broadcast_ws(
-        "question_card",
-        {"session": session_key, "tool_call_id": tool_call_id, "questions": questions},
-    )
 
 
 # File-change chips: the native default agent's write tools.
@@ -3371,6 +3345,8 @@ async def run_chat(
             except Exception:
                 logger.debug("steer source wiring skipped", exc_info=True)
         running_turn.set_steer_drains(state, session, session_key, _steerable)
+        # Who answers the questions an agent CLI asks her on this turn (`chat_questions.arm`).
+        chat_questions.arm(state, session, client, attended=not _unattended_turn)
 
         # `PreResponse` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing until
         # now. Fired BEFORE the stream is created — the last moment the catalog's description
@@ -3705,11 +3681,9 @@ async def run_chat(
                 # leaving it to be inferred (§2.5 gap 7). Both paths are live: an ACP
                 # CLI may put its `diff` block on the opening frame or on the update.
                 _capture_declared_file_change(session, event.file_change)
-                # AskUserQuestion → render an interactive question card alongside
-                # the pill. The card lets the user answer inline; the agent is
-                # already paused on the tool call awaiting the reply.
-                if event.title == "AskUserQuestion":
-                    _emit_question_card(state, session.key, event.tool_input, event.tool_call_id)
+                # A question the call puts to her (`owner_questions`): PersonalClaw's own tool's
+                # attaches to this call; another runtime's she cannot answer here is shown so.
+                chat_questions.on_tool_call(state, session, client, event)
                 _risk = resolve_effective_risk(
                     getattr(event, "risk_level", "") or "",
                     event.title,
@@ -3807,6 +3781,7 @@ async def run_chat(
                     # path resolution, no disk read, which is what makes it work for a
                     # CLI whose edit tool the host has never heard of.
                     _capture_declared_file_change(session, event.file_change)
+                    chat_questions.on_tool_call_update(state, session, client, event)
                     _u_input = redact_credentials(
                         redact_exfiltration_urls(tool_input_to_str(event.tool_input)[:4000])[0]
                     )[0]
@@ -3969,7 +3944,12 @@ async def run_chat(
                 # of a card legible instead of letting it read as "nothing dangerous
                 # happened", and we abort the turn when the ungated tool is BOTH
                 # undeclared and mutating under a read-only posture.
-                if _acp_cli and event.tool_call_id in _ungated_candidates:
+                if (
+                    _acp_cli
+                    and event.tool_call_id in _ungated_candidates
+                    # Not a question it put to her on its card: her answer was that call's gate.
+                    and not state.owner_questions.was_put(session.key, event.tool_call_id)
+                ):
                     _ung_title, _ung_kind, _ung_input, _ung_declared = _ungated_candidates.pop(
                         event.tool_call_id
                     )

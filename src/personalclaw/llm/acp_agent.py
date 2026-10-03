@@ -17,7 +17,7 @@ spawned agent in its initialize response (R5.4).
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -582,6 +582,16 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         """Steers this turn pulled but never wrote to the CLI (empty on the happy path).
         Read by the dispatcher at turn end so an undeliverable steer is visible."""
         return self._client.undelivered_steers()
+
+    @property
+    def asks_through_elicitation(self) -> bool:
+        """Whether the agent puts its questions to the user through this host
+        (``AcpClient.asks_through_elicitation``)."""
+        return bool(getattr(self._client, "asks_through_elicitation", False))
+
+    def set_question_handler(self, handler: "Callable[[dict], Awaitable[dict]] | None") -> None:
+        """Arm what answers the agent's questions to the user (``AcpSession``)."""
+        self._client.set_question_handler(handler)
 
     async def start(self) -> None:
         """Spawn the configured command and run the ACP ``initialize`` handshake.

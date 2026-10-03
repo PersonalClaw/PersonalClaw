@@ -461,7 +461,9 @@ def test_the_three_origins_are_distinct_and_closed():
 #: ``context_usage`` left the same way: the ring's reading is said through
 #: ``DashboardState.say_context_usage``, which also keeps it for session detail. ``queue_push``
 #: left too, with the requeue of the steers a finished turn did not take, which moved into
-#: ``running_turn.end_steers``: the turn still sends it, from there.
+#: ``running_turn.end_steers``: the turn still sends it, from there. ``question_card`` left the
+#: same way: an agent's question to its owner is put through ``owner_questions``, which sends the
+#: card and its ``question_resolved``, so the chat runner sends neither.
 _BASELINE_WS_EVENTS = {
     "activity_event",
     "chat_chunk",
@@ -473,7 +475,6 @@ _BASELINE_WS_EVENTS = {
     "chat_user_message",
     "chat_variant_switch",
     "heartbeat",
-    "question_card",
     "queue_pop",
     "session_agent_switch",
     "session_clear",

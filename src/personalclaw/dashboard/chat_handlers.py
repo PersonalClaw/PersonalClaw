@@ -1114,6 +1114,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # live `approval` WS frame was lost/early (the turn otherwise stalls
             # silently — no `chat_done` fires while awaiting the human).
             "pending_approval": any(not f.done() for f in session._approval_futures.values()),
+            # The questions the turn waits on her answer to, as their cards: a page opened or
+            # reloaded while one waits shows it (`owner_questions`).
+            "pending_questions": state.owner_questions.pending_for(session.key),
             # persisted side-chat transcript (reloads attached to the session).
             "side": (
                 session._side.to_dict()

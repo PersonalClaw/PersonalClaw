@@ -1,22 +1,15 @@
-"""Interactive question cards (AskUserQuestion → question_card).
+"""The questions an ask-the-user call carries, read with defensive caps.
 
-Two layers:
-- ``validate_ask_user_question`` normalizes the Claude Code AskUserQuestion
-  schema with defensive caps and rejects unusable payloads.
-- ``_emit_question_card`` (chat_runner) broadcasts a session-keyed, redacted,
-  normalized ``question_card`` frame for a valid payload, and silently skips
-  (logs, no broadcast) a malformed one so a garbled tool call never breaks the
-  turn.
+``validate_ask_user_question`` normalizes AskUserQuestion's shape (PersonalClaw's own ``ask_user``
+takes the same) and rejects a payload with no question that has options. What becomes of the
+questions — the card, her answer, the call that waits — is
+``test_an_agent_question_reaches_its_owner.py``.
 """
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock
-
 import pytest
 
-from personalclaw.dashboard.chat_runner import _emit_question_card
 from personalclaw.validation import (
     _AUQ_MAX_OPTIONS,
     _AUQ_MAX_QUESTIONS,
@@ -116,79 +109,3 @@ class TestValidateAskUserQuestion:
     def test_rejects_unusable_payload(self, payload) -> None:
         with pytest.raises(ValidationError):
             validate_ask_user_question(payload)
-
-
-# ── _emit_question_card (broadcast wiring) ──
-
-
-class TestEmitQuestionCard:
-    def _state(self) -> MagicMock:
-        state = MagicMock()
-        state.broadcast_ws = MagicMock()
-        return state
-
-    def test_valid_input_broadcasts_normalized_frame(self) -> None:
-        state = self._state()
-        tool_input = json.dumps(
-            {
-                "questions": [
-                    {
-                        "question": "Deploy now?",
-                        "header": "Action",
-                        "options": [{"label": "Yes"}, {"label": "No"}],
-                    }
-                ]
-            }
-        )
-        _emit_question_card(state, "sess-1", tool_input, "call-abc")
-
-        state.broadcast_ws.assert_called_once()
-        event, payload = state.broadcast_ws.call_args[0]
-        assert event == "question_card"
-        assert payload["session"] == "sess-1"
-        assert payload["tool_call_id"] == "call-abc"
-        assert payload["questions"][0]["question"] == "Deploy now?"
-        assert [o["label"] for o in payload["questions"][0]["options"]] == ["Yes", "No"]
-
-    def test_redacts_every_user_facing_string(self) -> None:
-        state = self._state()
-        secret = "AKIAIOSFODNN7EXAMPLE"  # AWS access-key id → redact_credentials catches it
-        tool_input = json.dumps(
-            {
-                "questions": [
-                    {
-                        "question": f"Use key {secret}?",
-                        "header": secret,
-                        "options": [{"label": secret, "description": f"the {secret} key"}],
-                    }
-                ]
-            }
-        )
-        _emit_question_card(state, "sess-1", tool_input, None)
-
-        payload = state.broadcast_ws.call_args[0][1]
-        q = payload["questions"][0]
-        blob = json.dumps(q)
-        assert secret not in blob  # redacted in question, header, label, and description
-        assert "[REDACTED" in q["question"]
-        assert "[REDACTED" in q["header"]
-        assert "[REDACTED" in q["options"][0]["label"]
-        assert "[REDACTED" in q["options"][0]["description"]
-
-    def test_malformed_json_skips_broadcast(self, caplog) -> None:
-        state = self._state()
-        _emit_question_card(state, "sess-1", "{not valid json", "call-x")
-        state.broadcast_ws.assert_not_called()
-        assert "AskUserQuestion card skipped" in caplog.text
-
-    def test_unusable_payload_skips_broadcast(self, caplog) -> None:
-        state = self._state()
-        _emit_question_card(state, "sess-1", json.dumps({"questions": []}), "call-x")
-        state.broadcast_ws.assert_not_called()
-        assert "AskUserQuestion card skipped" in caplog.text
-
-    def test_empty_tool_input_is_noop(self) -> None:
-        state = self._state()
-        _emit_question_card(state, "sess-1", None, "call-x")
-        _emit_question_card(state, "sess-1", "", "call-x")
-        state.broadcast_ws.assert_not_called()

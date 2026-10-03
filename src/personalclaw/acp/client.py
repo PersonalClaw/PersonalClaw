@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
     from collections import deque
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from personalclaw.acp.dialect import ACPDialect
     from personalclaw.acp.session import AcpConnection, AcpSession
@@ -209,6 +209,10 @@ class AcpClient:
         # ``_teardown`` each replace ``self._session`` — a seam wired onto a discarded
         # session delivers nothing, silently.
         self._steer_pull: "Callable[[], list[str]] | None" = None
+        # What answers the agent's questions to the user, held and re-applied the same way, and
+        # whether this process was told it may ask them (``initialize``'s form elicitation).
+        self._question_handler: "Callable[[dict], Awaitable[dict]] | None" = None
+        self._asks_through_elicitation = False
 
     def _core_mcp_servers(self) -> list[dict[str, Any]]:
         """The ``mcpServers`` array every ``session/new``/``session/load`` sends.
@@ -618,16 +622,19 @@ class AcpClient:
         assert self._connection is not None
         conn = self._connection
 
-        # 1. Initialize — protocolVersion + clientInfo shape are dialect-owned.
+        # 1. Initialize — protocolVersion, clientInfo and clientCapabilities are dialect-owned.
+        capabilities = self._dialect.client_capabilities(attended=self._owner_answers())
         await conn.initialize(
             {
                 "protocolVersion": self._dialect.protocol_version(),
                 "clientInfo": self._dialect.client_info(
                     client_name=CLIENT_NAME, client_version=CLIENT_VERSION
                 ),
+                **({"clientCapabilities": capabilities} if capabilities else {}),
             },
             timeout=_INIT_TIMEOUT,
         )
+        self._asks_through_elicitation = "elicitation" in capabilities
         self._agent_capabilities = dict(conn.agent_capabilities or {})
         logger.info("ACP initialized (protocol=%s)", self._dialect.protocol_version())
         self._can_load_session = bool(self._agent_capabilities.get(CAP_LOAD_SESSION, False))
@@ -842,6 +849,7 @@ class AcpClient:
         # AcpSession (first turn, respawn after a death, fresh-turn session), and the seam
         # must follow the session that is about to run the turn.
         self._session.set_steer_source(self._steer_pull)
+        self._session.set_question_handler(self._question_handler)
         async for event in self._session.stream_events(message, timeout=timeout):
             self._stamp_turn_telemetry(event)
             self.last_prompt_stats = self._session.last_prompt_stats
@@ -877,6 +885,34 @@ class AcpClient:
             return self._session.set_steer_source(pull)
         return bool(pull is not None and self.steer_capable())
 
+    # ── the agent's questions to the user ───────────────────────────────────────
+    def _owner_answers(self) -> bool:
+        """Whether its owner, at a chat's card, answers this agent's questions: the session is a
+        chat's own (the one host that arms an answer, ``dashboard.chat_questions``) and is not a
+        run nobody watches. Any other host's agent is not told it may ask, so its CLI keeps its
+        question tool off rather than asking and being refused at once."""
+        from personalclaw.constants import DASHBOARD_SESSION_PREFIX
+        from personalclaw.guardrails.policy import is_unattended_session
+
+        key = self._session_key or ""
+        return (
+            not self._unattended
+            and key.startswith(DASHBOARD_SESSION_PREFIX)
+            and not is_unattended_session(key)
+        )
+
+    @property
+    def asks_through_elicitation(self) -> bool:
+        """Whether this agent puts its questions to the user here: the process was told at
+        ``initialize`` that it may (the dialect asks that way and the session is attended)."""
+        return self._asks_through_elicitation
+
+    def set_question_handler(self, handler: "Callable[[dict], Awaitable[dict]] | None") -> None:
+        """Arm what answers the agent's questions (``AcpSession.set_question_handler``)."""
+        self._question_handler = handler
+        if self._session is not None:
+            self._session.set_question_handler(handler)
+
     def undelivered_steers(self) -> list[str]:
         """Steers this turn pulled but never wrote to the CLI (empty on the happy path)."""
         return self._session.undelivered_steers() if self._session is not None else []
@@ -902,6 +938,7 @@ class AcpClient:
         if not self._can_execute_commands:
             raise AcpCommandsUnsupported(command)
         assert self._session is not None
+        self._session.set_question_handler(self._question_handler)
         async for event in self._session.stream_command(command, timeout=timeout):
             self._stamp_turn_telemetry(event)
             self.last_prompt_stats = self._session.last_prompt_stats

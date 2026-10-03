@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **When an agent needs your decision to go on, it asks you a question with options and waits: the question shows as a card in its chat, where you choose, write your own answer or skip it, and as a Needs you item in the Inbox and Mission Control's Your turn. PersonalClaw's own agent asks with its new `ask_user` tool, and Claude Code asks its own questions there too; your Stop withdraws a question still waiting.**
 - **`personalclaw.sdk.net.open_url` streams a download too large to buffer, every request and each redirect hop asked of the egress guard first, and the `guarded-download` core feature names it (an SDK addition, used by `diarization-onnx`).**
 - **An app built for a newer PersonalClaw is refused when you review, install, update or switch it on, and the refusal names what this one lacks: an app lists the core features it relies on in `requiresCoreFeatures`, and `personalclaw.sdk.features` says which this core offers (SDK addition, used by `discord-channel`, `email-channel`, `slack-channel` and `telegram-channel`).**
 - **Your agent can search what your earlier chats said (`chat_search`), and a handoff, a standup or a weekly review now looks there too. It never returns the chat you are in, an Incognito chat or a Temporary chat, and from a Temporary chat it searches nothing.**

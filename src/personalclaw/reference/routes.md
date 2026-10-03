@@ -190,6 +190,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/plan/cancel` — abandon the walkthrough.
 - `POST /api/chat/sessions/{session}/plan/comment` — {step_id, text} — comment + redraft.
 - `POST /api/chat/sessions/{session}/plan/edit` — {step_id, markdown} — edit the plan.
+- `POST /api/chat/sessions/{session}/questions/{question}/answer` — answer an agent's question.
 - `DELETE /api/chat/sessions/{session}/queue/{queue_id}` — cancel a queued message.
 - `POST /api/chat/sessions/{session}/reasoning-effort` — set reasoning effort.
 - `POST /api/chat/sessions/{session}/regenerate` — regenerate the last assistant reply.

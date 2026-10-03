@@ -364,8 +364,9 @@ export function inboxRaisedBy(item: Pick<AttentionInput, 'refs' | 'sender_name' 
   if (refString(refs, 'workflow')) return named('Workflow', refString(refs, 'workflow_name'))
   if (refString(refs, 'source') === 'control_bridge') return 'Control bridge'
   // An approval's own row, carded only once the approval has left the list (fact 2): it is named by
-  // the words the registry named the approval by.
-  if (mirroredApprovalId(item) !== '' && refString(refs, 'source_label')) {
+  // the words the registry named the approval by. So is an agent's question to her: who asks, in
+  // which chat (`owner_questions`).
+  if ((mirroredApprovalId(item) !== '' || refString(refs, 'question')) && refString(refs, 'source_label')) {
     return sentenceStart(refString(refs, 'source_label'))
   }
   // An app's proposal: the name the app goes by, which the platform keeps on the row when it is

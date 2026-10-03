@@ -161,6 +161,12 @@ class ACPDialect:
     #: to the normal queue, which is visible (a `queue_push` event) instead of silent.
     supports_mid_turn_prompt: bool = False
 
+    #: Whether this backend puts its question tool's questions to the client over ACP's form
+    #: elicitation (``acp/elicitation.py``) once the client advertises it. Default **False**: the
+    #: capability is advertised only to a backend whose bridge was read, because a backend that
+    #: asks a form PersonalClaw cannot read is answered ``cancel``, and that is all it gets.
+    asks_through_elicitation: bool = False
+
     # ── mid-turn steering ──
     def mid_turn_prompt_request(self, *, session_id: str, text: str) -> AcpRequest | None:
         """The request that delivers a STEER into the turn already generating, or
@@ -197,6 +203,19 @@ class ACPDialect:
     def client_info(self, *, client_name: str, client_version: str) -> dict:
         """The ``initialize.clientInfo`` block."""
         return {"name": client_name, "version": client_version}
+
+    def client_capabilities(self, *, attended: bool) -> dict:
+        """The ``initialize.clientCapabilities`` block, ``{}`` when it has nothing to say.
+
+        Form elicitation only for an ATTENDED session of a backend that asks through it: an
+        unattended one has nobody to answer, and the backend then keeps its question tool off
+        (Claude Code's adapter lists ``AskUserQuestion`` as disallowed without it), so its model
+        is not offered a tool that could only be cancelled."""
+        if attended and self.asks_through_elicitation:
+            from personalclaw.acp.elicitation import FORM_CAPABILITY
+
+            return dict(FORM_CAPABILITY)
+        return {}
 
     def activate_agent_request(self, *, session_id: str, agent: str) -> AcpRequest | None:
         """Request that activates/selects the agent, or ``None`` if the dialect
@@ -565,6 +584,10 @@ class ClaudeCodeDialect(ZedAdapterDialect):
     """`@zed-industries/claude-code-acp` driving the Claude Code CLI."""
 
     name = "claude"
+
+    #: The adapter enables Claude Code's ``AskUserQuestion`` only for a client that advertises
+    #: form elicitation, and then asks each of its questions over ``elicitation/create``.
+    asks_through_elicitation = True
 
     def child_process_names(self) -> tuple[str, ...]:
         return ("claude",)

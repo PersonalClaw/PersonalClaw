@@ -56,6 +56,8 @@ METHOD_SET_MODE = "session/set_mode"
 METHOD_PROMPT = "session/prompt"
 METHOD_CANCEL = "session/cancel"
 METHOD_REQUEST_PERMISSION = "session/request_permission"
+#: An agent asking the user a question mid-turn, over a form (``acp/elicitation.py``).
+METHOD_ELICITATION_CREATE = "elicitation/create"
 METHOD_SESSION_UPDATE = "session/update"
 METHOD_METADATA = "_vendor.dev/metadata"
 METHOD_COMMANDS_EXECUTE = "_vendor.dev/commands/execute"

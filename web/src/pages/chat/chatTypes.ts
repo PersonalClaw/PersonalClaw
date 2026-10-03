@@ -8,6 +8,8 @@
 import { approvalRiskOf, blastRadiusOf, type BlastRadius } from './approvalMeta'
 import { turnErrorText } from './turnError'
 import type { ImageDelivery } from './imageAttachments'
+import type { AgentQuestion, QuestionAnswer } from '../../lib/api'
+import { questionSegmentOf } from './questionFrames'
 
 export interface TextSegment { kind: 'text'; text: string }
 
@@ -97,6 +99,27 @@ export interface ApprovalSegment {
   detail?: string
 }
 
+/** An agent's question to its owner (`owner_questions`): its card, answerable while the call that
+ *  asked waits on it. Opened by the `question_card` frame, settled by `question_resolved`, and
+ *  rebuilt after a reload from the asking call's row (`meta.question`) or the session's
+ *  `pending_questions` (`questionFrames.ts`). */
+export interface QuestionSegment {
+  kind: 'question'
+  id: string              // the question's id — what the answer route takes
+  toolCallId: string      // the call that asked, '' when it was not one the chat shows
+  questions: AgentQuestion[]
+  askedBy: string
+  /** False for a question shown with no way to send an answer back; `note` says so. */
+  answerable: boolean
+  note?: string
+  /** How it ended: `answered`, `skipped`, `expired` or `cancelled` (or, read from a row another
+   *  build wrote, a word this one does not know). Absent while it waits. */
+  outcome?: string
+  /** Why it ended with no answer. */
+  ended?: string
+  answers?: QuestionAnswer[]
+}
+
 /** Coarse activity line — the native loop emits `activity_event {kind,text}`
  *  (e.g. "Thinking…") but NOT individual tool_call/tool_result frames. We
  *  surface these as a quiet inline
@@ -146,7 +169,7 @@ export interface ErrorSegment { kind: 'error'; text: string; settings?: string }
  *  exactly as before: thinking is a live-stream affordance, not part of the record. */
 export interface ThinkingSegment { kind: 'thinking'; text: string }
 
-export type Segment = TextSegment | ToolSegment | ApprovalSegment | ActivitySegment | ErrorSegment | ThinkingSegment
+export type Segment = TextSegment | ToolSegment | ApprovalSegment | QuestionSegment | ActivitySegment | ErrorSegment | ThinkingSegment
 
 /** Fold one `chat_thinking` chunk into an assistant turn's segments: extend the
  *  trailing thinking block if the reasoning stream is uninterrupted, else open a
@@ -510,7 +533,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -763,6 +786,12 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
         const seg: ToolSegment = { kind: 'tool', id, tool: toolName(m.meta, m.content), detail: m.meta?.detail, toolKind: m.meta?.kind, input: m.meta?.input, output: m.meta?.output, purpose: m.meta?.purpose, done: !!m.meta?.done, contentType: m.meta?.content_type, rawRef: m.meta?.raw_ref, truncated: m.meta?.truncated, originalLength: m.meta?.original_length, recoveryHints: m.meta?.recovery_hints, agentError: m.meta?.agent_error, ok: m.meta?.ok === false ? false : undefined, ungated: ungatedOf(m.meta) }
         toolIndex.set(id, seg)
         lastAssistant().segments.push(seg)
+      }
+      // The question the call put to her, as its card ended — the card she saw live.
+      const asked = questionSegmentOf(m.meta?.question, id)
+      if (asked) {
+        const at = lastAssistant()
+        at.segments = [...at.segments.filter((sg) => !(sg.kind === 'question' && sg.id === asked.id)), asked]
       }
     } else if (m.role === 'permission') {
       // A permission row carries its outcome in meta.resolved once the user

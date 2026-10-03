@@ -1759,6 +1759,40 @@ Load a saved Prompt and render it with variable values filled in, returning the 
 }
 ```
 
+## personalclaw-question-tools
+
+### `ask_user`
+
+Ask the user a question and wait for the answer, when you need their decision to go on: which option to take, or which of several things they meant. The question shows in the chat as a card with your options and a box for an answer of their own, and in their Inbox; the call returns what they chose and wrote, or that they skipped it. Ask only what you cannot sensibly decide for them, and only while they are in the chat; for anything else, ask in your reply. Args: questions (1-4), each {question, header (a few words), options (2-6, each {label, description}), multiSelect (true when more than one option may be chosen)}.
+
+**Response type:** `question.answer`
+
+**Parameters:**
+- `questions` (array, required)
+
+**Example — Ask which of two approaches to take:**
+
+```json
+{
+  "questions": [
+    {
+      "header": "Database",
+      "options": [
+        {
+          "description": "Relational, like the rest",
+          "label": "Postgres"
+        },
+        {
+          "description": "One file, no server",
+          "label": "SQLite"
+        }
+      ],
+      "question": "Which database should the new service use?"
+    }
+  ]
+}
+```
+
 ## personalclaw-subagents
 
 ### `best_of_n`

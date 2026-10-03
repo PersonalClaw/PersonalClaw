@@ -32,6 +32,7 @@ from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.memory_locality import work_folder
 from personalclaw.memory_reads import reach_of
 from personalclaw.own_words import OWN_WORDS
+from personalclaw.owner_questions import OwnerQuestions
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
     is_read_only_bash,
@@ -1055,9 +1056,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # Pending tool approvals: id → asyncio.Future[bool]
         self._pending_approvals: dict[str, dict] = {}
         self._approval_futures: dict[str, asyncio.Future] = {}  # type: ignore[type-arg]
-        # A stopped turn's pending approvals are over (see `cancel_turn_approvals`), and so is the
-        # work it started (`started_work.end_turn`). The SessionManager owns the stop verb and
-        # cannot import upward to this object, so it is handed the two callbacks it needs.
+        # The questions agents are waiting on their owner's answer to.
+        self.owner_questions = OwnerQuestions(self)
+        # A stopped turn's pending approvals and questions are over (`cancel_turn_approvals`), and
+        # so is the work it started (`started_work.end_turn`). The SessionManager owns the stop
+        # verb and cannot import upward to this object, so it is handed the callbacks it needs.
         # Guarded for a stub SessionManager in a test.
         if hasattr(sessions, "register_turn_stop_hook"):
             sessions.register_turn_stop_hook(self.cancel_turn_approvals)

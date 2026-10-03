@@ -98,6 +98,7 @@ def _owner_chat(state, name: str = "mine", *, text: str = "my bank PIN is 4471")
 SESSION_WRITES: list[tuple[str, str, dict]] = [
     ("POST", "/api/chat/sessions/{session}/resume", {}),
     ("POST", "/api/chat/sessions/{session}/approve", {"action": "approved"}),
+    ("POST", "/api/chat/sessions/{session}/questions/{question}/answer", {"skip": True}),
     ("POST", "/api/chat/sessions/{session}/regenerate", {}),
     ("POST", "/api/chat/sessions/{session}/edit-resend", {"index": 0, "content": "now do X"}),
     ("POST", "/api/chat/sessions/{session}/switch-variant", {"index": 0, "variant": 0}),
@@ -141,7 +142,11 @@ SESSION_WRITES: list[tuple[str, str, dict]] = [
 
 
 def _path(template: str, session: str) -> str:
-    return template.replace("{session}", session).replace("{queue_id}", "q1")
+    return (
+        template.replace("{session}", session)
+        .replace("{queue_id}", "q1")
+        .replace("{question}", "q1")
+    )
 
 
 class TestAnAppCannotReachYourChat:

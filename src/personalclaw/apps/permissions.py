@@ -1365,6 +1365,10 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/chat/sessions/{session}/approve": OwnerOnly(
         "answering an approval a conversation raised — whether that tool call runs is yours to say"
     ),
+    # An agent's question is put to you, and what it goes on to do is your answer: no app gives it.
+    "POST /api/chat/sessions/{session}/questions/{question}/answer": OwnerOnly(
+        "answering a question an agent asked you — what it goes on to do is yours to say"
+    ),
     "POST /api/chat/sessions/{session}/channel-link": OwnerOnly(_CARRIES_TO_CHANNEL),
     "POST /api/chat/sessions/{session}/handoff": OwnerOnly(_CARRIES_TO_CHANNEL),
     "POST /api/chat/sessions/{session}/share": OwnerOnly(

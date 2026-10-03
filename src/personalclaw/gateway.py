@@ -4711,6 +4711,8 @@ class GatewayOrchestrator:
             # No approval survives a restart, so an Inbox row still asking for one from the
             # previous run is asking for nothing — close those before anyone opens them.
             self.dashboard_state.close_orphaned_approval_rows()
+            # …nor a question an agent was waiting on her answer to.
+            self.dashboard_state.owner_questions.close_orphaned_rows()
             self._start_incident_watch()
 
     def _start_incident_watch(self) -> None:

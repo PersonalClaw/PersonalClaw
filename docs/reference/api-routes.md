@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **917 registrations** over **743 distinct paths** — 910 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **918 registrations** over **744 distinct paths** — 911 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 128 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 80 | 68 |
+| `/api/chat` | 81 | 69 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 51 | 43 |
 | `/api/workflows` | 50 | 45 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 910 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 911 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -343,6 +343,7 @@ The 910 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/plan/cancel` | abandon the walkthrough. |
 | `POST` | `/api/chat/sessions/{session}/plan/comment` | {step_id, text} — comment + redraft. |
 | `POST` | `/api/chat/sessions/{session}/plan/edit` | {step_id, markdown} — edit the plan. |
+| `POST` | `/api/chat/sessions/{session}/questions/{question}/answer` | answer an agent's question. |
 | `DELETE` | `/api/chat/sessions/{session}/queue/{queue_id}` | cancel a queued message. |
 | `POST` | `/api/chat/sessions/{session}/reasoning-effort` | set reasoning effort. |
 | `POST` | `/api/chat/sessions/{session}/regenerate` | regenerate the last assistant reply. |

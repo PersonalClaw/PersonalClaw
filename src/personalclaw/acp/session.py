@@ -43,6 +43,7 @@ from personalclaw.acp.types import (
     METHOD_CLEAR_STATUS,
     METHOD_COMMANDS_EXECUTE,
     METHOD_COMPACTION_STATUS,
+    METHOD_ELICITATION_CREATE,
     METHOD_METADATA,
     METHOD_PROMPT,
     METHOD_REQUEST_PERMISSION,
@@ -68,12 +69,14 @@ def classify_frame(msg: JsonRpcMessage, req_id: int) -> str:
     """Classify one inbound frame into a turn action — the single classifier for every
     turn loop (the N=1 AcpClient wrapper and the concurrent path both run their turns
     through AcpSession, so this is THE classifier; kept here, importing no client).
-    Actions: complete | error | permission | update | metadata | compaction | clear |
-    agent_switched | skip."""
+    Actions: complete | error | permission | elicitation | update | metadata | compaction |
+    clear | agent_switched | request (any other request, which still needs its answer) | skip."""
     if msg.id == req_id and msg.method is None:
         return "error" if msg.error else "complete"
     if msg.method == METHOD_REQUEST_PERMISSION:
         return "permission"
+    if msg.method == METHOD_ELICITATION_CREATE:
+        return "elicitation"
     if msg.method == METHOD_SESSION_UPDATE:
         return "update"
     if msg.method == METHOD_METADATA:
@@ -84,6 +87,8 @@ def classify_frame(msg: JsonRpcMessage, req_id: int) -> str:
         return "clear"
     if msg.method == METHOD_AGENT_SWITCHED:
         return "agent_switched"
+    if msg.id is not None and msg.method:
+        return "request"
     return "skip"
 
 
@@ -190,11 +195,13 @@ class AcpSession:
         dialect=None,  # ACPDialect : permission-option parsing / approve outcome shape
         session_files_dir: "Path | None" = None,  # opt-in JSONL tool-result tailing
         describe_exit: "Callable[[], Awaitable[str]] | None" = None,  # how the process ended
+        send_error=None,  # async (req_id, code, message) -> None : refuse a server→client request
     ) -> None:
         self.session_id = session_id
         self._queue = queue
         self._send_request = send_request
         self._send_response = send_response
+        self._send_error = send_error
         self._cancel_session = cancel_session
         self._is_process_alive = is_process_alive
         self._describe_exit = describe_exit
@@ -218,6 +225,11 @@ class AcpSession:
         # answered once), and the option each refusal was answered with (`refusal_answer`).
         self._unanswered: dict[str, object] = {}
         self._answered: set[str] = set()
+        # This turn's questions (``elicitation/create``) still waiting for an answer, by id as
+        # text, and who answers them: the chat the turn runs for (``set_question_handler``).
+        # With nobody armed, a question is answered ``cancel`` at once.
+        self._unanswered_asks: dict[str, object] = {}
+        self._question_handler: "Callable[[dict], Awaitable[dict]] | None" = None
         self._refusals: dict[str, dict[str, str]] = {}
         # This turn's asked-about steps, by request id, as (title, the carry-on's words for it —
         # `step_words`); the ones refused since the agent was last prompted; and how often the turn
@@ -261,6 +273,69 @@ class AcpSession:
 
     def close(self) -> None:
         self._closed = True
+
+    # ── the agent's questions to the user ──────────────────────────────────────────────
+    def set_question_handler(self, handler: "Callable[[dict], Awaitable[dict]] | None") -> None:
+        """Arm (or with ``None`` disarm) what answers the agent's ``elicitation/create``: it is
+        handed the request's params and returns the response (``acp/elicitation.py``)."""
+        self._question_handler = handler
+
+    async def _answer_question(self, msg: JsonRpcMessage) -> None:
+        """Answer one ``elicitation/create`` — through the armed handler, which waits on the
+        user, or ``cancel`` when nobody can be asked. Never raises: an unanswered request is a
+        turn that waits forever."""
+        from personalclaw.acp.elicitation import CANCEL
+
+        rid = str(msg.id)
+        if rid in self._answered:
+            return
+        self._unanswered_asks[rid] = msg.id
+        result: dict = dict(CANCEL)
+        handler = self._question_handler
+        if handler is not None and not self._cancelled:
+            try:
+                result = await handler(msg.params if isinstance(msg.params, dict) else {})
+            except Exception:
+                logger.warning(
+                    "session %s: a question could not be asked", self.session_id, exc_info=True
+                )
+                result = dict(CANCEL)
+        else:
+            logger.info(
+                "session %s: nobody can answer the agent's question here; cancelled",
+                self.session_id,
+            )
+        await self._answer_ask(rid, result)
+
+    async def _answer_ask(self, rid: str, result: dict) -> None:
+        raw_id = self._unanswered_asks.pop(rid, None)
+        if raw_id is None or not self._mark_answered(rid):
+            return
+        logger.info(
+            "session %s: answered the agent's question %s (%s)",
+            self.session_id,
+            rid,
+            result.get("action"),
+        )
+        try:
+            await self._send_response(raw_id, result)
+        except Exception:
+            logger.debug(
+                "session %s: answering question %s failed", self.session_id, rid, exc_info=True
+            )
+
+    async def _refuse_request(self, msg: JsonRpcMessage) -> None:
+        """Answer a request this client does not serve with JSON-RPC's method-not-found, so the
+        agent learns at once instead of waiting on an answer that never comes."""
+        if self._send_error is None:
+            logger.debug("session %s: no way to refuse %s", self.session_id, msg.method)
+            return
+        try:
+            await self._send_error(msg.id, JSONRPC_METHOD_NOT_FOUND, f"{msg.method} is not served")
+        except Exception:
+            logger.debug(
+                "session %s: refusing %s failed", self.session_id, msg.method, exc_info=True
+            )
 
     # ── mid-turn steering ──────────────────────────────────────────────────────
     def steer_capable(self) -> bool:
@@ -425,6 +500,10 @@ class AcpSession:
                     rid,
                     exc_info=True,
                 )
+        from personalclaw.acp.elicitation import CANCEL
+
+        for rid in list(self._unanswered_asks):
+            await self._answer_ask(rid, dict(CANCEL))
 
     def _owe_answer(self, fut: "asyncio.Future[JsonRpcMessage]") -> None:
         """This turn ended while its prompt is still unanswered: her Stop went unanswered, its
@@ -476,6 +555,13 @@ class AcpSession:
                     await self._send_response(msg.id, self._dialect.reject_outcome(""))
                 except Exception:  # noqa: BLE001 - a dead agent asks nothing more
                     logger.debug("session %s: answering a stale request failed", self.session_id)
+            elif msg.method == METHOD_ELICITATION_CREATE and msg.id is not None:
+                from personalclaw.acp.elicitation import CANCEL
+
+                try:
+                    await self._send_response(msg.id, dict(CANCEL))
+                except Exception:  # noqa: BLE001 - a dead agent asks nothing more
+                    logger.debug("session %s: answering a stale question failed", self.session_id)
         if dropped:
             logger.info(
                 "session %s: dropped %d frame(s) the agent sent for the turn before",
@@ -750,6 +836,7 @@ class AcpSession:
         self._offered_options.clear()
         self._unanswered.clear()
         self._answered.clear()
+        self._unanswered_asks.clear()
         self._refusals.clear()
         self._asked.clear()
         self._declined.clear()
@@ -926,6 +1013,10 @@ class AcpSession:
                         )
                     continue
                 yield permission
+            elif action == "elicitation":
+                await self._answer_question(msg)
+            elif action == "request":
+                await self._refuse_request(msg)
             elif action == "update":
                 chunk, is_thinking = translate.extract_text_chunk(msg)
                 if chunk:
@@ -1117,6 +1208,12 @@ class AcpConnection:
         """Reply to a server→client request (e.g. a permission prompt) by id."""
         await self._write({"jsonrpc": "2.0", "id": req_id, "result": result})
 
+    async def send_error(self, req_id, code: int, message: str) -> None:
+        """Refuse a server→client request by id, with a JSON-RPC error."""
+        await self._write(
+            {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+        )
+
     async def request(self, method: str, params: dict, *, timeout: float = 60.0):
         """Write a JSON-RPC request and await its id-correlated response via the router.
 
@@ -1175,6 +1272,9 @@ class AcpConnection:
         async def _send_response(req_id, result):
             await self.send_response(req_id, result)
 
+        async def _send_error(req_id, code, message):
+            await self.send_error(req_id, code, message)
+
         async def _cancel():
             await self._write(
                 {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": sid}}
@@ -1190,6 +1290,7 @@ class AcpConnection:
             dialect=self._dialect,
             session_files_dir=session_files_dir,
             describe_exit=self.describe_exit,
+            send_error=_send_error,
         )
         self._sessions[sid] = sess
         return sess

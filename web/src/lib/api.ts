@@ -1766,6 +1766,30 @@ export interface ChatHistoryMsg {
   meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string; kind?: 'lesson' }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string; model_substitution?: string; ran_prompt?: { name?: unknown; text?: unknown } }
 }
 
+/** One question an agent put to its owner (`owner_questions`), as its card shows it: every string
+ *  masked, options in the order asked. `free_text` says she may answer in her own words too. */
+export interface AgentQuestion {
+  question: string
+  header: string
+  multiSelect: boolean
+  free_text: boolean
+  options: { label: string; description: string }[]
+}
+/** Her answer to one question: the options she chose, by their place in the list, and her words. */
+export interface QuestionAnswer { selected: number[]; other: string }
+/** The `question_card` frame, and each of a session's `pending_questions`. `answerable: false` is a
+ *  question shown with no way to send an answer back (`note` says so); nothing waits on it. */
+export interface QuestionCardFrame {
+  id: string
+  session: string
+  tool_call_id: string
+  questions: AgentQuestion[]
+  asked_by: string
+  ts: number
+  answerable: boolean
+  note?: string
+}
+
 // ── workspace / build entity types ──
 export interface NotificationItem {
   kind: string; title: string; body: string; ts: string
@@ -8591,7 +8615,7 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; steerable?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | 'interrupted' | null; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; steerable?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | 'interrupted' | null; pending_approval?: boolean; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
     /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
@@ -8738,6 +8762,10 @@ export const api = {
   stopChat: (session: string, force = false) => post<{ ok: boolean; stopped: boolean }>(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
   approve: (session: string, action: string, request_id?: string) =>
     post(`/api/chat/sessions/${session}/approve`, { action, request_id }),
+  /** Her answer to an agent's question (one per question), or her Skip. Refused with
+   *  `question_answered` / `question_ended` (409) once it no longer waits, saying which. */
+  answerChatQuestion: (session: string, question: string, body: { answers: QuestionAnswer[] } | { skip: true }) =>
+    post<{ ok: boolean; outcome: string }>(`/api/chat/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(question)}/answer`, body),
 
   // side chat (stage 6) — an isolated throwaway chat against a snapshot of the
   // session; streams deltas over the `chat.side_result` WS event.

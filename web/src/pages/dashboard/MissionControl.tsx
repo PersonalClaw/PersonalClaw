@@ -580,6 +580,13 @@ function AttentionCard({
           {card.origin === 'run' ? 'Open the run' : 'Open the loop'}
         </TextLink>
       ) : null}
+      {/* An agent's question is answered in the chat that asked it, where its card is. */}
+      {item && typeof item.refs?.question === 'string' && typeof item.refs?.session === 'string' ? (
+        <TextLink href={`#/chat/${encodeURIComponent(item.refs.session)}`} ink="emphasis" size="sm"
+          aria-label={`Answer it in the chat: ${subject}`}>
+          Answer it in the chat
+        </TextLink>
+      ) : null}
       {/* What the proposal would write is on the Skills page's proposals, where Home's row opens. */}
       {proposal ? (
         <TextLink href="#/skills?mode=proposals" ink="emphasis" size="sm" aria-label={`Review it in Skills: ${subject}`}>

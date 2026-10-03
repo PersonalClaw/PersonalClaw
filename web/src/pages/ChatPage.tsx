@@ -65,6 +65,7 @@ import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
 import { WorkflowProgressCard, liveWorkflowCards, workflowRefFromTool } from './chat/WorkflowProgressCard'
 import { ManualAutomationCard, manualAutomationFromTool } from './chat/ManualAutomationCard'
 import { ApprovalCard } from './chat/ApprovalCard'
+import { QuestionCard, type QuestionReply } from './chat/QuestionCard'
 import { RoomView } from './chat/RoomView'
 import { RoomsScope } from './chat/RoomsScope'
 import { ChatFilePanel } from './chat/ChatFilePanel'
@@ -76,10 +77,11 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
+import { applyQuestionFrame, applyQuestionResolved, graftPendingQuestions } from './chat/questionFrames'
 import { waitsPastItsTurn } from './chat/approvalSegment'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
@@ -1169,7 +1171,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const adoptSnapshot = (d: ChatDetail) => {
     const messages = d.messages || []
     const running = !!d.running
-    setTurns(hydrateTurns(messages, running))
+    // …with the questions its turn is waiting on her answer to, which no row holds yet.
+    setTurns(graftPendingQuestions(hydrateTurns(messages, running), d.pending_questions))
     setTakesSteers(running && !!d.steerable)
     adoptedUserTs.current = new Set(messages.flatMap((m) => (m.role === 'user' && m.ts ? [m.ts] : [])))
     // The answer still being written continues IN the segment the snapshot paints for it:
@@ -1550,6 +1553,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // already dropped a frame for another chat, which may be waiting on the same bare id.
         setTurns((prev) => prev.map((t) => ({ ...t, segments: applyApprovalResolved(t.segments, d) })))
         break
+      // An agent's question to her (`questionFrames`): its card, and how it ended.
+      case 'question_card':
+        endTextRun()  // land buffered text before the question card
+        patchLastAssistant((segs) => applyQuestionFrame(segs, d))
+        break
+      case 'question_resolved':
+        setTurns((prev) => prev.map((t) => ({ ...t, segments: applyQuestionResolved(t.segments, d) })))
+        break
       case 'chat_segment': endTextRun(); break
       // Whether the running turn takes a steer, said when the turn wires its runtime.
       case 'turn_steerable': setTakesSteers(!!d.steerable); break
@@ -1904,7 +1915,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const transcriptChangedAt = Date.now()
     const iv = window.setInterval(() => {
       if (Date.now() - lastWsActivityRef.current < 3500) return  // WS still active — no need
-      const showingApproval = turns.some((t) => t.segments.some((sg) => sg.kind === 'approval' && !(sg as ApprovalSegment).resolved))
+      const showingApproval = turns.some((t) => t.segments.some((sg) => (sg.kind === 'approval' && !(sg as ApprovalSegment).resolved)
+        || (sg.kind === 'question' && (sg as QuestionSegment).answerable && !(sg as QuestionSegment).outcome)))
       if (showingApproval) return  // card already up
       // One read at a time. A snapshot read in flight settles the claim itself, and this
       // reconciler's own read still out has not answered yet — issuing another every tick is
@@ -1921,6 +1933,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         const stall = resolveStalledStream({
           serverRunning: !!d.running,
           serverPendingApproval: !!d.pending_approval,
+          serverPendingQuestion: (d.pending_questions?.length ?? 0) > 0,
           msSinceTranscriptChange: Date.now() - transcriptChangedAt,
         })
         if (stall === 'wait') return  // genuinely just quiet (e.g. long model think) — leave it
@@ -2002,6 +2015,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const pending = takePendingWidgetAction()
     if (pending) void send(pending.text, { uiLabel: pending.label })
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Her answer to an agent's question, or her Skip. The card says a refusal itself; what took is
+  // settled here at once, as the `question_resolved` frame that follows settles it.
+  const answerQuestion = useCallback(async (id: string, reply: QuestionReply) => {
+    const s = sessionRef.current
+    if (!s) return
+    const { outcome } = await api.answerChatQuestion(s, id, reply)
+    const answers = 'answers' in reply ? reply.answers : undefined
+    setTurns((prev) => prev.map((t) => ({ ...t, segments: applyQuestionResolved(t.segments, { id, outcome, ...(answers ? { answers } : {}) }) })))
   }, [])
 
   const approve = useCallback((id: string, action: ApproveAction) => {
@@ -3899,7 +3922,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} />
+                            <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onAnswerQuestion={answerQuestion} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips under the last assistant turn only,
@@ -4583,13 +4606,14 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution }: {
+function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onAnswerQuestion, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution }: {
   segments: Segment[]; isLast: boolean
   /** The tool results of the whole chat that show a run's live card, one per run. */
   liveCards: Set<Segment>
   messageTs?: string
   streaming?: boolean
   onApprove: (id: string, action: ApproveAction) => void
+  onAnswerQuestion: (id: string, reply: QuestionReply) => Promise<unknown>
   onSwitchToAgent: (continuation: string) => void
   onOpenFile: (path: string) => void
   /** WT-04: the no-model empty-state's CTA — routes to Settings → Models through the hash router. */
@@ -4679,6 +4703,10 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
           </InlineError>
         )
     }
+    if (seg.kind === 'question') {
+      const q = seg as QuestionSegment
+      return <QuestionCard key={q.id} seg={q} onAnswer={onAnswerQuestion} />
+    }
     if (seg.kind === 'approval') {
       const ap = seg as ApprovalSegment
       return ap.queued
@@ -4693,7 +4721,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
     return null
   }
   const isProcess = (s: Segment) =>
-    s.kind === 'tool' || s.kind === 'error' || s.kind === 'approval' ||
+    s.kind === 'tool' || s.kind === 'error' || s.kind === 'approval' || s.kind === 'question' ||
     (s.kind === 'activity' && !inLedger(s))
 
   // Split the turn into the agent's WORK (tool calls, narration, approvals — up to
@@ -4722,7 +4750,9 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   // widget inside a collapsed disclosure hides the one thing the user came back to check. So is
   // an ask still waiting for work the chat started (`waitsPastItsTurn`).
   const isWorkflow = (s: Segment) => liveCards.has(s)
-  const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s) || waitsPastItsTurn(s)
+  // A question still waiting on her is never folded away either: the agent is halted on it.
+  const waitsForHer = (s: Segment) => s.kind === 'question' && (s as QuestionSegment).answerable && !(s as QuestionSegment).outcome
+  const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s) || waitsPastItsTurn(s) || waitsForHer(s)
   const sdlcNodes = segments.filter(isLiveCard).map(renderItem).filter(Boolean)
   // The ledger's rows are said in the footer only. What fed the turn arrives as the turn starts,
   // inside the work's span, and was drawn there too, live: a line a reload never showed.

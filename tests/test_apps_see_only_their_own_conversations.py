@@ -484,6 +484,7 @@ CHAT_FRAMES = [
     "activity_event",
     "queue_push",
     "question_card",
+    "question_resolved",
     "routing_suggestion",
     "subagent_status",
 ]

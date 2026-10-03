@@ -184,10 +184,14 @@ def is_interactive_tool(tool: "ToolDefinition") -> bool:
     fallback catches option-prompt-shaped tools from external MCP servers that
     never declared themselves interactive.
     """
-    if tool.interactive:
-        return True
-    name = (tool.name or "").lower().replace("-", "_")
-    compact = name.replace("_", "")
+    return tool.interactive or names_interactive_tool(tool.name)
+
+
+def names_interactive_tool(name: str) -> bool:
+    """True if a tool called *name* is option-prompt-shaped by its name alone
+    (:data:`INTERACTIVE_TOOL_NAME_HINTS`) — the rule for a tool whose definition is not ours to
+    read, such as an agent CLI's own."""
+    compact = (name or "").lower().replace("-", "_").replace("_", "")
     return any(h.replace("_", "") in compact for h in INTERACTIVE_TOOL_NAME_HINTS)
 
 

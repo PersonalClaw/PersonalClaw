@@ -866,6 +866,28 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    # ── personalclaw-question-tools ──────────────────────────────────────────
+    "ask_user": {
+        "response_type": "question.answer",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Ask which of two approaches to take",
+                "args": {
+                    "questions": [
+                        {
+                            "question": "Which database should the new service use?",
+                            "header": "Database",
+                            "options": [
+                                {"label": "Postgres", "description": "Relational, like the rest"},
+                                {"label": "SQLite", "description": "One file, no server"},
+                            ],
+                        }
+                    ]
+                },
+            },
+        ],
+    },
     # ── personalclaw-knowledge-tools ─────────────────────────────────────────
     "knowledge_search": {
         "response_type": "knowledge.search.results",

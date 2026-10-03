@@ -40,6 +40,9 @@ export const STREAM_HEAL_WARNING = 'the turn ended but its terminal frame never 
  *    the `approval` frame was lost or early the card never appears. Re-hydrating surfaces
  *    the persisted card.
  *
+ *  · `recover-question` — the same, parked on an agent's question to her: re-hydrating grafts
+ *    the session's `pending_questions`, so its card appears.
+ *
  *  · `wait` — genuinely quiet (a long model think). Leave it alone.
  *
  *  Kept out of `ChatPage` so both readings are assertable: nothing in `web/` can mount
@@ -49,10 +52,13 @@ export function resolveStalledStream(input: {
   serverRunning: boolean
   /** The server's `pending_approval` for this session. */
   serverPendingApproval: boolean
+  /** Whether the server's `pending_questions` for this session holds one. */
+  serverPendingQuestion?: boolean
   /** Milliseconds the transcript has been unchanged while the client claims the stream. */
   msSinceTranscriptChange: number
-}): 'settled' | 'recover-approval' | 'wait' {
+}): 'settled' | 'recover-approval' | 'recover-question' | 'wait' {
   if (!input.serverRunning && input.msSinceTranscriptChange >= STREAM_SETTLED_GRACE_MS) return 'settled'
   if (input.serverPendingApproval) return 'recover-approval'
+  if (input.serverPendingQuestion) return 'recover-question'
   return 'wait'
 }
