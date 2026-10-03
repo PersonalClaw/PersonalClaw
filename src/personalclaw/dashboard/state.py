@@ -2524,8 +2524,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         client guessing on a timer.
 
         Kinds in use: ``crons`` / ``cron_history`` (an automation changed / ran), ``loops``,
-        ``workflow_runs`` (a workflow run started, changed status or ended —
-        ``workflows/watchdog``), ``history`` (the chat list), ``agents``, ``lessons``,
+        ``tasks`` (a task was written — ``tasks/registry``), ``workflow_runs`` (a workflow run
+        started, changed status or ended — ``workflows/watchdog``), ``history`` (the chat list),
+        ``agents``, ``lessons``,
         ``artifacts`` (an artifact was written or removed — :meth:`announce_artifact_change`),
         ``mcp`` (what an MCP server's card says may have changed — ``mcp_status.announce``),
         ``suggestions`` / ``attachments`` (a suggestions refresh landed, an attachment was read),

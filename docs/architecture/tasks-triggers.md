@@ -28,6 +28,15 @@ relative to `PersonalClaw/src/personalclaw/`.
 - **One registry, every surface** (`tasks/registry.py`) — the chat
   `task_create` tool and the Tasks UI share the same provider registry, so
   a task created in conversation is the same object the board shows.
+- **Every change is announced** (`tasks/registry.py:_announce`) — the
+  registry's writes (a create, an edit, a delete, a comment) send the gateway's
+  `tasks` listing hint, a `refresh` frame naming `tasks`, as the loop store
+  sends `loops`. A page that lists tasks re-reads on it rather than showing a
+  task as it was until a reload: the phone companion's Tasks lane and Home's
+  ready list. Every door writes through the registry — the board, the agent's
+  `task_update`, a loop finishing its task, a workflow step, a bulk edit,
+  another device — so the hint is the same whoever wrote and whichever
+  provider holds the task. A write that changed nothing sends none.
 - **Due dates announce themselves** (`tasks/due_notices.py`) — a gateway
   loop (`gateway._task_due_loop`: once the dashboard is up, then every five
   minutes; off under `--no-crons`) sends one `tasks/due` notification per due

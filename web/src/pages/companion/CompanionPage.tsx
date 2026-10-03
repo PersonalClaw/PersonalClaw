@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone } from 'lucide-react'
 import { api, type PendingApproval, type PushStatus } from '../../lib/api'
 import { disablePush, enablePush, pushDeviceId, pushSupported } from '../../app/pushClient'
 import { disableNativePush, enableNativePush, nativeBridge, watchNativePushTaps } from '../../app/nativePush'
 import { useQuery } from '../../lib/data'
-import { useChatSocket } from '../../lib/useChatSocket'
+import { FOLLOWS, useLiveLane } from './useLiveLane'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
 import { blastRadiusOf, establishedFacets } from '../chat/approvalMeta'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -48,9 +48,11 @@ export function CompanionPage({ navigate, query }: RouteProps) {
     })
   }, [navigate])
   // Live data, never persisted to sessionStorage: a stale approval is a dangerous thing to
-  // paint. The queue re-reads on every WS approval event and on manual refresh.
+  // paint. The queue re-reads on its frames, a reconnect and the page being shown again, as
+  // every lane below does (`useLiveLane`), and on manual refresh.
   const { data, loading, error, refresh } = useQuery<PendingApproval[]>(
     'companion:approvals', () => api.approvals())
+  useLiveLane('companion:approvals', FOLLOWS.approvals)
   // Optimistically resolved ids — the row leaves immediately, and comes BACK if the POST
   // failed (with the failure announced), because silently dropping a permission prompt would
   // leave the user believing they answered it.
@@ -75,11 +77,6 @@ export function CompanionPage({ navigate, query }: RouteProps) {
       return next.size === s.size ? s : next
     })
   }, [data])
-
-  const onWs = useCallback((m: { type: string }) => {
-    if (m.type === 'approval' || m.type === 'approval_resolved') refresh()
-  }, [refresh])
-  useChatSocket(onWs, refresh)
 
   const act = async (ap: PendingApproval, action: 'approve' | 'reject') => {
     setBusy((s) => new Set(s).add(ap.id))

@@ -29,6 +29,26 @@ class UnknownTaskProvider(ValueError):
     """
 
 
+def _announce() -> None:
+    """Tell every open dashboard the task list changed: the gateway's `tasks` refresh hint.
+
+    Sent here, by the five writes below, because every door that writes a task comes through them
+    (the Tasks page, the agent's `task_update`, a loop finishing its task, a workflow step, a bulk
+    edit, the phone) whichever provider holds it. The surfaces that list tasks (the phone
+    companion's Tasks lane, Home's ready list) re-read on the hint, and nothing sent one, so a task
+    finished at one of those doors stayed open on every page left open until a reload. A write
+    that found nothing to change says nothing. Best-effort, and a no-op headless.
+    """
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        state = get_dashboard_state()
+        if state is not None:
+            state.push_refresh("tasks")
+    except Exception:
+        logger.debug("tasks: could not announce a change", exc_info=True)
+
+
 def register_provider(provider: TaskProvider) -> None:
     _providers[provider.name] = provider
 
@@ -264,7 +284,9 @@ async def create_task(provider_name: str = "native", **fields: Any) -> Task:
     prov = _resolve_one(provider_name)
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
-    return await prov.create_task(**fields)
+    task = await prov.create_task(**fields)
+    _announce()
+    return task
 
 
 async def update_task(
@@ -281,7 +303,10 @@ async def update_task(
         return None
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
-    return await prov.update_task(task_id, base_revision=base_revision, **fields)
+    edited = await prov.update_task(task_id, base_revision=base_revision, **fields)
+    if edited is not None:
+        _announce()
+    return edited
 
 
 async def engine_owned_refusal(
@@ -324,7 +349,10 @@ async def delete_task(task_id: str, provider_name: str | None = None) -> bool:
         return False
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
-    return await prov.delete_task(task_id)
+    deleted = await prov.delete_task(task_id)
+    if deleted:
+        _announce()
+    return deleted
 
 
 async def get_comments(task_id: str, provider_name: str | None = None) -> list[TaskComment]:
@@ -338,7 +366,11 @@ async def add_comment(
     prov = await _routed(task_id, provider_name)
     if prov is None:
         return None
-    return await prov.add_comment(task_id, body, author)
+    # A list row carries its task's comment count, so a comment changes the listing too.
+    comment = await prov.add_comment(task_id, body, author)
+    if comment is not None:
+        _announce()
+    return comment
 
 
 async def delete_comment(task_id: str, comment_id: str, provider_name: str | None = None) -> bool:
@@ -350,7 +382,10 @@ async def delete_comment(task_id: str, comment_id: str, provider_name: str | Non
         return False
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
-    return await prov.delete_comment(task_id, comment_id)
+    removed = await prov.delete_comment(task_id, comment_id)
+    if removed:
+        _announce()
+    return removed
 
 
 async def task_graph(provider_filter: str | None = None) -> dict[str, Any]:

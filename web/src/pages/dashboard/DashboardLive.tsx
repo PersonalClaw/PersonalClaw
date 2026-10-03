@@ -299,14 +299,15 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     if (t === 'approval' || t === 'approval_resolved') { soon('approvals', loadApprovals); soon('inbox', loadInbox) }
     else if (t.startsWith('inbox')) soon('inbox', loadInbox)
     else if (t.startsWith('notification')) soon('notifications', loadNotifications)
-    // The gateway's refresh hint: a loop started, paused, stopped or was deleted (`loops`); an
-    // automation changed (`crons`) or ran (`cron_history`). `history` is the CHAT history, and the
-    // run feed below is not.
+    // The gateway's refresh hint: a loop started, paused, stopped or was deleted (`loops`); a task
+    // was written (`tasks`); an automation changed (`crons`) or ran (`cron_history`). `history` is
+    // the CHAT history, and the run feed below is not.
     else if (t === 'refresh') {
       const kinds = refreshKinds(m)
       // A run-backed loop IS a workflow run, so a run changing status (`workflow_runs`, the
       // workflow watchdog's hint) moves its loop too.
       if (kinds.includes('loops') || kinds.includes('workflow_runs')) soon('loops', loadLoops)
+      if (kinds.includes('tasks')) soon('tasks', loadTasks)
       if (kinds.includes('crons') || kinds.includes('cron_history')) soon('schedule', loadSchedule)
     }
     // Loop / run progress + session lifecycle nudges refresh the work + status views
@@ -314,7 +315,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     else if (t === 'update_progress' || t === 'chat_status' || t === 'sessions' || t.startsWith('subagent')) {
       refreshWork()
     }
-  }, [soon, loadApprovals, loadInbox, loadNotifications, loadLoops, loadSchedule, refreshWork])
+  }, [soon, loadApprovals, loadInbox, loadNotifications, loadLoops, loadTasks, loadSchedule, refreshWork])
 
   useChatSocket(
     onMessage,

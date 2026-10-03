@@ -13,6 +13,7 @@ import type { WsMessage } from '../../lib/useChatSocket'
 const frames: Array<(m: WsMessage) => void> = []
 const inboxOpen = vi.fn(() => Promise.resolve([]))
 const triggersHistory = vi.fn(() => Promise.resolve({ runs: [], did_ids: [] }))
+const readyTasks = vi.fn(() => Promise.resolve([]))
 
 function mockApi() {
   vi.doMock('../../lib/api', async (orig) => ({
@@ -22,7 +23,7 @@ function mockApi() {
       inboxOpen: () => inboxOpen(),
       skillProposals: () => Promise.resolve({ proposals: [] }),
       uLoops: () => Promise.resolve([]),
-      readyTasks: () => Promise.resolve([]),
+      readyTasks: () => readyTasks(),
       notifications: () => Promise.resolve({ notifications: [] }),
       triggersHistory: () => triggersHistory(),
       status: () => Promise.resolve({}),
@@ -53,6 +54,7 @@ beforeEach(() => {
   frames.length = 0
   inboxOpen.mockClear()
   triggersHistory.mockClear()
+  readyTasks.mockClear()
   mockApi()
 })
 afterEach(() => { vi.useRealTimers() })
@@ -75,5 +77,18 @@ describe('Home and its frames', () => {
     say({ type: 'refresh', data: { kinds: ['crons', 'cron_history'] } } as WsMessage)
     act(() => { vi.advanceTimersByTime(200) })
     expect(triggersHistory.mock.calls.length - onMount).toBe(1)
+  })
+
+  it('reads the ready tasks when the task store says a task changed, not on another list', async () => {
+    // A task finished by a loop, the agent or another device used to reach Home only on its
+    // 20-second poll; the store now says so (`refresh: tasks`).
+    await mountHome()
+    const onMount = readyTasks.mock.calls.length
+    say({ type: 'refresh', data: { kinds: ['loops', 'crons'] } } as WsMessage)
+    act(() => { vi.advanceTimersByTime(200) })
+    expect(readyTasks.mock.calls.length - onMount).toBe(0)
+    say({ type: 'refresh', data: { kinds: ['tasks'] } } as WsMessage)
+    act(() => { vi.advanceTimersByTime(200) })
+    expect(readyTasks.mock.calls.length - onMount).toBe(1)
   })
 })

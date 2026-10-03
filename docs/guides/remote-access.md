@@ -448,6 +448,11 @@ waiting. Approve or deny, and the run you were pinged about continues. If the ap
 while your phone was in your pocket, the screen says so rather than leaving you hunting for a card
 that no longer exists.
 
+Below the approvals are the running loops, open tasks, the Inbox and recent notifications. Every
+part of the screen follows what changes while it is open, and reads again when you come back to it
+or its connection returns, so a page you left open days ago shows what is true now: a loop that has
+ended is not offered for pausing, and a task finished at your desk is not listed as open.
+
 Which notifications reach the phone at all is **Settings → Notifications**: every kind has a row,
 and *Approval needed* ships with the phone among its targets. Turn it off there and nothing else
 changes.

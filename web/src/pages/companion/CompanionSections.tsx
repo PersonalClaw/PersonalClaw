@@ -11,10 +11,12 @@ import {
 } from '../../lib/api'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { inboxRaisedBy, isOpenStatus } from '../../lib/attentionLanes'
+import { effectiveLoopStatus, loopStatusLabel, shownCycle } from '../../lib/loopStatus'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextArea } from '../../ui/forms'
 import { useCompanionAction } from './useCompanionAction'
+import { FOLLOWS, useLiveLane } from './useLiveLane'
 import { signalPriority } from '../tasks/taskMeta'
 import { isChannelItem } from '../inbox/inboxMeta'
 import { noteMeta } from '../notifications/notificationMeta'
@@ -22,8 +24,9 @@ import { noteMeta } from '../notifications/notificationMeta'
 /** `#/companion`'s non-approval sections (MOBILE-COMPANION `MC-6`, the former S2
  *  T2.1/T2.2 breadth deferred by the 2026-07-26 amendment).
  *
- *  Four sections, one shape each: read a list, render the honest state (error before
- *  empty — always), and offer the one or two actions a phone is actually good for.
+ *  Four sections, one shape each: read a list, keep it current while the page is open
+ *  (`useLiveLane`), render the honest state (error before empty — always), and offer the
+ *  one or two actions a phone is actually good for.
  *  All four share `useCompanionAction`, so the optimistic-with-revert contract and the
  *  reconcile-against-the-server rule are written once (see that file's trap note).
  *
@@ -155,6 +158,7 @@ export function RunningLoopsSection() {
   // three the change names. No loop endpoint is invented or reshaped here.
   const query = useQuery<Loop[]>('loops-companion', () =>
     api.uLoops().then((ls) => ls.filter((l) => STEERABLE.includes(l.status))))
+  useLiveLane('loops-companion', FOLLOWS.loops)
   const { act, view, busy } = useCompanionAction<{ status: UnifiedLoopStatus }>(query.data)
   const [nudging, setNudging] = useState<string | null>(null)
   const [text, setText] = useState('')
@@ -180,7 +184,10 @@ export function RunningLoopsSection() {
         return (
           <div key={l.id} className="flex flex-col gap-m">
             <Row title={l.name || l.task} sub={l.name ? l.task : undefined}
-              meta={`${l.status.replace(/_/g, ' ')} · cycle ${l.total_cycles}`}
+              // The registry's word and cycle, as the cockpit, the Loops list and Home read the same
+              // loop: the raw wire value read "running" for a loop incident mode holds (it starts no
+              // cycle), and the completed count read one cycle behind every other surface.
+              meta={`${loopStatusLabel(effectiveLoopStatus(l.status, l.stop_reason, l.held))} · cycle ${shownCycle(l.status, l.total_cycles)}`}
               actions={<>
                 {l.status === 'running' ? (
                   <Button size="sm" variant="secondary" loading={working}
@@ -242,6 +249,7 @@ export function TasksSection() {
   const query = useQuery<TaskItem[]>('tasks-companion', () =>
     Promise.all(OPEN_STATUSES.map((s) => api.tasks({ status: s, limit: 20 })))
       .then((pages) => pages.flatMap((p) => p.tasks)))
+  useLiveLane('tasks-companion', FOLLOWS.tasks)
   const { act, view, busy } = useCompanionAction<{ status: TaskStatus }>(query.data)
 
   const move = (t: TaskItem, status: TaskStatus, verb: string) =>
@@ -293,6 +301,7 @@ export function TasksSection() {
 // a desk job, deciding whether something still needs one is not.
 export function InboxSection() {
   const query = useQuery<InboxItem[]>('inbox-companion', () => api.inboxOpen())
+  useLiveLane('inbox-companion', FOLLOWS.inbox)
   const { act, view, busy } = useCompanionAction<{ status: InboxItem['status'] }>(query.data)
 
   const resolve = (i: InboxItem, status: 'handled' | 'dismissed', verb: string) =>
@@ -347,6 +356,7 @@ export function RecentSection() {
   // what happened last.
   const query = useQuery<NotificationItem[]>('notifications-companion', () =>
     api.notifications().then((d) => d.notifications))
+  useLiveLane('notifications-companion', FOLLOWS.notifications)
   const { act, view, busy } = useCompanionAction<{ acked: boolean }>(query.data)
 
   return (
