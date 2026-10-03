@@ -425,9 +425,10 @@ async def test_a_renamed_trigger_is_named_in_the_runs_feed_as_it_is_called_now(
     home, bell, monkeypatch
 ):
     """A trigger still in the list is named as it is now called, not as it was when it ran."""
-    at = _soon(3600)
-    tid = await _page_trigger(every=3600, start_at=at)
-    await _tick_at(monkeypatch, bell, at + 1)
+    tid = await _page_trigger(every=3600)
+    # An interval's first run is an interval after it is made, so the tick is at the time the row
+    # holds: a time read before the page made it falls short whenever making it takes a moment.
+    await _tick_at(monkeypatch, bell, _slot(home, tid) + 1)
     store = TriggerStore(base_dir=home)
     trigger = store.get(tid).trigger
     trigger.name = "Pack the swim bag"
