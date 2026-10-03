@@ -471,9 +471,13 @@ async def test_vault_sync_normal_session_is_not_blocked(monkeypatch, tmp_path):
             self.vdir = vdir
             seen["mode"] = mode
 
-        def sync(self, *, knowledge=None, enqueue=None) -> dict:
+        def sync(self) -> dict:
             seen["synced"] = True
             return {"created": 0, "updated": 0, "deleted": 0}
+
+        async def sweep_raw(self, *, knowledge=None, enqueue=None) -> dict:
+            seen["swept"] = True
+            return {"ingested": 0, "refused": 0, "left": 0, "failed": 0}
 
     monkeypatch.setattr(
         "personalclaw.dashboard.handlers.memory._get_service", lambda _state: MagicMock()
@@ -490,7 +494,7 @@ async def test_vault_sync_normal_session_is_not_blocked(monkeypatch, tmp_path):
 
     assert resp.status != 403
     assert json.loads(resp.body)["path"] == str(tmp_path)
-    assert seen["synced"] is True
+    assert seen["synced"] is True and seen["swept"] is True
     # An `off` vault exports one-shot but must NOT be silently upgraded to two_way:
     # a "sync now" button is not how a user chooses to have their files read back.
     assert seen["mode"] == "mirror"

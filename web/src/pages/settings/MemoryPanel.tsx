@@ -2505,6 +2505,7 @@ function VaultSection({ settings, onMode, onPath, saved }: {
       if (r.absorbed) parts.push(`${r.absorbed} edit${r.absorbed === 1 ? '' : 's'} read back`)
       if (r.conflicts) parts.push(`${r.conflicts} conflict${r.conflicts === 1 ? '' : 's'} — see Health`)
       if (r.raw_ingested) parts.push(`${r.raw_ingested} raw file${r.raw_ingested === 1 ? '' : 's'} → Knowledge`)
+      if (r.raw_refused) parts.push(`${r.raw_refused} raw file${r.raw_refused === 1 ? '' : 's'} refused — see Knowledge`)
       // Each folder's own memory is synced into a vault of its own beside it, and said too.
       const own = Object.values(r.folders ?? {})
       const sum = (k: 'records' | 'files') => own.reduce((n, f) => n + f[k], 0)

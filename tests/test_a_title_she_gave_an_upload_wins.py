@@ -23,6 +23,7 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.dashboard.handlers import knowledge as H
+from personalclaw.knowledge.file_items import store_file_item
 from personalclaw.knowledge.pipeline import ensure_nodes_registered
 from personalclaw.knowledge.pipeline.runner import _run_insights
 from personalclaw.knowledge.store import KnowledgeStore
@@ -72,10 +73,10 @@ def _provider(store):
 
 
 def _upload(store, tmp_path, name=MEMO) -> str:
-    """The item an upload writes (`_store_file_item`): titled with the file's name."""
+    """The item an upload writes (`store_file_item`): titled with the file's name."""
     src = tmp_path / name
     src.write_bytes(b"not really audio, and the pipeline never reads it here")
-    item, is_new = asyncio.run(H._store_file_item(store, str(src), name, mime="audio/mp4"))
+    item, is_new = asyncio.run(store_file_item(store, str(src), name, mime="audio/mp4"))
     assert is_new and item["title"] == name
     return item["id"]
 

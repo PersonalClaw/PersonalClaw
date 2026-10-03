@@ -118,6 +118,18 @@ async def ingest_item(
             except Exception:
                 logger.debug("knowledge ingest publish failed", exc_info=True)
 
+    # A file the library refused at its door (``knowledge.file_items.take_file``) was kept as
+    # nothing, so a re-run has nothing to read: it says why again, not that the item holds no text.
+    refused = str((item.get("file_metadata") or {}).get("refused") or "")
+    if refused and not item.get("file_path"):
+        _merge_file_metadata(store, item_id, {"node_phases": refused_phases(item_type, refused)})
+        store.update_item(
+            item_id, processing_status="failed", processing_error=refused, touch=False
+        )
+        store.db.commit()
+        _emit("ingest_failed", error=refused)
+        return "failed"
+
     store.update_item(item_id, processing_status="processing", processing_error=None, touch=False)
     store.db.commit()
     _emit("ingest_started", item_type=item_type)
@@ -170,7 +182,7 @@ async def ingest_item(
             try:
                 await scan_text(read, surface="knowledge")
             except ContentRefused as exc:
-                return _withheld(store, item_id, graph, result, exc.withheld, _emit)
+                return _withheld(store, item_id, graph, result, exc.nothing_made, _emit)
 
         # Persist each pooled node output into the extracted-content pool.
         store.clear_extracted_contents(item_id)
@@ -487,14 +499,14 @@ async def ingest_item(
     return status
 
 
-def _withheld(store, item_id: str, graph, result, why: str, emit) -> str:
-    """End the ingest of a file whose text the content scan withheld (*why*, the scan's words).
+def _withheld(store, item_id: str, graph, result, reason: str, emit) -> str:
+    """End the ingest of a file whose text the content scan withheld (*reason*, the status line the
+    scan's refusal gives it: ``ContentRefused.nothing_made``).
 
     Nothing the graph made of it is kept, nor what an earlier ingest made of the same file (its
     text, its pool, its chunks, its insights and its vector), no model reads it, and the item says
     why on its status line and on the step that read it. ``failed``: nothing could be made of it.
     """
-    reason = f"{why[:1].upper()}{why[1:]}, so nothing was made from it."
     store.clear_extracted_contents(item_id)
     store.clear_chunks(item_id)
     store.update_item(item_id, content="", insights={}, embedding=None, touch=False)
@@ -509,6 +521,14 @@ def _withheld(store, item_id: str, graph, result, why: str, emit) -> str:
     store.db.commit()
     emit("ingest_failed", error=reason)
     return "failed"
+
+
+def refused_phases(item_type: str, reason: str) -> dict[str, dict]:
+    """The step map of an item made of nothing from a file its door refused (*reason*, the item's
+    status line): no step of its graph or of the terminal stages runs, and each says why."""
+    skipped = oc.not_applicable(reason).to_dict()
+    steps = [*getattr(graph_for(item_type), "nodes", {}), *TERMINAL_STAGES]
+    return {step: dict(skipped) for step in steps}
 
 
 def _structural_descriptor(item: dict) -> str:

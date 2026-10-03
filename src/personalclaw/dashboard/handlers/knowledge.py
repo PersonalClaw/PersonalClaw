@@ -4,13 +4,11 @@ import asyncio
 import json
 import logging
 import re
-import shutil
 import tempfile
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 from aiohttp import web
 
@@ -21,7 +19,7 @@ from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import json_error
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
 from personalclaw.knowledge.llm_pool import LLMPool
-from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbnail
+from personalclaw.knowledge.media import classify, guess_mime
 from personalclaw.knowledge.retrieval import HybridRetriever, _bytes_to_floats
 from personalclaw.knowledge.semantics import DEFAULT_LIST_EXCLUDED_KINDS
 from personalclaw.knowledge.staleness import is_synthesized, staleness_for
@@ -462,151 +460,6 @@ async def regenerate_intelligence(request: web.Request) -> web.Response:
     store.db.commit()
     _sel_log("knowledge.regenerate_intelligence", scope=scope, queued=n)
     return web.json_response({"queued": n, "scope": scope})
-
-
-def _hash_file(path) -> str:
-    """SHA-256 of a file's bytes (streamed), or '' on error. Used to dedup uploads."""
-    import hashlib
-
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 16), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except OSError:
-        return ""
-
-
-def _take_gist(tmp_path: str) -> tuple[str | None, str]:
-    """Read an uploaded source file's code and its content hash, and remove the upload. The code
-    is ``None`` when the file is not text (``knowledge.readers.file_text``): a file named as code
-    whose bytes are binary is not code, and is not decoded into text."""
-    from personalclaw.knowledge.readers import NotText, file_text
-
-    code: str | None
-    try:
-        code = file_text(tmp_path)
-    except NotText:
-        code = None
-    except OSError:
-        code = ""
-    content_hash = _hash_file(tmp_path)
-    Path(tmp_path).unlink(missing_ok=True)
-    return code, content_hash
-
-
-def _take_file(tmp_path: str, dest: Path, thumb: Path | None) -> tuple[int, str, str]:
-    """Move an upload to *dest* (a copy when it is on another disk), and make its thumbnail at
-    *thumb* when one is asked for. Returns its size, its content hash and the thumbnail's path
-    (``""`` when none was made)."""
-    shutil.move(tmp_path, dest)
-    made = thumb is not None and make_image_thumbnail(str(dest), str(thumb))
-    return dest.stat().st_size, _hash_file(dest), str(thumb) if made else ""
-
-
-def _discard_file(dest: Path, thumb_path: str) -> None:
-    """Remove a stored upload that turned out to be a duplicate, and its thumbnail."""
-    dest.unlink(missing_ok=True)
-    if thumb_path:
-        Path(thumb_path).unlink(missing_ok=True)
-
-
-async def _store_file_item(
-    store, tmp_path: str, filename: str, mime: str | None = None
-) -> tuple[dict | None, bool]:
-    """Persist an uploaded file under the knowledge files dir as ONE logical-doc
-    typed item (image/audio/video/pdf/document/sheet/slides) pointing at it (+ a
-    thumbnail for images), queued for node-graph ingestion. One item = one file —
-    document text extraction + chunking happen inside the graph/embedder, never as
-    separate item rows. ``mime`` (the upload's content-type) disambiguates ambiguous
-    extensions like .webm (a browser audio recording is audio/webm, not video).
-
-    What reads or writes the whole file (the move, which copies when the upload sits on another
-    disk, the hash, the thumbnail, a gist's read) runs in a worker thread: on the event loop,
-    hashing a 512 MB upload stopped every other request for 0.22 s. What decides the item (the
-    duplicate check and the insert) stays on the loop, so two uploads of the same bytes that
-    finish together still make one item."""
-    from personalclaw.knowledge import knowledge_files_dir
-    from personalclaw.knowledge.media import code_language
-
-    item_type = classify(filename, mime) or "image"
-
-    # A source-code upload is a gist (code), stored as a text-backed item whose content
-    # IS the code — read inline, language stamped for syntax highlighting + the
-    # "Gist · <Language>" label, routed through the passthrough graph (no file on disk,
-    # one logical doc). Dedup on the content hash, same as binary files.
-    lang = code_language(filename)
-    if item_type == "gist" and lang:
-        from personalclaw.uploads.content_scan import scan_text
-        from personalclaw.uploads.store import UploadError
-
-        code, content_hash = await asyncio.to_thread(_take_gist, tmp_path)
-        if code is None:
-            raise UploadError(f"{filename} is not a text file, so it cannot be kept as code", 415)
-        # Its text is the item's content, read here, so it is scanned here: the scan of the
-        # file's bytes skips a window that holds a stray NUL byte. Refused, it raises.
-        await scan_text(code, surface="knowledge")
-        if content_hash:
-            existing = store.find_active_by_file_hash(content_hash)
-            if existing:
-                return existing, False
-        new_id = store.create_typed_item(
-            item_type="gist",
-            title=filename,
-            content=code,
-            extra={
-                "gist_language": lang,
-                "file_metadata": {"content_hash": content_hash} if content_hash else {},
-                "processing_status": "queued",
-            },
-        )
-        return store.get_item(new_id), True
-    # Pick a mime_type consistent with the resolved item_type: a .webm recording is
-    # classified audio via its upload mime, but guess_mime(name) → video/webm; honor
-    # the upload mime when its top-level matches the item_type so the stored mime (and
-    # the metadata chip) say audio/webm, not video/webm.
-    guessed = guess_mime(filename)
-    mime_type = mime if (mime and mime.split("/", 1)[0].lower() == item_type) else guessed
-    item_id = str(uuid4())
-    files_dir = Path(knowledge_files_dir())
-    ext = Path(filename).suffix.lower()
-    dest = files_dir / f"{item_id}{ext}"
-    thumb = files_dir / f"{item_id}.thumb.webp" if item_type == "image" else None
-    size, content_hash, thumb_path = await asyncio.to_thread(_take_file, tmp_path, dest, thumb)
-
-    # Content-hash dedup: re-uploading byte-identical content into the same space
-    # returns the existing item instead of a duplicate (the file analog of bookmark
-    # URL dedup). Hash is stored in file_metadata so the check is exact, not by name.
-    # Nothing is awaited between this check and the insert below.
-    if content_hash:
-        existing = store.find_active_by_file_hash(content_hash)
-        if existing:
-            # Drop the redundant copy we just saved.
-            await asyncio.to_thread(_discard_file, dest, thumb_path)
-            return existing, False  # (item, is_new) — dedup hit
-
-    new_id = store.create_typed_item(
-        item_type=item_type,
-        title=filename,
-        content="",
-        extra={
-            "file_path": str(dest),
-            "mime_type": mime_type,
-            "file_size": size,
-            "thumbnail_path": thumb_path,
-            # original_filename lets enrichment tell a filename-seeded title (fair game
-            # for AI-title promotion) from a user-authored one (never clobbered).
-            "file_metadata": {
-                **({"content_hash": content_hash} if content_hash else {}),
-                "original_filename": filename,
-            },
-            # Queue for node-graph ingestion (Image/Audio/Video graph): exif, OCR,
-            # vision, transcription, … The caller enqueues after this returns.
-            "processing_status": "queued",
-        },
-    )
-    return store.get_item(new_id), True  # (item, is_new)
 
 
 def _serve_item_path(store, item_id: str, *, thumbnail: bool) -> tuple[Path | None, str]:
@@ -1832,6 +1685,7 @@ async def ingest_file(request: web.Request) -> web.Response:
     suffix = Path(filename).suffix
     # Per-filetype cap from the shared upload policy (video 2 GB, audio 1 GB, image
     # 200 MB, …) — the browser mime disambiguates .webm/.ogg for the right category.
+    from personalclaw.knowledge.file_items import store_file_item
     from personalclaw.uploads import check_upload
     from personalclaw.uploads.content_scan import ContentRefused, scan_upload
     from personalclaw.uploads.spool import Spool
@@ -1879,7 +1733,7 @@ async def ingest_file(request: web.Request) -> web.Response:
         # code file, whose text is read as it is stored, the scan of that text.
         try:
             await scan_upload(Path(tmp.name), policy.category, surface="knowledge")
-            item, is_new = await _store_file_item(store, tmp.name, filename, mime=upload_mime)
+            item, is_new = await store_file_item(store, tmp.name, filename, mime=upload_mime)
         except ContentRefused as exc:
             Path(tmp.name).unlink(missing_ok=True)
             return exc.response()

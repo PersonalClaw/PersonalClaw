@@ -407,57 +407,60 @@ class TestTimelineIsAppendOnly:
 # ── Raw/ capture routes to KNOWLEDGE, never to memory ────────────────────────
 
 
-class _FakeKnowledge:
-    def __init__(self) -> None:
-        self.items: list[dict] = []
-        self.statuses: dict[str, str] = {}
+@pytest.fixture
+def knowledge(tmp_path):
+    from personalclaw.knowledge.store import KnowledgeStore
 
-    def create_typed_item(self, **kw) -> str:
-        item_id = f"k-{len(self.items)}"
-        self.items.append({"id": item_id, **kw})
-        return item_id
+    return KnowledgeStore(str(tmp_path / "knowledge.db"))
 
-    def update_item(self, item_id: str, **kw) -> None:
-        self.statuses[item_id] = str(kw.get("processing_status") or "")
+
+def _knowledge_items(store) -> list[dict]:
+    return [store.get_item(r["id"]) for r in store.db.execute("SELECT id FROM items").fetchall()]
 
 
 class TestRawSweep:
-    def test_a_dropped_file_becomes_a_knowledge_item_and_not_a_memory(self, vault, service):
+    @pytest.mark.asyncio
+    async def test_a_dropped_file_becomes_a_knowledge_item_and_not_a_memory(
+        self, vault, service, knowledge
+    ):
         (vault.path / "raw").mkdir(parents=True)
         (vault.path / "raw" / "notes.md").write_text("meeting notes", encoding="utf-8")
-        store = _FakeKnowledge()
         queued: list[str] = []
 
         before = len(service.get_records())
-        out = vault.sweep_raw(knowledge=store, enqueue=queued.append)
+        out = await vault.sweep_raw(knowledge=knowledge, enqueue=queued.append)
 
-        assert out == {"ingested": 1, "failed": 0}
-        assert store.items[0]["content"] == "meeting notes"
-        assert store.items[0]["provider"] == "native"
-        assert queued == ["k-0"]
-        assert store.statuses["k-0"] == "queued"
+        assert out == {"ingested": 1, "refused": 0, "left": 0, "failed": 0}
+        [item] = _knowledge_items(knowledge)
+        assert Path(item["file_path"]).read_text(encoding="utf-8") == "meeting notes"
+        assert item["provider"] == "native" and "vault-raw" in item["tags"]
+        assert queued == [item["id"]]
+        assert item["processing_status"] == "queued"
         # THE boundary: nothing landed in memory.
         assert len(service.get_records()) == before
 
-    def test_the_file_is_moved_not_deleted(self, vault):
+    @pytest.mark.asyncio
+    async def test_the_file_is_moved_not_deleted(self, vault, knowledge):
         (vault.path / "raw").mkdir(parents=True)
         (vault.path / "raw" / "notes.md").write_text("keep me", encoding="utf-8")
-        vault.sweep_raw(knowledge=_FakeKnowledge())
+        await vault.sweep_raw(knowledge=knowledge, enqueue=lambda _id: None)
         assert not (vault.path / "raw" / "notes.md").exists()
         assert (vault.path / "raw" / ".ingested" / "notes.md").read_text() == "keep me"
 
-    def test_a_second_sweep_does_not_reingest(self, vault):
+    @pytest.mark.asyncio
+    async def test_a_second_sweep_does_not_reingest(self, vault, knowledge):
         (vault.path / "raw").mkdir(parents=True)
         (vault.path / "raw" / "notes.md").write_text("once", encoding="utf-8")
-        store = _FakeKnowledge()
-        vault.sweep_raw(knowledge=store)
-        assert vault.sweep_raw(knowledge=store)["ingested"] == 0
-        assert len(store.items) == 1
+        await vault.sweep_raw(knowledge=knowledge, enqueue=lambda _id: None)
+        out = await vault.sweep_raw(knowledge=knowledge, enqueue=lambda _id: None)
+        assert out["ingested"] == 0
+        assert len(_knowledge_items(knowledge)) == 1
 
-    def test_no_raw_dir_never_opens_a_knowledge_store(self, vault):
+    @pytest.mark.asyncio
+    async def test_no_raw_dir_never_opens_a_knowledge_store(self, vault):
         """The lazy `get_knowledge_store()` fallback must not fire on every sync — it
-        would open the real home's knowledge.db from a worker thread for nothing."""
-        assert vault.sweep_raw() == {"ingested": 0, "failed": 0}
+        would open the real home's knowledge.db for nothing."""
+        assert await vault.sweep_raw() == {"ingested": 0, "refused": 0, "left": 0, "failed": 0}
 
 
 # ── Starter seeding writes only missing or pristine files ────────────────────

@@ -292,13 +292,13 @@ async def _finalize_target(request: web.Request, sess: UploadSession, final_path
 
     if sess.target == "knowledge":
         from personalclaw.dashboard.handlers.knowledge import _store as _kn_store
-        from personalclaw.dashboard.handlers.knowledge import _store_file_item
+        from personalclaw.knowledge.file_items import store_file_item
         from personalclaw.knowledge.media import classify
 
         if classify(sess.filename, sess.mime or None) is None:
             raise UploadError(f"unsupported file type: {sess.filename}", 415)
         store = _kn_store(request)
-        item, is_new = await _store_file_item(
+        item, is_new = await store_file_item(
             store, str(final_path), sess.filename, mime=sess.mime or None
         )
         if item is None:

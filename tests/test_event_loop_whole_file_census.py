@@ -160,7 +160,8 @@ HANDED_OFF: frozenset[tuple[str, str]] = frozenset(
     {
         ("uploads/store.py", "UploadStore.assemble"),
         ("dashboard/handlers/uploads.py", "_finalize_target"),
-        ("dashboard/handlers/knowledge.py", "_store_file_item"),
+        ("knowledge/file_items.py", "store_file_item"),
+        ("knowledge/file_items.py", "take_file"),
         ("dashboard/handlers/files.py", "api_file_move"),
         ("dashboard/handlers/evals.py", "api_evals_retrieval_card"),
         ("action_providers/selfqa_evidence_provider.py", "SelfQaEvidenceActionProvider.execute"),

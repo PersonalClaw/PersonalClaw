@@ -4065,7 +4065,9 @@ export interface KnowledgeItem {
   mime_type?: string; file_size?: number; thumbnail_path?: string; file_path?: string; word_count?: number
   // `ocr_*`: a scanned PDF's pages are rasterized to be OCR'd, and that is capped — these
   // three say whether the cap BIT, so a partial read is never presented as a whole document.
-  file_metadata?: { width?: number; height?: number; format?: string; page_count?: number; sheet_count?: number; slide_count?: number; row_count?: number; line_count?: number; ocr_pages_capped?: boolean; ocr_page_cap?: number; ocr_pages_rasterized?: number; no_speech?: boolean; frames_sampled?: number; frame_times?: number[]; video_seconds?: number } & Record<string, unknown>
+  // `refused`: why the library refused the file the item was to be made from, as its status line says.
+  // Nothing of the file was kept, so there is nothing to retry: the file goes in by being added again.
+  file_metadata?: { width?: number; height?: number; format?: string; page_count?: number; sheet_count?: number; slide_count?: number; row_count?: number; line_count?: number; ocr_pages_capped?: boolean; ocr_page_cap?: number; ocr_pages_rasterized?: number; no_speech?: boolean; frames_sampled?: number; frame_times?: number[]; video_seconds?: number; refused?: string } & Record<string, unknown>
   insights?: Record<string, unknown> | null; ai_summary?: string; ai_title?: string
   // node-graph ingestion lifecycle (#30): queued|processing|done|partial|failed
   processing_status?: string; processing_error?: string
@@ -5015,7 +5017,10 @@ export interface VolunteerStats {
 /** A folder's memory as the vault projects it: a vault of its own inside the vault (`path`). */
 export interface MemoryVaultFolder { id: string; folder: string; gone: boolean; path: string; files: number }
 export interface MemoryVaultStatus { enabled: boolean; mode: MemoryVaultMode; path: string; files: number; exists: boolean; folders?: MemoryVaultFolder[] }
-export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string; mode: MemoryVaultMode; absorbed: number; rejected: number; conflicts: number; raw_ingested: number; seeded: number
+export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string; mode: MemoryVaultMode; absorbed: number; rejected: number; conflicts: number; seeded: number
+  /** The files dropped in the vault's `raw/` folder the sync took into Knowledge, and those it refused (each a
+   *  failed Knowledge item saying why). The vault's own sync only: a folder's memory's vault has no `raw/`. */
+  raw_ingested?: number; raw_refused?: number
   /** Each folder's own memory's vault, by its memory's id (`MemoryPartition.id`): its own sync's numbers. */
   folders?: Record<string, MemoryVaultSyncResult> }
 export interface DailyDigest { day: string; text: string; created_at: string }

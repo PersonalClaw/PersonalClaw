@@ -74,7 +74,9 @@ Every route that stores an uploaded file the agent or the library will later rea
 `uploads.content_scan.scan_upload` before anything is made from it, whether it came in one request
 or in parts: a chat attachment, a file uploaded to a folder, a Knowledge file, a file dropped into
 a workflow run, a binary artifact's new bytes, a pinned screen frame, a project archive and a
-backup import.
+backup import. A file dropped in the memory vault's `raw/` folder comes in no request, and is taken
+as a Knowledge file is when a sync sweeps it (`knowledge.file_items.take_file`): the same kinds, the
+same size limits and the same scan, each refusal filed as a failed item that says why.
 
 The scan reads an upload by its bytes, whatever its name or its declared type says it is, with
 both of the scanner's surfaces, the destructive-script rules and the prose-injection rules, as two
@@ -516,8 +518,25 @@ item vector).
   the scan and a reversible `memory_events` row). Every page carries a
   `source_hash` of its BODY, which is what makes an edit detectable and a
   frontmatter rewrite invisible; a page the parser cannot read is left alone and
-  flagged rather than merged. Files dropped in `<vault>/raw/` are routed to the
-  KNOWLEDGE ingest queue, never into memory — the boundary holds inside the vault.
+  flagged rather than merged. Files dropped in `<vault>/raw/` go to KNOWLEDGE, never
+  into memory — the boundary holds inside the vault. Every sync (the one after a chat
+  ends, and Sync now in Settings → Memory) is followed by the sweep
+  (`MemoryVault.sweep_raw`, on the gateway's event loop), which takes each file as the
+  Knowledge page takes an upload (`knowledge.file_items.take_file`): typed by its kind
+  (`media.classify`), held to the size the upload policy allows it, its bytes scanned,
+  and kept in the library's own files, so the reader for its kind reads it when it is
+  ingested (a document's text, which the ingest scans too; a script's code, read and
+  scanned as it is kept; a picture's graph). A file Knowledge refuses (a kind it does not
+  take, too large, content the scan refuses or could not check, a binary file named as
+  code) becomes a failed item that says why and keeps no text and no file
+  (`file_metadata.refused`): no step of it runs, a re-run of its ingest says why again
+  rather than that it holds no text, and its page offers no Retry, since the file goes in
+  again by being dropped again. Every swept file then moves to `raw/.ingested/`, under a
+  name of its own when one there already has its name; an empty file stays in `raw/`
+  until it holds something. A note an earlier version made
+  of a dropped file is left as it was, since the owner may have edited, tagged or filed it:
+  to have one read the way a file is read now, delete the note and move its file from
+  `raw/.ingested/` back into `raw/`.
   Each folder's memory that holds records is a vault of its own under
   `folders/<id>/`, in the same mode, so a hand edit there is read back into that
   folder's memory (see "Partitions & project locality").

@@ -6,7 +6,9 @@ folder, a Knowledge file, a resumable upload when it completes, a file dropped i
 run, a binary artifact's new bytes, a pinned screen frame, a project archive and a backup import,
 whether the file arrived in one request or in parts. ``tests/test_stored_upload_scan_census.py``
 reads the package for every route that takes a file's bytes from a request, and fails on one that
-neither scans them nor says why not.
+neither scans them nor says why not. A file dropped in the memory vault's ``raw/`` folder, which no
+request brings, is handed to it when a sync takes it into Knowledge
+(``knowledge.file_items.take_file``).
 
 What it reads. An upload is read by its bytes, whatever its name or its type says it is, by both
 of the scanner's surfaces (the destructive-script rules and the prose-injection rules), as two
@@ -92,6 +94,13 @@ WITHHELD = {
 }
 
 
+def nothing_made(why: str) -> str:
+    """The status line of a library item made of nothing from its file, for the reason *why*: the
+    scan's (:data:`WITHHELD`), or why a file nobody uploaded was not taken
+    (``knowledge.file_items.take_file``)."""
+    return f"{why[:1].upper()}{why[1:]}, so nothing was made from it."
+
+
 class ContentRefused(UploadError):
     """The scan's answer that an upload may not be used, with its wire code.
 
@@ -106,6 +115,11 @@ class ContentRefused(UploadError):
     def withheld(self) -> str:
         """Why the text a reader made of a file is not handed on (:data:`WITHHELD`)."""
         return WITHHELD[self.code]
+
+    @property
+    def nothing_made(self) -> str:
+        """The status line of a library item whose file this withheld (:func:`nothing_made`)."""
+        return nothing_made(self.withheld)
 
     def response(self) -> web.Response:
         """The wire answer: ``{"error": {"code", "message"}}`` with this refusal's status."""

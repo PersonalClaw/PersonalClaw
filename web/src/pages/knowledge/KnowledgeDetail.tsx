@@ -682,7 +682,8 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
             viewport — so even alone on a wrapped line it still could not fit, and its own
             wrapping never got a chance to engage. `ml-auto` still right-aligns it. */}
         <div className="ml-auto min-w-0">
-          <ProcessingStrip status={procStatus} nodePhases={nodePhases} error={full.processing_error} graph={ingestGraph} onRetry={generateInsights} retrying={genning} standing={standing} />
+          {/* A refused file kept nothing to read again, so it offers no Retry (`file_metadata.refused`). */}
+          <ProcessingStrip status={procStatus} nodePhases={nodePhases} error={full.processing_error} graph={ingestGraph} onRetry={full.file_metadata?.refused ? undefined : generateInsights} retrying={genning} standing={standing} />
         </div>
       </div>
 

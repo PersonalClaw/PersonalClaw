@@ -1,7 +1,6 @@
 """Memory API handlers — preferences, projects, history, settings, semantic, episodic, embeddings, graph."""  # noqa: E501
 
 import asyncio
-import functools
 import json
 import logging
 import threading
@@ -1282,9 +1281,10 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     An ``off`` export never reads pages back: two-way is a mode you choose, not
     something a "sync now" button turns on for you.
 
-    Passes the gateway's knowledge store + ingest queue through for the ``raw/`` sweep,
-    so a file dropped in the vault is ingested immediately rather than waiting for a
-    restart's pending-item recovery. Returns the change summary."""
+    Then sweeps ``raw/`` (``MemoryVault.sweep_raw``) into the gateway's knowledge store and
+    ingest queue, so a file dropped in the vault is taken and read now rather than waiting for a
+    restart's pending-item recovery. Returns the change summary, with how many dropped files were
+    taken (``raw_ingested``) and refused (``raw_refused``: each a failed item saying why)."""
     if _is_restricted_session(request.app["state"], request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
@@ -1315,9 +1315,10 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
         enqueue = state.knowledge_ingest_queue().enqueue_background
     except Exception:
         logger.debug("vault sync: knowledge ingest unavailable", exc_info=True)
-    summary = await asyncio.to_thread(
-        functools.partial(vault.sync, knowledge=knowledge, enqueue=enqueue)
-    )
+    summary = await asyncio.to_thread(vault.sync)
+    swept = await vault.sweep_raw(knowledge=knowledge, enqueue=enqueue)
+    summary["raw_ingested"] = swept["ingested"]
+    summary["raw_refused"] = swept["refused"]
     summary["path"] = str(vdir)
     return web.json_response(summary)
 

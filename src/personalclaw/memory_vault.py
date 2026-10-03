@@ -53,12 +53,13 @@ Edits read back are written with ``source="vault_edit"``, which is deliberately 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.atomic_write import atomic_write, make_private_dirs
 from personalclaw.config.loader import MEMORY_VAULT_MODES
@@ -98,6 +99,14 @@ FOLDERS_DIR = "folders"
 #: sweep skips it) — moving rather than deleting, because the sweep's whole job is
 #: to hand the user's file to knowledge, not to be the thing that loses it.
 _RAW_DONE_DIR = "raw/.ingested"
+#: The tag every item a ``raw/`` sweep makes is filed under, so what came in through the drop box
+#: can be found in Knowledge.
+_RAW_TAG = "vault-raw"
+#: The ``raw/`` folders a sweep is taking files from now (:meth:`MemoryVault.sweep_raw`).
+_SWEEPING: set[str] = set()
+#: The sweeps the mirror after a chat's end started (:func:`mirror_after_consolidation`), held
+#: until each ends.
+_SWEEPS: set[asyncio.Task[dict]] = set()
 
 #: ``type:`` values this projection actually writes. The vocabulary also names
 #: ``connection`` and ``qa`` pages; nothing generates those yet, so they are not
@@ -757,6 +766,12 @@ class MemoryVault:
     def two_way(self) -> bool:
         return self._mode == "two_way"
 
+    @property
+    def takes_raw(self) -> bool:
+        """Whether this vault has the ``raw/`` drop box: the global memory's does, a folder's
+        memory's vault does not."""
+        return self._folder is None
+
     def _manifest_path(self) -> Path:
         return self._dir / _MANIFEST_NAME
 
@@ -855,7 +870,7 @@ class MemoryVault:
         """
         return ("episodic" if rec.kind.value == "episodic" else "semantic", rec.id)
 
-    def sync(self, *, knowledge: object = None, enqueue: object = None) -> dict:
+    def sync(self) -> dict:
         """Reconcile the vault against the store. Returns a change summary.
 
         Order matters and is the whole design:
@@ -865,8 +880,12 @@ class MemoryVault:
            gone before it was read;
         2. **project** the store onto pages, skipping any page absorption refused
            (those are flagged in frontmatter instead, never overwritten);
-        3. **sweep** ``raw/`` into the knowledge ingest queue;
-        4. **seed** the starter files that are missing or still pristine.
+        3. **seed** the starter files that are missing or still pristine.
+
+        The ``raw/`` drop box is not swept here: what a sweep takes is scanned, which a gateway
+        waits on in a child process from its event loop, so every sync is followed by
+        :meth:`sweep_raw` there (:func:`mirror_after_consolidation`, and the route
+        ``POST /api/memory/vault/sync``).
 
         Never raises for a single bad record or page — it is skipped and logged, so
         one malformed row can't stall the vault.
@@ -988,9 +1007,8 @@ class MemoryVault:
         except OSError:
             logger.debug("vault: manifest write failed", exc_info=True)
 
-        swept = {"ingested": 0}
         seeded = {"written": 0}
-        if self._folder is None:
+        if self.takes_raw:
             # The drop box has to be visible to be usable, so make it exist. Created here
             # rather than in `seed()` because it is structure, not content — and `sweep_raw`
             # still short-circuits on an empty one before it opens a knowledge store.
@@ -998,7 +1016,6 @@ class MemoryVault:
                 (self._dir / _RAW_DIR).mkdir(parents=True, exist_ok=True)
             except OSError:
                 logger.debug("vault: could not create raw/", exc_info=True)
-            swept = self.sweep_raw(knowledge=knowledge, enqueue=enqueue)
             seeded = self.seed(starter_seeds(self._mode))
 
         summary = {
@@ -1010,7 +1027,6 @@ class MemoryVault:
             "absorbed": absorbed["absorbed"],
             "rejected": absorbed["rejected"],
             "conflicts": len(conflicts),
-            "raw_ingested": swept["ingested"],
             "seeded": seeded["written"],
         }
         if self._folder is None:
@@ -1209,67 +1225,93 @@ class MemoryVault:
 
     # ── Raw/ capture, starter seeding ────────────────────────────────────────
 
-    def sweep_raw(self, *, knowledge: object = None, enqueue: object = None) -> dict:
-        """Route files dropped in ``raw/`` into the KNOWLEDGE ingest queue.
+    async def sweep_raw(self, *, knowledge: object = None, enqueue: object = None) -> dict:
+        """Take each file dropped in ``raw/`` into KNOWLEDGE, as the Knowledge page takes an upload.
 
-        The boundary holds inside the vault dir: a file the user dropped is one of
-        *their documents*, not a memory the assistant formed, so it becomes a knowledge
-        item and never a memory row. Swept files move to ``raw/.ingested/`` rather than
-        being deleted — the sweep's job is to hand the file over, not to be the thing
-        that loses it.
+        The boundary holds inside the vault dir: a file the user dropped is one of *their
+        documents*, not a memory the assistant formed, so it becomes a knowledge item and never a
+        memory row. It is taken as an upload is (``knowledge.file_items.take_file``): typed by its
+        kind, held to the size the upload policy allows it, its bytes scanned, and kept in the
+        library's own files, to be read by the reader for its kind when it is ingested. A file the
+        library refuses (a kind it does not take, too large, content the scan refuses or could not
+        check, a binary file named as code) is filed as a failed item that says why and keeps no
+        text. Each swept file then moves to ``raw/.ingested/`` rather than being deleted, under a
+        name of its own when one there already has its name: the sweep's job is to hand the file
+        over, not to be the thing that loses it. An empty file is left where it is, and taken once
+        it holds something (an editor's new page is empty until it is written).
 
-        No new watcher: the sync pass is the sweep. ``enqueue`` (the gateway's ingest
-        queue) is optional — without it the item is left ``processing_status='queued'``
-        and the queue's own ``recover_pending()`` picks it up, so a sweep on the
-        consolidation cadence still gets ingested.
+        No new watcher: every sync of the vault is followed by this (see :meth:`sync`).
+        ``knowledge`` is the store to file into (the process's own, ``get_knowledge_store()``, when
+        none is given); ``enqueue`` hands each new item to be read (when none is given, the
+        gateway's ingest queue, its background lane; a process that is no gateway leaves the item
+        ``queued``, and the queue's ``recover_pending()`` picks it up when it starts).
+
+        Runs on the gateway's event loop: the scan runs in a child process it waits on, and the
+        copying in worker threads. One sweep of a vault at a time: one that starts while another
+        runs takes nothing, since the running one is taking those files.
+
+        Returns how many files were ``ingested`` (taken: a new item, or one that already held the
+        same bytes), ``refused`` (a failed item says why), ``left`` (empty) and ``failed`` (an
+        error the log names; the file stays in ``raw/`` for the next sweep).
         """
-        out = {"ingested": 0, "failed": 0}
+        out = {"ingested": 0, "refused": 0, "left": 0, "failed": 0}
         raw = self._dir / _RAW_DIR
-        if not raw.is_dir():
+        if str(raw) in _SWEEPING:
             return out
-        candidates = [
-            p
-            for p in sorted(raw.iterdir())
-            if p.is_file() and not p.is_symlink() and not p.name.startswith(".")
-        ]
+        candidates = _dropped_files(raw)
         if not candidates:
             return out
-        if knowledge is None:
-            from personalclaw.knowledge import get_knowledge_store
+        _SWEEPING.add(str(raw))
+        try:
+            if knowledge is None:
+                from personalclaw.knowledge import get_knowledge_store
 
-            knowledge = get_knowledge_store()
-        done = self._dir / _RAW_DONE_DIR
-        for src in candidates:
-            try:
-                content = ""
-                if src.suffix.lower() in (".md", ".markdown", ".txt", ".text", ""):
-                    content = src.read_text(encoding="utf-8", errors="replace")[:_MAX_BODY]
-                done.mkdir(parents=True, exist_ok=True)
-                dest = done / src.name
-                src.replace(dest)
-                item_id = knowledge.create_typed_item(  # type: ignore[attr-defined]
-                    item_type="note",
-                    title=src.stem or src.name,
-                    content=content,
-                    provider="native",
-                    tags=["vault-raw"],
-                    extra={"file_path": str(dest)},
-                )
-                if not item_id:
-                    out["failed"] += 1
-                    continue
-                knowledge.update_item(  # type: ignore[attr-defined]
-                    item_id, processing_status="queued", touch=False
-                )
-                if callable(enqueue):
-                    enqueue(item_id)
-                out["ingested"] += 1
-            except Exception:
-                logger.debug("vault: raw sweep failed for %s", src, exc_info=True)
-                out["failed"] += 1
-        if out["ingested"]:
-            logger.info("memory vault raw sweep: %d file(s) → knowledge", out["ingested"])
+                knowledge = get_knowledge_store()
+            if enqueue is None:
+                enqueue = _gateway_enqueue()
+            for src in candidates:
+                out[await self._take_dropped(src, knowledge, enqueue)] += 1
+        finally:
+            _SWEEPING.discard(str(raw))
+        if out["ingested"] or out["refused"]:
+            logger.info(
+                "memory vault raw sweep: %d file(s) → knowledge, %d refused",
+                out["ingested"],
+                out["refused"],
+            )
         return out
+
+    async def _take_dropped(self, src: Path, knowledge: object, enqueue: object) -> str:
+        """Take one dropped file (:meth:`sweep_raw`); returns which count it adds to."""
+        from personalclaw.knowledge.file_items import take_file
+
+        try:
+            taken = await take_file(knowledge, src, surface="memory_vault", tags=[_RAW_TAG])
+        except Exception:  # noqa: BLE001 - one file the sweep cannot take must not stall the rest
+            logger.warning(
+                "memory vault raw sweep: %s could not be taken; it stays in raw/",
+                src.name,
+                exc_info=True,
+            )
+            return "failed"
+        if taken.item is None and not taken.refused:
+            return "left"
+        try:
+            _park(src, self._dir / _RAW_DONE_DIR)
+        except OSError:
+            logger.warning(
+                "memory vault raw sweep: %s could not be moved to %s",
+                src.name,
+                _RAW_DONE_DIR,
+                exc_info=True,
+            )
+        if taken.refused:
+            # Said where the owner looks: no browser was answered, as an upload's would be.
+            logger.warning("memory vault raw sweep: %s was not taken: %s", src.name, taken.refused)
+            return "refused"
+        if taken.is_new and taken.item is not None and callable(enqueue):
+            enqueue(taken.item["id"])
+        return "ingested"
 
     def seed(self, seeds: dict[str, str]) -> dict:
         """Write starter pages, but only where doing so cannot destroy anything.
@@ -1411,8 +1453,10 @@ def starter_seeds(mode: str) -> dict[str, str]:
         "- `entities/` — one page per person/project/tool memory knows about:",
         "  compiled truth on top, an append-only timeline below.",
         "- `tags/` — hub pages that make the graph view cluster.",
-        "- `raw/` — drop a file here and the next sync files it under **Knowledge**,",
-        "  never into memory.",
+        "- `raw/` — drop a file here and the next sync takes it into **Knowledge**, never",
+        "  into memory, as an upload is taken: checked by the content safety scan, then read",
+        "  for its kind (a document's text, a script's code, a picture). It then moves to",
+        "  `raw/.ingested/`. A file Knowledge refuses moves too, and its item says why.",
         "",
         "## Frontmatter",
         "",
@@ -1582,16 +1626,73 @@ def _retire(vault_dir: Path) -> None:
             logger.debug("vault: %s stays", folder, exc_info=True)
 
 
-def mirror_after_consolidation(service: "MemoryService") -> None:
+def _dropped_files(raw: Path) -> list[Path]:
+    """The files waiting in the drop box *raw*: none that is a link or hidden (``.ingested``, where
+    swept files go, is hidden)."""
+    if not raw.is_dir():
+        return []
+    return [
+        p
+        for p in sorted(raw.iterdir())
+        if p.is_file() and not p.is_symlink() and not p.name.startswith(".")
+    ]
+
+
+def _park(src: Path, done: Path) -> Path:
+    """Move a swept file into *done*, under its own name, or with a number after it when a file
+    there already has that name: the same name dropped twice keeps both files."""
+    done.mkdir(parents=True, exist_ok=True)
+    dest, n = done / src.name, 2
+    while dest.exists() or dest.is_symlink():
+        dest, n = done / f"{src.stem} ({n}){src.suffix}", n + 1
+    src.replace(dest)
+    return dest
+
+
+def _gateway_enqueue() -> Any:
+    """Where a sweep whose caller names no queue hands each new item to be read: the gateway's
+    ingest queue, its background lane, reached as the action providers reach the gateway's state
+    (``action_providers.services``). ``None`` in a process that is no gateway."""
+    from personalclaw.action_providers.services import get_action_services
+
+    services = get_action_services()
+    if services is None:
+        return None
+    try:
+        return services.state.knowledge_ingest_queue().enqueue_background
+    except Exception:  # noqa: BLE001 - no queue: the item waits queued for the queue's start
+        logger.debug("vault: the knowledge ingest queue is unavailable", exc_info=True)
+        return None
+
+
+def _sweep_ended(task: asyncio.Task[dict]) -> None:
+    _SWEEPS.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("memory vault: the raw/ sweep failed", exc_info=task.exception())
+
+
+def mirror_after_consolidation(service: MemoryService) -> asyncio.Task[dict] | None:
     """Best-effort post-consolidation sync — the primary freshness trigger.
 
     Wired into ``ConversationManager.consolidate_session``; never raises so a
     mirror hiccup can't break session sealing. In ``two_way`` this is also the
     on-cadence half of §5.2: edits made in the vault between sessions are absorbed
-    when the next session seals, with no watcher and no daemon."""
+    when the next session seals, with no watcher and no daemon.
+
+    The global memory's vault then sweeps ``raw/`` (:meth:`MemoryVault.sweep_raw`), as a task on
+    the running loop the seal runs on, into the gateway's knowledge ingest queue. The task is
+    returned, for a caller that waits for it; ``None`` when no sweep was started."""
     try:
         vault = vault_for(service)
-        if vault is not None:
-            vault.sync()
+        if vault is None:
+            return None
+        vault.sync()
+        if not vault.takes_raw:
+            return None
+        task = asyncio.get_running_loop().create_task(vault.sweep_raw())
     except Exception:
         logger.debug("memory vault: post-consolidation mirror failed", exc_info=True)
+        return None
+    _SWEEPS.add(task)
+    task.add_done_callback(_sweep_ended)
+    return task
