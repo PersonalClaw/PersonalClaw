@@ -545,12 +545,15 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # _tool_index is untouched). Fails open (returns the full set on any issue).
         from personalclaw.agents.native.tool_retrieval import (
             ToolRetriever,
+            catalog_groups,
             tool_schema_definition,
             tool_search_definition,
         )
 
         self._tool_retriever = ToolRetriever(
-            defs, carry_from=self._tool_retriever if carry else None
+            defs,
+            carry_from=self._tool_retriever if carry else None,
+            groups=catalog_groups(served),  # which groups are PersonalClaw's own, and their purpose
         )
         # The catalog's vectors are asked of the process's index now, so they are ready before a
         # turn ranks with them (a restart finds them saved). Off the loop: resolving the bound
@@ -1401,6 +1404,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         and retrieval doesn't reduce, the result is exactly ``_tool_schema`` — the
         byte-identical no-groups path.
         """
+        from personalclaw.agents.native.tool_retrieval import CATALOG_NOTE
         from personalclaw.context import user_request
 
         grouped = self._active_groups is not None
@@ -1466,14 +1470,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 # Only ACTIVE-group tools belong in the deferred-schema catalog (inactive groups
                 # are represented by their stub lines instead), and only the ones it is shown.
                 exclude |= {n for n in self._group_of_name if n not in (restrict or set())}
-            catalog = self._tool_retriever.catalog(exclude=exclude)
-            notes.append(
-                "[tool catalog] To save context, only the most relevant tools above carry their "
-                "full input schema this turn. Every OTHER available tool is listed below by "
-                'name + description. To use one: call tool_schema("name") to see its inputs, '
-                'then call it — or call tool_search("capability") to rank the catalog. Every '
-                "tool here is fully available; nothing is disabled.\n" + catalog
-            )
+            if catalog := self._tool_retriever.catalog(exclude=exclude):
+                notes.append(f"{CATALOG_NOTE}\n{catalog}")
             logger.debug(
                 "native: tier-1 %d/%d tools (+tool_search,+tool_schema); catalog=%d tools",
                 len(selected_defs),
@@ -2092,8 +2090,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 self._tool_retriever.search,
                 str(args.get("query", "")),
                 int(args.get("limit", 20) or 20),
+                self._offered,  # what this run is not shown is left out before the cut
             )
-            hits = [h for h in hits if self._offered(str(h.get("name", "")))]
             if not hits:
                 return "No tools matched. Try broader terms; all tools remain callable by name."
             # tool_search deliberately ranks the FULL catalog — including tools in

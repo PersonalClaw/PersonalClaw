@@ -65,6 +65,19 @@ line cut short). It logs once per process, naming the app and the tool. The Tool
 same text, so the page and the model never disagree about what a tool is. Built-in tools describe
 themselves as declared (`tests/test_tool_schema_portability.py`).
 
+## The tools a turn defers are listed, the platform's own first
+
+A turn whose tools do not all fit sends the schemas that matter (`ToolRetriever.select`) and lists
+the rest in a catalog of at most 6,000 characters, last line included (`ToolRetriever.catalog`,
+worded by `CATALOG_NOTE`). Each of PersonalClaw's own groups, the platform's and those of every
+provider it ships (`catalog_groups`, `registry.ships_with_core`), comes first: its name, what it
+is for in its app's own words, and every tool it has by name. The MCP servers, one group each, and
+the installed apps share what is left: first the tools the request is about, then one tool a group
+in turn. A last line names what was left out and points at `tool_search`. Where the turn's ranking
+ties, the platform's own tool goes first, for the schemas and in `tool_search`'s answer, which is
+cut at its limit only after the tools the run is not shown are left out
+(`tests/test_the_tool_catalog_names_the_platforms_own_tools.py`).
+
 ## The wire map
 
 | # | Hop | What happens | Where |

@@ -713,6 +713,17 @@ def still_serves(provider: ToolProvider) -> bool:
     return not _was_registered(provider) or _live(provider) is not None
 
 
+def ships_with_core(provider: ToolProvider) -> bool:
+    """Whether PersonalClaw ships *provider*: the platform, which a session builds for itself and
+    never registers, or one registered at core's standing (core's own, or a ``builtin``-tier app's).
+    Not one an installed app added, nor one no longer registered."""
+    with _lock:
+        if not _was_registered(provider):
+            return True
+        reg = _live(provider)
+        return reg is not None and reg.standing == CORE
+
+
 async def list_all_tools(*, skip: Iterable[str] = ()) -> list[ToolDefinition]:
     """Aggregate tools from all registered providers, each name from the one provider serving it.
 

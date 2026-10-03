@@ -201,7 +201,7 @@ def test_catalog_bounded_and_points_at_search_when_huge():
     ]  # 600 tools
     r = ToolRetriever(defs, k=20)
     cat = r.catalog(exclude=set(), max_chars=1500)
-    assert len(cat) <= 1500 + 200  # bounded (+ the overflow summary line)
+    assert len(cat) <= 1500  # bounded, the overflow summary line included
     assert "tool_search" in cat  # overflow points the model at discovery
 
 
