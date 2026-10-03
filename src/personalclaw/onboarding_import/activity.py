@@ -8,9 +8,10 @@ files, 5.3 GB, took 41 s to read and 246 s to import 10,000 of them).
 file the scan only looked into, in full and one at a time (:func:`~.engine.read_unread`), so the
 next scan's counts are final. It holds one file's conversation at a time and writes nothing.
 
-**The import** (:class:`ImportJob`) re-scans, writes the picked items one by one — every kind
-before conversations, so a stop part-way has brought the setup over — and keeps a running count a
-person can watch. A stop (asked for, or the gateway shutting down) takes effect between two items:
+**The import** (:class:`ImportJob`) re-scans the tools its press names (and those turned on in
+Settings: :func:`~personalclaw.outside_home.readable`), writes the picked items one by one — every
+kind before conversations, so a stop part-way has brought the setup over — and keeps a running count
+a person can watch. A stop (asked for, or the gateway shutting down) takes effect between two items:
 each write is whole or absent (a transcript lands in one atomic write that names where it came
 from), so what is left behind is every written item and nothing half-written. A gateway restart
 ends the thread the same way; nothing about the job survives it but what it wrote, and the next
@@ -23,7 +24,7 @@ import itertools
 import logging
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -153,10 +154,19 @@ class ImportJob:
     ``not_reached``) or ``failed`` (a write raised; ``error`` is its sentence, screened).
     """
 
-    def __init__(self, job_id: str, fingerprints: list[str], accepted: Mapping[str, str]) -> None:
+    def __init__(
+        self,
+        job_id: str,
+        fingerprints: list[str],
+        accepted: Mapping[str, str],
+        asked: Collection[str] = (),
+    ) -> None:
         self.id = job_id
         self._fingerprints = fingerprints
         self._accepted = dict(accepted)
+        #: The tools' setups the import's press names: its re-scan reads those, and the ones
+        #: the owner turned on, and no other.
+        self._asked = frozenset(asked)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self.status = "running"
@@ -209,7 +219,7 @@ class ImportJob:
         from personalclaw.onboarding_import.floors import screened_failure
 
         try:
-            results = scan_all(look=True)
+            results = scan_all(look=True, asked=self._asked)
             found = {item.fingerprint for result in results for item in result.items}
             with self._lock:
                 self.total = sum(1 for fp in dict.fromkeys(self._fingerprints) if fp in found)
@@ -286,14 +296,18 @@ class ImportActivity:
         self.reading.start(results)
 
     def start_import(
-        self, fingerprints: list[str], accepted: Mapping[str, str]
+        self,
+        fingerprints: list[str],
+        accepted: Mapping[str, str],
+        asked: Collection[str] = (),
     ) -> tuple[ImportJob, bool]:
-        """``(job, started)``: a new import, or the one already running (``started`` False)."""
+        """``(job, started)``: a new import, or the one already running (``started`` False).
+        ``asked`` is the tools' setups its press names."""
         with self._lock:
             if self._job is not None and self._job.running:
                 return self._job, False
             self.reading.stop()
-            job = ImportJob(f"import-{next(self._ids)}", fingerprints, accepted)
+            job = ImportJob(f"import-{next(self._ids)}", fingerprints, accepted, asked)
             self._job = job
         job.start()
         return job, True

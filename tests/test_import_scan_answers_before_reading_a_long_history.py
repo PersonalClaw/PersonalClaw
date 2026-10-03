@@ -45,6 +45,9 @@ READING_THREAD = "onboarding-import-reading"
 REPLY = "The flaky test waits on a timer it never cancels, so the next test sees it fire. " * 200
 #: How many times the time rail times each history's first answer.
 TIMED_ROUNDS = 3
+#: The step's press, Look in Claude Code: the one tool here, read only for a request naming it.
+PLACE = "setup:claude_code"
+PRESS = frozenset({PLACE})
 
 
 def _transcript(n: int, tool_lines: int) -> str:
@@ -151,7 +154,7 @@ class _Counts:
 
 async def _first_answer(client: TestClient) -> tuple[dict, float]:
     started = time.monotonic()
-    resp = await client.get("/api/onboarding/import")
+    resp = await client.get("/api/onboarding/import", params={"look_in": PLACE})
     assert resp.status == 200
     return await resp.json(), time.monotonic() - started
 
@@ -294,11 +297,11 @@ async def test_a_scan_answered_while_the_history_is_read_does_not_share_the_inte
     real_scan = handler._scan_with_plans
     at_start: list[dict] = []
 
-    def a_long_scan():
+    def a_long_scan(asked):
         at_start.append(activity.reading.to_dict())
         beside["scanning"] = True
         try:
-            answer = real_scan()
+            answer = real_scan(asked)
             time.sleep(0.5)
             return answer
         finally:
@@ -371,7 +374,7 @@ import tracemalloc
 from personalclaw.onboarding_import import read_unread, scan_all, unread
 
 tracemalloc.start()
-results = scan_all(look=True)
+results = scan_all(look=True, asked={"setup:claude_code"})
 look_peak = tracemalloc.get_traced_memory()[1]
 tracemalloc.reset_peak()
 read = read_unread(results)
@@ -384,7 +387,7 @@ print(json.dumps({
     "read": read,
     "items": len(items),
     "with_messages": sum(1 for i in items if i.payload),
-    "unread_after": unread(scan_all(look=True)),
+    "unread_after": unread(scan_all(look=True, asked={"setup:claude_code"})),
 }))
 """
 
@@ -413,12 +416,12 @@ def test_a_looked_then_read_listing_is_the_listing_a_full_read_makes(machine):
     from personalclaw.onboarding_import.sources.common import READINGS
 
     _history(machine / "claude", tool_lines=3)
-    looked = scan_all(look=True)
+    looked = scan_all(look=True, asked=PRESS)
     assert any(i.provisional for r in looked for i in r.items)
     read_unread(looked)
-    after = [r.to_dict() for r in scan_all(look=True)]
+    after = [r.to_dict() for r in scan_all(look=True, asked=PRESS)]
     READINGS.clear()
-    full = [r.to_dict() for r in scan_all()]
+    full = [r.to_dict() for r in scan_all(asked=PRESS)]
     assert after == full
     assert all(not i["provisional"] for s in after for i in s["items"])
 
@@ -447,7 +450,7 @@ def test_an_import_writes_no_ledger_entry_per_conversation_and_its_transcripts_s
         return real(path, *args, **kwargs)
 
     monkeypatch.setattr(atomic_write, "_atomic_write", spying)
-    results = scan_all(look=True)
+    results = scan_all(look=True, asked=PRESS)
     picks = [
         i.fingerprint
         for r in results
@@ -458,7 +461,7 @@ def test_an_import_writes_no_ledger_entry_per_conversation_and_its_transcripts_s
     assert report.counts()["imported"] == 200
     assert ledger_writes == []
     state_path().unlink(missing_ok=True)
-    planned = plans(scan_all(look=True))
+    planned = plans(scan_all(look=True, asked=PRESS))
     assert {planned[fp].state.value for fp in picks} == {"existing"}
 
 
@@ -469,7 +472,7 @@ def test_an_import_puts_the_setup_before_the_history_and_a_stop_names_the_rest(m
 
     root = _history(machine / "claude", tool_lines=1)
     (root / "CLAUDE.md").write_text("# Rules\n\n- Run the linter.\n", encoding="utf-8")
-    results = scan_all(look=True)
+    results = scan_all(look=True, asked=PRESS)
     written: list[ImportCategory] = []
     report = run_import(
         results,
@@ -528,7 +531,7 @@ def test_after_an_import_the_history_is_listed_and_kept_searchable_without_rerea
     from personalclaw.onboarding_import import ImportCategory, run_import, scan_all
 
     _history(machine / "claude", tool_lines=2)
-    results = scan_all(look=True)
+    results = scan_all(look=True, asked=PRESS)
     picks = [
         i.fingerprint
         for r in results
@@ -584,7 +587,9 @@ async def test_a_history_imports_as_a_job_within_a_generous_ceiling(machine):
         body, _seconds = await _first_answer(client)
         picks = [c["fingerprint"] for c in _conversations(body)]
         started = time.monotonic()
-        resp = await client.post("/api/onboarding/import", json={"fingerprints": picks})
+        resp = await client.post(
+            "/api/onboarding/import", json={"fingerprints": picks, "look_in": [PLACE]}
+        )
         assert resp.status == 202
         seen_progress = set()
         for _ in range(6000):

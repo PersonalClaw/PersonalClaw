@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, CircleAlert, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, ShieldCheck, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -9,8 +9,9 @@ import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { Segmented } from '../../ui/Segmented'
-import { Field, TextArea, TextInput } from '../../ui/forms'
+import { Field, FieldError, TextArea, TextInput } from '../../ui/forms'
 import { Markdown } from '../../ui/Markdown'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
@@ -23,7 +24,7 @@ import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQuery
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { refreshKinds, useChatSocket } from '../../lib/useChatSocket'
 import { readableErrText } from '../../lib/errText'
-import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ImportableMcpList, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
+import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ImportableMcpList, type ImportableTool, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
 import { STORED_VALUE_MASK, buildMcpEnv, buildMcpHeaders, definitionForm, formSave, formatArgs, parseArgs, type McpServerForm } from './mcpServerEnv'
@@ -141,6 +142,9 @@ interface ToolsIndexData {
   /** The other tools' MCP settings files that are there and could not be read: the servers they
    *  hold are missing from `importable`. Absent from a copy cached before it existed. */
   importUnreadable?: ImportableMcpList['unreadable']
+  /** Every tool the import list can look in, and whether this read did: only those turned on in
+   *  Settings › Security, since this read names none. Absent from a copy cached before it existed. */
+  importTools?: ImportableTool[]
   /** `null` when the pool could not be read: the tile is then not drawn at all. */
   poolStats: McpPoolStats | null
   groups: ToolGroupsData | null
@@ -167,6 +171,8 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       // (`failedRead`), never `[]`: a failed import read painted "nothing to import", and it is said
       // where its answer would be instead. The server list does the same, in its own read below.
       api.toolsIndex(),
+      // Names no tool to look in: another tool's setup is read only for her Look in press below,
+      // or on every visit once she turned it on in Settings › Security.
       api.importableMcp().catch(failedRead),
       api.mcpPoolStats().catch(() => null),
       api.toolGroups().catch(() => null),
@@ -182,6 +188,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       tools: idx.tools, loadFailures: idx.load_failures ?? [],
       importable: isFailedRead(importable) ? null : importable.servers, importableError: isFailedRead(importable) ? importable.failed : '',
       importUnreadable: isFailedRead(importable) ? [] : importable.unreadable,
+      importTools: isFailedRead(importable) ? [] : (importable.tools ?? []),
       poolStats, groups, elicitationServers, readOnlyServers,
     }
   }, { persist: true })
@@ -208,6 +215,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   const importUnread = !!data && data.importable === null
   const importableError = data?.importableError ?? ''
   const importUnreadable = data?.importUnreadable ?? []
+  const importTools = data?.importTools ?? []
   const poolStats = data?.poolStats ?? null
   /** `null` while unread or unreadable: no grant can be written from it. */
   const elicitationServers = data?.elicitationServers ?? null
@@ -228,6 +236,23 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // view↔edit MODE flag (`useEditFlag`, `?edit=1`), and this one names a record.
   const [editing, setEditing] = useQueryParam(query, setQuery, 'editServer', '')
   const load = () => { invalidateKeys('tools:index'); invalidateKeys('tools:mcp-servers'); refresh(); refreshServers() }
+
+  // 🔴 ANOTHER TOOL'S SETUP IS READ ONLY WHEN SHE ASKS. The index read above, sent on every visit
+  // and every refresh, read Claude Code's and Codex's settings each time, while Settings › Security
+  // says PersonalClaw reads only inside its home unless a place is turned on. Now it names no tool,
+  // and a Look in press reads the one it names, once: what that found lives HERE, never in the
+  // index's cache, so no refresh reads that tool again. An Import is a press too, and reads the
+  // list again from the tools she looked in.
+  const [look, setLook] = useState<{ places: string[]; list: ImportableMcpList } | null>(null)
+  const [looking, setLooking] = useState<string | null>(null)
+  const [lookFailed, setLookFailed] = useState('')
+  async function lookIn(places: string[], pressed: string) {
+    setLooking(pressed)
+    setLookFailed('')
+    try { setLook({ places, list: await api.importableMcp(places) }) }
+    catch (e) { setLookFailed(readableErrText(e)) }
+    finally { setLooking(null) }
+  }
   // `refresh`, not `load`: a read already on the wire is joined, never stacked behind another. A
   // frame lost while the socket was down is made up for by reading again when it reconnects.
   useChatSocket((m) => { if (refreshKinds(m).includes('mcp')) refreshServers() }, refreshServers)
@@ -541,14 +566,18 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // what is on screen.
   const shownTools = (groups ?? []).reduce((n, g) => n + g.tools.length, 0)
   // Where the import list goes, the same in both bodies: the list, each other tool's settings file
-  // that could not be read (its servers are missing from the list), or the failed look itself.
-  const importSection = filtered ? null : importUnread
+  // that could not be read (its servers are missing from the list), or the failed look itself, and
+  // for each tool not looked in, the press that looks. What a press found stands until the next.
+  const pressed = look?.places ?? []
+  const importList: ImportableMcpList | null = look?.list
+    ?? (importUnread ? null : { servers: importable, unreadable: importUnreadable, tools: importTools })
+  const importSection = filtered ? null : !importList
     ? <ImportUnread error={importableError} onRetry={load} />
     : (
-      <>
-        {importUnreadable.length > 0 && <ImportFilesUnread files={importUnreadable} onRetry={load} />}
-        {importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
-      </>
+      <OtherToolsImport list={importList} pressed={pressed} looking={looking} lookFailed={lookFailed}
+        onLook={(place) => lookIn([...new Set([...pressed, place])], place)}
+        onRetry={look ? () => lookIn(pressed, '') : load}
+        onImported={() => { setTimeout(load, 300); if (look) void lookIn(pressed, '') }} />
     )
 
   return (
@@ -1137,13 +1166,80 @@ function importedValues(s: ImportableMcpServer): string {
   return said.charAt(0).toUpperCase() + said.slice(1)
 }
 
+/** The import list: what the other tools hold that PersonalClaw does not, each of their files that
+ *  could not be read, and the Look in press for every tool not looked in. A tool a press looked in
+ *  that has nothing to offer says so, since the press asked a question and silence is no answer. */
+function OtherToolsImport({ list, pressed, looking, lookFailed, onLook, onRetry, onImported }: {
+  list: ImportableMcpList
+  /** The places a Look in press named on this visit. */
+  pressed: string[]
+  looking: string | null
+  lookFailed: string
+  onLook: (place: string) => void
+  onRetry: () => void
+  onImported: () => void
+}) {
+  const tools = list.tools ?? []
+  const unlooked = tools.filter((t) => !t.looked)
+  const empty = tools.filter((t) => t.looked && pressed.includes(t.place)
+    && !list.servers.some((s) => s.place === t.place) && !list.unreadable.some((u) => u.backend === t.name))
+  return (
+    <div className="flex flex-col gap-m">
+      {list.unreadable.length > 0 && <ImportFilesUnread files={list.unreadable} onRetry={onRetry} />}
+      {/* Opened by a press: she asked to see what the tool holds. */}
+      {list.servers.length > 0 && <ImportSuggestions key={pressed.join('\n')} servers={list.servers} startOpen={pressed.length > 0} onImported={onImported} />}
+      {empty.length > 0 && (
+        <p role="status" data-type="body-s" className="text-on-surface-low">
+          Nothing to import from {empty.map((t) => t.name).join(' or ')}: {empty.length === 1 ? 'it has' : 'they have'} no MCP server PersonalClaw doesn't already have.
+        </p>
+      )}
+      {unlooked.length > 0 && <LookInOtherTools tools={unlooked} looking={looking} failed={lookFailed} onLook={onLook} />}
+      {unlooked.length === 0 && lookFailed && <FieldError>{asSentence(`Couldn't look again: ${lookFailed}`)}</FieldError>}
+    </div>
+  )
+}
+
+/** The tools whose setup this page has not looked in, each with the press that does. PersonalClaw
+ *  reads another tool's settings only when she asks, or on every visit once she turns that tool on
+ *  in Settings › Security, so this is a question the page asks rather than a list it fills. */
+function LookInOtherTools({ tools, looking, failed, onLook }: {
+  tools: ImportableTool[]; looking: string | null; failed: string; onLook: (place: string) => void
+}) {
+  const headingId = useId()
+  return (
+    <div role="group" aria-labelledby={headingId} className="flex flex-col gap-s rounded-lg bg-surface-container px-m py-s">
+      <div className="flex items-center gap-s text-on-surface-low">
+        <Download size={14} aria-hidden="true" />
+        <Eyebrow as="span" id={headingId}>Import from other tools</Eyebrow>
+      </div>
+      <p data-type="body-s" className="text-on-surface-var">
+        PersonalClaw has not looked in {tools.map((t) => t.name).join(' or ')} for MCP servers to import. It
+        reads another tool's settings only when you ask, or on every visit once you turn that tool on
+        in <TextLink href="#/settings/security" ink="emphasis">Settings › Security</TextLink>.
+      </p>
+      <div className="flex flex-wrap items-center gap-s">
+        {tools.map((t) => (
+          <Button key={t.place} variant="secondary" size="sm" loading={looking === t.place}
+            loadingLabel={`Looking in ${t.name}…`}
+            disabled={looking !== null && looking !== t.place}
+            disabledReason="Wait for the look already running to finish"
+            onClick={() => onLook(t.place)}>
+            <Download size={13} /> Look in {t.name}
+          </Button>
+        ))}
+      </div>
+      {failed && <FieldError>{asSentence(`Couldn't look: ${failed}`)}</FieldError>}
+    </div>
+  )
+}
+
 /** Collapsed "Discovered in other tools" list — MCP servers configured in another tool (Claude
  *  Code, Codex) but not yet in PersonalClaw, from every scope it keeps them in: yours everywhere,
  *  yours in one project, and a project's own `.mcp.json`. Importing one copies its spec into
  *  ~/.personalclaw/mcp.json so the native loop can run it. A row is keyed and imported by its
  *  `id`, because two scopes (or two tools) can hold a server of the same name. */
-function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServer[]; onImported: () => void }) {
-  const [open, setOpen] = useState(false)
+function ImportSuggestions({ servers, startOpen, onImported }: { servers: ImportableMcpServer[]; startOpen: boolean; onImported: () => void }) {
+  const [open, setOpen] = useState(startOpen)
   const [busy, setBusy] = useState<string | null>(null)
 
   const importOne = async (s: ImportableMcpServer) => {

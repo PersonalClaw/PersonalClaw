@@ -27,6 +27,8 @@ from personalclaw.onboarding_import.sources import claude_code, codex
 
 #: Sits inside every broken fixture, so a test can show the reason never quotes the file.
 PLANTED = "planted-value-7c1f"
+#: The owner's press, Look in Claude Code and Codex: what lets the Tools page's list read them.
+LOOK = ("setup:claude_code", "setup:codex")
 
 BROKEN_CLAUDE_CONFIG = (
     '{"mcpServers": {"notes": {"command": "notes-mcp", "env": {"TOKEN": "' + PLANTED + '"}}}'
@@ -157,7 +159,9 @@ def two_tools(monkeypatch, claude_root, codex_root):
         '[mcp_servers.planner]\ncommand = "planner-mcp"\n', encoding="utf-8"
     )
     monkeypatch.setattr(
-        mcp_discovery, "_import_sources", lambda: ((config, "Claude Code"), (codex_root, "Codex"))
+        mcp_discovery,
+        "_import_sources",
+        lambda: (("claude_code", lambda: config), ("codex", lambda: codex_root)),
     )
     monkeypatch.setattr(mcp_discovery, "_mcp_json_paths", lambda: (claude_root / "none.json",))
     monkeypatch.setattr(mcp_discovery, "_load_agent_config", lambda: {})
@@ -167,7 +171,7 @@ def two_tools(monkeypatch, claude_root, codex_root):
 def test_the_import_list_names_the_file_it_could_not_read_beside_what_it_could(two_tools):
     from personalclaw import mcp_discovery
 
-    servers, unreadable = mcp_discovery.discover_importable_servers()
+    servers, unreadable, _tools = mcp_discovery.discover_importable_servers(asked=LOOK)
     assert [(s["name"], s["backend"]) for s in servers] == [("planner", "Codex")]
     assert unreadable == [
         {
@@ -182,7 +186,8 @@ def test_the_import_list_names_the_file_it_could_not_read_beside_what_it_could(t
 async def test_the_import_route_answers_the_unreadable_file(two_tools):
     from personalclaw.dashboard.handlers.mcp import api_mcp_importable
 
-    resp = await api_mcp_importable(make_mocked_request("GET", "/api/mcp/importable"))
+    query = "&".join(f"look_in={place}" for place in LOOK)
+    resp = await api_mcp_importable(make_mocked_request("GET", f"/api/mcp/importable?{query}"))
     body = json.loads(resp.body.decode())
     assert resp.status == 200
     assert [s["name"] for s in body["servers"]] == ["planner"]

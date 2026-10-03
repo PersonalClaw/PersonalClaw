@@ -15,6 +15,12 @@ all.
 A provider app's subscription sign-in (``llm/subscription_credentials.py``) is a place too, one per
 registered source: the app declares where its CLI keeps the sign-in, and the owner allows reading it
 here, per source.
+
+So is the setup of each agent tool a setup can be brought over from (``onboarding_import``): its
+folders, its config and the projects it lists. That one is also read when the owner presses Look
+in it, on the Tools page or the setup step, for the request the press makes and no other:
+:func:`readable` is the check every reader of a tool's setup makes, and a page load or a background
+refresh names no place, so it reads only what the owner turned on.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ import json
 import logging
 import os
 import shutil
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +43,9 @@ AGENT_SKILLS = "agent-skills"
 HUGGINGFACE_CACHE = "huggingface-cache"
 #: The prefix of a subscription provider's sign-in place: ``sign-in:<source id>``.
 SIGN_IN_PREFIX = "sign-in:"
+#: The prefix of another agent tool's setup, one place per tool a setup can be brought over from
+#: (``onboarding_import.registry``): ``setup:<tool>``.
+SETUP_PREFIX = "setup:"
 
 
 @dataclass(frozen=True)
@@ -79,7 +89,10 @@ def _expanded(raw: str) -> str:
 
 
 def places() -> list[Place]:
-    """Every place the owner can allow, core's first and then each subscription sign-in."""
+    """Every place the owner can allow: core's, then each agent tool's setup, then each
+    subscription sign-in. Listing them reads none of them."""
+    from personalclaw.onboarding_import.registry import list_sources
+
     out = [
         Place(
             id=AGENT_SKILLS,
@@ -102,6 +115,21 @@ def places() -> list[Place]:
             ),
         ),
     ]
+    for tool in list_sources():
+        name = tool.display_name
+        out.append(
+            Place(
+                id=tool.place,
+                label=f"Your {name} setup",
+                paths=tuple(str(path) for path in tool.locations()),
+                detail=(
+                    f"The Tools page and the Bring your setup over step list what {name} has as "
+                    f"soon as they open, instead of when you press Look in {name}. "
+                    f"{tool.place_note}PersonalClaw only reads it, and nothing comes over until "
+                    "you import it."
+                ),
+            )
+        )
     from personalclaw.llm.subscription_credentials import registered_sources
 
     for source in registered_sources():
@@ -134,6 +162,14 @@ def allowed_ids() -> set[str]:
 
 def allowed(place_id: str) -> bool:
     return place_id in allowed_ids()
+
+
+def readable(place_id: str, *, asked: Collection[str] = ()) -> bool:
+    """Whether the request being answered may read ``place_id``: the owner turned it on in
+    Settings, or this very request is the owner's press to look there (``asked``, the places the
+    press names). The one check before another tool's setup is read. A page load and a background
+    refresh ask for nothing, so they read only what the owner turned on."""
+    return place_id in asked or allowed(place_id)
 
 
 def place_path(place_id: str) -> Path | None:

@@ -36,7 +36,7 @@ async def test_a_failed_import_lookup_is_a_failure_not_an_empty_list(monkeypatch
 
     config = tmp_path / ".claude.json"
 
-    def unreadable():
+    def unreadable(**_asked):
         raise PermissionError(13, "Permission denied", str(config))
 
     monkeypatch.setattr(mcp_discovery, "discover_importable_servers", unreadable)
@@ -59,9 +59,10 @@ async def test_a_lookup_that_worked_still_answers_its_list(monkeypatch):
     from personalclaw import mcp_discovery
     from personalclaw.dashboard.handlers.mcp import api_mcp_importable
 
-    monkeypatch.setattr(mcp_discovery, "discover_importable_servers", lambda: ([], []))
+    monkeypatch.setattr(mcp_discovery, "discover_importable_servers", lambda **_: ([], [], []))
     resp = await api_mcp_importable(make_mocked_request("GET", "/api/mcp/importable"))
-    assert resp.status == 200 and _body(resp) == {"servers": [], "unreadable": []}
+    assert resp.status == 200
+    assert _body(resp) == {"servers": [], "unreadable": [], "tools": []}
 
 
 @pytest.mark.asyncio

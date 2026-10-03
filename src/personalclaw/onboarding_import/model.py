@@ -329,13 +329,17 @@ class ScanResult:
 
     ``present`` distinguishes "the tool isn't installed" (no root) from "the tool is
     installed but has nothing to import" — the onboarding step words those very
-    differently.
+    differently. Both are answers only when ``looked``: a tool whose setup PersonalClaw may not
+    read for this request (``outside_home.readable``) is not opened, listed or even checked for,
+    so whether it is there is not known, and the step offers to look instead.
     """
 
     source: str
     display_name: str
     root: str
     present: bool
+    #: Whether the scan read the tool's setup at all. False: nothing of it was opened.
+    looked: bool = True
     items: list[ImportItem] = field(default_factory=list)
     #: Credential-bearing files refused unread, and entries left out whole because they hold a
     #: credential. A count the user is shown so they learn something was withheld. Each item
@@ -393,6 +397,7 @@ class ScanResult:
             "display_name": self.display_name,
             "root": self.root,
             "present": self.present,
+            "looked": self.looked,
             "counts": self.counts(),
             "items": [item.to_dict() for item in self.items],
             "secrets_skipped": self.secrets_skipped,

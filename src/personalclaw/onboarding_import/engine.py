@@ -23,14 +23,21 @@ and a body, and honouring a client-supplied one would copy any directory into th
 Beside the pick, a skill whose scan has warnings can carry the ``consent`` its scan
 showed: the one thing the person accepted, which its install checks against the bytes it
 installs.
+
+**A tool is read only when it may be.** Another tool's setup is a place outside the home, so a
+scan of this machine's tools reads one only when the owner pressed Look in it for this request
+(``asked``, the places the press names) or turned it on in Settings
+(:func:`personalclaw.outside_home.readable`). Any other comes back ``looked`` false, with
+nothing of it opened, listed or checked for.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
+from personalclaw import outside_home
 from personalclaw.onboarding_import.floors import one_walk
 from personalclaw.onboarding_import.model import (
     ImportCategory,
@@ -40,24 +47,54 @@ from personalclaw.onboarding_import.model import (
     ScanResult,
     WriteResult,
 )
-from personalclaw.onboarding_import.registry import get_source, list_sources
+from personalclaw.onboarding_import.registry import ImportSource, get_source, list_sources
 from personalclaw.onboarding_import.writers import import_report, plan_item
 
 
-def scan_source(name: str, root: Path | str | None = None, *, look: bool = False) -> ScanResult:
-    """Scan one registered source. Never writes — to our home or theirs."""
-    return get_source(name).scan(root, look=look)
+def _not_looked(source: ImportSource) -> ScanResult:
+    """A tool this request may not read: named, with where it would be, and nothing read."""
+    return ScanResult(
+        source=source.name,
+        display_name=source.display_name,
+        root=str(source.resolve_root()),
+        present=False,
+        looked=False,
+    )
 
 
-def scan_all(*, roots: dict[str, Path | str] | None = None, look: bool = False) -> list[ScanResult]:
-    """Scan every registered source, resolving each root env-var-then-default.
+def _scan(
+    source: ImportSource, root: Path | str | None, *, look: bool, asked: Collection[str]
+) -> ScanResult:
+    """``source`` scanned at ``root`` when it is named, else this machine's copy of it, which
+    only a press for it (``asked``) or the owner's yes in Settings lets anything read."""
+    if root is None and not outside_home.readable(source.place, asked=asked):
+        return _not_looked(source)
+    return source.scan(root, look=look)
 
-    ``roots`` overrides a source's root by name (what a test fixture or a seeded
-    dev home uses); an absent source yields ``present=False``, not an error. To ``look``
-    is to read each conversation not read before only as far as its first prompt.
+
+def scan_source(
+    name: str,
+    root: Path | str | None = None,
+    *,
+    look: bool = False,
+    asked: Collection[str] = (),
+) -> ScanResult:
+    """Scan one registered source: the folder ``root`` names, or this machine's copy of the tool
+    when ``asked`` names its setup or the owner turned it on. Never writes — to our home or
+    theirs."""
+    return _scan(get_source(name), root, look=look, asked=asked)
+
+
+def scan_all(*, look: bool = False, asked: Collection[str] = ()) -> list[ScanResult]:
+    """Scan every registered source on this machine that may be read for this request, each at
+    its root resolved env-var-then-default.
+
+    ``asked`` is the setups the owner pressed Look in for this request; the others are read only
+    when turned on in Settings, and come back ``looked`` false otherwise. A tool that is not on
+    this machine yields ``present=False``, not an error. To ``look`` is to read each
+    conversation not read before only as far as its first prompt.
     """
-    overrides = roots or {}
-    return [src.scan(overrides.get(src.name), look=look) for src in list_sources()]
+    return [_scan(src, None, look=look, asked=asked) for src in list_sources()]
 
 
 def unread(results: Iterable[ScanResult]) -> int:

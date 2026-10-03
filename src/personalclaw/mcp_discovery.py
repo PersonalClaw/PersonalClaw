@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -51,7 +51,9 @@ def _get_probe_timeout() -> int:
 # (``~/.claude.json``) is not invocable by the native loop, so surfacing it here would imply
 # tools the agent can't call. Such servers are instead offered as explicit *import
 # suggestions* via :func:`discover_importable_servers` + the ``/api/mcp/apply`` endpoint,
-# which copies a chosen spec into ``~/.personalclaw/mcp.json``.
+# which copies a chosen spec into ``~/.personalclaw/mcp.json``. Another tool's setup is a place
+# outside the home, read for the suggestions only when the owner presses Look in it or turned it
+# on in Settings (``outside_home.readable``).
 #
 # UT3: ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was dropped, so
 # there is a single read+write path the dashboard, the provider instances, agent.py, and the
@@ -74,13 +76,15 @@ def _mcp_json_paths() -> tuple[Path, ...]:
     return (config_dir() / "mcp.json",)
 
 
-def _import_sources() -> tuple[tuple[Path, str], ...]:
+def _import_sources() -> tuple[tuple[str, Callable[[], Path]], ...]:
     """The other tools' MCP configuration PersonalClaw can *import from* (but never silently
-    loads), each as ``(where, backend label)``: Claude Code's global config, which
+    loads), each as ``(tool, where)``: Claude Code's global config, which
     :func:`~personalclaw.onboarding_import.sources.claude_code.mcp_servers` follows to all three
     of its scopes (the file's own ``mcpServers``, each project entry's, each project's
     ``.mcp.json``), and the Codex home, whose ``config.toml``
-    :func:`~personalclaw.onboarding_import.sources.codex.mcp_servers` reads.
+    :func:`~personalclaw.onboarding_import.sources.codex.mcp_servers` reads. ``tool`` is the
+    importer's name (its setup is the place ``setup:<tool>``) and ``where`` resolves the file
+    when, and only when, that tool may be read.
 
     A FUNCTION, like :func:`_mcp_json_paths`: this was ``Path.home() / ".claude.json"`` frozen at
     import, so it ignored ``$CLAUDE_CONFIG_DIR`` while the onboarding importer honoured it. Both
@@ -90,28 +94,51 @@ def _import_sources() -> tuple[tuple[Path, str], ...]:
     from personalclaw.onboarding_import.sources import claude_code, codex
 
     return (
-        (claude_code.global_config_path(), claude_code.DISPLAY_NAME),
-        (codex.resolve_root(), codex.DISPLAY_NAME),
+        (claude_code.NAME, claude_code.global_config_path),
+        (codex.NAME, codex.resolve_root),
     )
 
 
-def _importable_entries() -> tuple[list[tuple[str, Any]], list[dict[str, str]]]:
-    """``(entries, unreadable)``: ``(backend label, server)`` for every MCP server another tool has
-    configured, every scope, and ``{backend, path, why}`` for each of their configuration files
-    that is there and could not be read, whose servers are therefore not among ``entries``."""
+def _importable_entries(
+    asked: Collection[str] = (),
+) -> tuple[list[tuple[str, Any]], list[dict[str, str]], list[dict[str, Any]]]:
+    """``(entries, unreadable, tools)``: ``(backend label, server)`` for every MCP server another
+    tool this request may read has configured, every scope; ``{backend, path, why}`` for each of
+    their configuration files that is there and could not be read, whose servers are therefore
+    not among ``entries``; and each tool as ``{place, name, looked, allowed}``.
+
+    A tool is read only when ``asked`` names its setup (the owner's press, for this request) or
+    the owner turned it on in Settings (``outside_home.readable``). Any other is ``looked`` false,
+    and nothing of it is opened, listed or checked for."""
+    from personalclaw import outside_home
+    from personalclaw.onboarding_import.registry import get_source
     from personalclaw.onboarding_import.sources import claude_code, codex
 
-    readers = {
-        claude_code.DISPLAY_NAME: lambda path: claude_code.mcp_servers(config_path=path),
-        codex.DISPLAY_NAME: codex.mcp_servers,
+    readers: dict[str, Callable[[Path], Any]] = {
+        claude_code.NAME: lambda path: claude_code.mcp_servers(config_path=path),
+        codex.NAME: codex.mcp_servers,
     }
     entries: list[tuple[str, Any]] = []
     unreadable: list[dict[str, str]] = []
-    for path, backend in _import_sources():
-        listing = readers[backend](path)
+    tools: list[dict[str, Any]] = []
+    for tool, where in _import_sources():
+        source = get_source(tool)
+        looked = outside_home.readable(source.place, asked=asked)
+        tools.append(
+            {
+                "place": source.place,
+                "name": source.display_name,
+                "looked": looked,
+                "allowed": outside_home.allowed(source.place),
+            }
+        )
+        if not looked:
+            continue
+        backend = source.display_name
+        listing = readers[tool](where())
         entries.extend((backend, server) for server in listing.servers)
         unreadable.extend({"backend": backend, **entry.to_dict()} for entry in listing.unreadable)
-    return entries, unreadable
+    return entries, unreadable, tools
 
 
 # ── transports ──────────────────────────────────────────────────────────────
@@ -1139,22 +1166,30 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
     return out
 
 
-def discover_importable_servers() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    """``(servers, unreadable)``: the MCP servers configured in another tool (Claude Code, Codex)
-    that are NOT yet present in any PersonalClaw scope — i.e. candidates the user can *import*
-    into ``~/.personalclaw/mcp.json`` to make them callable by the native loop — and each of
-    those tools' configuration files that is there and could not be read, as
+def discover_importable_servers(
+    *, asked: Collection[str] = ()
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[dict[str, Any]]]:
+    """``(servers, unreadable, tools)``: the MCP servers configured in another tool (Claude Code,
+    Codex) that are NOT yet present in any PersonalClaw scope — i.e. candidates the user can
+    *import* into ``~/.personalclaw/mcp.json`` to make them callable by the native loop — and
+    each of those tools' configuration files that is there and could not be read, as
     ``{backend, path, why}``. The servers such a file holds are not in the list, so the list
     beside it is incomplete, never "nothing to import".
+
+    Only the tools this request may read are looked in: those whose setup ``asked`` names (the
+    owner pressed Look in it) or the owner turned on in Settings. ``tools`` says, per tool, its
+    ``place``, its ``name``, whether this list ``looked`` in it and whether it is ``allowed``
+    without a press, so a page can offer the press for one it did not look in.
 
     PersonalClaw does not silently load these (the native loop can't reach a server only another
     tool has). The UI offers each as an explicit "Import" action backed by ``/api/mcp/apply``,
     which copies the spec into the PClaw scope.
 
     This is the list a browser renders, so each entry carries what the picker shows and no
-    credential: ``{id, name, backend, scope, origin, note, transport, command, args, url, env,
-    headers}``. ``id`` names the server in its scope — what the import sends back, so a pick names
-    a listed row and never a file. ``scope`` is the tool's (``user``, ``local``, ``project``)
+    credential: ``{id, name, backend, place, scope, origin, note, transport, command, args, url,
+    env, headers}``. ``id`` names the server in its scope — what the import sends back, so a pick
+    names a listed row and never a file — and ``place`` the setup it came from, which the import
+    names to be read again. ``scope`` is the tool's (``user``, ``local``, ``project``)
     and ``origin`` says where, in words; ``note`` is what to know first (a project server nobody
     approved, a variable nothing sets, a server the tool has turned off). ``command`` is the
     command's file name, ``args`` the arguments with every credential in them masked
@@ -1169,9 +1204,11 @@ def discover_importable_servers() -> tuple[list[dict[str, Any]], list[dict[str, 
     known: set[str] = set(_load_mcp_json().keys())
     known |= set(_load_agent_config().get("mcpServers", {}).keys())
 
+    from personalclaw.onboarding_import.registry import get_source
+
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    entries, unreadable = _importable_entries()
+    entries, unreadable, tools = _importable_entries(asked)
     for backend, server in entries:
         spec = server.spec
         if server.name in known or server.id in seen:
@@ -1189,6 +1226,7 @@ def discover_importable_servers() -> tuple[list[dict[str, Any]], list[dict[str, 
                 "id": server.id,
                 "name": server.name,
                 "backend": backend,
+                "place": get_source(server.source).place,
                 "scope": server.scope,
                 "origin": server.origin,
                 "note": server.note,
@@ -1200,17 +1238,18 @@ def discover_importable_servers() -> tuple[list[dict[str, Any]], list[dict[str, 
                 "headers": _names_with_presence(spec.get("headers")),
             }
         )
-    return out, unreadable
+    return out, unreadable, tools
 
 
-def importable_spec(server_id: str) -> tuple[str, dict[str, Any]] | None:
+def importable_spec(server_id: str, *, asked: Collection[str]) -> tuple[str, dict[str, Any]] | None:
     """``(name, definition)`` of the importable server ``server_id`` names, or ``None``.
 
-    Read again from the other tool's own files, the way the list was: the import copies exactly
-    the server the row showed, in the scope it showed it in, and a caller can only ever name a
-    row — never a path, a file or a definition of its own.
+    Read again from the other tool's own files, the way the list was, and only from the tools the
+    import's press names (``asked``) or the owner turned on: the import copies exactly the server
+    the row showed, in the scope it showed it in, and a caller can only ever name a row — never a
+    path, a file or a definition of its own.
     """
-    entries, _unreadable = _importable_entries()
+    entries, _unreadable, _tools = _importable_entries(asked)
     for _backend, server in entries:
         if server.id == server_id:
             return server.name, dict(server.spec)

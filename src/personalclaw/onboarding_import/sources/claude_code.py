@@ -158,6 +158,23 @@ def global_config_path(root: Path | None = None) -> Path:
     return Path.home() / _GLOBAL_CONFIG
 
 
+#: What else reading this machine's Claude Code setup opens, in the words Settings shows beside the
+#: place's folders (:func:`locations`).
+PLACE_NOTE = (
+    "The place also covers, in each project Claude Code lists, the project's CLAUDE.md files, "
+    "its .mcp.json and its .claude settings. "
+)
+
+
+def locations() -> tuple[Path, ...]:
+    """Where this machine's Claude Code keeps its setup, as Settings names the place: its config
+    folder and its global config. From ``$CLAUDE_CONFIG_DIR`` alone, opening and checking nothing
+    there, which :func:`global_config_path` does to find the legacy file it prefers."""
+    root = resolve_root()
+    beside = root if _configured_root() is not None else root.parent
+    return (root, beside / _GLOBAL_CONFIG)
+
+
 def config_dir_of(config_path: Path) -> Path:
     """The config directory that goes with a global config file: ``~/.claude`` for the
     ``~/.claude.json`` beside it, the file's own directory for one inside a config directory."""

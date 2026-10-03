@@ -109,6 +109,15 @@ async function j<T>(r: Response): Promise<T> {
  *  connections to the gateway. */
 export interface ReadOptions { signal?: AbortSignal }
 
+/** `?look_in=…` for each place a Look in press names, or `''`: a request that names none reads
+ *  only the places the owner turned on in Settings › Security. */
+const lookInQuery = (places: string[]) => {
+  const q = new URLSearchParams()
+  for (const place of places) q.append('look_in', place)
+  const text = q.toString()
+  return text ? `?${text}` : ''
+}
+
 const get = <T>(p: string, opts: ReadOptions = {}) =>
   refuseIfSignedOut() ?? fetch(p, { headers: { ...SK }, ...(opts.signal ? { signal: opts.signal } : {}) }).then(j<T>)
 // `extra` carries a write's precondition — `basedOn(revision)` for a whole-document write
@@ -3014,18 +3023,26 @@ export interface McpPoolStats {
  *  approved, a `${VAR}` nothing sets); `''` when there is nothing to say. */
 export interface ImportableMcpServer {
   id: string; name: string; backend: string; scope: 'user' | 'local' | 'project'; origin: string; note: string
+  /** The setup it came from (`setup:<tool>`): what its import names, to be read again. */
+  place: string
   transport: McpTransport; command: string; args: string[]; url: string
   env?: McpValuePresence[]; headers?: McpValuePresence[]
 }
+/** Another agent tool whose setup PersonalClaw can import from, as one answer saw it. Its setup is
+ *  a place outside PersonalClaw's home: `looked` says this answer read it, which only a Look in
+ *  press for it (`look_in`) or the owner turning it on in Settings › Security (`allowed`) does. */
+export interface ImportableTool { place: string; name: string; looked: boolean; allowed: boolean }
 /** A file another tool keeps that is THERE and could not be read: `path` as a person reads it
  *  (`~/.claude.json`), `why` in words. What it holds is missing from the answer beside it, which is
  *  therefore incomplete, never "nothing to import". */
 export interface UnreadableToolFile { path: string; why: string }
-/** `GET /api/mcp/importable`: the servers to offer, and each of the other tools' MCP settings files
- *  that could not be read, with the tool it belongs to. */
+/** `GET /api/mcp/importable`: the servers to offer, each of the other tools' MCP settings files
+ *  that could not be read, with the tool it belongs to, and every tool it could look in. */
 export interface ImportableMcpList {
   servers: ImportableMcpServer[]
   unreadable: (UnreadableToolFile & { backend: string })[]
+  /** Absent from a copy cached before it existed, which is read as none. */
+  tools?: ImportableTool[]
 }
 /** `not_run: 'refused_by_tool'` marks a call the tool refused before anything ran; `dry_run`
  *  marks the answer to a check (`api.checkTool`). */
@@ -6186,9 +6203,12 @@ export interface OnboardingImportSkillScan {
 export interface OnboardingImportNotImported { what: string; count: number; why: string }
 /** What one source's scanner found. `detected` is computed server-side (present on this machine
  *  AND holding something, or holding a file that could not be read), so "did we find it" is
- *  decided once. */
+ *  decided once. `looked` false is a tool this answer did not read at all, because neither a Look
+ *  in press for its `place` nor the owner's switch in Settings › Security (`allowed`) let it: then
+ *  `present` and the rest say nothing about it. */
 export interface OnboardingImportSource {
   source: string; display_name: string; root: string; present: boolean; detected: boolean
+  place: string; looked: boolean; allowed: boolean
   counts: Record<string, number>
   items: OnboardingImportItem[]
   secrets_skipped: number; redactions: number
@@ -8517,14 +8537,15 @@ export const api = {
   saveOnboardingState: (patch: OnboardingStatePatch) =>
     post<{ ok: boolean; state: OnboardingState }>('/api/onboarding/state', patch),
   /** What other local agent tools on this machine hold. Read-only in both
-   *  directions — it writes neither their config nor our home. */
-  onboardingImportScan: () => get<OnboardingImportScan>('/api/onboarding/import'),
+   *  directions — it writes neither their config nor our home. A tool is read only when
+   *  `lookIn` names its place (the step's Look in press) or the owner turned it on in Settings. */
+  onboardingImportScan: (lookIn: string[] = []) => get<OnboardingImportScan>(`/api/onboarding/import${lookInQuery(lookIn)}`),
   /** Start importing the picked items: the job, which runs on in the gateway. The server
    *  RE-SCANS and keeps only the fingerprints its own scan found: ids travel, never items, so a
    *  caller can never name a directory to copy in. `accepted` carries, for each picked skill
    *  whose scan has warnings, the `consent` its scan showed: the warnings the user accepted,
    *  which its install checks against what it installs. */
-  runOnboardingImport: (body: { fingerprints: string[]; accepted?: Record<string, string> }) =>
+  runOnboardingImport: (body: { fingerprints: string[]; accepted?: Record<string, string>; look_in?: string[] }) =>
     post<OnboardingImportJob>('/api/onboarding/import', body),
   /** The running or last import, with its report once finished — `null` when this gateway has
    *  run none (a first visit, or after a restart). */
@@ -9461,20 +9482,23 @@ export const api = {
     post<McpSignInStart>(`/api/mcp/servers/${encodeURIComponent(name)}/sign-in`, client ?? {}),
   // Sign out: the sign-in leaves mcp.json and the agent config, and its tokens the credential store.
   signOutMcp: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}/sign-in`),
-  // Servers configured in an external backend (Claude Code) not yet in PClaw.
-  importableMcp: () => get<ImportableMcpList>('/api/mcp/importable'),
+  // Servers configured in an external backend (Claude Code) not yet in PClaw. A tool is looked in only
+  // when `lookIn` names its place (the Tools page's Look in press) or the owner turned it on in
+  // Settings › Security, so the page's own load reads nothing another tool keeps.
+  importableMcp: (lookIn: string[] = []) => get<ImportableMcpList>(`/api/mcp/importable${lookInQuery(lookIn)}`),
   // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from the other
   // tool's own file, values included (stored in the credential store), and leaves that file as it is.
   // The imported server waits for the owner's Allow on its row before anything starts it.
   // The route answers 200 for a batch, so a change that did not land carries an `error` — thrown here,
   // so `reportingWrite` reports both failure shapes.
   /** Import one listed server: the row's `id` names it in its scope, and the gateway reads its
-   *  definition again from the other tool's own files. Claude Code's file is left as it is — the
-   *  import used to send `ccGlobal: true`, which copied a local- or project-scope server into
-   *  Claude Code's USER scope as a side effect. */
-  importMcpServer: async (server: Pick<ImportableMcpServer, 'id' | 'name'>) => {
+   *  definition again from the other tool's own files — from the row's `place`, which the import
+   *  press names and nothing else. Claude Code's file is left as it is — the import used to send
+   *  `ccGlobal: true`, which copied a local- or project-scope server into Claude Code's USER scope
+   *  as a side effect. */
+  importMcpServer: async (server: Pick<ImportableMcpServer, 'id' | 'name' | 'place'>) => {
     const r = await post<{ results?: Array<{ name?: string; error?: string }> }>(
-      '/api/mcp/apply', { changes: [{ name: server.name, personalclaw: true, from: server.id }] })
+      '/api/mcp/apply', { changes: [{ name: server.name, personalclaw: true, from: server.id, place: server.place }] })
     const failed = r.results?.find((c) => c.error)
     if (failed?.error) throw new Error(failed.error)
     return r

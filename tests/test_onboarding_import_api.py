@@ -55,6 +55,11 @@ from personalclaw.onboarding_import import ImportCategory, fingerprint_of
 #: a test fails. Shaped like a real key so the redactors engage.
 SECRET = "sk-ant-api03-PEP5PLANTEDSECRET00000000000000000000000000000AA"
 
+#: The step's press, Look in Claude Code and Codex: the two tools' setups, which a scan reads
+#: only when a request names them (or the owner turned them on in Settings).
+LOOK = ["setup:claude_code", "setup:codex"]
+LOOK_QUERY = [("look_in", place) for place in LOOK]
+
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -148,7 +153,7 @@ def _bytes_under(root: Path, *, but: Path | None = None) -> bytes:
 
 
 async def _scan(client) -> dict:
-    resp = await client.get("/api/onboarding/import")
+    resp = await client.get("/api/onboarding/import", params=LOOK_QUERY)
     assert resp.status == 200
     return await resp.json()
 
@@ -234,7 +239,7 @@ async def test_the_scan_shows_a_conflict_before_anything_is_imported(make_client
 @pytest.mark.asyncio
 async def test_planted_secret_appears_nowhere_in_the_scan_response(make_client):
     async with make_client() as client:
-        resp = await client.get("/api/onboarding/import")
+        resp = await client.get("/api/onboarding/import", params=LOOK_QUERY)
         raw = await resp.text()
     assert SECRET not in raw
     # Vacuity: the response really did carry the file the secret was planted in.
@@ -245,7 +250,7 @@ async def test_planted_secret_appears_nowhere_in_the_scan_response(make_client):
 async def test_the_scan_writes_nothing_to_the_home(make_client, home):
     before = sorted(p.name for p in home.rglob("*"))
     async with make_client() as client:
-        assert (await client.get("/api/onboarding/import")).status == 200
+        assert (await client.get("/api/onboarding/import", params=LOOK_QUERY)).status == 200
     assert sorted(p.name for p in home.rglob("*")) == before
 
 
@@ -266,8 +271,9 @@ async def _finished(client) -> dict:
 
 
 async def _import(client, **body):
-    """Start an import and wait for it: ``(POST status, the finished job's report)``."""
-    resp = await client.post("/api/onboarding/import", json=body)
+    """Start an import and wait for it: ``(POST status, the finished job's report)``. It names the
+    tools the scan looked in, as the step's own press does."""
+    resp = await client.post("/api/onboarding/import", json={"look_in": LOOK, **body})
     started = await resp.json()
     if resp.status != 202:
         return resp.status, started
@@ -452,7 +458,9 @@ async def test_a_write_failure_is_reported_with_the_secret_redacted(make_client,
     monkeypatch.setattr("personalclaw.onboarding_import.run_import", boom)
     async with make_client() as client:
         pick = [_fingerprint(await _scan(client), "mcp_servers")]
-        resp = await client.post("/api/onboarding/import", json={"fingerprints": pick})
+        resp = await client.post(
+            "/api/onboarding/import", json={"fingerprints": pick, "look_in": LOOK}
+        )
         assert resp.status == 202
         job = await _finished(client)
         raw = json.dumps(job)
@@ -545,7 +553,9 @@ async def test_a_pick_larger_than_any_real_setup_is_refused(make_client, monkeyp
     monkeypatch.setattr("personalclaw.onboarding_import.scan_all", must_not_scan)
     pick = [f"{n:016x}" for n in range(_MAX_CHOSEN + 1)]
     async with make_client() as client:
-        resp = await client.post("/api/onboarding/import", json={"fingerprints": pick})
+        resp = await client.post(
+            "/api/onboarding/import", json={"fingerprints": pick, "look_in": LOOK}
+        )
         payload = await resp.json()
     assert resp.status == 400
     assert payload["error"]["code"] == "invalid_request"
@@ -776,8 +786,12 @@ async def test_one_import_runs_at_a_time(make_client, monkeypatch):
     monkeypatch.setattr(onboarding_import, "run_import", slow)
     async with make_client() as client:
         pick = [_fingerprint(await _scan(client), "mcp_servers")]
-        first = await client.post("/api/onboarding/import", json={"fingerprints": pick})
-        second = await client.post("/api/onboarding/import", json={"fingerprints": pick})
+        first = await client.post(
+            "/api/onboarding/import", json={"fingerprints": pick, "look_in": LOOK}
+        )
+        second = await client.post(
+            "/api/onboarding/import", json={"fingerprints": pick, "look_in": LOOK}
+        )
         refused = await second.json()
         release.set()
         job = await _finished(client)
@@ -811,7 +825,9 @@ async def test_a_stop_takes_effect_between_two_items_and_the_rest_are_named(
         scan = await _scan(client)
         pick = [_fingerprint(scan, "instructions"), _fingerprint(scan, "mcp_servers")]
         assert (
-            await client.post("/api/onboarding/import", json={"fingerprints": pick})
+            await client.post(
+                "/api/onboarding/import", json={"fingerprints": pick, "look_in": LOOK}
+            )
         ).status == 202
         assert await asyncio.to_thread(writing.wait, 10)
         stopping = await client.delete("/api/onboarding/import/job")

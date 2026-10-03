@@ -475,9 +475,14 @@ Data leaving the running system:
   defaults to `<home>/workspace`, and neither a session restart nor an MCP sync writes
   `~/.mcp.json`. A place outside the home that is worth reading (the skills folder AI tools share,
   the machine-wide Hugging Face folder with its `huggingface-cli login` token, a subscription
-  provider's sign-in) is declared in that module, is off until the owner turns it on in Settings →
-  Security → Outside PersonalClaw's home (`security.outside_home`, a loosening the PATCH asks to
-  confirm), and is only read. Some libraries a feature loads would write outside the home, or
+  provider's sign-in, another agent tool's setup) is declared in that module, is off until the owner
+  turns it on in Settings → Security → Outside PersonalClaw's home (`security.outside_home`, a
+  loosening the PATCH asks to confirm), and is only read. Another agent tool's setup (Claude Code's
+  `~/.claude`, `~/.claude.json` and the projects it lists; Codex's `~/.codex`) is also read for one
+  request when the owner presses **Look in** it on the Tools page or in onboarding's Bring your setup
+  over (`?look_in=setup:<tool>`): every reader of it asks `outside_home.readable`, and a page load,
+  a background refresh or an import that names no tool reads only the setups turned on
+  (`tests/test_another_tools_setup_is_read_only_when_you_ask.py` watches the reads themselves). Some libraries a feature loads would write outside the home, or
   report on their use, by themselves, so every `personalclaw` command, and every child it starts,
   tells each one not to with the library's own setting (`library_env.py`): the Hugging Face
   library reads no token it finds by itself (`HF_HUB_DISABLE_IMPLICIT_TOKEN`), downloads over its

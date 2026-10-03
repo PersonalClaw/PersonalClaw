@@ -30,6 +30,11 @@ from personalclaw.onboarding_import import ImportCategory, WriteOutcome, run_imp
 
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_tool_homes" / "noor"
 
+#: Claude Code's setup as a place outside the home. The owner pressing Look in Claude Code
+#: names it, and that press is what lets a scan read this machine's Claude Code.
+PLACE = "setup:claude_code"
+PRESS = frozenset({PLACE})
+
 #: The Slack incoming webhook the persona's CLAUDE.md posts to. Fake, but shaped exactly like a
 #: live one — which is why the committed fixture carries a marker instead: the forge's push
 #: protection refuses a commit holding one. Assembled here, planted into the copy.
@@ -96,7 +101,7 @@ def _tree(root: Path) -> dict[str, str]:
 def test_mcp_servers_come_from_claude_json_and_each_projects_mcp_json(noor: Path) -> None:
     """User scope (``.claude.json`` → ``mcpServers``), local scope (``projects[p].mcpServers``)
     and project scope (``<project>/.mcp.json``), each labelled with where it was found."""
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     servers = _items(result, ImportCategory.MCP_SERVERS)
 
     assert sorted(servers) == [
@@ -148,7 +153,7 @@ def test_a_project_server_nobody_approved_is_offered_but_not_ticked(noor: Path) 
     config["projects"]["/Users/noor/src/cloned-demo"] = {"enabledMcpjsonServers": []}
     config_path.write_text(json.dumps(config), encoding="utf-8")
 
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     demo = _items(result, ImportCategory.MCP_SERVERS)[
         "project:/Users/noor/src/cloned-demo:demo-tools"
     ]
@@ -163,7 +168,7 @@ def test_a_variable_nothing_sets_is_said_not_passed_on(noor: Path) -> None:
     doc["mcpServers"]["playwright"]["env"] = {"PW_PROFILE": "${PLAYWRIGHT_PROFILE_DIR}"}
     mcp.write_text(json.dumps(doc), encoding="utf-8")
 
-    item = _items(scan_source("claude_code"), ImportCategory.MCP_SERVERS)[
+    item = _items(scan_source("claude_code", asked=PRESS), ImportCategory.MCP_SERVERS)[
         "project:/Users/noor/src/feedsmith:playwright"
     ]
     assert "${PLAYWRIGHT_PROFILE_DIR}" in item.note
@@ -174,7 +179,7 @@ def test_a_variable_nothing_sets_is_said_not_passed_on(noor: Path) -> None:
 
 
 def test_memories_are_the_auto_memory_topic_files_and_memory_md_is_their_index(noor: Path) -> None:
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     memories = _items(result, ImportCategory.MEMORIES)
 
     assert sorted(memories) == [
@@ -197,7 +202,7 @@ def test_a_memory_md_with_notes_of_its_own_is_a_memory(noor: Path) -> None:
     index = noor / ".claude" / "projects" / "-Users-noor-src-feedsmith" / "memory" / "MEMORY.md"
     index.write_text(index.read_text(encoding="utf-8") + "- Tomás reviews changelog wording.\n")
 
-    keys = set(_items(scan_source("claude_code"), ImportCategory.MEMORIES))
+    keys = set(_items(scan_source("claude_code", asked=PRESS), ImportCategory.MEMORIES))
     assert "projects/-Users-noor-src-feedsmith/memory/MEMORY.md" in keys
 
 
@@ -205,7 +210,7 @@ def test_a_memory_md_with_notes_of_its_own_is_a_memory(noor: Path) -> None:
 
 
 def test_every_kind_claude_code_keeps_is_an_item_or_named_as_not_imported(noor: Path) -> None:
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
 
     assert sorted(_items(result, ImportCategory.INSTRUCTIONS)) == [
         "CLAUDE.md",
@@ -298,7 +303,7 @@ def test_a_transcript_brings_the_conversation_and_leaves_tool_output_behind(noor
         for line in extra:
             handle.write(json.dumps(line) + "\n")
 
-    item = _items(scan_source("claude_code"), ImportCategory.CONVERSATIONS)[
+    item = _items(scan_source("claude_code", asked=PRESS), ImportCategory.CONVERSATIONS)[
         "projects/-Users-noor/80aa7bec-27c9-4094-86e2-35fb104eed4f.jsonl"
     ]
     # The scan names the conversation and counts it; the import reads the messages themselves.
@@ -333,7 +338,7 @@ def test_a_transcript_line_nested_past_the_recursion_limit_does_not_end_the_scan
     with transcript.open("a", encoding="utf-8") as handle:
         handle.write("[" * 100_000 + "]" * 100_000 + "\n")
 
-    item = _items(scan_source("claude_code"), ImportCategory.CONVERSATIONS)[
+    item = _items(scan_source("claude_code", asked=PRESS), ImportCategory.CONVERSATIONS)[
         "projects/-Users-noor/80aa7bec-27c9-4094-86e2-35fb104eed4f.jsonl"
     ]
     assert item.origin == "Project · ~"
@@ -347,7 +352,7 @@ def test_import_lands_each_kind_where_personalclaw_reads_it(noor: Path) -> None:
     from personalclaw.prompt_providers.native_provider import NativePromptProvider
 
     before = _tree(noor)
-    report = run_import([scan_source("claude_code")])
+    report = run_import([scan_source("claude_code", asked=PRESS)])
     outcomes = {r.key: r.outcome for r in report.results}
     assert WriteOutcome.CONFLICT not in outcomes.values()
     assert WriteOutcome.REJECTED not in outcomes.values(), [
@@ -404,8 +409,8 @@ def test_import_lands_each_kind_where_personalclaw_reads_it(noor: Path) -> None:
 
 
 def test_a_second_import_finds_everything_already_here(noor: Path) -> None:
-    run_import([scan_source("claude_code")])
-    again = run_import([scan_source("claude_code")])
+    run_import([scan_source("claude_code", asked=PRESS)])
+    again = run_import([scan_source("claude_code", asked=PRESS)])
     assert {r.outcome for r in again.results} == {WriteOutcome.EXISTING}
 
 
@@ -415,7 +420,7 @@ def test_planning_every_kind_writes_nothing(noor: Path) -> None:
     from personalclaw.config.loader import config_dir
     from personalclaw.onboarding_import import plans
 
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     before = sorted(str(p) for p in config_dir().rglob("*"))
     planned = plans([result])
     assert {plan.state.value for plan in planned.values()} == {"new"}
@@ -446,7 +451,7 @@ async def test_tools_import_lists_every_scope_and_imports_a_local_server_by_its_
     before = claude_json.read_bytes()
 
     async with TestClient(TestServer(_app())) as client:
-        listing = await (await client.get("/api/mcp/importable")).json()
+        listing = await (await client.get("/api/mcp/importable", params={"look_in": PLACE})).json()
         rows = {row["name"]: row for row in listing["servers"]}
         assert set(rows) == {
             "github",
@@ -471,7 +476,12 @@ async def test_tools_import_lists_every_scope_and_imports_a_local_server_by_its_
                 "/api/mcp/apply",
                 json={
                     "changes": [
-                        {"name": "grafana", "personalclaw": True, "from": rows["grafana"]["id"]}
+                        {
+                            "name": "grafana",
+                            "personalclaw": True,
+                            "from": rows["grafana"]["id"],
+                            "place": rows["grafana"]["place"],
+                        }
                     ]
                 },
             )
@@ -481,12 +491,21 @@ async def test_tools_import_lists_every_scope_and_imports_a_local_server_by_its_
         stale = await (
             await client.post(
                 "/api/mcp/apply",
-                json={"changes": [{"name": "kafka-dev", "personalclaw": True, "from": "0" * 16}]},
+                json={
+                    "changes": [
+                        {
+                            "name": "kafka-dev",
+                            "personalclaw": True,
+                            "from": "0" * 16,
+                            "place": PLACE,
+                        }
+                    ]
+                },
             )
         ).json()
         assert "no longer has" in stale["results"][0]["error"]
 
-        after = await (await client.get("/api/mcp/importable")).json()
+        after = await (await client.get("/api/mcp/importable", params={"look_in": PLACE})).json()
         assert "grafana" not in {row["name"] for row in after["servers"]}
 
     stored = json.loads((config_dir() / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
@@ -518,7 +537,7 @@ def test_a_file_from_a_folder_whose_trust_prompt_was_refused_starts_unticked(noo
     config = json.loads((noor / ".claude" / ".claude.json").read_text(encoding="utf-8"))
     assert config["projects"]["/Users/noor"]["hasTrustDialogAccepted"] is False  # as recorded
 
-    items = _items(scan_source("claude_code"), ImportCategory.INSTRUCTIONS)
+    items = _items(scan_source("claude_code", asked=PRESS), ImportCategory.INSTRUCTIONS)
     home_notes = items["project:/Users/noor/CLAUDE.md"]
     assert home_notes.preselect is False
     assert home_notes.note == "Claude Code's trust prompt for this folder was never accepted."

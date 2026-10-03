@@ -473,9 +473,13 @@ _IMPORT_DRIVER = textwrap.dedent("""
         app.router.add_post("/api/mcp/apply", h.api_mcp_apply)
         app.router.add_post("/api/mcp/servers/{name}/allow", h.api_mcp_server_allow)
         out = {}
+        # The Tools page's Look in Claude Code press, then Import on the row it lists.
+        look = {"look_in": "setup:claude_code"}
         async with TestClient(TestServer(app)) as c:
-            out["importable"] = await (await c.get("/api/mcp/importable")).text()
-            change = {"name": NAME, "personalclaw": True, "ccGlobal": True}
+            out["importable"] = await (await c.get("/api/mcp/importable", params=look)).text()
+            rows = json.loads(out["importable"])["servers"]
+            row = next(r for r in rows if r["name"] == NAME)
+            change = {"name": NAME, "personalclaw": True, "from": row["id"], "place": row["place"]}
             resp = await c.post("/api/mcp/apply", json={"changes": [change]})
             out["apply"] = await resp.json()
             listed = await (await c.get("/api/mcp")).json()

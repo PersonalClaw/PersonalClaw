@@ -381,19 +381,20 @@ describe('api.importMcpServer', () => {
     const fetchMock = answer({ ok: true, results: [{ name: 'cc-notion', actions: { personalclaw: 'added', ccGlobal: 'noop' } }] })
     vi.stubGlobal('fetch', fetchMock)
     const { api } = await import('../../lib/api')
-    await api.importMcpServer({ id: 'a1b2c3d4e5f60718', name: 'cc-notion' })
+    await api.importMcpServer({ id: 'a1b2c3d4e5f60718', name: 'cc-notion', place: 'setup:claude_code' })
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('/api/mcp/apply')
-    // The row's id, so the gateway copies the definition that row showed — and no `ccGlobal`, which
-    // used to copy a local- or project-scope server into Claude Code's user scope on the way.
+    // The row's id, so the gateway copies the definition that row showed, and the place it came
+    // from, the one tool the gateway reads again for it — and no `ccGlobal`, which used to copy a
+    // local- or project-scope server into Claude Code's user scope on the way.
     expect(JSON.parse(String(init.body))).toEqual({
-      changes: [{ name: 'cc-notion', personalclaw: true, from: 'a1b2c3d4e5f60718' }],
+      changes: [{ name: 'cc-notion', personalclaw: true, from: 'a1b2c3d4e5f60718', place: 'setup:claude_code' }],
     })
   })
 
   it('throws the change’s own sentence when the 200 says it did not land', async () => {
     vi.stubGlobal('fetch', answer({ ok: true, results: [{ name: 'x', error: "No MCP server named 'x' was found to add." }] }))
     const { api } = await import('../../lib/api')
-    await expect(api.importMcpServer({ id: '0000000000000000', name: 'x' })).rejects.toThrow("No MCP server named 'x' was found to add.")
+    await expect(api.importMcpServer({ id: '0000000000000000', name: 'x', place: 'setup:codex' })).rejects.toThrow("No MCP server named 'x' was found to add.")
   })
 })

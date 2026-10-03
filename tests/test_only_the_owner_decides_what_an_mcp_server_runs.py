@@ -451,11 +451,18 @@ async def test_import_from_another_tool_waits_for_the_owner(tool, tmp_path, monk
         if tool == "Claude Code"
         else _codex(tmp_path, server)
     )
-    monkeypatch.setattr(mcp_discovery, "_import_sources", lambda: ((where, tool),))
+    importer = {"Claude Code": "claude_code", "Codex": "codex"}[tool]
+    monkeypatch.setattr(mcp_discovery, "_import_sources", lambda: ((importer, lambda: where),))
     async with _tools_page(monkeypatch) as http:
-        listed = (await (await http.get("/api/mcp/importable")).json())["servers"]
+        look = {"look_in": f"setup:{importer}"}
+        listed = (await (await http.get("/api/mcp/importable", params=look)).json())["servers"]
         [row] = [r for r in listed if r["name"] == server.name]
-        change = {"name": server.name, "personalclaw": True, "from": row["id"]}
+        change = {
+            "name": server.name,
+            "personalclaw": True,
+            "from": row["id"],
+            "place": row["place"],
+        }
         applied = await (await http.post("/api/mcp/apply", json={"changes": [change]})).json()
         assert not any(r.get("error") for r in applied["results"]), applied
         assert server.name in _mcp_json()

@@ -67,7 +67,9 @@ SERVERS = {
 }
 
 # One gateway process. argv[1] is JSON: `own` is a server to add through the Tools page first, and
-# `import` the names to import, each with Claude Code's own entry left in place (`ccGlobal: true`).
+# `import` the names to import. The list is the Tools page's Look in Claude Code press; a name it
+# lists is imported as the page imports a row (its id and its place), and any other, one of
+# PersonalClaw's own, is put into Claude Code's scope (`ccGlobal: true`).
 _DRIVER = textwrap.dedent("""
     import asyncio, json, sys
 
@@ -92,8 +94,15 @@ _DRIVER = textwrap.dedent("""
             if PLAN.get("own"):
                 name, body = PLAN["own"]
                 out["own"] = (await c.put(f"/api/mcp/servers/{name}", json=body)).status
-            out["importable"] = await (await c.get("/api/mcp/importable")).text()
-            changes = [{"name": n, "personalclaw": True, "ccGlobal": True} for n in PLAN["import"]]
+            look = {"look_in": "setup:claude_code"}
+            out["importable"] = await (await c.get("/api/mcp/importable", params=look)).text()
+            rows = {r["name"]: r for r in json.loads(out["importable"])["servers"]}
+            changes = [
+                {"name": n, "personalclaw": True, "from": rows[n]["id"], "place": rows[n]["place"]}
+                if n in rows
+                else {"name": n, "personalclaw": True, "ccGlobal": True}
+                for n in PLAN["import"]
+            ]
             if changes:
                 resp = await c.post("/api/mcp/apply", json={"changes": changes})
                 out["apply"] = await resp.json()
@@ -176,6 +185,7 @@ def test_the_import_list_names_each_server_and_carries_no_credential(world) -> N
     assert row == {
         "name": "cc-args",
         "backend": "Claude Code",
+        "place": "setup:claude_code",
         "scope": "user",
         "origin": "User scope",
         "note": "",
@@ -266,7 +276,10 @@ def test_the_mcp_importer_asks_the_onboarding_resolver(monkeypatch, tmp_path) ->
     codex_home = tmp_path / "codex-home"
     monkeypatch.setattr(claude_code, "global_config_path", lambda: elsewhere)
     monkeypatch.setattr(codex, "resolve_root", lambda: codex_home)
-    assert mcp_discovery._import_sources() == ((elsewhere, "Claude Code"), (codex_home, "Codex"))
+    assert [(tool, where()) for tool, where in mcp_discovery._import_sources()] == [
+        ("claude_code", elsewhere),
+        ("codex", codex_home),
+    ]
     from personalclaw.dashboard.handlers import mcp as mcp_mod
 
     assert mcp_mod._cc_global_json() == elsewhere

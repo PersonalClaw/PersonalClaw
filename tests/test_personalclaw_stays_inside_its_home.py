@@ -110,7 +110,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     (_CLAUDE_CODE, "global_config_path"): _IMPORT,
     (_CLAUDE_CODE, "config_dir_of"): _IMPORT,
     (_CODEX, "resolve_root"): _IMPORT,
-    (_CODEX, "_skill_roots"): _IMPORT,
+    (_CODEX, "_shared_skills"): _IMPORT,
     (_IMPORT_COMMON, "on_this_machine"): _IMPORT,
     ("packs/external_formats.py", "default_dest_dir"): "an export the owner starts",
     ("dashboard/handlers/files.py", "_default_browse_dir"): "the folder picker, the owner choosing",

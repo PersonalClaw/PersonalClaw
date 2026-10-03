@@ -928,9 +928,11 @@ function EgressPolicyEditor() {
  *
  *  PersonalClaw keeps what it reads and writes in its home. Each place here already lives
  *  elsewhere on this computer (the skills other AI tools share, the Hugging Face folder, another
- *  CLI's sign-in) and is off until the owner turns it on. Turning one on asks first and names the
- *  folder; turning it off never asks and stops the reading at once. PersonalClaw never writes or
- *  deletes there, and the copy says so, because that is the promise the switch makes.
+ *  CLI's sign-in, another agent tool's setup) and is off until the owner turns it on. Turning one
+ *  on asks first and names the folder; turning it off never asks and stops the reading at once.
+ *  PersonalClaw never writes or deletes there, and the copy says so, because that is the promise
+ *  the switch makes. An agent tool's setup is also read when she presses Look in it (the Tools
+ *  page, Bring your setup over), for that press alone, so the hint names the press too.
  *
  *  The read is bare: a failed fetch is said, not rendered as "nothing is allowed". */
 export function OutsideHomeEditor() {
@@ -970,7 +972,7 @@ export function OutsideHomeEditor() {
   }
 
   return (
-    <Section title={title} hint="PersonalClaw reads and writes only inside its own home. Turn on a place below to let it also read something another tool keeps on this computer. It never writes to or deletes anything there.">
+    <Section title={title} hint="PersonalClaw reads and writes only inside its own home. It reads something another tool keeps on this computer only when you ask it to look there, such as Look in on the Tools page, or once you turn that place on below. It never writes to or deletes anything there.">
       <RowGroup>
         {data.places.map((place) => (
           <OutsidePlaceRow key={place.id} place={place} busy={busy !== ''}

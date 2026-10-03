@@ -3,11 +3,17 @@
 The onboarding step's calls, and nothing else.
 
 ``GET``
-    Scan every registered source and answer what could be adopted, item by item: what
-    each item is, what was withheld from it, and what importing it would do right now
-    (``state`` — ``new``, ``existing``, ``conflict`` or ``rejected`` — read off the
-    destination by the planner the writer itself consults). Read-only in both
-    directions: it never writes to the foreign root, and it never writes to our home.
+    Scan the registered sources this request may read and answer what could be adopted, item
+    by item: what each item is, what was withheld from it, and what importing it would do right
+    now (``state`` — ``new``, ``existing``, ``conflict`` or ``rejected`` — read off the
+    destination by the planner the writer itself consults). Read-only in both directions: it
+    never writes to the foreign root, and it never writes to our home.
+
+    Another tool's setup is a place outside the home, so the step's press names the tools it
+    looks in (``?look_in=setup:<tool>``, repeated), and a tool is read only when it is named or
+    the owner turned it on in Settings → Security (``outside_home.readable``). The step opening
+    names none, so on a home that turned none on it reads nothing outside the home: each source
+    comes back ``looked`` false, for the step to offer the press.
 
     The scan LOOKS rather than reads (:mod:`personalclaw.onboarding_import.engine`): a
     months-long history is thousands of transcripts, and reading them all before answering
@@ -18,7 +24,9 @@ The onboarding step's calls, and nothing else.
 
 ``POST``
     Start the import of the items the user picked: ``202`` with the job, whose progress the
-    stream carries and whose report ``GET …/job`` answers once it has finished. A skill
+    stream carries and whose report ``GET …/job`` answers once it has finished. ``look_in``
+    names the tools the step looked in: the job's re-scan reads those and the ones turned on,
+    and a pick from any other is reported ``missing``. A skill
     whose scan has warnings comes over only when the pick also names, under ``accepted``,
     the ``consent`` the scan showed for it — the warnings the user accepted. One import runs
     at a time: a second POST while one runs is ``409`` with the running job.
@@ -77,12 +85,22 @@ ACTIVITY = web.AppKey("onboarding_import_activity", ImportActivity)
 _STREAM_SECONDS = 0.5
 
 
-def _scan_with_plans() -> tuple[list, dict]:
+def _scan_with_plans(asked: frozenset[str]) -> tuple[list, dict]:
     """One thread hop for both reads: the foreign roots, then each item's destination."""
     from personalclaw.onboarding_import import plans, scan_all
 
-    results = scan_all(look=True)
+    results = scan_all(look=True, asked=asked)
     return results, plans(results)
+
+
+def _looked_in(values: list) -> tuple[frozenset[str], web.Response | None]:
+    """The tools' setups a press names, or the refusal of one that names something else."""
+    from personalclaw.onboarding_import.registry import looked_in
+
+    try:
+        return looked_in(values), None
+    except ValueError as exc:
+        return frozenset(), json_error("bad_request", message=str(exc), status=400)
 
 
 async def api_onboarding_import_scan(request: web.Request) -> web.Response:
@@ -91,21 +109,27 @@ async def api_onboarding_import_scan(request: web.Request) -> web.Response:
     ``sources`` carries EVERY registered source, each with ``detected`` computed
     server-side (present on this machine AND holding something) — so the step can
     both list what was found and name what it looked for, from one list, without
-    re-deriving "detected" on the client. Each source's ``items`` carry the stable
+    re-deriving "detected" on the client. Each also carries its ``place``, whether this answer
+    ``looked`` in it (named by ``look_in``, or ``allowed`` in Settings), and nothing found for
+    one it did not look in. Each source's ``items`` carry the stable
     ``fingerprint`` a pick sends back, plus the item's plan. ``categories`` is the
     closed category vocabulary in declaration order, so the step's groups cannot
     drift from the writers' dispatch table. ``reading`` is the reading pass, started
     here when the scan left conversation files unread.
     """
-    from personalclaw.onboarding_import import ImportCategory, detected, offer
+    from personalclaw import outside_home
+    from personalclaw.onboarding_import import ImportCategory, detected, get_source, offer
     from personalclaw.onboarding_import.floors import screened_failure
 
+    asked, refusal = _looked_in(request.query.getall("look_in", []))
+    if refusal is not None:
+        return refusal
     activity = request.app[ACTIVITY]
     # A reading pass waits while this answer is made — the scan, and composing a history's worth
     # of items: parsing beside it in the same interpreter made the answer ten times slower.
     with activity.reading.paused():
         try:
-            results, planned = await asyncio.to_thread(_scan_with_plans)
+            results, planned = await asyncio.to_thread(_scan_with_plans, asked)
         except Exception as exc:  # noqa: BLE001 — a scan fault is reported, never a blank step
             logger.warning("onboarding import: scan failed", exc_info=True)
             return json_error(
@@ -118,8 +142,11 @@ async def api_onboarding_import_scan(request: web.Request) -> web.Response:
         found = {result.source for result in detected(results)}
         sources = []
         for result in results:
+            place = get_source(result.source).place
             payload = result.to_dict()
             payload["detected"] = result.source in found
+            payload["place"] = place
+            payload["allowed"] = outside_home.allowed(place)
             payload["items"] = [offer(item, planned[item.fingerprint]) for item in result.items]
             sources.append(payload)
 
@@ -211,12 +238,14 @@ def _accepted(body: dict) -> tuple[dict[str, str], web.Response | None]:
 async def api_onboarding_import_run(request: web.Request) -> web.Response:
     """POST /api/onboarding/import — start importing the picked items.
 
-    Body: ``{"fingerprints": [fingerprint, …], "accepted": {fingerprint: consent, …}}`` — the
-    items to bring over, as the scan named them, and for a skill whose scan has warnings the
-    ``consent`` of the warnings accepted. Answers ``202`` with the job; the job's report, once it
-    has finished, is the :class:`~personalclaw.onboarding_import.ImportReport`: per-item
-    outcomes, the items left out, the picks that no longer exist, those a stop left unreached,
-    and the withheld-secret counts. A conflict is a real answer the step renders, not a failure.
+    Body: ``{"fingerprints": [fingerprint, …], "accepted": {fingerprint: consent, …},
+    "look_in": [place, …]}`` — the items to bring over, as the scan named them, for a skill whose
+    scan has warnings the ``consent`` of the warnings accepted, and the tools the step looked in,
+    which the job's re-scan reads beside those turned on. Answers ``202`` with the job; the job's
+    report, once it has finished, is the :class:`~personalclaw.onboarding_import.ImportReport`:
+    per-item outcomes, the items left out, the picks that no longer exist, those a stop left
+    unreached, and the withheld-secret counts. A conflict is a real answer the step renders, not a
+    failure.
     """
     try:
         body = await request.json()
@@ -231,10 +260,14 @@ async def api_onboarding_import_run(request: web.Request) -> web.Response:
     accepted, refusal = _accepted(body)
     if refusal is not None:
         return refusal
+    named = body.get("look_in", [])
+    asked, refusal = _looked_in(named if isinstance(named, list) else [named])
+    if refusal is not None:
+        return refusal
 
     # The items are re-scanned inside the job, from the foreign root, never taken from the
     # caller: the pick is fingerprints and the job keeps only those its own scan found.
-    job, started = request.app[ACTIVITY].start_import(fingerprints, accepted)
+    job, started = request.app[ACTIVITY].start_import(fingerprints, accepted, asked)
     if not started:
         return web.json_response(
             {

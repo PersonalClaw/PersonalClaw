@@ -144,6 +144,13 @@ trust**, **Guardrails** and **External access** open at any time, so you can sig
 device out or turn on the incident kill switch in the middle of setup. Setup links
 to them as **Security controls**.
 
+**Already use Claude Code or Codex?** Step 2, **Bring your setup over**, reads nothing of theirs
+until you ask: press **Look in Claude Code and Codex** and it lists what each holds (instructions,
+memories, MCP servers, skills, agents, prompts and conversations) for you to pick from. Nothing in
+their folders is changed, and nothing comes over until you import it. The Tools page offers the
+same **Look in** press for their MCP servers. To have both list a tool on every visit without the
+press, turn it on in **Settings → Security → Outside PersonalClaw's home**.
+
 **Already running [Ollama](https://ollama.com)?** The first-run **essentials**
 step detects a local Ollama automatically and offers a one-click bind with **no
 API key** — skip straight to [§4](#4-first-chat). The model it proposes is one the

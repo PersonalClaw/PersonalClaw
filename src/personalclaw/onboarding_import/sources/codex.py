@@ -131,6 +131,21 @@ def resolve_root() -> Path:
     return Path(env).expanduser() if env else Path.home() / ".codex"
 
 
+def _shared_skills() -> Path:
+    """``~/.agents/skills``: your home's skills folder, which Codex reads beside its own."""
+    return Path.home() / ".agents" / _SKILLS_DIR
+
+
+#: What else reading this machine's Codex setup opens, beyond the place's folders: nothing.
+PLACE_NOTE = ""
+
+
+def locations() -> tuple[Path, ...]:
+    """Where this machine's Codex keeps its setup, as Settings names the place: the Codex home and
+    the skills folder it reads beside it. Opens and checks nothing there."""
+    return (resolve_root(), _shared_skills())
+
+
 def _read_config(base: Path) -> tuple[dict[str, Any], str, int]:
     """``(document, file name, withheld)``: Codex's config WITH its values (``{}`` when there is
     none), the file it came from, and 1 when that file was refused unread.
@@ -494,7 +509,7 @@ def _skill_roots(base: Path, explicit: Path | None) -> list[tuple[Path, str]]:
     """
     roots = [(base / _SKILLS_DIR, "")]
     if explicit is None:
-        agents_skills = Path.home() / ".agents" / _SKILLS_DIR
+        agents_skills = _shared_skills()
         roots.append((agents_skills, from_home(agents_skills)))
     roots.append((base / _MEMORIES_DIR / _SKILLS_DIR, "Codex memories"))
     return roots

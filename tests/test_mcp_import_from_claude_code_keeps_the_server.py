@@ -59,9 +59,10 @@ _ECHO_SERVER = textwrap.dedent("""
         mcp.run()
     """)
 
-# One gateway "boot" per invocation. `import` lists, imports the way the Tools page does, and lists
-# again; `restart` runs the boot steps a gateway runs, then lists, and spawns the server through
-# the native client (the path an agent's tool call takes) to read what it was started with.
+# One gateway "boot" per invocation. `import` looks in Claude Code, imports a row the way the Tools
+# page does (its id and the place it came from), and looks again; `restart` runs the boot steps a
+# gateway runs, then lists, and spawns the server through the native client (the path an agent's
+# tool call takes) to read what it was started with.
 _DRIVER = textwrap.dedent("""
     import asyncio, json, sys
 
@@ -88,10 +89,16 @@ _DRIVER = textwrap.dedent("""
         app.router.add_post("/api/mcp/apply", h.api_mcp_apply)
         app.router.add_post("/api/mcp/servers/{name}/allow", h.api_mcp_server_allow)
         out = {}
+        # The Tools page's Look in Claude Code press: the one request that may read its file.
+        look = {"look_in": "setup:claude_code"}
         async with TestClient(TestServer(app)) as c:
-            out["importable_body"] = await (await c.get("/api/mcp/importable")).text()
+            out["importable_body"] = await (await c.get("/api/mcp/importable", params=look)).text()
             if STEP == "import":
-                change = {"name": NAME, "personalclaw": True, "ccGlobal": True}
+                rows = json.loads(out["importable_body"])["servers"]
+                row = next(s for s in rows if s["name"] == NAME)
+                change = {
+                    "name": NAME, "personalclaw": True, "from": row["id"], "place": row["place"],
+                }
                 resp = await c.post("/api/mcp/apply", json={"changes": [change]})
                 out["apply_status"] = resp.status
                 out["apply"] = await resp.json()
@@ -104,7 +111,7 @@ _DRIVER = textwrap.dedent("""
                 allow = {"revision": row.get("allowRevision"), "confirm": True}
                 resp = await c.post(f"/api/mcp/servers/{NAME}/allow", json=allow)
                 out["allow_status"] = resp.status
-            after = await (await c.get("/api/mcp/importable")).json()
+            after = await (await c.get("/api/mcp/importable", params=look)).json()
             out["importable_after"] = [s["name"] for s in after["servers"]]
             await asyncio.gather(*app["state"]._background_tasks, return_exceptions=True)
 

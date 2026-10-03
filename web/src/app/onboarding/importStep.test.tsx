@@ -29,7 +29,7 @@ const stopOnboardingImport = vi.fn()
 
 vi.mock('../../lib/api', () => ({
   api: {
-    onboardingImportScan: () => onboardingImportScan(),
+    onboardingImportScan: (...a: unknown[]) => onboardingImportScan(...a),
     runOnboardingImport: (...a: unknown[]) => runOnboardingImport(...a),
     onboardingImportJob: () => onboardingImportJob(),
     stopOnboardingImport: () => stopOnboardingImport(),
@@ -84,7 +84,9 @@ function item(fingerprint: string, category: string, key: string, extra: Partial
   }
 }
 
-/** A scan shaped like the gateway's, with a root path and item keys the POST must not carry. */
+/** A scan shaped like the gateway's, with a root path and item keys the POST must not carry. Both
+ *  tools are turned on in Settings › Security, so the step lists them as it opens: the case the
+ *  tests below start from. `nothing of another tool is read until she asks` covers the press. */
 const CLAUDE_ROOT = '/home/ada/.claude'
 const ITEMS = () => [
   item('f1', 'instructions', 'CLAUDE.md', { redactions: 1 }),
@@ -98,7 +100,7 @@ function scan(items: OnboardingImportItem[] = ITEMS(), overrides: Partial<Onboar
     sources: [
       {
         source: 'claude_code', display_name: 'Claude Code', root: CLAUDE_ROOT,
-        present: true, detected: true,
+        present: true, detected: true, place: 'setup:claude_code', looked: true, allowed: true,
         counts: { ...ZERO, instructions: 1, mcp_servers: 2, skills: 1 },
         items,
         secrets_skipped: 2, redactions: 1,
@@ -108,7 +110,8 @@ function scan(items: OnboardingImportItem[] = ITEMS(), overrides: Partial<Onboar
       },
       {
         source: 'codex', display_name: 'Codex', root: '/home/ada/.codex',
-        present: false, detected: false, counts: { ...ZERO }, items: [],
+        present: false, detected: false, place: 'setup:codex', looked: true, allowed: true,
+        counts: { ...ZERO }, items: [],
         secrets_skipped: 0, redactions: 0, notes: [], not_imported: [],
       },
     ],
@@ -1032,9 +1035,88 @@ describe('the import runs as a job the step watches', () => {
 
 describe('the first scan of a long history is never a bare spinner', () => {
   it('says what it is doing while it looks', async () => {
+    onboardingImportScan.mockResolvedValueOnce(unlookedScan()).mockReturnValue(new Promise(() => {}))
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Look in Claude Code and Codex' }))
+    expect(await screen.findByText('Looking in the tools you chose…')).toBeTruthy()
+  })
+
+  it('does not say it is looking before her press, when it reads no tool she did not turn on', async () => {
     onboardingImportScan.mockReturnValue(new Promise(() => {}))
     mount()
-    expect(await screen.findByText('Looking for other agent tools on this machine…')).toBeTruthy()
+    expect(await screen.findByText('Getting the step ready…')).toBeTruthy()
+    expect(screen.queryByText(/Looking/)).toBeNull()
+  })
+})
+
+// ── nothing of another tool is read until she asks ────────────────────────────────────────────
+//
+// Settings › Security promises PersonalClaw reads only inside its home unless she turns a place
+// on, and the step read both tools' setups the moment it opened. It now opens naming no tool, and
+// a tool not turned on comes back `looked: false`: the step asks to look in it, and every read
+// after her press names the tools she pressed for and no other.
+
+/** The step opening on a home that turned on neither tool: nothing of theirs was read. */
+function unlookedScan(): OnboardingImportScan {
+  const base = scan()
+  return {
+    ...base,
+    sources: base.sources.map((source) => ({
+      ...source, looked: false, allowed: false, present: false, detected: false, items: [],
+      counts: { ...ZERO }, secrets_skipped: 0, redactions: 0, notes: [], not_imported: [],
+    })),
+  }
+}
+const BOTH = ['setup:claude_code', 'setup:codex']
+
+describe('nothing of another tool is read until she asks', () => {
+  it('opens naming no tool, and asks to look in the ones not turned on', async () => {
+    onboardingImportScan.mockResolvedValue(unlookedScan())
+    mount()
+    expect(await screen.findByText(/^PersonalClaw can look in Claude Code and Codex for the setup you made there/)).toBeTruthy()
+    expect(onboardingImportScan).toHaveBeenCalledTimes(1)
+    expect(onboardingImportScan).toHaveBeenCalledWith([])
+    expect(screen.getByRole('button', { name: 'Look in Claude Code and Codex' })).toBeTruthy()
+    // It did not look, so it does not say it found nothing.
+    expect(screen.queryByText(/No other agent tools found/)).toBeNull()
+    expect(screen.getByText('PersonalClaw has not looked in Claude Code or Codex.')).toBeTruthy()
+  })
+
+  it('the press names both tools, and lists what they hold', async () => {
+    onboardingImportScan.mockResolvedValueOnce(unlookedScan()).mockResolvedValue(scan())
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Look in Claude Code and Codex' }))
+    expect(await screen.findByText(/^We found Claude Code on this machine/)).toBeTruthy()
+    expect(onboardingImportScan).toHaveBeenLastCalledWith(BOTH)
+  })
+
+  it('the import, and every read after the press, names the tools she looked in', async () => {
+    onboardingImportScan.mockResolvedValueOnce(unlookedScan()).mockResolvedValue(scan())
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Look in Claude Code and Codex' }))
+    await screen.findByText(/^We found Claude Code on this machine/)
+    importNow()
+    await waitFor(() => expect(runOnboardingImport).toHaveBeenCalledTimes(1))
+    expect(runOnboardingImport.mock.calls[0][0]).toMatchObject({ look_in: BOTH })
+    expect(onboardingImportScan.mock.calls.slice(1).every(([places]) => JSON.stringify(places) === JSON.stringify(BOTH))).toBe(true)
+  })
+
+  it('skipping without the press reads nothing more', async () => {
+    onboardingImportScan.mockResolvedValue(unlookedScan())
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: 'Skip this' }))
+    expect(onSkip).toHaveBeenCalledTimes(1)
+    expect(onboardingImportScan).toHaveBeenCalledTimes(1)
+  })
+
+  it('a tool turned on is listed as the step opens, and the other is offered beside it', async () => {
+    const s = scan()
+    s.sources[1] = { ...s.sources[1], looked: false, allowed: false }
+    onboardingImportScan.mockResolvedValue(s)
+    await mounted()
+    expect(screen.getByText('PersonalClaw has not looked in Codex.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Look in Codex' }))
+    await waitFor(() => expect(onboardingImportScan).toHaveBeenLastCalledWith(['setup:codex']))
   })
 })
 

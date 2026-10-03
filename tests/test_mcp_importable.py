@@ -14,6 +14,9 @@ import json
 
 import personalclaw.mcp_discovery as disc
 
+#: The owner's press, Look in Claude Code: what lets the list read Claude Code's file at all.
+PRESS = frozenset({"setup:claude_code"})
+
 
 def _write(path, servers: dict) -> None:
     path.write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
@@ -40,13 +43,14 @@ def test_discover_importable_returns_cc_servers_not_in_pclaw(tmp_path, monkeypat
             "bogus": {"description": "no command or url"},
         },
     )
-    monkeypatch.setattr(disc, "_import_sources", lambda: ((cc, "Claude Code"),))
+    monkeypatch.setattr(disc, "_import_sources", lambda: (("claude_code", lambda: cc),))
     # No PClaw-scope servers configured.
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "nope.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
 
-    out, unreadable = disc.discover_importable_servers()
+    out, unreadable, tools = disc.discover_importable_servers(asked=PRESS)
     assert unreadable == []
+    assert [(t["place"], t["looked"]) for t in tools] == [("setup:claude_code", True)]
     by_name = {s["name"]: s for s in out}
     assert set(by_name) == {"cc-only", "remote"}  # bogus dropped (no command/url)
     assert by_name["cc-only"]["backend"] == "Claude Code"
@@ -60,18 +64,18 @@ def test_discover_importable_excludes_already_known(tmp_path, monkeypatch):
     _write(cc, {"shared": {"command": "npx"}})
     pclaw = tmp_path / "mcp.json"
     _write(pclaw, {"shared": {"command": "npx"}})
-    monkeypatch.setattr(disc, "_import_sources", lambda: ((cc, "Claude Code"),))
+    monkeypatch.setattr(disc, "_import_sources", lambda: (("claude_code", lambda: cc),))
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (pclaw,))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
 
-    assert disc.discover_importable_servers() == ([], [])
+    assert disc.discover_importable_servers(asked=PRESS)[:2] == ([], [])
 
 
 def test_discover_importable_no_source_file(tmp_path, monkeypatch):
     """A config that is not there is nothing to import, and no failure either."""
     monkeypatch.setattr(
-        disc, "_import_sources", lambda: ((tmp_path / "absent.json", "Claude Code"),)
+        disc, "_import_sources", lambda: (("claude_code", lambda: tmp_path / "absent.json"),)
     )
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "nope.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
-    assert disc.discover_importable_servers() == ([], [])
+    assert disc.discover_importable_servers(asked=PRESS)[:2] == ([], [])

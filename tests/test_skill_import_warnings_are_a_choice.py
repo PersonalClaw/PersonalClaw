@@ -41,6 +41,10 @@ from personalclaw.supply_chain import SkillScanner, Verdict
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_tool_homes" / "noor"
 SKILLS = Path(__file__).parent / "fixtures" / "agent_tool_skills"
 
+#: The owner's press, Look in Claude Code: what lets a scan read this machine's Claude Code.
+PLACE = "setup:claude_code"
+PRESS = frozenset({PLACE})
+
 
 @pytest.fixture
 def noor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -91,7 +95,9 @@ def audit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _skills() -> dict[str, object]:
-    return {i.key: i for i in scan_source("claude_code").by_category(ImportCategory.SKILLS)}
+    return {
+        i.key: i for i in scan_source("claude_code", asked=PRESS).by_category(ImportCategory.SKILLS)
+    }
 
 
 def _installed(name: str) -> Path:
@@ -121,7 +127,9 @@ def test_harmless_prose_no_longer_holds_a_skill_back(noor: Path) -> None:
     incident = _skills()["incident-writeup"]
     assert incident.scan.verdict == "clean" and incident.preselect is True
 
-    report = run_import([scan_source("claude_code")], fingerprints=[incident.fingerprint])
+    report = run_import(
+        [scan_source("claude_code", asked=PRESS)], fingerprints=[incident.fingerprint]
+    )
     assert [r.outcome for r in report.results] == [WriteOutcome.IMPORTED]
     assert (_installed("incident-writeup") / "SKILL.md").is_file()
 
@@ -151,11 +159,13 @@ def test_a_skill_with_warnings_shows_them_before_the_import_and_starts_unticked(
     )
     wire = release.to_dict()
     assert wire["preselected"] is False and wire["scan"]["verdict"] == "warning"
-    assert plans([scan_source("claude_code")])[release.fingerprint].state is ItemState.NEW
+    assert (
+        plans([scan_source("claude_code", asked=PRESS)])[release.fingerprint].state is ItemState.NEW
+    )
 
 
 def test_a_dangerous_skill_is_refused_before_the_import_and_says_why(noor: Path) -> None:
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     yt = {i.key: i for i in result.by_category(ImportCategory.SKILLS)}["yt-transcript"]
 
     assert yt.scan.verdict == "dangerous"
@@ -182,7 +192,7 @@ def test_a_dangerous_skill_is_refused_before_the_import_and_says_why(noor: Path)
 def test_accepting_the_warnings_imports_the_skill_and_the_audit_log_says_so(
     noor: Path, audit
 ) -> None:
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     release = {i.key: i for i in result.by_category(ImportCategory.SKILLS)}["feedsmith-release"]
 
     report = run_import(
@@ -209,7 +219,9 @@ def test_a_skill_with_warnings_picked_without_accepting_them_is_refused_with_why
 ) -> None:
     release = _skills()["feedsmith-release"]
 
-    report = run_import([scan_source("claude_code")], fingerprints=[release.fingerprint])
+    report = run_import(
+        [scan_source("claude_code", asked=PRESS)], fingerprints=[release.fingerprint]
+    )
 
     assert [(r.outcome, r.detail) for r in report.results] == [
         (
@@ -227,7 +239,7 @@ def test_an_acceptance_of_other_warnings_installs_nothing(noor: Path, audit) -> 
     The install compares it with the scan it makes of the bytes it installs, so a script changed
     after the scan (here a second command, which the scan would report as the same one finding) is
     not installed on an acceptance given for the one before."""
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     release = {i.key: i for i in result.by_category(ImportCategory.SKILLS)}["feedsmith-release"]
     script = noor / ".claude" / "skills" / "feedsmith-release" / "scripts" / "bump_version.py"
     script.write_text(
@@ -265,14 +277,20 @@ def _app() -> web.Application:
 @pytest.mark.asyncio
 async def test_the_route_carries_the_acceptance_and_refuses_a_malformed_one(noor: Path) -> None:
     async with TestClient(TestServer(_app())) as client:
-        scanned = await (await client.get("/api/onboarding/import")).json()
+        scanned = await (
+            await client.get("/api/onboarding/import", params={"look_in": PLACE})
+        ).json()
         claude = next(s for s in scanned["sources"] if s["source"] == "claude_code")
         release = next(i for i in claude["items"] if i["key"] == "feedsmith-release")
         assert release["scan"]["findings"][0]["rule"] == "python_exec"
 
         bad = await client.post(
             "/api/onboarding/import",
-            json={"fingerprints": [release["fingerprint"]], "accepted": {"feedsmith": "yes"}},
+            json={
+                "fingerprints": [release["fingerprint"]],
+                "accepted": {"feedsmith": "yes"},
+                "look_in": [PLACE],
+            },
         )
         assert bad.status == 400
         assert "'accepted' must map an item fingerprint" in (await bad.json())["error"]["message"]
@@ -282,6 +300,7 @@ async def test_the_route_carries_the_acceptance_and_refuses_a_malformed_one(noor
             json={
                 "fingerprints": [release["fingerprint"]],
                 "accepted": {release["fingerprint"]: release["scan"]["consent"]},
+                "look_in": [PLACE],
             },
         )
         assert good.status == 202

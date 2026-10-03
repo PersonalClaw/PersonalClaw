@@ -28,6 +28,17 @@ def _make_request(body: dict) -> MagicMock:
     return request
 
 
+def _turn_on_claude_codes_setup() -> None:
+    """What the Settings switch writes: Claude Code's setup turned on, so a lookup by name may
+    read Claude Code's file (a by-name change is no press to look in it)."""
+    from personalclaw.config.loader import config_dir
+
+    path = config_dir() / "config.json"
+    data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    data.setdefault("security", {})["outside_home"] = ["setup:claude_code"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Scope helpers: _set_personalclaw_entry, _set_scope_entry
 # ---------------------------------------------------------------------------
@@ -158,12 +169,14 @@ def scopes(tmp_path, monkeypatch):
 class TestApplyEndpoint:
     @pytest.mark.asyncio
     async def test_import_from_claude_code_copies_spec_into_pclaw(self, scopes):
-        """The Tools-page Import action (personalclaw=True + ccGlobal=True) copies a
-        Claude-Code server's spec into ~/.personalclaw/mcp.json while leaving the
-        Claude Code entry intact — so the native loop can run it."""
+        """A change by name (personalclaw=True + ccGlobal=True) copies a Claude-Code server's
+        spec into ~/.personalclaw/mcp.json while leaving the Claude Code entry intact — so the
+        native loop can run it. A by-name lookup reads Claude Code's file only once its setup is
+        turned on in Settings; the Tools page's own import names its row and that row's place."""
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         mc_path, cc_path, _ = scopes
+        _turn_on_claude_codes_setup()
         # Server exists ONLY in Claude Code's config.
         cc_path.write_text(
             json.dumps({"mcpServers": {"cc-srv": {"command": "npx", "args": ["cc-mcp"]}}})
@@ -191,6 +204,7 @@ class TestApplyEndpoint:
         from personalclaw.dashboard.handlers import mcp as mcp_mod
 
         mc_path, cc_path, _ = scopes
+        _turn_on_claude_codes_setup()
         cc_path.write_text(
             json.dumps({"mcpServers": {"cc-srv": {"command": "npx"}, "other": {"command": "y"}}})
         )

@@ -502,6 +502,11 @@ async def api_mcp_importable(request: web.Request) -> web.Response:
     one POSTs ``/api/mcp/apply`` with ``personalclaw: true`` to copy the spec
     into ``~/.personalclaw/mcp.json`` so it becomes a first-class PClaw server.
 
+    Another tool's setup is a place outside the home: it is looked in only when the request names
+    it (``?look_in=setup:<tool>``, repeated: the Tools page's Look in press) or the owner turned it
+    on in Settings → Security. The page's own load names none, so it reads only what was turned
+    on, and ``tools`` says which tools this answer looked in, for the page to offer the press.
+
     Each row carries what the picker shows and no credential: its transport, the command's name
     and its arguments, or its URL, each with every credential in it masked, and the names of the
     variables and headers it sets (``mcp_discovery.discover_importable_servers``). The import
@@ -516,9 +521,16 @@ async def api_mcp_importable(request: web.Request) -> web.Response:
     """
     from personalclaw.mcp_discovery import discover_importable_servers
     from personalclaw.onboarding_import.floors import screened_failure
+    from personalclaw.onboarding_import.registry import looked_in
 
     try:
-        servers, unreadable = await asyncio.to_thread(discover_importable_servers)
+        asked = looked_in(request.query.getall("look_in", []))
+    except ValueError as exc:
+        return json_error("bad_request", message=str(exc), status=400)
+    try:
+        servers, unreadable, tools = await asyncio.to_thread(
+            discover_importable_servers, asked=asked
+        )
     except Exception as exc:  # noqa: BLE001 — the failure is the answer, never an empty list
         logger.warning("looking for MCP servers to import failed", exc_info=True)
         return json_error(
@@ -529,7 +541,7 @@ async def api_mcp_importable(request: web.Request) -> web.Response:
             ),
             status=500,
         )
-    return web.json_response({"servers": servers, "unreadable": unreadable})
+    return web.json_response({"servers": servers, "unreadable": unreadable, "tools": tools})
 
 
 async def api_mcp_sync(request: web.Request) -> web.Response:
@@ -596,8 +608,9 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
 
         servers = data.setdefault("mcpServers", {})
         if name not in servers:
-            # Server may exist in another scope (agent config, ~/.claude.json).
-            # Create a stub so we can store disabled state here.
+            # Server may be defined only in the agent config (`list_servers` reads PersonalClaw's
+            # own two documents, never another tool's). Create a stub so we can store disabled
+            # state here.
             from personalclaw.mcp_discovery import (  # circular import: mcp_discovery defers imports of personalclaw.agent which shares state with this module  # noqa: E501
                 list_servers as _ls,
             )
@@ -689,9 +702,9 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
 
         servers = data.setdefault("mcpServers", {})
         if server not in servers:
-            # Server may exist in another scope (agent config, ~/.claude.json)
-            # but not in the global settings mcp.json. Create a stub entry to hold
-            # disabledTools state — the ACP agent reads this file for enforcement.
+            # Server may be defined only in the agent config, not in mcp.json (`list_servers`
+            # reads PersonalClaw's own two documents, never another tool's). Create a stub entry
+            # to hold disabledTools state — the ACP agent reads this file for enforcement.
             from personalclaw.mcp_discovery import (  # circular import: mcp_discovery defers imports of personalclaw.agent which shares state with this module  # noqa: E501
                 list_servers as _ls,
             )
@@ -1799,10 +1812,18 @@ def _find_server_spec_anywhere(name: str) -> dict | None:
 
     ``mcp.json`` first, because it defines every server it holds: the agent config's copy of one
     carries its command resolved to a path, which is not the definition the owner allowed
-    (`mcp_grants`). Then the agent config, then Claude Code's user scope. Returns a shallow copy
-    with ``disabled`` stripped (the caller decides whether to disable in its target scope).
+    (`mcp_grants`). Then the agent config, then Claude Code's user scope — only once the owner
+    turned Claude Code's setup on in Settings: a lookup by name is no press to look in it
+    (``outside_home.readable``). Returns a shallow copy with ``disabled`` stripped (the caller
+    decides whether to disable in its target scope).
     """
-    candidates = [_canonical_mcp_json(), _installed_agent_json(), _cc_global_json()]
+    from personalclaw import outside_home
+    from personalclaw.onboarding_import.registry import get_source
+    from personalclaw.onboarding_import.sources import claude_code
+
+    candidates = [_canonical_mcp_json(), _installed_agent_json()]
+    if outside_home.readable(get_source(claude_code.NAME).place):
+        candidates.append(_cc_global_json())
     for p in candidates:
         spec = _load_json_or_empty(p).get("mcpServers", {}).get(name)
         if isinstance(spec, dict) and (spec.get("command") or spec.get("url")):
@@ -2017,10 +2038,11 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
 
     Removing a server is ``DELETE /api/mcp/servers/{name}``, not a change here.
 
-    An import from the Tools page's list carries ``"from": <the row's id>``: the server is then
-    copied exactly as that row showed it, from the tool and the scope it came from — Claude
-    Code's user, local or project ``.mcp.json`` scope, or Codex's ``config.toml``
-    (``mcp_discovery.importable_spec``).
+    An import from the Tools page's list carries ``"from": <the row's id>`` and ``"place": <the
+    row's place>``: the server is then copied exactly as that row showed it, from the tool and
+    the scope it came from — Claude Code's user, local or project ``.mcp.json`` scope, or Codex's
+    ``config.toml`` (``mcp_discovery.importable_spec``). The place is the tool the press reads
+    again; a row id with no place names no tool to look in, and is refused.
 
     After all changes are written, ``rebuild_agent_config`` is called once so the agent config
     (``~/.personalclaw/agents/personalclaw.json``) reflects the new merged state. Returns a
@@ -2028,6 +2050,7 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
     """
     from personalclaw.mcp_discovery import importable_spec
     from personalclaw.onboarding_import.model import FINGERPRINT_RE
+    from personalclaw.onboarding_import.registry import looked_in
 
     try:
         body = await request.json()
@@ -2115,11 +2138,20 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
                     {"name": name, "error": "'from' must be an id from the Import list."}
                 )
                 continue
+            # The row's tool, read again for it: the one other tool this change may look in.
+            asked: frozenset[str] = frozenset()
+            if listed is not None:
+                try:
+                    asked = looked_in([change.get("place")], field="place")
+                except ValueError as exc:
+                    why = f"An import from the Import list names the place its row came from. {exc}"
+                    results.append({"name": name, "error": why})
+                    continue
             if desired_mc and not _scope_has_entry(name, _canonical_mcp_json()):
                 if listed is None:
                     preserved_spec = _find_server_spec_anywhere(name)
                 else:
-                    found = importable_spec(listed)
+                    found = importable_spec(listed, asked=asked)
                     if found is None or found[0] != name:
                         results.append(
                             {

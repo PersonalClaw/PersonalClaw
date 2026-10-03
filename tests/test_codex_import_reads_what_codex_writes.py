@@ -31,6 +31,11 @@ from personalclaw.onboarding_import import ImportCategory, WriteOutcome, run_imp
 
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_tool_homes" / "noor"
 
+#: Codex's setup as a place outside the home. The owner pressing Look in Codex names it, and
+#: that press is what lets a scan read this machine's Codex.
+PLACE = "setup:codex"
+PRESS = frozenset({PLACE})
+
 #: Credentials the fixture carries, fake and real-shaped. None may reach the scan's wire form.
 _GITHUB_PAT = "github_pat_11FIXTURE0NOT0A0REAL0TOKEN0000_forTestsOnly"
 _DB_PASSWORD = "s3a-Gull-Harbour-42"
@@ -102,7 +107,7 @@ def test_a_codex_url_server_is_streamable_http_with_its_headers(noor: Path) -> N
     bare ``url`` means SSE to PersonalClaw, so the scan says ``type: "http"`` itself."""
     from personalclaw.mcp_discovery import mcp_transport
 
-    servers = _items(scan_source("codex"), ImportCategory.MCP_SERVERS)
+    servers = _items(scan_source("codex", asked=PRESS), ImportCategory.MCP_SERVERS)
 
     assert sorted(servers) == ["feedsmith-db", "github", "notes", "openaiDeveloperDocs", "sentry"]
     assert servers["sentry"].payload == {
@@ -128,7 +133,7 @@ def test_the_bearer_token_is_read_from_the_variable_codex_reads(
     wire form, and whole in the definition the MCP writer stores."""
     from personalclaw.onboarding_import.sources import codex
 
-    sentry = _items(scan_source("codex"), ImportCategory.MCP_SERVERS)["sentry"]
+    sentry = _items(scan_source("codex", asked=PRESS), ImportCategory.MCP_SERVERS)["sentry"]
     assert sentry.secrets_skipped == 0, "a variable's NAME is not a withheld credential"
     assert sentry.note == (
         "Its token comes from $SENTRY_ACCESS_TOKEN, which the environment PersonalClaw runs in "
@@ -141,7 +146,7 @@ def test_the_bearer_token_is_read_from_the_variable_codex_reads(
         "X-Sentry-Org": "cartwheel",
         "Authorization": f"Bearer {_SENTRY_TOKEN}",
     }
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     sentry = _items(result, ImportCategory.MCP_SERVERS)["sentry"]
     assert sentry.note == ""
     assert sentry.secrets_skipped == 0, "stored, not left out"
@@ -180,12 +185,12 @@ def test_a_server_codex_turned_off_arrives_turned_off(noor: Path) -> None:
     from personalclaw.config.loader import config_dir
     from personalclaw.mcp_client import McpClientRegistry
 
-    notes = _items(scan_source("codex"), ImportCategory.MCP_SERVERS)["notes"]
+    notes = _items(scan_source("codex", asked=PRESS), ImportCategory.MCP_SERVERS)["notes"]
     assert notes.payload["disabled"] is True
     assert notes.note == "It is turned off in Codex."
     assert notes.preselect is True, "it comes over as Codex has it: there, and off"
 
-    report = run_import([scan_source("codex")], fingerprints=[notes.fingerprint])
+    report = run_import([scan_source("codex", asked=PRESS)], fingerprints=[notes.fingerprint])
     assert [r.outcome for r in report.results] == [WriteOutcome.IMPORTED]
     stored = json.loads((config_dir() / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
     assert stored["notes"]["disabled"] is True
@@ -219,7 +224,7 @@ async def test_tools_import_lists_codex_servers_and_stores_the_bearer_token(
     before = _tree(noor / ".codex")
 
     async with TestClient(TestServer(_app())) as client:
-        listing = await (await client.get("/api/mcp/importable")).json()
+        listing = await (await client.get("/api/mcp/importable", params={"look_in": PLACE})).json()
         rows = {row["name"]: row for row in listing["servers"]}
         assert set(rows) == {"feedsmith-db", "github", "notes", "openaiDeveloperDocs", "sentry"}
         assert {row["backend"] for row in rows.values()} == {"Codex"}
@@ -239,7 +244,12 @@ async def test_tools_import_lists_codex_servers_and_stores_the_bearer_token(
                 "/api/mcp/apply",
                 json={
                     "changes": [
-                        {"name": "sentry", "personalclaw": True, "from": rows["sentry"]["id"]}
+                        {
+                            "name": "sentry",
+                            "personalclaw": True,
+                            "from": rows["sentry"]["id"],
+                            "place": rows["sentry"]["place"],
+                        }
                     ]
                 },
             )
@@ -260,7 +270,7 @@ async def test_tools_import_lists_codex_servers_and_stores_the_bearer_token(
 
 
 def test_every_kind_codex_keeps_is_an_item_or_named_as_not_imported(noor: Path) -> None:
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
 
     assert {k: v for k, v in result.counts().items() if v} == {
         "instructions": 1,
@@ -317,7 +327,7 @@ def test_auth_json_is_counted_and_never_opened(noor: Path, monkeypatch: pytest.M
         return real_open(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", spy)
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
 
     assert "config.toml" in opened, "positive control: the spy sees the scanner's reads"
     assert "auth.json" not in opened
@@ -328,7 +338,7 @@ def test_auth_json_is_counted_and_never_opened(noor: Path, monkeypatch: pytest.M
 
 def test_codex_instructions_prefer_the_override_codex_reads(noor: Path) -> None:
     (noor / ".codex" / "AGENTS.override.md").write_text("Only this week: no refactors.\n")
-    items = _items(scan_source("codex"), ImportCategory.INSTRUCTIONS)
+    items = _items(scan_source("codex", asked=PRESS), ImportCategory.INSTRUCTIONS)
 
     assert items["AGENTS.override.md"].preselect is True
     assert items["AGENTS.md"].preselect is False
@@ -340,7 +350,7 @@ def test_codex_memories_are_what_its_memory_built(noor: Path) -> None:
     (memories / "raw_memories.md").write_text("- raw note\n", encoding="utf-8")
     (memories / "rollout_summaries").mkdir()
     (memories / "rollout_summaries" / "019f89e2.md").write_text("summary\n", encoding="utf-8")
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
 
     assert sorted(_items(result, ImportCategory.MEMORIES)) == [
         "memories/MEMORY.md",
@@ -360,7 +370,7 @@ def test_codex_reads_your_skills_from_both_of_its_places(noor: Path) -> None:
     system.mkdir(parents=True)
     (system / "SKILL.md").write_text("---\nname: skill-creator\ndescription: x\n---\n")
 
-    skills = _items(scan_source("codex"), ImportCategory.SKILLS)
+    skills = _items(scan_source("codex", asked=PRESS), ImportCategory.SKILLS)
     assert sorted(skills) == ["feedsmith-bench", "release-notes"]
     assert skills["release-notes"].origin == "~/.agents/skills"
     # A Codex home named explicitly is read on its own: another home's skills are not its own.
@@ -376,7 +386,7 @@ def test_codex_agents_become_agent_profiles(noor: Path) -> None:
         'sandbox_mode = "read-only"\ndeveloper_instructions = """\nList untested behaviour.\n"""\n',
         encoding="utf-8",
     )
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     agents = _items(result, ImportCategory.AGENTS)
     assert sorted(agents) == [
         "agents/reviewer.toml",
@@ -401,7 +411,7 @@ def test_codex_agents_become_agent_profiles(noor: Path) -> None:
 def test_codex_prompts_keep_their_placeholders_as_variables(noor: Path) -> None:
     from personalclaw.prompt_providers.native_provider import NativePromptProvider
 
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     prompts = _items(result, ImportCategory.PROMPTS)
     triage = prompts["prompts/triage-issue.md"]
     assert (triage.title, triage.target) == ("/prompts:triage-issue", "triage-issue")
@@ -465,7 +475,7 @@ def test_a_command_codex_refuses_is_one_personalclaw_refuses(noor: Path) -> None
     from personalclaw.config.loader import AppConfig
     from personalclaw.security import denied_command
 
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     denied = result.by_category(ImportCategory.DENIED_COMMANDS)
     assert [(i.title, i.payload, i.note) for i in denied] == [
         ("rm -rf", {"pattern": r"\brm\s+-rf\b"}, "Codex's reason: Delete specific paths instead.")
@@ -480,7 +490,7 @@ def test_a_command_codex_refuses_is_one_personalclaw_refuses(noor: Path) -> None
     for allowed in ("rm -rfv build", "farm -rf", "git push origin main"):
         assert getattr(denied_command(allowed), "pattern", None) != r"\brm\s+-rf\b", allowed
 
-    again = run_import([scan_source("codex")], fingerprints=[denied[0].fingerprint])
+    again = run_import([scan_source("codex", asked=PRESS)], fingerprints=[denied[0].fingerprint])
     assert [r.outcome for r in again.results] == [WriteOutcome.EXISTING]
 
 
@@ -520,7 +530,7 @@ def test_rules_that_ask_or_allow_are_named_not_imported(noor: Path) -> None:
     (noor / ".codex" / "rules" / "tui.rules").write_text(
         'prefix_rule(pattern = ["npm", "test"], decision = "allow")\n', encoding="utf-8"
     )
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     left = {n.what: n.count for n in result.not_imported}
     assert left["Command rules that ask first"] == 3
     assert left["Command rules that allow without asking"] == 1
@@ -533,7 +543,7 @@ def test_rules_that_ask_or_allow_are_named_not_imported(noor: Path) -> None:
 def test_a_codex_session_is_a_conversation_with_its_tool_calls_by_name(noor: Path) -> None:
     """Each prompt, each reply and each tool call by name — not a call's output, the model's
     reasoning, or the context Codex puts around a prompt. Titled as Codex lists it."""
-    conversations = _items(scan_source("codex"), ImportCategory.CONVERSATIONS)
+    conversations = _items(scan_source("codex", asked=PRESS), ImportCategory.CONVERSATIONS)
 
     assert sorted(c.title for c in conversations.values()) == [
         "Locust load test for DHL webhook",
@@ -637,7 +647,7 @@ def test_a_session_line_nested_past_the_recursion_limit_does_not_end_the_scan(
     with path.open("a", encoding="utf-8") as handle:
         handle.write("[" * 100_000 + "]" * 100_000 + "\n")
 
-    conversations = _items(scan_source("codex"), ImportCategory.CONVERSATIONS)
+    conversations = _items(scan_source("codex", asked=PRESS), ImportCategory.CONVERSATIONS)
     assert conversations[_REVIEW].title == "Review async fetcher diff"
     assert len(conversations) == 4
 
@@ -683,7 +693,7 @@ def test_a_compressed_session_is_the_same_conversation_as_its_plain_twin(noor: P
     in every field, keyed by the plain name either way."""
     from personalclaw.onboarding_import.sources.codex import read_for_import
 
-    first = scan_source("codex")
+    first = scan_source("codex", asked=PRESS)
     assert [entry.what for entry in first.not_imported] == [
         "Command rules that ask first",
         "Codex settings",
@@ -693,7 +703,7 @@ def test_a_compressed_session_is_the_same_conversation_as_its_plain_twin(noor: P
     compressed_read = read_for_import(compressed)
     (noor / ".codex" / _COMPRESSED).unlink()
     shutil.copyfile(_PLAIN_TWIN, noor / ".codex" / _FETCH_TIMING)
-    plain = _items(scan_source("codex"), ImportCategory.CONVERSATIONS)[_FETCH_TIMING]
+    plain = _items(scan_source("codex", asked=PRESS), ImportCategory.CONVERSATIONS)[_FETCH_TIMING]
 
     assert compressed.fingerprint == plain.fingerprint
     assert (compressed.title, compressed.target, compressed.origin, compressed.note) == (
@@ -726,7 +736,7 @@ def test_a_compressed_session_is_the_same_conversation_as_its_plain_twin(noor: P
 def test_a_compressed_session_comes_over_into_chat_history(noor: Path) -> None:
     from personalclaw.history import ConversationLog
 
-    report = run_import([scan_source("codex")])
+    report = run_import([scan_source("codex", asked=PRESS)])
     outcomes = {r.key: r.outcome for r in report.results}
     assert outcomes[_FETCH_TIMING] is WriteOutcome.IMPORTED
 
@@ -745,12 +755,12 @@ def test_a_compressed_session_comes_over_into_chat_history(noor: Path) -> None:
 def test_a_session_codex_compresses_after_an_import_is_already_here(noor: Path) -> None:
     """Codex compresses a session a week after its last change. The one an earlier import
     brought over is the same item afterwards, not a second copy or a conflict to review."""
-    run_import([scan_source("codex")])
+    run_import([scan_source("codex", asked=PRESS)])
     plain = noor / ".codex" / _REVIEW
     plain.with_name(plain.name + ".zst").write_bytes(_zstd(plain.read_bytes()))
     plain.unlink()
 
-    again = run_import([scan_source("codex")])
+    again = run_import([scan_source("codex", asked=PRESS)])
     assert {r.key: r.outcome for r in again.results}[_REVIEW] is WriteOutcome.EXISTING
 
 
@@ -767,7 +777,7 @@ def test_a_session_codex_is_compressing_is_one_session(noor: Path) -> None:
     (archived / (name + ".zst")).write_bytes(_zstd(b"{}\n"))
     (archived / (name + ".zst.compress.1.0.tmp")).write_bytes(b"half a frame")
 
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     conversations = _items(result, ImportCategory.CONVERSATIONS)
     assert conversations[_REVIEW].title == "Review async fetcher diff"
     assert len(conversations) == 4
@@ -805,7 +815,7 @@ def test_a_damaged_compressed_session_is_named_and_the_rest_come_over(
     path = noor / ".codex" / _COMPRESSED
     path.write_bytes(damage(path.read_bytes()))
 
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     conversations = _items(result, ImportCategory.CONVERSATIONS)
     assert _FETCH_TIMING not in conversations
     assert len(conversations) == 3, "the other sessions still come over"
@@ -841,7 +851,7 @@ def test_a_session_past_the_size_limit_is_named_as_too_large_compressed_or_not(
     plain = noor / ".codex" / _REVIEW
     plain.write_bytes(plain.read_bytes() + (json.dumps(output) + "\n").encode())
 
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     conversations = _items(result, ImportCategory.CONVERSATIONS)
     assert _FETCH_TIMING not in conversations and _REVIEW not in conversations
     assert len(conversations) == 2
@@ -895,7 +905,7 @@ def test_import_lands_each_codex_kind_where_personalclaw_reads_it(noor: Path) ->
     from personalclaw.history import ConversationLog
 
     before = _tree(noor / ".codex")
-    report = run_import([scan_source("codex")])
+    report = run_import([scan_source("codex", asked=PRESS)])
     outcomes = {r.key: r.outcome for r in report.results}
     assert WriteOutcome.CONFLICT not in outcomes.values()
 
@@ -932,14 +942,14 @@ def test_import_lands_each_codex_kind_where_personalclaw_reads_it(noor: Path) ->
 
 
 def test_a_second_codex_import_finds_everything_already_here(noor: Path) -> None:
-    first = run_import([scan_source("codex")])
+    first = run_import([scan_source("codex", asked=PRESS)])
     imported = {r.key for r in first.results if r.outcome is WriteOutcome.IMPORTED}
-    again = run_import([scan_source("codex")])
+    again = run_import([scan_source("codex", asked=PRESS)])
     assert {r.outcome for r in again.results if r.key in imported} == {WriteOutcome.EXISTING}
 
 
 def test_the_codex_environment_is_this_tests_own(noor: Path) -> None:
     """Guard for every test above: the scan reads the copy, never a developer's ``~/.codex``."""
-    result = scan_source("codex")
+    result = scan_source("codex", asked=PRESS)
     assert result.root == str(noor / ".codex")
     assert os.environ["CODEX_HOME"] == str(noor / ".codex")

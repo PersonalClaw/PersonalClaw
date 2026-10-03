@@ -35,6 +35,11 @@ from personalclaw.security import redact_credentials
 
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_tool_homes" / "noor"
 
+#: The owner's press, Look in Claude Code and Codex: the two tools' setups, which a scan
+#: reads on this machine only for a request that names them.
+LOOK = ["setup:claude_code", "setup:codex"]
+PRESS = frozenset(LOOK)
+
 #: The Slack incoming webhook the fixture's CLAUDE.md posts to. Fake, but shaped exactly like a
 #: live one, so the committed fixture carries a marker instead (the forge's push protection
 #: refuses a commit that holds one). Assembled here and planted into the copy.
@@ -170,7 +175,7 @@ def test_a_fine_grained_github_token_is_a_credential() -> None:
 def test_a_slack_webhook_in_claude_md_never_reaches_memory(noor: Path) -> None:
     from personalclaw.config.loader import config_dir
 
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     notes = {item.key: item for item in result.items}["CLAUDE.md"]
     assert _SLACK_PATH not in notes.text
     assert "https://hooks.slack.com/[REDACTED: webhook]" in notes.text
@@ -192,7 +197,10 @@ def test_a_fine_grained_token_pasted_into_a_memory_is_redacted(noor: Path) -> No
         topic.read_text(encoding="utf-8") + f"\nThe release job's token is {_GITHUB_PAT}.\n",
         encoding="utf-8",
     )
-    memories = {i.key: i for i in scan_source("claude_code").by_category(ImportCategory.MEMORIES)}
+    memories = {
+        i.key: i
+        for i in scan_source("claude_code", asked=PRESS).by_category(ImportCategory.MEMORIES)
+    }
     maintainers = memories["projects/-Users-noor-src-feedsmith/memory/maintainers.md"]
     assert _GITHUB_PAT not in maintainers.text
     assert maintainers.redactions == 1
@@ -205,7 +213,7 @@ def test_a_password_inside_a_database_url_goes_only_to_the_credential_store(noor
     the credential store and nowhere else — and the Sentry token beside it is nowhere at all."""
     from personalclaw.config.loader import config_dir
 
-    report = run_import([scan_source("claude_code")])
+    report = run_import([scan_source("claude_code", asked=PRESS)])
     assert WriteOutcome.REJECTED not in {r.outcome for r in report.results}
 
     assert not (config_dir() / "onboarding" / "staged").exists()
@@ -219,7 +227,7 @@ def test_claude_codes_own_options_are_named_and_none_is_counted_as_a_credential(
 ) -> None:
     """Nothing in the fixture's Claude Code home is left out: it has no credential file, and every
     value its MCP servers set is stored. A boolean named ``includeCoAuthoredBy`` is an option."""
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
 
     assert result.secrets_skipped == 0
     settings = {n.what: n for n in result.not_imported}["Claude Code settings"]
@@ -239,7 +247,7 @@ def test_a_command_claude_code_refuses_is_one_personalclaw_refuses(noor: Path) -
     from personalclaw.security import denied_command, denied_command_patterns
 
     force, rm = r"\bgit\s+push\s+--force\b", r"\brm\s+-rf\b"
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     denied = {i.title: i for i in result.by_category(ImportCategory.DENIED_COMMANDS)}
     assert {title: i.payload["pattern"] for title, i in denied.items()} == {
         "git push --force": force,
@@ -270,7 +278,7 @@ def test_a_refused_command_that_holds_a_credential_is_left_out_and_counted(noor:
     token = "sk-ant-api03-" + "Q" * 40
     _deny(noor, f"Bash(curl -H 'x-api-key: {token}' https://api.example.com:*)")
 
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     titles = [i.title for i in result.by_category(ImportCategory.DENIED_COMMANDS)]
     assert titles == ["git push --force", "rm -rf"]
     assert result.secrets_skipped == 1
@@ -285,7 +293,7 @@ def test_a_rule_this_import_cannot_turn_into_a_command_is_named(noor: Path) -> N
     starts with; a rule about files or tools is not about commands at all."""
     _deny(noor, "Bash(git * main)", "Bash", "WebFetch(domain:pastebin.com)")
 
-    left = {n.what: n for n in scan_source("claude_code").not_imported}
+    left = {n.what: n for n in scan_source("claude_code", asked=PRESS).not_imported}
     assert left["Refused commands with wildcards"].count == 2
     assert left["Refused commands with wildcards"].why == (
         "A refused command comes over as the words it starts with. These rules use a wildcard "
@@ -299,7 +307,7 @@ def test_no_import_stages_a_file_nothing_reads(noor: Path) -> None:
     no file set aside for a review nothing offers."""
     from personalclaw.config.loader import config_dir
 
-    run_import([scan_source("claude_code"), scan_source("codex")])
+    run_import([scan_source("claude_code", asked=PRESS), scan_source("codex", asked=PRESS)])
     assert not (config_dir() / "onboarding" / "staged").exists()
     assert "settings" not in {category.value for category in ImportCategory}
 
@@ -336,17 +344,21 @@ async def test_the_onboarding_step_stores_a_server_the_way_tools_import_does(
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "noor-tools-import"))
     async with TestClient(TestServer(_app())) as client:
-        listing = await (await client.get("/api/mcp/importable")).json()
+        query = [("look_in", place) for place in LOOK]
+        listing = await (await client.get("/api/mcp/importable", params=query)).json()
         # Codex has a `github` server too: the rows are Claude Code's, as the scan's items are.
         rows = {row["name"]: row for row in listing["servers"] if row["backend"] == "Claude Code"}
-        changes = [{"name": n, "personalclaw": True, "from": rows[n]["id"]} for n in names]
+        changes = [
+            {"name": n, "personalclaw": True, "from": rows[n]["id"], "place": rows[n]["place"]}
+            for n in names
+        ]
         answer = await (await client.post("/api/mcp/apply", json={"changes": changes})).json()
         assert all("error" not in row for row in answer["results"]), answer
     by_tools = {n: _stored_servers()[n] for n in names}
     resolved_by_tools = {n: resolve_mcp_spec(n, spec) for n, spec in by_tools.items()}
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "noor-onboarding"))
-    result = scan_source("claude_code")
+    result = scan_source("claude_code", asked=PRESS)
     picks = [
         i.fingerprint for i in result.by_category(ImportCategory.MCP_SERVERS) if i.target in names
     ]

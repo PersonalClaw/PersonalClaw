@@ -65,6 +65,13 @@ import {
  *  **Skipping is free too.** Nothing here is required to continue, and a machine with
  *  no other agent tool gets one honest line instead of a dead step.
  *
+ *  **Nothing is read until she asks.** Another tool's setup is a place outside PersonalClaw's
+ *  home, and Settings › Security promises PersonalClaw reads only inside it unless she turns a
+ *  place on. So the step opens by reading only the tools turned on there, and asks to look in the
+ *  rest (`AskToLook`): its press names them (`look_in`), and every read the step makes after it —
+ *  the listing again once the reading pass finishes, Scan again, the import's own re-scan — names
+ *  the tools she pressed for and no other.
+ *
  *  **A months-long history is the normal case, not an edge.** Thousands of transcripts —
  *  12,005 files and 5.3 GB in the history this was measured on — took 41 s to read before the
  *  step could show anything, and the import ran as one request with no progress. So the scan
@@ -249,12 +256,14 @@ export function ImportStep({ onDone, onSkip }: {
   const [reading, setReading] = useState<OnboardingImportReading | null>(null)
   const scanRef = useRef<OnboardingImportScan | null>(null)
   scanRef.current = scan
+  /** The tools' setups she pressed Look in for on this step: what every later read names. */
+  const lookedIn = useRef<string[]>([])
 
   const load = useCallback(() => {
     setScan(null)
     setScanError(null)
     setInterrupted(false)
-    api.onboardingImportScan().then((s) => {
+    api.onboardingImportScan(lookedIn.current).then((s) => {
       setScan(s)
       setReading(s.reading ?? null)
       // Everything that CAN come over starts ticked: the user came here to bring their
@@ -272,10 +281,16 @@ export function ImportStep({ onDone, onSkip }: {
   }, [])
   useEffect(load, [load])
 
+  /** Her press: look in these tools too, and list what they hold. */
+  const lookIn = useCallback((places: string[]) => {
+    lookedIn.current = [...new Set([...lookedIn.current, ...places])]
+    load()
+  }, [load])
+
   /** The listing fetched again once the reading pass has finished: the same screen, with every
    *  count final. What the user chose and opened stays as it was. */
   const refresh = useCallback(() => {
-    api.onboardingImportScan().then((s) => {
+    api.onboardingImportScan(lookedIn.current).then((s) => {
       const before = fingerprintsOf(scanRef.current)
       setPicked((prev) => repick(prev, before, s))
       setScan(s)
@@ -332,6 +347,8 @@ export function ImportStep({ onDone, onSkip }: {
   }, [readingRuns, watching, watchedId, refresh, settle])
 
   const detected = useMemo(() => (scan?.sources ?? []).filter((s) => s.detected), [scan])
+  /** The tools this answer did not read at all: neither pressed for nor turned on in Settings. */
+  const unlooked = useMemo(() => (scan?.sources ?? []).filter((s) => !s.looked), [scan])
   const groups = useMemo(() => (scan ? groupsOf(scan) : []), [scan])
   /** Every choosable item, in scan order — the order the pick is sent in. */
   const choosable = useMemo(
@@ -371,6 +388,9 @@ export function ImportStep({ onDone, onSkip }: {
       const started = await api.runOnboardingImport({
         fingerprints: chosen.map((i) => i.fingerprint),
         ...(Object.keys(accepted).length ? { accepted } : {}),
+        // The tools she looked in: the import's own re-scan reads those (and the ones turned on in
+        // Settings), and no other.
+        ...(lookedIn.current.length ? { look_in: lookedIn.current } : {}),
       })
       if (started.status === 'running') setJob(started)
       else settle(started)
@@ -409,9 +429,11 @@ export function ImportStep({ onDone, onSkip }: {
       ? 'Importing your setup…'
       : scan === null
         ? ''  // the loading region below carries this phase
-        : detected.length === 0
-          ? 'No other agent tools were found on this machine.'
-          : `Found ${detected.map((s) => s.display_name).join(' and ')}.`
+        : detected.length === 0 && unlooked.length > 0
+          ? `PersonalClaw has not looked in ${unlooked.map((s) => s.display_name).join(' or ')}.`
+          : detected.length === 0
+            ? 'No other agent tools were found on this machine.'
+            : `Found ${detected.map((s) => s.display_name).join(' and ')}.`
 
   if (job) {
     return (
@@ -464,13 +486,14 @@ export function ImportStep({ onDone, onSkip }: {
   }
   if (scan === null) {
     // Said, not just spun: on a months-long history this takes a few seconds, and a bare
-    // spinner reads as a step that is stuck.
+    // spinner reads as a step that is stuck. Before her press the step reads no tool she did not
+    // turn on, so it does not say it is looking.
     return (
       <div role="status" aria-busy="true" className="flex items-center gap-s py-s">
         <LoadingStatus what="detected tools" />
         <Loader2 size={18} className="animate-spin text-on-surface-low" aria-hidden="true" />
         <span data-type="body-s" className="text-on-surface-var" aria-hidden="true">
-          Looking for other agent tools on this machine…
+          {lookedIn.current.length > 0 ? 'Looking in the tools you chose…' : 'Getting the step ready…'}
         </span>
       </div>
     )
@@ -514,7 +537,9 @@ export function ImportStep({ onDone, onSkip }: {
 
       {report
         ? <Report report={report} scan={scan} onContinue={() => onDone(summaryOfReport(report))} />
-        : detected.length === 0
+        : detected.length === 0 && unlooked.length > 0
+          ? <AskToLook sources={scan.sources} onLook={lookIn} onSkip={onSkip} />
+          : detected.length === 0
           ? <Nothing looked={scan.sources} onContinue={() => onDone('Nothing to import')} />
           : (
             <>
@@ -525,6 +550,7 @@ export function ImportStep({ onDone, onSkip }: {
               </p>
 
               <ReadingLine reading={reading ?? scan.reading ?? null} />
+              {unlooked.length > 0 && <LookAlsoIn sources={unlooked} onLook={lookIn} />}
 
 
               <motion.div className="flex flex-col gap-s" initial="initial" animate="animate"
@@ -620,6 +646,49 @@ function ImportProgress({ job }: { job: OnboardingImportJob }) {
           ? 'Stopping after the item it is on. Everything that has landed is kept.'
           : 'Your setup comes over first, then your conversations. Stop at any point: everything that has landed is kept, and importing again brings over the rest.'}
       </p>
+    </div>
+  )
+}
+
+/** The step before any tool is read: the question its heading asks, and the press that answers it.
+ *  A tool already read (turned on in Settings › Security) is said to hold nothing to bring over,
+ *  since it is not on the press. */
+function AskToLook({ sources, onLook, onSkip }: {
+  sources: OnboardingImportSource[]
+  onLook: (places: string[]) => void
+  onSkip: () => void
+}) {
+  const ask = sources.filter((s) => !s.looked)
+  const read = sources.filter((s) => s.looked)
+  const names = ask.map((s) => s.display_name).join(' and ')
+  return (
+    <div className="flex flex-col gap-m">
+      <p data-type="body-s" className="text-on-surface-var">
+        PersonalClaw can look in {names} for the setup you made there: instructions, memories, MCP
+        servers, skills, agents, prompts and conversations. It reads {ask.length === 1 ? 'its' : 'their'} files
+        only when you ask, changes nothing in them, and brings nothing over until you choose what to import.
+      </p>
+      {read.length > 0 && (
+        <p data-type="caption" className="text-on-surface-low">
+          {read.map((s) => s.display_name).join(' and ')}{read.every((s) => s.allowed) ? ', which you turned on in Settings › Security,' : ''} {read.length === 1 ? 'has' : 'have'} nothing to bring over.
+        </p>
+      )}
+      <StepActions primary={{ label: `Look in ${names}`, onClick: () => onLook(ask.map((s) => s.place)) }}
+        secondary={{ label: 'Skip this', onClick: onSkip }} />
+    </div>
+  )
+}
+
+/** Beside what was found: each tool not looked in yet, with its own press. */
+function LookAlsoIn({ sources, onLook }: { sources: OnboardingImportSource[]; onLook: (places: string[]) => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-s">
+      <span data-type="caption" className="text-on-surface-low">
+        PersonalClaw has not looked in {sources.map((s) => s.display_name).join(' or ')}.
+      </span>
+      {sources.map((s) => (
+        <Button key={s.place} size="xs" variant="ghost" onClick={() => onLook([s.place])}>Look in {s.display_name}</Button>
+      ))}
     </div>
   )
 }
