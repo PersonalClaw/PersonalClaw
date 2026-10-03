@@ -134,7 +134,11 @@ If you need the URL again later — it is auth-gated — run `personalclaw token
 which prints a ready-to-open URL with a fresh credential.
 
 First-run onboarding in the dashboard asks for your name and walks you to
-provider setup.
+provider setup. Until you finish or skip it, the dashboard's other pages wait for
+it, except the security controls: **Settings → Devices**, **Security**, **Sender
+trust**, **Guardrails** and **External access** open at any time, so you can sign a
+device out or turn on the incident kill switch in the middle of setup. Setup links
+to them as **Security controls**.
 
 **Already running [Ollama](https://ollama.com)?** The first-run **essentials**
 step detects a local Ollama automatically and offers a one-click bind with **no

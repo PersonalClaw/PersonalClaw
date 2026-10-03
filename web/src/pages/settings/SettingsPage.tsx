@@ -52,6 +52,8 @@ import { SettingsHome } from './SettingsHome'
 import type { RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
 import { PageTitle } from '../../ui/PageTitle'
+import { TextLink } from '../../ui/TextLink'
+import { OPEN_DURING_SETUP } from '../../app/onboarding/openDuringSetup'
 
 // A subpage panel's render context: `go` navigates between subpages, `navigate` is
 // the raw router (for cross-section links), and `query`/`setQuery` let a panel put
@@ -139,8 +141,16 @@ const SUBPAGES: SubPage[] = [
  *  opens that subpage at #/settings/<id> with a Settings › <Label> breadcrumb. No
  *  left-nav: the home grid IS the navigation. A subpage's own nested state (tabs,
  *  expanded provider) rides `?query` so it's deep-linkable + refresh/Back-safe. */
-export function SettingsPage({ sub, navigate, query, setQuery }: RouteProps) {
+export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = false }: RouteProps & {
+  /** Opened while setup holds every other page (a first run not yet finished or skipped, or a
+   *  re-run in progress), which the shell does only for the pages setup never holds
+   *  (`app/onboarding/openDuringSetup`). The Settings home waits for setup then, so the way back
+   *  leads to setup, and the page names the others setup never holds: the shell draws no rail, and
+   *  this is how one of them reaches the next. */
+  duringSetup?: boolean
+}) {
   const go = (id: string) => navigate?.(id ? `settings/${id}` : 'settings')
+  const backToSetup = () => navigate?.('onboarding')
   const current = sub ? SUBPAGES.find((s) => s.id === sub) : undefined
 
   // Legacy deep-link: Vocabulary merged into Speech & Transcription (the `voice`
@@ -169,15 +179,18 @@ export function SettingsPage({ sub, navigate, query, setQuery }: RouteProps) {
       <TopBar
         left={
           <div className="flex items-center gap-1 min-w-0">
-            <IconButton icon={ArrowLeft} label="Back to Settings" size={36} onClick={() => go('')} />
-            {/* The "Settings" crumb and its chevron drop below `sm`. They are the one duplicate in this
-                row — the arrow to their left already goes to Settings and is already NAMED "Back to
-                Settings" — and at 390px they were eating the width the section name needs: the truncating
-                label measured 20px before the arrow stopped being squeezed and 4px after. Dropping them
-                returns that width to the thing that says where you are. Desktop is untouched. */}
+            {duringSetup
+              ? <IconButton icon={ArrowLeft} label="Back to setup" size={36} onClick={backToSetup} />
+              : <IconButton icon={ArrowLeft} label="Back to Settings" size={36} onClick={() => go('')} />}
+            {/* The "Settings" crumb ("Setup" while setup holds the other pages) and its chevron drop
+                below `sm`. They are the one duplicate in this row — the arrow to their left already
+                goes to the same place and is already NAMED for it ("Back to Settings") — and at 390px
+                they were eating the width the section name needs: the truncating label measured 20px
+                before the arrow stopped being squeezed and 4px after. Dropping them returns that width
+                to the thing that says where you are. Desktop is untouched. */}
             <span className="hidden shrink-0 items-center gap-1 sm:inline-flex">
-              <button type="button" onClick={() => go('')}
-                className="text-on-surface-low text-[1.0625rem] transition-colors hover:text-on-surface" style={fvs(470)}>Settings</button>
+              <button type="button" onClick={duringSetup ? backToSetup : () => go('')}
+                className="text-on-surface-low text-[1.0625rem] transition-colors hover:text-on-surface" style={fvs(470)}>{duringSetup ? 'Setup' : 'Settings'}</button>
               <ChevronRight size={16} className="shrink-0 text-on-surface-low/60" />
             </span>
             <span className="flex items-center gap-1.5 min-w-0 text-on-surface text-[1.0625rem]" style={fvs(470)}>
@@ -189,9 +202,32 @@ export function SettingsPage({ sub, navigate, query, setQuery }: RouteProps) {
       />
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto px-2xl py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+          {duringSetup && <SecurityControlsNav current={current.id} />}
           {current.render({ go, navigate, query, setQuery })}
         </div>
       </div>
     </div>
+  )
+}
+
+/** The pages setup never holds, named on each of them while setup holds the rest. In Settings' own
+ *  order and under Settings' own labels, so they read as the pages they are; this page is named
+ *  rather than linked, and marked as the one open. */
+function SecurityControlsNav({ current }: { current: string }) {
+  return (
+    <nav aria-label="Security controls" className="mb-l">
+      <p data-type="body-s" className="text-on-surface-low">
+        Setup isn&rsquo;t finished. These pages never wait for it:
+      </p>
+      <ul className="mt-xs flex flex-wrap gap-x-l gap-y-xs">
+        {SUBPAGES.filter((s) => OPEN_DURING_SETUP.includes(s.id)).map((s) => (
+          <li key={s.id}>
+            {s.id === current
+              ? <span data-type="body-s" aria-current="page" className="text-on-surface">{s.label}</span>
+              : <TextLink href={`#/settings/${s.id}`} size="sm" ink="emphasis">{s.label}</TextLink>}
+          </li>
+        ))}
+      </ul>
+    </nav>
   )
 }

@@ -749,6 +749,16 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                 {' '}Pick setup back up any time: Settings &rarr; Account &rarr; Run setup again.
               </p>
             )}
+            {/* 🔑 THE DOOR TO WHAT SETUP NEVER HOLDS, on every step. Signing a device out, replacing
+                the sign-in key and the incident switch run on nothing setup asks, so the guard never
+                holds their pages (`onboarding/openDuringSetup`) — but this screen has no rail, so
+                without this link they could be reached only by typing an address. It opens on
+                Devices, the likeliest need, and each of those pages names the others. On the canvas,
+                so the link takes the emphasis ink. */}
+            <p data-type="caption" className="mx-auto mt-s text-center text-on-surface-low" style={{ maxWidth: 380 }}>
+              <TextLink href="#/settings/devices" ink="emphasis">Security controls</TextLink> never wait for
+              setup, so you can sign a device out or suspend unattended work at any time.
+            </p>
           </motion.div>
           </div>
 

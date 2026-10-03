@@ -14,6 +14,7 @@ import { ChatPage } from '../pages/ChatPage'
 import { useIdentity } from './identity'
 import { Onboarding } from './Onboarding'
 import { peekOnboardingExit, clearOnboardingExit, setOnboardingExit } from './onboarding/exitTo'
+import { opensDuringSetup } from './onboarding/openDuringSetup'
 import { onSetupRerun } from './onboarding/rerun'
 import { ProductTour } from './onboarding/ProductTour'
 import { useHashRoute } from './useHashRoute'
@@ -454,6 +455,11 @@ function AppInner() {
     if (identityStatus !== 'ready') return
     const wantsSetup = !onboarded || setupRerun
     if (wantsSetup) {
+      // 🔑 THE PAGES THAT CUT SOMETHING OFF ARE NEVER HELD (`onboarding/openDuringSetup`): signing a
+      // device out or suspending unattended work runs on nothing setup asks, and cannot wait for it.
+      // No redirect, and no destination recorded, since nothing was deferred; one recorded earlier
+      // stays pending, because a visit here is not the end of setup.
+      if (opensDuringSetup(route, sub)) return
       if (route !== 'onboarding') {
         if (ROUTABLE.has(route) && route !== 'dashboard') setOnboardingExit([route, sub].filter(Boolean).join('/'))
         // 🔴 REPLACE FOR A FIRST RUN, PUSH FOR A RE-RUN. A push here made the browser's Back button a
@@ -539,6 +545,37 @@ function AppInner() {
       </div>
     )
   }
+  // A page setup never holds (`onboarding/openDuringSetup`), while setup holds every other one: on a
+  // home whose setup is not done, and during a deliberate re-run, which holds them the same way.
+  // Full-screen like the flow, with no rail: every rail destination but these would only lead back
+  // into setup, so the page itself names the way back and the other pages like it (`duringSetup`).
+  // It carries the incident banner, since one of these pages is where that switch is turned on, and
+  // the toast and dialog hosts: every control here asks before it acts and reports how it went, and a
+  // confirmation with no host to render it never resolves, which leaves the control doing nothing.
+  // No shell corners are drawn, so the page header keeps none of their room (as in embed mode).
+  if ((!onboarded || setupRerun) && opensDuringSetup(route, sub)) {
+    return (
+      <div className="flex h-full flex-col" style={{
+        background: 'var(--color-canvas)',
+        '--shell-corner-l': '0px',
+        '--shell-corner-lh': '0px',
+        '--shell-corner-r': '0px',
+        '--shell-corner-rh': '0px',
+      } as React.CSSProperties}>
+        <IncidentBanner />
+        <main className="min-h-0 flex-1">
+          <ErrorBoundary resetKey={sub}>
+            <Suspense fallback={<PageFallback />}>
+              <SettingsPage sub={sub} navigate={navigate} navEpoch={navEpoch} query={query} setQuery={setQuery} duringSetup />
+            </Suspense>
+          </ErrorBoundary>
+        </main>
+        <Toaster />
+        <DialogHost />
+      </div>
+    )
+  }
+
   // `sub` is the step's slug, `navigate` makes each step a history entry, and `onFinished` withdraws
   // a re-run request so the guard above — still the only navigator — moves the user out.
   //
