@@ -683,6 +683,14 @@ through one reporter, `delivery.report_run`, with the same words, route and
 dedup. The route was the scheduled fire's alone, so a Run now of a trigger set
 to report to a chat channel told that channel nothing.
 
+**A collapsed repeat stays collapsed.** "Collapse repeat failures"
+(`failure_policy.dedupe_hash`) tells the same error once an hour
+(`delivery.FAILURE_REMINDER_SECS`). The agent task a fire starts reports through
+the same reporter when it ends, and its own note goes out only when its trigger's
+route has not told the outcome, which `report_run` counts a collapsed repeat as
+having done when it first failed. The repeat used to reach the bell anyway, as
+the agent's own note.
+
 **A report says what the run produced.** "X finished" carries the action's
 sentence for a person, else what it printed (`schedule_history.summary_for_result`),
 and "X failed" says why (`schedule_history.failure_for_result`): its error, else

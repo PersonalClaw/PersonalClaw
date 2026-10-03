@@ -60,7 +60,9 @@ one process that boots everything:
   remediation engine that owns store maintenance — FTS reconciliation, the
   history/SEL prunes, skill aging — see `resilience/remediation.py`), autonudge
   (`autonudge.py`: reactive same-session self-prompting), inbox polling
-  (`inbox_service.py`), background subagents (`subagent.py`), and MCP server
+  (`inbox_service.py`), background subagents (`subagent.py`; the note a person
+  reads when one ends is named by its run and says what happened or why it failed,
+  and the same failure is told once an hour, `subagent_notes.py`), and MCP server
   wiring.
 - **The dashboard server** — `dashboard/server.py`, an aiohttp app serving the
   REST API, WebSocket event fan-out, and the built SPA (see below).

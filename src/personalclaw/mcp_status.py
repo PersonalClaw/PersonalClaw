@@ -17,6 +17,10 @@ headline: a traceback is not a reason.
 started again, by an agent's next turn or by the Tools page's next look, until its owner presses
 Retry or its definition changes. A failure that started nothing (its command is not there) or that
 waits on its owner (a sign-in) does not count toward it.
+
+**A server still starting is not a failure yet** (:func:`still_starting`): one that had not answered
+by its deadline and was still running is left to finish (`mcp_stdio`), because a first start can be
+installing what it runs. Its card reads as being checked until it is looked at again.
 """
 
 from __future__ import annotations
@@ -51,6 +55,9 @@ class StartFailure:
     #: Whether it counts toward :data:`STOP_AFTER`. A start that ran nothing (no command) or that
     #: waits on its owner (a sign-in) is not a failure to keep retrying.
     counts: bool = True
+    #: It has not finished starting, so nothing is known yet (:func:`still_starting`): its card
+    #: reads as being checked, not as an error.
+    pending: bool = False
 
 
 # ── the cause line in a server's error output ──────────────────────────────────────────────────
@@ -128,6 +135,32 @@ def did_not_answer(server: str, waited: float, stderr: str = "") -> StartFailure
         f"{server} did not answer within {_seconds(waited)}, so PersonalClaw stopped it.",
         detail=stderr.strip(),
     )
+
+
+def still_starting(
+    server: str, waited: float, stderr: str = "", *, allowance: float, earlier: bool = False
+) -> StartFailure:
+    """*server* had not answered within *waited* and was still running, so it was left to finish
+    starting for up to *allowance* (`mcp_stdio.FINISH_SECS`). With *earlier*, this start ran
+    nothing: an earlier start of the same program was still finishing, and it waited for that one.
+    Either way it is looked at again once that start ends, so it is not counted."""
+    if earlier:
+        headline = (
+            f"{server} is still finishing an earlier start, so it was not started a second time. "
+            "PersonalClaw checks it again when that start ends."
+        )
+    else:
+        headline = (
+            f"{server} has not answered after {_seconds(waited)} and is still starting. A first "
+            "start can take longer while it installs what it runs, so PersonalClaw lets it finish, "
+            f"for up to {_minutes(allowance)}, and then checks it again."
+        )
+    return StartFailure(headline, detail=stderr.strip(), counts=False, pending=True)
+
+
+def _minutes(secs: float) -> str:
+    minutes = secs / 60
+    return "1 minute" if minutes == 1 else f"{minutes:g} minutes"
 
 
 def command_not_found(command: str) -> StartFailure:

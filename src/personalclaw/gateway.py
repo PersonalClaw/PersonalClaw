@@ -37,6 +37,7 @@ from personalclaw import (
     notification_kinds,
     run_bounds,
     shutdown_event,
+    subagent_notes,
 )
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
@@ -2116,8 +2117,9 @@ class GatewayOrchestrator:
 
         For an agent task (`_subagent_done`) and a workflow run (`EngineServices.
         report_to_trigger`): the fire, or the Run now, that started either said nothing, since
-        nothing had happened yet (`delivery.says_nothing_now`). Returns whether a note went out;
-        a trigger whose route is ``none`` sends nothing.
+        nothing had happened yet (`delivery.says_nothing_now`). Returns whether its route has told
+        it (`delivery.report_run`): a repeat its trigger collapses was told when it first failed. A
+        trigger whose route is ``none`` sends nothing.
 
         A one-shot that retires after its run (`delete_after_run`) and only started this work
         leaves the list here, once the work has done what it was for and the note has gone out:
@@ -3771,6 +3773,9 @@ class GatewayOrchestrator:
             _task.add_done_callback(self._background_tasks.discard)
             _task.add_done_callback(_done)
 
+        # What this gateway's notes said about failed agent work, so a failure is told once.
+        failure_notes = subagent_notes.FailureNotes()
+
         async def _subagent_done(batch: "list[SubagentInfo]") -> None:
             # A batch of completions that all share ONE parent session,
             # delivered in a SINGLE parent turn. The manager coalesces per parent, so
@@ -3965,7 +3970,10 @@ class GatewayOrchestrator:
                     trigger_id, error=why_it_failed(member), summary=what_it_said(member)
                 )
 
-            told = all([_reported(m) for m in batch])
+            # Told: on each member's trigger route, or, the same failure, by a note within the hour.
+            told = all([_reported(m) for m in batch]) or failure_notes.already_told(
+                parent_key, batch
+            )
             # Why the parent was not handed the result, when its announce was refused
             # (`AnnounceRefused`): news a trigger's own note does not carry.
             _refusal = ""
@@ -4002,14 +4010,8 @@ class GatewayOrchestrator:
             # reads the same text the announce carries.
             details = {m.id: _detail(m) for m in batch}
 
-            def _ended(member: "SubagentInfo") -> str:
-                """How a member ended, in one word: its owner's Deny is not a failure."""
-                if member.declined is True:
-                    return "declined"
-                return "failed" if member.error else "completed"
-
             def _one_block(member: "SubagentInfo") -> str:
-                m_status = _ended(member)
+                m_status = subagent_notes.ended(member)
                 m_task, _ = redact_exfiltration_urls(member.task)
                 m_task, _ = redact_credentials(m_task)
                 m_task = m_task[:100]
@@ -4022,37 +4024,25 @@ class GatewayOrchestrator:
                 )
 
             blocks = [_one_block(m) for m in batch]
-            n_failed = sum(1 for m in batch if _ended(m) == "failed")
+            n_failed = sum(1 for m in batch if subagent_notes.ended(m) == "failed")
             if len(batch) == 1:
-                status = _ended(info)
-                title = f"Subagent `{info.id}` {status}"
                 announce = "[Subagent completion event]\n" + blocks[0]
             else:
-                status = "completed" if n_failed == 0 else "with failures"
-                title = f"{len(batch)} subagents {status}"
                 announce = (
                     f"[Subagent completion batch — {len(batch)} agents, "
                     f"{n_failed} failed]\n\n" + "\n\n---\n\n".join(blocks)
                 )
-            body = announce
+            # The note a PERSON reads is not that event: it is named by the run and says what
+            # happened (`subagent_notes`). An automation's run links back to the automation.
+            title, body = subagent_notes.note_for(batch, details)
             notice_meta = self._notif_meta(parent_key)
-            if len(batch) == 1 and info.title:
-                # The note a PERSON reads, for a run someone named — an automation's, by its
-                # trigger (`SubagentInfo.title`). It arrived as "Subagent `<id>` completed" with the
-                # completion-event preamble first and what the agent said last; now it is titled by
-                # the run and IS what the agent said (the reminder, the summary), and it links back
-                # to the automation. The announce above stays the model-facing event it always was,
-                # and a batch keeps the generic note, since no one name covers several runs.
-                ended = _ended(info)
-                title = f"{info.title} — {ended}" if ended != "completed" else info.title
-                body = details[info.id]
-                if info.trigger_id:
-                    from personalclaw.triggers.delivery import status_url as _trigger_status_url
+            if len(batch) == 1 and info.trigger_id:
+                from personalclaw.triggers.delivery import status_url as _trigger_status_url
 
-                    notice_meta = {
-                        **(notice_meta or {}),
-                        "statusUrl": _trigger_status_url(trigger_id=info.trigger_id),
-                    }
+                notice_meta = {
+                    **(notice_meta or {}),
+                    "statusUrl": _trigger_status_url(trigger_id=info.trigger_id),
+                }
             title, _ = redact_exfiltration_urls(title)
             title, _ = redact_credentials(title)
 

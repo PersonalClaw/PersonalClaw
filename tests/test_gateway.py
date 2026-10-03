@@ -1773,16 +1773,19 @@ class TestSubagentDone:
         assert body == "Error: the model did not answer"
 
     @pytest.mark.asyncio
-    async def test_a_run_nobody_named_keeps_the_completion_note(self):
-        """The control: an agent with no title is told as before."""
+    async def test_a_run_nobody_named_is_named_by_its_task(self):
+        """The control, for a run no trigger started and nobody named: its note was "Subagent
+        `<id>` completed" over the completion event. It is named by the first line of its task
+        now, says what the agent said, and links nowhere
+        (`test_a_failed_agent_note_says_what_failed_once`)."""
         orch, mock_sm = self._setup_orch_with_subagent_mgr()
         on_done = mock_sm.call_args[1]["on_done"]
 
-        await on_done([self._trigger_run(title="", trigger_id="")])
+        await on_done([self._trigger_run(title="", trigger_id="", task="Look up the dentist")])
 
         (_kind, title, body), kwargs = orch.dashboard_state.notify.call_args
-        assert title == "Subagent `rem00001` completed"
-        assert body.startswith("[Subagent completion event]")
+        assert title == "Look up the dentist"
+        assert body == "Time to call the dentist — the number is in your contacts."
         assert kwargs["meta"] is None
 
 

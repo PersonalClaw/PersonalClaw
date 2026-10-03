@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
+import type { McpServer } from '../../lib/api'
 import type { WsMessage } from '../../lib/useChatSocket'
 
 // ── A server's card says what the server is now, after every change ──────────────────────────────
@@ -111,5 +112,17 @@ describe('the line a card shows in place of tools', () => {
     expect(noToolsLine({ ...refused, error: '' }, 'error', undefined)).toBe('Not connected — no tools available.')
     expect(noToolsLine({ ...refused, status: 'probing', error: '' }, 'checking', undefined)).toBe('Checking the server…')
     expect(noToolsLine({ ...refused, enabled: false }, 'disabled', undefined)).toBe('Server disabled.')
+  })
+
+  it('says why a server still starting is still being checked', async () => {
+    // A first start that installs what it runs can outlast the probe; the gateway lets it finish
+    // and says so (`mcp_status.still_starting`), and the card carries that sentence.
+    const { noToolsLine, serverHealth } = await import('./ToolsPage')
+    const starting: McpServer = {
+      name: 'notes', status: 'probing', enabled: true, tools: [],
+      error: 'notes has not answered after 15 seconds and is still starting. A first start can take longer while it installs what it runs, so PersonalClaw lets it finish, for up to 10 minutes, and then checks it again.',
+    }
+    expect(noToolsLine(starting, 'checking', undefined)).toBe(`Checking the server — ${starting.error ?? ''}`)
+    expect(serverHealth(starting)).toEqual({ state: 'checking', tone: 'var(--color-on-surface-low)', detail: starting.error })
   })
 })

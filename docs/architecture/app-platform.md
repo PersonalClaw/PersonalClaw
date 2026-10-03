@@ -704,7 +704,13 @@ connection alike). Every start of a server is recorded in one place (`mcp_discov
 the words of `mcp_status.py`), which the Tools page card, the Settings test and an agent's failed
 call all read: a server that exited before it answered says so with its exit code and the line of
 its error output that says why, and one that fails to start three times in a row is not started
-again until its owner presses Retry or its definition changes.
+again until its owner presses Retry or its definition changes. A start is never cut off part-way:
+a program that has not said a word when its connection stops waiting (a package runner such as
+`npx` installing what it runs the first time) is left to finish, for up to ten minutes
+(`mcp_stdio.FINISH_SECS`), and its card says it is still starting. A start of the same program
+meanwhile waits for it rather than installing beside it, and once it ends the server is probed
+again; a probe that connects keeps nothing of the one before. Stopping a package runner in the
+middle of an install left its cache half-written, and some never repair that themselves.
 
 The manifest is the only way an app gets an MCP server. `/api/mcp` is owner-only for
 app tokens, reads included (`apps/permissions.OWNER_ONLY_API_PATHS`): a server entry is a

@@ -205,11 +205,14 @@ async def test_a_quiet_trigger_leaves_the_plain_note(home):
 
 
 @pytest.mark.asyncio
-async def test_an_agent_no_trigger_started_is_unchanged(home):
+async def test_an_agent_no_trigger_started_gets_its_own_note(home):
+    """No trigger's route tells it: its own note does, named by its task."""
     _store_trigger(home)
     orch, on_done = _on_done()
     await on_done([_agent(trigger_id="")])
-    assert [title for _k, title, _b in _notes(orch)] == ["Subagent `a1b2c3d4` completed"]
+    assert [(kind, title) for kind, title, _b in _notes(orch)] == [
+        (notification_kinds.SUBAGENT, "Check the inbox and tell me what matters.")
+    ]
 
 
 # ── the workflow run it started, when it ends ─────────────────────────────────────────────────

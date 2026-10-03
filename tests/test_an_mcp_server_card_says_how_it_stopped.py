@@ -202,16 +202,31 @@ async def test_a_server_that_exited_says_it_exited_with_its_code_and_cause(
 async def test_did_not_answer_is_said_only_of_a_server_still_running_at_the_deadline(
     tmp_path, monkeypatch
 ) -> None:
+    """...and only once it has had its time to finish starting. A first start that has not said a
+    word is left to finish, since it may be installing what it runs
+    (`test_an_mcp_start_is_never_cut_off_part_way`); here it never ends, so it is stopped when its
+    time is up, and the start after it, which does not answer either, did not answer."""
+    from personalclaw import mcp_stdio
+
     server = _Fixture(tmp_path, "slow", "hang")
     monkeypatch.setattr(mcp_discovery, "_get_probe_timeout", lambda: 2)
+    monkeypatch.setattr(mcp_stdio, "FINISH_SECS", 1.0)
     async with _tools_page(monkeypatch) as http:
         await _save(http, "slow", server.spec())
         await _settled(http)
         row = await _row(http, "slow")
+        assert row["status"] == "probing" and "still starting" in row["error"], row
+
+        async def _stopped_and_looked_at_again() -> None:
+            while mcp_stdio._finishing or mcp_discovery._RECHECKS:
+                await asyncio.sleep(0.05)
+
+        await asyncio.wait_for(_stopped_and_looked_at_again(), timeout=30)
+        row = await _row(http, "slow")
         assert row["status"] == "error", row
         assert "did not answer within 2 seconds" in row["error"], row["error"]
         assert "exited" not in row["error"]
-        assert server.launches == 1
+        assert server.launches == 2
 
 
 @pytest.mark.asyncio

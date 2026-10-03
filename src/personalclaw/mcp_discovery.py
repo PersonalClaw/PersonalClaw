@@ -338,9 +338,11 @@ def _keep(name: str, result: _ProbeResult) -> None:
 def forget_probe(name: str) -> None:
     """Drop what server ``name``'s last start found, and how many failed in a row: what it said is
     no longer true. Every write that changes a server, and its owner's Retry, comes through here,
-    which is also what starts a stopped server again."""
-    from personalclaw import mcp_status
+    which is also what starts a stopped server again, and what gives a start of it its time to
+    finish again (`mcp_stdio.forget_left`)."""
+    from personalclaw import mcp_status, mcp_stdio
 
+    mcp_stdio.forget_left(name)
     if _probe_cache.pop(name, None) is not None:
         mcp_status.announce(name)
 
@@ -388,7 +390,9 @@ def note_start(
     for it: an agent's turn, the Tools page's listing, a probe.
 
     A failure that counts adds one to the failed starts in a row; a start that connected resets
-    them. A start of a definition the server no longer has is not its result, and is dropped.
+    them. A start still going (`mcp_status.still_starting`) is no failure yet: the server reads
+    ``probing`` until it is looked at again (:func:`look_again`). A start of a definition the
+    server no longer has is not its result, and is dropped.
     """
     from personalclaw import mcp_status
 
@@ -404,9 +408,10 @@ def note_start(
         _keep(name, _ProbeResult("ok", listed, "", seal))
         return
     failures = (prev.failures if same and prev is not None else 0) + int(failure.counts)
+    status = PROBING if failure.pending else "error"
     _keep(
         name,
-        _ProbeResult("error", [], failure.headline, seal, detail=failure.detail, failures=failures),
+        _ProbeResult(status, [], failure.headline, seal, detail=failure.detail, failures=failures),
     )
     if failure.counts and failures == mcp_status.STOP_AFTER:
         logger.warning(
@@ -448,6 +453,15 @@ def _probe_ended(name: str) -> None:
     else:
         _probing.pop(name, None)
         mcp_status.announce(name)
+
+
+def look_again(name: str) -> None:
+    """Probe server *name* again, now that a start of it left to finish (`mcp_stdio`) has ended:
+    until a probe says what it is now, its card says it is still starting. Nothing to do when
+    something has looked at it since and its card says something else. Called on the loop."""
+    cached = _probe_cache.get(name)
+    if cached is not None and cached.status == PROBING:
+        recheck([name], forget=False)
 
 
 #: The re-probes :func:`recheck` started for a caller that holds no task set of its own.
@@ -954,6 +968,10 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
 
     _probe_started(server.name)
     try:
+        # A new answer. The server came from `list_servers`, which carries what the last probe
+        # found, and a probe that connected set only its status and tools: the card read "ok" over
+        # the old "did not answer".
+        server.tools, server.error, server.detail = [], "", ""
         await _probe(server)
     except Exception as exc:  # noqa: BLE001 — a probe that broke is this server's answer
         server.status = "error"
@@ -1039,9 +1057,14 @@ async def _probe(server: McpServerInfo) -> None:
         server.name, spec, deadline=_get_probe_timeout(), seal=_probed_as(server)
     )
     if started.error:
-        server.status = "error"
         server.error = started.error
         server.detail = started.detail
+        if started.starting:
+            # Left to finish (`mcp_stdio`), and looked at again when it has (`look_again`).
+            server.status = PROBING
+            logger.info("MCP probe [%s]: %s", server.name, server.error)
+            return
+        server.status = "error"
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
         return
     server.status = "ok"

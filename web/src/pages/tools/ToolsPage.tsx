@@ -77,8 +77,9 @@ export function serverHealth(s: McpServer): { state: string; tone: string; detai
   if (s.status === 'unserved') return { state: "agents can't call it", tone: 'var(--color-warn)', detail: s.error }
   if (s.status === 'signin') return { state: 'sign-in needed', tone: 'var(--color-warn)', detail: s.error }
   // The gateway is checking it, after a change or for the first time: no result is shown for it
-  // yet, because the last one was about something else (`mcp_discovery._get_cached`).
-  if (s.status === 'probing') return { state: 'checking', tone: 'var(--color-on-surface-low)' }
+  // yet, because the last one was about something else (`mcp_discovery._get_cached`). Or it is
+  // still starting, left to finish installing what it runs, and the gateway's sentence says so.
+  if (s.status === 'probing') return { state: 'checking', tone: 'var(--color-on-surface-low)', detail: s.error || undefined }
   return { state: s.status || 'unknown', tone: 'var(--color-warn)', detail: s.error }
 }
 
@@ -90,7 +91,9 @@ export function serverHealth(s: McpServer): { state: string; tone: string; detai
 export function noToolsLine(server: McpServer | undefined, healthState: string | undefined, signInState: string | undefined): string {
   if (!server?.enabled) return 'Server disabled.'
   if (healthState === 'error') return `Not connected — ${(server.error || 'no tools available').replace(/[.\s]+$/, '')}.`
-  if (server.status === 'probing') return 'Checking the server…'
+  if (server.status === 'probing') {
+    return server.error ? `Checking the server — ${server.error.replace(/[.\s]+$/, '')}.` : 'Checking the server…'
+  }
   if (signInState && signInState !== 'signed_in') return 'Its tools show here once you sign in.'
   return 'No tools exposed yet.'
 }

@@ -955,7 +955,10 @@ def report_run(
 
     ``summary`` is what the work produced (a command's output, an agent task's reply, a workflow
     run's summary), and ``run_id`` the workflow run the note links to; a failure's ``error`` is its
-    summary. Returns whether a note went out on the route. *state* is the dashboard state whose
+    summary. Returns whether the route has told this outcome: a note went out now, or, for a
+    failure the trigger collapses as a repeat, one went out about it within the reminder window. A
+    caller with a note of its own (an agent task's, `gateway._subagent_done`) sends it only when
+    this is false, so a collapsed repeat stays collapsed. *state* is the dashboard state whose
     `notify` every note goes through; with none, nothing is sent.
 
     Routes through `state.notify` (:func:`deliver`): R18 says "the substrate does not build a
@@ -981,7 +984,7 @@ def report_run(
         # `failure_policy.dedupe_hash`, and capped by a 1h window, so a still-broken automation
         # re-alerts: "it stopped telling me" and "it got fixed" must not look alike.
         if not ok and repeats_last_failure(trigger, error=error):
-            return False
+            return True
         note = build_delivery(
             trigger_id=str(getattr(trigger, "id", "") or ""),
             trigger_name=str(getattr(trigger, "name", "") or ""),

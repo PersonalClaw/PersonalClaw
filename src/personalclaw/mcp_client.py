@@ -38,10 +38,18 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from personalclaw import mcp_stdio
 from personalclaw import trace_recorder as _trace
 from personalclaw.cancellation import cancel_and_wait
-from personalclaw.mcp_status import StartFailure, closed, command_not_found, did_not_answer, exited
-from personalclaw.mcp_stdio import CommandNotFound, StdioRun
+from personalclaw.mcp_status import (
+    StartFailure,
+    closed,
+    command_not_found,
+    did_not_answer,
+    exited,
+    still_starting,
+)
+from personalclaw.mcp_stdio import CommandNotFound, StdioRun, stop_finishing, stop_finishing_soon
 
 if TYPE_CHECKING:
     from personalclaw.tool_providers.base import RiskLevel
@@ -362,24 +370,31 @@ class McpServerConn:
             from personalclaw.mcp_elicitation import elicitation_callback_for
 
             async with AsyncExitStack() as stack:
-                async with deadline:
-                    read, write = await self._open_transport(stack)
-                    # The ONE place the elicitation grant is consulted, resolved per
-                    # server at handshake time. `None` (the default — the grant list ships
-                    # empty) leaves the SDK's own default callback in place, and
-                    # `ClientSession.initialize` then sends `elicitation=None`, so the
-                    # capability is absent from THIS server's advertised set while a granted
-                    # sibling's session advertises it. One expression, both behaviours: a
-                    # branch here would be two session-construction paths to keep in step.
-                    session = await stack.enter_async_context(
-                        ClientSession(
-                            read,
-                            write,
-                            elicitation_callback=elicitation_callback_for(self.name),
+                try:
+                    async with deadline:
+                        read, write = await self._open_transport(stack)
+                        # The ONE place the elicitation grant is consulted, resolved per
+                        # server at handshake time. `None` (the default — the grant list ships
+                        # empty) leaves the SDK's own default callback in place, and
+                        # `ClientSession.initialize` then sends `elicitation=None`, so the
+                        # capability is absent from THIS server's advertised set while a granted
+                        # sibling's session advertises it. One expression, both behaviours: a
+                        # branch here would be two session-construction paths to keep in step.
+                        session = await stack.enter_async_context(
+                            ClientSession(
+                                read,
+                                write,
+                                elicitation_callback=elicitation_callback_for(self.name),
+                            )
                         )
-                    )
-                    await session.initialize()
-                    await self._refresh_tools(session)
+                        await session.initialize()
+                        await self._refresh_tools(session)
+                except TimeoutError:
+                    # Said before the stack puts the program away: one still starting (installing
+                    # what it runs) is left to finish rather than cut off part-way (`mcp_stdio`).
+                    if deadline.expired() and self._stdio is not None:
+                        self._stdio.stop_waiting()
+                    raise
                 note_start(self.name, self._definition_seal(), tools=self._tools)
                 self._ready.set()
                 await self._serve(session)
@@ -393,21 +408,34 @@ class McpServerConn:
             self._error = failure.headline
             self._failure = failure
             self._sign_in_needed = _wants_sign_in(exc)
-            logger.warning("MCP server '%s' connection failed: %s", self.name, self._error)
+            if failure.pending:
+                logger.info("MCP server '%s' is still starting: %s", self.name, self._error)
+            else:
+                logger.warning("MCP server '%s' connection failed: %s", self.name, self._error)
             if not self._ready.is_set() and not self._sign_in_needed:
                 note_start(self.name, self._definition_seal(), failure=failure)
             self._ready.set()  # unblock waiters with the error recorded
 
     def _start_failure(self, exc: BaseException, *, timed_out: bool) -> StartFailure:
         """Why this start failed, in `mcp_status`'s words. A stdio program that ended on its own
-        exited; one still running at the deadline did not answer; one that closed its output and
-        had to be stopped closed the connection. Any other failure is the connection's own
-        (:func:`_failure_text`), with the program's error output as its detail."""
+        exited; one still starting at the deadline, and left to finish, is still starting, as is a
+        start that waited for an earlier one still finishing; one still running at the deadline
+        did not answer; one that closed its output and had to be stopped closed the connection.
+        Any other failure is the connection's own (:func:`_failure_text`), with the program's error
+        output as its detail."""
         run = self._stdio
         leaf = _leaf(exc)
         if isinstance(leaf, CommandNotFound):
             return command_not_found(leaf.command)
         if run is not None:
+            if run.waiting or run.left_to_finish:
+                return still_starting(
+                    self.name,
+                    self._connect_timeout,
+                    run.stderr,
+                    allowance=mcp_stdio.FINISH_SECS,
+                    earlier=run.waiting,
+                )
             if run.exited and run.returncode is not None:
                 return exited(self.name, run.returncode, run.stderr)
             if timed_out:
@@ -515,6 +543,9 @@ class StartResult:
     sign_in_needed: bool
     #: It did not answer within its deadline.
     timed_out: bool
+    #: It is still starting: it was left to finish, or it waited for an earlier start that was
+    #: (`mcp_stdio`), and it is looked at again once that start ends.
+    starting: bool = False
 
 
 async def try_start(name: str, spec: dict[str, Any], *, deadline: float, seal: str) -> StartResult:
@@ -538,6 +569,7 @@ async def try_start(name: str, spec: dict[str, Any], *, deadline: float, seal: s
         detail=failure.detail if failure is not None else "",
         sign_in_needed=conn.sign_in_needed,
         timed_out=conn._timed_out,
+        starting=failure is not None and failure.pending,
     )
 
 
@@ -814,6 +846,8 @@ class McpClientRegistry:
             if gone or stale_hash:
                 conn = self._conns.pop(key)
                 asyncio.ensure_future(conn.shutdown())
+        # A program left to finish starting for a server that is gone, or switched off, goes too.
+        stop_finishing_soon(lambda name: name not in self._specs)
 
     def evict_session(self, session_key: str) -> None:
         """Shut down + drop all connections scoped to an ending session. Shared
@@ -886,6 +920,7 @@ class McpClientRegistry:
             self._sweeper = None
         await asyncio.gather(*(c.shutdown() for c in self._conns.values()), return_exceptions=True)
         self._conns.clear()
+        await stop_finishing(lambda _name: True)
 
     def _close(self, match: Callable[[str], bool], *, timeout: float = _CLOSE_TIMEOUT_SECS) -> None:
         """Close every connection to the servers *match* names — shared and per-session.
@@ -989,7 +1024,9 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
 
 def close_servers(match: Callable[[str], bool]) -> None:
     """Close every live connection to the servers *match* names (see
-    :meth:`McpClientRegistry._close`). Nothing to close before the first read built one."""
+    :meth:`McpClientRegistry._close`), and stop what was left to finish starting for them
+    (`mcp_stdio`), which a probe leaves before any read built a connection."""
+    stop_finishing_soon(match)
     if _registry is not None:
         _registry._close(match)  # noqa: SLF001 — the module's own registry
 
