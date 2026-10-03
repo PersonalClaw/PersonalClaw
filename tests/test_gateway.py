@@ -11,6 +11,7 @@ import pytest
 from personalclaw.approval_grants import ToolDecision
 from personalclaw.config.loader import AppConfig
 from personalclaw.gateway import _MAX_INJECT_ATTEMPTS, GatewayOrchestrator
+from personalclaw.self_update import CheckoutPosition
 from personalclaw.triggers.delivery import (
     _EPOCH_RE,
     _EPOCH_WINDOW_SECS,
@@ -768,9 +769,10 @@ class TestAutoApplyUpdate:
             patch("personalclaw.self_update.git_fetch_tags", return_value=_git_ok()),
             patch("personalclaw.self_update.git_checkout", return_value=_git_ok()) as checkout,
             patch("personalclaw.self_update.package_root", return_value="/tmp/proj"),
+            patch("personalclaw.self_update.git_position", return_value=_ON_A_RELEASE),
             patch("personalclaw._installer._have_pip", return_value=True),
             patch(
-                "personalclaw.dashboard.handlers.updates.build_frontend_async",
+                "personalclaw.checkout_update.build_frontend_async",
                 new_callable=AsyncMock,
             ),
             patch("personalclaw.dashboard.handlers.updates._graceful_reexec", reexec),
@@ -1163,6 +1165,11 @@ def _git_ok(rc: int = 0):
     return MagicMock(returncode=rc)
 
 
+#: Where the checkout is, as the update reads it before it moves (``self_update.git_position``):
+#: these tests' git steps are stand-ins, so it never moves.
+_ON_A_RELEASE = CheckoutPosition("1" * 40)
+
+
 class TestAutoApplyUpdateGitPath:
     """Release-based git auto-update: ride tags, nightly fast-forwards."""
 
@@ -1213,9 +1220,10 @@ class TestAutoApplyUpdateGitPath:
             patch("personalclaw.self_update.git_fetch_tags", return_value=_git_ok()) as fetch_tags,
             patch("personalclaw.self_update.git_checkout", return_value=_git_ok()) as checkout,
             patch("personalclaw.self_update.package_root", return_value="/tmp/proj"),
+            patch("personalclaw.self_update.git_position", return_value=_ON_A_RELEASE),
             patch("personalclaw._installer._have_pip", return_value=True),
             patch(
-                "personalclaw.dashboard.handlers.updates.build_frontend_async",
+                "personalclaw.checkout_update.build_frontend_async",
                 new_callable=AsyncMock,
             ),
             patch("personalclaw.dashboard.handlers.updates._graceful_reexec", reexec),
@@ -2086,9 +2094,10 @@ class TestAutoApplyUpdateVenvPath:
             patch("personalclaw.self_update.resolve_default_branch", return_value="main"),
             patch("personalclaw.self_update.git_fast_forward", return_value=_git_ok()) as ff,
             patch("personalclaw.self_update.package_root", return_value="/tmp/proj"),
+            patch("personalclaw.self_update.git_position", return_value=_ON_A_RELEASE),
             patch("personalclaw._installer._have_pip", return_value=True),
             patch(
-                "personalclaw.dashboard.handlers.updates.build_frontend_async",
+                "personalclaw.checkout_update.build_frontend_async",
                 new_callable=AsyncMock,
             ),
             patch("personalclaw.dashboard.handlers.updates._graceful_reexec", reexec),
@@ -2122,9 +2131,10 @@ class TestAutoApplyUpdateVenvPath:
             patch("personalclaw.self_update.git_fetch_tags", return_value=_git_ok()),
             patch("personalclaw.self_update.git_checkout", return_value=_git_ok()),
             patch("personalclaw.self_update.package_root", return_value="/tmp/proj"),
+            patch("personalclaw.self_update.git_position", return_value=_ON_A_RELEASE),
             patch("personalclaw._installer._have_pip", return_value=True),
             patch(
-                "personalclaw.dashboard.handlers.updates.build_frontend_async",
+                "personalclaw.checkout_update.build_frontend_async",
                 new_callable=AsyncMock,
             ) as fe_build,
             patch("personalclaw.dashboard.handlers.updates._graceful_reexec", reexec),
@@ -2133,7 +2143,9 @@ class TestAutoApplyUpdateVenvPath:
             with patch("asyncio.create_subprocess_exec", side_effect=await self._pip(1)):
                 await orch._auto_apply_update()
 
-        ds.push_update_progress.assert_any_call("error", "pip install failed: boom")
+        ds.push_update_progress.assert_any_call(
+            "error", "pip install failed: boom. Nothing was changed."
+        )
         fe_build.assert_not_awaited()
         reexec.assert_not_awaited()
 

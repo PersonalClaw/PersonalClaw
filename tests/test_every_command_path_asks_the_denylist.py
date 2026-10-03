@@ -71,6 +71,7 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "apps/source.py::_clone_git::subprocess.run": _GIT,
     "apps/worker_runtime.py::WorkerSupervisor._spawn::subprocess.Popen": "an app's worker",
     "artifacts/build.py::_run_esbuild::create_subprocess_limited": _COMPOSED,
+    "checkout_update.py::_install::asyncio.create_subprocess_exec": _COMPOSED,
     "cli_config.py::_edit_config::subprocess.run": "the owner's own editor, from the owner's CLI",
     "cli_doctor.py::_doctor::subprocess.run": _PROBE,
     "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": _GIT,
@@ -99,7 +100,6 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
         _COMPOSED
     ),
     "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec": _GIT,
-    "dashboard/handlers/updates.py::_advance_checkout::asyncio.create_subprocess_exec": (_COMPOSED),
     "dashboard/handlers_system.py::_collect_gpu_metrics::subprocess.check_output": _PROBE,
     "dashboard/handlers_system.py::_collect_system_metrics::subprocess.check_output": _PROBE,
     "dashboard/handlers_system.py::_get_static_system_info::subprocess.check_output": _PROBE,
@@ -109,7 +109,6 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "durability/state_history.py::git_available::subprocess.run": _GIT,
     "evals/runner.py::_spawn_cell::subprocess.run": "an evals matrix cell (PersonalClaw's own)",
     "frontend.py::build_frontend_async::asyncio.create_subprocess_exec": _COMPOSED,
-    "frontend.py::build_frontend_sync::subprocess.run": _COMPOSED,
     "gateway.py::_wslview_open::subprocess.run": "the system browser opener",
     "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::asyncio.create_subprocess_exec": (
         _COMPOSED

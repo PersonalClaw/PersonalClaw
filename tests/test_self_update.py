@@ -574,6 +574,8 @@ async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_ta
 
     monkeypatch.setattr(uk, "resolve_target", _resolve)
     monkeypatch.setattr(uk, "git_tracked_changes", lambda _p: [])  # clean tree => proceeds
+    # Where the checkout is, read before it moves (these git steps are stand-ins, so it never does).
+    monkeypatch.setattr(uk, "git_position", lambda _p: uk.CheckoutPosition("1" * 40))
     monkeypatch.setattr(uk, "git_fetch_tags", _fetch_tags)
     monkeypatch.setattr(uk, "git_checkout", _checkout)
     monkeypatch.setattr(uk, "git_fast_forward", _reset_or_branch_boom, raising=False)
@@ -592,7 +594,7 @@ async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_ta
     async def _fake_build(*_a, **_k):
         calls.append(("build",))
 
-    monkeypatch.setattr("personalclaw.dashboard.handlers.updates.build_frontend_async", _fake_build)
+    monkeypatch.setattr("personalclaw.checkout_update.build_frontend_async", _fake_build)
 
     async def _fake_reexec(_state, **_kwargs):
         calls.append(("reexec",))

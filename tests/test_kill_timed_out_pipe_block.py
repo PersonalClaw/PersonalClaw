@@ -209,11 +209,12 @@ async def test_control_the_replaced_shape_blows_the_same_bound(tmp_path):
 # advance goes through `asyncio.to_thread(self_update.git_*)`, sync `subprocess.run`
 # under one seam, not a create_subprocess_exec here), and the dashboard dirty-tree
 # check moved to `asyncio.to_thread(self_update.git_tracked_changes)` — so the `pull`
-# group-leader and the `dirty` leaf spawn are gone from this module's census.
+# group-leader and the `dirty` leaf spawn are gone from this module's census. The checkout's
+# install moved to `checkout_update.py` with the rest of the checkout's update (its census is
+# below).
 _UPDATES_GROUP_LED = {
     "proc",  # git fetch      -> forks git-remote-https / ssh
     "pip_up",  # pip -U         -> forks build backends / compilers
-    "install",  # the checkout's install (pip install -e / uv sync) -> forks build backends
 }
 _UPDATES_LEAF = {
     "local",  # git rev-parse HEAD
@@ -244,7 +245,7 @@ def _spawns_by_target(source: str, callee: str) -> dict[str, set[str]]:
 
 
 def test_only_the_censused_spawns_lead_their_own_group():
-    """Both directions: the three forking spawns opt in, the four leaves stay out."""
+    """Both directions: the two forking spawns opt in, the four leaves stay out."""
     src = (_SRC / "dashboard" / "handlers" / "updates.py").read_text()
     spawns = _spawns_by_target(src, "create_subprocess_exec")
 
@@ -287,7 +288,7 @@ def _timeout_kill_style(source: str) -> dict[str, str]:
 
 
 def test_updates_timeout_handlers_match_the_census_exactly():
-    """The three forking spawns kill their GROUP; the four leaves still kill by pid.
+    """The two forking spawns kill their GROUP; the four leaves still kill by pid.
 
     Bidirectional on purpose. A leaf drifting to ``group`` means someone blanket-swept
     and gave a non-forking child a session it doesn't need; a forking spawn drifting to
@@ -303,6 +304,19 @@ def test_updates_timeout_handlers_match_the_census_exactly():
     assert {n for n, s in style.items() if s == "pid"} == _UPDATES_LEAF, (
         "the set of pid-killed spawns in updates.py drifted from the census; "
         f"found {sorted(n for n, s in style.items() if s == 'pid')}"
+    )
+
+
+def test_the_checkouts_install_leads_its_group_and_its_timeout_kills_the_group():
+    """checkout_update.py has ONE spawn: the checkout's install (pip install -e / uv sync), which
+    forks build backends and compilers that inherit its pipes."""
+    src = (_SRC / "checkout_update.py").read_text()
+    assert _timeout_kill_style(src) == {"install": "group"}
+    spawns = _spawns_by_target(src, "create_subprocess_exec")
+    assert set(spawns) == {"install"}, spawns
+    assert "start_new_session" in spawns["install"], (
+        "the checkout's install no longer leads its own session, so kill_timed_out falls back "
+        "to a single-pid signal and its build backend holds the pipe open"
     )
 
 
@@ -795,12 +809,11 @@ async def test_gateway_auto_update_reaps_the_install_it_timed_out(
     ``subprocess.run(timeout=…)`` and so reap their own direct child inside CPython. The
     install is the one async spawn left in the update, and the one that can fork.
 
-    The deadline is INJECTED (``_CHECKOUT_INSTALL_TIMEOUT``), never slept on.
+    The deadline is INJECTED (``checkout_update._INSTALL_TIMEOUT``), never slept on.
     """
-    from personalclaw import _installer
+    from personalclaw import _installer, checkout_update
     from personalclaw import gateway as gw
     from personalclaw import self_update
-    from personalclaw.dashboard.handlers import updates
 
     pids = tmp_path / "pids"
     proj = tmp_path / "proj"
@@ -829,7 +842,7 @@ async def test_gateway_auto_update_reaps_the_install_it_timed_out(
     environment_made_by("pip")
     monkeypatch.setattr(_installer, "_have_pip", lambda: True)
     monkeypatch.setattr(gw.sys, "executable", str(stub))
-    monkeypatch.setattr(updates, "_CHECKOUT_INSTALL_TIMEOUT", 1.0)
+    monkeypatch.setattr(checkout_update, "_INSTALL_TIMEOUT", 1.0)
 
     # Drive the nightly branch straight to the install: every git stage before it is a
     # `self_update` helper, stubbed to succeed so the deadline under test is the only thing
@@ -840,6 +853,9 @@ async def test_gateway_auto_update_reaps_the_install_it_timed_out(
         return 1
 
     monkeypatch.setattr(self_update, "git_tracked_changes", lambda _proj: [])
+    monkeypatch.setattr(
+        self_update, "git_position", lambda _proj: self_update.CheckoutPosition("1" * 40)
+    )
     monkeypatch.setattr(self_update, "commits_behind_upstream", _one_behind)
     monkeypatch.setattr(self_update, "resolve_default_branch", lambda _proj: "main")
     monkeypatch.setattr(self_update, "git_fast_forward", lambda _proj, _branch: ok)

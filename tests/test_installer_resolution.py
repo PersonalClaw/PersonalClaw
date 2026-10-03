@@ -363,19 +363,23 @@ def _settings() -> list[str]:
     ]
 
 
-def test_personalclaw_updates_installer_keeps_no_cache(tmp_path, monkeypatch, environment_made_by):
-    """`personalclaw update` on a git checkout installs it through `cli_server._install`."""
-    from personalclaw import cli_server
+def test_a_checkouts_update_installs_it_keeping_no_cache(
+    tmp_path, monkeypatch, environment_made_by
+):
+    """A git checkout's update, from the dashboard or `personalclaw update`, installs it through
+    `checkout_update._install`."""
+    import asyncio
+
+    from personalclaw import checkout_update
 
     environment_made_by("uv")
     log = _recording_tools(tmp_path, monkeypatch, "uv")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "personalclaw"\n')
-    cli_server._install([], checkout=str(tmp_path))
+    assert asyncio.run(checkout_update._install(str(tmp_path), "uv sync")) == ""
     assert log.read_text().split() == ["uv", *_settings()]
 
 
-@pytest.mark.parametrize("build", ["sync", "async"])
-def test_a_frontend_rebuild_keeps_npms_cache_in_the_home(tmp_path, monkeypatch, build):
+def test_a_frontend_rebuild_keeps_npms_cache_in_the_home(tmp_path, monkeypatch):
     import asyncio
 
     from personalclaw import frontend
@@ -383,10 +387,7 @@ def test_a_frontend_rebuild_keeps_npms_cache_in_the_home(tmp_path, monkeypatch, 
     log = _recording_tools(tmp_path, monkeypatch, "npm", "node")
     checkout = tmp_path / "checkout"
     (checkout / "web").mkdir(parents=True)
-    if build == "sync":
-        frontend.build_frontend_sync(checkout, log=lambda _line: None)
-    else:
-        asyncio.run(frontend.build_frontend_async(str(checkout)))
+    asyncio.run(frontend.build_frontend_async(str(checkout)))
 
     runs = [line.split() for line in log.read_text().splitlines()]
     assert [run[0] for run in runs] == ["npm", "npm"], "npm ci, then npm run build"
@@ -528,8 +529,7 @@ def test_the_rail_sees_every_known_install_site():
         ("cli_server.py", "_install"),
         ("gateway.py", "GatewayOrchestrator._check_missing_deps"),
         ("dashboard/handlers/updates.py", "_apply_pip_update._apply"),
-        ("dashboard/handlers/updates.py", "_advance_checkout"),
-        ("frontend.py", "build_frontend_sync"),
+        ("checkout_update.py", "_install"),
         ("frontend.py", "build_frontend_async"),
         ("acp/cli_resolve.py", "_npm_global_root"),
         ("acp/cli_resolve.py", "provision_acp_adapter"),

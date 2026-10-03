@@ -4778,6 +4778,12 @@ class GatewayOrchestrator:
         except Exception:
             logger.debug("early app process reap failed", exc_info=True)
 
+        # An update half-way through stops its install and puts the checkout back before the
+        # process ends, so the next start runs the release the environment has.
+        from personalclaw import checkout_update
+
+        await self._stopping_step("the update in progress", checkout_update.stop())
+
         # End the chat turns still running, THEN save every chat: each turn ends by saying the
         # gateway restarted (or shut down) before it finished, and only a save after that keeps
         # it in the transcript the next start reads.
@@ -4969,9 +4975,10 @@ class GatewayOrchestrator:
         automatic check asks first, does nothing when there is nothing to advance, and says why it
         did not run on the update progress instead of to a request. Its rules for the tree are the
         owner's Update's: it lands only on the channel's or the pin's release, never on ``main``;
-        it never advances over uncommitted tracked edits (untracked files never block it); and it
+        it never advances over uncommitted tracked edits (untracked files never block it); it
         installs with the tool that made the environment, which must be there before anything
-        moves. Returns once the update has run, the restart it ends with asked for.
+        moves; and an install that fails puts the checkout back on the commit it was on. Returns
+        once the update has run, the restart it ends with asked for.
         """
         from personalclaw.dashboard.handlers.updates import start_checkout_update
 

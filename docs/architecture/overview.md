@@ -256,19 +256,23 @@ in `docs/reference/CONFIG-REFERENCE.md`.
 ## Self-update
 
 `dashboard/handlers/updates.py` (`api_update_apply`) runs the public update
-pipeline. A source checkout's update is one function, `start_checkout_update`,
-which the staged auto-update runs too. The git kind rides **release tags** by the
-`updates` channel/pin: `git fetch --tags` → `git checkout <resolved tag>` → the
-install, into the running environment, with the tool that made it (`_installer`,
-read from the environment's `INSTALLER` record: `uv sync --locked --inexact` for an
-environment uv made, `pip install -e .` for one pip made) → frontend build →
-graceful re-exec. The git-only `nightly` channel is the one branch-tracking path
-and advances by fast-forward; neither path runs `git pull` or
-`reset --hard origin/main`. Steps `pulling → installing → building → restarting`
+pipeline. A source checkout's update starts in one function, `start_checkout_update`,
+which the staged auto-update runs too, and the update itself is
+`checkout_update.update_checkout`, which `personalclaw update` runs as well. The git
+kind rides **release tags** by the `updates` channel/pin: `git fetch --tags` →
+`git checkout <resolved tag>` → the install, into the running environment, with the
+tool that made it (`_installer`, read from the environment's `INSTALLER` record:
+`uv sync --locked --inexact` for an environment uv made, `pip install -e .` for one
+pip made) → frontend build → graceful re-exec. The git-only `nightly` channel is the
+one branch-tracking path and advances by fast-forward; neither path runs `git pull`
+or `reset --hard origin/main`. Steps `pulling → installing → building → restarting`
 are reported over `update_progress` WebSocket events. Everything that can refuse
 is decided before the checkout moves: nothing to advance, uncommitted tracked
-edits, and the environment's installer missing, which refuses with a sentence
-naming what to run. An install failure aborts *before* restart; concurrent applies
-get a 409. A wheel install upgrades with the same rule. This covers the **core
-repo only** — apps update individually through the Store
-(`POST /api/apps/{name}/update`).
+edits, the environment's installer missing, which refuses with a sentence
+naming what to run, and a commit git cannot read. An install that does not finish
+(it fails, runs out of time, or the gateway stops while it runs) puts the checkout
+back on the exact commit and branch it was on, never by force, and the update stops
+*before* the restart; when git cannot put it back, the failure names where the
+checkout is and the one command that does. Concurrent applies get a 409. A wheel
+install upgrades with the same rule. This covers the **core repo only** — apps
+update individually through the Store (`POST /api/apps/{name}/update`).

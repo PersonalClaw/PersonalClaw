@@ -16,13 +16,12 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from personalclaw import __version__ as _local_version
-from personalclaw import log_sinks, self_update, shutdown_event
+from personalclaw import checkout_update, log_sinks, self_update, shutdown_event
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.sse import GatewayStopping, next_unless_stopping
 from personalclaw.dashboard.state import DashboardState
-from personalclaw.frontend import build_frontend_async
 from personalclaw.http_errors import json_error
 from personalclaw.net.git import git_argv, git_env, transport_refusal
 from personalclaw.request_validation import bool_field, json_object_body
@@ -427,11 +426,6 @@ async def api_changelog(request: web.Request) -> web.Response:
 # check, instead of a second pull/install/build/restart pipeline against the same working tree.
 _apply_in_flight = False
 
-#: How long installing the checkout may run before it is stopped and reaped, named so a test can
-#: inject one instead of sleeping on it. pip and uv both run the package's build backend, and a
-#: dependency the release changed may have to be downloaded.
-_CHECKOUT_INSTALL_TIMEOUT = 400.0
-
 
 def _busy_reason() -> str:
     """Why an update must not start now, or ``""`` when one may.
@@ -679,10 +673,11 @@ async def start_checkout_update(
     Release-based, per the ``updates`` channel/pin: the checkout rides release TAGS like every
     other install kind (``git fetch --tags`` + ``git checkout <tag>``), never fast-forwarding
     ``main`` nor hard-resetting the tree onto a branch. ``nightly`` is the one channel that tracks
-    the current branch, and it advances by FAST-FORWARD, never a reset. Then the checkout is
-    installed into the running environment with the tool that made it
-    (``_installer.checkout_install_argv``), its frontend is built (``npm ci && npm run build`` in
-    ``web/``), and the gateway restarts.
+    the current branch, and it advances by FAST-FORWARD, never a reset. The update itself is the
+    one ``personalclaw update`` runs too (``checkout_update.update_checkout``): it moves the
+    checkout, installs it into the running environment with the tool that made it and builds its
+    frontend, and when the install fails it puts the checkout back on the commit it was on. Then
+    the gateway restarts.
 
     Everything that can refuse is decided before anything changes. *state* is ``None`` for a
     gateway with no dashboard. Each refusal is said once:
@@ -835,8 +830,13 @@ async def _restart_only(state: DashboardState | None, note: str, auth_mode: str)
 async def _advance_checkout(
     state: DashboardState | None, proj: str, target_tag: str, *, auth_mode: str
 ) -> None:
-    """Move the checkout, install it, build its frontend and restart: the update
-    :func:`start_checkout_update` started. No *target_tag* is the nightly fast-forward."""
+    """Update the checkout and restart into it: the update :func:`start_checkout_update` started.
+    No *target_tag* is the nightly fast-forward.
+
+    The update itself is the one every surface runs (``checkout_update.update_checkout``): it puts
+    the checkout back when the install fails, and this says what it said. Restarting into an
+    environment with missing or stale dependencies could leave the gateway unable to start, so a
+    failed update keeps running the code that runs now."""
     global _apply_in_flight
 
     def progress(step: str, detail: str) -> None:
@@ -844,81 +844,13 @@ async def _advance_checkout(
             state.push_update_progress(step, detail)
 
     try:
-        if not target_tag:
-            # Nightly: advance the current branch by fast-forward only — never a
-            # silent reset. A diverged branch fails cleanly and is left untouched.
-            branch = await asyncio.to_thread(self_update.resolve_default_branch, proj)
-            progress("pulling", f"Fast-forwarding {branch}…")
-            ff = await asyncio.to_thread(self_update.git_fast_forward, proj, branch)
-            if ff.returncode != 0:
-                progress("error", f"Could not fast-forward {branch} (diverged?) — no changes made")
-                return
-        else:
-            # Ride the release tag: fetch tags, then check the resolved tag out
-            # (detaches HEAD onto that exact release). No pull, no reset.
-            progress("pulling", f"Fetching release {target_tag}…")
-            fetched = await asyncio.to_thread(self_update.git_fetch_tags, proj)
-            if fetched.returncode != 0:
-                progress("error", "git fetch --tags failed")
-                return
-            checked = await asyncio.to_thread(self_update.git_checkout, proj, target_tag)
-            if checked.returncode != 0:
-                progress("error", f"git checkout {target_tag} failed")
-                return
-
-        # Install into the RUNNING environment, with the tool that made it, so new dependencies
-        # land before the restart. Git ran at the repo root; the install and the frontend build
-        # run at the package root (nested in the monorepo layout).
-        pkg_root = self_update.package_root(proj)
-        progress("installing", "Installing package…")
-        from personalclaw._installer import checkout_install_argv, installer_env
-
-        argv = checkout_install_argv(pkg_root)
-        label = "uv sync" if argv[0] == "uv" else "pip install"
-        install = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=pkg_root,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=installer_env(),
-            # Own group: the installer forks build backends and compilers, all inheriting
-            # these pipes. See kill_timed_out.
-            start_new_session=True,
-        )
-        try:
-            _, install_err = await asyncio.wait_for(
-                install.communicate(), timeout=_CHECKOUT_INSTALL_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            # The deadline is the WHOLE teardown: `wait_for` cancels the read but leaves the
-            # installer and its build backend running. kill_timed_out is the one owner of that.
-            await kill_timed_out(install)
-            logger.error(
-                "Update: %s timed out after %.0fs; stopped", label, _CHECKOUT_INSTALL_TIMEOUT
-            )
-            progress("error", f"{label} timed out")
+        failed = await checkout_update.update_checkout(proj, target_tag, progress)
+        if failed:
+            logger.error("Update failed: %s", failed)
+            progress("error", failed)
+            if state is not None:
+                state.push_refresh("update_failed")
             return
-        if install.returncode != 0:
-            logger.error(
-                "Update: %s failed (rc=%d): %s",
-                label,
-                install.returncode,
-                mask_child_output(install_err, limit=500),
-            )
-            # Restarting into an environment with missing or stale dependencies could leave the
-            # gateway unable to start, so it keeps running the code it runs now.
-            summary = self_update.installer_error_summary(
-                mask_child_output(install_err, limit=None, one_line=False)
-            )
-            progress("error", f"{label} failed: {summary}" if summary else f"{label} failed")
-            return
-
-        # Build frontend assets (npm ci && npm run build in <pkg>/web/)
-        progress("building", "Building frontend…")
-        await build_frontend_async(
-            pkg_root, push_progress=state.push_update_progress if state is not None else None
-        )
-
         # Restart: the gateway stops the way every stop runs, then starts the new image
         progress("restarting", "Restarting server…")
         logger.info("Update complete — restarting")

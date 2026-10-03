@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from aiohttp import web
 
+from personalclaw import checkout_update
 from personalclaw import self_update as su
 from personalclaw.dashboard.state import DashboardState
 
@@ -342,6 +343,7 @@ class TestUpdateApplyPipeline:
         monkeypatch.setattr(upd, "_local_version", "0.1.0")
         monkeypatch.setattr(su, "resolve_target", AsyncMock(return_value="v9.9.9"))
         monkeypatch.setattr(su, "git_tracked_changes", lambda proj: [])
+        monkeypatch.setattr(su, "git_position", lambda proj: su.CheckoutPosition("1" * 40))
         git_calls: list[tuple] = []
         monkeypatch.setattr(
             su,
@@ -380,7 +382,7 @@ class TestUpdateApplyPipeline:
         async def fake_fe_build(proj, push_progress=None):  # type: ignore[no-untyped-def]
             fe_built.append(proj)
 
-        monkeypatch.setattr(upd, "build_frontend_async", fake_fe_build)
+        monkeypatch.setattr(checkout_update, "build_frontend_async", fake_fe_build)
 
         reexec_calls: list[dict] = []
 
@@ -428,7 +430,21 @@ class TestUpdateApplyPipeline:
         monkeypatch.setattr(su, "resolve_target", AsyncMock(return_value="v9.9.9"))
         monkeypatch.setattr(su, "git_tracked_changes", lambda proj: [])
         monkeypatch.setattr(su, "git_fetch_tags", lambda proj: MagicMock(returncode=0))
-        monkeypatch.setattr(su, "git_checkout", lambda proj, ref: MagicMock(returncode=0))
+        # Where the checkout is as the stubbed git moves it: on its release until the checkout of
+        # v9.9.9, and back once the failed update puts it back.
+        at = {"position": su.CheckoutPosition("1" * 40, tag="v0.1.0")}
+
+        def checkout(proj, ref):  # type: ignore[no-untyped-def]
+            at["position"] = su.CheckoutPosition("9" * 40, tag=ref)
+            return MagicMock(returncode=0)
+
+        def restore(proj, position):  # type: ignore[no-untyped-def]
+            at["position"] = position
+            return MagicMock(returncode=0)
+
+        monkeypatch.setattr(su, "git_position", lambda proj: at["position"])
+        monkeypatch.setattr(su, "git_checkout", checkout)
+        monkeypatch.setattr(su, "git_restore", restore)
         state = _make_state(monkeypatch, tmp_path)
 
         async def fake_exec(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -444,7 +460,7 @@ class TestUpdateApplyPipeline:
         monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
 
         fe_build = AsyncMock()
-        monkeypatch.setattr(upd, "build_frontend_async", fe_build)
+        monkeypatch.setattr(checkout_update, "build_frontend_async", fe_build)
         reexec = AsyncMock()
         monkeypatch.setattr(upd, "_graceful_reexec", reexec)
 
@@ -452,11 +468,14 @@ class TestUpdateApplyPipeline:
         assert resp.status == 200
         await asyncio.sleep(0.05)
 
-        # The installer's own reason reaches the panel, not a bare label.
+        # The installer's own reason reaches the panel, not a bare label, and so does where that
+        # left the checkout: back on the release it was on.
         assert state._update_progress == {
             "step": "error",
-            "detail": "pip install failed: resolver exploded",
+            "detail": "pip install failed: resolver exploded. Nothing was changed: the checkout is "
+            "back on v0.1.0.",
         }
+        assert at["position"].commit == "1" * 40
         fe_build.assert_not_awaited()
         reexec.assert_not_awaited()
         assert upd._apply_in_flight is False
@@ -560,7 +579,7 @@ class TestUpdateApplyPipeline:
 
         monkeypatch.setattr(su, "_run_git", fake_git)
         monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
-        monkeypatch.setattr(upd, "build_frontend_async", AsyncMock())
+        monkeypatch.setattr(checkout_update, "build_frontend_async", AsyncMock())
         monkeypatch.setattr(upd, "_graceful_reexec", AsyncMock())
 
         resp = await upd.api_update_apply(self._make_request(state))
@@ -617,7 +636,7 @@ class TestUpdateApplyPipeline:
         monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
 
         fe_build = AsyncMock()
-        monkeypatch.setattr(upd, "build_frontend_async", fe_build)
+        monkeypatch.setattr(checkout_update, "build_frontend_async", fe_build)
 
         reexec_calls: list[dict] = []
 

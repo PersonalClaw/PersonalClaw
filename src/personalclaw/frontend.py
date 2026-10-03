@@ -5,7 +5,6 @@ import hashlib
 import json
 import logging
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
@@ -251,53 +250,6 @@ def _propagate_dist(
         log(f"  Linked static/dist -> {built_dist}")
     except OSError as exc:
         log(f"  Could not symlink static/dist: {exc}")
-
-
-def build_frontend_sync(
-    proj_path: Path,
-    log: Callable[[str], None] = print,
-) -> None:
-    """Build frontend assets (sync).
-
-    Looks for ``web/`` at project root and runs
-    ``npm ci && npm run build`` if Node.js is available.
-    """
-    website_dir = proj_path / _DIR_NAME
-    if not website_dir.is_dir():
-        log(f"  {_DIR_NAME}/ not found — skipping frontend build")
-        return
-
-    if not shutil.which("node"):
-        log("  Node.js not found — skipping frontend build")
-        return
-
-    from personalclaw._installer import installer_env
-
-    log(f"  Building {_DIR_NAME} (npm ci && npm run build)...")
-    try:
-        r = subprocess.run(
-            ["npm", "ci", "--no-audit", "--no-fund"],
-            cwd=website_dir,
-            capture_output=True,
-            timeout=180,
-            env=installer_env(),
-        )
-        if r.returncode == 0:
-            r = subprocess.run(
-                ["npm", "run", "build"],
-                cwd=website_dir,
-                capture_output=True,
-                timeout=120,
-                env=installer_env(),
-            )
-            if r.returncode == 0:
-                _propagate_dist(website_dir / "dist", proj_path, log)
-            else:
-                log("  Frontend build failed — dashboard may be stale")
-        else:
-            log("  Frontend npm ci failed — dashboard may be stale")
-    except subprocess.TimeoutExpired:
-        log("  Frontend build timed out — dashboard may be stale")
 
 
 async def build_frontend_async(

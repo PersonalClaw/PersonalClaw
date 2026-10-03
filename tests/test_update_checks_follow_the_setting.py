@@ -480,6 +480,10 @@ def _staged_install_seams(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> li
 
     monkeypatch.setattr(self_update, "source_checkout", lambda: str(tmp_path / "checkout"))
     monkeypatch.setattr(self_update, "git_tracked_changes", lambda _proj: [])
+    # Where the checkout is, read before it moves; these git steps are stand-ins, so it never does.
+    monkeypatch.setattr(
+        self_update, "git_position", lambda _proj: self_update.CheckoutPosition("1" * 40)
+    )
     monkeypatch.setattr(self_update, "resolve_target", _resolve)
     monkeypatch.setattr(self_update, "git_fetch_tags", _git("fetch_tags"))
     monkeypatch.setattr(self_update, "git_checkout", _git("checkout"))

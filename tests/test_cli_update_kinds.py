@@ -6,21 +6,27 @@ first — hit "❌ PERSONALCLAW_PROJECT_DIR not set" and exit 1, while the insta
 machinery the dashboard already used sat one module away. One test per branch drives
 the real dispatch; nothing here runs git, pip, or a frontend build.
 
-The fake layer is deliberately narrow and at the two real seams:
-`self_update._run_git` (every sync git spawn funnels through it) and
-`cli_server.subprocess.run` (the installer and the post-update `setup --agent-only`).
-A test that actually ran `git checkout` / a fast-forward or `pip -U` would be a wrecking ball.
+The fake layer is deliberately narrow and at the real seams:
+`self_update._run_git` (every sync git spawn funnels through it), `cli_server.subprocess.run`
+(a wheel's installer and the post-update `setup --agent-only`) and the checkout update's
+install spawn (`checkout_update._install`). A test that actually ran `git checkout` / a
+fast-forward or `pip -U` would be a wrecking ball.
 """
 
 from __future__ import annotations
 
 import subprocess
 import types
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from personalclaw import cli_server, container_host
+from personalclaw import checkout_update, cli_server, container_host
 from personalclaw import self_update as su
+
+#: What git answers when the update reads where a checkout is (``self_update.git_position``):
+#: the commit HEAD names, and HEAD detached on it (the release tag the checkout is on).
+_ON_A_RELEASE = {"rev-parse": (0, "1" * 40 + "\n", ""), "symbolic-ref": (1, "", "")}
 
 
 class _Git:
@@ -55,14 +61,22 @@ def _fake_installer(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def spawns(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
-    """Capture cli_server's subprocess.run argvs; nothing is executed."""
+    """Capture every argv the update would run, cli_server's subprocess.run (a wheel's install,
+    `setup --agent-only`) and the checkout update's install; nothing is executed."""
     seen: list[list[str]] = []
 
     def _fake_run(argv, *a, **kw):  # type: ignore[no-untyped-def]
         seen.append(list(argv))
         return subprocess.CompletedProcess(argv, 0, "", "")
 
+    async def _fake_exec(*argv, **kw):  # type: ignore[no-untyped-def]
+        seen.append(list(argv))
+        proc = MagicMock(returncode=0)
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        return proc
+
     monkeypatch.setattr(cli_server.subprocess, "run", _fake_run)
+    monkeypatch.setattr(checkout_update.asyncio, "create_subprocess_exec", _fake_exec)
     return seen
 
 
@@ -81,8 +95,11 @@ def _no_network_and_no_build(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _no_releases() -> list:
         return []
 
+    async def _no_build(*_a, **_k) -> None:
+        return None
+
     monkeypatch.setattr(su, "fetch_releases", _no_releases)
-    monkeypatch.setattr(cli_server, "build_frontend_sync", lambda path: None)
+    monkeypatch.setattr(checkout_update, "build_frontend_async", _no_build)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
     _channel(monkeypatch)
@@ -168,7 +185,7 @@ def test_git_release_channel_fetches_tags_and_checks_out_the_resolved_tag(
     _channel(monkeypatch, "stable")
     _fake_resolve(monkeypatch, "v9.9.9")  # newer than the running version
     monkeypatch.setattr(cli_server, "__version__", "0.1.0")
-    git = _Git(**{"status": (0, "", "")})  # clean tree
+    git = _Git(**{"status": (0, "", ""), **_ON_A_RELEASE})  # clean tree
     monkeypatch.setattr(su, "_run_git", git)
     _fake_installer(monkeypatch)
 
@@ -234,7 +251,7 @@ def test_git_pin_checks_out_the_pinned_tag(
     _channel(monkeypatch, "stable", pin="0.1.0")
     _fake_resolve(monkeypatch, "v0.1.0")
     monkeypatch.setattr(cli_server, "__version__", "0.2.0")  # running a NEWER version
-    git = _Git(**{"status": (0, "", "")})
+    git = _Git(**{"status": (0, "", ""), **_ON_A_RELEASE})
     monkeypatch.setattr(su, "_run_git", git)
     _fake_installer(monkeypatch)
 
@@ -253,6 +270,7 @@ def test_git_nightly_channel_fast_forwards_the_branch(
     git = _Git(
         **{
             "rev-parse": (0, "main\n", ""),
+            "symbolic-ref": (0, "refs/heads/main\n", ""),  # HEAD is on the branch
             "diff": (1, "", ""),  # HEAD != origin/main → something to advance
             "status": (0, "", ""),  # clean tree
         }

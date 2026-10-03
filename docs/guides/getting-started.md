@@ -304,6 +304,15 @@ update changes nothing and says what to run instead, such as `personalclaw updat
 terminal where `uv` works. A service runs with the PATH it was installed with, so a uv
 installed later may be one only your terminal can see.
 
+**A git clone's failed update puts it back.** When the install does not finish (the
+network, a resolver conflict, a full disk, or PersonalClaw stopping while it runs), the
+update puts the clone back on the exact commit and branch it was on, so PersonalClaw keeps
+running the release its packages belong to, and says what failed. It never forces git: if
+git refuses (another git command holds the repository, say), the message names where the
+clone is and the one `git -C … checkout …` command that puts it back, to run before
+PersonalClaw next starts. That is also why an update never starts on uncommitted changes to
+tracked files.
+
 **Channels** (`updates.channel`) — which release line you follow:
 
 | Channel | Follows | Use it when |

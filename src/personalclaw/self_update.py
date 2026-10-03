@@ -44,17 +44,16 @@ being present.
 the running interpreter's environment. Which program performs it is resolved
 separately by :mod:`personalclaw._installer` (a uv venv ships no pip).
 
-**What this module does NOT own.** Sequencing and reporting stay with each
-frontend, because the two lifecycles genuinely differ: the dashboard applies
-asynchronously, publishes ``update_progress`` over the websocket, holds a 409
-in-flight guard and re-execs the live gateway; the CLI applies synchronously,
-prints to stdout, prompts a TTY and re-execs nothing (there is no server in that
-process). A single ``apply(kind, progress=...)`` would be a callback-shaped
-abstraction over two different lifecycles, so it was rejected — the shared part
-is the decision plus these primitives, and the installer every surface runs
-(``_installer``: the tool that made the environment). The dashboard's Update and the
-gateway's staged auto-update ARE one lifecycle, and so one function
-(``dashboard.handlers.updates.start_checkout_update``).
+**What this module does NOT own.** The update of a source checkout itself: moving it to its
+release, installing it and building its frontend, and putting it back where it was when that
+fails, is one sequence every surface runs (:mod:`personalclaw.checkout_update`). Each surface
+keeps what comes before and after it, because those genuinely differ: the dashboard answers a
+request, holds a 409 in-flight guard, publishes ``update_progress`` over the websocket and
+re-execs the live gateway; the CLI prints to the terminal and re-execs nothing (there is no
+server in that process). The dashboard's Update and the gateway's staged auto-update are one
+lifecycle, and so one function (``dashboard.handlers.updates.start_checkout_update``). A wheel's
+upgrade is one install with nothing to put back, run by each surface through ``_installer``
+(the tool that made the environment).
 
 Pre-1.0 clean break (owner 2026-07-20): implemented directly, WITHOUT a
 lifecycle gate — there is no lifecycle/gates.py machinery yet, so this is the one
@@ -69,6 +68,7 @@ import os
 import re
 import subprocess
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
@@ -1129,6 +1129,69 @@ def git_tracked_changes(proj: str) -> list[str]:
     # NOT stripped: porcelain status codes are column-significant (" M" unstaged vs
     # "M " staged), and stripping the blob eats the first line's leading space.
     return [ln for ln in (res.stdout or "").splitlines() if ln.strip() and not ln.startswith("??")]
+
+
+@dataclass(frozen=True)
+class CheckoutPosition:
+    """Where a checkout is: the commit HEAD names, and the branch HEAD is on (``""`` when it is
+    detached, as it is on a release tag). Two positions are the same place when both agree.
+
+    ``tag`` names the commit for a person (``v0.2.1``) when a tag points at it. It takes no part
+    in the comparison: the fetch an update runs can bring a tag naming a commit that had none.
+    """
+
+    commit: str
+    branch: str = ""
+    tag: str = field(default="", compare=False)
+
+    def __str__(self) -> str:
+        if self.tag:
+            return self.tag
+        if self.branch:
+            return f"{self.branch} at {self.commit[:7]}"
+        return f"commit {self.commit[:7]}"
+
+    def restore_args(self, *, force: bool = False) -> list[str]:
+        """The git arguments that put a checkout back here: the branch, reset to this commit (a
+        fast-forward moved it, and checking a tag out left it where it was), or this commit with
+        HEAD detached. Without *force* git refuses to overwrite a change in the tree, so putting a
+        checkout back never discards anyone's work; with it, those changes are discarded."""
+        checkout = ["checkout", "--force"] if force else ["checkout"]
+        if self.branch:
+            return [*checkout, "-B", self.branch, self.commit]
+        return [*checkout, "--detach", self.commit]
+
+
+def git_position(proj: str) -> CheckoutPosition | None:
+    """Where the checkout at *proj* is, or ``None`` when git cannot say.
+
+    An update reads this before it moves anything, and does not move a checkout it could not put
+    back. ``symbolic-ref --quiet`` exits 1 for a detached HEAD and with another code when it
+    cannot answer, so a failure is never read as "detached".
+    """
+    head = _run_git(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], cwd=proj, timeout=10)
+    commit = (head.stdout or "").strip() if head.returncode == 0 else ""
+    if not commit:
+        return None
+    ref = _run_git(["symbolic-ref", "--quiet", "HEAD"], cwd=proj, timeout=10)
+    if ref.returncode == 0:
+        name = (ref.stdout or "").strip()
+        if not name.startswith("refs/heads/"):
+            return None
+        branch = name.removeprefix("refs/heads/")
+    elif ref.returncode == 1:
+        branch = ""
+    else:
+        return None
+    named = _run_git(["describe", "--tags", "--exact-match", commit], cwd=proj, timeout=10)
+    tag = (named.stdout or "").strip() if named.returncode == 0 else ""
+    return CheckoutPosition(commit, branch, tag)
+
+
+def git_restore(proj: str, position: CheckoutPosition) -> subprocess.CompletedProcess[str]:
+    """Put the checkout at *proj* back on *position* (:meth:`CheckoutPosition.restore_args`),
+    refusing, as git does, to overwrite a change in the tree."""
+    return _run_git(position.restore_args(), cwd=proj, timeout=30)
 
 
 # ── Git primitives (async; the dashboard's pipeline runs on these) ──────────

@@ -443,10 +443,11 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/updates.py::_apply_pip_update._apply::asyncio.create_subprocess_exec": (
         "service: self pip update"
     ),
-    # The checkout's update (the owner's Update and the staged auto-update are one function)
-    # spawns only its install, with the tool that made the environment; the tag advance runs
-    # through asyncio.to_thread over self_update's sync git primitives, not a spawn here.
-    "dashboard/handlers/updates.py::_advance_checkout::asyncio.create_subprocess_exec": (
+    # The checkout's update (the owner's Update, the staged auto-update and `personalclaw
+    # update` are one function) spawns only its install, with the tool that made the
+    # environment; the tag advance and the put-back run in a thread over self_update's sync git
+    # primitives, not a spawn here.
+    "checkout_update.py::_install::asyncio.create_subprocess_exec": (
         "service: the checkout's install (pip install -e . or uv sync)"
     ),
     # A restart is the gateway's own full stop, then this exec of its fresh image.
@@ -476,7 +477,6 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "operator: evals matrix cell (own env isolation)"
     ),
     # Frontend build — operator/service; must stay uncapped (thousands of fds).
-    "frontend.py::build_frontend_sync::subprocess.run": "operator: frontend npm build",
     "frontend.py::build_frontend_async::asyncio.create_subprocess_exec": (
         "operator: frontend npm build"
     ),

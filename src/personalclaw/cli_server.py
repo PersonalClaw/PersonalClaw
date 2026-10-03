@@ -13,7 +13,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from personalclaw import __version__, container_host, gateway_base, process_facts, self_update
+from personalclaw import (
+    __version__,
+    checkout_update,
+    container_host,
+    gateway_base,
+    process_facts,
+    self_update,
+)
 from personalclaw.atomic_write import open_streamed
 from personalclaw.auth import lifetimes
 from personalclaw.config import AppConfig
@@ -30,7 +37,7 @@ from personalclaw.dashboard.token_auth import (
     duration_words,
     parse_duration,
 )
-from personalclaw.frontend import build_frontend_sync, ensure_dev_dist_symlink
+from personalclaw.frontend import ensure_dev_dist_symlink
 from personalclaw.gateway import run_gateway
 from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.memory import MemoryStore
@@ -590,16 +597,7 @@ def _update_git_nightly(git_dir: str) -> None:
     tracked = self_update.git_tracked_changes(git_dir)
     if tracked:
         _refuse_dirty_tree(tracked, "a fast-forward")
-    _require_installer()
-
-    print(f"  ⏩ git merge --ff-only origin/{branch}…")
-    ff = self_update.git_fast_forward(git_dir, branch)
-    if ff.returncode != 0:
-        # A diverged branch cannot fast-forward — we do NOT reset over it.
-        print(f"  ❌ fast-forward failed (branch diverged?):\n{_git_said(ff)}", file=sys.stderr)
-        sys.exit(1)
-
-    _finish_git_update(git_dir)
+    _finish_git_update(git_dir, "")
 
 
 def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
@@ -625,38 +623,44 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
     tracked = self_update.git_tracked_changes(git_dir)
     if tracked:
         _refuse_dirty_tree(tracked, f"checking out {target}")
-    _require_installer()
-
-    print("  ⬇️  git fetch --tags…")
-    fetched = self_update.git_fetch_tags(git_dir)
-    if fetched.returncode != 0:
-        print(f"  ❌ git fetch --tags failed:\n{_git_said(fetched)}", file=sys.stderr)
-        sys.exit(1)
-    print(f"  🏷  git checkout {target}…")
-    checked = self_update.git_checkout(git_dir, target)
-    if checked.returncode != 0:
-        print(f"  ❌ git checkout {target} failed:\n{_git_said(checked)}", file=sys.stderr)
-        sys.exit(1)
-
-    _finish_git_update(git_dir)
+    _finish_git_update(git_dir, target)
 
 
-def _finish_git_update(git_dir: str) -> None:
-    """Rebuild the SPA and install the checkout after the tree has been advanced.
+#: How ``personalclaw update`` marks each step of a checkout's update (``checkout_update``).
+_STEP_MARKS = {
+    "pulling": "⬇️ ",
+    "installing": "🔨",
+    "building": "🧱",
+    "warning": "⚠️ ",
+    "error": "❌",
+}
 
-    The SPA is built from source here (a checkout has no bundled dist), and both
-    the build and the install run at the PACKAGE root — which is nested
-    one level under the repo root in the monorepo layout, where git runs. It installs with the
-    tool that made the environment (``_installer.checkout_install_argv``), which
-    :func:`_require_installer` found there before the tree moved.
+
+def _say_step(step: str, detail: str) -> None:
+    """Print one step of a checkout's update; an error on stderr."""
+    print(f"  {_STEP_MARKS.get(step, '•')} {detail}", file=sys.stderr if step == "error" else None)
+
+
+def _finish_git_update(git_dir: str, target: str) -> None:
+    """Update the checkout to release *target* (none: fast-forward its branch), then refresh the
+    agent config and say to restart the gateway.
+
+    The update is the one the dashboard's Update runs too (``checkout_update.update_checkout``):
+    it moves the checkout, installs it with the tool that made the environment and builds its
+    frontend, at the PACKAGE root, which is nested one level under the repo root (where git runs)
+    in the monorepo layout. When the install fails it puts the checkout back on the commit it was
+    on, and this exits 1 with what it said.
     """
-    pkg_root = self_update.package_root(git_dir)
-    build_frontend_sync(Path(pkg_root))
-    _install([], checkout=pkg_root)
+    import asyncio
+
+    failed = asyncio.run(checkout_update.update_checkout(git_dir, target, _say_step))
+    if failed:
+        print(f"  ❌ {failed}", file=sys.stderr)
+        sys.exit(1)
 
     print("\n✅ PersonalClaw updated!")
     print(f"\n{DATA_WARNING}\n")
-    _refresh_agent_config(pkg_root)
+    _refresh_agent_config(self_update.package_root(git_dir))
     print("\n  ↻ Restart the gateway to run the new code: personalclaw restart")
 
 
@@ -813,44 +817,19 @@ def _move_line(target: str) -> str:
     return f"  {arrow} v{__version__} → v{self_update.normalize_version(target)}"
 
 
-def _require_installer() -> None:
-    """Exit 1, having changed nothing, when the tool that made PersonalClaw's environment is not
-    there to install the update (``_installer.require_own_installer``). Asked before the checkout
-    moves: found missing after it, the update would leave the new release's sources over the old
-    release's environment."""
-    from personalclaw._installer import NoInstallerError, require_own_installer
+def _install(args: list[str]) -> None:
+    """Install *args* (a wheel's ``-U personalclaw==<tag>``) into PersonalClaw's own environment
+    with the tool that made it, or exit 1 with a readable reason."""
+    from personalclaw._installer import NoInstallerError, install_argv, installer_env
 
     try:
-        require_own_installer()
-    except NoInstallerError as exc:
-        print(f"  ❌ {exc}", file=sys.stderr)
-        sys.exit(1)
-
-
-def _install(args: list[str], *, checkout: str = "") -> None:
-    """Install into PersonalClaw's own environment with the tool that made it, or exit 1 with a
-    readable reason: *args* for a wheel (``-U personalclaw==<tag>``), or the source *checkout*,
-    installed in place where it is."""
-    from personalclaw._installer import (
-        NoInstallerError,
-        checkout_install_argv,
-        install_argv,
-        installer_env,
-    )
-
-    try:
-        if checkout:
-            argv = checkout_install_argv(checkout)
-        else:
-            argv = install_argv(args)
+        argv = install_argv(args)
     except NoInstallerError as exc:
         print(f"  ❌ {exc}", file=sys.stderr)
         sys.exit(1)
 
     print(f"  🔨 {shlex.join(argv)}")
-    result = subprocess.run(
-        argv, cwd=checkout or None, capture_output=True, text=True, env=installer_env()
-    )
+    result = subprocess.run(argv, capture_output=True, text=True, env=installer_env())
     if result.returncode != 0:
         # Same one-line summary the dashboard shows: uv's stderr is ANSI-colored and
         # leads with the headline, so raw stderr reads as corrupted or as a fragment.
@@ -895,9 +874,10 @@ def _update(to: str = "") -> None:
 
     | kind | what happens | exit |
     |---|---|---|
-    | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure, no |
-    |  | fast-forward) + SPA build + install with the tool that | release found, or a |
-    |  | made the environment, then "restart the gateway" | dirty tree or a missing |
+    | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure (the |
+    |  | fast-forward) + install with the tool that made the | checkout put back), no |
+    |  | environment + SPA build (`checkout_update`), then | release found, or a |
+    |  | "restart the gateway" | dirty tree or a missing |
     |  |  | tool blocking it |
     | pip | that tool's `-U personalclaw==<channel/pin tag>`, | 0; 1 on install failure |
     |  | then "restart the gateway" (pip / pipx / uv tool) | or a pin naming no release |

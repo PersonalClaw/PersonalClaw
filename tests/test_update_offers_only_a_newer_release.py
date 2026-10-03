@@ -23,7 +23,7 @@ import types
 
 import pytest
 
-from personalclaw import cli_server, container_host
+from personalclaw import checkout_update, cli_server, container_host
 from personalclaw import self_update as su
 
 
@@ -107,8 +107,11 @@ def _install(
     async def _list() -> list[dict[str, object]]:
         return [dict(r) for r in releases]
 
+    async def _no_build(*_a, **_k) -> None:
+        return None
+
     monkeypatch.setattr(su, "fetch_releases", _list)
-    monkeypatch.setattr(cli_server, "build_frontend_sync", lambda path: None)
+    monkeypatch.setattr(checkout_update, "build_frontend_async", _no_build)
 
 
 def _pulled_tag(out: str) -> str:

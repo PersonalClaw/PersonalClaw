@@ -172,6 +172,10 @@ def test_a_failed_update_step_prints_what_git_said_masked(channel, monkeypatch, 
     monkeypatch.setattr(self_update, "git_fetch", lambda *_: failed)
     monkeypatch.setattr(self_update, "git_fetch_tags", lambda *_: failed)
     monkeypatch.setattr(self_update, "git_tracked_changes", lambda *_: [])
+    # Where the checkout is, read before the update moves it (`checkout_update`).
+    monkeypatch.setattr(
+        self_update, "git_position", lambda _proj: self_update.CheckoutPosition("1" * 40)
+    )
 
     async def resolve_target(*_):
         return "v9.9.9"
