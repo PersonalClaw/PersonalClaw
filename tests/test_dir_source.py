@@ -42,6 +42,17 @@ def _isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
 
 
+@pytest.fixture(autouse=True)
+def _no_settle_wait(monkeypatch):
+    """A file still being written waits out a settle window before it is taken. These tests are
+    about what the folder's observer reports and what the engine keeps of it, so the window is not
+    waited out here: settling has tests of its own
+    (``test_a_watched_folders_files_are_taken_as_uploads_are.py``)."""
+    from personalclaw.knowledge import file_items
+
+    monkeypatch.setattr(file_items, "SETTLE_SECS", 0.0)
+
+
 @pytest.fixture()
 def store(tmp_path):
     return KnowledgeStore(str(tmp_path / "knowledge.db"))
@@ -123,6 +134,14 @@ def _setup(store, watched, clock, **spec_over):
 
 async def _poll(engine, store, sid):
     return await engine.poll_source(store.get_source(sid), _cfg())
+
+
+async def _ingest(store, item_id):
+    """Read an item the poll queued, as the gateway's ingest queue does: a folder's file is read by
+    the reader for its kind when its item is ingested, as an upload is."""
+    from personalclaw.knowledge.pipeline.runner import ingest_item
+
+    await ingest_item(store, item_id)
 
 
 def _items(store, sid):
@@ -357,7 +376,8 @@ async def test_repeated_edits_to_one_file_collapse_to_one_reindex(store, watched
     rows = _items(store, sid)
     assert len(rows) == 1
     # The content indexed is the LAST state, not an intermediate one.
-    assert rows[0]["content"] == "v4"
+    await _ingest(store, rows[0]["id"])
+    assert store.get_item(rows[0]["id"])["content"] == "v4"
 
 
 # ── create vs modify: a new item vs the SAME item re-enqueued ───────────────────
@@ -382,7 +402,8 @@ async def test_create_makes_new_item_then_modify_reenqueues_the_same_item(store,
     rows = _new_rows()
     assert len(rows) == 1
     first_id = rows[0]["id"]
-    assert rows[0]["item_type"] == "note"
+    # A markdown file is a document, read by the document reader, as an upload of it is.
+    assert rows[0]["item_type"] == "document"
     assert queue.enqueued[before:] == [first_id]
 
     # modify → the EXISTING item, re-enqueued, no second row
@@ -393,9 +414,10 @@ async def test_create_makes_new_item_then_modify_reenqueues_the_same_item(store,
     rows = _new_rows()
     assert len(rows) == 1, "a modify must not mint a duplicate row"
     assert rows[0]["id"] == first_id
-    assert rows[0]["content"] == "second"
     assert rows[0]["processing_status"] == "queued", "re-index means back on the ingest path"
     assert queue.enqueued[before:] == [first_id, first_id]
+    await _ingest(store, first_id)
+    assert store.get_item(first_id)["content"] == "second"
 
 
 @pytest.mark.asyncio
@@ -438,6 +460,7 @@ async def test_delete_archives_with_source_deleted_at_and_never_hard_deletes(sto
     assert len(rows) == 1
     item_id = rows[0]["id"]
     assert not rows[0]["is_archived"]
+    await _ingest(store, item_id)
 
     # The file goes away.
     (watched / "doomed.md").unlink()
@@ -482,7 +505,8 @@ async def test_delete_then_restore_revives_the_same_item(store, watched):
     rows = _items(store, sid)
     assert len(rows) == 1, "a restored file revives its item rather than minting a second"
     assert rows[0]["id"] == item_id
-    assert rows[0]["content"] == "two"
+    await _ingest(store, item_id)
+    assert store.get_item(item_id)["content"] == "two"
     revived = store.get_item(item_id)
     assert not revived["is_archived"]
     assert "source_deleted_at" not in revived["file_metadata"]
@@ -549,7 +573,7 @@ async def test_one_unreadable_file_does_not_abort_the_cycle(store, watched, monk
     for name in ("good1.md", "bad.md", "good2.md"):
         _write(watched / name, name, mtime=clock.t)
 
-    real_open = open
+    real_open = os.open
 
     def _boom(path, *a, **kw):
         if str(path).endswith("bad.md"):
@@ -557,9 +581,10 @@ async def test_one_unreadable_file_does_not_abort_the_cycle(store, watched, monk
         return real_open(path, *a, **kw)
 
     # A context, not `monkeypatch.undo()`, which would also undo the fixtures' and the suite's
-    # patches for the rest of the test.
+    # patches for the rest of the test. The file is opened where it is taken, as an upload's
+    # copy is made (`knowledge.file_items`).
     with monkeypatch.context() as unreadable:
-        unreadable.setattr("builtins.open", _boom)
+        unreadable.setattr("os.open", _boom)
         clock.advance(11)
         # The two readable files still index; the unreadable one is skipped, not fatal.
         assert await _poll(engine, store, sid) == 2

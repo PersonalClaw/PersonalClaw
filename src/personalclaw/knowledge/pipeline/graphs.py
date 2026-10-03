@@ -198,6 +198,32 @@ class FeedItemGraph(PipelineGraph):
         self.add(NodeSpec(node_type="passthrough", backend="native"))
 
 
+class RawDocumentGraph(PipelineGraph):
+    """A ``raw``-enrichment source's document FILE (a note, PDF, sheet or deck a watched folder
+    took) → its text, read with no model: the document reader, then consolidate, ‖ slice.
+
+    :class:`DocumentGraph` without its scan branch. The reader and the slicer are pure python, so
+    the no-AI contract holds by the same absence :class:`FeedItemGraph` keeps it by: a page with no
+    text layer is read only by OCR, which is a model, so that node is not here. A scanned PDF from
+    a raw source has no text, and its item says so (``unsearchable``)."""
+
+    def build(self) -> None:
+        self.add(NodeSpec(node_type="document_read", backend="native"))
+        self.add(NodeSpec(node_type="consolidate", backend="concat"))
+        self.add(NodeSpec(node_type="document_slice", backend="native"))
+        self.edge("document_read", "consolidate")
+        self.edge("document_read", "document_slice")
+
+
+class RawImageGraph(PipelineGraph):
+    """A ``raw``-enrichment source's picture → what is read of it with no model: its exif (its
+    size and format). OCR and a description of it are a model's reading, so they are not here;
+    the item is described by what exif found."""
+
+    def build(self) -> None:
+        self.add(NodeSpec(node_type="exif", backend="pillow"))
+
+
 _GRAPH_BY_TYPE: dict[str, type[PipelineGraph]] = {
     **{t: PassthroughGraph for t in _TEXT_TYPES},
     **{t: DocumentGraph for t in _DOC_TYPES},
@@ -205,6 +231,13 @@ _GRAPH_BY_TYPE: dict[str, type[PipelineGraph]] = {
     "image": ImageGraph,
     "audio": AudioGraph,
     "video": VideoGraph,
+}
+
+#: The graphs of a ``raw`` source's items that are files: their kind's readers with no model.
+#: Every other raw item (a feed entry, a page, a code file's text) is :class:`FeedItemGraph`.
+_RAW_GRAPH_BY_TYPE: dict[str, type[PipelineGraph]] = {
+    **{t: RawDocumentGraph for t in _DOC_TYPES},
+    "image": RawImageGraph,
 }
 
 
@@ -216,14 +249,16 @@ def graph_for(item_type: str, *, enrichment: str = ENRICHMENT_FULL) -> PipelineG
     degrades to the item's raw content when there's no readable file).
 
     ``enrichment`` is the owning WatchedSource's no-AI setting (WATCHED-SOURCES §6.3).
-    :data:`~personalclaw.knowledge_providers.base.ENRICHMENT_RAW` overrides the type map
-    entirely and returns :class:`FeedItemGraph` — the type's own graph may contain LLM
-    nodes (a raw source of images would otherwise route through OCR + vision), and the
-    guarantee is that a raw item reaches no model at all, whatever it is.
+    :data:`~personalclaw.knowledge_providers.base.ENRICHMENT_RAW` overrides the type map: the
+    type's own graph may contain LLM nodes (a raw source of images would otherwise route through
+    OCR + vision), and the guarantee is that a raw item reaches no model at all, whatever it is.
+    A file a raw source took (a watched folder's document or picture) is read by its kind's
+    pure-python readers alone (:class:`RawDocumentGraph`, :class:`RawImageGraph`); every other raw
+    item is :class:`FeedItemGraph`.
     """
     cls: type[PipelineGraph]
     if enrichment == ENRICHMENT_RAW:
-        cls = FeedItemGraph
+        cls = _RAW_GRAPH_BY_TYPE.get(item_type, FeedItemGraph)
     else:
         cls = _GRAPH_BY_TYPE.get(item_type, DocumentGraph)
     g = cls(item_type=item_type)

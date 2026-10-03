@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { MemoryGraph } from './MemoryGraph'
 import { memoryEmbeddedStat } from './memoryEmbeddedStat'
+import { vaultSyncMessage } from './vaultSyncMessage'
 import {
   api, type MemorySettings, type SemanticEntry,
   type EpisodicEntry, type MemoryEvent, type MemoryVaultStatus, type MemoryVaultMode,
@@ -2498,22 +2499,7 @@ function VaultSection({ settings, onMode, onPath, saved }: {
   const sync = async () => {
     setSyncing(true); setMsg('')
     try {
-      const r = await api.syncMemoryVault()
-      const parts = [`Synced ${r.records} record${r.records === 1 ? '' : 's'} → ${r.files} file${r.files === 1 ? '' : 's'}`]
-      if (r.written) parts.push(`${r.written} updated`)
-      if (r.pruned) parts.push(`${r.pruned} pruned`)
-      if (r.absorbed) parts.push(`${r.absorbed} edit${r.absorbed === 1 ? '' : 's'} read back`)
-      if (r.conflicts) parts.push(`${r.conflicts} conflict${r.conflicts === 1 ? '' : 's'} — see Health`)
-      if (r.raw_ingested) parts.push(`${r.raw_ingested} raw file${r.raw_ingested === 1 ? '' : 's'} → Knowledge`)
-      if (r.raw_refused) parts.push(`${r.raw_refused} raw file${r.raw_refused === 1 ? '' : 's'} refused — see Knowledge`)
-      // Each folder's own memory is synced into a vault of its own beside it, and said too.
-      const own = Object.values(r.folders ?? {})
-      const sum = (k: 'records' | 'files') => own.reduce((n, f) => n + f[k], 0)
-      const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
-      const inFolders = own.length
-        ? ` ${own.length === 1 ? "One folder's own memory" : `${own.length} folders' own memories`}: ${plural(sum('records'), 'record')} → ${plural(sum('files'), 'file')}.`
-        : ''
-      setMsg((parts.length === 1 ? `${parts[0]} (no changes)` : `${parts[0]} (${parts.slice(1).join(', ')})`) + (inFolders ? `.${inFolders}` : ''))
+      setMsg(vaultSyncMessage(await api.syncMemoryVault()))
       loadStatus()
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Sync failed') }
     setSyncing(false)

@@ -1959,11 +1959,13 @@ class KnowledgeStore:
 
     def find_active_by_file_hash(self, content_hash: str):
         """Return an existing active item whose stored file content_hash matches, or None.
-        Used to dedup byte-identical re-uploads."""
+        Used to dedup byte-identical re-uploads. Never an item a watched source made of a file
+        (``source_id`` set): that item follows its file, archived when the file goes, so an
+        upload handed it would go with a file in someone's folder."""
         if not content_hash:
             return None
         row = self.db.execute(
-            "SELECT * FROM items WHERE status = 'active' "
+            "SELECT * FROM items WHERE status = 'active' AND source_id IS NULL "
             "AND json_extract(file_metadata, '$.content_hash') = ? "
             "ORDER BY created_at LIMIT 1",
             (content_hash,),

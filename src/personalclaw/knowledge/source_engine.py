@@ -26,10 +26,16 @@ stranded by a restart.
 The engine NEVER fetches web content itself — it drives PROVIDERS, whose fetches route
 through ``net.fetch`` under the ``SOURCE`` egress profile (WS-3+). Re-implementing a fetch
 here would bypass host classification, private-IP denial and the redirect-hop re-check.
+
+A watched folder's files are the one thing it takes itself (:func:`takes_files`): the folder
+observer's sighting names a file inside the folder, and the engine takes the file through the
+door the Knowledge page's uploads come through (``knowledge.file_items.take_watched_file``), so
+it is typed by its kind, scanned, and read by the reader for its kind, never decoded into a note.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -60,6 +66,20 @@ def polls_the_network(provider: Any) -> bool:
     from personalclaw.knowledge_providers.dir_source import DirSourceProvider
 
     return type(provider) is not DirSourceProvider
+
+
+def takes_files(provider: Any) -> bool:
+    """Whether ``provider``'s sightings name files the engine takes into the library itself, as
+    the Knowledge page takes an upload (``knowledge.file_items.take_watched_file``), rather than
+    carrying the content to keep.
+
+    Only core's own folder observer, recognised by its exact type, as :func:`polls_the_network`
+    recognises it: its sighting names a file inside a folder the owner shared, which it asks
+    again where it is (``DirSourceProvider.file_of``). Any other provider, an app's or a subclass,
+    hands the content it read, and the engine opens no file for it."""
+    from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+
+    return type(provider) is DirSourceProvider
 
 
 def effective_interval(source: dict, cfg: Any, provider: Any) -> float:
@@ -454,7 +474,7 @@ class SourceEngine:
                 cut_short = True
                 break
             try:
-                new_count += self._persist(source, item)
+                new_count += await self._persist(source, item, provider)
             except Exception:  # noqa: BLE001 — one bad item must not abandon the rest
                 logger.warning("source %s item %r persist failed", sid, item.guid, exc_info=True)
         # What the cap left out is not lost with the provider's new cursor. A poll cut short
@@ -489,8 +509,8 @@ class SourceEngine:
 
     # ── persisting one sighting (created / modified / deleted) ──────────────────────
 
-    def _persist(self, source: dict, item: Any) -> int:
-        """Persist ONE sighting; return 1 if it was (re-)indexed, else 0.
+    async def _persist(self, source: dict, item: Any, provider: Any) -> int:
+        """Persist ONE sighting of ``provider``'s; return 1 if it was (re-)indexed, else 0.
 
         The engine — not the provider — owns what a change KIND means, because the
         dangerous direction lives here: a provider that could decide "deleted" means
@@ -505,6 +525,9 @@ class SourceEngine:
         The kind is matched EXPLICITLY against the closed vocabulary; an unknown value is
         refused rather than falling through to a create, so a future kind cannot be
         silently mis-persisted as an ingestion.
+
+        A created or modified file of a watched folder is taken by :meth:`_take_file`, which
+        keeps the same two outcomes for the file's item.
         """
         from personalclaw.knowledge_providers.base import (
             CHANGE_CREATED,
@@ -515,9 +538,7 @@ class SourceEngine:
         change = getattr(item, "change", CHANGE_CREATED) or CHANGE_CREATED
         if change == CHANGE_DELETED:
             return self._archive_deleted(source, item)
-        if change == CHANGE_MODIFIED:
-            return self._reindex_modified(source, item)
-        if change != CHANGE_CREATED:
+        if change not in (CHANGE_CREATED, CHANGE_MODIFIED):
             logger.warning(
                 "source %s item %r has unknown change kind %r; skipped",
                 source["id"],
@@ -525,6 +546,10 @@ class SourceEngine:
                 change,
             )
             return 0
+        if takes_files(provider):
+            return await self._take_file(source, item, provider)
+        if change == CHANGE_MODIFIED:
+            return self._reindex_modified(source, item)
         return self._create_new(source, item)
 
     @staticmethod
@@ -631,11 +656,12 @@ class SourceEngine:
     def _reindex_modified(self, source: dict, item: Any) -> int:
         """An edited item → update the EXISTING row and re-enqueue it.
 
-        No second row: a mutable corpus (a watched directory) re-emits the same guid
-        every time the file changes, so keying off the existing item is what makes an
-        edit a re-index instead of a duplicate. A guid with no item yet (the source's
+        No second row: a mutable corpus (an app's source over a repository's files) re-emits
+        the same guid every time a file changes, so keying off the existing item is what makes
+        an edit a re-index instead of a duplicate. A guid with no item yet (the source's
         first pass only SEEDED it, so it was never ingested) legitimately becomes a
-        create — the alternative would drop the edit entirely."""
+        create — the alternative would drop the edit entirely. A watched folder's change is
+        :meth:`_take_file`'s, which keys off the existing item the same way."""
         existing = self._store.find_source_item(source["id"], item.guid)
         if existing is None:
             return self._create_new(source, item)
@@ -659,6 +685,54 @@ class SourceEngine:
         from personalclaw.knowledge_providers.base import CHANGE_MODIFIED
 
         self._emit_ingested(source, item, item_id, CHANGE_MODIFIED)
+        return 1
+
+    async def _take_file(self, source: dict, item: Any, provider: Any) -> int:
+        """A watched folder's created or modified file → its item, taken as an upload is.
+
+        The file is asked for where the folder holds it now (``provider.file_of``, against the
+        spec as stored now) and taken through the upload door
+        (``knowledge.file_items.take_watched_file``): its kind, its size, a scan of a private
+        copy of its bytes, then the copy kept, or a code file's text read and scanned. A first
+        sighting of a path the source already has an item for is refused before anything is
+        read, as the novelty gate refuses it; a change remakes the item the folder made of the
+        file before, never a second one. What the checks refuse is a failed item that says why,
+        named in the gateway log too, since no one was there to be told. A file that changed while
+        it was copied is left: it is still being written, and its next change brings it in."""
+        from personalclaw.knowledge.file_items import take_watched_file
+
+        sid = source["id"]
+        path = provider.file_of(self._source_spec(sid), item.guid)
+        if path is None:
+            return 0
+        existing = self._store.find_source_item(sid, item.guid)
+        if existing is not None and _first_sighting(item):
+            return 0
+        try:
+            taken = await take_watched_file(
+                self._store, path, source=source, guid=item.guid, existing=existing
+            )
+        except Exception:  # noqa: BLE001 — one file it cannot take must not lose the others
+            logger.warning(
+                "watched folder %s: %s could not be taken", sid, item.guid, exc_info=True
+            )
+            return 0
+        if taken.refused:
+            logger.warning("watched folder %s: %s was not taken: %s", sid, item.guid, taken.refused)
+            return 1 if taken.item is not None else 0
+        if taken.changing:
+            logger.info(
+                "watched folder %s: %s is still being written; it is taken once it is done",
+                sid,
+                item.guid,
+            )
+        if taken.item is None or not taken.is_new:
+            return 0
+        self._enqueue(taken.item["id"])
+        # Saved queries read what the item holds now: a code file's text, which was scanned; a
+        # document's text is read when the item is ingested.
+        sighting = dataclasses.replace(item, content=taken.item.get("content") or "")
+        self._emit_ingested(source, sighting, taken.item["id"], item.change)
         return 1
 
     def _archive_deleted(self, source: dict, item: Any) -> int:

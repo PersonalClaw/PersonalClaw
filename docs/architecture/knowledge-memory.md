@@ -74,9 +74,15 @@ Every route that stores an uploaded file the agent or the library will later rea
 `uploads.content_scan.scan_upload` before anything is made from it, whether it came in one request
 or in parts: a chat attachment, a file uploaded to a folder, a Knowledge file, a file dropped into
 a workflow run, a binary artifact's new bytes, a pinned screen frame, a project archive and a
-backup import. A file dropped in the memory vault's `raw/` folder comes in no request, and is taken
-as a Knowledge file is when a sync sweeps it (`knowledge.file_items.take_file`): the same kinds, the
-same size limits and the same scan, each refusal filed as a failed item that says why.
+backup import. Two doors bring a file in no request and are held to the same checks: a file
+dropped in the memory vault's `raw/` folder, taken as a Knowledge file is when a sync sweeps it
+(`knowledge.file_items.take_file`), and a file in a folder Knowledge watches, taken when a poll
+finds it new or changed (`knowledge.file_items.take_watched_file`). The same kinds, the same size
+limits and the same scan, each refusal filed as a failed item that says why. Neither takes a file
+that is still being written: its size and its times must hold still across a two-second settle
+window (`file_items.still`, one window for every file of a pass), and a copy that changes while
+it is made is not kept; the file is left for the next pass, rather than taken as the part of it
+copied in so far.
 
 The scan reads an upload by its bytes, whatever its name or its declared type says it is, with
 both of the scanner's surfaces, the destructive-script rules and the prose-injection rules, as two
@@ -307,11 +313,32 @@ advancing the cursor only after every item is durable.
   sightings are all first sightings keeps its cursor, so the next poll takes the
   next ones. A provider whose cursor must move asks for the cap (`max_items`, one
   of `ENGINE_POLL_KWARGS`) and stops at it.
+- **A watched folder's file is taken as an upload is.** The folder observer
+  (`DirSourceProvider`) reads no file: a settled sighting names the file inside
+  the folder (`file_of`, asked again when it is taken), and the engine takes it
+  through the upload door (`source_engine.takes_files`, the folder observer by its
+  exact type; `knowledge.file_items.take_watched_file`). It is typed by its kind
+  (`media.classify`), held to the size the upload policy allows it, a private copy
+  of its bytes scanned, then kept in the library's own files and read by the reader
+  for its kind when it is ingested: a document's text, which the ingest scans as
+  well; a script's code, read and scanned as it is kept; a picture by its graph.
+  What a check refuses is a failed item that says why and keeps no text and no
+  file; a later change that passes makes it again. No file is decoded into a note:
+  a kind the library does not take is refused, and a reader that finds no text in
+  a file says so. A change remakes the item the folder made of the file, never a
+  second one, and a file whose time moved but whose bytes did not is not read
+  again. A folder set to no AI has its files read by the readers that need no
+  model (`RawDocumentGraph`, `RawImageGraph`). A file still being written is left
+  for the next pass (see the content scan, above). A note an earlier version made
+  of a watched file is left as it was until the file next changes; to have one
+  read the new way now, save its file again.
 - **A watched folder's first scan** reads in what is already there, newest
-  first, up to `FIRST_SCAN_MAX_FILES` files or `FIRST_SCAN_MAX_BYTES`; the rest
-  are recorded as seen and come in when they change. It stops at the cap and
-  counts what is still to come, and the sources list shows the scan
-  (`first_scan`: found, left out, waiting).
+  first, up to `FIRST_SCAN_MAX_FILES` files or `FIRST_SCAN_MAX_BYTES`, each
+  file counted whole; a file too large for what is left of the bytes is left out
+  on the way, and the scan carries on with the older ones. What it left out is
+  recorded as seen and comes in when it changes. It stops at the cap and counts
+  what is still to come, and the sources list shows the scan (`first_scan`:
+  found, left out, waiting).
 - **A watched folder takes in only what is inside it.** Each path is taken in
   under the path it really is, links resolved first (`dir_source.resolve_in`,
   then `takes`, the rule the agent's file tools ask of the same folder): a link
@@ -533,7 +560,9 @@ item vector).
   rather than that it holds no text, and its page offers no Retry, since the file goes in
   again by being dropped again. Every swept file then moves to `raw/.ingested/`, under a
   name of its own when one there already has its name; an empty file stays in `raw/`
-  until it holds something. A note an earlier version made
+  until it holds something, and so does a file still being copied in, which the next
+  sync takes whole (Sync now says how many it left, `raw_waiting`). A note an earlier
+  version made
   of a dropped file is left as it was, since the owner may have edited, tagged or filed it:
   to have one read the way a file is read now, delete the note and move its file from
   `raw/.ingested/` back into `raw/`.

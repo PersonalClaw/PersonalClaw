@@ -586,13 +586,32 @@ async def test_a_mutated_spec_is_refused_at_poll_time_not_only_at_save(store):
 
 def test_the_raw_graph_contains_no_model_backed_node():
     """Structural rail: the no-AI contract is kept by ABSENCE, so the guarantee cannot be
-    re-enabled by a config edit, a node param, or a future backend registration."""
-    from personalclaw.knowledge.pipeline.graphs import FeedItemGraph, graph_for
+    re-enabled by a config edit, a node param, or a future backend registration.
+
+    A raw source's file (a watched folder's document or picture) is read by its kind's readers
+    that need no model; every other raw item hands on the content its source carried."""
+    from personalclaw.knowledge.pipeline.graphs import (
+        FeedItemGraph,
+        RawDocumentGraph,
+        RawImageGraph,
+        graph_for,
+    )
 
     model_backends = {"vision-llm", "reasoning-llm", "stt", "diarization", "lexicon"}
-    for item_type in ("bookmark", "note", "pdf", "image", "audio", "video", "unknown-type"):
+    expected = {
+        "bookmark": FeedItemGraph,
+        "note": FeedItemGraph,
+        "gist": FeedItemGraph,
+        "pdf": RawDocumentGraph,
+        "document": RawDocumentGraph,
+        "image": RawImageGraph,
+        "audio": FeedItemGraph,
+        "video": FeedItemGraph,
+        "unknown-type": FeedItemGraph,
+    }
+    for item_type, graph_cls in expected.items():
         graph = graph_for(item_type, enrichment=ENRICHMENT_RAW)
-        assert isinstance(graph, FeedItemGraph), item_type
+        assert type(graph) is graph_cls, item_type
         for name, spec in graph.nodes.items():
             assert spec.backend not in model_backends, f"{item_type}/{name} is model-backed"
             assert not getattr(spec, "uses_use_case", None), f"{item_type}/{name} binds a use case"

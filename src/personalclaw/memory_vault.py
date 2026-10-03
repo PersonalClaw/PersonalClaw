@@ -1238,7 +1238,10 @@ class MemoryVault:
         text. Each swept file then moves to ``raw/.ingested/`` rather than being deleted, under a
         name of its own when one there already has its name: the sweep's job is to hand the file
         over, not to be the thing that loses it. An empty file is left where it is, and taken once
-        it holds something (an editor's new page is empty until it is written).
+        it holds something (an editor's new page is empty until it is written). So is a file that
+        is still being written (``knowledge.file_items.still``: its size or its times moved within
+        a short settle window, or while it was copied): taken now, it would be a truncated item of
+        the part copied in so far, and the next sweep takes it whole.
 
         No new watcher: every sync of the vault is followed by this (see :meth:`sync`).
         ``knowledge`` is the store to file into (the process's own, ``get_knowledge_store()``, when
@@ -1251,16 +1254,19 @@ class MemoryVault:
         runs takes nothing, since the running one is taking those files.
 
         Returns how many files were ``ingested`` (taken: a new item, or one that already held the
-        same bytes), ``refused`` (a failed item says why), ``left`` (empty) and ``failed`` (an
-        error the log names; the file stays in ``raw/`` for the next sweep).
+        same bytes), ``refused`` (a failed item says why), ``waiting`` (still being written),
+        ``left`` (empty) and ``failed`` (an error the log names): the last three stay in ``raw/``
+        for the next sweep.
         """
-        out = {"ingested": 0, "refused": 0, "left": 0, "failed": 0}
+        out = {"ingested": 0, "refused": 0, "waiting": 0, "left": 0, "failed": 0}
         raw = self._dir / _RAW_DIR
         if str(raw) in _SWEEPING:
             return out
         candidates = _dropped_files(raw)
         if not candidates:
             return out
+        from personalclaw.knowledge.file_items import still
+
         _SWEEPING.add(str(raw))
         try:
             if knowledge is None:
@@ -1269,15 +1275,19 @@ class MemoryVault:
                 knowledge = get_knowledge_store()
             if enqueue is None:
                 enqueue = _gateway_enqueue()
-            for src in candidates:
+            settled = await still(candidates)
+            out["waiting"] += len(candidates) - len(settled)
+            for src in settled:
                 out[await self._take_dropped(src, knowledge, enqueue)] += 1
         finally:
             _SWEEPING.discard(str(raw))
-        if out["ingested"] or out["refused"]:
+        if out["ingested"] or out["refused"] or out["waiting"]:
             logger.info(
-                "memory vault raw sweep: %d file(s) → knowledge, %d refused",
+                "memory vault raw sweep: %d file(s) → knowledge, %d refused, "
+                "%d still being written",
                 out["ingested"],
                 out["refused"],
+                out["waiting"],
             )
         return out
 
@@ -1295,7 +1305,7 @@ class MemoryVault:
             )
             return "failed"
         if taken.item is None and not taken.refused:
-            return "left"
+            return "waiting" if taken.changing else "left"
         try:
             _park(src, self._dir / _RAW_DONE_DIR)
         except OSError:

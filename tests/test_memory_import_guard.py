@@ -477,7 +477,7 @@ async def test_vault_sync_normal_session_is_not_blocked(monkeypatch, tmp_path):
 
         async def sweep_raw(self, *, knowledge=None, enqueue=None) -> dict:
             seen["swept"] = True
-            return {"ingested": 0, "refused": 0, "left": 0, "failed": 0}
+            return {"ingested": 0, "refused": 0, "waiting": 0, "left": 0, "failed": 0}
 
     monkeypatch.setattr(
         "personalclaw.dashboard.handlers.memory._get_service", lambda _state: MagicMock()

@@ -430,7 +430,7 @@ class TestRawSweep:
         before = len(service.get_records())
         out = await vault.sweep_raw(knowledge=knowledge, enqueue=queued.append)
 
-        assert out == {"ingested": 1, "refused": 0, "left": 0, "failed": 0}
+        assert out == {"ingested": 1, "refused": 0, "waiting": 0, "left": 0, "failed": 0}
         [item] = _knowledge_items(knowledge)
         assert Path(item["file_path"]).read_text(encoding="utf-8") == "meeting notes"
         assert item["provider"] == "native" and "vault-raw" in item["tags"]
@@ -460,7 +460,13 @@ class TestRawSweep:
     async def test_no_raw_dir_never_opens_a_knowledge_store(self, vault):
         """The lazy `get_knowledge_store()` fallback must not fire on every sync — it
         would open the real home's knowledge.db for nothing."""
-        assert await vault.sweep_raw() == {"ingested": 0, "refused": 0, "left": 0, "failed": 0}
+        assert await vault.sweep_raw() == {
+            "ingested": 0,
+            "refused": 0,
+            "waiting": 0,
+            "left": 0,
+            "failed": 0,
+        }
 
 
 # ── Starter seeding writes only missing or pristine files ────────────────────

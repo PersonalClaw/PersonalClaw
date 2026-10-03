@@ -285,18 +285,50 @@ def test_a_mirror_stored_before_the_conversion_is_redone_once_at_start(store, tm
 # ── a watched folder's HTML file ───────────────────────────────────────────────
 
 
-def test_a_watched_folders_html_file_is_read_as_its_words(store, tmp_path):
+def test_a_watched_folders_html_file_is_read_as_its_words(store, tmp_path, monkeypatch):
+    """A watched folder's file is taken as an upload is, so its ``.html`` is read by the same
+    reader an uploaded one is."""
+    import os
+    import time
+
+    from personalclaw.config.loader import SourcesConfig
+    from personalclaw.knowledge import file_items
+    from personalclaw.knowledge.pipeline.runner import ingest_item
+    from personalclaw.knowledge.source_engine import SourceEngine
     from personalclaw.knowledge_providers.dir_source import DirSourceProvider
 
+    # The files are written before the poll; waiting for them to settle is not this test's.
+    monkeypatch.setattr(file_items, "SETTLE_SECS", 0.0)
     folder = tmp_path / "notes"
     folder.mkdir()
     (folder / "saved.html").write_text(_page(SHOWN_MARKUP), encoding="utf-8")
     (folder / "plain.md").write_text("# Plain\n\nPress <kbd>K</kbd>.", encoding="utf-8")
+    an_hour_ago = time.time() - 3600
+    for name in ("saved.html", "plain.md"):
+        os.utime(folder / name, (an_hour_ago, an_hour_ago))
+    sid = store.create_source(
+        name="notes",
+        provider="watched-dir",
+        kind="dir",
+        spec={"path": str(folder), "include": ["*.html", "*.md"]},
+        item_type="note",
+    )
     provider = DirSourceProvider(store)
-    spec = {"path": str(folder)}
-    _assert_stored_as_words(provider._read(spec, "saved.html") or "")
+    queued: list[str] = []
+    queue = type("Queue", (), {"enqueue_background": staticmethod(queued.append)})()
+    cfg = SourcesConfig(enabled=True, network_floor_secs=0, max_items_per_poll=50)
+    engine = SourceEngine(
+        store, queue, providers_lister=lambda: [provider], config_loader=lambda: cfg
+    )
+
+    asyncio.run(engine.poll_source(store.get_source(sid), cfg))
+    for item_id in queued:
+        asyncio.run(ingest_item(store, item_id))
+
+    by_name = {store.get_item(i)["guid"]: store.get_item(i) for i in queued}
+    _assert_stored_as_words(by_name["saved.html"]["content"])
     assert (
-        provider._read(spec, "plain.md") == "# Plain\n\nPress <kbd>K</kbd>."
+        by_name["plain.md"]["content"].strip() == "# Plain\n\nPress <kbd>K</kbd>."
     ), "a markdown file is markdown, kept as written"
 
 

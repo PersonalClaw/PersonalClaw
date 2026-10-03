@@ -36,6 +36,16 @@ def _isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
 
 
+@pytest.fixture(autouse=True)
+def _no_settle_wait(monkeypatch):
+    """A file still being written waits out a settle window before it is taken. These tests are
+    about which of the folder's paths it takes in, so the window is not waited out here: settling
+    has tests of its own (``test_a_watched_folders_files_are_taken_as_uploads_are.py``)."""
+    from personalclaw.knowledge import file_items
+
+    monkeypatch.setattr(file_items, "SETTLE_SECS", 0.0)
+
+
 @pytest.fixture()
 def store(tmp_path):
     return KnowledgeStore(str(tmp_path / "knowledge.db"))
@@ -247,19 +257,22 @@ async def test_a_note_taken_in_through_a_link_out_is_removed_at_the_next_scan(st
     assert _guids(store, sid) == {"today.md", "linked.md"}
 
 
-@pytest.mark.asyncio
-async def test_a_file_swapped_for_a_link_out_after_the_scan_is_not_read(store, place):
-    """The read checks again: a file replaced by a link between the scan and the read is not
-    opened."""
+def test_a_file_swapped_for_a_link_out_after_the_scan_is_not_read(store, place):
+    """The take checks again: a file replaced by a link between the scan and the take is not
+    opened, neither when the engine asks where the file is nor when the take opens it."""
+    from personalclaw.knowledge import file_items
+
     notes, private = place
     provider = DirSourceProvider(store)
     spec = {"path": str(notes)}
     (notes / "today.md").write_text("- water the tomatoes\n", encoding="utf-8")
-    assert provider._read(spec, "today.md") == "- water the tomatoes\n"
+    assert provider.file_of(spec, "today.md") == notes / "today.md"
 
     (notes / "today.md").unlink()
     (notes / "today.md").symlink_to(private / "diary.md")
-    assert provider._read(spec, "today.md") is None
+    assert provider.file_of(spec, "today.md") is None
+    with pytest.raises(OSError):
+        file_items._copy_capped(notes / "today.md", 1 << 20)
 
 
 def test_the_scan_and_the_file_tools_agree_on_what_the_folder_shares(

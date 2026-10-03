@@ -4322,7 +4322,7 @@ export interface SourceKind {
   presets?: string[]
   default_include?: string[]
   max_files?: number
-  /** A folder's first scan takes the newest files up to these bounds; older ones come in when
+  /** A folder's first scan takes its files newest first, up to these bounds; the rest come in when
    *  they change. Stated by the create form as the provider applies them. */
   first_scan_max_files?: number
   first_scan_max_bytes?: number
@@ -5042,9 +5042,10 @@ export interface VolunteerStats {
 export interface MemoryVaultFolder { id: string; folder: string; gone: boolean; path: string; files: number }
 export interface MemoryVaultStatus { enabled: boolean; mode: MemoryVaultMode; path: string; files: number; exists: boolean; folders?: MemoryVaultFolder[] }
 export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string; mode: MemoryVaultMode; absorbed: number; rejected: number; conflicts: number; seeded: number
-  /** The files dropped in the vault's `raw/` folder the sync took into Knowledge, and those it refused (each a
-   *  failed Knowledge item saying why). The vault's own sync only: a folder's memory's vault has no `raw/`. */
-  raw_ingested?: number; raw_refused?: number
+  /** The files dropped in the vault's `raw/` folder the sync took into Knowledge, those it refused (each a
+   *  failed Knowledge item saying why), and those it left in `raw/` because they are still being written (the
+   *  next sync takes them whole). The vault's own sync only: a folder's memory's vault has no `raw/`. */
+  raw_ingested?: number; raw_refused?: number; raw_waiting?: number
   /** Each folder's own memory's vault, by its memory's id (`MemoryPartition.id`): its own sync's numbers. */
   folders?: Record<string, MemoryVaultSyncResult> }
 export interface DailyDigest { day: string; text: string; created_at: string }

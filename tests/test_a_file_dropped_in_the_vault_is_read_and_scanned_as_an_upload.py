@@ -85,6 +85,17 @@ class _Queue:
     enqueue_background = enqueue
 
 
+@pytest.fixture(autouse=True)
+def _no_settle_wait(monkeypatch):
+    """A file still being written waits out a settle window before it is taken. These tests are
+    about what the drop box makes of a file once it is there, so the window is not waited out
+    here: settling has tests of its own
+    (``test_a_watched_folders_files_are_taken_as_uploads_are.py``)."""
+    from personalclaw.knowledge import file_items
+
+    monkeypatch.setattr(file_items, "SETTLE_SECS", 0.0)
+
+
 @pytest.fixture
 def vault_dir(tmp_path, monkeypatch) -> Path:
     root = tmp_path / "vault"

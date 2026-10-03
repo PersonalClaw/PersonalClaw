@@ -869,8 +869,9 @@ network fence around one that does not.
 Every file you upload is scanned before anything is made from it, sent in one request or in parts
 (`uploads/content_scan.py`): a chat attachment, a file uploaded to a folder, a Knowledge file, a
 file dropped into a workflow run, an artifact's new bytes, a pinned screen frame, a project archive
-and a backup, and a file you drop in the memory vault's `raw/` folder when a sync takes it into
-Knowledge (one it refuses becomes a failed Knowledge item that says why). The scan reads a file by its bytes, whatever its name says it is, with the scanner's
+and a backup, a file you drop in the memory vault's `raw/` folder when a sync takes it into
+Knowledge, and a file in a folder Knowledge watches when a poll takes it in (one either refuses
+becomes a failed Knowledge item that says why). The scan reads a file by its bytes, whatever its name says it is, with the scanner's
 destructive-script rules and its prose rules (injection phrases, invisible characters), and
 refuses a file they call dangerous: an SVG drawing is text and is read; an ordinary picture,
 recording, video or archive is binary and is not. A scan that could not run refuses the upload as

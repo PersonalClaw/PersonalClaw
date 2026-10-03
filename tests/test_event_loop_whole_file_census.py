@@ -161,7 +161,10 @@ HANDED_OFF: frozenset[tuple[str, str]] = frozenset(
         ("uploads/store.py", "UploadStore.assemble"),
         ("dashboard/handlers/uploads.py", "_finalize_target"),
         ("knowledge/file_items.py", "store_file_item"),
-        ("knowledge/file_items.py", "take_file"),
+        # The copy a file nobody uploaded is scanned and kept as (a dropped file, a watched
+        # folder's), and the move of a watched folder's copy into the library's files.
+        ("knowledge/file_items.py", "_check"),
+        ("knowledge/file_items.py", "_keep"),
         ("dashboard/handlers/files.py", "api_file_move"),
         ("dashboard/handlers/evals.py", "api_evals_retrieval_card"),
         ("action_providers/selfqa_evidence_provider.py", "SelfQaEvidenceActionProvider.execute"),

@@ -57,12 +57,14 @@ _EXT_TYPE: dict[str, str] = {
     ".pptx": "slides",
     ".ppt": "slides",
     # prose / markup → document (one logical doc; read inline). .markdown/.text are the
-    # full-word forms of .md/.txt that some editors emit.
+    # full-word forms of .md/.txt that some editors emit; .org is an Org-mode outline, plain text
+    # a watched folder of notes takes in by default.
     ".md": "document",
     ".markdown": "document",
     ".txt": "document",
     ".text": "document",
     ".rst": "document",
+    ".org": "document",
     ".html": "document",
     ".htm": "document",
     ".log": "document",

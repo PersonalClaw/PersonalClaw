@@ -1284,7 +1284,8 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     Then sweeps ``raw/`` (``MemoryVault.sweep_raw``) into the gateway's knowledge store and
     ingest queue, so a file dropped in the vault is taken and read now rather than waiting for a
     restart's pending-item recovery. Returns the change summary, with how many dropped files were
-    taken (``raw_ingested``) and refused (``raw_refused``: each a failed item saying why)."""
+    taken (``raw_ingested``), refused (``raw_refused``: each a failed item saying why) and left in
+    ``raw/`` because they are still being written (``raw_waiting``: the next sync takes them)."""
     if _is_restricted_session(request.app["state"], request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
@@ -1319,6 +1320,7 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     swept = await vault.sweep_raw(knowledge=knowledge, enqueue=enqueue)
     summary["raw_ingested"] = swept["ingested"]
     summary["raw_refused"] = swept["refused"]
+    summary["raw_waiting"] = swept["waiting"]
     summary["path"] = str(vdir)
     return web.json_response(summary)
 

@@ -29,17 +29,37 @@ different files edited in one window produce exactly three — one each, never o
 intermediate signature. A vanished file has no mtime, so a delete's window is timed from
 when it was first observed missing (the one piece of state the cursor carries for it).
 
+**A file still being written is not taken.** The quiet clock reads a file's modified time,
+which a copy that keeps the original's date (a large file copied in, a download) does not move
+while it writes. So a file whose window has passed is looked at once more before it is taken:
+its size and its times must hold still across a short settle window
+(``knowledge.file_items.still``, one window for every file of the poll). One that moved within
+it is left uncommitted for the next pass, as one still settling is, and so is one that changes
+while the engine copies it: taken then, it would be a truncated item of the part written so far.
+
+**A file is taken as an upload is.** The provider observes and reads no file. A settled
+sighting names the file inside the folder (:meth:`DirSourceProvider.file_of`), and the engine
+takes it through the door the Knowledge page's uploads come through
+(``knowledge.file_items.take_watched_file``): typed by its kind (``media.classify``), held to
+the size the upload policy allows it, a private copy of its bytes scanned, then kept in the
+library's own files and read by the reader for its kind when it is ingested (a document's text,
+which the ingest scans as well; a script's code, read and scanned as it is kept; a picture by its
+graph). What a check refuses is a failed item that says why and keeps no text and no file. No
+file is decoded into a note: a kind the library does not take is refused, and a reader that finds
+no text in a file says so. A note an earlier version made of a file is left as it was until the
+file next changes.
+
 **The first scan brings in what is already there, within a stated bound.** A person who
 adds a folder of notes to her library expects its notes in the library; a first pass that
 only recorded a baseline left a healthy-looking folder that brought nothing in, with no
 word about why. So the first scan takes the files already in the folder, the most recently
 changed first, up to :data:`FIRST_SCAN_MAX_FILES` files and :data:`FIRST_SCAN_MAX_BYTES` of
-them in all. What it leaves out (a folder of 4000 notes) goes into the baseline and comes
-in when it next changes, and the cursor records how many that was, so the sources page can
-say it rather than let a partial import pass for a complete one
-(:meth:`DirSourceProvider.first_scan_status`). This is a knowledge library, not a `file`
-trigger: a trigger must not fire for every file that already exists (its
-``WatchState.seeded`` rule), while a library that shows none of them is the defect.
+them in all, a file too large for what is left of that left out on the way. What it leaves out
+(a folder of 4000 notes) goes into the baseline and comes in when it next changes, and the
+cursor records how many that was, so the sources page can say it rather than let a partial
+import pass for a complete one (:meth:`DirSourceProvider.first_scan_status`). This is a
+knowledge library, not a `file` trigger: a trigger must not fire for every file that already
+exists (its ``WatchState.seeded`` rule), while a library that shows none of them is the defect.
 
 **Nothing a poll observes is lost to the engine's per-poll cap.** The engine indexes at
 most ``max_items`` sightings of one poll, and this provider's baseline is what it has
@@ -102,9 +122,6 @@ DEFAULT_DEBOUNCE_SECS = 5.0
 #: actually index; a watched directory is a notes/docs folder, not a binary drop.
 DEFAULT_INCLUDE = ("*.md", "*.markdown", "*.txt", "*.rst", "*.org")
 
-#: Files read as HTML and stored as their words (see ``DirSourceProvider._read``).
-HTML_SUFFIXES = frozenset({".html", ".htm"})
-
 #: Never walked, whatever the globs say: VCS/dependency/build noise a user never means to
 #: index, and the churn that would dominate every diff.
 SKIP_DIRS = frozenset(
@@ -130,10 +147,6 @@ SKIP_DIRS = frozenset(
 #: ``/`` must degrade to a refusal, not a multi-hour stat walk that starves the loop.
 MAX_FILES_PER_SOURCE = 5000
 
-#: Per-file content ceiling. A file larger than this is tracked (its deletion still
-#: archives) but truncated on read — one pathological file cannot blow the poll's memory.
-MAX_FILE_BYTES = 2 * 1024 * 1024
-
 #: How many reported deletions a source remembers, so a restored file revives its archived
 #: item instead of being dropped by the engine's novelty gate. Bounded like the seen-set.
 MAX_TOMBSTONES = 1000
@@ -144,9 +157,9 @@ MAX_TOMBSTONES = 1000
 #: whole-home or whole-drive folder must not queue tens of thousands of them.
 FIRST_SCAN_MAX_FILES = 1000
 
-#: The most bytes of files a first scan brings in, all of them together (each counted at
-#: most :data:`MAX_FILE_BYTES`, what is read of it). The file bound is what a notes folder
-#: meets; this one is what a folder of large text exports or logs meets first.
+#: The most bytes of files a first scan brings in, all of them together, each file counted
+#: whole (it is taken whole). The file bound is what a notes folder meets; this one is what a
+#: folder of large exports, logs or recordings meets first.
 FIRST_SCAN_MAX_BYTES = 100 * 1024 * 1024
 
 
@@ -262,12 +275,6 @@ def _signature(path: Path) -> list | None:
     except OSError:
         return None
     return [float(st.st_mtime), int(st.st_size)]
-
-
-def _open_no_link(path: str, flags: int) -> int:
-    """``open``'s opener for a file the scan took in: it does not follow a link put in its place
-    since."""
-    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0))
 
 
 class FolderScan(NamedTuple):
@@ -499,28 +506,36 @@ class DirSourceProvider(KnowledgeSourceProvider):
 
         return canonicalize(str((spec or {}).get("path") or ""))
 
-    def _read(self, spec: dict, rel: str) -> str | None:
-        """File text, or None when it cannot be read (fail-open per file). Read only at
-        EMIT time — never while a change is still settling — so a half-written file is
-        not what gets indexed.
-
-        An HTML file (a folder the spec widens to ``*.html``) is stored as its words, through
-        the same conversion an uploaded ``.html`` takes; every other file is text already."""
+    def file_of(self, spec: dict, rel: str) -> Path | None:
+        """The file the folder *spec* watches holds at *rel* (its path inside the folder), for the
+        engine to take into the library (``knowledge.file_items.take_watched_file``); ``None`` when
+        it is gone, is no longer one the folder takes in, or is a link now. Asked again when the
+        file is taken, as the scan asked it, and the take opens the file without following a link
+        put in its place since: what a link names is not taken."""
         root = self._resolved_path(spec)
-        if not root or resolve_in(root, os.path.join(root, rel)) != rel:
-            # Gone, or swapped for a link since the scan: what a link names is not read.
+        if not root or not takes(spec, rel, is_dir=False):
             return None
-        try:
-            with open(os.path.join(root, rel), "rb", opener=_open_no_link) as fh:
-                raw = fh.read(MAX_FILE_BYTES)
-        except OSError:
+        if resolve_in(root, os.path.join(root, rel)) != rel:
             return None
-        text = raw.decode("utf-8", errors="replace")
-        if Path(rel).suffix.lower() in HTML_SUFFIXES:
-            from personalclaw.knowledge.readers import html_to_prose
+        path = Path(root) / rel
+        return path if path.is_file() else None
 
-            return html_to_prose(text)
-        return text
+    async def _held_still(
+        self, spec: dict, settled: list[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
+        """*settled* without the files still being written: one whose size or times moved across
+        one settle window (``knowledge.file_items.still``) stays uncommitted, and is seen again at
+        the next pass. A deletion has no file to look at, and stays."""
+        from personalclaw.knowledge.file_items import still
+
+        root = Path(self._resolved_path(spec))
+        live = {root / rel: rel for rel, change in settled if change != CHANGE_DELETED}
+        if not live:
+            return settled
+        quiet = {live[path] for path in await still(list(live))}
+        return [
+            (rel, change) for rel, change in settled if change == CHANGE_DELETED or rel in quiet
+        ]
 
     @staticmethod
     def _first_scan(sigs: dict[str, list], prior: _DirCursor) -> _DirCursor:
@@ -530,20 +545,26 @@ class DirSourceProvider(KnowledgeSourceProvider):
         below sees them as created — with the same debounce, the same per-poll cap and the
         same emit path as a file added later, and no second way in. The files past the
         bound go INTO the baseline: they are in the folder, not in the library, and come in
-        when they change. The order is newest first and the cut is a prefix of it, so what
-        was left out is always "the files changed longest ago", which is a sentence the
-        page can say. ``prior``'s tombstones are kept, so a file deleted and restored
-        across the first scan still revives its archived item.
+        when they change. The order is newest first: each file is taken in turn until the file
+        bound, each counted at its whole size, and one too large for what is left of the byte
+        bound is left out on the way rather than ending the scan, so one large recording among
+        the notes does not keep the older notes out. What was left out is the files changed
+        longest ago and any too large to fit, which is what the page says. ``prior``'s
+        tombstones are kept, so a file deleted and restored across the first scan still
+        revives its archived item.
         """
         newest_first = sorted(sigs, key=lambda rel: (-float(sigs[rel][0]), rel))
-        taken = spent = 0
+        taken: set[str] = set()
+        spent = 0
         for rel in newest_first:
-            size = min(int(sigs[rel][1]), MAX_FILE_BYTES)
-            if taken >= FIRST_SCAN_MAX_FILES or spent + size > FIRST_SCAN_MAX_BYTES:
+            if len(taken) >= FIRST_SCAN_MAX_FILES:
                 break
-            taken += 1
+            size = int(sigs[rel][1])
+            if spent + size > FIRST_SCAN_MAX_BYTES:
+                continue
+            taken.add(rel)
             spent += size
-        left_out = {rel: sigs[rel] for rel in newest_first[taken:]}
+        left_out = {rel: sigs[rel] for rel in newest_first if rel not in taken}
         return _DirCursor(
             first_scan={"found": len(sigs), "left_out": len(left_out)},
             sigs=left_out,
@@ -583,7 +604,7 @@ class DirSourceProvider(KnowledgeSourceProvider):
     async def poll(
         self, source_id: str, cursor: str = "", *, max_items: int | None = None
     ) -> SourcePollResult:
-        """One observation pass: scan, diff, debounce, emit the settled changes.
+        """One observation pass: scan, diff, debounce, settle, emit the settled changes.
 
         ``max_items`` is the engine's per-poll cap (``ENGINE_POLL_KWARGS``). At most that
         many sightings are emitted; the rest stay uncommitted and come next poll, so none
@@ -646,6 +667,18 @@ class DirSourceProvider(KnowledgeSourceProvider):
                     continue
             settled.append((rel, change))
 
+        # A file whose quiet window has passed is looked at once more: a copy that keeps the
+        # original's date writes on under an old modified time, and taking it now would make an
+        # item of the part written so far.
+        quiet = await self._held_still(spec, settled)
+        if len(quiet) < len(settled):
+            logger.info(
+                "dir source %s: %d file(s) still being written; the next pass takes them",
+                source_id,
+                len(settled) - len(quiet),
+            )
+        settled = quiet
+
         # Deletions first (an archive, never enqueued, and what keeps a moved file from
         # showing twice), then files newest first, so a first scan that spans several
         # polls brings in the notes she touched last before the ones she has not opened in
@@ -670,8 +703,9 @@ class DirSourceProvider(KnowledgeSourceProvider):
                 continue
             emitted = self._emit(spec, rel, change, now)
             if emitted is None:
-                # Unreadable at emit time: skip the file but ADVANCE its baseline so the
-                # poll does not spin on it forever, and keep processing the others.
+                # Gone, or swapped for a link, since the scan: skip the file but ADVANCE its
+                # baseline so the poll does not spin on it forever, and keep processing the
+                # others.
                 read_errors += 1
                 state.sigs[rel] = sigs[rel]
                 continue
@@ -709,7 +743,9 @@ class DirSourceProvider(KnowledgeSourceProvider):
             self._store.forget_source_item(source_id, rel)
 
     def _emit(self, spec: dict, rel: str, change: str, now: float) -> SourceItem | None:
-        """Build the sighting for a settled change (content read only for a live file)."""
+        """Build the sighting for a settled change. A live file's names the file and carries no
+        content: the engine takes the file itself (:meth:`file_of`), as an upload is taken.
+        ``None`` for a file gone, or swapped for a link, since the scan."""
         from personalclaw.instants import utc_iso
 
         if change == CHANGE_DELETED:
@@ -719,13 +755,11 @@ class DirSourceProvider(KnowledgeSourceProvider):
                 change=CHANGE_DELETED,
                 metadata={"source_deleted_at": utc_iso(now)},
             )
-        content = self._read(spec, rel)
-        if content is None:
+        if self.file_of(spec, rel) is None:
             return None
         return SourceItem(
             guid=rel,
             title=Path(rel).name,
-            content=content,
             change=change,
             metadata={"relative_path": rel},
         )

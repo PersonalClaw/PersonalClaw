@@ -205,7 +205,7 @@ describe("a watched folder's first scan is stated on its row", () => {
   it("says which files the scan's bound left for later", () => {
     folder({ found: 1500, left_out: 500, waiting: 0 })
 
-    expect(screen.getByText('The first scan took the newest 1000 of 1500 files; the 500 older ones come in when they change.')).toBeTruthy()
+    expect(screen.getByText('The first scan took 1000 of 1500 files, the newest first; the other 500 come in when they change.')).toBeTruthy()
   })
 
   it('says nothing once the scan is complete', () => {
@@ -232,7 +232,7 @@ describe("a watched folder's first scan is stated on its row", () => {
 
   it('the create form states the bound the scan applies', () => {
     expect(firstScanPromise({ first_scan_max_files: 1000, first_scan_max_bytes: 100 * 1024 * 1024 }))
-      .toBe('Its first check reads in what is already there, newest first — up to 1,000 files or 100 MB. Older files come in when they change.')
+      .toBe('Its first check reads in what is already there, newest first — up to 1,000 files or 100 MB. The rest come in when they change.')
     expect(firstScanPromise({}), 'no bound shipped, no promise made').toBe('')
   })
 })

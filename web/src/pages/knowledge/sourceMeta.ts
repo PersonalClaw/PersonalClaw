@@ -96,7 +96,7 @@ export function cadenceNote(source: Pick<WatchedSource, 'poll_interval_secs' | '
 }
 
 /** A watched folder's first scan while it still has something to say: files still waiting to
- *  be read in (a check reads a capped number), or older files the scan's bound left for later.
+ *  be read in (a check reads a capped number), or the files the scan's bound left for later.
  *  '' when it has neither, and for every source that is not a folder. */
 export function firstScanLine(scan: WatchedSource['first_scan']): string {
   if (!scan) return ''
@@ -105,9 +105,11 @@ export function firstScanLine(scan: WatchedSource['first_scan']): string {
     parts.push(`${scan.waiting} more ${scan.waiting === 1 ? 'file is' : 'files are'} waiting to be read in.`)
   }
   if (scan.left_out > 0) {
+    // Not "the older ones": a file too large for what was left of the scan's bytes is left out
+    // too, wherever it falls in the order.
     const taken = scan.found - scan.left_out
-    parts.push(`The first scan took the newest ${taken} of ${scan.found} files; `
-      + `the ${scan.left_out} older ${scan.left_out === 1 ? 'one comes in when it changes' : 'ones come in when they change'}.`)
+    parts.push(`The first scan took ${taken} of ${scan.found} files, the newest first; `
+      + (scan.left_out === 1 ? 'the other one comes in when it changes.' : `the other ${scan.left_out} come in when they change.`))
   }
   return parts.join(' ')
 }
@@ -128,7 +130,7 @@ export function firstScanPromise(kind: Pick<SourceKind, 'first_scan_max_files' |
   const bytes = kind.first_scan_max_bytes
   if (!files || !bytes) return ''
   return `Its first check reads in what is already there, newest first — up to ${files.toLocaleString('en-US')} files `
-    + `or ${Math.round(bytes / (1024 * 1024))} MB. Older files come in when they change.`
+    + `or ${Math.round(bytes / (1024 * 1024))} MB. The rest come in when they change.`
 }
 
 /** The poll cadences the create form offers. Deliberately coarse: the engine clamps
