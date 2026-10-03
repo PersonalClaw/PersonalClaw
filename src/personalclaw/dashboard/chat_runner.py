@@ -18,6 +18,7 @@ from personalclaw.acp.types import (
     STOP_REASON_END_TURN,
     is_cancelled_stop,
 )
+from personalclaw.agents.instructions import agent_instructions
 from personalclaw.answer_rules import over_limit_notice
 from personalclaw.approval_brief import call_blast_radius
 from personalclaw.config import loader as config_loader
@@ -2713,8 +2714,7 @@ async def run_chat(
             provider_agent = bindings.provider_agent
             acp_mode = getattr(bindings, "acp_mode", "") or ""
             memory_store = bindings.memory_store_name
-            agent_system_prompt = bindings.system_prompt
-            agent_voice = bindings.voice
+            agent_system_prompt, agent_voice = agent_instructions(session.agent or None, cfg)
             # The bound agent's EXPLICIT persistent approval grant (the "Always allow for
             # this agent" the card's scope picker writes → AgentProfile.approval_mode).
             # Consumed below to seed a NEW session's trust — the single seam that makes the

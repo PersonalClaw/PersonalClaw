@@ -2187,7 +2187,7 @@ class SubagentManager:
         )
         # Intentionally check info.agent (not resolved `agent`) so only
         # explicitly requested agents skip _SYSTEM_PREFIX (defense-in-depth).
-        named_agent = bool(info.agent and _AGENT_NAME_RE.fullmatch(info.agent))
+        named_agent = info.agent if info.agent and _AGENT_NAME_RE.fullmatch(info.agent) else ""
         # Composed from what a parent model, a trigger or a workflow step read, so it is masked.
         raw_task = redact_for_model(info._raw_task or info.task)
         if named_agent:
@@ -2206,9 +2206,8 @@ class SubagentManager:
         if info.capability_class != CAPABILITY_TEXT:
             # Off the event loop: building the message embeds it with the embedding model.
             window = await resolve_window(serving=client)
-            full_message, _ = await asyncio.to_thread(
-                self._ctx_builder.build_message, message, is_new, session_key, window=window
-            )
+            build = partial(self._ctx_builder.build_message, agent=named_agent, window=window)
+            full_message, _ = await asyncio.to_thread(build, message, is_new, session_key)
 
         result_text = ""
         info.turns = 0

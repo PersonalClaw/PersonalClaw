@@ -13,16 +13,10 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 from personalclaw import home_paths, memory_writes
 from personalclaw.agent import _shipped_prompt
 from personalclaw.agents.defaults import is_default_agent
-from personalclaw.config import loader as config_loader
+from personalclaw.agents.instructions import AgentInstructions, agent_instructions
 from personalclaw.config.loader import AppConfig, _compose_voice, memory_dir_for_cwd
 from personalclaw.context_headroom import Component, Window
-from personalclaw.hooks import (
-    HOOK_INJECT_CONTEXT,
-    HOOK_MODIFY,
-    HookManager,
-    HookResult,
-    safe_read_file,
-)
+from personalclaw.hooks import HOOK_INJECT_CONTEXT, HOOK_MODIFY, HookManager, HookResult
 from personalclaw.memory import MemoryStore
 from personalclaw.schedule import get_local_tz
 from personalclaw.security import redact_for_model
@@ -745,6 +739,14 @@ def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
     return explicit or "chat"
 
 
+def _is_spawn(session_key: str | None) -> bool:
+    """Whether *session_key* is a spawned agent's (``subagent:<id>``). One that names no agent is a
+    helper of whatever started it, on that one's runtime, and is framed as a sub-agent on the
+    Background prompt rather than handed the default agent's own instructions: those belong to
+    the default agent's own work, and the helper may be running for another agent entirely."""
+    return (session_key or "").startswith("subagent:")
+
+
 def _resolve_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) -> str:
     """Resolve the default-agent system prompt through the shared renderer.
 
@@ -1303,25 +1305,6 @@ class ContextBuilder:
 
         return render_snippet_block("widget-instructions", {"density": density})
 
-    @staticmethod
-    def _load_agent_prompt(agent: str) -> str:
-        """Read the prompt from a custom agent's config file."""
-        agents_dir = config_loader.config_dir() / "agents"
-        for f in agents_dir.glob("*.json"):
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                if data.get("name") == agent or f.stem == agent:
-                    prompt = data.get("prompt") or ""
-                    if prompt.startswith("file://"):
-                        try:
-                            return safe_read_file(prompt[7:])
-                        except (OSError, PermissionError):
-                            return ""
-                    return prompt
-            except (json.JSONDecodeError, OSError):
-                continue
-        return ""
-
     def _slots_block(self, vector_store: object | None) -> str:
         """The ONE bounded Slots block, or "" (MGAV-8).
 
@@ -1872,13 +1855,18 @@ class ContextBuilder:
             _prompt_values = self._runtime_prompt_values(session_key or "", window=_window)
             # Agent prompt goes BEFORE session context wrapper
             # so the LLM treats it as its identity, not background info.
-            # An Agent Definition's system_prompt (edited in the Agents UI) wins
-            # over the file-based prompt — so what the user edits actually runs.
-            if system_prompt_override.strip():
-                agent_prompt = system_prompt_override
-            elif is_custom:
-                agent_prompt = self._load_agent_prompt(agent or "")
-            else:
+            # The turn's agent's own instructions win over the prompt bound for its context, so
+            # what the user edits actually runs. They and its voice come from the one reader of
+            # them (`agent_instructions`), for the agent named or else the default agent (not for
+            # a spawn that names none: `_is_spawn`), unless the caller hands them in already read
+            # (a chat). Read from the agent files alone, a webhook on an agent defined in
+            # config.json sent its model no prompt at all.
+            own = AgentInstructions()
+            if not system_prompt_override.strip() and (agent or not _is_spawn(session_key)):
+                own = agent_instructions(agent)
+            agent_prompt = system_prompt_override or own.prompt
+            agent_voice = agent_voice or own.voice
+            if not agent_prompt.strip() and not is_custom:
                 # Default-agent system prompt resolves from the prompt provider,
                 # via the use-case binding (chat / background; derived from the
                 # session_key when not set explicitly). Falls back to the shipped

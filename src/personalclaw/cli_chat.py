@@ -43,15 +43,17 @@ async def _chat(message: str | None, model: str | None) -> None:
 
 
 def _with_safety_rules(message: str) -> str:
-    """*message* behind the platform's safety rules, framed as the turn engine frames an agent's
-    system prompt. This chat hands its provider the typed words and no prompt of its own, and the
-    agent it talks to has the default agent's tools, so the message that opens its session is the
-    one that carries them, as every agent's first message does (``with_safety_rules``)."""
+    """*message* behind the default agent's own instructions and the platform's safety rules,
+    framed as the turn engine frames an agent's system prompt. This chat hands its provider the
+    typed words and no prompt of its own, and the agent it talks to is the default agent, so the
+    message that opens its session is the one that carries them, as every agent's first message
+    does (``agent_instructions``, ``with_safety_rules``)."""
+    from personalclaw.agents.instructions import agent_instructions
     from personalclaw.prompt_providers.runtime import render_snippet_block, with_safety_rules
 
-    rules = with_safety_rules("")
-    block = render_snippet_block("agent-system-prompt-wrapper", {"agent_prompt": rules})
-    return f"{block or rules}\n\n{message}"
+    prompt = with_safety_rules(agent_instructions(None).composed())
+    block = render_snippet_block("agent-system-prompt-wrapper", {"agent_prompt": prompt})
+    return f"{block or prompt}\n\n{message}"
 
 
 async def _send_and_print(provider: ModelProvider, message: str, *, opens_session: bool) -> None:

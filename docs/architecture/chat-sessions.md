@@ -263,6 +263,20 @@ chat, channel thread, loop worker, webhook, subagent).
 3. **Agent resolution** — an agent's own `system_prompt` governs when it has one;
    the default agent ships with none, so its prompt is the one bound in Settings →
    Prompts for the turn's context (`chat`, or `background` for unattended runs).
+   An agent's own instructions and voice are read in one place,
+   `agents.instructions.agent_instructions`: its profile in `config.json`, else its
+   file under `<home>/agents` (never another agent's words for a name `config.json`
+   does not hold). Every path that runs a named agent hands its model those words: a
+   chat routed to it, a spawn, workflow step, automation or app run that names it
+   (`build_message` is told the agent), a webhook on it, a loop it works, a room it
+   sits in (its first message), and the heartbeat and `personalclaw chat`, which run
+   the default agent. A spawn that names no agent is a helper of whatever started it,
+   on that one's runtime, framed as a sub-agent on the Background prompt and handed no
+   agent's own instructions: handed its parent's, a goal loop worker's helper would run
+   the loop's own cycle protocol, and handed the default agent's, a helper working for
+   another agent would be told it is the default one.
+   `tests/test_agent_safety_rules_census.py` fails for a new path that names the agent
+   it starts and hands its model none of its instructions.
    The agent's voice and the task-mode posture (`system_prompt_suffix`) are layered
    ON TOP of whichever prompt resolved — never a replacement (see `build_message`).
    So are the platform's safety rules, last and once: the `safety-rules` snippet the

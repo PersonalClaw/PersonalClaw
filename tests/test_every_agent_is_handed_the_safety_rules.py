@@ -30,6 +30,7 @@ import pytest
 
 import personalclaw
 from personalclaw.agents.defaults import LITE_AGENT_NAME, RESERVED_AGENT_NAMES
+from personalclaw.agents.instructions import agent_instructions
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.config import loader as config_loader
@@ -261,13 +262,13 @@ async def test_each_built_in_worker_is_handed_them_beside_its_own_prompt(tmp_pat
     """The goal loop's worker and planner, the Code project's worker and planner, the template
     refiner: each turn opens with its own protocol, and the rules follow it."""
     _install()
-    own = config_loader.resolve_agent_bindings(config_loader.AppConfig.load(), worker)
-    assert own.system_prompt, f"{worker} has a prompt of its own"
+    own = agent_instructions(worker)
+    assert own.prompt, f"{worker} has a prompt of its own"
     chat = _Chat(tmp_path)
     await chat.send(chat.session(f"loop-{worker}", agent=worker, app="loop"))
 
     sent = _carries_the_rules_once(chat.requests(worker)[0])
-    assert sent.index(own.system_prompt.translate(_MULTIBYTE_TABLE)) < _where(sent)
+    assert sent.index(own.prompt.translate(_MULTIBYTE_TABLE)) < _where(sent)
 
 
 @pytest.mark.asyncio

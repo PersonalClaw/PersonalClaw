@@ -225,7 +225,7 @@ async def test_agent_marketplace_test_failure_speaks_guidance(monkeypatch) -> No
         def release(self, session_key):  # pragma: no cover — not reached
             pass
 
-    defn = SimpleNamespace(system_prompt="", provider_entry="")
+    defn = SimpleNamespace(system_prompt="", voice="", provider_entry="")
     marketplace = SimpleNamespace(get=lambda name: defn)
     monkeypatch.setattr(
         am_h, "get_default_agent_registry", lambda: SimpleNamespace(get=lambda n: marketplace)

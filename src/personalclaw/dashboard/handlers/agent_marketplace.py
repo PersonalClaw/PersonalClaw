@@ -24,6 +24,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.agents.instructions import AgentInstructions
 from personalclaw.agents.marketplace import AgentDefinition, get_default_agent_registry
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import json_object_body, require_string, string_field
@@ -113,6 +114,7 @@ async def api_agent_marketplace_create(request: web.Request) -> web.Response:
         description=string_field(body, "description"),
         model=string_field(body, "model"),
         system_prompt=string_field(body, "system_prompt", strip=False),
+        voice=string_field(body, "voice", strip=False),
         skills=list(body.get("skills") or []),
         provider_entry=string_field(body, "provider_entry"),
         provider=string_field(body, "provider"),
@@ -170,10 +172,12 @@ async def api_agent_marketplace_activate(request: web.Request) -> web.Response:
     """POST /api/agent-marketplace/agents/:name/activate
 
     Promotes the agent definition into ``config.json``'s ``agents`` map so it
-    becomes selectable in the chat UI as a named persona.  The agent's
-    ``system_prompt`` is written to ``~/.personalclaw/agents/<name>/prompt.md``
-    and the agent entry's ``provider_agent`` field is left empty (meaning the chat
-    runner uses the default provider with a session-scoped system prompt).
+    becomes selectable in the chat UI as a named persona, on the default provider
+    (``provider_agent`` empty). The definition's instructions and voice go into the
+    profile, which is where every path that runs the agent reads them from
+    (``agents.instructions.agent_instructions``) and what the Agents page shows: they
+    used to be written to a ``prompt.md`` beside the definition that nothing read, so
+    an agent made this way ran on no instructions of its own anywhere.
     """
     name = request.match_info["name"]
     mp = _marketplace(request)
@@ -181,22 +185,14 @@ async def api_agent_marketplace_activate(request: web.Request) -> web.Response:
     if defn is None:
         return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
 
-    from personalclaw.config.loader import AgentProfile, AppConfig, config_dir
+    from personalclaw.config.loader import AgentProfile, AppConfig
 
-    # Write system prompt to disk so the agent session can load it via file://
-    agent_dir = config_dir() / "agents" / name
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    prompt_path = agent_dir / "prompt.md"
-    if defn.system_prompt:
-        prompt_path.write_text(defn.system_prompt, encoding="utf-8")
-    elif prompt_path.exists():
-        prompt_path.unlink()
-
-    # Persist into config.json agents map
     cfg = AppConfig.load()
     cfg.agents[name] = AgentProfile(
         provider_agent="",
         description=defn.description,
+        system_prompt=defn.system_prompt,
+        voice=defn.voice,
         model=defn.model,
         # Natural voice must cross into the config profile here or an agent
         # activated from the marketplace loses the preference its definition carries —
@@ -206,14 +202,6 @@ async def api_agent_marketplace_activate(request: web.Request) -> web.Response:
     )
     cfg.save()
 
-    # Re-install agent config so the prompt file is picked up by the ACP provider
-    try:
-        from personalclaw.agent import rebuild_agent_config
-
-        rebuild_agent_config()
-    except Exception as exc:
-        logger.warning("rebuild_agent_config failed after activate: %s", exc)
-
     _sel_log("agent_marketplace.activate", "ok", name, request)
     state = request.app.get("state")
     if state:
@@ -222,9 +210,7 @@ async def api_agent_marketplace_activate(request: web.Request) -> web.Response:
         except Exception:
             pass
 
-    return web.json_response(
-        {"ok": True, "name": name, "prompt_path": str(prompt_path) if defn.system_prompt else ""}
-    )
+    return web.json_response({"ok": True, "name": name})
 
 
 # ── Test ──────────────────────────────────────────────────────────────────────
@@ -262,10 +248,11 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
 
     start = time.monotonic()
 
-    # Build a combined prompt: inject system prompt as a preamble if defined
-    full_prompt = test_prompt
-    if defn.system_prompt:
-        full_prompt = f"<system>\n{defn.system_prompt[:2000]}\n</system>\n\n{test_prompt}"
+    # The definition's instructions and voice as a preamble, whole, as the agent activated from it
+    # is handed them: cut to 2,000 characters with its voice left out, a test of a longer
+    # definition answered from words an activated agent never runs on.
+    own = AgentInstructions(defn.system_prompt, defn.voice).composed()
+    full_prompt = f"<system>\n{own}\n</system>\n\n{test_prompt}" if own else test_prompt
 
     try:
         from personalclaw.llm_helpers import ToolApprovalPolicy, stream_and_collect

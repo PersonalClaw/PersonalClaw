@@ -19,6 +19,15 @@ and one that calls nothing refuses its calls. Every detector is shown to find wh
 before its answer is trusted. What the paths' models are actually handed is read in
 ``test_every_agent_is_handed_the_safety_rules.py``.
 
+The same sites are read for the agent's own instructions, which the rules follow. A site that NAMES
+the agent it starts (an ``agent=`` its session is acquired or its runtime built with) hands that
+agent's instructions to its model, read by their one reader
+(``agents.instructions.agent_instructions``): its assembly is told the agent, or handed its
+instructions read, or the message it composes itself reads them, or it is named in
+:data:`NOT_ITS_OWN_WORK` with why its turn is not that agent's own work. A site that names no
+agent starts the default one, whose instructions the assembly reads itself. What each path's model
+is handed is read in ``test_a_named_agents_instructions_reach_its_model.py``.
+
 What it cannot see: an agent started by a name other than these three.
 """
 
@@ -96,6 +105,26 @@ RESOLVED_DIRECTLY: dict[tuple[str, str], str] = {
     _SAMPLING_JUDGE: _A_JUDGE,
     ("learning/replay.py", "replay_proposal.judge_factory.<lambda>"): _A_JUDGE,
 }
+
+#: Sites that name the agent they start and are not that agent's own work, by (file, function),
+#: with what frames the turn instead of the agent's own instructions.
+NOT_ITS_OWN_WORK: dict[tuple[str, str], str] = {
+    ("dashboard/side.py", "_run_side_turn"): (
+        "a side question about a chat, on its agent's runtime, framed by the side chat's prompt"
+    ),
+    ("dashboard/handlers/optimizer.py", "handle_optimize._optimize"): (
+        "a prompt rewrite on the lite agent, framed by the Prompt optimizer prompt"
+    ),
+    ("dashboard/handlers/agent_marketplace.py", "api_agent_marketplace_test"): (
+        "a marketplace definition's one-turn test, handed the definition's own instructions and "
+        "voice: a definition is not one of your agents until it is activated"
+    ),
+}
+
+#: What tells an assembly the turn's agent: the agent, or its instructions already read.
+_TELLS_THE_AGENT = frozenset({"agent", "system_prompt_override"})
+#: What assembles a turn's first message.
+_ASSEMBLERS = frozenset({"build_message", "assemble_context"})
 
 
 def _tree(rel: str) -> ast.Module:
@@ -208,9 +237,8 @@ def test_the_assembly_layers_the_rules():
 
 
 def test_each_assembled_site_calls_the_assembler():
-    assembler = frozenset({"build_message", "assemble_context"})
     for rel, qualname in ASSEMBLED:
-        assert _uses(rel, qualname, assembler), f"{rel}: {qualname} no longer assembles its message"
+        assert _uses(rel, qualname, _ASSEMBLERS), f"{rel}: {qualname} no longer assembles"
 
 
 def test_each_layered_site_layers_the_rules():
@@ -238,6 +266,123 @@ def test_the_detectors_find_what_they_look_for():
     assert "build_message" in _names(funcs["a"]) and "build_message" not in _names(funcs["b"])
     assert _calls(tree, "f") == ["d.<lambda>"]
     assert _calls(tree, "build_message") == ["a"]
+
+
+# ── the agent's own instructions ─────────────────────────────────────────────────────────────
+
+
+def _own_calls(func: ast.AST) -> list[ast.Call]:
+    """The calls in *func*'s own body, a nested function's left out, as the acquisition census
+    reads a site."""
+    nested = {
+        id(node)
+        for inner in ast.walk(func)
+        if inner is not func and isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for node in ast.walk(inner)
+    }
+    return [
+        node for node in ast.walk(func) if isinstance(node, ast.Call) and id(node) not in nested
+    ]
+
+
+def _starts(call: ast.Call) -> bool:
+    """A call that starts an agent: an acquisition, a direct resolution through the bridge, or a
+    runtime built where the factory is made (``….create_provider_factory()(…)``)."""
+    if _called(call) in {"get_or_create", "resolve_provider_for_use_case"}:
+        return True
+    return isinstance(call.func, ast.Call) and _called(call.func) == "create_provider_factory"
+
+
+def _names_an_agent(call: ast.Call) -> bool:
+    """Whether *call* names the agent it starts: an ``agent=`` other than a literal ``None``."""
+    return any(
+        kw.arg == "agent" and not (isinstance(kw.value, ast.Constant) and kw.value.value is None)
+        for kw in call.keywords
+    )
+
+
+def _starts_a_named_agent(func: ast.AST) -> bool:
+    return any(_starts(call) and _names_an_agent(call) for call in _own_calls(func))
+
+
+def _tells_the_assembly(func: ast.AST) -> bool:
+    """Whether a call that names an assembler (calling it, or handing it to a worker thread or a
+    ``partial``) tells it the turn's agent."""
+    return any(
+        _names(call) & _ASSEMBLERS and {kw.arg for kw in call.keywords} & _TELLS_THE_AGENT
+        for call in _own_calls(func)
+    )
+
+
+def _site(rel: str, qualname: str) -> ast.AST:
+    """The function a site names; a lambda's is the function around it, whose own calls hold the
+    lambda's."""
+    func = _functions(_tree(rel)).get(qualname.removesuffix(".<lambda>"))
+    assert func is not None, f"{rel}: {qualname} is gone; update this census"
+    return func
+
+
+def test_the_assembly_reads_the_agents_own_instructions():
+    assert _uses("context.py", "ContextBuilder.build_message", {"agent_instructions"})
+
+
+def test_every_site_that_names_its_agent_hands_it_its_own_instructions():
+    sites = (
+        set(_census())
+        | _sites("create_provider_factory", skip=frozenset({"config/loader.py"}))
+        | _sites("resolve_provider_for_use_case", skip=frozenset({"providers/provider_bridge.py"}))
+    ) - REACQUIRES
+    named = {site for site in sites if _starts_a_named_agent(_site(*site))}
+    spawn = ("subagent.py", "SubagentManager._run_inner")
+    assert spawn in named, "the detector reads the real tree"
+    heartbeat = ("gateway.py", "GatewayOrchestrator._run_heartbeat_task")
+    assert heartbeat in sites and heartbeat not in named, "the detector tells a site naming none"
+    composers = {**LAYERED, **FACTORY_LAYERED}
+    failures: list[str] = []
+    for rel, qualname in sorted(named - set(NOT_ITS_OWN_WORK)):
+        if (rel, qualname) in ASSEMBLED:
+            if not _tells_the_assembly(_site(rel, qualname)):
+                failures.append(f"{rel}: {qualname} assembles its message without its agent")
+        elif (rel, qualname) in composers:
+            composer_rel, composer = composers[(rel, qualname)]
+            if not _uses(composer_rel, composer, {"agent_instructions"}):
+                failures.append(f"{composer_rel}: {composer} composes without the instructions")
+        else:
+            failures.append(f"{rel}: {qualname} hands its agent none of its instructions")
+    assert not failures, (
+        f"{failures}: a site that names the agent it starts hands that agent's own instructions to "
+        "its model: tell its assembly the agent (agent=…), compose its message with "
+        "agents.instructions.agent_instructions, or name it in NOT_ITS_OWN_WORK with why its turn "
+        "is not that agent's own work"
+    )
+    stale = sorted(set(NOT_ITS_OWN_WORK) - named)
+    assert not stale, f"{stale} name no agent any more; remove them from NOT_ITS_OWN_WORK"
+
+
+def test_the_instruction_detectors_find_what_they_look_for():
+    """Positive controls: a site that names its agent and tells its assembly, one that names it
+    and does not, one that names none, and a runtime built where the factory is made."""
+    funcs = _functions(
+        ast.parse(
+            "async def told(s, c, a):\n"
+            "    p, n, r = await s.get_or_create('k', agent=a)\n"
+            "    return await asyncio.to_thread(partial(c.build_message, agent=a), 'x', n)\n"
+            "async def untold(s, c, a):\n"
+            "    p, n, r = await s.get_or_create('k', agent=a)\n"
+            "    return await asyncio.to_thread(c.build_message, 'x', n, 'k')\n"
+            "async def nameless(s, c):\n"
+            "    p, n, r = await s.get_or_create('k', agent=None)\n"
+            "    def later():\n"
+            "        return c.build_message('x', n, agent='other')\n"
+            "    return later\n"
+            "def factory(cfg, a):\n"
+            "    return cfg.create_provider_factory()('k', agent=a)\n"
+        )
+    )
+    assert _starts_a_named_agent(funcs["told"]) and _starts_a_named_agent(funcs["untold"])
+    assert not _starts_a_named_agent(funcs["nameless"]) and _starts_a_named_agent(funcs["factory"])
+    assert _tells_the_assembly(funcs["told"]) and not _tells_the_assembly(funcs["untold"])
+    assert not _tells_the_assembly(funcs["nameless"]), "a nested function is its own site"
 
 
 # ── one wording ──────────────────────────────────────────────────────────────────────────────

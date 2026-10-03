@@ -632,32 +632,6 @@ class TestCompressThreadHistory:
         assert fake_key not in result
 
 
-class TestLoadAgentPrompt:
-    """Tests for _load_agent_prompt handling of null/missing prompt values."""
-
-    def test_null_prompt_returns_empty(self, tmp_path, monkeypatch):
-        """Agent JSON with "prompt": null should return empty string."""
-        import json
-
-        agents_dir = tmp_path / ".personalclaw" / "agents"
-        agents_dir.mkdir(parents=True)
-        (agents_dir / "test.json").write_text(
-            json.dumps({"name": "test", "prompt": None}), encoding="utf-8"
-        )
-        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-        assert ContextBuilder._load_agent_prompt("test") == ""
-
-    def test_missing_prompt_returns_empty(self, tmp_path, monkeypatch):
-        """Agent JSON without "prompt" key should return empty string."""
-        import json
-
-        agents_dir = tmp_path / ".personalclaw" / "agents"
-        agents_dir.mkdir(parents=True)
-        (agents_dir / "test.json").write_text(json.dumps({"name": "test"}), encoding="utf-8")
-        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-        assert ContextBuilder._load_agent_prompt("test") == ""
-
-
 class TestRuntimeDisplayName:
     """Tests for _runtime_display_name() and agent identity injection."""
 

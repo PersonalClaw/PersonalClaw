@@ -49,6 +49,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator, Callable, NamedTuple
 
 from personalclaw import context_headroom
+from personalclaw.agents.instructions import agent_instructions
 from personalclaw.context_compaction import compact, should_compact
 from personalclaw.history import speaker_of
 from personalclaw.llm.base import ModelSubstitution
@@ -263,7 +264,13 @@ def render_transcript(room: Room, messages: list[dict]) -> str:
 def build_member_prompt(
     room: Room, member: RoomMember, messages: list[dict], *, since_last_turn: bool
 ) -> str:
-    """One member's turn prompt: its own standing instruction, then the FENCED feed.
+    """One member's turn prompt: its own standing instructions, then the FENCED feed.
+
+    **The member's session opens with its agent's own instructions and voice**
+    (``agents.instructions.agent_instructions``), then the room's framing of its seat. A member is
+    one of the owner's agents, and it used to be sent its role line alone, so whatever its
+    instructions say it must do or never do held everywhere but in a room. Its session keeps that
+    first message, so a later slice does not repeat them.
 
     **The fence is not optional and not a formality.** Every line in that transcript is
     model text (or human text quoting model text) about to be handed to another model, so a
@@ -278,7 +285,7 @@ def build_member_prompt(
     both the sentence before the fence and the fence's own ``transformation_path`` say so.
     Narrowing the block did not soften it: a shorter quote of another model is not a more
     trustworthy one, so the slice is fenced and attributed exactly as the whole transcript is, and
-    the member's own standing instruction stays OUTSIDE the fence, where only instructions are.
+    the member's own standing instructions stay OUTSIDE the fence, where only instructions are.
 
     **The whole room opens the member's session, so it carries the platform's safety rules**
     (``prompt_providers.runtime.with_safety_rules``), ahead of the fence, as every agent's first
@@ -315,7 +322,9 @@ def build_member_prompt(
     role = f" You {member.role_blurb}." if member.role_blurb else ""
     head = f'You are "{member.name}", a member of the room "{room.title}".{role}\n'
     if not since_last_turn:
-        head = f"{with_safety_rules(head)}\n\n"
+        own = agent_instructions(member.name).composed()
+        opening = f"{own}\n\n{head}" if own else head
+        head = f"{with_safety_rules(opening)}\n\n"
     return (
         f"{head}{body}"
         "Write your next contribution to the room. Address the others by name when you "
