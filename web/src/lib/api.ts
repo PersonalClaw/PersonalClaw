@@ -1008,6 +1008,21 @@ export interface AppQualityWire {
   designSystem?: 'v2' | 'legacy' | 'n/a'
   a11y?: boolean
 }
+/** How the last run of a process an app runs (its backend, a background worker) ended on its own,
+ *  and the last lines it printed, which the gateway masks before they leave it. `ended` is the
+ *  gateway's words for it ("exited with code 1", "was ended by signal 9"); `cause` is the line of
+ *  what it printed that says why, `''` when none does. Absent while the process runs, and after a
+ *  stop PersonalClaw made. */
+export interface AppProcessExit {
+  pid: number; exitCode: number; ended: string; endedAt: string; cause: string; lines: string[]
+}
+/** One background worker of an app, as its supervisor holds it: `paused` (a spend ceiling or
+ *  incident mode; `reason` says which) and `failed` (given up on after crashing; `reason` says
+ *  why) are states, `running` is whether its process is. */
+export interface AppWorkerStatus {
+  name: string; state: 'running' | 'paused' | 'failed'; running: boolean; reason: string
+  exit: AppProcessExit | null
+}
 export interface AppSummary {
   name: string; displayName: string; version: string; description: string
   enabled: boolean; origin: string; source?: string; icon: string
@@ -1050,6 +1065,11 @@ export interface AppSummary {
   tags: string[]
   installedAt?: string; updatedAt?: string
   backendRunning: boolean; backendPort: number | null
+  /** While the backend is not running because its last run ended on its own: how, and the last
+   *  lines it printed. Absent for a core app, which has no backend. */
+  backendExit?: AppProcessExit | null
+  /** Its background workers (an app that holds `backgroundTasks`); absent for a core app. */
+  workers?: AppWorkerStatus[]
   /** Why the gateway must restart before only the installed version of this app runs (what an
    *  update or reinstall could not take out of the process); `""` when nothing is left over. */
   restartReason?: string
@@ -1077,6 +1097,8 @@ export interface AppDetail {
   config: Record<string, unknown>
   configSchema: Record<string, unknown>
   backendRunning: boolean; backendPort: number | null
+  backendExit: AppProcessExit | null
+  workers: AppWorkerStatus[]
   /** The same digest `AppSummary.uiRevision` carries: the app page versions its bundle URL. */
   uiRevision?: string
   restartReason?: string

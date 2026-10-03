@@ -4,7 +4,7 @@ import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
-  ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
+  ShieldCheck, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Archive, HardDrive, MapPin, AlertTriangle,
   Boxes, Package, Store, KeyRound, RotateCw, ShieldAlert, Wrench,
 } from 'lucide-react'
@@ -43,6 +43,7 @@ import { setActivation } from '../../app/appActivation'
 import { provenance, registryListing } from '../../lib/provenance'
 import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
+import { BackendStatus, WorkerStatus } from './appProcesses'
 import { QualityBadges } from './qualityBadges'
 import { StoreSideRail, type RailOption } from './StoreSideRail'
 import { artGradient } from './appArt'
@@ -1697,14 +1698,10 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
           </div>
         )}
 
-        {app.hasBackend && (
-          <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
-            <div className="flex items-center gap-2 text-on-surface"><Server size={14} /> Backend</div>
-            <div className="mt-1 text-on-surface-low">
-              {app.backendRunning ? `running on port ${app.backendPort}` : 'not running'}
-            </div>
-          </div>
-        )}
+        {/* The processes it runs: whether each is running, and for one that is not, how its last
+            run ended and the last lines it printed. */}
+        {app.hasBackend && <BackendStatus app={app} />}
+        {(app.workers ?? []).map((w) => <WorkerStatus key={w.name} worker={w} />)}
 
         {app.hasUI && app.enabled && (
           <label className="flex items-center justify-between gap-3 rounded-md border border-outline-variant bg-surface-high p-m">

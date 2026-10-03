@@ -708,7 +708,11 @@ async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
                 continue
             name = app.get("name", "")
             rb = sup.get(name)
-            backends[name] = {"alive": rb is not None}
+            # How a backend that is down last ended, and the last lines it printed.
+            backends[name] = {
+                "alive": rb is not None,
+                "exit": None if rb is not None else sup.last_exit(name),
+            }
         rollbacks: list[str] = []
         ad = apps_dir()
         if ad.exists():
@@ -725,7 +729,15 @@ async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
     dead = [n for n, v in ev["backends"].items() if not v["alive"]]
     problems = []
     if dead:
-        problems.append(f"{len(dead)} backend{'s' if len(dead) != 1 else ''} not running")
+        ended = [
+            f"{n} {x['ended']}" + (f": {x['cause']}" if x["cause"] else "")
+            for n in dead
+            if (x := ev["backends"][n]["exit"])
+        ]
+        problems.append(
+            f"{len(dead)} backend{'s' if len(dead) != 1 else ''} not running"
+            + (f" ({'; '.join(ended)})" if ended else "")
+        )
     if ev["rollback_leftovers"]:
         problems.append(
             f"{len(ev['rollback_leftovers'])} interrupted "
@@ -744,9 +756,9 @@ async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
         fix_id="serving-fs.orphan-prune" if ev["rollback_leftovers"] else None,
         remedy=(
             "No automatic fix for a backend that is down: the app watchdog already relaunches "
-            "one every 30 seconds, so a backend that stays down is failing to start — Settings → "
-            "Diagnostics → Live logs shows why. Disable the app under Settings → Apps to stop "
-            "the retries."
+            "one every 30 seconds, so a backend that stays down is failing to start — the app's "
+            "panel under Apps shows the last lines it printed, as does Settings → Diagnostics → "
+            "Live logs. Disable the app under Settings → Apps to stop the retries."
             if dead
             else ""
         ),

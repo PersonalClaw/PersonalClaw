@@ -180,19 +180,27 @@ def _reconcile_app_crons(request: web.Request) -> None:
 
 
 def _app_status(name: str) -> dict[str, Any]:
-    """Runtime status for an app: backend running/port, and why it needs a restart (if it does).
+    """Runtime status for an app: backend running/port, its workers, and why it needs a restart
+    (if it does).
 
-    ``restartReason`` is what an update or reinstall could not take out of the process — the
-    clause the Apps page states after "Restart the gateway to finish:", ``""`` when only the
-    installed version runs.
+    ``backendExit`` is how the backend's last run ended and the last lines it printed, while it
+    is not running because that run ended on its own (``BackendSupervisor.last_exit``), else
+    ``None``; ``workers`` is each background worker's state and, while its process is not
+    running, the same account of its last run (``WorkerSupervisor.report``). ``restartReason``
+    is what an update or reinstall could not take out of the process — the clause the Apps page
+    states after "Restart the gateway to finish:", ``""`` when only the installed version runs.
     """
     from personalclaw.apps import app_runtime
     from personalclaw.apps.backend_runtime import get_backend_supervisor
+    from personalclaw.apps.worker_runtime import get_worker_supervisor
 
-    rb = get_backend_supervisor().get(name)
+    backends = get_backend_supervisor()
+    rb = backends.get(name)
     return {
         "backendRunning": rb is not None,
         "backendPort": rb.port if rb else None,
+        "backendExit": None if rb is not None else backends.last_exit(name),
+        "workers": get_worker_supervisor().report(name),
         "restartReason": app_runtime.restart_reason(name),
     }
 

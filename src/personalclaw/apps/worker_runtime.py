@@ -38,6 +38,10 @@ PAUSED is the state difference, and it is what stops the two from collapsing: co
 them one way and a budget breach permanently kills a worker the user never disabled;
 collapse them the other and a disabled app's worker returns on the next sweep.
 
+**What a worker prints is relayed, as a backend's is.** Its stdout and stderr reach the
+gateway's log, masked and tagged with the app and the worker, and its last lines are kept on its
+record with how its process ended (``child_output``), which the app's panel shows.
+
 **The crash-loop bound is what makes revival safe.** A worker that dies during startup
 would otherwise be relaunched every sweep forever, burning CPU and filling the log. After
 ``_MAX_RESTARTS`` revives that each failed to stay up for ``_HEALTHY_UPTIME_SECS``, the
@@ -64,6 +68,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from personalclaw.apps.backend_runtime import _TERM_TIMEOUT, BackendSupervisor
 
@@ -79,6 +84,7 @@ from personalclaw.apps.background import (
 )
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.manifest import AppManifest
+from personalclaw.child_output import ChildOutput, relay
 from personalclaw.periodic_sweep import PeriodicSweep
 
 logger = logging.getLogger(__name__)
@@ -133,6 +139,8 @@ class SupervisedWorker:
     #: PAUSED only: whether the sweep may resume it once the policy clears. False for an
     #: operator pause, so the supervisor never fights a human.
     auto_resume: bool = True
+    #: What its latest process prints, relayed into the gateway's log, and how it ended.
+    output: ChildOutput | None = field(default=None, repr=False)
 
     @property
     def key(self) -> tuple[str, str]:
@@ -369,6 +377,24 @@ class WorkerSupervisor:
                 r for r in self._workers.values() if r.state is WorkerState.RUNNING and r.is_alive()
             ]
 
+    def report(self, app: str) -> list[dict[str, Any]]:
+        """What *app*'s panel shows for each of its workers: its state, why it is paused or was
+        given up on, and, while its process is not running, how its last run ended and the last
+        lines it printed (``ChildOutput.report``)."""
+        rows: list[dict[str, Any]] = []
+        for rec in self.list_workers(app):
+            running = rec.is_alive()
+            rows.append(
+                {
+                    "name": rec.worker,
+                    "state": rec.state.value,
+                    "running": running,
+                    "reason": rec.reason,
+                    "exit": None if running or rec.output is None else rec.output.report(),
+                }
+            )
+        return rows
+
     # -- lifecycle --------------------------------------------------------
     def start(self, manifest: AppManifest) -> list[SupervisedWorker]:
         """Start every worker *manifest* declares. Idempotent per worker.
@@ -481,16 +507,22 @@ class WorkerSupervisor:
         # non-loop thread while the loop holds locks (the backend_runtime hazard).
         launch_cmd = spawn_shim_argv(list(cmd), PROFILE_TOOL)
         try:
+            # Both streams are relayed into the gateway's log, masked, and the last lines are
+            # kept for the app's panel, as a backend's are.
             proc = subprocess.Popen(  # noqa: S603 — vetted app code, scanned at install
                 launch_cmd,
                 cwd=str(app_dir(rec.app)),
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
         except OSError as exc:
             logger.warning("app %s worker %s failed to launch: %s", rec.app, rec.worker, exc)
             return False
+        rec.output = ChildOutput(
+            app=rec.app, process=f"worker '{rec.worker}'", pid=proc.pid, env=env
+        )
+        relay(proc, rec.output)
         rec.proc = proc
         rec.pid = proc.pid
         rec.state = WorkerState.RUNNING
@@ -596,6 +628,8 @@ class WorkerSupervisor:
         proc = rec.proc
         if proc is None or proc.poll() is not None:
             return False
+        if rec.output is not None:
+            rec.output.stopping()
         try:
             proc.terminate()
             try:
@@ -745,7 +779,8 @@ class WorkerSupervisor:
                 _notify(
                     "A background worker keeps crashing",
                     f"{app_label(rec)} was restarted {_MAX_RESTARTS} times and kept "
-                    "failing, so it has been stopped. Check the app's worker.",
+                    "failing, so it has been stopped. The app's panel under Apps shows the last "
+                    "lines it printed.",
                     {"app": rec.app, "worker": rec.worker, "reason": rec.reason},
                 )
                 return

@@ -18,6 +18,10 @@ from the entry-point suffix (``.py``→python, ``.js``/``.mjs``→node). The cho
 port is passed via ``PORT`` env (the conventional contract) and recorded so the
 proxy can reach it.
 
+Output: what a backend prints on stdout and stderr is relayed into the gateway's log, masked and
+tagged with the app, and its last lines are kept with how it ended (``child_output``), which the
+app's panel and the Doctor show for a backend that is not running.
+
 Environment: a backend does **not** inherit the gateway's environment. It receives
 ``sandbox.build_child_env(site="app-backend")`` — the ``CHILD_ENV_BASE_NAMES``
 allowlist plus whatever the operator declared in ``sandbox.env_passthrough`` — layered
@@ -38,13 +42,14 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.periodic_sweep import PeriodicSweep
 
 if TYPE_CHECKING:
+    from personalclaw.child_output import ChildOutput
     from personalclaw.sandbox_providers import SandboxHandle, SandboxSpec
 
 logger = logging.getLogger(__name__)
@@ -162,6 +167,8 @@ class RunningBackend:
     #: state the wrap made (the ``none`` tier's seatbelt profile or launcher script), which
     #: :meth:`release` removes once the process has exited.
     sandbox: SandboxHandle | None = field(default=None, repr=False)
+    #: What it prints, relayed into the gateway's log, and how it ended (``child_output``).
+    output: ChildOutput | None = field(default=None, repr=False)
 
     @property
     def base_url(self) -> str:
@@ -184,6 +191,9 @@ class BackendSupervisor:
         self._procs: dict[str, RunningBackend] = {}
         self._lock = threading.Lock()
         self._held: set[str] = set()
+        #: Each app's latest backend run, kept after it ends so its panel can say why it is not
+        #: running, until the backend is stopped on purpose.
+        self._last_runs: dict[str, ChildOutput] = {}
 
     # -- holds ------------------------------------------------------------
     def hold(self, name: str) -> None:
@@ -215,6 +225,15 @@ class BackendSupervisor:
     def list_running(self) -> list[RunningBackend]:
         with self._lock:
             return [rb for rb in self._procs.values() if rb.is_alive()]
+
+    def last_exit(self, name: str) -> dict[str, Any] | None:
+        """How *name*'s latest backend run ended and the last lines it printed, when it ended
+        on its own (``ChildOutput.report``); ``None`` while one runs, or when none did."""
+        with self._lock:
+            if name in self._procs and self._procs[name].is_alive():
+                return None
+            run = self._last_runs.get(name)
+        return run.report() if run is not None else None
 
     # -- lifecycle --------------------------------------------------------
     def start(self, manifest: AppManifest) -> RunningBackend | None:
@@ -381,18 +400,25 @@ class BackendSupervisor:
                 inner_cmd = handle.argv
             launch_cmd = spawn_shim_argv(inner_cmd, PROFILE_TOOL)
             try:
+                # Both streams are piped and relayed into the gateway's log, masked, with the
+                # last lines kept for the app's panel: what a backend prints is the only account
+                # of why it stopped.
                 proc = subprocess.Popen(  # noqa: S603 — vetted app backend, scanned at install
                     launch_cmd,
                     cwd=str(root),
                     env=env,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
             except OSError as exc:
                 logger.warning("app %s backend failed to launch: %s", name, exc)
                 if handle is not None:
                     handle.cleanup()
                 return None
+            from personalclaw.child_output import ChildOutput, relay
+
+            output = ChildOutput(app=name, process="backend", pid=proc.pid, env=env)
+            relay(proc, output)
             rb = RunningBackend(
                 name=name,
                 port=port,
@@ -400,18 +426,24 @@ class BackendSupervisor:
                 health_check=backend.healthCheck,
                 proc=proc,
                 sandbox=handle,
+                output=output,
             )
             self._procs[name] = rb
+            self._last_runs[name] = output
             logger.info("app %s backend started: pid=%s port=%s", name, proc.pid, port)
             return rb
 
     def stop(self, name: str) -> bool:
         """Terminate an app's backend subprocess (graceful, then kill). Returns
-        True if a process was stopped."""
+        True if a process was stopped. A backend stopped on purpose leaves no last run to
+        report."""
         with self._lock:
             rb = self._procs.pop(name, None)
+            self._last_runs.pop(name, None)
         if rb is None:
             return False
+        if rb.output is not None and rb.is_alive():
+            rb.output.stopping()
         try:
             return self._terminate(name, rb.proc)
         finally:

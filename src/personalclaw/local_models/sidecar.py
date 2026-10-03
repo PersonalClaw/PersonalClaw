@@ -64,6 +64,15 @@ from typing import Any
 
 from personalclaw import app_code
 from personalclaw.atomic_write import atomic_write
+from personalclaw.child_output import (
+    STDERR,
+    STDOUT,
+    ChildOutput,
+    LineSplitter,
+    bound_line,
+    mask_line,
+    relay,
+)
 from personalclaw.periodic_sweep import PeriodicSweep
 from personalclaw.security import mask_child_output
 
@@ -76,8 +85,8 @@ _TERM_TIMEOUT = 5.0
 #: disk; the caller can pass its own for a hot path.
 _DEFAULT_CALL_TIMEOUT = 120.0
 
-#: How many child log lines (anything the child writes that is not a frame) to retain
-#: for the install/health surfaces. Bounded — a chatty native lib must not grow the heap.
+#: How many lines of an install's output to retain for its status. Bounded — pip's output for a
+#: large engine must not grow the heap.
 _LOG_TAIL_MAX = 40
 
 #: The venv marker file. Its presence means CORE created this venv, so core may delete
@@ -89,10 +98,6 @@ _EOF = {"__eof__": True}
 
 #: The child harness. Executed by path in the child, so it never needs the core package.
 _CHILD_HARNESS = Path(__file__).with_name("_sidecar_child.py")
-
-#: How much of a one-shot child's log (anything it wrote that is not a frame) is kept to say why
-#: it died. Bounded: a native library's progress output can run to megabytes on one line.
-_ONCE_LOG_BYTES = 8192
 
 
 class SidecarCrashed(RuntimeError):
@@ -184,10 +189,12 @@ def _restart_max_default() -> int:
 
 @dataclass
 class _Child:
-    """One spawned generation: its process, its reader thread, its reply queue."""
+    """One spawned generation: its process, its reader thread, its reply queue, and what it
+    prints that is not a frame (relayed into the gateway's log, its last lines kept)."""
 
     proc: subprocess.Popen
     generation: int
+    output: ChildOutput
     replies: queue.Queue = field(default_factory=queue.Queue)
     reader: threading.Thread | None = None
 
@@ -230,7 +237,8 @@ class SidecarRunner:
         self._stale_replies = 0
         self._last_stat: dict[str, Any] = {}
         self._last_reason = ""
-        self._log: list[str] = []
+        #: The latest child's output, kept after it dies: what the crash it raised was about.
+        self._output: ChildOutput | None = None
         self._lock = threading.Lock()
 
     # ── inspection ────────────────────────────────────────────────────────────
@@ -257,8 +265,9 @@ class SidecarRunner:
 
     @property
     def log_tail(self) -> list[str]:
-        """The last :data:`_LOG_TAIL_MAX` non-frame lines the child wrote."""
-        return list(self._log)
+        """The last lines the latest child wrote that are not frames, masked
+        (``child_output.ChildOutput.lines``)."""
+        return self._output.lines() if self._output is not None else []
 
     def is_alive(self) -> bool:
         return self._child is not None and self._child.is_alive()
@@ -354,7 +363,12 @@ class SidecarRunner:
             self._consecutive_failures += 1
             self._last_reason = "spawn_failed"
             raise SidecarCrashed("spawn_failed", generation=generation, detail=str(exc)) from exc
-        child = _Child(proc=proc, generation=generation)
+        # What it prints that is not a frame reaches the gateway's log, masked, as an app
+        # backend's does: its stderr through the relay, a stray stdout line through the frame
+        # reader.
+        output = ChildOutput(app=self.app, process="engine", pid=proc.pid, env=env)
+        self._output = output
+        child = _Child(proc=proc, generation=generation, output=output)
         child.reader = threading.Thread(
             target=self._read_frames,
             args=(child,),
@@ -362,12 +376,7 @@ class SidecarRunner:
             daemon=True,
         )
         child.reader.start()
-        threading.Thread(
-            target=self._read_logs,
-            args=(child,),
-            name=f"sidecar-{self.app}-g{generation}-log",
-            daemon=True,
-        ).start()
+        relay(proc, output, streams=(STDERR,))
         logger.info(
             "sidecar %s started: pid=%s generation=%s python=%s",
             self.app,
@@ -395,7 +404,7 @@ class SidecarRunner:
             if raw == "":
                 break
             if not raw.endswith("\n"):
-                self._note_log(f"[truncated frame discarded] {raw[:120]}")
+                child.output.line(STDOUT, f"[truncated frame discarded] {raw}")
                 break
             line = raw.strip()
             if not line:
@@ -403,27 +412,12 @@ class SidecarRunner:
             try:
                 frame = json.loads(line)
             except ValueError:
-                self._note_log(line[:200])  # a native lib's stray print, not a frame
+                child.output.line(STDOUT, line)  # a native lib's stray print, not a frame
                 continue
             if not isinstance(frame, dict):
                 continue
             self.deliver(child.generation, frame)
         child.replies.put((child.generation, dict(_EOF)))
-
-    def _read_logs(self, child: _Child) -> None:
-        """Retain the child's stderr as the install/health log tail."""
-        stream = child.proc.stderr
-        if stream is None:  # pragma: no cover
-            return
-        for raw in stream:
-            self._note_log(raw.rstrip("\n")[:200])
-
-    def _note_log(self, line: str) -> None:
-        if not line:
-            return
-        self._log.append(line)
-        if len(self._log) > _LOG_TAIL_MAX:
-            del self._log[: len(self._log) - _LOG_TAIL_MAX]
 
     def deliver(self, generation: int, frame: dict[str, Any]) -> bool:
         """The generation fence: accept *frame* only if *generation* is current.
@@ -459,6 +453,7 @@ class SidecarRunner:
             return
         proc = child.proc
         if proc.poll() is None:
+            child.output.stopping()
             try:
                 proc.terminate()
                 try:
@@ -468,7 +463,8 @@ class SidecarRunner:
                     proc.wait(timeout=_TERM_TIMEOUT)
             except OSError:
                 logger.debug("sidecar %s already gone at stop", self.app)
-        for stream in (proc.stdin, proc.stdout, proc.stderr):
+        # Not its stderr: the relay reading it closes it once the child's end of it has.
+        for stream in (proc.stdin, proc.stdout):
             try:
                 if stream is not None:
                     stream.close()
@@ -554,13 +550,15 @@ class SidecarRunner:
         self._last_reason = reason
         proc = child.proc
         if proc.poll() is None:
+            # Ended here, not on its own: the warning below says why.
+            child.output.stopping()
             try:
                 proc.kill()
             except OSError:
                 pass
         if self._child is child:
             self._child = None
-        detail = "; ".join(self._log[-3:])
+        detail = "; ".join(child.output.lines()[-3:])
         logger.warning("sidecar %s died: %s (generation %s)", self.app, reason, child.generation)
         return SidecarCrashed(reason, generation=child.generation, detail=detail)
 
@@ -676,11 +674,14 @@ async def run_once(
     except OSError as exc:
         logger.warning("%s: its child process could not start: %s", app, exc)
         raise SidecarCrashed("spawn_failed", generation=1, detail=str(exc)) from exc
+    # What it writes to stderr reaches the gateway's log, masked, as a supervised engine's does.
+    output = ChildOutput(app=app, process="engine", pid=proc.pid, env=env)
     try:
-        out, log = await _exchange(proc, request)
+        out = await _exchange(proc, request, output)
     except BaseException:
         # Cancelled (or anything else that leaves the call unanswered): nothing waits for the
         # child any more, so it goes, with what it started.
+        output.stopping()
         await kill_timed_out(proc)
         logger.debug("%s: the call ended unanswered, and its child process stopped", app)
         raise
@@ -689,7 +690,7 @@ async def run_once(
         code = proc.returncode
         reason = "eof" if code is None else f"signal_{-code}" if code < 0 else f"exit_{code}"
         logger.warning("%s: its child process ended before it answered (%s)", app, reason)
-        raise SidecarCrashed(reason, generation=1, detail="; ".join(log[-3:]))
+        raise SidecarCrashed(reason, generation=1, detail="; ".join(output.lines()[-3:]))
     if reply.get("ok"):
         return reply.get("result")
     raise SidecarWorkerError(
@@ -698,17 +699,19 @@ async def run_once(
     )
 
 
-async def _exchange(proc: Any, request: dict[str, Any]) -> tuple[bytes, list[str]]:
+async def _exchange(proc: Any, request: dict[str, Any], output: ChildOutput) -> bytes:
     """Send *request*, close the child's stdin, and read until the child exits: everything it
-    wrote to stdout, and the last lines of its log (stderr)."""
+    wrote to stdout. Each line of its log (stderr) goes to *output*, which then records how it
+    ended."""
     from personalclaw.cancellation import cancel_and_wait
 
-    log = bytearray()
-
     async def _read_log() -> None:
+        splitter = LineSplitter()
         while chunk := await proc.stderr.read(65536):
-            log.extend(chunk)
-            del log[: max(0, len(log) - _ONCE_LOG_BYTES)]
+            for text in splitter.feed(chunk):
+                output.line(STDERR, text)
+        for text in splitter.close():
+            output.line(STDERR, text)
 
     logs = asyncio.ensure_future(_read_log())
     try:
@@ -725,8 +728,8 @@ async def _exchange(proc: Any, request: dict[str, Any]) -> tuple[bytes, list[str
         # Ended early (cancelled, or a failure above): the log reader is stopped too, and a
         # reader that does not leave is given up after the stop's bound.
         await cancel_and_wait([logs], what="a one-call child's log")
-    lines = [line.strip()[:200] for line in log.decode("utf-8", "replace").splitlines()]
-    return out, [line for line in lines if line]
+    output.ended(proc.returncode)
+    return out
 
 
 def _reply(out: bytes, request_id: str) -> dict[str, Any] | None:
@@ -934,8 +937,11 @@ class SidecarInstall:
 
     @property
     def log_tail(self) -> list[str]:
+        """The last lines the running command printed, masked as a relayed line is
+        (``child_output.mask_line``): a status poll shows them."""
         with self._lock:
-            return list(self._log)
+            kept = list(self._log)
+        return [mask_line(line) for line in kept]
 
     def status(self) -> dict[str, Any]:
         """The rich poll shape (§3.2): what happened, and what to do about it."""
@@ -1143,7 +1149,7 @@ class SidecarInstall:
             self._note(line)
 
     def _note(self, line: str) -> None:
-        line = line.rstrip()[:200]
+        line = bound_line(line.rstrip())
         if not line:
             return
         with self._lock:

@@ -184,6 +184,8 @@ backend**.
   interpreter's own packages; it gets the child allowlist environment, the `tool` ceiling and a
   process group of its own. It has no deadline of its own (the caller's bound governs), and a
   cancelled call kills the child and what it started. The two speak one JSON line each way.
+  What the child writes to stderr reaches the gateway's log masked, as a backend's does, and a
+  call it died in names its last lines.
   Measured on this rule: faster-whisper, RapidOCR and torch release the lock in their heavy
   kernels (an event loop beside a 200-second transcription went at most 60 ms without a turn),
   so they stay in-process.
@@ -309,6 +311,17 @@ An app with a backend gets its own subprocess:
 - **PPID-guarded orphan reaping** — after a hard gateway kill, orphaned
   backends re-parent to init; only processes with PPID 1 are reaped, so a
   live sibling's process is never touched;
+- **what it prints reaches the log** (`child_output`): its stdout (at INFO) and
+  stderr (at WARNING, so it shows at the default level) are relayed line by line
+  into the gateway's log sinks, tagged `app <name> backend (pid N)`, masked by
+  shape and, for every credential in the environment it was handed (its proxy
+  secret among them), by value, with control characters written as visible
+  escapes. The log takes a burst of 200 lines from one process and then 2 a
+  second; what it does not take is counted in a note. A thread per process drains
+  its pipes as fast as it writes, so a chatty backend never waits on a full pipe.
+  Its last 40 lines and how it ended are kept, and while it is not running because
+  that run ended on its own, its panel under Apps and the Doctor's apps check show
+  them. A background worker and an engine are relayed the same way;
 - `PERSONALCLAW_SKIP_APP_BACKENDS=1` disables backend spawning (test
   isolation).
 
