@@ -241,6 +241,21 @@ def test_the_catalog_site_does_not_execute():
     assert ".execute(" not in src, "the catalog site must never execute a provider"
 
 
+def test_the_rung_router_only_reads_the_undo_declaration():
+    """The properties that earn `guardrails.rungs`'s exemption.
+
+    It resolves a provider to ask whether that provider can take its action back, which decides
+    whether the action may run at the rung that promises undo. It must only read that
+    declaration: if it ever executes or reverses a provider, it must argue its way into
+    `EXECUTION_SITES` (or be the reversal site) with a real gate instead.
+    """
+    src = _source("personalclaw.guardrails.rungs")
+    assert "get_action_provider(" in src, "the exemption is stale if rungs no longer resolves"
+    assert ".execute(" not in src, "the rung router must never execute a provider"
+    assert ".reverse(" not in src, "the rung router must never undo through a provider"
+    assert "reversal_kinds" in src, "the one thing rungs reads from a provider is its undo claim"
+
+
 def test_the_reversal_site_undoes_and_never_executes():
     """The second exemption from the execution invariant, and the properties that earn it.
 
@@ -325,6 +340,12 @@ def test_the_site_list_is_not_STALE():
         # nothing; the properties that earn the exemption are asserted in
         # `test_the_grant_copy_only_reads_the_display_name` below.
         "personalclaw.triggers.grants",
+        # The rung router -- `guardrails.rungs.can_be_undone` resolves each provider of an
+        # action type to read ONE declaration, `reversal_kinds`, so a rung that promises undo
+        # is only ever given to an action every provider of which can be taken back. It runs
+        # nothing and undoes nothing; the properties that earn the exemption are asserted in
+        # `test_the_rung_router_only_reads_the_undo_declaration` below.
+        "personalclaw.guardrails.rungs",
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it
     }

@@ -33,6 +33,10 @@ _CALL_SITE_SURFACES = {
     # no background model bound or callable, nothing is sent and the messages wait for the next
     # tick with the reason held for the panel, while ingestion, alerts and mute keep working.
     "inbox_sorting.py": "inbox_enrichment",
+    # The check that a drafted reply gives no answer she never gave. It is part of the draft, so
+    # it has the draft's floor: with no model the draft pauses with the rest of the Inbox's model
+    # work, and a check that cannot be made marks the draft unchecked rather than guessing.
+    "reply_answers.py": "inbox_enrichment",
     "after_turn_review.py": "memory_extraction",
     "knowledge/llm_pool.py": "knowledge_ingest",
     # The morning digest. Its own surface, not `knowledge_ingest` and not `research_report`:

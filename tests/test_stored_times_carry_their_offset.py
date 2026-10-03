@@ -33,10 +33,10 @@ CLIENT_ZONE = "America/Los_Angeles"
 @pytest.fixture()
 def gateway_zone(monkeypatch):
     """Run this process (the gateway) in Toronto, and put the C library's zone back after."""
-    monkeypatch.setenv("TZ", GATEWAY_ZONE)
-    time.tzset()
-    yield
-    monkeypatch.undo()
+    with monkeypatch.context() as m:
+        m.setenv("TZ", GATEWAY_ZONE)
+        time.tzset()
+        yield
     time.tzset()
 
 
@@ -252,10 +252,10 @@ def test_what_changed_since_a_local_time_is_measured_against_the_stored_instants
 def zone_where_today_is_not_utcs_today(monkeypatch):
     """A zone whose calendar day differs from UTC's at this moment: twelve hours either side."""
     zone = "Etc/GMT+12" if datetime.now(timezone.utc).hour < 12 else "Etc/GMT-12"
-    monkeypatch.setenv("TZ", zone)
-    time.tzset()
-    yield zone
-    monkeypatch.undo()
+    with monkeypatch.context() as m:
+        m.setenv("TZ", zone)
+        time.tzset()
+        yield zone
     time.tzset()
 
 
