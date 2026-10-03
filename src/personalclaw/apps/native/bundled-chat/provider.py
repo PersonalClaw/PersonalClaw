@@ -68,7 +68,6 @@ import tempfile
 import threading
 import time
 import urllib.error
-import urllib.request
 from collections.abc import AsyncIterator, Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -979,6 +978,9 @@ async def download_weight(*, progress: Any = None) -> Path:
     * **Bounded** — an https-only URL, a per-read socket timeout, a total deadline, and the
       record's size ceiling enforced WHILE the bytes arrive (the announced length before the
       first write, the running count after every read), not after the whole file has landed.
+    * **Held to the owner's network settings** — every request, each redirect hop included,
+      is asked of the egress guard before it is sent (``personalclaw.sdk.net.open_url``), and
+      audited: a host on Denied hosts is never contacted.
     * **Cancellable for real** — the transfer is a loop of ``await asyncio.to_thread(read)``,
       so cancelling the task lands between chunks (within one 4 MiB read) and the ``finally``
       unlinks the partial file. A download run as one blocking call could not be interrupted at
@@ -1124,6 +1126,18 @@ def _connection_failure(exc: BaseException) -> DownloadFailed:
     )
 
 
+def _open(url: str) -> Any:
+    """The source, opened through the egress guard: every request, each redirect hop included,
+    is asked of the owner's Network egress settings first, and a refused one is never sent."""
+    from personalclaw.sdk.net import EgressBlocked, open_url
+
+    try:
+        return open_url(url, timeout_s=_SOCKET_TIMEOUT_S)
+    except EgressBlocked as exc:
+        # The guard's sentence names what was refused and the setting that allows it.
+        raise DownloadFailed(DOWNLOAD_UNREACHABLE, f"{exc} {_STILL_USABLE}") from exc
+
+
 async def _transfer(declaration: BundleDeclaration, target: Path, progress: Any) -> None:
     """The bytes half of :func:`download_weight`: read, verify, atomically replace."""
     handle, temp_name = tempfile.mkstemp(dir=str(target.parent), suffix=".partial")
@@ -1138,12 +1152,7 @@ async def _transfer(declaration: BundleDeclaration, target: Path, progress: Any)
     deadline = time.monotonic() + _DEADLINE_S
     try:
         try:
-            response = await asyncio.to_thread(
-                urllib.request.urlopen,  # noqa: S310 — scheme pinned above
-                declaration.source_url,
-                None,
-                _SOCKET_TIMEOUT_S,
-            )
+            response = await asyncio.to_thread(_open, declaration.source_url)
         except urllib.error.HTTPError as exc:
             raise _status_failure(exc) from exc
         except (urllib.error.URLError, OSError) as exc:

@@ -175,22 +175,21 @@ def _parser_remedy() -> str:
     """The one actionable remedy every grammar-load failure names.
 
     The parser wheels are DECLARED dependencies, so "not installed" is rarely the real
-    story: the language pack keeps each grammar as a shared library in a cache and
-    fetches it on first use, which makes a cold cache's first load a network operation.
-    That cache is in the home (``library_env``), so a pre-fetch has to be told the same
-    folder or it fills the language pack's own one, which PersonalClaw does not read.
+    story: each grammar is a shared library the code map fetches the first time it needs
+    that language, through the egress guard (``grammars.ensure``), which makes a cold
+    cache's first load a network operation. The reason recorded beside this says what
+    stopped it: a refused host names the setting that allows it.
     """
-    from personalclaw.library_env import library_env
+    from urllib.parse import urlparse
 
-    folder = library_env()["TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"]
+    from personalclaw.codegraph.grammars import RELEASES
+
     return (
         "No tree-sitter grammar could be loaded for this language. The parser wheels "
-        "(tree-sitter, tree-sitter-language-pack) are declared dependencies, and the "
-        "language pack downloads each grammar's shared library into PersonalClaw's home "
-        "the first time it is needed — so a cold cache needs network access. Pre-fetch "
-        "the grammars where the network is available: "
-        f'TREE_SITTER_LANGUAGE_PACK_CACHE_DIR="{folder}" python -c "from '
-        "tree_sitter_language_pack import download; download(['python'])\"."
+        "(tree-sitter, tree-sitter-language-pack) are declared dependencies, and the code map "
+        f"fetches each language's grammar from {urlparse(RELEASES).hostname} the first time it "
+        "needs it, through PersonalClaw's network settings, into PersonalClaw's home. Until it "
+        "can, files in this language have no definitions in the map; the rest works as before."
     )
 
 
@@ -269,6 +268,9 @@ def _get_parser(language: str):
     try:
         from tree_sitter_language_pack import get_parser
 
+        from personalclaw.codegraph import grammars
+
+        grammars.ensure(language)
         parser = get_parser(language)  # type: ignore[arg-type]
     except Exception as exc:
         _record_load_failure(language, exc)

@@ -31,9 +31,11 @@ available everywhere:
    standalone copy work, so it is the property the rail pins.
    ``test_the_structural_rail_reds_on_the_old_shape`` feeds it the pre-DIST-16 shape and
    watches it fail, so the rail is not vacuous.
-2. **Behavioural, when a container runtime is installed** — copy ``compose.yaml`` ALONE
-   into a scratch directory (no ``.env``, no ``deploy/`` nesting) and run
-   ``compose config``. Skipped without ``docker``/``finch``, which is why layer 1 exists.
+2. **Behavioural, when a container runtime is installed and the run opts in** — copy
+   ``compose.yaml`` ALONE into a scratch directory (no ``.env``, no ``deploy/`` nesting) and run
+   ``compose config``. Skipped without ``docker``/``finch``, which is why layer 1 exists, and
+   without ``PERSONALCLAW_TEST_CONTAINER_RUNTIME=1``: the probe runs this machine's own runtime
+   (``tests/container_runtime.py``).
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import container_runtime
 import pytest
 import yaml
 
@@ -193,10 +196,14 @@ def test_the_guide_states_the_real_failure_not_a_silent_one():
 _CONTROL_COMPOSE = 'services:\n  probe:\n    image: "busybox:latest"\n'
 
 
+#: The runtimes whose ``compose`` this layer may use, in the order it tries them.
+_RUNTIMES = ("docker", "finch")
+
+
 def _usable_runtime(scratch: Path) -> str | None:
     """A container runtime whose ``compose config`` actually runs in *scratch*."""
-    for candidate in ("docker", "finch"):
-        if not shutil.which(candidate):
+    for candidate in _RUNTIMES:
+        if not container_runtime.available(candidate):
             continue
         control = scratch / "control.yaml"
         control.write_text(_CONTROL_COMPOSE)
@@ -219,6 +226,7 @@ def _usable_runtime(scratch: Path) -> str | None:
 
 @pytest.mark.timeout(240)
 def test_compose_config_succeeds_from_a_scratch_directory(tmp_path):
+    container_runtime.require(*_RUNTIMES)
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     runtime = _usable_runtime(scratch)

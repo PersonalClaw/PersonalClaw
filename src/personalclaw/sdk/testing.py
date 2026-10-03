@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import functools
 import inspect
 import ipaddress
 import os
@@ -652,6 +653,9 @@ class GitGuard:
         signature = inspect.signature(real)
         guard = self
 
+        # Carries `__wrapped__`, so a guard installed after this one reads the signature of
+        # `subprocess`'s own method through it, and binds a launch's arguments by their names.
+        @functools.wraps(real)
         def execute_child(popen, *args, **kwargs):
             try:
                 call = signature.bind(popen, *args, **kwargs).arguments

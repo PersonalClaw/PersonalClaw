@@ -6,16 +6,17 @@ Two layers:
   declared-env baking, the app-provider registration contract (``lima`` is NOT a core builtin),
   and the typed, reasoned no-Lima refusal. These are the command-construction + failure-
   honesty guarantees, asserted without a VM.
-* **Integration** (skipped unless ``limactl`` + a Running instance are present): a real
-  ``limactl shell`` proving path translation end to end.
+* **Integration** (skipped unless ``limactl`` + a Running instance are present, and the run sets
+  ``PERSONALCLAW_TEST_CONTAINER_RUNTIME=1``: it runs a command in this machine's own VM,
+  ``tests/container_runtime.py``): a real ``limactl shell`` proving path translation end to end.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 
+import container_runtime
 import pytest
 
 from personalclaw.sandbox_providers import (
@@ -181,8 +182,13 @@ def test_available_flips_with_the_probe(monkeypatch):
 
 # ── integration (real limactl + Running instance) ───────────────────────────────
 
-_HAS_LIMA = shutil.which("limactl") is not None and lima_available(refresh=True)
-_lima_only = pytest.mark.skipif(not _HAS_LIMA, reason="limactl / Running instance unavailable")
+# Asked as the module is imported, so it asks the opt-in first: `limactl list` reaches this
+# machine's VMs, and only a run that opted in may.
+_HAS_LIMA = bool(container_runtime.available("limactl")) and lima_available(refresh=True)
+_lima_only = pytest.mark.skipif(
+    not _HAS_LIMA,
+    reason=container_runtime.skip_reason(("limactl",)) or "no Running Lima instance",
+)
 
 
 @_lima_only

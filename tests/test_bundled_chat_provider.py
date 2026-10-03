@@ -33,12 +33,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import shutil
 import ssl
 import struct
 import threading
 import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -50,6 +52,7 @@ from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
 # `over-budget` reaches an app only through `DownloadResult` (the SDK does not publish it), so
 # the in-flight ceiling tests read the code from core, where the verdict is made.
 from personalclaw.bundled_model import DOWNLOAD_OVER_BUDGET
+from personalclaw.config.loader import config_dir
 from personalclaw.llm.capabilities import Capability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
 
@@ -63,6 +66,7 @@ from personalclaw.sdk.local_model import (
     DOWNLOAD_UNREACHABLE,
 )
 from personalclaw.sdk.prompt import USER_REQUEST_MARKER
+from personalclaw.sel import sel
 
 APP_NAME = "bundled-chat"
 _BUNDLE = NATIVE_DIR / APP_NAME
@@ -1305,13 +1309,15 @@ def test_every_settings_key_reaches_the_provider(rail, tmp_path) -> None:
 # "it raised": a single flattened "download failed" would leave a user with no idea whether to
 # retry, wait, or go bind a provider they already have.
 #
-# Every test below stubs `urlopen` and nothing else — the verification, the atomic replace, the
-# partial cleanup and the outcome classification are the real code. A fake at any deeper seam
-# would stop witnessing the thing that matters: that NOTHING usable-looking is left behind.
+# Every test below stubs opening the source (`_open`, which asks the egress guard and then opens
+# the URL) and nothing else — the verification, the atomic replace, the partial cleanup and the
+# outcome classification are the real code. A fake at any deeper seam would stop witnessing the
+# thing that matters: that NOTHING usable-looking is left behind. The guard half is driven for
+# real further down, and so is the opener behind it, at a proxy that refuses.
 
 
 class _FakeResponse:
-    """A urlopen result that hands out *body* in pieces, optionally lying about the length.
+    """An opened source that hands out *body* in pieces, optionally lying about the length.
 
     ``stall`` models a slow connection: after the first chunk, every further read blocks until
     the event is set. It has to block in the WORKER THREAD, where a real socket read blocks, or
@@ -1346,7 +1352,7 @@ class _FakeResponse:
 
 
 def _serve(rail, monkeypatch, result) -> list[str]:
-    """Point the module's ``urlopen`` at *result* (bytes, or an exception to raise).
+    """Point the module's ``_open`` at *result* (bytes, or an exception to raise).
 
     Returns the list of URLs it was asked for, so a test can assert a refusal happened BEFORE
     any socket was opened — "it raised" and "it raised without reaching the network" are
@@ -1354,13 +1360,13 @@ def _serve(rail, monkeypatch, result) -> list[str]:
     """
     asked: list[str] = []
 
-    def fake_urlopen(url, data=None, timeout=None):  # noqa: ANN001, ANN202
+    def fake_open(url: str) -> _FakeResponse:
         asked.append(url)
         if isinstance(result, BaseException):
             raise result
         return _FakeResponse(*result) if isinstance(result, tuple) else _FakeResponse(result)
 
-    monkeypatch.setattr(rail.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(rail, "_open", fake_open)
     return asked
 
 
@@ -1521,7 +1527,7 @@ def test_a_certificate_that_cannot_be_verified_names_the_clock_and_the_ca(
     [
         # Something closed the connection in the middle of the handshake.
         urllib.error.URLError(ssl.SSLEOFError(8, "EOF occurred in violation of protocol")),
-        # An alert while the response is read escapes `urlopen` unwrapped.
+        # An alert while the response is read escapes the opener unwrapped.
         ssl.SSLError(1, "[SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error"),
     ],
     ids=["cut-off-handshake", "alert-while-reading"],
@@ -1588,14 +1594,14 @@ def test_a_proxy_refusing_the_tunnel_is_read_from_what_urllib_really_raises(
     rail, home, monkeypatch, status, reason, advice
 ) -> None:
     """Through an HTTPS proxy a refusal is not an HTTPError: `http.client` raises an OSError from
-    the CONNECT, before the source is asked. So this drives the REAL `urlopen` at a proxy that
-    refuses, and the mapping is checked against the stdlib's own words rather than a copy."""
+    the CONNECT, before the source is asked. So this drives the REAL opener at a proxy that
+    refuses, and the mapping is checked against the stdlib's own words rather than a copy. The
+    egress guard runs first and lets the source through: its name is given a public address,
+    the guard's own resolver being the one seam, so the request goes where a real one would."""
     target = sign_off(rail, monkeypatch, home)
     for name in ("NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy", "https_proxy"):
         monkeypatch.delenv(name, raising=False)
-    # `urlopen` builds its opener once, and the opener reads the proxy settings then: a cached
-    # one would ignore the variable set below.
-    monkeypatch.setattr(rail.urllib.request, "_opener", None)
+    monkeypatch.setattr("personalclaw.net.guard._resolve", lambda host: ["140.82.112.3"])
     with _RefusingProxy(status, reason) as proxy:
         monkeypatch.setenv("HTTPS_PROXY", proxy.url)
         with pytest.raises(rail.DownloadFailed) as caught:
@@ -1607,6 +1613,38 @@ def test_a_proxy_refusing_the_tunnel_is_read_from_what_urllib_really_raises(
     assert "Retry when you are connected" not in said and "pin needs fixing" not in said
     assert not _asks_for_a_password_in_the_environment(said), said
     assert _leftovers(target) == []
+
+
+def test_a_model_source_on_denied_hosts_is_never_contacted(rail, home, monkeypatch) -> None:
+    """The download is held to the owner's Network egress settings like every other request:
+    a source on Denied hosts is refused before a connection is opened, the sentence names the
+    setting, the refusal is audited, and the install stays usable. The guard and the opener are
+    the real ones; only the connection underneath records that it was never asked for."""
+    target = sign_off(rail, monkeypatch, home)
+    (config_dir() / "config.json").write_text(
+        json.dumps({"security": {"egress": {"deny_hosts": ["example.invalid"]}}}), encoding="utf-8"
+    )
+    connected: list[str] = []
+
+    def connect(_handler: object, request: urllib.request.Request) -> None:
+        connected.append(request.full_url)
+        raise urllib.error.URLError("the guard let this through")
+
+    monkeypatch.setattr(urllib.request.HTTPSHandler, "https_open", connect)
+    with pytest.raises(rail.DownloadFailed) as caught:
+        asyncio.run(rail.download_weight())
+    said = str(caught.value)
+    assert connected == [], "a refused source was connected to"
+    assert caught.value.outcome == DOWNLOAD_UNREACHABLE
+    assert "https://example.invalid/tiny.gguf was not reached" in said and "Denied hosts" in said
+    assert said.endswith(rail._STILL_USABLE), said
+    refused = [
+        row
+        for row in sel().recent(200)
+        if row.get("operation") == "egress_fetch" and row.get("outcome") == "denied"
+    ]
+    assert [row.get("resources") for row in refused] == ["https://example.invalid/tiny.gguf"]
+    assert _leftovers(target) == [] and rail.offer() is not None
 
 
 def test_a_truncated_transfer_is_refused_and_its_partial_file_removed(
@@ -1696,7 +1734,7 @@ def test_a_transfer_is_stopped_the_moment_it_passes_the_ceiling(
         def __exit__(self, *exc: object) -> None:
             return None
 
-    monkeypatch.setattr(rail.urllib.request, "urlopen", lambda *_a, **_k: _Endless())
+    monkeypatch.setattr(rail, "_open", lambda _url: _Endless())
     seen: list[int] = []
     with pytest.raises(rail.DownloadFailed) as caught:
         asyncio.run(rail.download_weight(progress=lambda d, _t: seen.append(d)))
@@ -1831,8 +1869,8 @@ def test_a_restart_with_the_weight_already_there_does_not_fetch_it_again(
 ) -> None:
     """Fetched ONCE per machine, not once per process — the across-restarts half.
 
-    ``urlopen`` is stubbed to raise, so reaching the network at all fails the test rather than
-    quietly costing 138 MiB a second time.
+    Opening the source is stubbed to raise, so reaching the network at all fails the test rather
+    than quietly costing 138 MiB a second time.
     """
     weight, _ = tiny_gguf(tmp_path / "src")
     target = sign_off(rail, monkeypatch, home, weight)

@@ -635,16 +635,30 @@ def _make_app(registry=None, cfg=None, user="testuser"):
     return app
 
 
+def _a_terminal_of_its_own(monkeypatch, tmp_path) -> None:
+    """The terminal these tests open: ``/bin/sh``, with a ``HOME`` of the test's own.
+
+    The terminal opens its configured shell as a login shell, and with none configured it opens
+    ``$SHELL``: on a developer's machine their own login shell, which runs their startup files and
+    adds what it ran to their history."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(
+        json.dumps({"dashboard": {"terminal": {"enabled": True, "shell": "/bin/sh"}}})
+    )
+    monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
+    monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+
+
 class TestTerminalWsIntegration:
     """Integration tests that exercise the full WebSocket PTY lifecycle."""
 
     @pytest.mark.asyncio
     async def test_ws_spawn_and_disconnect(self, monkeypatch, tmp_path):
         """Connect via WS, spawn a PTY, then disconnect — session stays in registry."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"enabled": True}}}))
-        monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
-        monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+        _a_terminal_of_its_own(monkeypatch, tmp_path)
 
         registry: dict = {}
         app = _make_app(registry=registry)
@@ -671,10 +685,7 @@ class TestTerminalWsIntegration:
     @pytest.mark.asyncio
     async def test_ws_ping_pong(self, monkeypatch, tmp_path):
         """Send a ping control message, receive pong."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"enabled": True}}}))
-        monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
-        monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+        _a_terminal_of_its_own(monkeypatch, tmp_path)
 
         registry: dict = {}
         app = _make_app(registry=registry)
@@ -698,10 +709,7 @@ class TestTerminalWsIntegration:
     @pytest.mark.asyncio
     async def test_ws_resize(self, monkeypatch, tmp_path):
         """Send a resize control message, verify session cols/rows update."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"enabled": True}}}))
-        monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
-        monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+        _a_terminal_of_its_own(monkeypatch, tmp_path)
 
         registry: dict = {}
         app = _make_app(registry=registry)
@@ -731,10 +739,7 @@ class TestTerminalWsIntegration:
     @pytest.mark.asyncio
     async def test_ws_binary_io(self, monkeypatch, tmp_path):
         """Send binary data through WS, verify PTY receives it."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"enabled": True}}}))
-        monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
-        monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+        _a_terminal_of_its_own(monkeypatch, tmp_path)
 
         registry: dict = {}
         app = _make_app(registry=registry)
@@ -756,10 +761,7 @@ class TestTerminalWsIntegration:
     @pytest.mark.asyncio
     async def test_ws_reconnect_existing_session(self, monkeypatch, tmp_path):
         """Reconnect to an existing PTY session."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"enabled": True}}}))
-        monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
-        monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+        _a_terminal_of_its_own(monkeypatch, tmp_path)
 
         registry: dict = {}
         app = _make_app(registry=registry)
@@ -788,10 +790,7 @@ class TestTerminalWsIntegration:
     @pytest.mark.asyncio
     async def test_ws_invalid_json_ignored(self, monkeypatch, tmp_path):
         """Invalid JSON text frames are silently ignored."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({"dashboard": {"terminal": {"enabled": True}}}))
-        monkeypatch.setattr(terminal, "config_path", lambda: cfg_file)
-        monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
+        _a_terminal_of_its_own(monkeypatch, tmp_path)
 
         registry: dict = {}
         app = _make_app(registry=registry)

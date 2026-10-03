@@ -5,17 +5,19 @@ Two layers:
 * **Pure-unit** (run everywhere, no Docker): command construction, registry wiring, the typed
   no-Docker refusal, and the write-boundary / model-grant / port / env argv properties. These are
   the command-construction guarantees, asserted without a daemon.
-* **Integration** (skipped unless the docker CLI + daemon are present): a real container proving
-  UID alignment and that a host path outside the mounted workspace is not visible.
+* **Integration** (skipped unless the docker CLI + daemon are present, and the run sets
+  ``PERSONALCLAW_TEST_CONTAINER_RUNTIME=1``: it pulls an image and runs containers on this
+  machine's Docker, ``tests/container_runtime.py``): a real container proving UID alignment and
+  that a host path outside the mounted workspace is not visible.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import subprocess
 
+import container_runtime
 import pytest
 
 from personalclaw.sandbox import ResourceCeilings
@@ -161,8 +163,13 @@ def test_wrap_refuses_with_typed_error_when_docker_unavailable(monkeypatch):
 
 # ── integration (real daemon) ───────────────────────────────────────────────────
 
-_HAS_DOCKER = shutil.which("docker") is not None and docker_available(refresh=True)
-_docker_only = pytest.mark.skipif(not _HAS_DOCKER, reason="docker CLI/daemon unavailable")
+# Asked as the module is imported, so it asks the opt-in first: `docker version` reaches this
+# machine's daemon, and only a run that opted in may.
+_HAS_DOCKER = bool(container_runtime.available("docker")) and docker_available(refresh=True)
+_docker_only = pytest.mark.skipif(
+    not _HAS_DOCKER,
+    reason=container_runtime.skip_reason(("docker",)) or "the docker daemon is not answering",
+)
 
 
 @pytest.fixture
@@ -175,8 +182,9 @@ def _sandbox_image_pulled():
     run`` first prints "Unable to find image ... locally" + pull progress to stderr, which the
     merge would fold into the captured output ahead of the real command result. Pulling first is
     a no-op once the image is local. Only requested by ``@_docker_only`` tests, so docker is
-    present when this runs.
+    present when this runs, and the run opted in; it asks again all the same, being a pull.
     """
+    container_runtime.require("docker")
     subprocess.run(
         ["docker", "pull", sandbox_image()],
         capture_output=True,

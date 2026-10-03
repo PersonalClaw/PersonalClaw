@@ -126,11 +126,11 @@ STATE_REFUSED = "refused"
 
 #: Named download failures. Each is a DIFFERENT thing for the user to do about it, which is the
 #: whole reason they are separate values rather than one "download failed": unreachable means a
-#: retry can work once what the sentence names is fixed (no network, a proxy wanting
-#: credentials or refusing, a source that cannot answer right now, a certificate that could not
-#: be verified, a secure connection cut off), a bad status means the pinned upstream moved, a
-#: short transfer means retry now, and a digest mismatch means the bytes are not the signed-off
-#: bytes and retrying is not the answer.
+#: retry can work once what the sentence names is fixed (no network, the owner's network
+#: settings refusing the source, a proxy wanting credentials or refusing, a source that cannot
+#: answer right now, a certificate that could not be verified, a secure connection cut off), a
+#: bad status means the pinned upstream moved, a short transfer means retry now, and a digest
+#: mismatch means the bytes are not the signed-off bytes and retrying is not the answer.
 DOWNLOAD_OK = "ok"
 DOWNLOAD_UNREACHABLE = "unreachable"
 DOWNLOAD_BAD_STATUS = "bad-status"

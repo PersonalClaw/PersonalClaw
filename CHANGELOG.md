@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **`personalclaw.sdk.net.open_url` streams a download too large to buffer, every request and each redirect hop asked of the egress guard first, and the `guarded-download` core feature names it (an SDK addition, used by `diarization-onnx`).**
 - **An app built for a newer PersonalClaw is refused when you review, install, update or switch it on, and the refusal names what this one lacks: an app lists the core features it relies on in `requiresCoreFeatures`, and `personalclaw.sdk.features` says which this core offers (SDK addition, used by `*-channel`).**
 - **Your agent can search what your earlier chats said (`chat_search`), and a handoff, a standup or a weekly review now looks there too. It never returns the chat you are in, an Incognito chat or a Temporary chat, and from a Temporary chat it searches nothing.**
 - **An answer longer than the word limit its agent's own instructions set is followed by a note giving its word count and quoting the instruction. The answer itself is never cut.**
@@ -183,6 +184,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Core's test suite builds images, runs containers and starts the Compose stack only where `PERSONALCLAW_TEST_CONTAINER_RUNTIME=1` is set (CI sets it), and names a test that would otherwise; the programs a test starts keep their caches, logs and shell history in its own folder, and every test loads libraries the way every `personalclaw` command does.**
 - **Each deep-research run keeps its RESEARCH.md in its own folder, and its rounds, its judge and its Document panel all read that one file: a new run starts empty instead of from the last run's report, and continues an earlier run only when its `continue_from` input names it.**
 - **With several tool servers set up, the agent still sees every one of PersonalClaw's own tools: a turn's catalog names each of its groups, what it is for and all its tools first, your servers and apps share the room left, the tools your request is about first, and a last line says what was left out and that `tool_search` finds it. The catalog no longer runs past its size, and `tool_search` cuts its answer after leaving out what the run is not shown.**
 - **Cancelling a file you are adding to Knowledge stops it: while it uploads the form says so and offers Cancel upload, and its Cancel, Back and leaving the page stop it too, so nothing is added or processed. A cancelled upload in Knowledge, a chat or Files is removed from the gateway at once, and an upload that has all been sent no longer offers a cancel that could not stop it.**
@@ -1068,6 +1070,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Downloads go through Settings → Security → Network egress: the code map's grammars, the bundled chat model, the app template `personalclaw app new --from-template` fetches and every Hugging Face download (the speech, voice, diarization and embedding models apps fetch) ask the egress guard before each request and each redirect, so a host on Denied hosts is never reached, and each request is audited. The language pack downloads nothing itself, and the Hugging Face library's Xet transfer client, which opened connections of its own, is switched off.**
 - **Your memory is read only where the work may read it: a conversation an app started, and the agents it starts, read your saved facts, lessons and past conversations only when the app has the memory permission you allowed when you installed it, and a Temporary chat's subagents and workflow steps read none, as the chat itself does. Each says why when it is asked to recall, and a turn that read none says so in its details.**
 - **A gateway log line that names a tool call (asked about, refused, refused with its batch or on an unattended run, approved by a source, run without asking, failing again) writes its title masked, on one line and cut at 160 characters, so a credential in a command no longer reaches the log in clear.**
 - **An action that cannot be undone never runs at “runs with undo”: where its own rung or an app's clamped ceiling would put it there it asks first, and Settings → Guardrails → Earned autonomy and the Inbox say what it does cannot be taken back. A run that kept no undo is logged at the rung it had, an undo notice no longer says the action ran on its own, promotion never offers that rung to such an action, and the Self-QA filing step has its own rung.**

@@ -11,14 +11,21 @@
 A blocked fetch raises :class:`EgressBlocked`, carrying the guard's reason +
 recovery hints so callers surface it through the uniform tool-result contract rather
 than as an opaque stall.
+
+``fetch`` buffers the body under the policy's byte cap, which a model download is not: a
+synchronous caller that streams a large file opens it with :func:`open_url` instead, which asks
+the guard about every request it sends (each redirect hop too) through :func:`check`, under the
+connector policy with the owner's Network egress settings on it, and audits each answer.
 """
 
+import http.client
 import logging
+import urllib.request
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from personalclaw.net.guard import GuardDecision, evaluate
-from personalclaw.net.policy import STRICT, EgressPolicy
+from personalclaw.net.guard import GuardDecision, evaluate, refusal_for
+from personalclaw.net.policy import CONNECTOR, STRICT, EgressPolicy, egress_policy_for
 
 logger = logging.getLogger(__name__)
 
@@ -225,3 +232,56 @@ def _absolutize(base: str, location: str) -> str:
     from urllib.parse import urljoin
 
     return urljoin(base, location)
+
+
+#: How a refused download's sentence ends: the owner's next step once the host is allowed.
+DOWNLOAD_AGAIN = "then start the download again"
+
+
+def check(url: str, *, then: str = DOWNLOAD_AGAIN) -> None:
+    """Ask the egress guard about one request a client is about to send, under the connector
+    policy with the owner's Network egress settings on it, and audit the answer.
+
+    A refusal raises :class:`EgressBlocked`, its message the sentence the owner reads: what was
+    refused and the setting that allows it, ending in *then*."""
+    policy = egress_policy_for(CONNECTOR)
+    decision = evaluate(url, policy)
+    if decision.allow:
+        _audit(url, policy, outcome="allowed")
+        return
+    _audit(url, policy, outcome="denied", reason=decision.reason)
+    refused = EgressBlocked(decision)
+    refused.args = (refusal_for(url, decision, then=then),)
+    raise refused
+
+
+class _AskTheGuardFirst(urllib.request.BaseHandler):
+    """Asks the guard about each request before any handler opens it.
+
+    ``default_open`` is the hook the standard library's opener calls for every request it
+    sends, of any scheme, the requests it sends to follow a redirect included, before the
+    handler for the scheme. Returning nothing lets that handler open the request."""
+
+    def __init__(self, then: str) -> None:
+        self._then = then
+
+    def default_open(self, req: urllib.request.Request) -> None:
+        check(req.full_url, then=self._then)
+        return None
+
+
+def open_url(url: str, *, timeout_s: float, then: str = DOWNLOAD_AGAIN) -> http.client.HTTPResponse:
+    """Open *url* with the standard library's client, every request it sends asked of the
+    egress guard first (:func:`check`), each redirect hop included: a refused host is never
+    contacted. For a synchronous caller streaming a large body, which :func:`fetch` is not for.
+
+    Raises :class:`EgressBlocked` for a refused request, before it is sent, and otherwise what
+    ``urllib.request.urlopen`` raises. *timeout_s* bounds each socket operation, as
+    ``urlopen``'s does. The proxy settings in the environment apply, read on each call.
+
+    What it cannot do that :func:`fetch` does: the guard checks the address the name resolves to
+    when it is asked, and the client then resolves the name again for itself, so the connection
+    is not held to the address the guard checked."""
+    opener = urllib.request.build_opener(_AskTheGuardFirst(then))
+    response: http.client.HTTPResponse = opener.open(url, timeout=timeout_s)
+    return response

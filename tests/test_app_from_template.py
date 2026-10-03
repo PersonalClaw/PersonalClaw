@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import http.server
 import io
+import json
 import tarfile
 import threading
 from pathlib import Path
@@ -44,6 +45,8 @@ from personalclaw.cli_app_new import (
     from_template,
     scaffold,
 )
+from personalclaw.config.loader import config_dir
+from personalclaw.sel import sel
 
 # ---------------------------------------------------------------------------
 # Archive fixtures
@@ -123,15 +126,24 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         return
 
 
+def _egress(**settings: list[str]) -> None:
+    """This test home's Settings → Security → Network egress."""
+    (config_dir() / "config.json").write_text(
+        json.dumps({"security": {"egress": settings}}), encoding="utf-8"
+    )
+
+
 @pytest.fixture
 def local_archive_server(monkeypatch: pytest.MonkeyPatch):
-    """A loopback HTTP server the transport is allowed to talk to, for this test only."""
+    """A loopback HTTP server the transport is allowed to talk to, for this test only: the
+    template allowlists name it, and so does Allowed hosts, as an owner serving one would."""
     server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
     server.reply = (200, {"Content-Type": "application/gzip"}, b"")  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     monkeypatch.setattr("personalclaw.cli_app_new.TEMPLATE_SCHEMES", frozenset({"http"}))
     monkeypatch.setattr("personalclaw.cli_app_new.TEMPLATE_HOSTS", frozenset({"127.0.0.1"}))
+    _egress(allow_hosts=["127.0.0.1"])
     try:
         yield server, f"http://127.0.0.1:{server.server_address[1]}/tar.gz"
     finally:
@@ -196,6 +208,32 @@ def test_a_non_allowlisted_host_never_reaches_the_network(monkeypatch: pytest.Mo
     with pytest.raises(ScaffoldError):
         fetch_template_archive("https://evil.example.com/x.tar.gz")
     assert opened == []
+
+
+def test_a_template_host_on_denied_hosts_is_never_contacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The template host is allowlisted, and the owner's Network egress settings still apply:
+    a host on Denied hosts is refused, and the refusal audited, before the opener is built."""
+    opened: list[str] = []
+
+    def _explode(*args: object, **kwargs: object) -> None:
+        opened.append("build_opener")
+        raise AssertionError("the network was reached for a denied host")
+
+    monkeypatch.setattr("urllib.request.build_opener", _explode)
+    _egress(deny_hosts=["codeload.github.com"])
+    with pytest.raises(ScaffoldError) as exc:
+        fetch_template_archive(TEMPLATE_ARCHIVE_URL)
+    assert opened == []
+    assert f"{TEMPLATE_ARCHIVE_URL} was not reached" in str(exc.value)
+    assert "Denied hosts" in str(exc.value)
+    refused = [
+        row.get("resources")
+        for row in sel().recent(50)
+        if row.get("operation") == "egress_fetch" and row.get("outcome") == "denied"
+    ]
+    assert refused == [TEMPLATE_ARCHIVE_URL]
 
 
 # ---------------------------------------------------------------------------

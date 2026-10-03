@@ -26,6 +26,7 @@ from personalclaw.net import (  # noqa: F401
     egress_policy_for,
     evaluate,
     fetch,
+    open_url,
     sync_egress_policy,
 )
 
@@ -62,6 +63,11 @@ from personalclaw.web.fetch import (  # noqa: F401
 # reaching into ``personalclaw.net`` directly (the app import-boundary forbids that).
 __all__ = [
     "fetch",
+    # `fetch`'s counterpart for a download too large to buffer: a model's weights, an app's
+    # model files. The standard library's opener with every request asked of the guard first,
+    # each redirect hop included, under the connector policy and the owner's Network egress
+    # settings; the app gets a stream and keeps its own reading, bounds and progress.
+    "open_url",
     "CONNECTOR",
     "EgressPolicy",
     "WEBHOOK",

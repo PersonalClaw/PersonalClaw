@@ -38,6 +38,10 @@ _AS_A_COMMAND_STARTS: dict[str, str] = {
     "library_env.py::keep_the_libraries_in_the_home": (
         "the libraries' own settings that keep them in the home, before an app imports one"
     ),
+    "net/libraries.py::guard_the_hub": (
+        "the Hugging Face library's own offline switch, as it is first imported, when it takes no "
+        "client that asks the egress guard: its downloads, and its children's, are refused"
+    ),
     "gateway_base.py::publish": "the port the gateway bound, once, right after it binds",
 }
 

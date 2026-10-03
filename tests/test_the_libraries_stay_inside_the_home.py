@@ -6,13 +6,13 @@ calls:
 * huggingface_hub, for a call that passes no token, looks one up — the environment, then the token
   file ``huggingface-cli login`` writes in the Hugging Face folder other tools share — and sends it.
   That file is outside the home, and PersonalClaw reads it only once the owner allows that folder.
-  It keeps the chunk cache of every Xet transfer in that shared folder too, whatever folder the
-  download itself was told to fill, and before its first request it fetches a list of AI tools
-  from the Hub and keeps it there;
+  It hands a Xet-stored file to a native client of its own, which keeps its chunk cache in that
+  shared folder and connects where the egress guard cannot check it, and before its first request
+  it fetches a list of AI tools from the Hub and keeps it there;
 * onnxruntime, as it loads, starts its maker's telemetry: a device identifier and a queue of events
   about the machine, in a folder of the maker's under the user's home;
-* tree-sitter-language-pack downloads the code map's grammars into a folder of its own in the
-  user's cache.
+* tree-sitter-language-pack downloads the code map's grammars by itself, from the address it knows,
+  into a folder of its own in the user's cache.
 
 Every ``personalclaw`` command sets each library's own setting before an app can import it, and a
 child process gets the same values. Each library is driven for real, in a fresh interpreter (each
@@ -43,10 +43,11 @@ from personalclaw.sandbox import build_child_env
 #: The libraries' own names for the settings, spelled out rather than imported, so a constant that
 #: named anything else would fail here and not only in the library's silence.
 TOKEN_SWITCH = "HF_HUB_DISABLE_IMPLICIT_TOKEN"
-XET_CACHE = "HF_XET_CACHE"
+XET_SWITCH = "HF_HUB_DISABLE_XET"
 HUB_TELEMETRY = "HF_HUB_DISABLE_TELEMETRY"
 ORT_TELEMETRY = "ORT_DISABLE_TELEMETRY"
 GRAMMAR_CACHE = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
+GRAMMAR_MANIFEST = "TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL"
 #: Neutral fakes: the library sends whatever string it holds, so nothing here needs a token's shape.
 _PLANTED = "fake-hub-token-planted-by-this-test"
 _HANDED = "fake-hub-token-handed-over-by-the-caller"
@@ -70,7 +71,7 @@ from huggingface_hub.utils import build_hf_headers
 print(json.dumps({{
     "none_passed": build_hf_headers().get("authorization"),
     "handed": build_hf_headers(token={_HANDED!r}).get("authorization"),
-    "xet_cache": constants.HF_XET_CACHE,
+    "xet_off": constants.HF_HUB_DISABLE_XET,
 }}))
 """
 
@@ -165,32 +166,37 @@ def test_the_names_are_the_settings():
     assert tuple(library_env()) == LIBRARY_ENV_NAMES
     assert set(LIBRARY_ENV_NAMES) == {
         TOKEN_SWITCH,
-        XET_CACHE,
+        XET_SWITCH,
         HUB_TELEMETRY,
         ORT_TELEMETRY,
         GRAMMAR_CACHE,
+        GRAMMAR_MANIFEST,
     }
 
 
 def test_every_command_sets_them_over_what_it_inherited(monkeypatch):
     """Even over a shell that set them otherwise: the owner's allow switch decides whether a file
-    outside the home is read, and nothing writes there or reports on its use, whatever an
-    inherited variable says."""
+    outside the home is read, and nothing writes there, reports on its use or downloads past the
+    egress guard, whatever an inherited variable says."""
     from personalclaw.config.loader import config_dir
 
     monkeypatch.setenv(TOKEN_SWITCH, "0")
-    monkeypatch.setenv(XET_CACHE, "/elsewhere/huggingface/xet")
+    monkeypatch.setenv(XET_SWITCH, "0")
     monkeypatch.setenv(HUB_TELEMETRY, "0")
     monkeypatch.setenv(ORT_TELEMETRY, "0")
     monkeypatch.setenv(GRAMMAR_CACHE, "/elsewhere/grammars")
+    monkeypatch.setenv(GRAMMAR_MANIFEST, "https://grammars.example.com/parsers.json")
 
     _run_a_command(monkeypatch)
 
     assert os.environ[TOKEN_SWITCH] == "1"
+    assert os.environ[XET_SWITCH] == "1"
     assert os.environ[HUB_TELEMETRY] == "1"
     assert os.environ[ORT_TELEMETRY] == "1"
-    assert _inside(os.environ[XET_CACHE], config_dir()), "the transfer cache is outside the home"
     assert _inside(os.environ[GRAMMAR_CACHE], config_dir()), "the grammars are outside the home"
+    manifest = os.environ[GRAMMAR_MANIFEST]
+    assert manifest.startswith("file://"), f"the grammar list is read from the network: {manifest}"
+    assert _inside(manifest.removeprefix("file://"), config_dir()), manifest
 
 
 def test_the_caches_go_to_the_home_a_dotenv_names(tmp_path, monkeypatch):
@@ -207,18 +213,19 @@ def test_the_caches_go_to_the_home_a_dotenv_names(tmp_path, monkeypatch):
     _run_a_command(monkeypatch)
 
     assert os.environ["PERSONALCLAW_HOME"] == str(named), "control: the .env named the home"
-    assert _inside(os.environ[XET_CACHE], named.resolve()), os.environ[XET_CACHE]
     assert _inside(os.environ[GRAMMAR_CACHE], named.resolve()), os.environ[GRAMMAR_CACHE]
+    manifest = os.environ[GRAMMAR_MANIFEST].removeprefix("file://")
+    assert _inside(manifest, named.resolve()), manifest
 
 
-def test_the_hub_finds_no_token_and_caches_in_the_home(tmp_path, monkeypatch):
+def test_the_hub_finds_no_token_and_sends_no_file_past_its_own_client(tmp_path, monkeypatch):
     left_alone = _hub(tmp_path, {})
     assert (
         left_alone["none_passed"] == f"Bearer {_PLANTED}"
     ), "control: with its lookup on, the library reads the planted token file by itself"
-    assert left_alone["xet_cache"] == str(
-        tmp_path / "hf" / "xet"
-    ), "control: left alone, the library caches Xet transfers in the shared folder"
+    assert (
+        left_alone["xet_off"] is False
+    ), "control: left alone, the library hands a Xet-stored file to its native client"
 
     home = tmp_path / "pclaw-home"
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
@@ -226,7 +233,7 @@ def test_the_hub_finds_no_token_and_caches_in_the_home(tmp_path, monkeypatch):
 
     assert told["none_passed"] is None, "the library found a token nobody handed it"
     assert told["handed"] == f"Bearer {_HANDED}", "a token an app hands over still goes"
-    assert told["xet_cache"].startswith(str(home.resolve())), told["xet_cache"]
+    assert told["xet_off"] is True, "a Xet-stored file would bypass the guarded client"
 
 
 class _FakeHub(http.server.ThreadingHTTPServer):
@@ -337,15 +344,16 @@ def test_the_code_maps_grammars_download_into_the_home(tmp_path, monkeypatch):
     assert _inside(told, home.resolve()), told
 
 
-def test_the_code_maps_remedy_fills_the_folder_it_reads(tmp_path, monkeypatch):
-    """A grammar that cannot load names the pre-fetch that fixes it. The language pack keeps its
-    grammars where it is told, so the pre-fetch must be told the same folder, or it fills one
-    PersonalClaw never reads."""
+def test_the_code_maps_remedy_names_no_download_of_its_own(tmp_path, monkeypatch):
+    """A grammar that cannot load says where grammars come from and how they arrive. It used to
+    name a pre-fetch command, which ran the language pack's own downloader: a download past the
+    egress guard. Every grammar now arrives through the guard, so the remedy names no command."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "pclaw-home"))
 
     remedy = parse._parser_remedy()
 
-    assert f'{GRAMMAR_CACHE}="{library_env()[GRAMMAR_CACHE]}"' in remedy, remedy
+    assert "github.com" in remedy and "network settings" in remedy, remedy
+    assert "download(" not in remedy and "python -c" not in remedy, remedy
 
 
 def test_a_child_process_is_told_the_same(tmp_path, monkeypatch):

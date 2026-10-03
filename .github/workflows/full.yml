@@ -123,6 +123,10 @@ jobs:
     # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      # A runner's Docker, where it has one, is the job's own, so the tests that build images,
+      # run containers and start the Compose stack run here (tests/container_runtime.py). A
+      # developer's machine runs them only when it sets this too.
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -297,6 +301,10 @@ jobs:
     # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      # A runner's Docker, where it has one, is the job's own, so the tests that build images,
+      # run containers and start the Compose stack run here (tests/container_runtime.py). A
+      # developer's machine runs them only when it sets this too.
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
     steps:
       - uses: actions/checkout@v7
       - name: Install uv

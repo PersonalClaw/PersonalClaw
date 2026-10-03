@@ -1604,10 +1604,13 @@ def main() -> None:
 
     # Before an app can import a library, and after a `.env` above may have named the home: the
     # libraries PersonalClaw's features load send only a token a caller handed them, keep their
-    # caches in this home, and start no telemetry (`library_env`).
+    # caches in this home, start no telemetry (`library_env`), and send no request the egress
+    # guard has not checked (`net/libraries.py`).
     from personalclaw.library_env import keep_the_libraries_in_the_home
+    from personalclaw.net import libraries
 
     keep_the_libraries_in_the_home()
+    libraries.install()
 
     # Validate PERSONALCLAW_PORT early — fail fast before anything else loads.
     _raw_port = os.environ.get("PERSONALCLAW_PORT")

@@ -31,8 +31,15 @@ import re
 #: answers, so a prompt that offers the brief's answers has nothing to offer.
 APPROVAL_ANSWERS = "approval-answers"
 
+#: An app can stream a download through the egress guard: ``personalclaw.sdk.net.open_url`` opens
+#: a URL with every request it sends, each redirect hop included, asked of the guard first under
+#: the connector policy and the owner's Network egress settings, and raises ``EgressBlocked`` for
+#: a refused one before it is sent. A core without it has no ``open_url``, so an app that imports
+#: it does not load.
+GUARDED_DOWNLOAD = "guarded-download"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
-CORE_FEATURES: frozenset[str] = frozenset({APPROVAL_ANSWERS})
+CORE_FEATURES: frozenset[str] = frozenset({APPROVAL_ANSWERS, GUARDED_DOWNLOAD})
 
 #: The shape of a feature name: lowercase words joined by hyphens.
 FEATURE_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")

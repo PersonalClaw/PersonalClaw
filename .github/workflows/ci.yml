@@ -419,6 +419,10 @@ jobs:
       # PERSONALCLAW_HOME precedence over Path.home(), so a global value defeats those
       # patches and reds them. The runner's $HOME is already ephemeral.
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+      # A runner's Docker, where it has one, is the job's own, so the tests that build images,
+      # run containers and start the Compose stack run here (tests/container_runtime.py). A
+      # developer's machine runs them only when it sets this too.
+      PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
     steps:
       - uses: actions/checkout@v7
       - name: Install uv

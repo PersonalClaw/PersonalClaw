@@ -368,7 +368,9 @@ pip or uv install, the container and the desktop app are always notify-only.
 
 **The small default model is a download you start.** It is fetched once, only when you ask for
 it, from a pinned revision on Hugging Face, and checked against a recorded sha256 before it is
-installed.
+installed. Like the code map's grammars and the models an app fetches, it goes through the
+network egress guard, redirects included, so a host you put on Denied hosts in Settings →
+Security → Network egress is never reached.
 
 ## Supply chain
 

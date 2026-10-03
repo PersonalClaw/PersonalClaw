@@ -60,6 +60,27 @@ port_guard = importlib.import_module("port_guard")
 # it is imported. Proof: tests/test_no_test_git_reaches_the_machines_credential_helper.py.
 git_helper_guard = importlib.import_module("git_helper_guard")
 
+# ── The machine's container runtime stays out ───────────────────────────
+# From here on a container runtime, or the VM one runs in, that a test starts (docker, finch,
+# podman, nerdctl, limactl and the rest) is refused before it starts unless the run sets
+# PERSONALCLAW_TEST_CONTAINER_RUNTIME=1, which CI does: the test that started it fails by name
+# (`_no_test_drives_the_container_runtime_unasked`), and a module whose import started one fails its
+# collection. A test that drives one asks `container_runtime.require()` first, which skips it and
+# says why, and the run's summary lists those skips (`pytest_terminal_summary`). Mechanism and what
+# it cannot see: tests/container_runtime.py. Proof: tests/test_container_runtime_census.py.
+container_runtime = importlib.import_module("container_runtime")
+
+# ── The programs a test starts keep their files in the test's own folder ─
+# black's cache, npm's cache and logs, mise's cache and state, a shell's history, and what the
+# libraries PersonalClaw loads are told (`personalclaw.library_env`): each set for the test's own
+# folder and home by `_each_program_keeps_its_files_in_the_tests_folder`, and for a folder of the
+# run's own before anything is collected (`pytest_configure`). Mechanism and what it cannot move:
+# tests/tool_homes.py. Proof: tests/test_a_tests_programs_keep_their_files_in_its_folder.py.
+tool_homes = importlib.import_module("tool_homes")
+
+#: What `pytest_configure` set for collection, put back by `pytest_unconfigure`.
+_PUT_THE_PROGRAMS_BACK: list = []
+
 # ── Imported-checkout provenance rail (#2634) ──────────────────────────
 # An editable install points at a mutable working tree. In a git worktree, that can make
 # pytest import ``personalclaw`` from the shared checkout while collecting tests from this
@@ -112,11 +133,41 @@ _TEST_HOME_NUMBERS = itertools.count()
 
 def pytest_configure(config):
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
+    config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
+    # The grammars the code map's tests parse with, fetched once and kept between runs, in pytest's
+    # own cache folder in the checkout (every worker shares it); a run without that cache keeps them
+    # in its own folder.
+    cache = getattr(config, "cache", None)
+    grammars = (
+        Path(cache.mkdir("tree-sitter-grammars"))
+        if cache is not None
+        else tool_homes.BASE / "grammars"
+    )
+    _PUT_THE_PROGRAMS_BACK.append(tool_homes.for_collection(tool_homes.BASE, grammars))
 
 
 def pytest_unconfigure(config):
     _LET_THE_KEYCHAIN_BACK_IN()
     git_helper_guard.close()
+    container_runtime.GUARD.undo()
+    while _PUT_THE_PROGRAMS_BACK:
+        _PUT_THE_PROGRAMS_BACK.pop()()
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Say which tests did not drive this machine's container runtime, and how to let them: a skip
+    alone is one letter in a progress line, and these are the tests that prove the images."""
+    skipped = container_runtime.skipped_without_the_opt_in(
+        terminalreporter.stats.get("skipped", [])
+    )
+    if not skipped:
+        return
+    terminalreporter.write_sep(
+        "-", f"{len(skipped)} test(s) that drive this machine's container runtime were skipped"
+    )
+    terminalreporter.write_line(f"Set {container_runtime.OPT_IN}=1 to run them:")
+    for nodeid in skipped:
+        terminalreporter.write_line(f"  {nodeid}")
 
 
 # NOTE: this suite is standalone — it must collect + pass on a clone of this
@@ -187,6 +238,16 @@ def _no_test_signs_git_in_with_the_machines_helper():
     refused = git_helper_guard.GUARD.take()
     if refused:
         pytest.fail(git_helper_guard.failure(refused), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_drives_the_container_runtime_unasked():
+    """Fail the test that started a container runtime in a run that did not opt in. The runtime
+    itself was refused before it started: tests/container_runtime.py."""
+    yield
+    refused = container_runtime.GUARD.take()
+    if refused:
+        pytest.fail(container_runtime.failure(refused), pytrace=False)
 
 
 @pytest.fixture(autouse=True)
@@ -310,18 +371,16 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     """
     import personalclaw.config.loader as config_loader
 
-    holder: list[Path] = []
-    base = tmp_path_factory.getbasetemp()
+    # This test's own folder, which holds its home and the folders the programs it starts write
+    # in (`_each_program_keeps_its_files_in_the_tests_folder`). A name, made only when something
+    # writes there: most tests never resolve an unspecified home, and `resolve_config_dir()` must
+    # not make the home it names, nor a folder to hold it. So it is not `mktemp()`, which makes the
+    # folder it numbers: a test that watches every `mkdir` saw one appear when a path check asked
+    # where the home is.
+    root = tmp_path_factory.getbasetemp() / f"pclaw-home-{next(_TEST_HOME_NUMBERS)}"
 
     def tmp_home() -> Path:
-        # Named lazily, and made only when `config_dir()` asks: most tests never resolve an
-        # unspecified home, and `resolve_config_dir()` must not make the home it names, nor a
-        # folder to hold it. So it is a name here, not `mktemp()`, which makes the folder it
-        # numbers: a test that watches every `mkdir` saw one appear when a path check asked
-        # where the home is.
-        if not holder:
-            holder.append(base / f"pclaw-home-{next(_TEST_HOME_NUMBERS)}" / "home")
-        return holder[0]
+        return root / "home"
 
     original_config_dir = config_loader.config_dir
     original_resolve_config_dir = config_loader.resolve_config_dir
@@ -367,6 +426,36 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
         for original, (name, replacement) in guarded.items():
             if getattr(module, name, None) is original:
                 monkeypatch.setattr(module, name, replacement)
+    return root
+
+
+@pytest.fixture(autouse=True)
+def _each_program_keeps_its_files_in_the_tests_folder(_isolate_real_home_writers, monkeypatch):
+    """Point what each program a test starts writes (black's cache, npm's cache and logs, mise's
+    cache and state, a shell's history) into the test's own folder, and tell the libraries
+    PersonalClaw loads what every ``personalclaw`` command tells them, for the test's own home.
+
+    The code map's grammars stay where the run keeps them (``tool_homes.grammar_env``): a test of
+    its own would download them again. A test that drives ``cli.main()`` sets the library settings
+    in ``os.environ`` itself, and teardown puts back what was there before this fixture set them.
+    Mechanism: tests/tool_homes.py."""
+    root = _isolate_real_home_writers
+    library = tool_homes.library_env_for(root / "home")
+    for name in tool_homes.GRAMMAR_SETTINGS:
+        # The run's own value, registered all the same: a test that drives `cli.main()` changes it.
+        library[name] = os.environ[name]
+    for name, value in {**tool_homes.program_env(root / "programs"), **library}.items():
+        monkeypatch.setenv(name, value)
+
+
+@pytest.fixture(autouse=True)
+def _the_library_guard_stays_with_its_test():
+    """A test that drives ``cli.main()`` installs the import hook that holds huggingface_hub to the
+    egress guard (``net.libraries.install``). It is taken out again, so a later test in the worker
+    imports the library the way that test arranges, not the way an earlier one left it."""
+    before = list(sys.meta_path)
+    yield
+    sys.meta_path[:] = before
 
 
 @pytest.fixture(autouse=True)
@@ -884,18 +973,6 @@ def _disable_live_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     (``monkeypatch.delenv('PERSONALCLAW_DISABLE_LIVE_WRITES', raising=False)``) —
     making the intent to write real state visible, never accidental."""
     monkeypatch.setenv("PERSONALCLAW_DISABLE_LIVE_WRITES", "1")
-
-
-@pytest.fixture(autouse=True)
-def _library_env_restored(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every ``personalclaw`` command sets what the libraries its features load are told
-    (``library_env``) in ``os.environ``, and a test that drives ``cli.main()`` would leave it set
-    for every test after it in the worker — the transfer and grammar caches pointed at that test's
-    home. Unset here, so teardown puts back what the process had, whatever the test set."""
-    from personalclaw.library_env import LIBRARY_ENV_NAMES
-
-    for name in LIBRARY_ENV_NAMES:
-        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)

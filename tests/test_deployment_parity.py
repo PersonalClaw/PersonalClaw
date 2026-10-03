@@ -4,8 +4,10 @@ path (docker/finch).
 
 Both runtimes are skipped cleanly when the relevant runtime is absent:
 - Service path: skipped when `personalclaw` is not on PATH
-- Compose path: skipped when neither `docker` nor `finch` is on PATH, or when
-  the Compose stack cannot be built/started
+- Compose path: skipped when neither `docker` nor `finch` is on PATH, when the run
+  does not set `PERSONALCLAW_TEST_CONTAINER_RUNTIME=1` (it builds two images and
+  starts the stack on this machine's own runtime: `tests/container_runtime.py`), or
+  when the Compose stack cannot be built/started
 
 The Compose path auto-detects the container runtime (docker preferred, then
 finch); there is no command-line selector.
@@ -22,6 +24,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import container_runtime
 import pytest
 
 # Endpoints that must respond identically on both runtimes
@@ -140,19 +143,10 @@ def service_gateway():
 # ── Compose path fixture ──────────────────────────────────────────────────────
 
 
-def _container_runtime() -> str | None:
-    for rt in ("docker", "finch"):
-        if shutil.which(rt):
-            return rt
-    return None
-
-
 @pytest.fixture(scope="module")
 def compose_gateway(request: pytest.FixtureRequest):
     """Start the gateway via `docker/finch compose up` using the build overlay."""
-    runtime = _container_runtime()
-    if not runtime:
-        pytest.skip("Neither docker nor finch on PATH — Compose path not available")
+    runtime = container_runtime.require("docker", "finch")
 
     repo_root = Path(__file__).resolve().parent.parent
     compose_dir = repo_root / "deploy" / "compose"

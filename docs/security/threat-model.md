@@ -274,7 +274,15 @@ Content and requests arriving from outside the owner's trust boundary:
   every request is refused, and denials log to the Security Event Log.
 - **Egress chokepoint** (`net/client.py` + `net/guard.py` + `net/policy.py`): the
   single outbound-HTTP seam with named policies, layered by
-  `net/policy.py::egress_policy_for`.
+  `net/policy.py::egress_policy_for`. Downloads go through it too, each request and each
+  redirect hop asked before it is sent and audited: the code map fetches a grammar bundle
+  through `net.fetch` and hands the language pack a manifest naming only files on this machine
+  (`codegraph/grammars.py`); in every PersonalClaw process the Hugging Face library is given
+  clients that ask the guard first (`net/libraries.py`); and a download too large to buffer
+  streams through `net.open_url` (the bundled chat model's weights, an app's model files).
+  Neither of the last two holds the connection to the address the guard checked, as `fetch`
+  does, and a process that does not import PersonalClaw (an app's sidecar) gets the libraries'
+  settings, not their guarded clients.
 - **What a channel is handed is masked, once, by core** (`channel_delivery.py::MaskedDelivery`).
   A channel app sends what it is handed to a service outside the machine, so every channel's
   delivery handle is registered behind the mask, and every path to a channel (a reply, an owner
@@ -472,14 +480,15 @@ Data leaving the running system:
   confirm), and is only read. Some libraries a feature loads would write outside the home, or
   report on their use, by themselves, so every `personalclaw` command, and every child it starts,
   tells each one not to with the library's own setting (`library_env.py`): the Hugging Face
-  library reads no token it finds by itself (`HF_HUB_DISABLE_IMPLICIT_TOKEN`), keeps its Xet
-  transfer cache in the home whatever folder a download was told to fill (`HF_XET_CACHE`), and
-  fetches and keeps no list of AI tools in the shared folder and sends no usage pings
-  (`HF_HUB_DISABLE_TELEMETRY`); onnxruntime starts none of its maker's telemetry, the device
-  identifier and machine description it would keep under the user's home and upload
-  (`ORT_DISABLE_TELEMETRY`); and the code map's grammars download into the home
-  (`TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`). An app's download passes the token PersonalClaw
-  resolved, or none.
+  library reads no token it finds by itself (`HF_HUB_DISABLE_IMPLICIT_TOKEN`), downloads over its
+  HTTP client rather than its Xet transfer client, which opens connections of its own
+  (`HF_HUB_DISABLE_XET`), and fetches and keeps no list of AI tools in the shared folder and sends
+  no usage pings (`HF_HUB_DISABLE_TELEMETRY`); onnxruntime starts none of its maker's telemetry,
+  the device identifier and machine description it would keep under the user's home and upload
+  (`ORT_DISABLE_TELEMETRY`); and the language pack behind the code map keeps its grammars in the
+  home and downloads none itself (`TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`, and
+  `TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL` naming a file there). An app's download passes the
+  token PersonalClaw resolved, or none.
   An ACP adapter an agent app needs is npm-installed only as you install or enable the app, never
   at a gateway start (`acp/cli_resolve.py`). Deleting a skill that lives outside the home is refused (409). The
   Files page has no root for the home itself, whose `config.json`, `mcp.json` and automations it

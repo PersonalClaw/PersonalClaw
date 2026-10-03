@@ -4,11 +4,13 @@ One guard, one classifier, policy-per-surface. All outbound HTTP that could reac
 attacker-influenced host goes through :func:`personalclaw.net.client.fetch`, which
 evaluates the URL against an :class:`~personalclaw.net.policy.EgressPolicy`, pins the
 validated IP (closing the DNS-rebind TOCTOU window), re-checks every redirect hop, and
-caps bytes/timeout. :func:`personalclaw.net.guard.classify_host` is the authoritative
+caps bytes/timeout. A download too large to buffer streams through
+:func:`personalclaw.net.client.open_url`, which asks the same guard about every request and
+redirect hop before it is sent. :func:`personalclaw.net.guard.classify_host` is the authoritative
 "is this IP safe to reach" answer consulted by both outbound and inbound checks.
 """
 
-from personalclaw.net.client import EgressBlocked, FetchResponse, fetch
+from personalclaw.net.client import EgressBlocked, FetchResponse, fetch, open_url
 from personalclaw.net.guard import GuardDecision, IpVerdict, classify_host, evaluate
 from personalclaw.net.policy import (
     CONNECTOR,
@@ -27,6 +29,7 @@ __all__ = [
     "EgressBlocked",
     "FetchResponse",
     "fetch",
+    "open_url",
     "GuardDecision",
     "IpVerdict",
     "classify_host",

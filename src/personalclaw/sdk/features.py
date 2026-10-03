@@ -14,8 +14,16 @@ app relies on, and a build offers the name exactly when it offers the contract.
 ``APPROVAL_ANSWERS``: a channel's approval prompt offers the answers PersonalClaw hands it in the
 approval brief (``personalclaw.sdk.channel.approval_brief_for(event)["answers"]``). A channel app
 whose prompt offers them declares it.
+
+``GUARDED_DOWNLOAD``: a download streams through the egress guard
+(``personalclaw.sdk.net.open_url``). An app that downloads with it declares it.
 """
 
-from personalclaw.apps.core_features import APPROVAL_ANSWERS, CORE_FEATURES, core_has
+from personalclaw.apps.core_features import (
+    APPROVAL_ANSWERS,
+    CORE_FEATURES,
+    GUARDED_DOWNLOAD,
+    core_has,
+)
 
-__all__ = ["APPROVAL_ANSWERS", "CORE_FEATURES", "core_has"]
+__all__ = ["APPROVAL_ANSWERS", "CORE_FEATURES", "GUARDED_DOWNLOAD", "core_has"]

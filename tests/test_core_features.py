@@ -16,18 +16,25 @@ import pytest
 
 from personalclaw.apps.core_features import FEATURE_NAME_RE
 from personalclaw.sdk import features
-from personalclaw.sdk.features import APPROVAL_ANSWERS, CORE_FEATURES, core_has
+from personalclaw.sdk.features import APPROVAL_ANSWERS, CORE_FEATURES, GUARDED_DOWNLOAD, core_has
 
 #: Every name a core has offered. A name leaves this set only with a deliberate break of every app
 #: that declares it, so a removal from CORE_FEATURES fails here first.
-OFFERED_ONCE = {"approval-answers"}
+OFFERED_ONCE = {"approval-answers", "guarded-download"}
 
 
 def test_the_sdk_publishes_the_names_and_the_question():
-    assert set(features.__all__) == {"APPROVAL_ANSWERS", "CORE_FEATURES", "core_has"}
+    assert set(features.__all__) == {
+        "APPROVAL_ANSWERS",
+        "CORE_FEATURES",
+        "GUARDED_DOWNLOAD",
+        "core_has",
+    }
     assert APPROVAL_ANSWERS == "approval-answers"
-    assert APPROVAL_ANSWERS in CORE_FEATURES
-    assert core_has(APPROVAL_ANSWERS) is True
+    assert GUARDED_DOWNLOAD == "guarded-download"
+    for name in (APPROVAL_ANSWERS, GUARDED_DOWNLOAD):
+        assert name in CORE_FEATURES
+        assert core_has(name) is True
 
 
 def test_a_feature_this_core_does_not_offer_is_answered_no():
@@ -88,8 +95,49 @@ def _approval_answers_hold() -> None:
     assert offerable(approval_brief_for(event)) == composed
 
 
+def _guarded_download_holds() -> None:
+    """``open_url`` asks the guard before a request is sent: a source on this machine, which the
+    owner has not allowed, is refused and never contacted, and once allowed it is read."""
+    import http.server
+    import json
+    import threading
+
+    from personalclaw.config.loader import config_dir
+    from personalclaw.sdk.net import EgressBlocked, open_url
+
+    asked: list[str] = []
+
+    class _Source(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 — http.server's name
+            asked.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", "5")
+            self.end_headers()
+            self.wfile.write(b"bytes")
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Source)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/file"
+    try:
+        with pytest.raises(EgressBlocked):
+            open_url(url, timeout_s=10)
+        assert asked == [], "a refused source was contacted"
+        (config_dir() / "config.json").write_text(
+            json.dumps({"security": {"egress": {"allow_hosts": ["127.0.0.1"]}}}), encoding="utf-8"
+        )
+        with open_url(url, timeout_s=10) as response:
+            assert response.read() == b"bytes"
+        assert asked == ["/file"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
-WITNESSES = {APPROVAL_ANSWERS: _approval_answers_hold}
+WITNESSES = {APPROVAL_ANSWERS: _approval_answers_hold, GUARDED_DOWNLOAD: _guarded_download_holds}
 
 
 def test_every_offered_feature_has_a_witness():

@@ -171,15 +171,17 @@ CHILD_ENV_BASE_NAMES: frozenset[str] = frozenset(
         "XDG_RUNTIME_DIR",
         "XDG_STATE_HOME",
         # What the libraries a feature loads are told in the gateway (``library_env``): the Hugging
-        # Face hub sends only a token it is handed and keeps its caches in the home, onnxruntime
-        # starts no telemetry, and the code map's grammars download into the home. A model engine
-        # or a voice a child runs loads the same libraries, so it reads the same settings: it finds
-        # no token file outside the home, writes nothing there and reports nothing.
+        # Face hub sends only a token it is handed and no file over its native transfer client,
+        # onnxruntime starts no telemetry, and the code map's grammars are read from the home and
+        # downloaded by nothing but PersonalClaw. A model engine or a voice a child runs loads the
+        # same libraries, so it reads the same settings: it finds no token file outside the home,
+        # writes nothing there, reports nothing and downloads nothing past the egress guard.
         "HF_HUB_DISABLE_IMPLICIT_TOKEN",
-        "HF_XET_CACHE",
+        "HF_HUB_DISABLE_XET",
         "HF_HUB_DISABLE_TELEMETRY",
         "ORT_DISABLE_TELEMETRY",
         "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR",
+        "TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL",
         # How the network works HERE. Absent on the host this was measured on, but a
         # corporate install has them, and a script that curls or pip-installs without them
         # fails SILENTLY (a hang, then a timeout) — the worst diagnostic shape there is.

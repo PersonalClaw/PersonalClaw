@@ -35,15 +35,24 @@ from personalclaw.tool_providers.code_map import CodeMapToolProvider
 # naming the recorded reason. What must NEVER skip is the dependency itself: the parser
 # wheels are declared in pyproject, so an unimportable `tree_sitter_language_pack` is a
 # packaging regression, and `test_the_parser_dependency_is_installed` fails for it.
-_PY_STATUS = parser_status("python")
-needs_grammar = pytest.mark.skipif(
-    not _PY_STATUS.available,
-    reason=(
-        "no tree-sitter grammar for python — "
-        f"{_PY_STATUS.reason or 'reason not recorded'}. This is a capability skip, not a "
-        "pass: the dependency assertion in TestParse still runs."
-    ),
-)
+#
+# Probed inside each test, never as the module is imported: a grammar not yet on this machine
+# is fetched through the egress guard, and a fetch reads the network settings of the test's own
+# home and audits there, which nothing has while the module is collected.
+
+
+@pytest.fixture
+def python_grammar():
+    status = parser_status("python")
+    if not status.available:
+        pytest.skip(
+            "no tree-sitter grammar for python — "
+            f"{status.reason or 'reason not recorded'}. This is a capability skip, not a "
+            "pass: the dependency assertion in TestParse still runs."
+        )
+
+
+needs_grammar = pytest.mark.usefixtures("python_grammar")
 
 PY_SOURCE = b'''"""Module docstring."""
 import os

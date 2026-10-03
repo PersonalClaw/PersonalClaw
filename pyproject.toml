@@ -121,7 +121,9 @@ dependencies = [
     # wheels, so there's no compiler requirement. Indexing still fails SOFT: no
     # parser, no graph, and everything falls back to grep/read. 1.15.7 is the first language
     # pack that reads TREE_SITTER_LANGUAGE_PACK_CACHE_DIR, the setting that keeps the grammars
-    # it downloads inside the home (library_env.py); an older one keeps them in the user's cache.
+    # inside the home (library_env.py); an older one keeps them in the user's cache. The pack
+    # downloads nothing itself: codegraph/grammars.py fetches its bundle through the egress guard
+    # and hands it a manifest file naming only files on this machine (MANIFEST_URL, file://).
     "tree-sitter>=0.21,<1",
     "tree-sitter-language-pack>=1.15.7,<2",
     # NOTE — openai / anthropic are NOT core deps. Their provider

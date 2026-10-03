@@ -1228,8 +1228,16 @@ def _read_capped(stream: Any, limit: int, what: str) -> bytes:
 
 
 def fetch_template_archive(url: str) -> bytes:
-    """GET ``url`` and return the tarball bytes. https + allowlist + no redirects + 200."""
+    """GET ``url`` and return the tarball bytes. https + allowlist + no redirects + 200, and the
+    owner's Network egress settings: the one request is asked of the egress guard, and audited,
+    before it is sent (no redirect is followed, so it is the only one)."""
+    from personalclaw.net.client import EgressBlocked, check
+
     _validate_template_url(url)
+    try:
+        check(url, then="then run the command again")
+    except EgressBlocked as exc:
+        raise ScaffoldError(str(exc)) from exc
     opener = urllib.request.build_opener(_NoRedirect)
     request = urllib.request.Request(url, method="GET", headers={"Accept": "application/gzip"})
     try:
