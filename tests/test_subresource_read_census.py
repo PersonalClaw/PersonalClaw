@@ -192,6 +192,7 @@ PARENT_READ_EXCLUDE = {
     "/api/session/archive/{name}": "plain archive-file detail; file read rejects absence",
     "/api/skills/proposals/{id}": "plain proposal detail; proposal store rejects absence",
     "/api/voice/profiles/{id}": "plain profile detail; require_profile rejects absence",
+    "/api/workflows/batches/{name}": "plain batch detail; batch_start.state_of rejects absence",
     "/api/workflows/runs/{run_id}": "plain run detail; service.status rejects absence",
     "/api/ws/terminal/{session_id}": (
         "WebSocket creation; session_id is a new client-selected key, not a parent"
@@ -285,8 +286,8 @@ def _directly_named_handlers() -> set[str]:
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
     assert len(nonterminal) == 88
-    assert len(deep_terminal) == 17
-    assert len(selected) == 105
+    assert len(deep_terminal) == 18
+    assert len(selected) == 106
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)
