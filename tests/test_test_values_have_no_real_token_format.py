@@ -113,6 +113,7 @@ _SHAPE_TESTS = frozenset(
         "tests/test_ledger_golden.py",
         "tests/test_legibility_always_on.py",
         "tests/test_local_model_hf_token.py",
+        "tests/test_mcp_argument_credentials_live_in_the_credential_store.py",
         "tests/test_mcp_import_list_shows_no_secret_and_reads_claude_config_dir.py",
         "tests/test_no_read_shows_what_its_twin_masks.py",
         "tests/test_onboarding_import_api.py",
