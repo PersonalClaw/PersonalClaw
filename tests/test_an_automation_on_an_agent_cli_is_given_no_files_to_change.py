@@ -64,7 +64,6 @@ def home(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr("personalclaw.subagent_persistence._subagents_dir", lambda: root / "agents")
-    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
     return SimpleNamespace(pc=pc_home, note=notes / "kitchen.md")
 
 

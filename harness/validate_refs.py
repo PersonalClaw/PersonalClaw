@@ -25,6 +25,10 @@ from pathlib import Path
 from harness.profiles import HARNESS_PY, profile_names
 from harness.specs import Spec, ValidationIssue
 
+#: pytest's exit code when the files it was given hold no test to collect
+#: (``pytest.ExitCode.NO_TESTS_COLLECTED``).
+_NO_TESTS_COLLECTED = 5
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
@@ -71,16 +75,20 @@ def _file_defines(file_part: str, func_name: str) -> bool:
     return False
 
 
-def collect_test_ids(*, timeout: int = 180) -> tuple[set[str], int, str]:
-    """Collect the ENTIRE test suite once. Returns (collected, rc, stderr).
+def collect_test_ids(files: list[str], *, timeout: int = 180) -> tuple[set[str], int, str]:
+    """Collect the test *files* the requested node-ids name, once. Returns (collected, rc, stderr).
 
     ``rc`` is ``-1`` if the subprocess couldn't be launched at all; otherwise pytest's
-    exit code. We collect the whole ``tests/`` tree (not the requested node-ids) and match
-    in Python because passing an explicit node-id list is fragile: one un-collectable id in
-    the batch (a genuinely missing test, or a module that ``pytest.skip``s at collection
-    time) makes pytest abort the whole batch, which would poison resolution of every other
-    spec's references. Collecting the universe once is both robust and — at one pytest call
-    regardless of spec count — no slower than batching.
+    exit code. We collect the FILES (not the requested node-ids) and match in Python
+    because passing an explicit node-id list is fragile: one un-collectable id in the batch
+    (a genuinely missing test, or a module that ``pytest.skip``s at collection time) makes
+    pytest abort the whole batch, which would poison resolution of every other spec's
+    references. A file argument has neither failure: a module that skips at collection time
+    is reported skipped and every other file still collects, and only files that exist are
+    passed (a missing one is a dangling reference, which :func:`_file_defines` reports). It
+    is one pytest call regardless of spec count, and its cost is the named files', not the
+    suite's: collecting the whole ``tests/`` tree for them took 75 s on a developer's machine
+    and 136 s in an Ubuntu CI image (2,202 files, measured), and grows with every test added.
 
     ``-o addopts=`` blanks the project's default addopts (``-n auto --cov …``) for this
     run — those flags need the xdist/cov plugins and pull in worker processes we don't
@@ -90,6 +98,9 @@ def collect_test_ids(*, timeout: int = 180) -> tuple[set[str], int, str]:
     Modules that skip at collection time simply won't appear (the AST fallback in
     :func:`_node_id_matches` distinguishes those from a real dangling reference).
     """
+    present = [f for f in files if (_repo_root() / f).is_file()]
+    if not present:
+        return set(), 0, ""
     cmd = [
         HARNESS_PY,
         "-m",
@@ -100,6 +111,7 @@ def collect_test_ids(*, timeout: int = 180) -> tuple[set[str], int, str]:
         "-q",
         "-p",
         "no:cacheprovider",
+        *present,
     ]
     try:
         proc = subprocess.run(
@@ -196,19 +208,20 @@ def validate_refs(
             for node in spec.get_list("requiredTests"):
                 all_requested.setdefault(node, []).append(spec)
         if all_requested:
-            collected, rc, stderr = collect_test_ids()
-            if rc == -1 or (not collected and rc != 0):
-                # Either the subprocess couldn't be launched (rc == -1) or the whole-suite
-                # collection itself broke (non-zero rc AND nothing collected). Report once,
-                # don't blame every spec. A non-zero rc WITH a non-empty collection is
-                # normal here — the apps-boundary module skips at collection time, which
-                # pytest reports as rc 4 (usage) while still collecting everything else;
-                # the per-node AST fallback tells a real dangling reference from a skip.
+            files = sorted({_split_node_id(node)[0] for node in all_requested})
+            collected, rc, stderr = collect_test_ids(files)
+            if rc == -1 or (not collected and rc not in (0, _NO_TESTS_COLLECTED)):
+                # Either the subprocess couldn't be launched (rc == -1) or the collection
+                # itself broke (an error rc AND nothing collected). Report once, don't blame
+                # every spec. A non-zero rc WITH a non-empty collection is normal here, and so
+                # is "no tests collected" when every named file skips at collection time (the
+                # apps-boundary module does, on a clone with no apps beside it): the per-node
+                # AST fallback tells a real dangling reference from a skip.
                 issues.append(
                     ValidationIssue(
                         _repo_root() / "harness",
                         "error",
-                        f"could not collect the test suite (pytest rc={rc}): "
+                        f"could not collect the referenced test files (pytest rc={rc}): "
                         f"{stderr.strip()[:400]}",
                     )
                 )

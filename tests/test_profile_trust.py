@@ -40,11 +40,6 @@ def agent_root(tmp_path, monkeypatch):
     return tmp_path
 
 
-@pytest.fixture(autouse=True)
-def _mock_memory_ok(monkeypatch):
-    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
-
-
 def _manager_with_tool(
     tool_title: str, *, hook_action: str = TOOL_AUTO_APPROVE, risk_level: str = ""
 ):

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from harness import cli
 from harness.specs import load_specs, validate_all
 from harness.validate_refs import (
@@ -20,7 +22,7 @@ from harness.validate_refs import (
 
 
 def test_the_interpreter_is_absolute_and_launchable_from_any_cwd() -> None:
-    """The whole-suite collection must launch from a worktree, not just the checkout.
+    """The test collection must launch from a worktree, not just the checkout.
 
     ``VENV_PY`` was the cwd-relative ``".venv/bin/python"``. A git worktree has no
     ``.venv``, so ``collect_test_ids`` failed with ``[Errno 2]``, ``validate_refs``
@@ -113,6 +115,46 @@ def test_dangling_node_id_is_flagged(tmp_path: Path) -> None:
     )
     errors = [i for i in validate_refs([spec], check_tests=True) if i.level == "error"]
     assert any("does not resolve" in i.message for i in errors)
+
+
+def test_resolving_references_collects_only_the_files_they_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One pytest call over the files the node-ids name, never the whole suite: collecting all of
+    ``tests/`` took 75-136 s (2,202 files) against the call's 180 s limit and grew with every test
+    added. A named file that does not exist is not handed to pytest, which would refuse the whole
+    call over it, and its node-id still reads as dangling."""
+    import harness.validate_refs as refs
+    from harness.specs import KIND_RULE, Spec
+
+    here = "tests/test_harness_validate.py"
+    missing = "tests/test_no_such_file_anywhere.py::test_ghost"
+    spec = Spec(
+        path=tmp_path / "r.md",
+        kind=KIND_RULE,
+        meta={
+            "id": "r",
+            "type": KIND_RULE,
+            "statement": "s",
+            "appliesTo": ["src/x.py"],
+            "source": "x",
+            "requiredTests": [f"{here}::test_split_node_id_strips_class_and_params", missing],
+        },
+        body="why",
+    )
+    commands: list[list[str]] = []
+    real_run = refs.subprocess.run
+
+    def recording(cmd, **kwargs):
+        commands.append(list(cmd))
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(refs.subprocess, "run", recording)
+    errors = [i.message for i in validate_refs([spec], check_tests=True) if i.level == "error"]
+
+    assert len(commands) == 1, commands
+    assert [arg for arg in commands[0] if arg.endswith(".py")] == [here], commands[0]
+    assert len(errors) == 1 and repr(missing) in errors[0], errors
 
 
 def test_cli_validate_returns_zero_on_shipped_specs() -> None:

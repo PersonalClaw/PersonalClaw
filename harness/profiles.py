@@ -24,7 +24,7 @@ def resolve_python(repo_root: Path | None = None) -> str:
 
     This was the cwd-relative literal ``".venv/bin/python"``, which is only correct when
     the process happens to sit in a checkout that has a ``.venv``. A git worktree does
-    not: ``harness validate``'s whole-suite collection could not even launch there
+    not: ``harness validate``'s test collection could not even launch there
     (``[Errno 2] No such file or directory: '.venv/bin/python'``), so reference
     resolution collapsed into one "could not collect the test suite" error and three
     tests in ``tests/test_harness_validate.py`` failed in EVERY worktree — for long

@@ -501,7 +501,6 @@ async def test_a_step_of_the_run_writes_its_document_and_cannot_write_another_ru
 
     monkeypatch.setenv("HOME", str(tmp_path / "user"))
     monkeypatch.setattr("personalclaw.subagent_persistence._subagents_dir", lambda: tmp_path / "s")
-    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
     mine, theirs = _create("mine"), _create("theirs")
     sweep = next(n for n in _nodes(Node.from_dict(_spec()["root"])) if n.id == "sweep")
     assert stage_capability(sweep.config or {}) == "mutating", "vacuity floor: the sweep writes"

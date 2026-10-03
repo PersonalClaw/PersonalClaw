@@ -133,7 +133,6 @@ def test_an_acp_call_to_notify_says_whether_it_only_tells_the_owner():
 @pytest.fixture()
 def agent_root(tmp_path, monkeypatch):
     monkeypatch.setattr("personalclaw.subagent_persistence._subagents_dir", lambda: tmp_path)
-    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
     return tmp_path
 
 

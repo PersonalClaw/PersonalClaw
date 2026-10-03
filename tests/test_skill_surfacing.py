@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 import pytest
 
 import personalclaw.skills.surfacing as surf
@@ -198,7 +200,11 @@ def test_a_changed_description_is_embedded_again_and_an_unchanged_one_is_read(
 
     surface_skills("anything at all", skills, max_skills=3, **bound)
     assert bound["index"].drain(timeout=10)
-    assert calls == ["anything at all", surf.skill_text(skills[1])], calls
+    # The reworded description is embedded by the index's own thread, which the turn starts
+    # before it embeds the message, so the two calls come in either order. What holds is which
+    # texts were embedded, once each: the message and the reworded description, and never the
+    # description that did not change.
+    assert Counter(calls) == Counter(["anything at all", surf.skill_text(skills[1])]), calls
 
 
 def test_the_index_is_read_back_after_a_restart(monkeypatch, tmp_path):

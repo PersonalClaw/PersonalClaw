@@ -475,10 +475,6 @@ async def test_the_agent_an_apps_job_starts_recalls_nothing_without_the_permissi
         ctx = MagicMock()
         ctx.hooks.auto_approve_subagent_spawn = True
         manager = SubagentManager(sessions=sessions, ctx_builder=ctx)
-        # The host's free memory is not what this test is about.
-        monkeypatch.setattr(
-            "personalclaw.subagent.check_memory_available", lambda min_gb: (True, 64.0)
-        )
         monkeypatch.setattr(
             invoke_agent_provider,
             "get_action_services",

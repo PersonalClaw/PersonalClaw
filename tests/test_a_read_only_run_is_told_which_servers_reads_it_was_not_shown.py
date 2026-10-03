@@ -41,7 +41,6 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "personalclaw.subagent_persistence._subagents_dir", lambda: tmp_path / "agents"
     )
-    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
     # The owner trusts one server's read-only labels, and not the other's.
     monkeypatch.setattr(
         "personalclaw.mcp_client.read_only_labels_trusted", lambda server: server == "wiki"

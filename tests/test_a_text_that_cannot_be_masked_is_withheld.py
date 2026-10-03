@@ -25,6 +25,8 @@ paths mask as before when the masker works.
 from __future__ import annotations
 
 import ast
+import errno
+import io
 import json
 import logging
 import uuid
@@ -347,20 +349,14 @@ def test_a_capture_failure_is_screened_when_it_can_be() -> None:
 # ── the log sinks ──────────────────────────────────────────────────────────────────────────
 
 
-class _FullDisk:
-    """A log file's stream on a full disk."""
+class _FullDisk(io.StringIO):
+    """A log file's stream on a full disk: an open, empty text file whose every write the disk
+    refuses. Everything else is a real file's, because what the rotating handler asks of its
+    stream before it writes differs between Python releases: Ubuntu 24.04's 3.12.3 seeks to the
+    end and then asks the position, later releases only ask the position."""
 
     def write(self, _text: str) -> int:
-        raise OSError(28, "No space left on device")
-
-    def tell(self) -> int:
-        return 0
-
-    def flush(self) -> None:
-        pass
-
-    def close(self) -> None:
-        pass
+        raise OSError(errno.ENOSPC, "No space left on device")
 
 
 @pytest.fixture

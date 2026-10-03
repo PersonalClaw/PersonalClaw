@@ -34,7 +34,7 @@ import pytest
 
 import personalclaw.schedule_script as ss
 from personalclaw import gateway_base
-from personalclaw.sandbox import PROFILE_TOOL, detect_backend, spawn_shim_argv
+from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
 
 # A cron run spawns a fresh interpreter through the sandbox, twice over (shim then target).
 # Under full-suite xdist load that can take tens of seconds of wall time from pure CPU
@@ -206,10 +206,11 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
 ) -> None:
     """The shim is the OUTERMOST layer of the argv the cron runner spawns.
 
-    The drives above cannot see this on a host whose sandbox backend is ``none`` (the two
-    orders are then identical), but the order is load-bearing: inside the wrap, the shim's own
-    interpreter import has to survive the seatbelt/namespace profile. Assert the shape at the
-    real call site by capturing the argv ``subprocess.run`` receives.
+    The order is load-bearing: inside the wrap, the shim's own interpreter import has to
+    survive the seatbelt/namespace profile. Assert the shape at the real call site by capturing
+    the argv ``subprocess.run`` receives and the argv ``wrap_argv`` handed back: what follows the
+    shim's ``--`` is that wrap, whole. Compared with the wrap itself, the order shows on every
+    backend, ``none`` included, where the two orders would otherwise spawn the same programs.
     """
     _set_sandbox_config(monkeypatch, tmp_path, nofile=_CEILING, max_pids=0, max_rss_mb=0)
     spec = _crons_with(
@@ -221,19 +222,23 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
             return "ok"
         """,
     )
-    # Settle the sandbox backend BEFORE opening the measurement window below.
+    # Settle what the OS-sandbox wrap works out on first use BEFORE opening the measurement
+    # window below.
     #
     # `wrap_argv` derives the backend on first use, and that derivation can SPAWN a host-fact
-    # capability probe (`sandbox-exec -f /tmp/personalclaw_probe_*.sb <python> -c pass`).
-    # The spy below monkeypatches `run` on the shared `subprocess` MODULE object, so it
-    # captures every spawn in the process and cannot tell that probe apart from the cron
-    # child's own — it counted both. Whether it saw one or two therefore depended on whether
-    # some earlier test in the same pytest-split shard had already warmed the cache, which is
-    # exactly how this assertion came up `2 == 1` on the `(3.13, macos-14, 4)` leg while
-    # passing on every host where the probe short-circuits. Settling it here makes the window
-    # hold the cron spawn and nothing else, on every host and in any shard, so the count below
-    # stays an exact 1 rather than a tolerance.
-    detect_backend(config_mode="standard")  # the mode `run_script_sandboxed` passes
+    # capability probe (`sandbox-exec -f /tmp/personalclaw_probe_*.sb <python> -c pass`). The
+    # namespace backend's first launcher spawns one more: `ssh -V`, for the host-key setting
+    # its ssh accepts. The spy below monkeypatches `run` on the shared `subprocess` MODULE
+    # object, so it captures every spawn in the process and cannot tell those probes apart from
+    # the cron child's own — it counted both. Whether it saw one or two therefore depended on
+    # whether some earlier test in the same pytest-split shard had already warmed the cache,
+    # which is exactly how this assertion came up `2 == 1` on the `(3.13, macos-14, 4)` leg and,
+    # run alone, on Linux. One whole wrap, thrown away, settles all of it on every backend, so
+    # the window holds the cron spawn and nothing else and the count below stays an exact 1
+    # rather than a tolerance.
+    _settled, settled_cleanup = ss.wrap_argv(["python3", "-c", "pass"], mode="standard")
+    if settled_cleanup:
+        os.unlink(settled_cleanup)
 
     seen: list[list[str]] = []
     real_run = ss.subprocess.run
@@ -242,7 +247,16 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
         seen.append(list(argv))
         return real_run(argv, **kwargs)
 
+    wraps: list[list[str]] = []
+    real_wrap = ss.wrap_argv
+
+    def _record_wrap(argv, mode="auto"):
+        wrapped, cleanup = real_wrap(argv, mode=mode)
+        wraps.append(list(wrapped))
+        return wrapped, cleanup
+
     monkeypatch.setattr(ss.subprocess, "run", _capture)
+    monkeypatch.setattr(ss, "wrap_argv", _record_wrap)
     r = ss.run_script_sandboxed(spec, "ei3-job", "", timeout=_TIMEOUT)
     assert r["status"] == "ok", r
 
@@ -256,19 +270,13 @@ def test_the_ceiling_shim_wraps_the_sandbox_and_not_the_reverse(
     sep = argv.index("--")
     inner = argv[sep + 1 :]
     assert inner, "nothing after the shim's '--' separator"
-    # ...and whatever the OS-sandbox wrap produced sits INSIDE it, never around it.
-    assert (
-        "personalclaw._spawn_exec_shim" not in inner[1:]
-    ), f"the shim appears inside the sandbox wrap, not outside it: {argv}"
-    # Immediately inside the shim sits whatever wrap_argv produced: the seatbelt/namespace
-    # wrapper on a host that has one, and the bare launcher on a host that has none.
-    # Compared on the BASENAME: the macOS wrap resolves its own enforcement binaries to
-    # absolute paths (`/usr/bin/env`, `/usr/bin/sandbox-exec`) rather than leaving bare names
-    # for the child's `execvp` — matching on the bare string here pinned the defect.
-    assert os.path.basename(inner[0]) in ("env", "unshare", "sandbox-exec", "python3"), (
-        f"expected the OS-sandbox wrapper (or the bare launcher) inside the shim, "
-        f"got {inner[0]!r}"
-    )
+    # ...and what the OS-sandbox wrap produced sits INSIDE it, whole: the seatbelt wrap
+    # (`/usr/bin/env -u … /usr/bin/sandbox-exec -f <profile> python3 …`), the namespace
+    # launcher (`<this interpreter> <launcher script> <python3's path> …`) or, on a host with
+    # neither, the bare launcher (`python3 …`). Compared with what `wrap_argv` returned here,
+    # not with a list of program names: such a list named a wrapper no backend runs (`unshare`)
+    # and missed the interpreter the namespace backend runs its launcher with.
+    assert wraps == [inner], f"the shim does not hold the sandbox wrap whole: {wraps} / {argv}"
 
 
 def test_the_ceiling_survives_an_intervening_os_sandbox_wrapper(

@@ -46,6 +46,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from fresh_interpreter import measure
 
 from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
 
@@ -2162,33 +2163,51 @@ def test_the_provider_says_it_reads_only_the_request(rail) -> None:
     assert rail.BundledChatProvider().request_only is True
 
 
-def test_prefill_never_materialises_the_full_attention_matrix(rail, tmp_path, monkeypatch) -> None:
+#: What :func:`test_prefill_never_materialises_the_full_attention_matrix` measures, in an
+#: interpreter of its own (``fresh_interpreter``).
+_PREFILL_PEAK = """
+import tracemalloc
+from pathlib import Path
+
+from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
+
+rail = load_bundle_module(NATIVE_DIR / VALUES["app"], VALUES["app"], "provider")
+rail._ATTENTION_BLOCK_BYTES = VALUES["block_bytes"]
+model = rail.LlamaCpuModel(rail.GgufModel(Path(VALUES["model"])))
+ids = [3 + (i % 10) for i in range(VALUES["span"])]
+cache = rail._KvCache(model.n_layer, model.n_head_kv, model.head_dim)
+tracemalloc.start()
+model.forward(ids, cache)
+peak = tracemalloc.get_traced_memory()[1]
+tracemalloc.stop()
+print(json.dumps({"peak": peak, "n_head": model.n_head}))
+"""
+
+
+def test_prefill_never_materialises_the_full_attention_matrix(tmp_path) -> None:
     """The memory half: attention at a 4,096-token cap still peaked 2.6 GB above the weights.
 
     Measured before this change on the shipped weight: a 4,096-token prefill peaked at 3,687 MB
     RSS against 904 MB loaded — the (9, 4096, 4096) float32 score array and the three copies the
     softmax made of it. Computed in query blocks, the peak is bounded by the block budget however
     long the prompt is. ``tracemalloc`` sees numpy's allocations, so the bound is asserted
-    directly: the whole prefill peaks below a QUARTER of one full score matrix.
+    directly, in an interpreter of its own so that no other test's thread allocates into the
+    peak: the whole prefill peaks below a QUARTER of one full score matrix.
     """
-    import tracemalloc
-
     path, _ = tiny_gguf(tmp_path / "mem")
-    model = rail.LlamaCpuModel(rail.GgufModel(path))
-    monkeypatch.setattr(rail, "_ATTENTION_BLOCK_BYTES", 1 << 20, raising=False)
     span = 2048
-    ids = [3 + (i % 10) for i in range(span)]
-    one_matrix = model.n_head * span * span * 4
-    cache = rail._KvCache(model.n_layer, model.n_head_kv, model.head_dim)
-    tracemalloc.start()
-    try:
-        model.forward(ids, cache)
-        _current, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
+    found = measure(
+        _PREFILL_PEAK,
+        tmp_path / "child",
+        app=APP_NAME,
+        model=str(path),
+        span=span,
+        block_bytes=1 << 20,
+    )
+    one_matrix = found["n_head"] * span * span * 4
     assert (
-        peak < one_matrix / 4
-    ), f"prefill peaked at {peak:,} bytes; one score matrix is {one_matrix:,}"
+        found["peak"] < one_matrix / 4
+    ), f"prefill peaked at {found['peak']:,} bytes; one score matrix is {one_matrix:,}"
 
 
 @pytest.mark.parametrize("block_bytes", [1, 200, 10**9])

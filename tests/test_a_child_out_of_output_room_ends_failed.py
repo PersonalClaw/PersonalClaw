@@ -105,7 +105,6 @@ class _Look(ToolProvider):
 @pytest.fixture
 def agent_root(tmp_path, monkeypatch):
     monkeypatch.setattr("personalclaw.subagent_persistence._subagents_dir", lambda: tmp_path)
-    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
     return tmp_path
 
 

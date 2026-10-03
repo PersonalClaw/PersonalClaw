@@ -3,6 +3,7 @@
 import asyncio
 import functools
 import importlib
+import inspect
 import itertools
 import os
 import shutil
@@ -308,6 +309,47 @@ def _forbid_second_openmp_runtime(request):
     new = tuple(m for m in native_omp_guard.resident(sys.modules) if m not in before)
     if new:
         pytest.fail(native_omp_guard.explain(new, request.node.nodeid), pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def _meminfo_with_memory_to_spare(tmp_path_factory) -> Path:
+    """A ``/proc/meminfo`` saying 64 GiB are available (:func:`_a_host_with_memory_to_spare`)."""
+    meminfo = tmp_path_factory.getbasetemp() / "meminfo-with-memory-to-spare"
+    meminfo.write_text("MemTotal: 67108864 kB\nMemAvailable: 67108864 kB\n", encoding="utf-8")
+    return meminfo
+
+
+@pytest.fixture(autouse=True)
+def _a_host_with_memory_to_spare(_meminfo_with_memory_to_spare, monkeypatch):
+    """Every test runs on a host with memory to spare for a subagent.
+
+    A spawn refuses below ``agent.spawn_min_memory_gb`` of free memory, and on Linux it reads that
+    from ``/proc/meminfo`` at the instant it spawns: what the suite's other workers and the
+    children they started hold then, nothing the test did. Measured: one Linux run refused the
+    spawns of twelve tests with "only 3.1 GB memory available (need 4 GB)", and each passed
+    alone. macOS has no ``/proc/meminfo``, which reads as unknown, so the same tests never met
+    the floor there. So the host's own reading is this fixture's file, on every platform; the
+    floor still compares it with the configured minimum. The floor's own tests read a meminfo
+    they wrote (``path=``) or stand in a low reading, as before.
+
+    pytest sets up a conftest's autouse fixtures of one scope in the order of their names, and
+    this name sorts before ``_isolate_real_home_writers``: a first import of
+    ``personalclaw.subagent`` here happens before the home is redirected, so the home resolvers
+    it binds are the ones that fixture re-points in every test.
+    """
+    from personalclaw import subagent
+
+    read = subagent.check_memory_available
+    params = inspect.signature(read).parameters
+    host = params["path"].default
+
+    @functools.wraps(read)
+    def check(min_gb: float = params["min_gb"].default, path: str = host) -> tuple[bool, float]:
+        return read(
+            min_gb=min_gb, path=str(_meminfo_with_memory_to_spare) if path == host else path
+        )
+
+    monkeypatch.setattr(subagent, "check_memory_available", check)
 
 
 @pytest.fixture(autouse=True)

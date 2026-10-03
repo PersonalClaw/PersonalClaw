@@ -30,12 +30,12 @@ import asyncio
 import json
 import threading
 import time
-import tracemalloc
 from pathlib import Path
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from fresh_interpreter import measure
 
 #: The CI-sized history: as many transcript files as a few weeks of daily use, most of them small.
 FILES = 1500
@@ -43,6 +43,8 @@ FILES = 1500
 READING_THREAD = "onboarding-import-reading"
 #: The conversation text a reply carries — what a scan that held conversations would hold.
 REPLY = "The flaky test waits on a timer it never cancels, so the next test sees it fire. " * 200
+#: How many times the time rail times each history's first answer.
+TIMED_ROUNDS = 3
 
 
 def _transcript(n: int, tool_lines: int) -> str:
@@ -176,31 +178,35 @@ async def test_the_first_answer_does_not_grow_with_how_much_history_there_is(mac
     times, and takes about as long — it does not read what it does not show.
 
     On origin/main it parsed every line of every file (22k, then 181k lines), and the second
-    answer took ~5x the first. The time rail is a ratio within this run, with slack for noise."""
-    counts = _Counts(monkeypatch)
-    _history(machine / "claude", tool_lines=12)
-    async with _client() as client:
-        small, small_seconds = await _first_answer(client)
-        small_lines = counts.lines
-        await _stop_reading(client)
-
-    import shutil
-
+    answer took ~5x the first. The time rail is a ratio within this run, with slack for noise:
+    each history's first answer is timed ``TIMED_ROUNDS`` times, the two histories in turn, and
+    the fastest of each is compared. A stall of the host that has nothing to do with the scan
+    (another worker's build, the disk writing out the history just made) lands on one answer
+    and decides nothing, as it did once: 1.7 s small, then 19.6 s large, on a run whose shard
+    took twice its usual time. A scan that reads what it does not show is slower on EVERY large
+    answer, so the fastest one still shows it."""
     from personalclaw.onboarding_import.sources.common import READINGS
 
-    shutil.rmtree(machine / "claude")
-    READINGS.clear()
-    _history(machine / "claude", tool_lines=120)
-    counts.reset()
-    async with _client() as client:
-        large, large_seconds = await _first_answer(client)
-        large_lines = counts.lines
-        await _stop_reading(client)
+    counts = _Counts(monkeypatch)
+    histories = {
+        "small": _history(machine / "claude-small", tool_lines=12),
+        "large": _history(machine / "claude-large", tool_lines=120),
+    }
+    seconds: dict[str, list[float]] = {size: [] for size in histories}
+    for _round in range(TIMED_ROUNDS):
+        for size, root in histories.items():
+            monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(root))
+            READINGS.clear()
+            counts.reset()
+            async with _client() as client:
+                body, took = await _first_answer(client)
+                lines = counts.lines
+                await _stop_reading(client)
+            assert len(_conversations(body)) == FILES, size
+            assert lines <= FILES + 50, f"{lines} lines parsed for {FILES} {size} transcripts"
+            seconds[size].append(took)
 
-    assert len(_conversations(small)) == len(_conversations(large)) == FILES
-    assert small_lines <= FILES + 50, f"{small_lines} lines parsed for {FILES} transcripts"
-    assert large_lines <= FILES + 50, f"{large_lines} lines parsed for {FILES} transcripts"
-    assert large_seconds < 2 * small_seconds + 1.0, (small_seconds, large_seconds)
+    assert min(seconds["large"]) < 2 * min(seconds["small"]) + 1.0, seconds
 
 
 @pytest.mark.asyncio
@@ -357,30 +363,47 @@ def test_a_reader_gives_way_before_a_file_and_every_few_thousand_lines_of_it(mac
         assert len(waits) == 3, "outside a reading pass, nothing waits"
 
 
+#: What :func:`test_a_scan_holds_no_conversation_and_the_reading_pass_one_at_a_time` measures,
+#: in an interpreter of its own (``fresh_interpreter``).
+_SCAN_PEAKS = """
+import tracemalloc
+
+from personalclaw.onboarding_import import read_unread, scan_all, unread
+
+tracemalloc.start()
+results = scan_all(look=True)
+look_peak = tracemalloc.get_traced_memory()[1]
+tracemalloc.reset_peak()
+read = read_unread(results)
+read_peak = tracemalloc.get_traced_memory()[1]
+tracemalloc.stop()
+items = [i for r in results for i in r.items]
+print(json.dumps({
+    "look_peak": look_peak,
+    "read_peak": read_peak,
+    "read": read,
+    "items": len(items),
+    "with_messages": sum(1 for i in items if i.payload),
+    "unread_after": unread(scan_all(look=True)),
+}))
+"""
+
+
 def test_a_scan_holds_no_conversation_and_the_reading_pass_one_at_a_time(machine):
     """The listing is titles and counts; a conversation's messages are read when it is imported.
     On origin/main every conversation's messages were held by the scan at once (1.1 GB for the
-    measured history). Measured here with ``tracemalloc``: the look, and the reading pass that
-    reads every file in full after it, each peak far below the conversation text the history
-    holds (1,500 replies of 16 KB, 24 MB)."""
-    from personalclaw.onboarding_import import read_unread, scan_all, unread
-
+    measured history). Measured here with ``tracemalloc``, in an interpreter of its own so that no
+    other test's thread allocates into the peak: the look, and the reading pass that reads every
+    file in full after it, each peak far below the conversation text the history holds (1,500
+    replies of 16 KB, 24 MB)."""
     _history(machine / "claude", tool_lines=12)
     held = FILES * len(REPLY)
-    tracemalloc.start()
-    try:
-        results = scan_all(look=True)
-        look_peak = tracemalloc.get_traced_memory()[1]
-        tracemalloc.reset_peak()
-        assert read_unread(results) == FILES
-        read_peak = tracemalloc.get_traced_memory()[1]
-    finally:
-        tracemalloc.stop()
-    items = [i for r in results for i in r.items]
-    assert len(items) == FILES and all(not i.payload for i in items), "no messages in a scan"
-    assert look_peak < held / 3, (look_peak, held)
-    assert read_peak < held / 3, (read_peak, held)
-    assert unread(scan_all(look=True)) == 0, "what the pass read is what the next scan answers from"
+    found = measure(_SCAN_PEAKS, machine / "child")
+    assert found["read"] == FILES
+    assert found["items"] == FILES and found["with_messages"] == 0, "no messages in a scan"
+    assert found["look_peak"] < held / 3, (found["look_peak"], held)
+    assert found["read_peak"] < held / 3, (found["read_peak"], held)
+    assert found["unread_after"] == 0, "what the pass read is what the next scan answers from"
 
 
 def test_a_looked_then_read_listing_is_the_listing_a_full_read_makes(machine):

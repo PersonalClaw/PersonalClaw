@@ -370,17 +370,22 @@ jobs:
   #
   #   _ENV_KINDS = frozenset({"container", "desktop"})
   #
-  # so `PERSONALCLAW_INSTALL_KIND` forces ONLY those two. `git` and `pip` are *detected*:
-  # `detect_install_kind()` returns "git" when `git_root(project_dir())` is non-empty and
-  # falls through to "pip" otherwise, where `project_dir()` reads PERSONALCLAW_PROJECT_DIR
-  # (set by `cli._detect_project_dir` when running from a checkout).
+  # so `PERSONALCLAW_INSTALL_KIND` forces ONLY those two. `git` and `pip` are *detected*, from
+  # where the running `personalclaw` package was imported (`self_update.source_checkout`):
+  # "git" when it is a checkout's `src/personalclaw` and that checkout carries `.git`, "pip"
+  # otherwise. Nothing else decides it: not the working directory, not
+  # PERSONALCLAW_PROJECT_DIR. So the two arms differ in what they INSTALL: git installs the
+  # checkout editable (the package runs from the checkout), and pip puts a wheel built from
+  # it in that install's place (the package runs from site-packages, as it does after pip,
+  # pipx or `uv tool`).
   #
   # WHY THIS MATTERS RATHER THAN BEING A DETAIL. Setting INSTALL_KIND=git is silently
-  # IGNORED — detection returns "pip" — so an `assert kind == want` arm for git FAILS, and
-  # the pip arm would have "passed" only by landing on the fallback, proving nothing about
-  # the override it claimed to test. Each arm below therefore drives the mechanism that
-  # actually selects its kind, and prints which one, so a green check cannot be read as
-  # "the env var forced all four".
+  # IGNORED, so an `assert kind == want` arm for git that only set it would FAIL, and a pip arm
+  # that installed the checkout editable is a git install, whatever its environment says.
+  # Each arm below therefore drives the mechanism that actually selects its kind, and prints
+  # which one, so a green check cannot be read as "the env var forced all four". The pip arm
+  # also starts inside the checkout with PERSONALCLAW_PROJECT_DIR naming it: a wheel install
+  # run there once counted as a git install, and "Update & Restart" ran git on that tree.
   #
   # The desktop arm runs on macOS because that is where a desktop install lives; running it
   # on Linux would assert the wrong platform's path.
@@ -408,7 +413,14 @@ jobs:
           python-version: "3.12"
 
       - name: Install
-        run: pip install --quiet -e .
+        env:
+          WANT_KIND: ${{ matrix.kind }}
+        run: |
+          pip install --quiet -e .
+          # pip: the checkout's wheel in place of the editable install, so the package runs from
+          # site-packages as it does after pip, pipx or `uv tool`. Alone: its dependencies are
+          # the ones the line above installed.
+          if [ "$WANT_KIND" = pip ]; then pip install --quiet --no-deps --force-reinstall .; fi
 
       - name: Self-update path for kind=${{ matrix.kind }}
         env:
@@ -419,14 +431,15 @@ jobs:
           # Drive the mechanism that actually selects THIS kind (see the job comment).
           case "$WANT_KIND" in
             git)
-              # Detected, not forced: point PROJECT_DIR at the checkout, which carries .git.
-              export PERSONALCLAW_PROJECT_DIR="$GITHUB_WORKSPACE"
-              export VIA="detected from PERSONALCLAW_PROJECT_DIR + .git"
+              # Detected, not forced: the running package is the checkout's, which carries .git.
+              unset PERSONALCLAW_PROJECT_DIR || true
+              export VIA="detected from the running package's checkout + .git"
               ;;
             pip)
-              # Detected by fallback: no PROJECT_DIR, so there is no git root to find.
-              unset PERSONALCLAW_PROJECT_DIR || true
-              export VIA="detected by fallback (no project dir)"
+              # Detected, not forced: the running package is the wheel's copy. Started inside the
+              # checkout, with PERSONALCLAW_PROJECT_DIR naming it, which must not make it git.
+              export PERSONALCLAW_PROJECT_DIR="$GITHUB_WORKSPACE"
+              export VIA="detected from a wheel install started inside the checkout"
               ;;
             container|desktop)
               export PERSONALCLAW_INSTALL_KIND="$WANT_KIND"

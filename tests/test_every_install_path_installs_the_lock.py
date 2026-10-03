@@ -51,8 +51,8 @@ _RANGE_INSTALLS = {
         "installs the released wheel from PyPI: a stranger's documented path is the subject"
     ),
     (".github/workflows/clean-machine-walkthroughs.yml", "pip install --quiet -e ."): (
-        "exercises the self-updater's classification of a pip install; the install kind is "
-        "the subject, not the dependency set"
+        "installs the checkout for the self-updater walkthrough, whose subject is how each "
+        "install kind is classified, not the dependency set"
     ),
     ("scripts/fresh_install_validate.sh", "personalclaw==${version}"): (
         "validates the released wheel on a clean machine, the way a user installs it"

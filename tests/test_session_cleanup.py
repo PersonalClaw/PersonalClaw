@@ -42,12 +42,6 @@ def agent_root(tmp_path, monkeypatch):
     return tmp_path
 
 
-@pytest.fixture(autouse=True)
-def _mock_memory_ok(monkeypatch):
-    """Prevent memory guard from refusing spawns on low-RAM build machines."""
-    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
-
-
 # ══════════════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════════════
 

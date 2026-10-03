@@ -52,7 +52,6 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "personalclaw.subagent_persistence._subagents_dir", lambda: tmp_path / "agents"
     )
-    monkeypatch.setattr("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0))
     monkeypatch.delenv(mcp_shared.TOOL_TIER_KEY, raising=False)
     reset_ceiling()
     reset_meter()
