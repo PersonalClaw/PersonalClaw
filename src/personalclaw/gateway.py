@@ -709,9 +709,10 @@ class GatewayOrchestrator:
                         approved = await asker.request_approval(
                             event,
                             # Where it came from, in the words the registry's entry names it by
-                            # (`approval_source_label`): a workflow's step, a trigger, a loop.
+                            # (`approval_source_label`): a workflow's step, a trigger, a loop, and
+                            # the app whose work it is.
                             source=source_label_in(
-                                getattr(self.dashboard_state, "_sessions", None),
+                                self.dashboard_state,
                                 source=source,
                                 session=asked_in,
                                 trigger=asked_by,

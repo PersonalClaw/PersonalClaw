@@ -647,9 +647,10 @@ async def test_none_of_your_standing_grants_approves_an_app_agents_call(tmp_path
     [("dashboard:its-chat", APP), ("subagent:its-run", APP), ("dashboard:hers", ""), ("", "")],
     ids=["a conversation it started", "a run of its agent", "her conversation", "no parent"],
 )
-async def test_an_agent_spawned_by_an_apps_work_is_that_apps_agent_work(parent, app):
+async def test_an_agent_spawned_by_an_apps_work_is_that_apps_agent_work(tmp_path, parent, app):
     """An agent its conversation or its run spawns carries the app, so the start and the calls
-    are held as the app's (`SubagentManager._grant_now`, the relay above), never as hers."""
+    are held as the app's (`SubagentManager._grant_now`, the relay above), never as hers. The app
+    is installed with a tier: an app that may run no agent work starts none."""
     from personalclaw.dashboard.handlers.messaging import api_spawn
 
     started: list[dict[str, Any]] = []
@@ -672,9 +673,11 @@ async def test_an_agent_spawned_by_an_apps_work_is_that_apps_agent_work(parent, 
     gateway = web.Application()
     gateway["state"] = state
     gateway.router.add_post("/api/spawn", api_spawn)
-    async with TestClient(TestServer(gateway)) as client:
-        resp = await client.post("/api/spawn", json={"task": TASK, "parent_session": parent})
-        assert resp.status == 200, await resp.text()
+    with _home(tmp_path):
+        _install(tmp_path, APP, {"agent": "tools"})
+        async with TestClient(TestServer(gateway)) as client:
+            resp = await client.post("/api/spawn", json={"task": TASK, "parent_session": parent})
+            assert resp.status == 200, await resp.text()
     (spawned,) = started
     assert spawned["app"] == app, spawned
 

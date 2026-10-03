@@ -997,7 +997,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "says why.",
     # ── app agent work (dashboard/handlers/apps.py — api_app_agent_run) ──
     # A 403: the task asked for more than its app's `agent` tier lets its agent work use (a wider
-    # tier, or a text task naming an agent), so nothing ran. The message names both tiers.
+    # tier, or a text task naming an agent), so nothing ran. The message names both tiers. The
+    # spawn route and the batch route answer it too, for an agent the app's work starts beyond the
+    # tier the app holds now (`apps.app_work`): the message says what the app may do.
     "agent_tier_exceeded": "The task asks for more than its app's agent tier allows, so nothing "
     "ran; the message names the tier it asked for and the app's.",
     # A 400: the task's `tier` names no tier.

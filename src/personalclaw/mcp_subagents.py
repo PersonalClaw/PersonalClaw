@@ -439,6 +439,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         agent_ids: list[str] = []
         agent_names: list[str] = []
+        # A start the gateway refused, with its reason: a task over capacity waits in its queue and
+        # is answered as spawned, so every error here is a task that did not start.
         errors: list[str] = []
         for i, t in enumerate(task_list):
             a = agents_list[i] if agents_list else agent
@@ -463,7 +465,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 label = f"{aid} ({a})" if a else aid
                 spawn_lines.append(f"  {label}: {t[:80]}")
         if errors:
-            spawn_lines.append(f"\n{len(errors)} task(s) queued (at capacity):")
+            spawn_lines.append(f"\n{len(errors)} task(s) did not start:")
             for e in errors:
                 spawn_lines.append(f"  - {e}")
         if agent_ids:
@@ -471,7 +473,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 "\nWait for [Subagent completion event] messages before responding to the user."
             )
         else:
-            spawn_lines.append("All tasks queued — results will arrive as completion events.")
+            spawn_lines.append("None of them started, so no result will arrive.")
         return "\n".join(spawn_lines)
 
     if name == "subagent_list":

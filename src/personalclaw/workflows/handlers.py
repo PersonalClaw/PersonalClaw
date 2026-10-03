@@ -147,6 +147,9 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # (it acts on its own, or there is nowhere to ask), and nothing else lets it start
     # (`batch_start`).
     "WF_BATCH_NOBODY_TO_ASK": (409, "nobody_to_ask"),
+    # 403 like an app's agent task asking for more than its tier: the batch is an app's work, and
+    # the tier the app holds now does not cover its tasks, so none started (`batch_start`).
+    "WF_BATCH_BEYOND_APP_TIER": (403, "agent_tier_exceeded"),
     "WF_BATCH_NOT_FOUND": (404, "not_found"),
     # The posture screen's refusal (`service._write_definition`): the save would let a step do
     # more and the owner's yes was not given. The editor's save answers it as the consent question

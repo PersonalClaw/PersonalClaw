@@ -733,7 +733,8 @@ async def start_run(
 
     ``extra`` is what the run's record carries from its start beside its inherited memory mode,
     written at create for the same reason: a batch's Allow (`batch_start.CONSENT_KEY`), which its
-    first step's spawn reads.
+    first step's spawn reads. Whose work the run is, when *session_key* is an app's work
+    (`apps.app_work.RUN_KEY`), is recorded beside them, unless ``extra`` already says.
     """
     from personalclaw.workflows.effects import START_DEDUPE
     from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
@@ -853,6 +854,14 @@ async def start_run(
     # redundant string to every unrestricted run's record for no behavioural gain. Only a restricted
     # inheritance is a fact worth recording.
     run_extra: dict[str, Any] = dict(extra or {})
+    from personalclaw.apps import app_work
+
+    if app_work.RUN_KEY not in run_extra:
+        # Whose work it is, when its session is an app's: its steps are then the app's, held to
+        # its tier and asking her for their calls, after the agent that started it is gone too.
+        # A caller that decided it already (a batch, which waits for an answer first) says so.
+        work = app_work.of_session(getattr(supervisor, "state", None), session_key)
+        run_extra = app_work.stamp(run_extra, work)
     if inherited is not ownership.MemoryMode.NORMAL:
         model = memory_writes.handed_model(session_key)
         run_extra = ownership.stamp_run_mode(run_extra, inherited, model=model)

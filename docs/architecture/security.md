@@ -655,7 +655,7 @@ the ceiling did not bound.
   request, within the step's time limit, `approval_grants.APPROVED_BEFORE_RESUME`), a subagent
   batch's tasks starting on what allowed that batch's start (`approval_grants.BATCH_ALLOWED`: her
   answer to its one ask, or, for a batch that only reads, the grant that starts its chat's
-  subagents),
+  subagents; an app's batch never starts on a grant of hers, `apps.app_work`),
   the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
   unattended ACP CLI approving its own calls, a session policy that never asks, and the eval
   runner's allowlist of read-only tools. Under

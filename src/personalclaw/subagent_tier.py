@@ -42,8 +42,9 @@ message it may send its owner. An automation's step is turned into those by
 to at install (``apps.agent_tiers``; ``handlers/apps.api_app_agent_run``, and its scheduled jobs'
 ``apps/app_crons.start_job``): ``text`` at
 :data:`CAPABILITY_TEXT`, ``read`` at the research class, ``tools`` at the mutating one, and the run
-names its app (``SubagentInfo.app``), as does an agent the app's conversation or run spawns
-(``memory_reads.reach_of``'s ``app``). That permission starts it (``approval_grants.APP``) and
+names its app (``SubagentInfo.app``), as does every agent the app's work starts, held to the same
+tier (``apps.app_work``): a subagent its conversation, run or job spawns, each task of a batch it
+starts and each step of a run it starts. That permission starts it (``approval_grants.APP``) and
 approves none of its calls: the owner's standing grants (YOLO, a chat's Trust, the Approval mode, a
 setting that approves every background call) are hers, for her own agents, so each call of an
 app's agent that needs approval asks her, as its install consent says (``SubagentManager.

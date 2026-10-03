@@ -10,7 +10,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import bounded_log, memory_reads, notification_kinds
+from personalclaw import bounded_log, notification_kinds
 from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
 from personalclaw.dashboard.chat_utils import _remove_queued_by_id
 from personalclaw.dashboard.state import (
@@ -88,6 +88,18 @@ async def api_spawn(request: web.Request) -> web.Response:
     agent = cleaned.get("agent") or ""
     max_turns = cleaned.get("max_turns") or 0
     cwd = cleaned.get("cwd") or ""
+    # The app whose work the parent is (a conversation it started, a run of its agent, its
+    # scheduled job's agent, up the chain): an agent spawned there is that app's work too
+    # (`apps.app_work`), so it runs at no more than the app's tier, none of the owner's standing
+    # grants approves its calls (`subagent_tier`), and it reads your memory as the app may.
+    from personalclaw.apps import app_work
+
+    work = app_work.of_session(state, str(parent_session or ""))
+    capability = None
+    if work is not None:
+        capability, refused = app_work.subagent_class(work)
+        if refused:
+            return json_error("agent_tier_exceeded", message=refused, status=403)
     info = state.subagents.spawn(
         task,
         parent_session_key=parent_session,
@@ -95,10 +107,8 @@ async def api_spawn(request: web.Request) -> web.Response:
         max_turns=max_turns,
         cwd=cwd,
         silent=silent,
-        # The app whose work the parent is (a conversation it started, a run of its agent, up the
-        # chain): an agent spawned there is that app's work too, so none of the owner's standing
-        # grants approves its calls (`subagent_tier`), and it reads your memory as the app may.
-        app=memory_reads.reach_of(state, str(parent_session or "")).app,
+        capability_class=capability,
+        app=work.app if work is not None else "",
     )
     if not info:
         return web.json_response(

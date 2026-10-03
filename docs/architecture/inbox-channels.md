@@ -250,7 +250,12 @@ subagent tasks from “Retry ceiling” is waiting…"): `tool_input` names each
 change. One whose tasks only read asks through the start's relay, so a Trust or YOLO switch
 answers it as it answers a start; one whose tasks may change things is answered only by a decision
 on it, so such a switch, which answers every pending approval it covers, leaves it asking
-(`request_approval(answered_alone=True)`). In the chat that started the work, the card for an ask
+(`request_approval(answered_alone=True)`). A batch an app's agent asked for is the app's work
+(`apps.app_work`): it never starts on a grant of yours, its ask and each of its tasks' asks name the
+app and its scheduled job ("A batch of 3 subagent tasks from the app “Research Lab”'s scheduled job
+“advance-campaigns”", "The “…” step of a batch from the app “Research Lab”…"), and so does an ask of
+a subagent its agent started ("A subagent of the app “…”"): the entry carries those words
+(`whose_work`, `approval_source.whose_work`). In the chat that started the work, the card for an ask
 a subagent or a batch raised answers through the approvals queue, with Allow or Deny for that ask
 alone (`ApprovalSegment.queued`): the chat's own approve route holds only the chat's own asks.
 Such an ask outlives the turn that started the work, so the turn keeps its card out of the work it
@@ -258,9 +263,11 @@ folds once it has answered, until the ask is answered (`approvalSegment.waitsPas
 
 The entry also says where the call came from, in words (`source_label`, from
 `approval_source.approval_source_label`): `chat “Trip planning”`, `loop “Fix the README”`,
-`workflow “deep-research” · step “sweep”`, `trigger “Friday digest”`, `subagent of chat “…”`,
-`batch of chat “…”` (a batch's ask, before any of its tasks exists), `MCP server “…”`,
-`room “…” · member “…”`. Every surface that answers an approval renders the one approval card
+`workflow “deep-research” · step “sweep”` (the step by its label), `trigger “Friday digest”`,
+`subagent of chat “…”`, `batch of chat “…”` (a batch's ask, before any of its tasks exists),
+`batch of the app “…” · step “…”` and `subagent of the app “…”` (an app's work, with its scheduled
+job when one started it), `MCP server “…”`, `room “…” · member “…”`. Every surface that answers an
+approval renders the one approval card
 (`pages/chat/ApprovalCard`;
 `app/PendingApprovalCard` for the queue surfaces: the workflow run view, Mission Control, Home's To
 triage, the Inbox row and its notification): the tool and its risk, what it can touch, its whole

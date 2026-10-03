@@ -26,6 +26,14 @@ itself (`tool_providers.base.WORK_ASKS_META_KEY`), so a batch asks its owner onc
 * **Nobody to ask, nothing started.** Where nothing lets it start on its own, a session that runs
   without asking anyone (a loop started Unattended) and a gateway with nowhere to ask are refused,
   saying why: a grant that approves calls on its own is not consent to a batch's writes.
+* **An app's agent's batch is the app's work** (`apps.app_work`): one its scheduled job's agent,
+  its agent run or a conversation it started asks for. None of the owner's grants starts it: one
+  that only reads starts on the app's install consent (`approval_grants.APP`), as one subagent its
+  agent starts does, and one that may change things asks for her own Allow, as any batch does. It
+  starts only within the tier the app holds then: at ``text``, or with no tier, nothing starts, and
+  at ``read`` a task that may change things is refused, saying why. Its run records whose work it
+  is (`app_work.RUN_KEY`), so each task carries the app's name and asks her for its calls, and
+  every ask names the app and its scheduled job.
 * **A restart does not lose the ask.** A batch waiting for its answer is recorded until it ends
   (:func:`state_of` reads it, for the batch's card in its chat), and a gateway that comes back asks
   it again (:func:`resume`), or ends it unstarted once its approval window has passed, saying
@@ -48,6 +56,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.apps import app_work
+from personalclaw.apps.app_work import AppWork
 from personalclaw.automation_posture import WHAT_IT_MAY_DO
 from personalclaw.workflows import owner_allow, service, store
 from personalclaw.workflows.models import (
@@ -111,6 +121,8 @@ class _Asking:
     #: What allowing it does, then each task by its name with what it may change (`_ask_text`).
     purpose: str
     said: str
+    #: Whose work it is when it is an app's (`apps.app_work`), else None: the owner's own.
+    work: AppWork | None = None
 
 
 def tasks_of(root: dict[str, Any], writes: dict[str, Any] | None = None) -> list[Task]:
@@ -164,25 +176,38 @@ def _asking(
     workspace: dict[str, Any],
     inputs: dict[str, Any],
     writes: dict[str, Any],
+    work: AppWork | None,
 ) -> _Asking:
     """The batch *name* as it is asked: its tasks, and its ask's two lines (:func:`_ask_text`)."""
     tasks = tasks_of(root, writes)
-    purpose, said = _ask_text(tasks, folder=str(inputs.get("cwd") or ""), workspace=workspace)
-    return _Asking(name, session_key, tasks, purpose, said)
-
-
-def _ask_text(tasks: list[Task], *, folder: str, workspace: dict[str, Any]) -> tuple[str, str]:
-    """``(purpose, input)`` of the batch's ask: what allowing it does, then each task by its name
-    with what it may change, and where its tasks work. Every clause is read from the spec that
-    runs, and true of it."""
-    changing = sum(1 for task in tasks if task.changes)
-    purpose = (
-        f"Starts {len(tasks)} tasks at once, and {changing} of them may change things, not only "
-        "read. Allow it and its tasks start; deny it and none does."
-        if changing
-        else f"Starts {len(tasks)} tasks at once, each of which only reads. Allow it and its tasks "
-        "start; deny it and none does."
+    purpose, said = _ask_text(
+        tasks, folder=str(inputs.get("cwd") or ""), workspace=workspace, work=work
     )
+    return _Asking(name, session_key, tasks, purpose, said, work)
+
+
+def _ask_text(
+    tasks: list[Task], *, folder: str, workspace: dict[str, Any], work: AppWork | None
+) -> tuple[str, str]:
+    """``(purpose, input)`` of the batch's ask: what allowing it does, whose work it is when it is
+    an app's, then each task by its name with what it may change, and where its tasks work. Every
+    clause is read from the spec that runs, and true of it."""
+    changing = sum(1 for task in tasks if task.changes)
+    starts = f"Starts {len(tasks)} tasks at once" + (
+        f" for {app_work.named(work)}" if work is not None else ""
+    )
+    purpose = (
+        f"{starts}, and {changing} of them may change things, not only read. Allow it and its "
+        "tasks start; deny it and none does."
+        if changing
+        else f"{starts}, each of which only reads. Allow it and its tasks start; deny it and none "
+        "does."
+    )
+    if work is not None:
+        purpose += (
+            " They are the app's work: none of your own approval settings approves their calls, "
+            "so each one that needs approval asks you."
+        )
     lines = []
     for number, task in enumerate(tasks, 1):
         name = f"{task.label} ({task.agent})" if task.agent else task.label
@@ -233,19 +258,66 @@ def _reads(folder: str) -> str:
     return "" if refused else resolved
 
 
-def _start_grant(state: Any, session_key: str, name: str) -> str:
+def _start_grant(state: Any, session_key: str, name: str, work: AppWork | None) -> str:
     """The grant that starts a batch that only reads from *session_key* without asking: the one
     that would start a subagent that session asked for (`SubagentManager._start_grant`: YOLO, its
-    Trust, the hook setting), if the operator ceiling lets it stand. ``""`` when the batch asks."""
+    Trust, the hook setting), if the operator ceiling lets it stand. An app's batch (*work*) starts
+    on the app's install consent alone (`approval_grants.APP`), as one subagent its agent starts
+    does (`SubagentManager._spawn_grant`): her grants are for her own agents. ``""`` when the
+    batch asks."""
     from personalclaw import approval_grants
 
     manager = getattr(state, "subagents", None)
-    grant = manager._start_grant(session_key) if manager is not None else ""
+    if work is not None:
+        grant = approval_grants.APP
+    else:
+        grant = manager._start_grant(session_key) if manager is not None else ""
     if grant and approval_grants.stands(
         grant, caller=session_key or "subagent", subject=f"subagent_run,batch={name}"
     ):
         return grant
     return ""
+
+
+def _beyond_the_apps_tier(tasks: list[Task], work: AppWork | None) -> str:
+    """Why an app's batch (*work*) starts none of its *tasks*, or ``""``: the tier the app holds
+    now does not cover them (`app_work.beyond_tier`). ``""`` for the owner's own batch."""
+    if work is None:
+        return ""
+    changing = [task.label for task in tasks if task.changes]
+    why = app_work.beyond_tier(work, changes=bool(changing))
+    if not why:
+        return ""
+    # Its tasks that may change things are named when they are what the tier does not cover.
+    changes = "; ".join(f"“{label}”" for label in changing)
+    which = "" if app_work.beyond_tier(work, changes=False) else f"{changes} may change things; "
+    return (
+        f"{which}it is the work of {app_work.named(work)}, and {why}, so none of its "
+        f"{len(tasks)} tasks started."
+    )
+
+
+def _refused(asking: _Asking, why: str) -> None:
+    """Audit the start of an app's batch that its app's tier refused: a control's refusal, said as
+    one, never anyone's answer."""
+    from personalclaw.sel import sel
+
+    try:
+        sel().log_tool_invocation(
+            session_key=asking.session_key,
+            source="subagent",
+            tool_name="subagent_run",
+            tool_input={"batch": asking.name, "tasks": [task.label for task in asking.tasks]},
+            outcome="refused",
+            error=why,
+            metadata={
+                "batch": asking.name,
+                **(asking.work.to_dict() if asking.work is not None else {}),
+                "reason": "agent_tier",
+            },
+        )
+    except Exception:
+        logger.debug("SEL audit failed for batch %s", asking.name, exc_info=True)
 
 
 def _nobody_to_ask(state: Any, chat: str, *, reads: bool) -> str:
@@ -294,9 +366,13 @@ async def start(
     """
     from personalclaw.approval_grants import ToolDecision
 
+    work = app_work.of_session(state, session_key)
     asking = _asking(
-        name, session_key, root=root, workspace=workspace, inputs=inputs, writes=writes
+        name, session_key, root=root, workspace=workspace, inputs=inputs, writes=writes, work=work
     )
+    if beyond := _beyond_the_apps_tier(asking.tasks, work):
+        _refused(asking, beyond)
+        return service._service_failure("WF_BATCH_BEYOND_APP_TIER", beyond)
     begin = _starter(
         supervisor,
         name=name,
@@ -305,9 +381,10 @@ async def start(
         inputs=inputs,
         description=description,
         session_key=session_key,
+        work=work,
     )
     changing = [task.label for task in asking.tasks if task.changes]
-    if not changing and (grant := _start_grant(state, session_key, name)):
+    if not changing and (grant := _start_grant(state, session_key, name, work)):
         _audit(asking, ToolDecision(True, "auto_approved", grant))
         return await begin({"allowed_at": time.time(), "by": grant})
     why = _nobody_to_ask(state, session_key.removeprefix("dashboard:"), reads=not changing)
@@ -322,6 +399,7 @@ async def start(
             "session_key": session_key,
             "asked_at": time.time(),
             "tasks": len(asking.tasks),
+            **({app_work.RUN_KEY: work.to_dict()} if work is not None else {}),
             "start": {
                 "root": root,
                 "workspace": workspace,
@@ -341,8 +419,12 @@ async def start(
     )
 
 
-def _starter(supervisor: Any, *, name: str, root: dict[str, Any], **fields: Any) -> Any:
-    """The save-and-start of one batch, given what allowed it (:data:`CONSENT_KEY`)."""
+def _starter(
+    supervisor: Any, *, name: str, root: dict[str, Any], work: AppWork | None, **fields: Any
+) -> Any:
+    """The save-and-start of one batch, given what allowed it (:data:`CONSENT_KEY`). An app's
+    batch's run records whose work it is as the batch was asked for (`app_work.stamp`), not as its
+    session reads when it starts: the agent that asked may have ended while it waited."""
 
     async def _begin(consent: dict[str, Any]) -> dict[str, Any]:
         from personalclaw.approval_grants import YOU
@@ -370,7 +452,7 @@ def _starter(supervisor: Any, *, name: str, root: dict[str, Any], **fields: Any)
             supervisor=supervisor,
             origin_kind=OriginKind.SUBAGENT_TOOL,
             session_key=fields["session_key"],
-            extra={CONSENT_KEY: consent},
+            extra=app_work.stamp({CONSENT_KEY: consent}, work),
         )
 
     return _begin
@@ -475,13 +557,14 @@ def _tell(supervisor: Any, endings: list[SubagentInfo]) -> None:
 
 
 def _audit(asking: _Asking, decision: Any) -> None:
+    whose = asking.work.to_dict() if asking.work is not None else {}
     owner_allow.audit(
         asking.session_key,
         source="subagent",
         tool="subagent_run",
         tool_input={"batch": asking.name, "tasks": [task.label for task in asking.tasks]},
         decision=decision,
-        metadata={"batch": asking.name},
+        metadata={"batch": asking.name, **whose},
     )
 
 
@@ -594,13 +677,23 @@ def asked_in(approval_id: str) -> str:
 
 def asker(approval_id: str, title: str) -> str:
     """Who waits on a batch's ask, as the Inbox names it ("A batch of 2 subagent tasks from
-    “Retry ceiling”"), or ``""`` when *approval_id* is no batch's ask."""
+    “Retry ceiling”", or from the app whose work it is), or ``""`` when *approval_id* is no
+    batch's ask."""
     name = batch_of(approval_id)
     if not name:
         return ""
     count = int((read_record(name) or {}).get("tasks") or 0)
     what = f"A batch of {count} subagent tasks" if count else "A batch of subagent tasks"
+    if (work := work_of(approval_id)) is not None:
+        return f"{what} from {app_work.named(work)}"
     return f"{what} from “{title}”" if title else what
+
+
+def work_of(approval_id: str) -> AppWork | None:
+    """Whose work the batch the approval *approval_id* asks to start is, when it is an app's (its
+    record says, `app_work.RUN_KEY`); ``None`` for the owner's own, and for no batch's ask."""
+    name = batch_of(approval_id)
+    return app_work.of_record(read_record(name) if name else None)
 
 
 def resume(state: Any, supervisor: Any) -> int:
@@ -631,9 +724,17 @@ def resume(state: Any, supervisor: Any) -> int:
             continue
         session_key = str(record.get("session_key") or "")
         fields = {key: dict(start.get(key) or {}) for key in ("root", "workspace", "inputs")}
-        asking = _asking(name, session_key, **fields, writes=dict(start.get("writes") or {}))
+        work = work_of(ask_id(name))
+        asking = _asking(
+            name, session_key, **fields, writes=dict(start.get("writes") or {}), work=work
+        )
         if time.time() - float(record.get("asked_at") or 0.0) > approval_window_secs():
             error = spawn_refusal(ToolDecision(False, "expired", NOBODY), what="batch")
+            _end_record(name, error=error)
+            _tell(supervisor, never_started(session_key, name, asking.tasks, error=error))
+            continue
+        if error := _beyond_the_apps_tier(asking.tasks, work):
+            _refused(asking, error)
             _end_record(name, error=error)
             _tell(supervisor, never_started(session_key, name, asking.tasks, error=error))
             continue
@@ -644,6 +745,7 @@ def resume(state: Any, supervisor: Any) -> int:
             **fields,
             description=str(start.get("description") or ""),
             session_key=session_key,
+            work=work,
         )
         _waiting(state, _ask_then_start(state, supervisor, asking, begin))
         asked += 1

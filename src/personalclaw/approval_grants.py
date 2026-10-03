@@ -87,8 +87,10 @@ SOURCE = "source"
 #: The gateway was started with ``--approval yolo`` or ``--approval reads``.
 CLI = "cli"
 #: An app's background task starting on the ``agent`` permission the owner agreed to at install
-#: (`subagent.SubagentManager._spawn_grant`). It covers the start alone: no agent tier approves
-#: the task's calls, so each one that needs approval asks.
+#: (`subagent.SubagentManager._spawn_grant`), and so does any agent that task starts: a subagent,
+#: a batch of them (`workflows.batch_start`), the steps of a run it starts (`apps.app_work`). It
+#: covers the start alone: no agent tier approves the task's calls, so each one that needs
+#: approval asks.
 APP = "app_grant"
 #: A workflow step the owner chose "always allow" for earlier in the run.
 REMEMBERED = "remembered"
@@ -99,8 +101,9 @@ REMEMBERED = "remembered"
 APPROVED_BEFORE_RESUME = "approved_before_resume"
 #: A subagent batch's start was allowed, once, for all its tasks (`workflows.batch_start`): by her
 #: answer to its one ask, which named each task and what each may change, or, for a batch that only
-#: reads, by the grant that starts its chat's subagents. Each task starts on that, and asks nobody
-#: again. It covers the starts only; each task's own calls ask as any agent's do.
+#: reads, by the grant that starts its chat's subagents (an app's batch: :data:`APP`). Each task
+#: starts on that, and asks nobody again. It covers the starts only; each task's own calls ask as
+#: any agent's do.
 BATCH_ALLOWED = "batch_allowed"
 #: A workflow run's own gate policy for an origin nobody watches (a schedule, an event).
 GATE_POLICY = "gate_policy"

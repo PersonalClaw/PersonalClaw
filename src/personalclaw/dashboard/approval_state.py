@@ -139,13 +139,21 @@ def _who_asked(entry: dict[str, Any]) -> str:
         from personalclaw.auto_denials import trigger_asker
 
         return trigger_asker(str(entry.get("trigger_name") or ""))
+    from personalclaw.approval_source import is_a_batch, step_name
     from personalclaw.workflows.ownership import parse_owned
 
+    # Whose work it is when it is an app's (`approval_source.whose_work`): the app, and its
+    # scheduled job where one started the work.
+    whose = str(entry.get("whose_work") or "")
     step = parse_owned(str(entry.get("session") or ""))
     if step is not None:
         # A workflow step's agent asks under its run's key: the step is named as the run page, and
         # the Inbox's "Run this step again", name it — by its label.
-        return f"The “{_step_name(*step)}” step of a workflow run"
+        named = redact_field(step_name(*step))
+        if whose:
+            run = "batch" if is_a_batch(step[0]) else "workflow run"
+            return f"The “{named}” step of a {run} from {whose}"
+        return f"The “{named}” step of a workflow run"
     from personalclaw.workflows.batch_start import asker
 
     if batch := asker(str(entry.get("id") or ""), title):
@@ -158,6 +166,9 @@ def _who_asked(entry: dict[str, Any]) -> str:
         from personalclaw.apps.app_manager import display_name_of
 
         return f"A background agent of the app “{display_name_of(session[len('app:') :])}”"
+    if entry.get("source") == "subagent" and whose:
+        # A subagent an app's agent started: the app's work, named by the app.
+        return f"A subagent of {whose}"
     if entry.get("source") == "subagent":
         return f"A subagent of “{title}”" if title else "A subagent"
     if entry.get("source") == "agent":
@@ -170,21 +181,6 @@ def _who_asked(entry: dict[str, Any]) -> str:
         member, room = seat
         return f"{member} in the room “{room}”" if room else f"{member} in a room"
     return "A background task"
-
-
-def _step_name(run_id: str, node_id: str) -> str:
-    """A run's step as the run page names it: its label, else its id."""
-    from personalclaw.workflows import store
-    from personalclaw.workflows.models import Node, walk
-
-    try:
-        spec = store.read_spec(run_id) or {}
-        for _path, node in walk(Node.from_dict(spec.get("root") or {})):
-            if node.id == node_id:
-                return node.label or node_id
-    except Exception:  # noqa: BLE001 - a wording helper never fails the approval it describes
-        logger.debug("could not read the steps of run %s", run_id, exc_info=True)
-    return node_id
 
 
 def _background_asker(*, source: str, session: str, trigger: str) -> str:
@@ -540,15 +536,18 @@ class DashboardApprovalState:
         allowed hosts (``run_bounds.ask_note``). ``asked_by`` is the
         principal that raised it, which may never answer it (``approval_answer``, rule 2).
         ``source_label`` is where it came from in words
-        (:func:`~personalclaw.approval_source.approval_source_label`). ``deny_effect`` is what a
+        (:func:`~personalclaw.approval_source.approval_source_label`), and ``whose_work`` whose
+        work it is when it is an app's, in words (``approval_source.whose_work``: the app, and its
+        scheduled job), ``""`` for yours: no grant of yours approves it. ``deny_effect`` is what a
         Deny does when it does more than decline the call (an agent CLI that can refuse it only
         by ending its turn), said on every card before it is pressed; "" when it declines it.
         """
-        from personalclaw.approval_source import approval_source_label, live_chat_name
+        from personalclaw.approval_source import approval_source_label, live_chat_name, whose_work
         from personalclaw.triggers.store import trigger_name
 
         title = redact_field(live_chat_name(self._sessions, session))
         named = redact_field(trigger_name(trigger)) if trigger else ""
+        whose = whose_work(self, session=session, approval_id=approval_id)
         return {
             "id": approval_id,
             # How the WAITER addresses this call. Equal to `id` for a background origin; for a
@@ -569,6 +568,7 @@ class DashboardApprovalState:
             "deny_effect": deny_effect,
             "trigger": trigger,
             "trigger_name": named,
+            "whose_work": whose,
             # Where it came from, in the words every surface shows it by: the dashboard's cards,
             # its Inbox row, and the tag a channel's prompt carries.
             "source_label": approval_source_label(
@@ -578,6 +578,7 @@ class DashboardApprovalState:
                 trigger_name=named,
                 title=title,
                 approval_id=approval_id,
+                whose=whose,
             ),
             "asked_by": asked_by,
             "ts": time.time(),

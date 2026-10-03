@@ -23,7 +23,9 @@ An Incognito chat reads memory as any chat does, and writes nothing back
 :func:`reach_of` is the answer for the work a session key names. It follows a subagent to the
 session it works for, an app's agent run to its app, an agent a scheduled job started (and the
 job's own session) to the app whose job it is, by the job's id the work carries, and a workflow
-step to the chat or the app's job that started its run, up to the chat at the top, and reads each
+step to the chat or the app's job that started its run, up to the chat at the top. A run whose
+record says it is an app's work (``apps.app_work``: a batch, or any run, the app's agent started)
+is that app's from its record, after the agent that started it is gone too. It reads each
 one's mode as the one reader of a session's mode reads it (``memory_writes.session_mode``): the
 live chat first, then the in-process registry a channel, a run or a subagent's start marks
 (:mod:`session_restrictions`), then the mode its transcript records, and for a step its run's. A
@@ -82,7 +84,8 @@ class Reach:
     (``memory_writes.session_mode``), ``None`` for work that is no chat's; ``restricted_mode`` is
     the strictest mode, as each one's own records read, of any session along ``keys`` that keeps
     nothing (``"temporary"``, ``memory_writes.UNREADABLE``, ``"incognito"``), ``""`` when each keeps
-    memory or is no chat's: the work then keeps nothing either.
+    memory or is no chat's: the work then keeps nothing either; ``job`` is the trigger id of that
+    app's scheduled job when the job's fire started the work (``app_crons.job_id``), ``""`` else.
     """
 
     keys: tuple[str, ...] = ()
@@ -91,6 +94,7 @@ class Reach:
     refusal: str = ""
     mode: str | None = None
     restricted_mode: str = ""
+    job: str = ""
 
     @property
     def reads(self) -> bool:
@@ -111,12 +115,16 @@ def reach_of(state: Any, caller: str, *, app: str = "") -> Reach:
     memory."""
     keys: list[str] = []
     modes: list[str | None] = []
+    job = ""
     key = "" if caller == _DASHBOARD_UI else (caller or "").strip()
     while key and key not in keys:
         keys.append(key)
-        mode, owner, key = _step(state, key)
+        mode, owner, owners_job, key = _step(state, key)
         modes.append(mode)
         app = app or owner
+        # The app's own job, found wherever along the chain it is named: a task of a batch the
+        # job's agent started carries the app's name, and its run names the job.
+        job = job or (owners_job if owner == app else "")
     blank = next((why for why in map(_blank, modes) if why), "")
     return Reach(
         tuple(keys),
@@ -125,6 +133,7 @@ def reach_of(state: Any, caller: str, *, app: str = "") -> Reach:
         refusal=blank or app_refusal(app),
         mode=modes[0] if modes else None,
         restricted_mode=_strictest_keeping_nothing(modes),
+        job=job,
     )
 
 
@@ -183,9 +192,10 @@ def app_refusal(app: str, *, changing: bool = False) -> str:
     )
 
 
-def _step(state: Any, key: str) -> tuple[str | None, str, str]:
+def _step(state: Any, key: str) -> tuple[str | None, str, str, str]:
     """For the session *key*: its mode as its own records read (``memory_writes.session_mode``),
-    the app its work is for (``""`` for yours), and the key it works for next (``""`` at the
+    the app its work is for (``""`` for yours), that app's scheduled job when the job's fire
+    started it (its trigger id, ``""`` for none), and the key it works for next (``""`` at the
     top)."""
     from personalclaw.memory_writes import NOT_A_STEP, run_of_step, session_mode
 
@@ -194,21 +204,37 @@ def _step(state: Any, key: str) -> tuple[str | None, str, str]:
         subagents = getattr(state, "subagents", None)
         info = subagents.get(key[len(_SUBAGENT) :]) if subagents else None
         # The app whose agent permission started it, or whose scheduled job's fire did.
-        app = str(getattr(info, "app", "") or "") or job_app(getattr(info, "trigger_id", ""))
-        return mode, app, str(getattr(info, "parent_session_key", "") or "")
+        trigger = str(getattr(info, "trigger_id", "") or "")
+        app = str(getattr(info, "app", "") or "") or job_app(trigger)
+        job = trigger if app and job_app(trigger) == app else ""
+        return mode, app, job, str(getattr(info, "parent_session_key", "") or "")
     if key.startswith(_APP):
-        return mode, key[len(_APP) :], ""
+        return mode, key[len(_APP) :], "", ""
     run = run_of_step(key)
     if run is not NOT_A_STEP:
+        from personalclaw.apps.app_work import of_run
+
+        # Whose work its record says the run is: started for the app's work (its batch, a run its
+        # agent started), or by its scheduled job. Read from the record, which outlives the agent
+        # that started the run.
+        work = of_run(run)
         origin = getattr(run, "origin", None)
-        app = job_app(getattr(origin, "trigger_id", ""))  # a run an app's scheduled job started
-        return mode, app, str(getattr(origin, "session_key", "") or "")
-    app = job_app(key[len(_TRIGGER) :]) if key.startswith(_TRIGGER) else ""
+        if work is not None and not work.app:
+            # Its record says it is an app's work and cannot say whose: nothing can say what it
+            # may read, so it reads and keeps nothing.
+            from personalclaw.memory_writes import UNREADABLE as NOTHING_CAN_SAY
+
+            mode = NOTHING_CAN_SAY
+        app, job = (work.app, work.job) if work is not None else ("", "")
+        return mode, app, job, str(getattr(origin, "session_key", "") or "")
+    trigger = key[len(_TRIGGER) :] if key.startswith(_TRIGGER) else ""
+    app = job_app(trigger)
+    job = trigger if app else ""
     creating_app = getattr(state, "session_creating_app", None)
     if not app and callable(creating_app):
         name = key.split(":", 1)[-1]
         app = creating_app(name) or creating_app(key)
-    return mode, app, ""
+    return mode, app, job, ""
 
 
 def job_app(trigger_id: object) -> str:

@@ -696,6 +696,9 @@ async def dispatch_stage(
     whether the stage may write, the operator ceiling still bounds the auto-approval grant
     (`subagent._run_inner`'s PHF-8 check), and the spawn and every auto-approved tool call are
     SEL-audited as they are for any other auto-approved spawn.
+
+    **A run that is an app's work** (`apps.app_work`) is held as the app's: each stage starts only
+    within the agent tier the app holds now, carries the app's name, and approves none of its calls.
     """
     if depth >= MAX_WF_DEPTH:
         return _fail(
@@ -723,6 +726,19 @@ async def dispatch_stage(
     skip, skip_why = _restriction_skip(cfg, run_id)
     if skip:
         return NodeResult(state=InstanceState.DEGRADED, output=None, degraded_reason=skip_why)
+
+    # A step of a run that is an app's work is the app's (`apps.app_work`): it starts within the
+    # tier the app holds now, carries the app's name, and so approves none of its calls.
+    from personalclaw.apps.app_work import step_refusal
+
+    capability = stage_capability(cfg)
+    work, beyond = step_refusal(run_id, capability)
+    if beyond:
+        return _fail(
+            FailureClass.PERMISSION,
+            beyond,
+            "switch the app on, or update it to a version whose agent tier covers this step",
+        )
 
     if subagents is None:
         return _fail(
@@ -789,13 +805,17 @@ async def dispatch_stage(
     # nothing rather than like no pin.
     model = str(cfg.get("model", "") or "") or None
     max_turns = int(cfg.get("max_turns", 0) or 0)
-    approval_mode = str(cfg.get("approval_mode", "") or "") or ("auto" if unattended else None)
-    # ONE capability decision (`stage_capability`): it drives BOTH the leaf-env read-only flag
-    # (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP tools) AND the
-    # subagent capability class (the `_run_inner` approval loop, the worker's NATIVE tools). A
-    # research node passed as research here has its native Write/Bash denied too — the gap the
-    # MCP-only seam left open.
-    capability = stage_capability(cfg)
+    # An app's step approves none of its own calls, whatever the run's overlay or the step says.
+    approval_mode = (
+        None
+        if work is not None
+        else (str(cfg.get("approval_mode", "") or "") or ("auto" if unattended else None))
+    )
+    # ONE capability decision (`stage_capability`, taken above): it drives BOTH the leaf-env
+    # read-only flag (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP tools)
+    # AND the subagent capability class (the `_run_inner` approval loop, the worker's NATIVE
+    # tools). A research node passed as research here has its native Write/Bash denied too — the
+    # gap the MCP-only seam left open.
     request_key = stage_request_key(
         run_id=run_id,
         instance_path=instance_path,
@@ -832,6 +852,7 @@ async def dispatch_stage(
             request_key=request_key,
             # Her earlier Allow, only when it was for exactly this request.
             approved_at=approved_at if approved_request == request_key else 0.0,
+            app=work.app if work is not None else "",
         )
     except BaseException:
         # A spawn that RAISED produced no `NodeResult`, so the holder below never reaches the
@@ -1192,6 +1213,14 @@ async def dispatch_action(
             FailureClass.USER,
             f"unknown action provider {name!r}",
             "install the app that provides it, or pick a registered provider",
+        )
+    from personalclaw.apps.app_work import action_refusal
+
+    if refused := action_refusal(run_id, name):
+        return _fail(
+            FailureClass.PERMISSION,
+            refused,
+            "start the workflow yourself to run this step as yours",
         )
 
     from personalclaw.action_providers.base import ActionContext
