@@ -412,7 +412,9 @@ chat's mode and stays on its model as one its agent starts in the gateway does,
 and it controls a run it started that keeps nothing as it does. Any other change
 it asks of the routes (a definition saved or deleted, a run that you or another
 chat started) is refused, saying why, and so is every call of a chat whose mode
-cannot be read (`handlers._guard`).
+cannot be read (`handlers._guard`). A subagent's or a step's call is judged as
+its chat's, by the strictest mode up the chain it works for
+(`memory_reads.reach_of`), whatever its own key is marked.
 
 ## Mid-flight mutation
 

@@ -233,7 +233,7 @@ class TestLogRejectEvent:
 
         store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
-        with patch.object(store, "_log_event") as mock_log:
+        with patch.object(store, "_record_event") as mock_log:
             store.log_reject_event(SemanticRejectCode.ALLOWLIST, "bad.key", "v", "user_explicit")
             mock_log.assert_called_once_with(
                 "allowlist_reject", "semantic", "bad.key", None, "v", "user_explicit"
@@ -244,7 +244,7 @@ class TestLogRejectEvent:
 
         store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
-        with patch.object(store, "_log_event") as mock_log:
+        with patch.object(store, "_record_event") as mock_log:
             store.log_reject_event(SemanticRejectCode.KEY_FORMAT, "x", "v", "user_explicit")
             mock_log.assert_not_called()
 
@@ -253,7 +253,7 @@ class TestLogRejectEvent:
 
         store = VectorMemoryStore(db_path=tmp_path / "mem.db")
         store.init()
-        with patch.object(store, "_log_event") as mock_log:
+        with patch.object(store, "_record_event") as mock_log:
             store.log_reject_event(
                 SemanticRejectCode.INJECTION,
                 "pref.x",

@@ -168,7 +168,6 @@ def patched_native(provider, document_editing_on):
 
 def _state() -> MagicMock:
     state = MagicMock()
-    state._restricted_keys = set()
     state._sessions = {}
     return state
 

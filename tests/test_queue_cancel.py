@@ -109,7 +109,6 @@ def _make_state():
     state._background_tasks = set()
     # YOLO is process-global (personalclaw.trust_mode); the autouse
     # _reset_trust_mode fixture keeps it OFF — no instance field to set.
-    state._restricted_keys = set()
     state.sessions = None
     state.conversation_log = None
     state.channel_manager = None

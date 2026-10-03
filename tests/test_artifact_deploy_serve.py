@@ -61,7 +61,6 @@ def patched_native(provider):
 async def _client(app_provider) -> TestClient:
     app = web.Application()
     state = MagicMock()
-    state._restricted_keys = set()
     state._sessions = {}
     app["state"] = state
     register_artifact_routes(app)

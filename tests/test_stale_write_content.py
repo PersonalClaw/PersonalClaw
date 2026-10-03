@@ -80,7 +80,6 @@ def _app() -> web.Application:
 
     app = web.Application()
     state = MagicMock()
-    state._restricted_keys = set()
     state._sessions = {}
     app["state"] = state
     app.router.add_get("/api/file-read", api_file_read)

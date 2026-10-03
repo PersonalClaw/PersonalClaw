@@ -10,6 +10,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw import memory_writes
 from personalclaw.dashboard.chat import restore_recent_sessions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
@@ -836,8 +837,9 @@ class TestRehydrateSessionFromHistory:
         session = _rehydrate_session_from_history(state, "incog")
         assert session is not None
         assert session.memory_mode == "off"
-        # Restricted keys marker is set so consolidation respects the mode.
-        assert "dashboard:incog" in state._restricted_keys
+        # A mode this build does not know keeps nothing: the one reader of a session's mode reads
+        # it as one nothing can say, so consolidation and every write respect it.
+        assert memory_writes.blocks_memory_writes("dashboard:incog", state=state)
 
     def test_rehydrates_folder_and_pin_metadata(self, tmp_path, monkeypatch):
         """Folder, pin, and color metadata are preserved across rehydrate."""

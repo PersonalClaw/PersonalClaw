@@ -156,9 +156,12 @@ async def _list_marketplace_skills() -> list[dict[str, Any]]:
 
 def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
     """Check if request comes from work that keeps nothing: an Incognito or Temporary chat's, the
-    work such a chat started, or work for a chat whose mode nothing can say. The one reader of a
-    session's mode answers, over the gateway's live chats (``memory_writes.blocks_memory_writes``):
-    the live chat first, then the registry, the transcript and a step's run.
+    work such a chat started, or work for a chat whose mode nothing can say. Judged as the work it
+    does for the chat at the top (``memory_reads.reach_of``, :attr:`Reach.restricted_mode`): a
+    subagent's or a workflow step's request keeps nothing when anything it works for keeps
+    nothing, whatever its own key is marked. Each session's mode is read by the one reader of a
+    session's mode, over the gateway's live chats: the live chat first, then the registry, the
+    transcript and a step's run.
 
     Reads X-Session-Key header (set by browser and MCP subprocesses).
     Returns True if the session should be blocked from memory operations.
@@ -166,9 +169,9 @@ def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
     sk = request.headers.get("X-Session-Key", "")
     if not sk or sk == "dashboard:ui":
         return False
-    from personalclaw import memory_writes
+    from personalclaw import memory_reads
 
-    return memory_writes.blocks_memory_writes(sk, state=state)
+    return bool(memory_reads.reach_of(state, sk).restricted_mode)
 
 
 def _memory_refusal(state: DashboardState, request: "Any") -> str:
@@ -211,57 +214,3 @@ def _change_refused_for_the_app(
         error=refused,
     )
     return web.json_response({"error": refused}, status=403)
-
-
-def _session_has_persisted_history(session_name: str) -> bool:
-    """Return True iff the session has a JSONL file in ~/.personalclaw/sessions/.
-
-    This is a positive signal that the session was previously established
-    as non-ephemeral: ephemeral (incognito/temporary) sessions never write
-    to disk, so a persisted JSONL can only come from a real user session.
-
-    Used by ``api_lessons_create`` to distinguish between:
-
-    * A legitimate MCP subprocess whose in-memory session was evicted by the
-      idle-sweep loop (``session.py``'s 30-minute timeout). The subprocess
-      still holds the original ``PERSONALCLAW_SESSION_KEY`` env var, so it
-      keeps sending the same ``X-Session-Key``, but ``state._sessions`` has
-      moved on. Without this check such calls return HTTP 400 ``unknown
-      session`` even though the user is actively typing in the thread.
-
-    * A forged or stale key from a context that never had a real session
-      backing it — which should continue to be rejected.
-
-    Only checks existence, not contents. Authentication of the caller is
-    still enforced by the ``X-Internal-Secret`` middleware upstream; this
-    check only governs the *ephemeral vs non-ephemeral* distinction.
-    """
-    if (
-        not session_name
-        or "/" in session_name
-        or "\\" in session_name
-        or "\x00" in session_name
-        or session_name.startswith(".")
-    ):
-        # Defence-in-depth against path traversal; ``PERSONALCLAW_SESSION_KEY``
-        # normally has no path separators, but ``X-Session-Key`` is
-        # attacker-controlled in principle even behind the secret
-        # middleware. Reject forward slash (Linux/macOS) and backslash
-        # (Windows) path separators, null bytes that can truncate C-level
-        # path parsing, and leading dots that could target hidden
-        # per-directory files outside the intended session namespace.
-        return False
-    sess_dir = config_loader.config_dir() / "sessions"
-    if not sess_dir.exists():
-        return False
-    # Match the resolution order used by the channel app's interactions
-    # handler when linking threads to existing sessions: bare stem first, then
-    # the ``dashboard_`` prefix fallback for dashboard sessions.
-    if (sess_dir / f"{session_name}.jsonl").exists():
-        return True
-    if (
-        not session_name.startswith("dashboard_")
-        and (sess_dir / f"dashboard_{session_name}.jsonl").exists()
-    ):
-        return True
-    return False

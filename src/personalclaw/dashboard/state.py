@@ -1080,8 +1080,6 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._engagement_store: "EngagementStore | None" = None  # lazily built (inbox ranking)
         # Update progress tracking (shared across all connected clients)
         self._update_progress: dict[str, str] | None = None  # {step, detail}
-        # Restricted (incognito/temporary): session keys with memory writes disabled
-        self._restricted_keys: set[str] = set()
         # Ephemeral: session keys with no memory writes at all
         self._ephemeral_keys: set[str] = set()
         # Per-project file index registry (shared across sessions)
@@ -2224,8 +2222,6 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # An app's conversation carries the app as its origin tag too — what its turns' usage is
         # attributed to, after a restart as well as before.
         session._app = app or session.created_by_app
-        if memory_mode and memory_mode != "persistent":
-            self._restricted_keys.add(f"dashboard:{name}")
         if ephemeral:
             self._ephemeral_keys.add(f"dashboard:{name}")
         # Check if this session is already linked to a channel thread

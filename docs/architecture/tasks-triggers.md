@@ -74,7 +74,11 @@ relative to `PersonalClaw/src/personalclaw/`.
   `MemoryKeyPattern` — a key glob such as `project.acme.*`, `ContentMatch` — a
   value regex), an accepted inbox message (`InboxMessage`, `InboxSender`,
   `InboxAddress`) or an app's trigger-source event (`AppEvent`, a glob on
-  `app:<app>:<event>`). The pattern grammar and the bus are
+  `app:<app>:<event>`). A memory write reaches the bus once it is stored
+  (`vector_memory._log_event`, after the change's own statement): a write the
+  store refuses (work that may change nothing) or turns away (a conflict it
+  skips, a value it rejects) is recorded in the memory's history and fires no
+  trigger. The pattern grammar and the bus are
   `event_triggers.py`; every source calls its `emit_event`. In the gateway the
   router (`triggers/event_fire.py`) matches the store's event rows, admits each
   match through the gate walk a clock fire takes (`service.admit_fire`:

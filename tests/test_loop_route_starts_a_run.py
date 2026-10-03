@@ -97,11 +97,10 @@ class _FakeState:
     def __init__(self, *, restricted: set[str] | None = None) -> None:
         self.workflows = _RecordingSupervisor()
         # The chats named in ``restricted`` are live Incognito chats, held as the gateway holds
-        # one: by name, with its mode, and its ``dashboard:`` key among the restricted ones.
+        # one: by name, with its mode.
         self._sessions: dict[str, Any] = {
             name: SimpleNamespace(memory_mode="incognito") for name in restricted or ()
         }
-        self._restricted_keys: set[str] = {f"dashboard:{name}" for name in restricted or ()}
         self._sse = None
 
     def push_refresh(self, *kinds: str) -> None:

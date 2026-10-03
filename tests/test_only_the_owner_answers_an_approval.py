@@ -226,7 +226,7 @@ async def test_an_agents_tool_cannot_answer_a_gate_over_http(isolated, monkeypat
     from personalclaw.workflows.human_input import list_continuations
 
     run, watchdog = await _parked_on_an_approval(monkeypatch)
-    state = SimpleNamespace(workflows=watchdog, _restricted_keys=set(), _sessions={})
+    state = SimpleNamespace(workflows=watchdog, _sessions={})
 
     @web.middleware
     async def signed_in(request: web.Request, handler: Any) -> web.StreamResponse:

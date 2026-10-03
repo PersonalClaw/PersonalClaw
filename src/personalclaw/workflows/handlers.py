@@ -238,16 +238,17 @@ def _guard(request: web.Request, operation: str, *, run_id: str = "") -> web.Res
     agent's tool starts in the gateway does; and it may control a run it started that keeps nothing
     as it does (``run_id``, the run the call is for). Anything else it would change keeps what it
     keeps (a definition in your library, a run that you or another chat started), so it is
-    refused, and so is every call of a session whose mode cannot be read. The refusal says why, as
-    the one reader of a session's mode reads it (``memory_writes.session_mode``).
+    refused, and so is every call of a session whose mode cannot be read. The refusal says why, in
+    the mode the guard judged it by: the strictest up the chain it works for
+    (``memory_reads.reach_of``), so a subagent's call is its chat's.
     """
     state = request.app.get("state")
     if state is None or not _is_restricted_session(state, request):
         return None
-    from personalclaw import memory_writes
+    from personalclaw import memory_reads, memory_writes
 
     session_key = request.headers.get("X-Session-Key", "")
-    mode = memory_writes.session_mode(session_key, state=state)
+    mode = memory_reads.reach_of(state, session_key).restricted_mode
     why = {
         "temporary": "it keeps nothing, as a Temporary chat does",
         "incognito": "it keeps nothing, as an Incognito chat does",

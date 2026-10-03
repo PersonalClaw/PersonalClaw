@@ -78,7 +78,6 @@ class _State:
     def __init__(self) -> None:
         self.workflows = _Supervisor()
         self._sessions: dict[str, Any] = {}
-        self._restricted_keys: set[str] = set()
         self._sse = None
 
     def push_refresh(self, *kinds: str) -> None:

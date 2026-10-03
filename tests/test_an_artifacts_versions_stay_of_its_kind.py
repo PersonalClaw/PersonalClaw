@@ -180,7 +180,6 @@ class TestEveryOtherWriterOfABodyIsHeldToIt:
         async def drive() -> tuple[int, dict]:
             app = web.Application()
             state = MagicMock()
-            state._restricted_keys = set()
             state._sessions = {}
             app["state"] = state
             register_artifact_routes(app)
@@ -253,7 +252,6 @@ class TestEachVersionIsReadAtItsOwnAddress:
         async def drive() -> tuple[str, str, bytes]:
             app = web.Application()
             state = MagicMock()
-            state._restricted_keys = set()
             state._sessions = {}
             app["state"] = state
             register_artifact_routes(app)

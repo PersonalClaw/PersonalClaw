@@ -85,7 +85,6 @@ def _editing(enabled: bool):
 
 def _state() -> MagicMock:
     state = MagicMock()
-    state._restricted_keys = set()
     state._sessions = {}
     return state
 

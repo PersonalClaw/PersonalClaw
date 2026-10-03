@@ -66,7 +66,6 @@ def _files_app() -> web.Application:
 
     app = web.Application()
     state = MagicMock()
-    state._restricted_keys = set()
     state._sessions = {}
     app["state"] = state
     app.router.add_get("/api/file-read", api_file_read)
@@ -533,7 +532,6 @@ def test_writing_back_a_listed_fact_keeps_its_hidden_key(tmp_path, monkeypatch):
     vs.set_semantic.return_value = None
     state = MagicMock()
     state.context_builder.memory.vector_store = vs
-    state._restricted_keys = set()
 
     listed = MagicMock()
     listed.app = {"state": state}

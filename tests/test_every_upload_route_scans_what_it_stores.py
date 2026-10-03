@@ -185,7 +185,6 @@ def _artifact(tmp_path, monkeypatch) -> SimpleNamespace:
     first = b"%PDF-1.4\n% the list as it was\n%%EOF\n"
     art = provider.create_binary(name="Shopping", data=first, mime=pdf, kind="pdf", actor="agent")
     state = MagicMock()
-    state._restricted_keys = set()
     state._sessions = {}
     app = web.Application()
     app["state"] = state

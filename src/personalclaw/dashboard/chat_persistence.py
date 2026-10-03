@@ -532,10 +532,7 @@ def _rehydrate_session_from_history(
         session.last_activity_at = float(_la)
     if meta.get("never_archive"):
         session.never_archive = True
-    mm = meta.get("memory_mode", "persistent")
-    session.memory_mode = mm
-    if mm != "persistent":
-        state._restricted_keys.add(f"dashboard:{session_name}")
+    session.memory_mode = meta.get("memory_mode", "persistent")
     if meta.get("forked_from") is not None:
         session.forked_from = meta["forked_from"]
     # Restore the persisted side-chat buffer (transcript only; settled state).
@@ -719,10 +716,7 @@ def restore_recent_sessions(
             session.last_activity_at = float(_la)
         if meta.get("never_archive"):
             session.never_archive = True
-        mm = meta.get("memory_mode", "persistent")
-        session.memory_mode = mm
-        if mm != "persistent":
-            state._restricted_keys.add(f"dashboard:{session_name}")
+        session.memory_mode = meta.get("memory_mode", "persistent")
         if meta.get("forked_from") is not None:
             session.forked_from = meta["forked_from"]
         _side_meta = meta.get("side")

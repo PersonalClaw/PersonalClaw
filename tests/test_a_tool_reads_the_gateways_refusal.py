@@ -3,8 +3,8 @@
 ``urlopen`` raises on every 4xx and 5xx, and ``mcp_core``'s helpers answered with ``str()`` of
 that: "HTTP Error 403: Forbidden". The route's own sentence, which says why and what to do, never
 reached the tool. Computer use rendered "HTTP Error 403: Forbidden" where its refusal composes
-WHAT, WHY and FIX for the model, and the lesson tool's advice for an unknown session could never
-fire. Driven here through a real loopback server, so ``urlopen`` raises what it raises.
+WHAT, WHY and FIX for the model, and the lesson tool could never say why a lesson was not saved.
+Driven here through a real loopback server, so ``urlopen`` raises what it raises.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from personalclaw import mcp_core
+from personalclaw import mcp_core, memory_writes
 from personalclaw.computer_use import tools as computer_tools
 from personalclaw.http_errors import json_error
 
@@ -35,7 +35,7 @@ _REFUSAL = json_error(
 _ANSWERS: dict[str, tuple[int, bytes]] = {
     computer_tools.DISPATCH_PATH: (_REFUSAL.status, _REFUSAL.body),
     "/structured": (_REFUSAL.status, _REFUSAL.body),
-    "/api/lessons": (400, json.dumps({"error": "unknown session"}).encode()),
+    "/api/lessons": (403, json.dumps({"error": memory_writes.REFUSAL}).encode()),
     "/sentence": (400, json.dumps({"ok": False, "error": "unknown session"}).encode()),
     "/nameless": (409, json.dumps({"ok": False, "refused": "It is already running."}).encode()),
     "/not-json": (502, b"<html>Bad Gateway</html>"),
@@ -123,10 +123,12 @@ def test_computer_use_renders_the_refusal_the_dispatch_composed(gateway):
     assert "HTTP Error 403" not in text
 
 
-def test_the_lesson_tool_explains_a_session_the_gateway_does_not_know(gateway):
+def test_the_lesson_tool_says_why_the_gateway_refused_the_lesson(gateway):
     from personalclaw import mcp_memory
+    from personalclaw.tool_providers.base import ToolFailure
 
     out = mcp_memory._call_tool_inner(
         "memory_remember", {"rule": "Answer in French.", "category": "preference"}
     )
-    assert out.startswith("Lesson was NOT saved: this session is not recognised"), out
+    assert isinstance(out, ToolFailure), "a lesson that was not saved is a failure, not a reply"
+    assert out == f"Error: {memory_writes.REFUSAL}", out

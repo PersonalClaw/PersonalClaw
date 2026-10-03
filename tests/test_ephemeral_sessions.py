@@ -12,6 +12,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw import memory_writes
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
@@ -101,34 +102,35 @@ class TestSessionCreation:
         state = _make_state(tmp_path)
         session = state.get_or_create_session("e1", memory_mode="incognito")
         assert session.memory_mode == "incognito"
-        assert "dashboard:e1" in state._restricted_keys
+        assert memory_writes.blocks_memory_writes("dashboard:e1", state=state)
 
     def test_get_or_create_session_temporary(self, tmp_path):
         state = _make_state(tmp_path)
         session = state.get_or_create_session("t1", memory_mode="temporary")
         assert session.memory_mode == "temporary"
-        assert "dashboard:t1" in state._restricted_keys
+        assert memory_writes.blocks_memory_writes("dashboard:t1", state=state)
 
     def test_get_or_create_session_persistent(self, tmp_path):
         state = _make_state(tmp_path)
         session = state.get_or_create_session("n1")
         assert session.memory_mode == "persistent"
-        assert "dashboard:n1" not in state._restricted_keys
+        assert not memory_writes.blocks_memory_writes("dashboard:n1", state=state)
 
     @pytest.mark.asyncio
-    async def test_restricted_key_cleaned_on_session_delete(self, tmp_path, monkeypatch):
+    async def test_restricted_mode_cleaned_on_session_delete(self, tmp_path, monkeypatch):
+        """A deleted Incognito chat leaves nothing that restricts a new chat of the same name."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         state.get_or_create_session("reuse", memory_mode="incognito")
-        assert "dashboard:reuse" in state._restricted_keys
+        assert memory_writes.blocks_memory_writes("dashboard:reuse", state=state)
 
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.delete("/api/chat/sessions/reuse")
             assert resp.status == 200
 
-        assert "dashboard:reuse" not in state._restricted_keys
         session = state.get_or_create_session("reuse")
         assert session.memory_mode == "persistent"
+        assert not memory_writes.blocks_memory_writes("dashboard:reuse", state=state)
 
     def test_get_or_create_session_memory_mode_mismatch_raises(self, tmp_path):
         state = _make_state(tmp_path)
@@ -206,7 +208,7 @@ class TestRestore:
         assert restored >= 1
         assert "e1" in state2._sessions
         assert state2._sessions["e1"].memory_mode == "incognito"
-        assert "dashboard:e1" in state2._restricted_keys
+        assert memory_writes.blocks_memory_writes("dashboard:e1", state=state2)
 
 
 # ── User-initiated resume from History tab ──
@@ -233,7 +235,7 @@ class TestResumeFromHistory:
         assert data["ok"] is True
         assert data["memory_mode"] == "incognito"
         assert state._sessions["e1"].memory_mode == "incognito"
-        assert "dashboard:e1" in state._restricted_keys
+        assert memory_writes.blocks_memory_writes("dashboard:e1", state=state)
 
     @pytest.mark.asyncio
     async def test_a_temporary_chat_whose_session_ended_is_not_resumed(self, tmp_path, monkeypatch):
@@ -248,11 +250,12 @@ class TestResumeFromHistory:
 
         assert resp.status == 404
         assert "t1" not in state._sessions
-        assert "dashboard:t1" not in state._restricted_keys
+        # Nothing records it any more, so its work keeps nothing, as an ended Temporary chat's.
+        assert memory_writes.blocks_memory_writes("dashboard:t1", state=state)
         assert not state.conversation_log.has_log("t1")
 
     @pytest.mark.asyncio
-    async def test_resume_persistent_leaves_restricted_keys_empty(self, tmp_path, monkeypatch):
+    async def test_resume_persistent_keeps_memory(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         _write_session(state.conversation_log, "p1", [("user", "hi")])
@@ -263,7 +266,7 @@ class TestResumeFromHistory:
 
         assert data["memory_mode"] == "persistent"
         assert state._sessions["p1"].memory_mode == "persistent"
-        assert "dashboard:p1" not in state._restricted_keys
+        assert not memory_writes.blocks_memory_writes("dashboard:p1", state=state)
 
     @pytest.mark.asyncio
     async def test_resume_missing_memory_mode_defaults_persistent(self, tmp_path, monkeypatch):
@@ -359,7 +362,7 @@ class TestSessionAPI:
         assert data["memory_mode"] == "incognito"
         session_key = data["key"]
         assert state._sessions[session_key].memory_mode == "incognito"
-        assert f"dashboard:{session_key}" in state._restricted_keys
+        assert memory_writes.blocks_memory_writes(f"dashboard:{session_key}", state=state)
 
     @pytest.mark.asyncio
     async def test_create_persistent_session_via_api(self, tmp_path, monkeypatch):
@@ -447,7 +450,10 @@ class TestLessonsGate:
             assert resp.status == 400
 
     @pytest.mark.asyncio
-    async def test_learn_add_rejected_for_unknown_session(self, tmp_path, monkeypatch):
+    async def test_learn_add_refused_for_unknown_session(self, tmp_path, monkeypatch):
+        """A chat the gateway does not hold and nothing records is one whose mode nothing can
+        say (a Temporary chat that has ended): its work keeps nothing, so it is refused as any
+        write such work makes is."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
 
@@ -457,27 +463,8 @@ class TestLessonsGate:
                 json={"rule": "remember this", "category": "knowledge"},
                 headers={"X-Session-Key": "dashboard:deleted-session"},
             )
-            assert resp.status == 400
-
-    @pytest.mark.asyncio
-    async def test_learn_add_blocked_by_session_fallback_on_restricted_key_desync(
-        self, tmp_path, monkeypatch
-    ):
-        """Defense-in-depth: even if _restricted_keys loses the key, the session's own flag blocks writes."""  # noqa: E501
-        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        state = _make_state(tmp_path)
-        state.get_or_create_session("e1", memory_mode="incognito")
-        state._restricted_keys.discard("dashboard:e1")
-
-        async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await client.post(
-                "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
-                headers={"X-Session-Key": "dashboard:e1"},
-            )
             assert resp.status == 403
-            data = await resp.json()
-            assert "not allowed" in data["error"]
+            assert (await resp.json())["error"] == memory_writes.REFUSAL
 
     @pytest.mark.asyncio
     async def test_learn_add_allowed_for_browser_ui_despite_restricted_session(
@@ -661,7 +648,9 @@ class TestSessionRecovery:
     """memory_remember must accept keys whose session was evicted from memory but whose
     JSONL file still exists in ~/.personalclaw/sessions/ — this covers the long-lived
     Slack thread / reopened dashboard tab cases where the MCP subprocess holds a
-    stale PERSONALCLAW_SESSION_KEY env var that maps to a swept session.
+    stale PERSONALCLAW_SESSION_KEY env var that maps to a swept session. The transcript is
+    one of the records the one reader of a session's mode reads, so it says the chat keeps
+    memory when the gateway no longer holds the chat.
     """
 
     def _write_sessions_jsonl(self, tmp_path, stem: str) -> None:
@@ -718,8 +707,9 @@ class TestSessionRecovery:
             assert resp.status == 200
 
     @pytest.mark.asyncio
-    async def test_learn_add_still_rejected_when_no_jsonl_exists(self, tmp_path, monkeypatch):
-        """Forged/stale keys with no backing JSONL are still rejected as unknown."""
+    async def test_learn_add_still_refused_when_no_jsonl_exists(self, tmp_path, monkeypatch):
+        """Forged/stale keys with no backing JSONL are still refused: nothing records such a
+        chat, so nothing can say its mode, and its work keeps nothing."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         state = _make_state(tmp_path)
@@ -732,30 +722,28 @@ class TestSessionRecovery:
                 json={"rule": "remember this", "category": "knowledge"},
                 headers={"X-Session-Key": "dashboard:forged-key"},
             )
-            assert resp.status == 400
+            assert resp.status == 403
             data = await resp.json()
-            assert data["error"] == "unknown session"
+            assert data["error"] == memory_writes.REFUSAL
 
     @pytest.mark.asyncio
     async def test_learn_add_rejects_path_traversal_in_session_name(self, tmp_path, monkeypatch):
-        """Defence-in-depth: session names with path separators, null bytes, or
-        leading dots are rejected even when a matching file happens to exist
-        at the resolved traversal target. This proves the guard itself blocks
-        the request — without creating the target files, the test would pass
-        even if the guard were removed because ``Path.exists()`` would return
-        ``False`` for the missing file."""
+        """Defence-in-depth: a session name with path separators or a null byte never makes the
+        route read a file outside the sessions folder, even when a transcript that would let the
+        write through exists at the resolved traversal target. Every reader of a session's mode
+        names its transcript through ``history.session_path``, which maps any key to a file
+        directly in that folder, so such a key names a chat nothing records, and is refused.
+        Without the seeded targets the test would pass even if a reader followed the path."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         state = _make_state(tmp_path)
         sess_dir = tmp_path / ".personalclaw" / "sessions"
         sess_dir.mkdir(parents=True, exist_ok=True)
 
-        # Seed files at every resolved traversal target so that the guard —
-        # NOT the missing-file fallback — is what rejects each request.
+        # Seed a transcript that records no restricted mode (one a write would pass on) at every
+        # resolved traversal target, so that only never reading it refuses each request.
         # "../escape" → sess_dir/../escape.jsonl → ~/.personalclaw/escape.jsonl
         (tmp_path / ".personalclaw" / "escape.jsonl").write_text("{}\n")
-        # ".hidden" → sess_dir/.hidden.jsonl
-        (sess_dir / ".hidden.jsonl").write_text("{}\n")
         # "a/b" → sess_dir/a/b.jsonl
         sub = sess_dir / "a"
         sub.mkdir(parents=True, exist_ok=True)
@@ -763,18 +751,16 @@ class TestSessionRecovery:
         # "a\\b" (Windows path separator) → nominally sess_dir/a\b.jsonl.
         # Create a literal single-filename entry with an embedded backslash
         # so that, on Linux, a JSONL with that exact name exists — proving
-        # the guard rejects backslash independent of platform behaviour.
+        # the reader never names it, independent of platform behaviour.
         (sess_dir / "a\\b.jsonl").write_text("{}\n")
 
         async with TestClient(TestServer(_make_app(state))) as client:
-            # These keys must be *rejected* — either by the server guard
-            # (status 400) or by aiohttp's own header validation before the
-            # request ever reaches the server (ValueError on newline / CR
-            # / null byte). Both outcomes prove the traversal attempt is
-            # blocked end-to-end.
+            # These keys must be *refused* — by the route (403: no record of the chat) or by
+            # aiohttp's own header validation before the request ever reaches the server
+            # (ValueError on newline / CR / null byte). Both outcomes prove the traversal
+            # attempt is blocked end-to-end.
             for bad_key in (
                 "dashboard:../escape",
-                "dashboard:.hidden",
                 "dashboard:a/b",
                 "dashboard:a\\b",
             ):
@@ -783,7 +769,7 @@ class TestSessionRecovery:
                     json={"rule": "x", "category": "knowledge"},
                     headers={"X-Session-Key": bad_key},
                 )
-                assert resp.status == 400, f"path-traversal attempt passed: {bad_key!r}"
+                assert resp.status == 403, f"path-traversal attempt passed: {bad_key!r}"
 
             # Null byte: blocked at transport level. Older aiohttp raises
             # ValueError client-side; newer versions reject at the HTTP parser
@@ -797,43 +783,15 @@ class TestSessionRecovery:
                     json={"rule": "x", "category": "knowledge"},
                     headers={"X-Session-Key": "dashboard:bad\x00key"},
                 )
-                assert resp.status == 400, "null byte header reached handler"
+                assert resp.status == 403, "null byte header reached handler"
             except (ValueError, aiohttp.ServerDisconnectedError, aiohttp.ClientConnectionError):
                 pass  # transport-level rejection — acceptable
-
-    def test_session_has_persisted_history_unit(self, tmp_path, monkeypatch):
-        """Direct unit test for the helper."""
-        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-        from personalclaw.dashboard.handlers._shared import _session_has_persisted_history
-
-        assert _session_has_persisted_history("1776000000.123456") is False
-        assert _session_has_persisted_history("") is False
-        assert _session_has_persisted_history("../escape") is False
-        assert _session_has_persisted_history(".hidden") is False
-        assert _session_has_persisted_history("a\\b") is False
-        assert _session_has_persisted_history("bad\x00key") is False
-
-        sess_dir = tmp_path / ".personalclaw" / "sessions"
-        sess_dir.mkdir(parents=True, exist_ok=True)
-        (sess_dir / "1776000000.123456.jsonl").write_text("{}\n")
-        assert _session_has_persisted_history("1776000000.123456") is True
-
-        # dashboard_ prefix fallback
-        (sess_dir / "dashboard_chat-1.jsonl").write_text("{}\n")
-        assert _session_has_persisted_history("chat-1") is True
-
-        # Even if a file exists at a traversal-style path, the guard still
-        # rejects it — this is what actually proves defence-in-depth.
-        (sess_dir / ".hidden.jsonl").write_text("{}\n")
-        assert _session_has_persisted_history(".hidden") is False
-        (sess_dir / "a\\b.jsonl").write_text("{}\n")
-        assert _session_has_persisted_history("a\\b") is False
 
     # ── Audit events on positive-match paths (security-controls rule) ──
 
     @pytest.mark.asyncio
     async def test_learn_add_audits_live_session_allow_path(self, tmp_path, monkeypatch):
-        """Live in-memory session → audit event with resources='live_session'."""
+        """Live in-memory session → audit event naming the chat the lesson is filed under."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         monkeypatch.setattr(
@@ -858,25 +816,20 @@ class TestSessionRecovery:
             operation="memory_remember",
             outcome="allowed",
             source="dashboard",
-            resources="live_session",
+            resources="dashboard:live1",
         )
 
     @pytest.mark.asyncio
-    async def test_learn_add_audits_restricted_key_allow_path(self, tmp_path, monkeypatch):
-        """Key present in _restricted_keys → audit event with resources='restricted_key'.
-
-        Restricted keys are blocked *later* in the handler by the
-        ``_is_restricted_session`` guard (403), but the session-scope check
-        itself permits them through — that positive-match decision must be
-        audited for the security-controls rule even though the downstream
-        write is denied.
+    async def test_learn_add_audits_restricted_session_deny_path(self, tmp_path, monkeypatch):
+        """A restricted session's lesson → one decision, audited as a denial
+        ('restricted_session_block', with the reason the 403 gives), and no allow row: the
+        security-controls rule asks that every permission decision emits a SEL event, and the
+        route makes this one exactly once.
         """
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         state = _make_state(tmp_path)
-        # Populate _restricted_keys without a live session so in_sessions=False
-        # and in_restricted=True on the guard.
-        state._restricted_keys.add("dashboard:r1")
+        state.get_or_create_session("r1", memory_mode="incognito")
 
         with patch("personalclaw.dashboard.handlers.schedule._sel") as mock_sel:
             async with TestClient(TestServer(_make_app(state))) as client:
@@ -885,21 +838,23 @@ class TestSessionRecovery:
                     json={"rule": "x", "category": "knowledge"},
                     headers={"X-Session-Key": "dashboard:r1"},
                 )
-                # Downstream _is_restricted_session still blocks the write
-                # with 403, but the session-scope allow decision fires first.
-                assert resp.status in (200, 403)
+                assert resp.status == 403
 
         mock_sel().log_api_access.assert_any_call(
             caller="dashboard:r1",
             operation="memory_remember",
-            outcome="allowed",
+            outcome="denied",
             source="dashboard",
-            resources="restricted_key",
+            resources="restricted_session_block",
+            error=memory_writes.REFUSAL,
         )
+        outcomes = [c.kwargs.get("outcome") for c in mock_sel().log_api_access.call_args_list]
+        assert "allowed" not in outcomes
 
     @pytest.mark.asyncio
     async def test_learn_add_audits_channel_namespace_allow_path(self, tmp_path, monkeypatch):
-        """Key in the ``channel:`` namespace → audit event with resources='channel_namespace'."""
+        """Key in the ``channel:`` namespace → audit event naming the thread the lesson is filed
+        under."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         monkeypatch.setattr(
@@ -922,7 +877,7 @@ class TestSessionRecovery:
             operation="memory_remember",
             outcome="allowed",
             source="dashboard",
-            resources="channel_namespace",
+            resources="channel:C123:1777000000.000000",
         )
 
     @pytest.mark.asyncio

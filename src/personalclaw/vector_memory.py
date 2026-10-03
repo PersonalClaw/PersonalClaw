@@ -648,7 +648,8 @@ def _migrate_v12(db: sqlite3.Connection) -> None:
     """Record which session each record was derived from, in both record tables.
 
     ``source_session`` is the key of the session whose work wrote the row (a chat's transcript
-    key), stamped by the store from :func:`personalclaw.memory_writes.source_session`; ``NULL``
+    key; the chat's for its subagents' work), stamped by the store from
+    :func:`personalclaw.memory_writes.filed_under`; ``NULL``
     for a row no session's work wrote (the owner's own edit, an import, a maintenance pass). It is
     how everything a session left in memory can be found again by the session it came from.
 
@@ -1709,10 +1710,11 @@ class VectorMemoryStore(MemoryProvider):
         *,
         value_json: str | None = None,
     ) -> None:
-        """Emit an audit event for a validation rejection."""
+        """Record a validation rejection in the memory's history: a write that did not happen,
+        so no data-event trigger hears of it (:meth:`_record_event`)."""
         if code in _AUDITABLE_REJECT_CODES:
             snippet = (value_json if value_json is not None else str(value))[:200]
-            self._log_event(code.value, "semantic", key, None, snippet, source)
+            self._record_event(code.value, "semantic", key, None, snippet, source)
 
     # ── Semantic CRUD ──
 
@@ -1901,14 +1903,15 @@ class VectorMemoryStore(MemoryProvider):
 
         # 7. Conflict resolution
         existing = self.db.execute("SELECT * FROM semantic_memory WHERE key = ?", (key,)).fetchone()
+        replaces = bool(existing) and not existing["is_deleted"]
 
-        if existing and not existing["is_deleted"]:
+        if replaces:
             old_conf = existing["confidence"]
             if source in _HUMAN_AUTHORED_SOURCES:
                 pass  # the human always wins
             elif existing["source"] in _HUMAN_AUTHORED_SOURCES:
                 # Existing came from the human — only the human can overwrite it
-                self._log_event(
+                self._record_event(
                     "conflict_skip", "semantic", key, existing["value_json"], value_json, source
                 )
                 return "Existing entry set by user cannot be overwritten by automated source"
@@ -1917,7 +1920,7 @@ class VectorMemoryStore(MemoryProvider):
             elif abs(confidence - old_conf) < 0.1:
                 pass  # similar confidence → newer wins (same or different source)
             else:
-                self._log_event(
+                self._record_event(
                     "conflict_skip",
                     "semantic",
                     key,
@@ -1926,16 +1929,6 @@ class VectorMemoryStore(MemoryProvider):
                     source,
                 )
                 return f"Existing entry has higher confidence ({old_conf:.2f} vs {confidence:.2f})"
-            self._log_event(
-                "update",
-                "semantic",
-                key,
-                existing["value_json"],
-                value_json,
-                source,
-            )
-        else:
-            self._log_event("create", "semantic", key, None, value_json, source)
 
         # 8. Upsert
         now = _now_iso()
@@ -1973,11 +1966,12 @@ class VectorMemoryStore(MemoryProvider):
             row_weight = memory_holder.normalize_weight(
                 row_holder, weight if weight is not None else memory_holder.weight_cap(row_holder)
             )
-        # The session this write derives from, stamped like the contributor at the one statement
-        # that writes the row. Unlike the contributor it IS in the ON CONFLICT update: a fact a
-        # later session restates now comes from that session too, and a value is only ever
-        # rewritten by work that may write (memory_writes refuses the statement otherwise).
-        from_session = memory_writes.source_session() or None
+        # The session this write is filed under (a subagent's under the chat it works for),
+        # stamped like the contributor at the one statement that writes the row. Unlike the
+        # contributor it IS in the ON CONFLICT update: a fact a later session restates now comes
+        # from that session too, and a value is only ever rewritten by work that may write
+        # (memory_writes refuses the statement otherwise).
+        from_session = memory_writes.filed_under() or None
         self.db.execute(
             "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted, tier, contributor, holder, weight, source_session) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, 0, 'semantic', ?, ?, ?, ?) "
@@ -2003,9 +1997,15 @@ class VectorMemoryStore(MemoryProvider):
             ),
         )
         self.db.commit()
+        # Its history row, and the data-event triggers told of it, once the row is stored: work
+        # that may change nothing has its statement refused above, before anything hears of it.
+        if replaces:
+            self._log_event("update", "semantic", key, existing["value_json"], value_json, source)
+        else:
+            self._log_event("create", "semantic", key, None, value_json, source)
 
         # 9. Retire conflicting episodic entries that reference the old value
-        if existing and not existing["is_deleted"]:
+        if replaces:
             old_val = existing["value_json"]
             try:
                 old_text = json.loads(old_val) if isinstance(old_val, str) else str(old_val)
@@ -2514,18 +2514,11 @@ class VectorMemoryStore(MemoryProvider):
         new_value: str | None,
         source: str,
     ) -> None:
-        """Append to the audit trail, under the source the current work writes as
-        (``memory_writes.written_by``: an app's work is recorded as the app's)."""
-        source = memory_writes.written_by(source)
-        try:
-            self.db.execute(
-                "INSERT INTO memory_events (event_type, memory_type, memory_key, "
-                "old_value, new_value, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (event_type, memory_type, key, old_value, new_value, source, _now_iso()),
-            )
-            self.db.commit()
-        except Exception:
-            logger.debug("Failed to log memory event", exc_info=True)
+        """Record a change that is stored: its row in the audit trail (:meth:`_record_event`),
+        then the data-event triggers told of it. Called only once the change's own statement has
+        run, so a write the store refuses (work that may change nothing) never reaches a trigger.
+        A write that does not happen at all is recorded with :meth:`_record_event` alone."""
+        self._record_event(event_type, memory_type, key, old_value, new_value, source)
         # Notify data-event triggers (#38) — fires MemoryUpdate/KeyPattern/ContentMatch
         # triggers. Best-effort, never blocks or breaks a memory write.
         try:
@@ -2542,6 +2535,30 @@ class VectorMemoryStore(MemoryProvider):
             )
         except Exception:
             logger.debug("event-trigger emit failed", exc_info=True)
+
+    def _record_event(
+        self,
+        event_type: str,
+        memory_type: str,
+        key: str,
+        old_value: str | None,
+        new_value: str | None,
+        source: str,
+    ) -> None:
+        """Append to the audit trail, under the source the current work writes as
+        (``memory_writes.written_by``: an app's work is recorded as the app's). Alone, for a write
+        the store turned away (a conflict it skipped, a value it rejected): its history says it
+        was tried, and no trigger hears of a change that did not happen."""
+        source = memory_writes.written_by(source)
+        try:
+            self.db.execute(
+                "INSERT INTO memory_events (event_type, memory_type, memory_key, "
+                "old_value, new_value, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (event_type, memory_type, key, old_value, new_value, source, _now_iso()),
+            )
+            self.db.commit()
+        except Exception:
+            logger.debug("Failed to log memory event", exc_info=True)
 
     def get_events(self, limit: int = 50, offset: int = 0) -> list[dict]:
         """Return recent memory events with pagination."""
@@ -3433,7 +3450,7 @@ class VectorMemoryStore(MemoryProvider):
                             )
                             break
                         else:
-                            self._log_event(
+                            self._record_event(
                                 "conflict_skip",
                                 "episodic",
                                 existing_id if existing else "?",
@@ -3470,7 +3487,7 @@ class VectorMemoryStore(MemoryProvider):
                     importance,
                     now,
                     current_username() if contributor is None else contributor,
-                    memory_writes.source_session() or None,
+                    memory_writes.filed_under() or None,
                 ),
             )
             self.db.commit()

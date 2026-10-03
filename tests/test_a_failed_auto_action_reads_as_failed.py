@@ -529,7 +529,7 @@ def reply(monkeypatch: Any):
         return await handler(request)
 
     app = web.Application(middlewares=[as_owner])
-    app["state"] = SimpleNamespace(_restricted_keys=set(), _sessions={})
+    app["state"] = SimpleNamespace(_sessions={})
     app.router.add_post("/api/proactive/digest/reply", mod.api_proactive_reply)
 
     async def send(text: str) -> dict:

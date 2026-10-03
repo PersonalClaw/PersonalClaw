@@ -213,28 +213,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 return tool_failure("workspace name is required when scope='workspace'")
             payload["workspace"] = ws
         d = _post("/api/lessons", payload)
-        err_val = d.get("error")
-        if err_val:
-            # Map the backend session-scope error to a user-actionable
-            # message so the LLM can explain the situation instead of
-            # leaking an opaque HTTP 400 as a "transport failed" error.
-            # See api_lessons_create in dashboard/handlers/schedule.py: the
-            # "unknown session" response is returned when the X-Session-Key
-            # matches neither a live in-memory session, a restricted key, the
-            # channel: namespace, nor a persisted session JSONL — so the
-            # remaining cases are genuinely unrecognised keys (forged, or
-            # ephemeral/incognito sessions that never wrote to disk), not
-            # merely evicted real sessions.
-            if "unknown session" in str(err_val):
-                return (
-                    "Lesson was NOT saved: this session is not recognised "
-                    "by the gateway (no active session, restricted key, or "
-                    "persisted history found for this session key). Start "
-                    "a new channel thread or dashboard tab and re-state the "
-                    "lesson you want to save — it will not carry over "
-                    "from this session automatically."
-                )
-            return tool_failure(f"{err_val}")
+        # A refusal says why in the gateway's words: an Incognito or Temporary chat's work keeps
+        # nothing (a subagent's and a workflow step's included, judged by the chat they work for),
+        # and an app's keeps nothing unless the app was given your memory.
+        if d.get("error"):
+            return tool_failure(f"{d['error']}")
         return f"Saved lesson ({scope}): {rule}"
 
     if name == "memory_list":

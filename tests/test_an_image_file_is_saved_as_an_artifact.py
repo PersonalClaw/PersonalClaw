@@ -50,7 +50,6 @@ def _save(body: dict, headers: dict[str, str] | None = None) -> tuple[int, dict]
     async def drive() -> tuple[int, dict]:
         app = web.Application()
         state = MagicMock()
-        state._restricted_keys = set()
         state._sessions = {}
         app["state"] = state
         register_artifact_routes(app)
@@ -184,7 +183,6 @@ class TestOnlyAFileInAPlaceFilesOpensIsRead:
         async def drive() -> tuple[int, dict]:
             app = web.Application()
             state = MagicMock()
-            state._restricted_keys = set()
             state._sessions = {}
             app["state"] = state
             register_artifact_routes(app)

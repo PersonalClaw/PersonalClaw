@@ -162,20 +162,23 @@ class _Source:
 
 
 class _Whose:
-    """The app whose work a scope is (``""`` for yours) and why that app's work may change none of
-    your memory (``""`` when it may): found when first asked and kept for the work's whole length,
-    so work that writes nothing (most of a tool's calls) never looks."""
+    """Whose work a scope is: the app's (``""`` for yours), why that app's work may change none of
+    your memory (``""`` when it may), and the session at the top of the chain the work is done for
+    (``""`` when nothing says: the scope's own session then). Found when first asked and kept for
+    the work's whole length, so work that writes nothing (most of a tool's calls) never looks.
+    *find* answers ``(app, session the work is for)``."""
 
     __slots__ = ("_find", "_found")
 
-    def __init__(self, find: Callable[[], str]) -> None:
+    def __init__(self, find: Callable[[], tuple[str, str]]) -> None:
         self._find = find
-        self._found: tuple[str, str] | None = None
+        self._found: tuple[str, str, str] | None = None
 
-    def get(self) -> tuple[str, str]:
+    def get(self) -> tuple[str, str, str]:
         if self._found is None:
-            app = (self._find() or "").strip()
-            self._found = (app, _app_may_not_change(app))
+            app, works_for = self._find()
+            app = (app or "").strip()
+            self._found = (app, _app_may_not_change(app), (works_for or "").strip())
         return self._found
 
 
@@ -393,15 +396,14 @@ def derived_from(
     session_key: str,
     *aliases: str,
     memory_mode: str | None = None,
-    app: str | Callable[[], str] = "",
+    app: str = "",
 ) -> Iterator[None]:
     """Run the enclosed work as deriving from ``session_key``.
 
     ``aliases`` are other spellings of the same session's key (a chat's name and its transcript's
     key); the session is restricted when any of them is. ``memory_mode`` is the mode the caller
-    holds for it, if any. ``app`` is the app whose work it is (``""`` for yours), or a function
-    that finds it: it and whether it may change your memory are asked when the work first needs
-    them, once, for the work's whole length.
+    holds for it, if any. ``app`` is the app whose work it is (``""`` for yours): whether it may
+    change your memory is asked when the work first needs it, once, for the work's whole length.
 
     Scopes nest, and the innermost names the session the work is for: a pass that consolidates
     one session is that session's work wherever it was started from, and a long-lived loop that a
@@ -418,13 +420,20 @@ def derived_from(
         _SCOPE.reset(token)
 
 
-def _whose_of(app: str | Callable[[], str]) -> _Whose | None:
-    """The app a scope's work is for (:class:`_Whose`), from what its caller names: the app, a
-    function that finds it, or ``""`` for yours (``None``)."""
-    if callable(app):
-        return _Whose(app)
+def _whose_of(app: str = "", reach: "Callable[[], Reach] | None" = None) -> _Whose | None:
+    """Whose work a scope is (:class:`_Whose`), from what its caller names: *reach*, the walk that
+    finds the app and the chat at the top the work is done for (``memory_reads.reach_of``), else
+    the app (``""`` for yours: ``None``)."""
+    if reach is not None:
+        found = reach
+
+        def find() -> tuple[str, str]:
+            whose = found()
+            return whose.app, whose.keys[-1] if whose.keys else ""
+
+        return _Whose(find)
     named = (app or "").strip()
-    return _Whose(lambda: named) if named else None
+    return _Whose(lambda: (named, "")) if named else None
 
 
 def _source_blocks(source: _Source) -> bool:
@@ -459,11 +468,12 @@ def _app_may_not_change(app: str) -> str:
     return app_refusal(app, changing=True)
 
 
-def _whose() -> tuple[str, str]:
-    """The current work's app and why it may change none of your memory (:class:`_Whose`)."""
+def _whose() -> tuple[str, str, str]:
+    """The current work's app, why it may change none of your memory, and the session at the top it
+    is done for (:class:`_Whose`)."""
     source = _SCOPE.get()
     if source is None or source.whose is None:
-        return "", ""
+        return "", "", ""
     return source.whose.get()
 
 
@@ -547,22 +557,23 @@ def model_of(session_key: str) -> str:
 
 
 def _work_of(
-    session_key: str, memory_mode: str | None, app: str | Callable[[], str] = ""
+    session_key: str, memory_mode: str | None, reach: "Callable[[], Reach] | None" = None
 ) -> _Source:
     key = (session_key or "").strip()
-    return _Source((key,), memory_mode, model_of(key), whose=_whose_of(app))
+    return _Source((key,), memory_mode, model_of(key), whose=_whose_of(reach=reach))
 
 
 @contextmanager
 def as_work_of(
-    session_key: str, *, memory_mode: str | None = None, app: str | Callable[[], str] = ""
+    session_key: str, *, memory_mode: str | None = None, reach: "Callable[[], Reach] | None" = None
 ) -> Iterator[None]:
     """Run the enclosed work as the work of ``session_key`` away from that session's own turn: a
-    request its agent's tool makes (``dashboard/memory_write_gate``), a workflow run's work
-    (``workflows/run_start.run_context``). As :func:`derived_from` does, the app whose work it is
-    included, and when the session keeps nothing, on the one model its work stays on
-    (:func:`model_of`)."""
-    token = _SCOPE.set(_work_of(session_key, memory_mode, app))
+    request its agent's tool makes (``dashboard/memory_write_gate``). *reach* finds whose work it
+    is (``memory_reads.reach_of``), asked when the work first needs it: the app's, if an app's, and
+    the chat at the top it is done for, which what it writes is filed under (:func:`filed_under`).
+    When the session keeps nothing, it runs on the one model its work stays on (:func:`model_of`).
+    """
+    token = _SCOPE.set(_work_of(session_key, memory_mode, reach))
     try:
         yield
     finally:
@@ -784,13 +795,25 @@ def hand_on(
 
 
 def source_session() -> str:
-    """The session the current work derives from, or ``""`` outside any.
-
-    Stamped on every record the memory store writes, so what a session left in memory can always
-    be found by the session it came from.
-    """
+    """The session the current work derives from, or ``""`` outside any."""
     source = _SCOPE.get()
     return source.keys[0] if source is not None else ""
+
+
+def filed_under() -> str:
+    """The session a record the current work writes is filed under, ``""`` outside any work.
+
+    Stamped on every record the memory store writes (its ``source_session``), so what a session
+    left in memory can always be found by the session it came from. That is the chat at the top of
+    the chain the work is done for, when the work names one: a request a subagent makes is the
+    work it does for its chat, as a step's is for the chat that started its run, so what it keeps
+    is filed under that chat (``memory_reads.reach_of``, asked once for the work's whole length).
+    Otherwise it is the session the work derives from (:func:`source_session`).
+    """
+    source = _SCOPE.get()
+    if source is None:
+        return ""
+    return _whose()[2] or source.keys[0]
 
 
 # ── what an earlier version kept ────────────────────────────────────────────────────────────

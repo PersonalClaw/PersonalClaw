@@ -248,7 +248,6 @@ class _FakeState:
     def __init__(self) -> None:
         self.workflows = _RecordingSupervisor()
         self._sessions: dict[str, Any] = {}
-        self._restricted_keys: set[str] = set()
         self._sse = None
 
     def push_refresh(self, *kinds: str) -> None:

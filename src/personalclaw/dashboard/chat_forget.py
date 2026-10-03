@@ -155,7 +155,6 @@ def forget_temporary_chat(state: DashboardState, session: _ChatSession, *, why: 
 
     name = session.key
     state._sessions.pop(name, None)
-    state._restricted_keys.discard(f"dashboard:{name}")
     state._ephemeral_keys.discard(f"dashboard:{name}")
     history_key = persisted_history_key(state.conversation_log, name)
     files = temporary_attachments(state, history_key, session)

@@ -107,7 +107,6 @@ class TestIsRestrictedSession:
         from personalclaw.dashboard.state import _ChatSession
 
         state = MagicMock()
-        state._restricted_keys = set()
         state._sessions = {"chat-1-abc": _ChatSession(key="chat-1-abc", memory_mode="temporary")}
 
         assert _is_restricted_session(state, self._mock_request("dashboard:chat-1-abc")) is True
@@ -117,7 +116,6 @@ class TestIsRestrictedSession:
         from personalclaw.dashboard.state import _ChatSession
 
         state = MagicMock()
-        state._restricted_keys = set()
         state._sessions = {"chat-1-def": _ChatSession(key="chat-1-def")}
 
         assert _is_restricted_session(state, self._mock_request("dashboard:chat-1-def")) is False
@@ -128,7 +126,6 @@ class TestIsRestrictedSession:
         from personalclaw.dashboard.handlers import _is_restricted_session
 
         state = MagicMock()
-        state._restricted_keys = set()
         state._sessions = {}
 
         assert _is_restricted_session(state, self._mock_request("dashboard:chat-1-eph")) is True
@@ -140,7 +137,6 @@ class TestIsRestrictedSession:
         sr.mark_temporary("slack:C123-456")
 
         state = MagicMock()
-        state._restricted_keys = set()
         state._sessions = {}
 
         assert _is_restricted_session(state, self._mock_request("slack:C123-456")) is True
@@ -150,7 +146,6 @@ class TestIsRestrictedSession:
         from personalclaw.dashboard.handlers import _is_restricted_session
 
         state = MagicMock()
-        state._restricted_keys = set()
         assert _is_restricted_session(state, self._mock_request()) is False
 
     def test_dashboard_ui_key_not_restricted(self):
@@ -158,7 +153,6 @@ class TestIsRestrictedSession:
         from personalclaw.dashboard.handlers import _is_restricted_session
 
         state = MagicMock()
-        state._restricted_keys = set()
         assert _is_restricted_session(state, self._mock_request("dashboard:ui")) is False
 
     def teardown_method(self):
@@ -187,7 +181,6 @@ class TestMemoryRecallGuard:
         from personalclaw.dashboard.state import _ChatSession  # noqa: F401
 
         state = MagicMock()
-        state._restricted_keys = set()
         state._sessions = {session.key: session} if session else {}
         # Your own chat: no app started it, and no subagent works for it.
         state.session_creating_app.return_value = ""

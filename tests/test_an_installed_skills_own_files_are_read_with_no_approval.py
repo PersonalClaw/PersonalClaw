@@ -362,7 +362,6 @@ async def test_a_skills_file_the_agent_names_opens_where_she_reads_the_chat(home
 
     app = web.Application()
     state = MagicMock()
-    state._restricted_keys = set()
     state._sessions = {}
     app["state"] = state
     app.router.add_get("/api/file-read", api_file_read)

@@ -72,7 +72,6 @@ class _FakeState:
     def __init__(self) -> None:
         self.workflows = None
         self._sessions: dict[str, Any] = {}
-        self._restricted_keys: set[str] = set()
         self._sse = None
         self.refreshed: list[str] = []
 

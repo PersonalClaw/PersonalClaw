@@ -15,12 +15,15 @@ one whose conversation, agent, agent run or scheduled job the session names
 changes your memory only when the app holds the ``memory`` permission; otherwise the memory stores
 refuse the change and the 403 says why in the app's words, and with it what it writes names the app
 as its source. A request an app's own token makes with no session of its own is the app's work too.
+The same walk names the chat at the top the request's work is done for, which what it writes is
+filed under (``memory_writes.filed_under``): a subagent's lesson is its chat's.
 
 ``dashboard:ui`` is the dashboard's own pages acting for the owner, not a session.
 """
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -57,11 +60,9 @@ def memory_write_middleware() -> Any:
             return await handler(request)
         key = session_key or f"{memory_writes.APP_SOURCE_PREFIX}{token_app}"
         state = request.app.get("state")
+        whose = functools.partial(memory_reads.reach_of, state, key, app=token_app)
 
-        def whose() -> str:
-            return memory_reads.reach_of(state, key, app=token_app).app
-
-        with memory_writes.as_work_of(key, memory_mode=_mode_of(request, key), app=whose):
+        with memory_writes.as_work_of(key, memory_mode=_mode_of(request, key), reach=whose):
             try:
                 return await handler(request)
             except memory_writes.MemoryWriteRefused as refused:

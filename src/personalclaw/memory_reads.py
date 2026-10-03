@@ -34,7 +34,11 @@ turn are assembled with (memory, lessons, standing instructions, episodes, activ
 push reflex), the memory tools' routes (``memory_recall``, ``memory_list``, ``triage_rules_list``),
 ``get_context``'s memory tier and the Learning page's facts. ``chat_search`` asks it too: a
 Temporary chat's work searches no chat, and an app's searches only that app's conversations. The
-write scope asks it for the app whose work a request is (:mod:`personalclaw.memory_writes`).
+write scope asks it for the app whose work a request is and for the chat at the top that what the
+request writes is filed under (:mod:`personalclaw.memory_writes`), and the routes' guard of a
+change to memory asks it whether the work keeps anything (:attr:`Reach.restricted_mode`): work for
+a chat that keeps nothing keeps nothing, whatever its own key is marked, so a subagent's lesson is
+saved exactly where the chat it works for may keep one.
 
 A refusal is said in words (:attr:`Reach.refusal`), so a tool asked for a memory answers why there
 is none rather than "nothing found".
@@ -75,7 +79,10 @@ class Reach:
     own records say the work starts blank (:data:`TEMPORARY`, :data:`UNREADABLE`, or ``""``);
     ``refusal`` is why it reads none of your memory (``blank``, or the app's reason), ``""`` when it
     may; ``mode`` is the mode of the session the call is made for, as its own records read
-    (``memory_writes.session_mode``), ``None`` for work that is no chat's.
+    (``memory_writes.session_mode``), ``None`` for work that is no chat's; ``restricted_mode`` is
+    the strictest mode, as each one's own records read, of any session along ``keys`` that keeps
+    nothing (``"temporary"``, ``memory_writes.UNREADABLE``, ``"incognito"``), ``""`` when each keeps
+    memory or is no chat's: the work then keeps nothing either.
     """
 
     keys: tuple[str, ...] = ()
@@ -83,6 +90,7 @@ class Reach:
     blank: str = ""
     refusal: str = ""
     mode: str | None = None
+    restricted_mode: str = ""
 
     @property
     def reads(self) -> bool:
@@ -116,6 +124,7 @@ def reach_of(state: Any, caller: str, *, app: str = "") -> Reach:
         blank=blank,
         refusal=blank or app_refusal(app),
         mode=modes[0] if modes else None,
+        restricted_mode=_strictest_keeping_nothing(modes),
     )
 
 
@@ -220,3 +229,11 @@ def _blank(mode: str | None) -> str:
     if mode == "temporary":
         return TEMPORARY
     return UNREADABLE if mode == NOTHING_CAN_SAY else ""
+
+
+def _strictest_keeping_nothing(modes: list[str | None]) -> str:
+    """The strictest of *modes* that keeps nothing (:attr:`Reach.restricted_mode`), ``""`` when
+    none does."""
+    from personalclaw.memory_writes import UNREADABLE as NOTHING_CAN_SAY
+
+    return next((m for m in ("temporary", NOTHING_CAN_SAY, "incognito") if m in modes), "")

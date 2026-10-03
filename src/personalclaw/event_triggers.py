@@ -5,7 +5,8 @@ An event trigger is an ordinary row in the one trigger store (`triggers.json`) w
 **source-agnostic**: every event carries a ``source``, and a trigger only ever fires on
 events of its own source.
 
-Memory writes (``vector_memory._log_event``) — ``source="memory"``:
+Memory writes (``vector_memory._log_event``, once the write is stored: a write the store refuses
+or turns away is recorded in the memory's history and reaches no trigger) — ``source="memory"``:
 
 - **MemoryUpdate**     — any memory write (create/update/delete).
 - **MemoryKeyPattern** — a write whose key matches a glob (``project.acme.*``).

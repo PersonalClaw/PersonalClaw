@@ -16,17 +16,11 @@ import logging
 
 from aiohttp import web
 
-from personalclaw import memory_reads
+from personalclaw import memory_reads, memory_writes
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import MaskConflict, redact_values_for_display, stored_name
 
-from ._shared import (
-    _change_refused_for_the_app,
-    _get_memory,
-    _is_restricted_session,
-    _memory_refusal,
-    _session_has_persisted_history,
-)
+from ._shared import _change_refused_for_the_app, _get_memory, _memory_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +45,6 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     refused = _change_refused_for_the_app(state, request, "memory_remember")
     if refused is not None:
         return refused
-    # Block lesson writes from restricted (incognito/temporary/guest) sessions.
     sk = request.headers.get("X-Session-Key", "")
     if not sk:
         _sel().log_api_access(
@@ -62,85 +55,14 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             resources="missing_session_key",
         )
         return web.json_response({"error": "missing X-Session-Key"}, status=400)
-    if sk != "dashboard:ui":
-        session_name = sk.split(":", 1)[-1] if ":" in sk else sk
-        in_sessions = session_name in state._sessions
-        in_restricted = sk in state._restricted_keys
-        is_channel_ns = sk.startswith("channel:")
-        # Only consult the on-disk JSONL when the cheaper in-memory
-        # checks all fail. ``_session_has_persisted_history()`` performs
-        # synchronous filesystem I/O (up to two ``Path.exists()`` calls),
-        # so evaluating it eagerly on every ``memory_remember`` request would
-        # block the event loop on the common (live-session) path. Deferring
-        # it keeps the fallback semantics identical while making the
-        # happy path allocation-free.
-        if not (in_sessions or in_restricted or is_channel_ns):
-            if not _session_has_persisted_history(session_name):
-                # Session may have been evicted from memory (idle sweep,
-                # gateway restart) while the MCP subprocess keeps its
-                # original PERSONALCLAW_SESSION_KEY env var. Ephemeral
-                # (incognito/temporary) sessions never write JSONL, so
-                # the absence of a session JSONL here means the key
-                # genuinely does not belong to any established session.
-                _sel().log_api_access(
-                    caller=sk,
-                    operation="memory_remember",
-                    outcome="denied",
-                    source="dashboard",
-                    resources="unknown_session",
-                )
-                return web.json_response({"error": "unknown session"}, status=400)
-            # JSONL-fallback is the sole reason the call is permitted.
-            # Audit it as an allow decision so session-recovery
-            # authorization is traceable alongside the deny path above.
-            _sel().log_api_access(
-                caller=sk,
-                operation="memory_remember",
-                outcome="allowed",
-                source="dashboard",
-                resources="jsonl_fallback_recovery",
-            )
-        elif in_sessions:
-            # Live in-memory session — the common happy path. Audit so that
-            # every ``memory_remember`` permission decision on this branch is
-            # traceable (security-controls rule).
-            _sel().log_api_access(
-                caller=sk,
-                operation="memory_remember",
-                outcome="allowed",
-                source="dashboard",
-                resources="live_session",
-            )
-        elif in_restricted:
-            _sel().log_api_access(
-                caller=sk,
-                operation="memory_remember",
-                outcome="allowed",
-                source="dashboard",
-                resources="restricted_key",
-            )
-        else:  # is_channel_ns
-            _sel().log_api_access(
-                caller=sk,
-                operation="memory_remember",
-                outcome="allowed",
-                source="dashboard",
-                resources="channel_namespace",
-            )
-    else:
-        # Browser UI's static key — implicitly trusted, but the allow
-        # decision itself is still an authorization outcome and must be
-        # audited (security-controls rule: every permission decision
-        # emits a SEL event).
-        _sel().log_api_access(
-            caller=sk,
-            operation="memory_remember",
-            outcome="allowed",
-            source="dashboard",
-            resources="dashboard_ui",
-        )
-    if _is_restricted_session(state, request):
-        sk = request.headers.get("X-Session-Key", "")
+    # The lesson is the work of the session the key names, judged as the work it does for the chat
+    # at the top (`memory_reads.reach_of`): a subagent's or a workflow step's is saved where that
+    # chat keeps memory, and refused where anything on the way keeps nothing (an Incognito or
+    # Temporary chat, or one whose mode nothing can say: a chat the gateway does not hold that
+    # nothing records), whatever its own key is marked. What it writes is filed under that chat
+    # (`memory_writes.filed_under`). `dashboard:ui` is your own Memory page.
+    reach = memory_reads.reach_of(state, sk)
+    if reach.restricted_mode:
         logger.warning("Blocked memory_remember from restricted session %s", sk)
         _sel().log_api_access(
             caller=sk,
@@ -148,12 +70,16 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             outcome="denied",
             source="dashboard",
             resources="restricted_session_block",
-            error="Memory writes are not allowed in this session mode.",
+            error=memory_writes.REFUSAL,
         )
-        return web.json_response(
-            {"error": "Memory writes are not allowed in this session mode."},
-            status=403,
-        )
+        return web.json_response({"error": memory_writes.REFUSAL}, status=403)
+    _sel().log_api_access(
+        caller=sk,
+        operation="memory_remember",
+        outcome="allowed",
+        source="dashboard",
+        resources=reach.keys[-1] if reach.keys else "dashboard_ui",
+    )
     rule = body.get("rule", "").strip()
     if not rule:
         return web.json_response({"error": "rule is required"}, status=400)

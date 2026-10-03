@@ -1851,7 +1851,6 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
         keys={history_key, name, *([session.key] if session is not None else [])},
         attachments=temporary_attachments(state, history_key, session),
     )
-    state._restricted_keys.discard(f"dashboard:{name}")
     # Kill the per-tab session to free resources.
     await state.sessions.remove(history_key)
     state.push_sessions_update()
@@ -1957,8 +1956,6 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
                 state._sessions[name] = removed
                 failed.append(name)
                 continue
-            else:
-                state._restricted_keys.discard(f"dashboard:{name}")
         # Session cleanup is best-effort — history is already written
         try:
             await state.sessions.remove(_history_key_for(name))
@@ -2478,12 +2475,7 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
         from personalclaw.natural_voice import normalize_conversation_choice
 
         session.natural_voice = normalize_conversation_choice(meta["natural_voice"])
-    mm = meta.get("memory_mode", "persistent")
-    session.memory_mode = mm
-    if mm != "persistent":
-        state._restricted_keys.add(f"dashboard:{name}")
-    else:
-        state._restricted_keys.discard(f"dashboard:{name}")
+    session.memory_mode = meta.get("memory_mode", "persistent")
     if meta.get("forked_from") is not None:
         session.forked_from = meta["forked_from"]
     # Clear closed flag so session restores on next gateway restart. This is now the

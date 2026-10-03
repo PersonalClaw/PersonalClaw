@@ -171,7 +171,6 @@ def _app(store: VectorMemoryStore) -> web.Application:
     app = web.Application()
     app["state"] = MagicMock(
         _sessions={},
-        _restricted_keys=set(),
         context_builder=types.SimpleNamespace(memory=types.SimpleNamespace(vector_store=store)),
     )
     app.router.add_get("/api/healthz", api_healthz)

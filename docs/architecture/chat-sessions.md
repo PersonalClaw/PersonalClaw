@@ -84,6 +84,17 @@ chat, channel thread, loop worker, webhook, subagent).
   the consolidator runs no pass. With it, what the work writes names the app
   (`written_by`).
 
+  A change to memory that a subagent's or a workflow step's request makes is
+  judged the same way, as the work it does for the chat at the top. The routes'
+  guard of a memory change (`_is_restricted_session`, and the lesson route's own
+  check) refuses it when any session up the chain keeps nothing
+  (`Reach.restricted_mode`), whatever the caller's own key is marked, and what it
+  writes is filed under that chat (`memory_writes.filed_under`, found by the same
+  walk the middleware asks for the app). So a subagent's `memory_remember` saves
+  its lesson where its chat keeps memory, filed under the chat, and is refused in
+  the words every refused memory write uses (`memory_writes.REFUSAL`) where the
+  chat is Incognito or Temporary or nothing can say what it is.
+
   The agent's own search of your chats (`chat_search`, served by
   `GET /api/sessions/recall` over `chat_recall.py`) runs the same
   `session_search.search`, so it never finds a restricted chat either. It also
@@ -187,8 +198,10 @@ chat, channel thread, loop worker, webhook, subagent).
     channel's end of session, `personalclaw consolidate`, the consolidate
     request and the per-turn and idle passes all end in `_consolidate`.
   - Every record the memory store writes is stamped with the session it came
-    from (`source_session`), and at start the gateway removes every record a
-    restricted session left (`forget_what_restricted_sessions_left`): by that
+    from (`source_session`, `memory_writes.filed_under`: what a subagent's or a
+    step's request writes names the chat it works for), and at start the gateway
+    removes every record a restricted session left
+    (`forget_what_restricted_sessions_left`): by that
     stamp, an episodic row's `conversation_id`, a `consolidation:<key>` source or
     a session-scoped row's `scope_ref`, with its history events, links and
     vectors. A record that names no session (a persona note or a lesson an
