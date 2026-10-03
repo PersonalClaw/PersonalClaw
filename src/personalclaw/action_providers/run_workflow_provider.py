@@ -141,7 +141,7 @@ class RunWorkflowActionProvider(ActionProvider):
         provided = (action_config or {}).get("inputs") or {}
         if not isinstance(provided, dict):
             provided = {}
-        coerced, problem = start_problem(spec, provided)
+        coerced, problem = start_problem(spec, provided, name=name)
         if problem:
             # The workflow changed after this trigger was saved: the same sentence the form gave,
             # at the fire, and a USER failure — a retry sends the same inputs.
@@ -346,7 +346,7 @@ async def config_problem(action_config: dict[str, Any] | None) -> str:
     spec = _spec_of(definition)
     if not isinstance(spec, dict) or not spec.get("root"):
         return f"workflow {name!r} has no usable spec"
-    _coerced, problem = start_problem(spec, provided)
+    _coerced, problem = start_problem(spec, provided, name=name)
     return f"workflow {name!r}: {problem}" if problem else ""
 
 

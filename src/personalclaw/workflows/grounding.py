@@ -262,6 +262,7 @@ def _add_bindings(bundle: GroundingBundle) -> None:
         "siblings",
         "previous",
         "brief",
+        "run",
     ]
     bundle.pipes = sorted(PIPES)
 

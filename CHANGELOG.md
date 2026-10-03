@@ -183,6 +183,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Each deep-research run keeps its RESEARCH.md in its own folder, and its rounds, its judge and its Document panel all read that one file: a new run starts empty instead of from the last run's report, and continues an earlier run only when its `continue_from` input names it.**
 - **With several tool servers set up, the agent still sees every one of PersonalClaw's own tools: a turn's catalog names each of its groups, what it is for and all its tools first, your servers and apps share the room left, the tools your request is about first, and a last line says what was left out and that `tool_search` finds it. The catalog no longer runs past its size, and `tool_search` cuts its answer after leaving out what the run is not shown.**
 - **A call that did not run says why on its card, live and after a reload: the chat's mode, the shell denylist, a hook (one that blocked it after you allowed it too), or an unattended run with nobody to approve it. A call an agent CLI keeps failing the same way says so on its card, and a turn's footer says what fed it, what it learned and its telemetry the same live as after a reload.**
 - **An exit criterion an agent sends as `"met": "false"` stays unmet, so its task, and a loop waiting on that task, no longer close before the work is done. A plan step's `completed`, a task list's `repeatable` and a project run's `attended` sent as text are read as the word they spell too.**

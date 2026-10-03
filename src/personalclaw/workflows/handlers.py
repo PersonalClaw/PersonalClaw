@@ -84,6 +84,9 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # it is one value's TYPE that is wrong, which is a malformed request, not a failed validation
     # pass over a document.
     "WF_RUN_INPUT_TYPE": (400, "invalid_inputs"),
+    # 400 like its sibling: the request named a run this one cannot continue, which the caller
+    # fixes by naming another or leaving it blank to start fresh.
+    "WF_RUN_CONTINUATION_INVALID": (400, "invalid_inputs"),
     "WF_RUN_PREFLIGHT_FAILED": (422, "preflight_failed"),
     "WF_NO_SUPERVISOR": (503, "engine_unavailable"),
     "WF_RUN_LAUNCH_FAILED": (500, "launch_failed"),

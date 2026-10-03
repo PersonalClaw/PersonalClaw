@@ -60,6 +60,7 @@ function body(over: Partial<WorkflowRunDeliverable> = {}): WorkflowRunDeliverabl
     },
     roots: [{ kind: 'run_dir', path: '/tmp/home/workflows/runs/r1', exists: true }],
     instructed: false,
+    continued_from: null,
     ...over,
   }
 }
@@ -218,6 +219,63 @@ describe('a written document reads as a document', () => {
     expect(screen.getByText('research')).toBeTruthy()
     expect(screen.getByText('/srv/example/workspace')).toBeTruthy()
     expect(screen.queryByText(/read from this run’s run directory/)).toBeNull()
+  })
+
+  it('🔴 the document a run keeps in its own folder reads as its own, not as a copy', async () => {
+    // A research run hands its steps one path in its own documents folder and they write the
+    // state there, so there is no step and no folder to name: calling it a copy would send the user
+    // looking for a shared file that is not the run's.
+    payload = () =>
+      Promise.resolve(
+        body({
+          workflow: 'deep-research',
+          report: { ...present('RESEARCH.md', '# Findings'), found_in: 'kept' },
+          instructed: true,
+        }),
+      )
+    render(<DeliverablePanel runId="r1" />)
+    await waitFor(() => expect(screen.getByText('Findings')).toBeTruthy())
+    expect(screen.getByText(/read from this run’s own documents folder/)).toBeTruthy()
+    expect(screen.queryByText(/copy of what/)).toBeNull()
+  })
+})
+
+describe('a run that continues another says so', () => {
+  it('🔴 names the run it continued and that it started from a copy of its document', async () => {
+    // A document carried over from another run reads exactly like one this run wrote, so the
+    // panel says where this run started.
+    payload = () =>
+      Promise.resolve(
+        body({
+          workflow: 'deep-research',
+          report: { ...present('RESEARCH.md', '# Findings'), found_in: 'kept' },
+          continued_from: { run_id: 'b2663163', name: 'RESEARCH.md', carried: true },
+        }),
+      )
+    render(<DeliverablePanel runId="r1" />)
+    const line = await screen.findByText(/This run continues run/)
+    expect(line.textContent).toBe(
+      'This run continues run b2663163, and started from a copy of that run’s RESEARCH.md.',
+    )
+  })
+
+  it('and says it started from nothing when there was nothing to carry over', async () => {
+    payload = () =>
+      Promise.resolve(
+        body({ continued_from: { run_id: 'e8fa16ca', name: 'RESEARCH.md', carried: false } }),
+      )
+    render(<DeliverablePanel runId="r1" />)
+    const line = await screen.findByText(/This run continues run/)
+    expect(line.textContent).toBe(
+      'This run continues run e8fa16ca, and started from nothing: that run left no RESEARCH.md it could carry over.',
+    )
+  })
+
+  it('says nothing of the kind for a run that continues nothing', async () => {
+    payload = () => Promise.resolve(body({ report: present('REPORT.md', 'done') }))
+    render(<DeliverablePanel runId="r1" />)
+    await waitFor(() => expect(screen.getByText('done')).toBeTruthy())
+    expect(screen.queryByText(/This run continues run/)).toBeNull()
   })
 })
 

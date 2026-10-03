@@ -8,12 +8,20 @@ run routes, none served a document, and ``service.outbox`` — the closest thing
 artifacts*, which is a different noun (a run's document is a file its worker maintains in place; an
 artifact is something it deliberately published).
 
-Everything here is a READ over files the run already has, with one exception: a step that worked
-in a folder the run does not own (a project-less run's steps work in the shared workspace) leaves
-its documents there, so as it settles the run keeps a copy of what that step wrote in its own
-folder (:func:`keep_step_documents`) and the read serves the copy. Those copies, and the manifest
-that says whose they are, are the one thing this module writes: they sit in the run's own
-directory (:data:`KEPT_DIRNAME`) and go wherever it goes. No store and no new event kind.
+Everything here is a READ over files the run already has, with two exceptions, both in the run's
+own documents folder (:data:`KEPT_DIRNAME`), which goes wherever the run goes. No store and no new
+event kind.
+
+* **A run whose steps keep a document across steps keeps it there** (:func:`document_path`). A
+  template hands its steps that one absolute path (:data:`OWN_DOCUMENT_REF`), so every round, its
+  judge, the supervisor's check of the deliverable and the Document panel read the same file, and
+  no other run's. A run reads another run's document only when it was started to continue that run,
+  saying so in its inputs (:data:`CONTINUE_FROM_INPUT`): it then starts from a copy
+  (:func:`carry_over`), and the run it continued is left as it was.
+* **A step that worked in a folder the run does not own** (a project-less run's steps work in the
+  shared workspace) leaves the documents its task named there, so as it settles the run keeps a
+  copy of what that step wrote (:func:`keep_step_documents`) and the read serves the copy, with the
+  manifest that says whose it is.
 
 **THE MAPPING IS DRIVEN, NOT ASSERTED.** The filename does not live in a constant here. It is
 computed by walking ``loop_aliases`` FORWARD — every ``(kind, variant)`` pair the alias table
@@ -102,13 +110,30 @@ ABSENT_REASONS: frozenset[str] = frozenset(
 ROOT_WORKSPACE = "workspace"
 ROOT_RUN_DIR = "run_dir"
 
-#: The run's copies of documents its steps wrote in a folder the run does not own
-#: (:func:`keep_step_documents`), under its run dir. Last: a document in a root the run owns is the
-#: live one, and a copy is only ever what a step left.
+#: The run's own documents folder, under its run dir: the document its steps keep there
+#: (:func:`document_path`), and its copies of documents its steps wrote in a folder the run does
+#: not own (:func:`keep_step_documents`). Last for a run that keeps no document of its own: a
+#: document in a root the run owns is the live one, and a copy is only ever what a step left.
 ROOT_KEPT = "kept"
 KEPT_DIRNAME = "documents"
 #: Where each copy came from, beside the copies. A dot-name, which no keepable name can be.
 KEPT_MANIFEST = ".kept.json"
+
+#: The binding that hands a run's steps the absolute path of the document the run keeps in its own
+#: folder (``{{run.document}}``). A template that binds it keeps its document THERE: its steps are
+#: told that one path, the panel reads it, and a file of the same name anywhere else is not the
+#: run's document, so nothing copies one over it (:func:`keep_step_documents`).
+OWN_DOCUMENT_REF = "run.document"
+
+#: The run input that names the run this one continues. A run of a template that keeps its own
+#: document starts from a copy of that run's (:func:`carry_over`), and from nothing otherwise: a
+#: fork says it continues its parent here (``checkpoints.fork_run``), and a scheduled re-run that is
+#: meant to continue says so the same way. Read off the inputs, so the record of the run says it.
+CONTINUE_FROM_INPUT = "continue_from"
+
+#: The key in a run's ``extra`` recording what it continued: the run, the document, and whether a
+#: copy was made. Written once, before the first step, so a resume never copies twice.
+CONTINUED_KEY = "continued_from"
 
 #: Bytes of document served inline. A deliverable is a markdown document a human reads, and the
 #: panel renders it in one response — but a runaway worker can append forever, and an unbounded read
@@ -338,6 +363,142 @@ def resolve_name(workflow_name: str, spec: Any = None, run: Any = None) -> Resol
     return ResolvedName(name=source.name, reason="", source=source)
 
 
+# ── the document a run keeps in its own folder ───────────────────────────────
+
+
+def keeps_own_document(spec: Any) -> bool:
+    """Whether *spec*'s steps keep the run's document in the run's own folder: a binding in its
+    graph reads :data:`OWN_DOCUMENT_REF`."""
+    from personalclaw.workflows.bindings import refs_in
+
+    if not isinstance(spec, dict):
+        return False
+    return any(expr.split("|")[0].strip() == OWN_DOCUMENT_REF for expr in refs_in(spec.get("root")))
+
+
+def documents_dir(run_id: str) -> Path:
+    """The run's own documents folder (:data:`KEPT_DIRNAME`)."""
+    from personalclaw.workflows import store
+
+    return store.run_dir(run_id) / KEPT_DIRNAME
+
+
+def document_path(run: Any, spec: Any) -> str:
+    """The absolute path of the document *run* keeps in its own folder, or ``""`` for none.
+
+    The ONE path a run that keeps its document hands its steps (``{{run.document}}``), checks its
+    judge's pass against (:func:`kept_document_check`) and serves on its Document panel
+    (:func:`run_roots`), so all of them read the same file. Its name is the run's declared document
+    (:func:`resolve_name`), held to one plain file name; a run whose template binds the path and
+    declares no document keeps none, and the binding says so where it is read.
+    """
+    run_id = str(getattr(run, "id", "") or "")
+    if not run_id or not keeps_own_document(spec):
+        return ""
+    name = resolve_name(str(getattr(run, "workflow_name", "") or ""), spec, run).name
+    return str(documents_dir(run_id) / name) if keepable(name) else ""
+
+
+def kept_document_check(run: Any, spec: Any, check: Any) -> bool | None:
+    """The run's own check of a judge's pass of a run that keeps its document: whether the
+    document is there, when the judge declares ``artifact_exists`` (``judge_pretier``'s check).
+    ``None`` when the judge declares another check or the run keeps no document of its own."""
+    from personalclaw.workflows.judge_pretier import artifact_check
+
+    path = document_path(run, spec)
+    return artifact_check(check, path) if path else None
+
+
+def continues(run: Any) -> str:
+    """The id of the run *run* was started to continue (:data:`CONTINUE_FROM_INPUT`), or ``""``."""
+    inputs = getattr(run, "inputs", None)
+    return str(inputs.get(CONTINUE_FROM_INPUT) or "").strip() if isinstance(inputs, dict) else ""
+
+
+def continuation_inputs(parent: Any, spec: Any) -> dict[str, str]:
+    """What a fork of *parent* puts in its inputs to say it continues it: ``continue_from`` naming
+    the parent, for a template that keeps its own document, and nothing for any other. A fork
+    inherits the steps its parent finished, so its next step starts from the parent's document."""
+    if not keeps_own_document(spec):
+        return {}
+    return {CONTINUE_FROM_INPUT: str(getattr(parent, "id", "") or "")}
+
+
+def _earlier_run(parent_id: str, workflow_name: str) -> str:
+    """Why *parent_id* names no earlier run of *workflow_name*, or ``""`` when it does.
+
+    The one test both the start check and the carry make, because the id is a run's input and the
+    folder its document is read from is built from it: only a run the store holds, of the same
+    workflow, is ever read."""
+    from personalclaw.workflows import store
+
+    parent = store.get(parent_id)
+    if parent is None:
+        return f"there is no run {parent_id!r} to continue"
+    if parent.workflow_name != workflow_name:
+        return (
+            f"run {parent_id} is a run of {parent.workflow_name}, and a {workflow_name} run "
+            f"continues only an earlier {workflow_name} run"
+        )
+    return ""
+
+
+def continuation_refusal(workflow_name: str, spec: Any, inputs: Any) -> str:
+    """Why a run of *workflow_name* with *inputs* cannot continue the run they name, or ``""``.
+
+    Asked before a run that says it continues another is made, so a continuation that cannot happen
+    is refused in words rather than run as a fresh start that only claims to continue: the run must
+    exist, be a run of the same workflow, and have kept the document this one starts from.
+    """
+    parent_id = str((inputs or {}).get(CONTINUE_FROM_INPUT) or "").strip()
+    if not parent_id:
+        return ""
+    if not keeps_own_document(spec):
+        return (
+            f"{workflow_name} keeps no document of its own, so a run of it continues no other run"
+        )
+    if refused := _earlier_run(parent_id, workflow_name):
+        return refused
+    name = resolve_name(workflow_name, spec).name
+    data, info = _read_regular(documents_dir(parent_id) / name) if keepable(name) else (None, None)
+    if data is None or info is None:
+        return f"run {parent_id} kept no {name or 'document'} to continue from"
+    if info.st_size > KEEP_MAX_BYTES:
+        return f"run {parent_id}'s {name} is larger than a run can start from"
+    return ""
+
+
+def carry_over(run: Any, spec: Any) -> dict[str, Any] | None:
+    """Start a run that continues another from a copy of that run's document, once.
+
+    Returns the record to keep under :data:`CONTINUED_KEY`, or ``None`` when the run continues
+    nothing, keeps no document of its own, or already did this (a resume). The run it continues is
+    only read, never written: two runs continuing one each start from their own copy. A document
+    already at this run's path is never replaced, and a run it continues that kept no document (a
+    fork of a run that stopped before writing one) leaves this one starting from nothing, saying so.
+    The run it names is asked for again here, not trusted from the start check: a run that is not
+    an earlier run of this workflow (one deleted since) is never read, and this one starts from
+    nothing.
+    """
+    from personalclaw.atomic_write import atomic_write_bytes, ensure_private_dir
+
+    parent_id = continues(run)
+    extra = getattr(run, "extra", None)
+    target = document_path(run, spec)
+    if not parent_id or not target or not isinstance(extra, dict) or extra.get(CONTINUED_KEY):
+        return None
+    name = Path(target).name
+    if refused := _earlier_run(parent_id, str(getattr(run, "workflow_name", "") or "")):
+        logger.warning("run %s starts from nothing: %s", getattr(run, "id", ""), refused)
+        return {"run_id": parent_id, "name": name, "carried": False}
+    data, info = _read_regular(documents_dir(parent_id) / name)
+    carried = data is not None and info is not None and info.st_size <= KEEP_MAX_BYTES
+    if carried and data is not None and not Path(target).exists():
+        ensure_private_dir(Path(target).parent)
+        atomic_write_bytes(target, data)
+    return {"run_id": parent_id, "name": name, "carried": carried}
+
+
 # ── reading a document out of a run's roots ──────────────────────────────────
 
 
@@ -408,17 +569,27 @@ class Roots:
         return [r.to_dict() for r in self.entries]
 
 
-def run_roots(run: Any) -> Roots:
+def run_roots(run: Any, spec: Any = None) -> Roots:
     """Where a run's documents can be: its provisioned workspace, its own run dir, then the copies
     it kept of what its steps wrote anywhere else (:data:`ROOT_KEPT`, once there are any).
 
     Workspace-first mirrors ``loop/watchdog._deliverable_file`` exactly, and for the same measured
     reason: the brief directs a worker to write the document into the bound workspace when there is
     one, so resolving the run dir first finds nothing for every isolated run.
+
+    A run whose steps keep its document in its own documents folder (:func:`document_path`, read
+    off *spec*, the run's own) is read THERE first, and the folder is named before anything is in
+    it: that is the one place its steps were told to write, so it is where "not written yet" was
+    looked for.
     """
     from personalclaw.workflows import provisioning, store
 
     entries: list[Root] = []
+    run_id = str(getattr(run, "id", "") or "")
+    own = bool(run_id) and keeps_own_document(spec)
+    if own:
+        folder = str(documents_dir(run_id))
+        entries.append(Root(ROOT_KEPT, folder, _is_dir(folder)))
     try:
         workspace = str((provisioning.workspace_state(run) or {}).get("path", "") or "")
     except Exception:  # pragma: no cover — a malformed record must not 500 a read
@@ -426,12 +597,11 @@ def run_roots(run: Any) -> Roots:
         workspace = ""
     if workspace:
         entries.append(Root(ROOT_WORKSPACE, workspace, _is_dir(workspace)))
-    run_id = str(getattr(run, "id", "") or "")
     if run_id:
         path = str(store.run_dir(run_id))
         entries.append(Root(ROOT_RUN_DIR, path, _is_dir(path)))
-        kept = str(store.run_dir(run_id) / KEPT_DIRNAME)
-        if _is_dir(kept):
+        kept = str(documents_dir(run_id))
+        if not own and _is_dir(kept):
             # Only once something was kept: a folder the run has not needed is not a place anyone
             # should be told it looked.
             entries.append(Root(ROOT_KEPT, kept, True))
@@ -582,7 +752,9 @@ def keep_step_documents(
     What counts as this step's: a document the panel reads (:func:`document_names`) under an
     allowed name (``_KEEPABLE_RE``), a regular file directly in *folder* — never followed through a
     link, never a protected location — changed since the step started (*since*). A later step's
-    write replaces the copy, so the run keeps the document as its steps last left it.
+    write replaces the copy, so the run keeps the document as its steps last left it. The document
+    a run keeps in its own folder (:func:`document_path`) is never one of them: its steps were told
+    where it is, and a file of its name in a shared folder is some other run's.
 
     Returns the names kept. Never raises: a settle must not fail over a copy.
     """
@@ -601,22 +773,22 @@ def keep_step_documents(
 def _keep(run: Any, spec: Any, *, folder: str, since: float, step: str, now: float) -> list[str]:
     from personalclaw.atomic_write import atomic_json_write, atomic_write_bytes
     from personalclaw.security import is_sensitive_path
-    from personalclaw.workflows import store
 
     run_id = str(getattr(run, "id", "") or "")
     if not run_id or not folder or since <= 0:
         # With no start to measure from, nothing in a shared folder can be told to be this step's.
         return []
     source = Path(folder).resolve()
-    owned = {Path(r.path).resolve() for r in run_roots(run).entries if r.kind != ROOT_KEPT}
+    owned = {Path(r.path).resolve() for r in run_roots(run, spec).entries if r.kind != ROOT_KEPT}
     if source in owned:
         # A folder the run owns is read in place, and a copy of it would only go stale.
         return []
-    dest = store.run_dir(run_id) / KEPT_DIRNAME
+    dest = documents_dir(run_id)
+    own = Path(document_path(run, spec)).name
     kept: list[str] = []
     entries: dict[str, Any] | None = None
     for name in document_names(run, spec):
-        if not _KEEPABLE_RE.fullmatch(name):
+        if not _KEEPABLE_RE.fullmatch(name) or name == own:
             continue
         path = source / name
         if is_sensitive_path(str(path)):
@@ -694,14 +866,16 @@ def instructed_by_spec(spec: Any, name: str, inputs: Any = None) -> bool | None:
     reporting that as "the worker has not written it yet" would send a user to wait for something
     that is never coming.
 
-    ``deep-research`` is the ONE exception and the direction of travel: PP-16's research port made
-    ``RESEARCH.md`` the round loop's own carried state, so its prompts name the file, this returns
-    ``True`` for it, and the panel stops saying nothing asked. Each remaining per-kind port is
-    expected to move one more template out of the six — the count above is the honest measurement
-    of how far that has got, not a permanent property.
+    ``deep-research`` is the ONE exception and the direction of travel: porting the research kind
+    made ``RESEARCH.md`` the round loop's own carried state, so its prompts hand its steps the run's
+    own copy of it (:data:`OWN_DOCUMENT_REF`), this returns ``True`` for it, and the panel stops
+    saying nothing asked. Each remaining per-kind port is expected to move one more template out of
+    the six — the count above is the honest measurement of how far that has got, not a permanent
+    property.
 
     ``None`` when there is no name to look for, so "we did not check" stays distinct from "we
-    checked and it is not there". A substring scan over the serialized spec rather than a walk of
+    checked and it is not there". A spec that hands its steps the run's document path has asked for
+    it whatever the name. Otherwise a substring scan over the serialized spec rather than a walk of
     prompt fields: the name can legitimately appear in a node prompt, an action argument, a
     workspace setup step or a judge rubric, and a field-by-field walk would answer "no" for the
     ones it had not learned about yet. The spec's own :data:`DOCUMENT_KEY` is left out of the
@@ -709,6 +883,8 @@ def instructed_by_spec(spec: Any, name: str, inputs: Any = None) -> bool | None:
     """
     if not name:
         return None
+    if keeps_own_document(spec):
+        return True
     try:
         import json
 

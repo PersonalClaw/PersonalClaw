@@ -313,6 +313,10 @@ WF_ERROR_CODES: dict[str, str] = {
     ),
     "WF_RUN_MISSING_INPUTS": "The run request omits inputs the definition declares as required.",
     "WF_RUN_INPUT_TYPE": "One or more supplied inputs do not match their declared type.",
+    "WF_RUN_CONTINUATION_INVALID": (
+        "The run says it continues another (its `continue_from` input) and cannot: no such run, a "
+        "run of another workflow, a workflow that keeps no document, or a run that kept none."
+    ),
     "WF_RUN_PREFLIGHT_FAILED": (
         "Preflight found a blocking gap, so the run was refused before it started; the "
         "message carries the findings."
@@ -395,6 +399,10 @@ WF_ERROR_CODES: dict[str, str] = {
     ),
     "WF_MUT_NO_TARGET": "An op that edits a node names no `node_id`.",
     "WF_MUT_EMPTY_OVERRIDES": "A `set_input` op carries no overrides.",
+    "WF_MUT_START_ONLY_INPUT": (
+        "A `set_input` op changes `continue_from`, which a run reads only when it starts; start a "
+        "new run that continues the one meant instead."
+    ),
     "WF_MUT_INSERT_NO_NODE": "An `insert` op carries no `node` payload.",
     "WF_MUT_INSERT_BAD_NODE": "An `insert` op's `node` payload is not a valid node spec.",
     "WF_MUT_EMPTY_UPDATE": "An `update_node` op names no fields to change.",

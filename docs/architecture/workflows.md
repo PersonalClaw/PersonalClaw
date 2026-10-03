@@ -48,7 +48,7 @@ while not terminal:
 | `incident_hold.py` | incident mode's hold on a run: the stage in flight withdrawn as a pause withdraws it, nothing started while the switch is on, the status left `running` with the sentence its views show (`held`), and the run carrying on by itself once the switch is off |
 | `stage_settlement.py` | settling `stage` nodes, whose work runs in a spawned subagent the controller polls rather than awaits: the one out-of-band predicate, the settle, re-queueing after a restart, stopping on cancel and pause. A stage whose answer ignored its declared `schema` settles `failed` (`protocol`), naming what was asked for and what came (`engine.apply_declared_schema`, the same gate every node kind meets at the dispatch seam; a judge is held to its contract instead of every key); one whose time limit ended a wait for the owner's answer settles `timeout` with the typed reason the run's ending reads (`approval_timeout`). The owner's Allow of an attempt's start is kept on its instance (`approved_request`, `approved_at`), so the attempt a restart re-queues starts on it when it asks the same thing (`engine.stage_request_key`) within the step's time limit; a settle or a rewind drops it |
 | `step_dispatch.py` | running one node's dispatcher under its knobs: the retry correction and carried context on a copy of the node, the write-scope snapshot, `timeout_total` as a real kill, `success_when` |
-| `node_bindings.py` | the `BindingContext` a node's `{{…}}` resolve against, built per dispatch from durable run state: outputs, artifacts, `last`, `previous`, siblings, the Session Brief, the secret resolver |
+| `node_bindings.py` | the `BindingContext` a node's `{{…}}` resolve against, built per dispatch from durable run state: outputs, artifacts, `last`, `previous`, siblings, the Session Brief, the secret resolver, the run's own document path |
 | `iteration_context.py` | the handoff / carryover / decisions lifecycle across a loop's iterations: captured from an iteration's own output, journaled, rehydrated on resume, rendered into a fresh iteration's prompt; and the steering queued for the next iteration, taken at the boundary (`consume_steering`) |
 | `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
 | `declines.py` | a Deny of a call inside a `stage`: kept on the step (`NodeInstance.declined`, from `SubagentInfo.declined_calls`), the rest of its loop cycle not run, the cycle journaled `declined` and the loop waiting for its owner (a paused run, its sentence, one Inbox item) instead of running the next cycle into the same ask; her Resume carries her steering into that cycle. What the run page lists under "Declined by you" |
@@ -144,7 +144,7 @@ while not terminal:
 | `web_preview.py` | a run's localhost dev-server preview: fixed-argv `lsof`/`ss`/`ps` host-fact probes, port→pid→cwd attribution scoped to the run's own workspace, and the honest empty reason when no scanner exists |
 | `loop_run_map.py` | the `Loop`→`WorkflowRun` field map: every `Loop` field either maps to a run field, maps to a template input, or is listed as homeless — the checked starting point for retiring the second work-unit noun |
 | `loop_view.py` | the READ half of that map: a run started as a loop (`WorkflowRun.loop_kind`) projected back into the loop wire shape, so `GET /api/loops` lists every loop whatever backs it. The projected row carries `run_id` (the discriminator every surface routes by); a run's status, stop reason and error come from one mapping (`loop_ending`): a budget stop is `complete` with the budget it reached ("Ended early"), any other escalation `failed` + `worker_failed`, and the error is the run's ending; the cycle count is the root loop's distinct finished iterations and the budget is the one the engine stops at; and `RUN_ACTION_SOURCE_STATES` is the run's narrower action table (no resume from `failed`), railed equal to the frontend mirror |
-| `deliverable.py` | a run's DOCUMENT deliverable + working log, the run-side answer to `GET /api/loops/{id}/report`: the kind→filename resolution DERIVED by walking `loop_aliases` forward and asking each kind's own `deliverable_name` (never a constant here) unless the run was started to produce a named document (`run_document`, kept in the run's `extra` by a loop started with `document`) or its own spec states one (a top-level `"document"`: a filename, or `""` for none — `goal-pursuit-monitor` keeps none, since each wake is a fresh step with no directory of its own to keep a log in), the workspace-then-run-dir root order that mirrors `loop/watchdog._deliverable_file`, a confined + redacted read with a blob ceiling that bounds the redactor's quadratic unbroken-token cost, and a five-member NAMED absence vocabulary — unknown template, kind declares none, not written, no root, unreadable — because a blank panel cannot tell a finished verifiable goal from a slow worker. Carries no money field by design (issue #2566) |
+| `deliverable.py` | a run's DOCUMENT deliverable + working log, the run-side answer to `GET /api/loops/{id}/report`: the kind→filename resolution DERIVED by walking `loop_aliases` forward and asking each kind's own `deliverable_name` (never a constant here) unless the run was started to produce a named document (`run_document`, kept in the run's `extra` by a loop started with `document`) or its own spec states one (a top-level `"document"`: a filename, or `""` for none — `goal-pursuit-monitor` keeps none, since each wake is a fresh step with no directory of its own to keep a log in), the workspace-then-run-dir root order that mirrors `loop/watchdog._deliverable_file` (a run whose steps keep the document in its own documents folder, `{{run.document}}`, is read there first), the one path such a run hands its steps, its judge's check and its panel, and the copy a run that continues another starts from, a confined + redacted read with a blob ceiling that bounds the redactor's quadratic unbroken-token cost, and a five-member NAMED absence vocabulary — unknown template, kind declares none, not written, no root, unreadable — because a blank panel cannot tell a finished verifiable goal from a slow worker. Carries no money field by design (issue #2566) |
 
 ## Containers do not execute
 
@@ -251,6 +251,24 @@ rotting into a list of codes that no longer exist.
 is user- and model-authored text, and an expression language would make it a
 code-execution surface. An unknown pipe is *refused*, never ignored: a silently
 dropped sanitization pipe leaves a spec that looks sanitized and is not.
+
+`{{run.document}}` is the absolute path of the document the run keeps in its own
+documents folder (`deliverable.document_path`), for a template whose steps carry
+state in a file from step to step. A template that binds it keeps its document
+THERE: its steps are handed that one path and their file tools reach that folder
+and no other run's (`provisioning.step_documents`), the judge's declared
+`artifact_exists` check reads it, the Document panel serves it, and a file of
+the same name in a shared folder is never copied over it. A run reads another
+run's document only when its `continue_from` input names that run: it starts
+from a copy (`run_start.carry_over_document`, recorded as `continued_from` on
+the run), a fork says it continues its parent there on its own, and a start that
+names a run it cannot continue is refused (`WF_RUN_CONTINUATION_INVALID`; a
+subworkflow child is refused the same way, as its node's failure). The carry asks
+the store for that run again rather than trusting the start check, and reads only
+an earlier run of the same workflow. `continue_from` is read when the run starts,
+so an edit that would change it on a run that exists is refused
+(`WF_MUT_START_ONLY_INPUT`). A run that keeps no document has no `run` root, and a
+read of it says so.
 
 A pipe's arguments are **literals** — a quoted string, a number, `true`/`false` or
 `null` — so an argument can never name a variable. That makes `| default([])` not an
@@ -411,6 +429,9 @@ A finished run is one attempt and cannot be re-entered, so a retry is a
 **fork**, not a rewind: the child draft inherits only the steps that SUCCEEDED
 (their state, outputs and step records), and every other step starts `PENDING`
 at the same epoch, so starting the child re-runs exactly what did not finish.
+For a template that keeps its document in the run's own folder, the child's
+inputs say it continues its parent (`continue_from`), so the step it re-runs
+starts from a copy of the document the finished steps left.
 Effect records carry over whole, because the committed-effect boundary reads
 them and a fork cannot un-fire anything, and they are also what keeps a retried
 effect recognisable: `effects.effect_key` reuses the key of the newest same-epoch

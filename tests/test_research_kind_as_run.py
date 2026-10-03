@@ -44,6 +44,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -113,12 +114,19 @@ class _Info:
         self.agent = ""
 
 
+#: The one absolute path a `deep-research` prompt hands its step for the run's state document, on a
+#: line of its own (`{{run.document}}`).
+_STATE_PATH = re.compile(r"^(/\S+/RESEARCH\.md)$", re.MULTILINE)
+
+
 class _FakeSubagents:
     """Stands in for `SubagentManager` on `spawn` + `get`, exactly as `dispatch_stage` calls them.
 
     The result is chosen by reading the PROMPT, because `deep-research`'s three stages want three
     different JSON shapes. A fake that returned one canned string for all three would make the
-    judge's schema unreachable and the sweep's progress field untestable.
+    judge's schema unreachable and the sweep's progress field untestable. A sweep also does what a
+    real one does to the run's state: it writes the document at the path its prompt names, which
+    the judge's pass is then checked against.
     """
 
     def __init__(self) -> None:
@@ -154,6 +162,12 @@ class _FakeSubagents:
                 "sources_read": ["https://example.invalid/a"],
                 "open_subtopics": [],
             }
+            found = _STATE_PATH.search(prompt)
+            if found:
+                state = Path(found.group(1))
+                state.parent.mkdir(parents=True, exist_ok=True)
+                with state.open("a", encoding="utf-8") as fh:
+                    fh.write("## Sources read\n- https://example.invalid/a\n")
         info = _Info(f"sub{len(self.prompts)}", json.dumps(payload))
         self.infos[info.id] = info
         return info
@@ -256,6 +270,7 @@ def _drive(spec: dict[str, Any] | None = None) -> tuple[RunStatus, str, _FakeSub
                 "exit_condition": "every claim cites a fetched source",
                 "output_manner": "a one-page brief",
                 "source_budget": 0,
+                "continue_from": "",
             },
         )
     )

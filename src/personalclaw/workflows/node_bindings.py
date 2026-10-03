@@ -13,7 +13,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.knowledge import session_brief
-from personalclaw.workflows import store
+from personalclaw.workflows import deliverable, store
 from personalclaw.workflows.bindings import BindingContext, BindingError
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -92,6 +92,7 @@ def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
         secret_resolver=(
             _reference_kept if _config_reaches_a_model(ctl, item.node) else _secret_resolver
         ),
+        run_document=deliverable.document_path(ctl.run, ctl.spec),
     )
 
 

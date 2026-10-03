@@ -312,6 +312,7 @@ def _check_bindings(spec: dict[str, Any], nodes: list[dict], check: SelfCheck) -
         "siblings",
         "previous",
         "brief",
+        "run",
         "secret",
     }
     for expr in set(refs_in(spec)):

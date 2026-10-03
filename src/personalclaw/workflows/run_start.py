@@ -1,8 +1,9 @@
 """What a run binds before its first node.
 
 Called from `RunController._prepare`: the declared `workspace:`, the
-project's context dir as the memory cwd, and a restricted origin's memory posture.
-Each is idempotent, because `_prepare` runs again on every resume.
+project's context dir as the memory cwd, a restricted origin's memory posture, and the document a
+run that continues another starts from. Each is idempotent, because `_prepare` runs again on every
+resume.
 """
 
 from __future__ import annotations
@@ -169,6 +170,29 @@ def bind_project_memory_cwd(ctl: RunController) -> None:
     logger.info(
         "run %s: cwd bound to project context dir for memory locality (%s)", ctl.run.id, cwd
     )
+
+
+async def carry_over_document(ctl: RunController) -> None:
+    """Start a run that continues another (its `continue_from` input) from a copy of that run's
+    document, before its first step reads it (`deliverable.carry_over`).
+
+    Recorded on the run (`deliverable.CONTINUED_KEY`) the moment it is made, so a resume never
+    copies twice, the run's record says which run it continued, and the Document panel says so.
+    Best-effort like the rest of `_prepare`: a copy that fails leaves the run starting from nothing
+    and says so in the log, rather than refusing a run its start already admitted.
+    """
+    from personalclaw.workflows import deliverable
+
+    try:
+        record = deliverable.carry_over(ctl.run, ctl.spec)
+    except Exception:
+        logger.warning("run %s: could not carry its document over", ctl.run.id, exc_info=True)
+        return
+    if record is None:
+        return
+    async with ctl._lock:
+        ctl.run.extra[deliverable.CONTINUED_KEY] = record
+        ctl._save_run()
 
 
 def enforce_inherited_mode(ctl: RunController) -> None:

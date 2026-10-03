@@ -435,7 +435,14 @@ def _settled_stage_output(ctl: RunController, node: Node | None, text: str) -> N
     thing a stage may return, and that is its shape, not a fallback. A stage that declares one
     and answers outside it has not done its step, so it settles FAILED, naming what was asked for
     and what came (its envelope is kept for the inspector, never bound).
+
+    A judge's pass of a run that keeps its document is held to the run's own check of it
+    (`deliverable.kept_document_check`): the judge contract's declared `artifact_exists`, asked of
+    the one path the run handed its steps. A pass while that document is not there is a judge and
+    the run disagreeing, and the contract escalates it rather than letting the loop finish on it.
     """
+    from personalclaw.workflows import deliverable
+
     if node is None:
         return NodeResult(state=InstanceState.DONE, output={"result": text})
     cfg = node.config or {}
@@ -445,14 +452,20 @@ def _settled_stage_output(ctl: RunController, node: Node | None, text: str) -> N
 
         parsed = parse_llm_json(text)
     output: Any = parsed if isinstance(parsed, dict) else {"result": text}
+    hints = judge_hints_from_dict(
+        (ctl.spec.get("runtime_hints") or {}).get("judge")
+        if isinstance(ctl.spec.get("runtime_hints"), dict)
+        else None
+    )
     # Through the same helper the dispatch seam uses, so there is ONE definition of what a
     # validated verdict is — a second copy here would drift from the gate's.
     settled = apply_judge_contract(
         node,
         NodeResult(state=InstanceState.DONE, output=output),
-        judge_hints_from_dict(
-            (ctl.spec.get("runtime_hints") or {}).get("judge")
-            if isinstance(ctl.spec.get("runtime_hints"), dict)
+        hints,
+        fallback_result=(
+            deliverable.kept_document_check(ctl.run, ctl.spec, hints.fallback_check)
+            if cfg.get("judge_contract")
             else None
         ),
     )

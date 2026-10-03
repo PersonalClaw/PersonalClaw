@@ -190,6 +190,26 @@ holds the previous iteration in its transcript.
 Return them only when you have something to say. A fabricated handoff is worse
 than none — the next iteration would trust it.
 
+## A document the steps keep: `{{run.document}}`
+
+When the steps of a run carry state in a file from one round to the next (a
+report that grows, the sources already read), hand them `{{run.document}}`: the
+absolute path of the run's declared document (its kind's, or the template's own
+top-level `"document"`) in the run's own documents folder. Never a bare file
+name. A project-less run's steps work in the shared workspace every session
+defaults to, so a relative `NOTES.md` is one file that every run of the template
+reads and rewrites, and a step told only a name searches the disk for it. The
+judge, the judge's `artifact_exists` check and the Document panel read the same
+path, and the steps' file tools reach that folder and no other run's.
+
+A run starts with no document unless it continues another. An input named
+`continue_from` names the run whose document this one starts from a copy of;
+declare it, and let a prompt read it so the step knows where it started. A fork
+says it continues its parent there on its own, and a start that names a run it
+cannot continue is refused, as is a subworkflow node that does. It is read once,
+when the run starts, so an edit of a run that would change it is refused too.
+`deep-research` is the worked example.
+
 ## Concurrency
 
 `max_concurrency` on a `foreach` caps how many *items* are in flight. Set it when

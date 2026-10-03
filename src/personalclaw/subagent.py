@@ -2155,10 +2155,10 @@ class SubagentManager:
         # the run previews what WOULD happen with no side effects.
         if info.dry_run:
             extra_kwargs["dry_run"] = True
-        if info.may_read or info.may_change:
-            extra_kwargs["extra_tool_roots"] = [*info.may_read, *info.may_change]
-        from personalclaw.workflows.provisioning import step_reads
+        from personalclaw.workflows.provisioning import step_documents, step_reads
 
+        if roots := [*info.may_read, *info.may_change, *step_documents(info.parent_run)]:
+            extra_kwargs["extra_tool_roots"] = roots  # its trigger's reach, its run's documents
         if reads := step_reads(info.parent_run):  # its run's project tree, its batch's folder
             extra_kwargs["read_tool_roots"] = reads
         if session_env := tier_for(info).session_env(info.extra_env):

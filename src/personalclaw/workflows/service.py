@@ -826,6 +826,13 @@ async def start_run(
     # was a landmine, and a template could only be run by passing every key it declared. Found by
     # starting a bundled template from the UI with its optional field left blank.
     inputs = with_declared_defaults(spec, inputs or {})
+    # A run that says it continues another starts from that run's document, so one that cannot is
+    # refused in words here, before any run exists — never run as a fresh start that claims to
+    # continue (`deliverable.continuation_refusal`).
+    from personalclaw.workflows.deliverable import continuation_refusal
+
+    if refused := continuation_refusal(name, spec, inputs):
+        return _service_failure("WF_RUN_CONTINUATION_INVALID", f"cannot continue: {refused}")
 
     # Run-start preflight: credentials, binaries, models and action providers.
     # Blocking here rather than degrading at node 7, which has already paid for six nodes.

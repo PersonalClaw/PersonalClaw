@@ -116,6 +116,10 @@ class BindingContext:
     #: is not available here" instead of resolving to a silent empty string.
     self_output: Any = None
     has_self_output: bool = False
+    #: The absolute path of the document the run keeps in its own folder, exposed as
+    #: `{{run.document}}` (`deliverable.document_path`). "" for a run that keeps none, where the
+    #: root is absent and a read of it says so rather than handing a step an empty path.
+    run_document: str = ""
 
     def as_root(self) -> dict[str, Any]:
         root: dict[str, Any] = {
@@ -142,6 +146,8 @@ class BindingContext:
             root["previous"] = {"output": self.previous_output}
         if self.has_self_output:
             root["output"] = self.self_output
+        if self.run_document:
+            root["run"] = {"document": self.run_document}
         if self.brief is not None:
             # `text` is pre-fenced and citation-instructed, so a template writes
             # `{{brief.text}}` and cannot accidentally interpolate raw knowledge into a prompt.
@@ -657,6 +663,7 @@ _ROOT_HOLDS = {
     "last": "the previous iteration of the loop this node is in",
     "output": "this node's own output, and only inside `success_when`",
     "previous": "the previous cycle of the enclosing `until_cancelled` body",
+    "run": "the document this run keeps in its own folder, for a run that declares one",
     "siblings": "the accumulated outputs of this node's `parallel` siblings",
 }
 

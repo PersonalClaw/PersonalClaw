@@ -757,6 +757,27 @@ def _detach_node(node: dict[str, Any], node_id: str) -> dict[str, Any] | None:
 # ── the whole transaction ────────────────────────────────────────────────────
 
 
+def _start_only_inputs(ops: list[Op], spec: dict[str, Any]) -> list[Issue]:
+    """An edit that changes the run a run continues, refused: the run read it when it started,
+    and its folder and its page say what it started from, so a new value would only make its
+    inputs say otherwise, or let a resume carry another run's document into it."""
+    from personalclaw.workflows.deliverable import CONTINUE_FROM_INPUT, keeps_own_document
+
+    if not keeps_own_document(spec):
+        return []
+    return [
+        Issue(
+            code="WF_MUT_START_ONLY_INPUT",
+            message=(
+                f"{CONTINUE_FROM_INPUT} is read when a run starts, so it cannot change on a run "
+                "that exists: start a new run that continues the one you mean"
+            ),
+        )
+        for op in ops
+        if op.kind == OpKind.SET_INPUT and CONTINUE_FROM_INPUT in op.overrides
+    ]
+
+
 def prepare_batch(
     raw_ops: list[dict[str, Any]],
     spec: dict[str, Any],
@@ -784,6 +805,7 @@ def prepare_batch(
         return result
 
     result.issues.extend(validate_batch(ops, root, instances))
+    result.issues.extend(_start_only_inputs(ops, spec))
     if result.issues:
         result.ok = False
         return result

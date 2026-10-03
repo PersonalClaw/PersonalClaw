@@ -228,6 +228,16 @@ def run_pretier(
 # ── The deterministic fallback / cross-check ──
 
 
+def artifact_check(check: Any, artifact_path: str) -> bool | None:
+    """The ``artifact_exists`` check, which needs nothing awaited: whether *artifact_path* exists.
+    ``None`` for any other declared check, and for no path: "nothing to check" is not a failure."""
+    from personalclaw.workflows.judge_contract import FallbackCheck
+
+    if str(getattr(check, "value", check)) != FallbackCheck.ARTIFACT_EXISTS.value:
+        return None
+    return Path(artifact_path).exists() if artifact_path else None
+
+
 async def run_fallback_check(
     check: Any,
     *,
@@ -251,9 +261,7 @@ async def run_fallback_check(
         return None
 
     if kind is FallbackCheck.ARTIFACT_EXISTS:
-        if not artifact_path:
-            return None
-        return Path(artifact_path).exists()
+        return artifact_check(kind, artifact_path)
 
     if kind is FallbackCheck.DIFF_NONEMPTY:
         return diff_lines > 0

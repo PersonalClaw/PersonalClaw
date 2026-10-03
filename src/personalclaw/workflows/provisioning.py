@@ -884,6 +884,38 @@ def step_reads(parent_run: str) -> list[str]:
     return list(dict.fromkeys(reads))
 
 
+def step_documents(parent_run: str) -> list[str]:
+    """The run's own documents folder, for a step of a run that keeps its document there, or
+    ``[]``.
+
+    *parent_run* is a spawn's ``workflow:<run_id>`` (``ownership.OWNED_PREFIX``); any other spawn
+    reaches nothing more. The folder is the one the run hands its steps the document's path in
+    (``deliverable.document_path``), read from the run's record and its own spec, never from the
+    request, so a step reaches its own run's document and no other run's. Read and change: what a
+    step may do there stays its tier's, so a read-only judge reads the document and changes
+    nothing. Made here, 0700 like every folder in the home, so the first round's write never meets
+    a missing folder.
+    """
+    from personalclaw.workflows.ownership import OWNED_PREFIX
+
+    if not parent_run.startswith(OWNED_PREFIX):
+        return []
+    run_id = parent_run[len(OWNED_PREFIX) :]
+    from personalclaw.atomic_write import ensure_private_dir
+    from personalclaw.workflows import deliverable, store
+
+    try:
+        run = store.get(run_id)
+        path = deliverable.document_path(run, store.read_spec(run_id)) if run is not None else ""
+        if not path:
+            return []
+        ensure_private_dir(Path(path).parent)
+    except Exception:  # noqa: BLE001 - an unreadable record reaches nothing more
+        logger.debug("run %s: its documents folder is out of reach", run_id, exc_info=True)
+        return []
+    return [os.path.realpath(Path(path).parent)]
+
+
 def run_workdir(run_id: str) -> str:
     """The folder a step of run *run_id* works in, from the run's own record, or ``""``.
 

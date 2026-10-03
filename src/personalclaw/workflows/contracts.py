@@ -337,15 +337,20 @@ def coerce_declared_inputs(
     return coerced, sorted(errors)
 
 
-def start_problem(spec: dict[str, Any], provided: dict[str, Any]) -> tuple[dict[str, Any], str]:
+def start_problem(
+    spec: dict[str, Any], provided: dict[str, Any], *, name: str = ""
+) -> tuple[dict[str, Any], str]:
     """`provided` coerced to its declared types, and why a run of `spec` cannot start with it.
 
-    Returns ``(coerced, problem)``, ``problem`` empty when the run can start. The two checks
+    Returns ``(coerced, problem)``, ``problem`` empty when the run can start. The checks
     `service.start_run` makes before it spends anything — every required input given (derived from
-    the tree, not only the declaration) and every input its declared type — as ONE question, so a
-    trigger that starts a workflow asks it when it is SAVED and again when it fires, and hears the
-    same answer the Run button would.
+    the tree, not only the declaration), every input its declared type, and a run it says it
+    continues one it can continue (`deliverable.continuation_refusal`, for the workflow *name*, the
+    spec's own when not given) — as ONE question, so a trigger that starts a workflow asks it when
+    it is SAVED and again when it fires, and hears the same answer the Run button would.
     """
+    from personalclaw.workflows.deliverable import continuation_refusal
+
     extraction = apply_extraction(
         resolve_unfilled_inputs(
             {"inputs": spec.get("inputs") or {}, "root": spec.get("root") or {}}
@@ -357,6 +362,8 @@ def start_problem(spec: dict[str, Any], provided: dict[str, Any]) -> tuple[dict[
     coerced, errors = coerce_declared_inputs(spec, dict(provided))
     if errors:
         return coerced, "input(s) do not match their declared type: " + "; ".join(errors)
+    if refused := continuation_refusal(name or str(spec.get("name") or ""), spec, coerced):
+        return coerced, f"cannot continue: {refused}"
     return coerced, ""
 
 

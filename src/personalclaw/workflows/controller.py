@@ -660,6 +660,8 @@ class RunController:
         run_start.enforce_inherited_mode(self)
         provisioned = await run_start.provision_workspace(self)
         run_start.bind_project_memory_cwd(self)
+        if provisioned:
+            await run_start.carry_over_document(self)
         self._publish("workflow_run_update", {"status": self.run.status.value})
         return provisioned
 

@@ -680,6 +680,7 @@ def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: 
                     "item",
                     "iter",
                     "last",
+                    "run",
                 )
                 and not head.startswith("secret:")
                 and root_seg not in _UNTRUSTED_ROOTS

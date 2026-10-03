@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.workflows import store
+from personalclaw.workflows import deliverable, store
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     InstanceState,
@@ -236,7 +236,13 @@ def fork_run(
             workflow_name=parent.workflow_name,
             status=RunStatus.DRAFT,
             spec_version=spec_version,
-            inputs={**dict(parent.inputs), "__fork_axis": fork_axis},
+            # A fork continues its parent: it says so in its inputs, and so its next step starts
+            # from a copy of the document the parent keeps, not from the parent's file itself.
+            inputs={
+                **dict(parent.inputs),
+                "__fork_axis": fork_axis,
+                **deliverable.continuation_inputs(parent, spec),
+            },
             intent=parent.intent,
             origin=parent.origin,
             parent_run_id=parent.id,

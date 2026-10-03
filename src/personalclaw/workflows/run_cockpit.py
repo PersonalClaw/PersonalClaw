@@ -282,7 +282,7 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
     workflow = str(getattr(run, "workflow_name", "") or "")
     spec = store.read_spec(run_id)
     resolved = deliverable_mod.resolve_name(workflow, spec, run)
-    roots = deliverable_mod.run_roots(run)
+    roots = deliverable_mod.run_roots(run, spec)
     report = deliverable_mod.read_document(roots, resolved.name, reason=resolved.reason)
     # The log's name is the loop store's own declaration, imported rather than re-spelled: one
     # on-disk convention, one string. Unconditional — every kind's worker keeps a working log, which
@@ -305,6 +305,9 @@ def run_deliverable(run_id: str) -> dict[str, Any]:
             resolved.name,
             run.inputs if isinstance(resolved.source, deliverable_mod.RunStatement) else None,
         ),
+        # The run this one was started to continue, and whether it started from a copy of that
+        # run's document — `None` for a run that continues nothing.
+        continued_from=(run.extra or {}).get(deliverable_mod.CONTINUED_KEY),
     )
 
 

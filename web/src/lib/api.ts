@@ -2650,8 +2650,10 @@ export interface WorkflowDeliverableDoc {
   // redactor is quadratic in unbroken-token length — one 512 KB base64 blob measured 111s — so a
   // blob is clipped rather than served, and the clip is COUNTED rather than silent.
   clipped_blobs: number
-  // `kept`: the run's own copy of what one of its steps wrote in a folder the run does not own
-  // (a project-less run's steps work in the shared workspace), with that folder and that step.
+  // `kept`: the run's own documents folder. With `kept_from`/`kept_by`, the run's copy of what one of
+  // its steps wrote in a folder the run does not own (a project-less run's steps work in the shared
+  // workspace), naming that folder and that step; without them, the document the run's steps keep
+  // in that folder themselves, at the one path the run handed them.
   found_in: 'workspace' | 'run_dir' | 'kept' | null
   absent_reason: WorkflowDeliverableAbsence | null
   kept_from: string | null
@@ -2679,13 +2681,17 @@ export interface WorkflowRunDeliverable {
       | null
   }
   // Where the backend looked, in order — workspace first, then the run dir, then the copies the run
-  // kept (only once it kept any).
+  // kept (only once it kept any). A run whose steps keep the document in its own documents folder
+  // is read there first, and that folder is listed before anything is in it.
   roots: Array<{ kind: 'workspace' | 'run_dir' | 'kept'; path: string; exists: boolean }>
   // Whether this run's OWN spec — or, for a document the run was started to produce, its own task —
   // ever names the document. `false` reframes an absence from "not yet" to "never asked for":
   // measured, no bundled template names its kind's document today. `null` when there was no name
   // to check for.
   instructed: boolean | null
+  // The run this one was started to continue (its `continue_from` input), and whether it started
+  // from a copy of that run's document. `null` for a run that continues nothing.
+  continued_from: { run_id: string; name: string; carried: boolean } | null
 }
 // One dashboard pin. A REFERENCE, never a copy: no name and no content,
 // because a denormalized title goes stale on the next rename and a card that is confidently wrong

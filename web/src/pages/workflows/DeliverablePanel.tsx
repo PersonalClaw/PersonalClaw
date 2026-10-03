@@ -84,8 +84,12 @@ function Absent({ doc, instructed }: { doc: WorkflowDeliverableDoc; instructed: 
 
 /** Where the shown document was read from. A kept copy says whose writing it is and where it was
  *  written: a project-less run's steps work in the shared workspace, and the run keeps its own copy
- *  of what each step wrote there rather than reading a folder other runs write into too. */
+ *  of what each step wrote there rather than reading a folder other runs write into too. A document
+ *  the run's steps keep in that folder themselves names no step and no folder: nothing was copied. */
 function readFrom(doc: WorkflowDeliverableDoc): ReactNode {
+  if (doc.found_in === 'kept' && !doc.kept_by && !doc.kept_from) {
+    return 'read from this run’s own documents folder'
+  }
   if (doc.found_in === 'kept') {
     return (
       <>
@@ -95,6 +99,21 @@ function readFrom(doc: WorkflowDeliverableDoc): ReactNode {
     )
   }
   return `read from this run’s ${doc.found_in === 'workspace' ? 'workspace' : 'run directory'}`
+}
+
+/** What a run that continues another started from. Said whenever the run continues one, because a
+ *  document carried over from another run reads exactly like one this run wrote. */
+function Continued({ from }: { from: NonNullable<WorkflowRunDeliverable['continued_from']> }) {
+  return (
+    <p data-type="caption" className="text-on-surface-low">
+      This run continues run <span className="font-mono">{from.run_id}</span>
+      {from.carried ? (
+        <>, and started from a copy of that run’s <span className="font-mono">{from.name}</span>.</>
+      ) : (
+        <>, and started from nothing: that run left no <span className="font-mono">{from.name}</span> it could carry over.</>
+      )}
+    </p>
+  )
 }
 
 /** The name a slot was looked for under, or an explicit dash. Never blank: a missing label reads as a
@@ -164,6 +183,8 @@ export function DeliverablePanel({ runId }: { runId: string }) {
           </p>
         )}
       </div>
+
+      {data.continued_from && <Continued from={data.continued_from} />}
 
       <Segmented
         ariaLabel="Document"

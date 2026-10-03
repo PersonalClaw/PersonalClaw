@@ -1052,6 +1052,16 @@ async def dispatch_subworkflow(
         except BindingError as exc:
             failure = binding_failure(exc, f"subworkflow input {key!r} did not resolve")
             return NodeResult(state=InstanceState.FAILED, failure=failure)
+    # A child that says it continues a run is held to what a started run is: an input bound from
+    # anything upstream names a run, and a folder is read from it.
+    from personalclaw.workflows.deliverable import continuation_refusal
+
+    if refused := continuation_refusal(name, spec, child_inputs):
+        return _fail(
+            FailureClass.USER,
+            f"cannot continue: {refused}",
+            "name an earlier run of this workflow in `continue_from`, or leave it blank",
+        )
 
     parent = store.get(run_id) if run_id else None
     child = store.create(
@@ -2090,7 +2100,11 @@ def apply_artifact_gate(node: Node, result: NodeResult, workspace: Any) -> NodeR
 
 
 def apply_judge_contract(
-    node: Node, result: NodeResult, judge_hints: JudgeHints | None
+    node: Node,
+    result: NodeResult,
+    judge_hints: JudgeHints | None,
+    *,
+    fallback_result: bool | None = None,
 ) -> NodeResult:
     """Validate a judge STAGE's output against the contract (WF2LOO-13).
 
@@ -2116,6 +2130,10 @@ def apply_judge_contract(
     The model's own keys survive underneath the validated ones: a template may read something
     the contract does not model (`marginal_value`), and a loop's `progress_field` may point at
     any key in the body's output, so dropping them would break a reader this seam never saw.
+
+    *fallback_result* is the run's own deterministic check of the work, when it has one (a stage
+    judging a run that keeps its document passes it: `stage_settlement._settled_stage_output`); a
+    PASS it contradicts is escalated, the contract's standing cross-check.
     """
     if not bool((node.config or {}).get("judge_contract", False)):
         return result
@@ -2123,7 +2141,7 @@ def apply_judge_contract(
         return result  # already failing; a verdict on top of it adds nothing
     hints = judge_hints or JudgeHints()
     raw = result.output if isinstance(result.output, dict) else None
-    decision = validate_verdict(raw, hints)
+    decision = validate_verdict(raw, hints, fallback_result=fallback_result)
     payload: dict[str, Any] = dict(raw or {})
     payload.update(decision.to_dict())
     payload["contract_valid"] = decision.valid and not decision.protocol_error
