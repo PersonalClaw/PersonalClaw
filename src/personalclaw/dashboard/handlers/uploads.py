@@ -6,6 +6,8 @@ file against the size policy up front, ``part`` streams fixed-size chunks to the
 reports what landed, and ``complete`` assembles + runs a bounded content scan then
 hands the finished file to the SAME per-target finalize the single-POST paths use
 (chat attachment / knowledge ingest / workspace) — no duplicate destination logic.
+``DELETE`` drops an upload the client cancelled: its parts go at once, and a complete
+asked for afterwards finds nothing, so nothing is made from it.
 
 These routes live on a dedicated 2 GB sub-app (see server.py) so the main + API
 apps keep a tight body ceiling; large media never touches them.
@@ -20,6 +22,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.uploads.policy import limits_table, single_post_threshold
 from personalclaw.uploads.store import UploadError, UploadStore
 
@@ -165,6 +168,11 @@ async def api_uploads_part(request: web.Request) -> web.Response:
         sess = await store.write_part(sid, index, request.content)
     except UploadError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
+    except ConnectionError:
+        # The client went away mid-part: it cancelled the upload, or lost its connection and
+        # will send the part again. Nothing was kept of it, and nobody is left to answer.
+        logger.info("Upload %s: part %s ended early (the connection closed)", sid, index)
+        return json_error("upload_interrupted", status=400)
     except Exception:
         logger.exception("write_part failed for %s idx=%s", sid, index)
         return web.json_response({"error": "failed to write part"}, status=500)
@@ -196,6 +204,14 @@ async def api_uploads_status(request: web.Request) -> web.Response:
             "completed": sess.completed,
         }
     )
+
+
+async def api_uploads_drop(request: web.Request) -> web.Response:
+    """DELETE /api/uploads/{id} — drop a cancelled upload: its parts go, it can't be completed."""
+    sid = request.match_info["id"]
+    if not _store(request).drop(sid):
+        return json_error("upload_not_found", status=404)
+    return web.json_response({"uploadId": sid, "dropped": True})
 
 
 async def api_uploads_complete(request: web.Request) -> web.Response:

@@ -1,4 +1,5 @@
 import { api, type KnowledgeItem, type KnowledgeItemEdit, type KnowledgeStats } from '../../lib/api'
+import type { UploadProgress } from '../../lib/chunkedUpload'
 
 /**
  * Knowledge data layer — a thin pass-through to the real backend. Typed items
@@ -50,12 +51,14 @@ export async function deleteKnowledge(id: string): Promise<void> {
 }
 
 /** Upload a real file → ONE logical-document item, run through its node-graph.
- *  Large files stream via the resumable protocol; onProgress reports bytes/pct. */
+ *  Large files stream via the resumable protocol; onProgress reports bytes/pct, and says when the
+ *  upload is `finishing` (past cancelling). Aborting `signal` before then cancels it: no item. */
 export async function uploadKnowledgeFile(
   file: File,
-  onProgress?: (p: { loaded: number; total: number; pct: number }) => void,
-): Promise<{ item_id?: string; type?: string; status: string }> {
-  return api.ingestKnowledgeFile(file, onProgress)
+  onProgress?: (p: UploadProgress) => void,
+  signal?: AbortSignal,
+): Promise<{ item_id?: string; type?: string; status: string; deduped?: boolean }> {
+  return api.ingestKnowledgeFile(file, onProgress, signal)
 }
 
 /** 🔴 THIS READ MUST REJECT, BECAUSE ITS ZEROS ARE CLAIMS AND ONE OF THEM GIVES ADVICE.

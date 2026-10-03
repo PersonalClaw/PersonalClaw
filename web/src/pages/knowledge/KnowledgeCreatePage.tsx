@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { ArrowLeft, Check, Loader2, Upload, X, Link2, FileText, Mic } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -16,6 +16,10 @@ import { createKnowledge, updateKnowledge, uploadKnowledgeFile } from './knowled
 import { AudioRecorder } from './AudioRecorder'
 import { notify } from '../../app/appSdk'
 import { labelNoun, withArticle } from '../../lib/article'
+import { useUnsavedGuard } from '../../lib/useUnsavedGuard'
+
+/** Why the form's way out is closed for the second or two a finished upload takes to be added. */
+const ADDING = 'The file has been sent and is being added to your library'
 
 /** Dedicated create PAGE (matches the create-page pattern used across the app):
  *  step 1 = a type-grid picker (all 12 knowledge formats); step 2 = a per-type
@@ -72,11 +76,28 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
   const [audioSrc, setAudioSrc] = useState<'upload' | 'record'>('upload')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  // Upload progress for a large (chunked/resumable) knowledge file; -1 = not uploading.
-  const [uploadPct, setUploadPct] = useState(-1)
+  // The file upload in flight, or null. `pct` is null until a part has landed, and stays null for a
+  // file small enough to go in one request, which reports none. `finishing`: every byte is there and
+  // the gateway is adding it, past the point a cancel can be honoured.
+  const [upload, setUpload] = useState<{ pct: number | null; finishing: boolean } | null>(null)
+  // 🔴 CANCEL USED TO LEAVE THE PAGE AND NOTHING ELSE. The upload took no signal, so a file she
+  // cancelled at 14% went on uploading unseen, became an item with her title, and was processed by a
+  // model. Now "Cancel upload", the form's Cancel and Back, and leaving the page all abort it, and the
+  // gateway drops what it holds (`lib/chunkedUpload`). A finishing upload no longer listens.
+  const uploadAbort = useRef<AbortController | null>(null)
+  const cancelUpload = () => uploadAbort.current?.abort()
+  // Set on mount (not at creation) so a development double-mount leaves it true.
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; uploadAbort.current?.abort() }
+  }, [])
+  // Closing or reloading the tab while it uploads asks first.
+  useUnsavedGuard(upload !== null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   async function pickFile(f: File) {
+    if (busy) return  // the file being uploaded stays the file shown; cancel the upload to change it
     setFile(f); setErr(''); setFileTooBig(false)
     if (f.type.startsWith('image/')) setPreview(URL.createObjectURL(f))
     if (!title) setTitle(f.name)
@@ -98,14 +119,18 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
     setBusy(true); setErr('')
     try {
       if (kind === 'file' && file) {
+        // Armed before the size check, so a cancel during it stops the upload before it starts.
+        const ctrl = new AbortController()
+        uploadAbort.current = ctrl
+        setUpload({ pct: null, finishing: false })
         // Client-side per-filetype pre-check — reject oversize before uploading a byte.
         const { precheck } = await import('../../lib/chunkedUpload')
         const pcErr = await precheck(file)
-        if (pcErr) { setErr(pcErr); setBusy(false); return }
+        if (pcErr) { setErr(pcErr); return }
+        if (ctrl.signal.aborted) return
         // Every uploaded file → ONE logical-document item, run through its node-graph.
         // Large files stream via the resumable protocol with progress.
-        const res = await uploadKnowledgeFile(file, (p) => setUploadPct(p.pct))
-        setUploadPct(-1)
+        const res = await uploadKnowledgeFile(file, (p) => setUpload({ pct: p.pct, finishing: !!p.finishing }), ctrl.signal)
         // The ingest endpoint only takes bytes — apply the form's title/tags to the
         // created item. Whatever the title field holds when she presses Add is HER title,
         // the file's own name included: the field was filled with it and she kept it, and
@@ -117,7 +142,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
         const custom: KnowledgeItemEdit = {}
         if (title.trim()) custom.title = title.trim()
         if (tags.length) custom.add_tags = tags
-        if (res.item_id && !(res as { deduped?: boolean }).deduped && Object.keys(custom).length) {
+        if (res.item_id && !res.deduped && Object.keys(custom).length) {
           // 🔴 This is the ONLY carrier for the title and tags the user typed — ingest takes bytes
           // only. `catch(() => {})` meant a refused patch produced a fully successful-looking create
           // that silently dropped both, and the page navigates away on success, so nothing ever
@@ -133,8 +158,13 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
         // text / gist / journal → typed item (POST /api/knowledge/items)
         await createKnowledge({ type, title: title.trim(), content, tags, gist_language: kind === 'gist' ? language : undefined })
       }
-      onCreated()
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setBusy(false); setUploadPct(-1) }
+      // Only from the page she is still on: a save that finishes after she left must not pull her back.
+      if (mounted.current) onCreated()
+    } catch (e) {
+      // A cancel she asked for is no failure: the form stays as it was, and nothing was added.
+      const { isAbortError } = await import('../../lib/chunkedUpload')
+      if (!isAbortError(e)) setErr(e instanceof Error ? e.message : 'Save failed')
+    } finally { uploadAbort.current = null; setBusy(false); setUpload(null) }
   }
 
   // Fleeting notes are content-only (auto-titled on ingest); journals are date-titled —
@@ -149,7 +179,8 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
 
   return (
     <div className="flex h-full flex-col" onKeyDown={onKeyDown}>
-      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back to types" size={40} onClick={onBack} /><PageTitle className="inline-flex items-center gap-s"><tm.icon size={18} style={{ color: tm.tone }} /> New {noun}</PageTitle></div>} />
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back to types" size={40} onClick={() => { cancelUpload(); onBack() }}
+        disabled={!!upload?.finishing} disabledReason={upload?.finishing ? ADDING : undefined} /><PageTitle className="inline-flex items-center gap-s"><tm.icon size={18} style={{ color: tm.tone }} /> New {noun}</PageTitle></div>} />
       {/* Full-height authoring shell mirroring the detail page's edit layout: inline title
           at top, a per-type middle that fills the height (Monaco for gist, textarea for
           text, drop-zone for files, URL field for bookmarks), and inline tags.
@@ -212,7 +243,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
               {type === 'audio' && (
                 <div className="mb-m flex gap-1 rounded-pill bg-surface-high p-0.5 w-max">
                   {(['upload', 'record'] as const).map((s) => (
-                    <button key={s} type="button" onClick={() => { setAudioSrc(s); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }}
+                    <button key={s} type="button" disabled={busy} onClick={() => { setAudioSrc(s); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }}
                       data-type="body-s" className={`inline-flex items-center gap-1.5 rounded-pill px-3 h-8 transition-colors ${audioSrc === s ? 'bg-surface text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
                       {s === 'upload' ? <Upload size={14} /> : <Mic size={14} />} {s === 'upload' ? 'Upload' : 'Record'}
                     </button>
@@ -255,7 +286,8 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                       <div className="flex items-center gap-m px-m">
                         {preview ? <img src={preview} alt="" className="size-16 rounded-md object-cover" /> : <tm.icon size={28} style={{ color: tm.tone }} />}
                         <div className="min-w-0"><div data-type="body-s" className="truncate text-on-surface">{file.name}</div><div data-type="caption" className="text-on-surface-low">{fmtBytes(file.size)}</div></div>
-                        <SquareIconButton icon={X} iconSize={16} tone="danger" label="Remove file" onClick={(e) => { e.stopPropagation(); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }} />
+                        <SquareIconButton icon={X} iconSize={16} tone="danger" label="Remove file" onClick={(e) => { e.stopPropagation(); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }}
+                          disabled={upload !== null} disabledReason={upload?.finishing ? ADDING : 'Cancel the upload to choose another file'} />
                       </div>
                     ) : (
                       <><Upload size={22} className="text-on-surface-low" /><span data-type="body-s" className="text-on-surface-low">Drop {withArticle(`${noun} file`)}, or choose one</span></>
@@ -267,11 +299,16 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
           )}
 
           {err && <p role="alert" data-type="body-s" className="shrink-0 text-danger">{err}</p>}
-          {uploadPct >= 0 && (
-            <div data-type="caption" className="flex shrink-0 items-center gap-2 text-on-surface-var">
+          {upload && (
+            <div data-type="caption" className="flex shrink-0 items-center gap-s text-on-surface-var">
               <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
-              <span>Uploading… {uploadPct}%</span>
-              <Meter size="thin" className="w-32" label="Upload progress" pct={uploadPct} />
+              {upload.finishing ? <span>Adding it to your library…</span> : (
+                <>
+                  <span>Uploading…{upload.pct === null ? '' : ` ${upload.pct}%`}</span>
+                  {upload.pct !== null && <Meter size="thin" className="w-32" label="Upload progress" pct={upload.pct} />}
+                  <Button variant="ghost" size="xs" onClick={cancelUpload}>Cancel upload</Button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -280,7 +317,9 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
         <div className="mx-auto flex items-center justify-between gap-s" style={{ maxWidth: 'var(--content-width)' }}>
           <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><FileText size={12} /> Saved to your knowledge library, then enriched automatically.</span>
           <div className="flex gap-s">
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            {/* Leaving stops an upload still sending; one being added can no longer be stopped. */}
+            <Button variant="ghost" onClick={() => { cancelUpload(); onClose() }}
+              disabled={!!upload?.finishing} disabledReason={upload?.finishing ? ADDING : undefined}>Cancel</Button>
             {/* Reason per KIND, because `canSave` means something different for each; omitted
                 while `busy`, where the label already reads "Saving…". */}
             <Button onClick={save} loading={busy} disabled={busy || !canSave}

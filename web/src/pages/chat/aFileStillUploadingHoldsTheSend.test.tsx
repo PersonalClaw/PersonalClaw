@@ -145,6 +145,19 @@ describe('a message whose file is still uploading', () => {
     expect((meta as { files?: string[] }).files, 'the message carries the file').toEqual([STORED])
   })
 
+  it('once its file is being finished, offers no cancel the gateway would not honour', async () => {
+    await pasteWhileTyping('What does the p99 chart show?')
+    await waitFor(() => expect(sendButton().getAttribute('aria-disabled')).toBe('true'))
+    expect(screen.getByRole('button', { name: 'Cancel upload' })).toBeInTheDocument()
+    const [, onProgress] = h.uploadFiles.mock.calls[0] as unknown as [File[], (i: number, p: object) => void]
+
+    // Every byte is in: the gateway completes the upload whatever the page does now.
+    act(() => { onProgress(0, { loaded: 4, total: 4, pct: 100, finishing: true }) })
+
+    expect(screen.queryByRole('button', { name: 'Cancel upload' })).toBeNull()
+    expect(sendButton().getAttribute('title')).toBe('Send message — Wait for chart-p99.png to finish uploading.')
+  })
+
   it('goes without it once the upload is cancelled or fails', async () => {
     const user = userEvent.setup()
     await pasteWhileTyping('Send it anyway.')

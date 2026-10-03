@@ -239,7 +239,8 @@ well — cells copied from a spreadsheet bring a picture of themselves along —
 
 A file still uploading shows its progress above the composer, and until it is in, Send is off
 and says which file it is waiting for; Enter says the same. The message then goes with the
-file. Cancel the upload to send without it.
+file. Cancel the upload to send without it, while it is still sending: once the whole file is
+sent its row stops offering Cancel, and it is attached a moment later.
 
 There are two ways it can happen, and PersonalClaw picks for you:
 

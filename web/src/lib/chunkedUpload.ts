@@ -3,6 +3,12 @@
 // protocol (/api/uploads/init → PUT part → /complete), exposing byte-level progress
 // + cancel. Small files (below the server's single-POST threshold) still use the
 // simple single-POST path the callers pass in, so the common case is unchanged.
+//
+// A cancel is honoured up to the moment every part has landed: it aborts the part in flight,
+// `complete` is never asked for, and the gateway is told to drop what it holds
+// (DELETE /api/uploads/{id}), so nothing is made from the upload. The same drop follows a
+// failure and the page closing mid-upload. After that moment the gateway completes the upload
+// whatever the page does, so progress says `finishing` and a caller stops offering Cancel.
 
 import { errText } from './errText'
 
@@ -12,6 +18,10 @@ export interface UploadProgress {
   loaded: number        // bytes uploaded so far
   total: number         // file size
   pct: number           // 0..100
+  /** Every part has landed and the gateway is completing the upload: it becomes its attachment,
+   *  workspace file or knowledge item whatever the page does now, so a cancel can no longer be
+   *  honoured. Set on the last report only. */
+  finishing?: boolean
 }
 
 export interface ChunkedUploadOpts {
@@ -73,32 +83,61 @@ export async function chunkedUpload(file: File, opts: ChunkedUploadOpts): Promis
     mime: file.type || guessMime(file.name), target: opts.target,
     ...(opts.path ? { path: opts.path } : {}),
   }
+  // Not aborted with the rest: a cancel that lands while this is in flight is honoured below,
+  // where the id it answers with lets the upload it opened be dropped.
   const initR = await fetch('/api/uploads/init', {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...SK },
-    body: JSON.stringify(initBody), signal: opts.signal,
+    body: JSON.stringify(initBody),
   })
   if (!initR.ok) throw new Error(await errText(initR))
   const { uploadId, partSize, totalParts } = await initR.json()
 
-  let loaded = 0
-  for (let i = 0; i < totalParts; i++) {
+  // From here the gateway holds this upload's parts. One this page gives up is dropped there now,
+  // rather than left for the day-long sweep. `keepalive` lets the drop outlive the page.
+  const drop = () => {
+    void fetch(`/api/uploads/${uploadId}`, { method: 'DELETE', headers: { ...SK }, keepalive: true }).catch(() => {})
+  }
+  window.addEventListener('pagehide', drop)
+  try {
+    let loaded = 0
+    for (let i = 0; i < totalParts; i++) {
+      if (opts.signal?.aborted) throw new DOMException('upload cancelled', 'AbortError')
+      const start = i * partSize
+      const blob = file.slice(start, Math.min(start + partSize, file.size))  // streams from disk
+      // Per-part retry with backoff: a PUT is idempotent (re-PUTting the same index
+      // overwrites), so a transient network blip resumes that part rather than failing
+      // the whole upload — the "survives a network drop" promise. A real error
+      // (413/4xx) is not retried; cancellation propagates immediately.
+      await putPartWithRetry(uploadId, i, blob, opts.signal)
+      loaded += blob.size
+      opts.onProgress?.({ loaded, total: file.size, pct: Math.round((loaded / file.size) * 100) })
+    }
     if (opts.signal?.aborted) throw new DOMException('upload cancelled', 'AbortError')
-    const start = i * partSize
-    const blob = file.slice(start, Math.min(start + partSize, file.size))  // streams from disk
-    // Per-part retry with backoff: a PUT is idempotent (re-PUTting the same index
-    // overwrites), so a transient network blip resumes that part rather than failing
-    // the whole upload — the "survives a network drop" promise. A real error
-    // (413/4xx) is not retried; cancellation propagates immediately.
-    await putPartWithRetry(uploadId, i, blob, opts.signal)
-    loaded += blob.size
-    opts.onProgress?.({ loaded, total: file.size, pct: Math.round((loaded / file.size) * 100) })
+  } catch (e) {
+    drop()
+    throw e
+  } finally {
+    window.removeEventListener('pagehide', drop)
   }
 
-  const compR = await fetch(`/api/uploads/${uploadId}/complete`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...SK },
-    body: '{}', signal: opts.signal,
-  })
-  if (!compR.ok) throw new Error(await errText(compR))
+  // Every part has landed. The gateway makes the upload what it was for on this request, and goes
+  // on whatever the page does, so it carries no cancel: aborting it would only stop the page from
+  // hearing what happened.
+  opts.onProgress?.({ loaded: file.size, total: file.size, pct: 100, finishing: true })
+  let compR: Response
+  try {
+    compR = await fetch(`/api/uploads/${uploadId}/complete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...SK },
+      body: '{}',
+    })
+  } catch (e) {
+    drop()
+    throw e
+  }
+  if (!compR.ok) {
+    drop()
+    throw new Error(await errText(compR))
+  }
   return compR.json()
 }
 

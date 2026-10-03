@@ -27,6 +27,7 @@ def _register_upload_routes(app: web.Application) -> None:
     app.router.add_post("/api/uploads/init", _up.api_uploads_init)
     app.router.add_put("/api/uploads/{id}/part", _up.api_uploads_part)
     app.router.add_get("/api/uploads/{id}", _up.api_uploads_status)
+    app.router.add_delete("/api/uploads/{id}", _up.api_uploads_drop)
     app.router.add_post("/api/uploads/{id}/complete", _up.api_uploads_complete)
 
 

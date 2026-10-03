@@ -1842,6 +1842,13 @@ async def ingest_file(request: web.Request) -> web.Response:
                 "deduped": not is_new,
             }
         )
+    except ConnectionError:
+        # The browser went away before the whole file arrived: its upload was cancelled, or its
+        # connection dropped. Nothing was stored, and the partial file goes.
+        tmp.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        logger.info("Knowledge upload of %s ended early (the connection closed)", filename)
+        return json_error("upload_interrupted", status=400)
     except Exception:
         logger.exception("Ingestion failed for %s", filename)
         Path(tmp.name).unlink(missing_ok=True)

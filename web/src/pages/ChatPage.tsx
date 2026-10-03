@@ -943,7 +943,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Live upload progress: one row per file still uploading, from every attach in flight (a second
   // paste does not replace the first's rows). Each row names the attach it came from (`batch`), so
   // an attach that finishes takes down its own rows and no one else's.
-  const [uploads, setUploads] = useState<{ batch: number; name: string; pct: number }[]>([])
+  // `finishing`: every byte of that file is in and the gateway is completing it, so it can no
+  // longer be cancelled (`lib/chunkedUpload`) and its row stops offering to.
+  const [uploads, setUploads] = useState<{ batch: number; name: string; pct: number; finishing?: boolean }[]>([])
   // Each in-flight attach's AbortController, by batch, so a row's Cancel stops the upload it shows.
   const uploadAborts = useRef(new Map<number, AbortController>())
   const uploadBatch = useRef(0)
@@ -952,9 +954,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // creates the chat and remounts this component, so the upload that finished afterwards landed in
   // an instance that was gone: the file was stored and attached to nothing, with nothing said. While
   // any row is up, Send is off and says this, and `send` refuses with it.
+  const uploadCancellable = uploads.some((u) => !u.finishing)
   const uploadHold = uploads.length === 0 ? ''
-    : uploads.length === 1 ? `Wait for ${uploads[0].name} to finish uploading, or cancel it.`
-    : `Wait for ${uploads.length} files to finish uploading, or cancel them.`
+    : uploads.length === 1 ? `Wait for ${uploads[0].name} to finish uploading${uploadCancellable ? ', or cancel it' : ''}.`
+    : `Wait for ${uploads.length} files to finish uploading${uploadCancellable ? ', or cancel them' : ''}.`
   const [promptHistory, setPromptHistory] = useState<string[]>([])
   // `undefined` until the backend reports a measurement (it sends `pct: null` when it
   // has none) — an unmeasured context must show no percentage, not 0%.
@@ -3321,7 +3324,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (!ok.length) { done(); return }
     setUploads((prev) => [...prev.filter((u) => u.batch !== batch), ...rows(ok)])
     const r = await api.uploadFiles(ok, (idx, p) => {
-      setUploads((prev) => { let i = -1; return prev.map((u) => (u.batch === batch && ++i === idx ? { ...u, pct: p.pct } : u)) })
+      setUploads((prev) => { let i = -1; return prev.map((u) => (u.batch === batch && ++i === idx ? { ...u, pct: p.pct, finishing: !!p.finishing } : u)) })
     }, ctrl.signal).catch(async (e) => {
       // A user cancel is not an error — just clear silently; other failures surface.
       // (abort is named inconsistently across engines — isAbortError normalises it.)
@@ -3442,8 +3445,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   nothing about how far along any of them was. */}
               <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
               <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
-              <IconButton icon={X} label="Cancel upload" onClick={() => uploadAborts.current.get(u.batch)?.abort()} size={20} iconSize={13}
-                tone="danger" className="shrink-0" />
+              {!u.finishing && <IconButton icon={X} label="Cancel upload" onClick={() => uploadAborts.current.get(u.batch)?.abort()} size={20} iconSize={13}
+                tone="danger" className="shrink-0" />}
             </div>
           ))}
         </div>

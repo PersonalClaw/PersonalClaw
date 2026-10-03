@@ -838,6 +838,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/upload/file` — cross-platform multipart file upload.
 - `POST /api/uploads/init` — {filename, size, mime, target[, path]} → session.
 - `GET /api/uploads/limits` — per-category caps + the single-POST threshold, so
+- `DELETE /api/uploads/{id}` — drop a cancelled upload: its parts go, it can't be completed.
 - `GET /api/uploads/{id}` — which parts landed (drives client resume).
 - `POST /api/uploads/{id}/complete` — assemble + scan + hand off to the target.
 - `PUT /api/uploads/{id}/part` — stream one part to disk (idempotent).

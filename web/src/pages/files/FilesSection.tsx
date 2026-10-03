@@ -108,7 +108,9 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   // Inline error banner for file ops (move/delete/upload).
   const [fileErr, setFileErr] = useState<string | null>(null)
   // Live progress for large (chunked/resumable) uploads; small files finish in one POST.
-  const [uploadRows, setUploadRows] = useState<{ name: string; pct: number }[]>([])
+  // `finishing`: every byte of that file is in and the gateway is completing it, so it can no
+  // longer be cancelled (`lib/chunkedUpload`) and its row stops offering to.
+  const [uploadRows, setUploadRows] = useState<{ name: string; pct: number; finishing?: boolean }[]>([])
   // Controller for the in-flight upload batch, so a Cancel button can abort it (parity
   // with the composer attach). Cleared when the batch settles.
   const uploadAbortRef = useRef<AbortController | null>(null)
@@ -306,7 +308,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     uploadAbortRef.current = ctrl
     try {
       const r = await api.fileUpload(dir, ok, (idx, p) => {
-        setUploadRows((prev) => prev.map((u, i) => (i === idx ? { ...u, pct: p.pct } : u)))
+        setUploadRows((prev) => prev.map((u, i) => (i === idx ? { ...u, pct: p.pct, finishing: !!p.finishing } : u)))
       }, ctrl.signal)
       if (r.ok) refresh()
       else setFileErr(`Upload failed: ${r.error ?? 'unknown error'}`)
@@ -488,11 +490,13 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                       <span className="max-w-[40%] shrink-0 truncate" title={u.name}>{u.name}</span>
                       <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
                       <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
-                      <button type="button" aria-label="Cancel upload"
-                        className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger"
-                        onClick={() => uploadAbortRef.current?.abort()}>
-                        <X size={13} />
-                      </button>
+                      {!u.finishing && (
+                        <button type="button" aria-label="Cancel upload"
+                          className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger"
+                          onClick={() => uploadAbortRef.current?.abort()}>
+                          <X size={13} />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

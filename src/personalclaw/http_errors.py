@@ -465,6 +465,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "missing_file": "The upload carried no file field.",
     "invalid_content_type": "The request's Content-Type is not supported on this route.",
     "invalid_upload": "The multipart upload could not be parsed.",
+    # ── the resumable upload protocol (dashboard/handlers/uploads.py) ──
+    # 404 `upload_not_found`: `DELETE /api/uploads/{id}` named no upload in progress.
+    # 400 `upload_interrupted`: the connection closed before the request's body had all arrived,
+    # which is what a cancel does to the request in flight. A part answers it, and so does the
+    # knowledge single-request upload (`POST /api/knowledge/ingest`).
+    "upload_not_found": (
+        "No upload in progress has that id: it was never started, has finished, or was dropped."
+    ),
+    "upload_interrupted": (
+        "The connection closed before the upload's bytes had all arrived, so none of it was kept."
+    ),
     # ── inbound MCP surface (inbound/mcp_http.py) ──
     #
     # Same reasoning as the bridge above, and the same conclusion: ADMISSION reuses the

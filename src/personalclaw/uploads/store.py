@@ -14,8 +14,9 @@ copies part→final in bounded chunks. Every file here is written through
 writes a file there: what someone uploads is theirs alone. Disk strategy is adaptive (see
 :meth:`UploadStore.init`): with ≥2× headroom parts are separate files concatenated
 at complete (robust resume — each part independently re-PUTtable); when tighter,
-parts append into one growing final file (~1× disk). Abandoned sessions are swept
-by TTL.
+parts append into one growing final file (~1× disk). A session the client gives up
+(a cancelled upload) is dropped at once (:meth:`UploadStore.drop`); one nobody drops
+(a tab closed mid-upload) is swept by TTL.
 """
 
 from __future__ import annotations
@@ -175,6 +176,8 @@ class UploadStore:
             raise UploadError(f"part index {index} out of range (0..{sess.total_parts - 1})", 400)
 
         expected = self._expected_part_size(sess, index)
+        part_path = self._dir(sid) / f"part_{index:06d}"
+        tmp = self._dir(sid) / f".part_{index:06d}.tmp"
         written = 0
         if sess.append_mode:
             # Seek to this part's offset in the single growing file and overwrite.
@@ -183,10 +186,19 @@ class UploadStore:
                 fh.seek(index * sess.part_size)
                 written = await _stream_to(part_reader, fh, cap=expected)
         else:
-            part_path = self._dir(sid) / f"part_{index:06d}"
-            tmp = self._dir(sid) / f".part_{index:06d}.tmp"
-            with open_streamed(tmp, "wb") as fh:
-                written = await _stream_to(part_reader, fh, cap=expected)
+            try:
+                with open_streamed(tmp, "wb") as fh:
+                    written = await _stream_to(part_reader, fh, cap=expected)
+            except BaseException:
+                # A part that did not arrive whole (its connection closed: the upload was
+                # cancelled, or the network dropped) leaves no file: a resume sends it again.
+                tmp.unlink(missing_ok=True)
+                raise
+        if not (self._dir(sid) / "meta.json").is_file():
+            # Dropped while this part streamed in (its files went with it). Recording the part
+            # would write the session's record again and bring the dropped upload back.
+            raise UploadError("upload session not found", 404)
+        if not sess.append_mode:
             os.replace(tmp, part_path)
 
         if written > expected:
@@ -234,6 +246,17 @@ class UploadStore:
 
     def cleanup(self, sid: str) -> None:
         shutil.rmtree(self._dir(sid), ignore_errors=True)
+
+    def drop(self, sid: str) -> bool:
+        """Discard an upload that will not be completed: the client cancelled it.
+
+        Its parts go now rather than at the sweep, a part still streaming in for it is not
+        recorded (:meth:`write_part`), and a later complete finds nothing to assemble. False
+        when there is no such upload: never opened, already completed, dropped or swept."""
+        if not (self._dir(sid) / "meta.json").is_file():
+            return False
+        shutil.rmtree(self._dir(sid), ignore_errors=True)
+        return True
 
     def sweep(self, ttl_secs: int = _SESSION_TTL_SECS) -> int:
         """Delete session dirs idle longer than ``ttl_secs``. Returns count swept."""

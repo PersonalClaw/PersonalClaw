@@ -4,6 +4,8 @@
 // API contract in docs.
 
 import { apiVersionHeaders } from './apiVersion'
+// Type only: the upload client itself is loaded on first use, by the three upload calls below.
+import type { UploadProgress } from './chunkedUpload'
 import { errEnvelope, errText } from './errText'
 import { withSecurityConsent } from './securityConsent'
 import { isSignedOutRefusal, reportSignedOut, signedOutState } from './signedOut'
@@ -9767,17 +9769,19 @@ export const api = {
     get<{ outbound: KnowledgeItemRelation[]; inbound: KnowledgeItemRelation[] }>(
       `/api/knowledge/items/${encodeURIComponent(id)}/relations`),
   knowledgeEmbeddingStatus: () => get<{ enabled: boolean; available?: boolean; model?: string; total_items?: number; embedded_items?: number; stale_items?: number }>('/api/knowledge/embedding/status'),
-  // Every uploaded file → ONE logical-document item run through its node-graph.
+  // Every uploaded file → ONE logical-document item run through its node-graph. Aborting `signal`
+  // cancels the upload, and no item is made from it (`chunkedUpload`).
   ingestKnowledgeFile: async (
     file: File,
-    onProgress?: (p: { loaded: number; total: number; pct: number }) => void,
-  ): Promise<{ item_id?: string; type?: string; status: string }> => {
+    onProgress?: (p: UploadProgress) => void,
+    signal?: AbortSignal,
+  ): Promise<{ item_id?: string; type?: string; status: string; deduped?: boolean }> => {
     const { needsChunked, chunkedUpload } = await import('./chunkedUpload')
     if (await needsChunked(file)) {
-      return chunkedUpload(file, { target: 'knowledge', onProgress })
+      return chunkedUpload(file, { target: 'knowledge', onProgress, signal })
     }
     const fd = new FormData(); fd.append('file', file)
-    const r = await fetch('/api/knowledge/ingest', { method: 'POST', headers: { ...SK }, body: fd })
+    const r = await fetch('/api/knowledge/ingest', { method: 'POST', headers: { ...SK }, body: fd, signal })
     if (!r.ok) throw new Error(await errText(r))
     return r.json()
   },
@@ -10123,7 +10127,7 @@ export const api = {
   attachmentExtract: (path: string, opts: ReadOptions = {}) => get<AttachmentExtract>(`/api/attachment-extract?path=${encodeURIComponent(path)}`, opts),
   uploadFiles: async (
     files: File[],
-    onProgress?: (fileIndex: number, p: { loaded: number; total: number; pct: number }) => void,
+    onProgress?: (fileIndex: number, p: UploadProgress) => void,
     signal?: AbortSignal,
   ): Promise<{ paths: string[]; error?: string }> => {
     const { needsChunked, chunkedUpload } = await import('./chunkedUpload')
@@ -10175,7 +10179,7 @@ export const api = {
   fileDelete: (path: string) => post<{ ok: boolean }>('/api/file-delete', { path }),
   fileUpload: async (
     dir: string, files: File[],
-    onProgress?: (fileIndex: number, p: { loaded: number; total: number; pct: number }) => void,
+    onProgress?: (fileIndex: number, p: UploadProgress) => void,
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; paths?: string[]; error?: string }> => {
     const { needsChunked, chunkedUpload } = await import('./chunkedUpload')
