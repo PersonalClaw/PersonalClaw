@@ -234,7 +234,10 @@ says what that means.
   accepted refiner diff, a prompt card, a pack's template (which arrives asking), and an edit of a
   running workflow (an agent's is refused). No standing grant answers either ask, and a session
   with nobody to ask (an Unattended loop's) is refused. A request to `POST /api/spawn` cannot set
-  a subagent's approval mode at all.
+  a subagent's approval mode at all. The `subagent_run` call itself asks nobody: what it starts
+  asks (one task's start, or the batch's one ask), so the call is not a second question. A batch
+  that only reads starts on what starts its chat's subagents (its Trust, YOLO) or on your answer
+  to its one ask; a waiting batch's record (`workflows/batches/`) only ever asks again.
 - **The app's own code is outside all of this.** An app's provider module is imported
   into the gateway's process, its backend is a process under your account, each MCP
   server in its manifest is a command the gateway launches with the gateway's own

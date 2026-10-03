@@ -50,6 +50,13 @@ NOBODY = "nobody"
 #: approves one of these itself. Not a grant, so the operator ceiling does not bound it, just as
 #: it does not make a native runtime ask about a read.
 DECLARED_READ = "declared_read"
+#: The call's own declaration that what it starts asks the owner itself
+#: (``tool_providers.base.WORK_ASKS_META_KEY``): ``subagent_run``, whose one subagent's start, or
+#: whose batch's one ask naming every task, is what asks her. A native runtime never asks about
+#: such a call; an ACP CLI asks the host, so the host answers it itself. Not a grant, so the
+#: operator ceiling does not bound it, as with a declared read: what the call starts is asked, or
+#: started by a grant the ceiling bounds.
+WORK_ASKS = "work_asks"
 
 #: The chat's own Trust (its toggle, or "This chat" on an approval card).
 TRUST = "trust"
@@ -90,9 +97,10 @@ REMEMBERED = "remembered"
 #: (`workflows.models.NodeInstance.approved_request`). It covers that one start, within the step's
 #: time limit; the agent's own calls ask as any agent's do.
 APPROVED_BEFORE_RESUME = "approved_before_resume"
-#: The owner allowed a subagent batch's start, an ask that named each of its tasks and what each
-#: may change (`workflows.batch_start`): each task starts on that yes, which her answer alone gave.
-#: It covers the starts only; each task's own calls ask as any agent's do.
+#: A subagent batch's start was allowed, once, for all its tasks (`workflows.batch_start`): by her
+#: answer to its one ask, which named each task and what each may change, or, for a batch that only
+#: reads, by the grant that starts its chat's subagents. Each task starts on that, and asks nobody
+#: again. It covers the starts only; each task's own calls ask as any agent's do.
 BATCH_ALLOWED = "batch_allowed"
 #: A workflow run's own gate policy for an origin nobody watches (a schedule, an event).
 GATE_POLICY = "gate_policy"
@@ -144,9 +152,9 @@ class ToolDecision:
 
 def batch_allowed(parent_run: str) -> bool:
     """Whether the run a spawn belongs to (*parent_run*, a step's ``workflow:<run_id>``) is a
-    subagent batch whose start its owner allowed (`workflows.batch_start.CONSENT_KEY`), so its
-    task starts on that Allow (:data:`BATCH_ALLOWED`). Fails closed: a record that cannot be read
-    is no Allow."""
+    subagent batch whose start was allowed (`workflows.batch_start.CONSENT_KEY`: her answer, or the
+    grant that started a batch that only reads), so its task starts on that (:data:`BATCH_ALLOWED`).
+    Fails closed: a record that cannot be read is no Allow."""
     from personalclaw.workflows import store
     from personalclaw.workflows.batch_start import CONSENT_KEY
     from personalclaw.workflows.models import OriginKind
@@ -164,6 +172,19 @@ def batch_allowed(parent_run: str) -> bool:
         and run.origin.kind == OriginKind.SUBAGENT_TOOL
         and isinstance((run.extra or {}).get(CONSENT_KEY), dict)
     )
+
+
+def declared_answer(event: object) -> str:
+    """Who answers a call an agent CLI asks the host about, by what its tool declares, before any
+    grant or person is consulted: :data:`DECLARED_READ` for a declared read, :data:`WORK_ASKS` for
+    a call whose work asks the owner itself, ``""`` for every other call (it is asked, or a grant
+    approves it). The answer a native runtime gives the same call by never asking about it; each
+    gate asks it only past its refusals (task mode, deny-list, hooks, tool grants, a tier)."""
+    from personalclaw.task_modes import declared_level
+
+    if declared_level(getattr(event, "risk_level", "") or "") == "safe":
+        return DECLARED_READ
+    return WORK_ASKS if getattr(event, "work_asks", False) is True else ""
 
 
 def decision_of(answer: object) -> ToolDecision:

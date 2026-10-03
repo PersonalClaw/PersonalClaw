@@ -2181,6 +2181,18 @@ export interface WorkflowRunSummary {
    *  (`WorkflowRunDetailData.held`); empty otherwise. */
   held?: string
 }
+/** A batch `subagent_run` started, before and after its one ask: waiting for its answer
+ *  (`asking`), allowed and `starting`, `started` (its `run_id` is its record from then on), or
+ *  `not_started`, with the `error` that says why. */
+export interface WorkflowBatchState {
+  batch: string
+  status: 'asking' | 'starting' | 'started' | 'not_started'
+  run_id?: string
+  /** How many tasks it starts, while it waits. */
+  tasks?: number
+  error?: string
+}
+
 export interface WorkflowRunDetailData {
   run_id: string; workflow: string; status: WorkflowRunStatus; spec_version: number
   error?: string; attention?: Record<string, unknown> | null
@@ -10246,6 +10258,9 @@ export const api = {
   startWorkflowRun: (body: { name: string; inputs?: Record<string, unknown>; mode?: 'blocking' | 'background'; project_id?: string; idempotency_key?: string }) =>
     post<{ run_id: string; status: string; blocking?: boolean; needs_input?: WorkflowContinuation[] }>('/api/workflows/runs', body),
   workflowRun: (id: string) => get<WorkflowRunDetailData>(`/api/workflows/runs/${encodeURIComponent(id)}`),
+  /** How a batch `subagent_run` started stands (`batch_start.state_of`), what its card in the chat
+   *  that started it follows from its one ask to its run. 404 for a name no batch has. */
+  workflowBatch: (name: string) => get<WorkflowBatchState>(`/api/workflows/batches/${encodeURIComponent(name)}`),
   /** Replace the run's sparse SupervisorPolicy overlay. PUT with REPLACE
    *  semantics — the body IS the overlay, so `{}` clears every override. Prelaunch only:
    *  a launched run answers 409 `run_not_prelaunch` (the engine's own saves would silently

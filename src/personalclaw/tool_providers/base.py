@@ -47,6 +47,15 @@ PROPOSES_META_KEY = "personalclaw/proposes"
 #: still do nothing but tell the owner something (:attr:`ToolDefinition.tells_owner`).
 TELLS_OWNER_META_KEY = "personalclaw/tells_owner"
 
+#: The ``_meta`` key one of PersonalClaw's own tool dicts sets to declare that what a call starts
+#: asks the owner itself, saying what it would do (``subagent_run``: one subagent's start, or one
+#: ask for a whole batch, naming every task). The call is not asked about first, on any runtime:
+#: asking about the call too asked her twice for one thing. It is no read, so Ask mode, Trust reads,
+#: a dry run and a ``read`` grant still treat the call as the change it is. Read only from
+#: PersonalClaw's own modules (`agents.native.tools`, `acp.mcp_servers.core_tool_declaration`),
+#: never from another server.
+WORK_ASKS_META_KEY = "personalclaw/work_asks"
+
 
 def only_tells_the_owner(tells_owner: Collection[str], tool_input: object) -> bool:
     """Whether a call does nothing but tell the owner something: its tool declares the arguments

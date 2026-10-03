@@ -48,6 +48,8 @@ export function settledSentence(retry: 'approved' | 'rejected', by: unknown, too
   }
   // Not a permission: the tool declares it only reads, and a read asks nobody.
   if (who === 'declared_read') return `Ran again without asking: ${tool} only reads, and a read asks nobody.`
+  // Nor this: what the call starts asks you itself (a subagent's start, a batch's one ask).
+  if (who === 'work_asks') return `Ran again without asking: what ${tool} starts asks you itself.`
   return `Ran again without asking: ${RAN_WITHOUT_ASKING[who] ?? 'a standing permission'} allowed ${tool}.`
 }
 

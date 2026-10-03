@@ -101,7 +101,6 @@ from personalclaw.guardrails.policy import (
 )
 from personalclaw.rooms.store import Room, RoomError, RoomMember
 from personalclaw.rooms.turn import SESSION_KEY_PREFIX, session_key
-from personalclaw.task_modes import declared_level
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.llm.base import LLMEvent
@@ -586,10 +585,11 @@ def approval_channel(
         if denial:
             record(ToolRefusal(member.name, title, denial))
             return False
-        # A call whose tool declares it only reads asks nobody, as a native member's never does:
-        # an ACP member's CLI asks about every call, so this one is answered here, past the tier.
-        if declared_level(getattr(event, "risk_level", "")) == "safe":
-            return ToolDecision(True, "auto_approved", approval_grants.DECLARED_READ)
+        # A call whose tool declares it only reads, or that its work asks for itself, asks nobody,
+        # as a native member's never does: an ACP member's CLI asks about every call, so this one
+        # is answered here, past the tier.
+        if unasked := approval_grants.declared_answer(event):
+            return ToolDecision(True, "auto_approved", unasked)
         if approver is None:
             record(ToolRefusal(member.name, title, NO_APPROVER_REASON))
             return False

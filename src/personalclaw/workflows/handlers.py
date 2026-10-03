@@ -133,9 +133,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # `overridable` so the retry is not blind (the strict write side).
     "WF_POLICY_KEY_UNKNOWN": (400, "unknown_policy_key"),
     # 409: the batch is well-formed; it is the session that started it that cannot ask its owner
-    # (it acts on its own, or there is nowhere to ask), and only her Allow starts a batch that
-    # may change things (`batch_start`).
+    # (it acts on its own, or there is nowhere to ask), and nothing else lets it start
+    # (`batch_start`).
     "WF_BATCH_NOBODY_TO_ASK": (409, "nobody_to_ask"),
+    "WF_BATCH_NOT_FOUND": (404, "not_found"),
     # The posture screen's refusal (`service._write_definition`): the save would let a step do
     # more and the owner's yes was not given. The editor's save answers it as the consent question
     # (`_save_def`); any other door that reaches it is asked the same question.
@@ -996,6 +997,16 @@ async def api_batch_start(request: web.Request) -> web.Response:
     return _reply(result, status=202)
 
 
+async def api_batch_state(request: web.Request) -> web.Response:
+    """GET /api/workflows/batches/{name} — where a `subagent_run` batch stands (`batch_start`).
+
+    Waiting for its owner's answer, started (with its run), or ended before it started, saying
+    why (`batch_start.state_of`): what its card in the chat that started it reads."""
+    from personalclaw.workflows import batch_start
+
+    return _reply(batch_start.state_of(request.match_info.get("name", "")))
+
+
 async def api_run_status(request: web.Request) -> web.Response:
     result = service.status(request.match_info.get("run_id", ""))
     return _reply(shown_status(result) if result.get("ok") else result)
@@ -1746,6 +1757,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs", api_runs_list)
     app.router.add_post("/api/workflows/runs", api_run_start)
     app.router.add_post("/api/workflows/batches", api_batch_start)
+    app.router.add_get("/api/workflows/batches/{name}", api_batch_state)
     app.router.add_post("/api/workflows/agent-saves", api_agent_save)
     app.router.add_get("/api/workflows/runs/{run_id}", api_run_status)
     app.router.add_delete("/api/workflows/runs/{run_id}", api_run_delete)

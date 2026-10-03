@@ -65,7 +65,13 @@ def _run_name_of(run_id: str) -> str:
 
 
 def approval_source_label(
-    *, source: str, session: str, trigger: str = "", trigger_name: str = "", title: str = ""
+    *,
+    source: str,
+    session: str,
+    trigger: str = "",
+    trigger_name: str = "",
+    title: str = "",
+    approval_id: str = "",
 ) -> str:
     """Where a pending approval came from, in the few words every surface shows it by.
 
@@ -73,9 +79,10 @@ def approval_source_label(
     (``ChannelDelivery.request_approval``'s ``source``): ``chat “Trip planning”``,
     ``loop “Fix the README”``, ``workflow “deep-research” · step “sweep”``,
     ``trigger “Friday digest”``, ``subagent of chat “Trip planning”``,
-    ``MCP server “deepwiki”``; a chat's own agent asking through the queue (*source* ``agent``) is
-    its chat. A name that is not known leaves the bare kind (``chat``, ``loop``), which is still
-    true. The work is read in the order that decides it: the trigger
+    ``batch of chat “Trip planning”``, ``MCP server “deepwiki”``; a chat's own agent asking
+    through the queue (*source* ``agent``) is its chat. A name that is not known leaves the bare
+    kind (``chat``, ``loop``), which is still true. The work is read in the order that decides it:
+    the trigger
     whose run asked, the workflow step whose session it is, the loop whose worker or planner it
     is, then the
     chat or the background origin. A loop's worker asks on the chat path, with no source of its
@@ -83,7 +90,9 @@ def approval_source_label(
 
     *source* is the registry's (``""`` for a chat's own call), *session* the key it asked under,
     *trigger* and *trigger_name* the trigger whose run asked, and *title* the chat's name. The
-    names are the ones the entry shows, already masked.
+    names are the ones the entry shows, already masked. *approval_id* is the ask's own id: a
+    batch's ask (``workflows.batch_start``) is raised on the subagent path before any of its
+    tasks exists, so it is named the ``batch`` of its chat or loop, not a ``subagent`` of it.
     """
     if trigger:
         return _quoted("trigger", trigger_name)
@@ -92,10 +101,13 @@ def approval_source_label(
     step = parse_owned(session)
     if step is not None:
         return f"{_quoted('workflow', redact_field(_run_name_of(step[0])))} · step “{step[1]}”"
+    from personalclaw.workflows.owner_allow import BATCH_PREFIX
+
+    started = "batch" if approval_id.startswith(BATCH_PREFIX) else "subagent"
     loop_name = loop_name_of(session)
     if loop_name is not None:
         where = _quoted("loop", redact_field(loop_name))
-        return f"subagent of {where}" if source == "subagent" else where
+        return f"{started} of {where}" if source == "subagent" else where
     if session.startswith("cron:"):
         from personalclaw.triggers.store import trigger_name as name_of_trigger
 
@@ -103,7 +115,7 @@ def approval_source_label(
     if source.startswith("mcp:"):
         return _quoted("MCP server", source.removeprefix("mcp:"))
     if source == "subagent":
-        return f"subagent of {_quoted('chat', title)}" if title else "subagent"
+        return f"{started} of {_quoted('chat', title)}" if title else started
     if not source:
         return _quoted("chat", title)
     if source == "agent":
@@ -113,7 +125,9 @@ def approval_source_label(
     return "background task"
 
 
-def source_label_in(sessions: Any, *, source: str, session: str, trigger: str) -> str:
+def source_label_in(
+    sessions: Any, *, source: str, session: str, trigger: str, approval_id: str = ""
+) -> str:
     """:func:`approval_source_label` for a call about to ask, named from the live *sessions* and
     the trigger store the way its registry entry names it: the gateway asks a channel before the
     entry exists."""
@@ -125,4 +139,5 @@ def source_label_in(sessions: Any, *, source: str, session: str, trigger: str) -
         trigger=trigger,
         trigger_name=redact_field(trigger_name(trigger)) if trigger else "",
         title=redact_field(live_chat_name(sessions, session)),
+        approval_id=approval_id,
     )

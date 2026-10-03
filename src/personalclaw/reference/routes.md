@@ -867,6 +867,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/attention` — per-template §4.4 attention summaries.
 - `GET /api/workflows/audit` — Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default
 - `POST /api/workflows/batches` — start a batch `subagent_run` compiled (`batch_start`).
+- `GET /api/workflows/batches/{name}` — where a `subagent_run` batch stands (`batch_start`).
 - `GET /api/workflows/manifest` — the machine-readable self-description of this instance.
 - `GET /api/workflows/runs` — Paginated run list. Reads the store directly: this is a projection for a table, not
 - `POST /api/workflows/runs` — _(no summary)_

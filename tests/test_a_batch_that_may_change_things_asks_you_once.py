@@ -512,7 +512,12 @@ async def test_with_nowhere_to_ask_it_is_refused(gateway):
 
 
 @pytest.mark.asyncio
-async def test_a_batch_that_only_reads_starts_at_once_as_the_chats_batch(gateway):
+async def test_a_batch_that_only_reads_started_on_the_chats_trust_is_the_chats_batch(gateway):
+    """Started on the grant that starts the chat's own subagents (its Trust), it asks nobody
+    (`test_starting_subagents_asks_you_once` has the one ask it asks otherwise)."""
+    gateway.state.subagents = SimpleNamespace(
+        _start_grant=lambda _key: approval_grants.PARENT_TRUST
+    )
     out = await _run_tool({**FIX, "capability": "research", "writes": []}, FIND)
 
     assert _asks(gateway.state) == [], "a batch that only reads asked to start"

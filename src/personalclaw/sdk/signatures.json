@@ -1360,7 +1360,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "tells_owner"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "annotations"},
     {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "charged"},
-    {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "output_cap"}
+    {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "output_cap"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "work_asks"}
    ],
    "returns": "None"
   },

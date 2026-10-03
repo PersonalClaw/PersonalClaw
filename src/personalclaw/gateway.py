@@ -715,6 +715,7 @@ class GatewayOrchestrator:
                                 source=source,
                                 session=asked_in,
                                 trigger=asked_by,
+                                approval_id=str(request_id),
                             ),
                             parent_session_key=parent_session_key,
                             sessions=self.sessions,
@@ -3336,6 +3337,15 @@ class GatewayOrchestrator:
                     svc.workflows = self.workflow_watchdog
             except Exception:
                 logger.debug("could not attach the workflow supervisor to action services")
+            # A batch the previous run left waiting for its owner's answer is asked again, now
+            # that its tasks have a supervisor to start on (`batch_start.resume`).
+            if self.dashboard_state is not None:
+                from personalclaw.workflows.batch_start import resume
+
+                try:
+                    resume(self.dashboard_state, self.workflow_watchdog)
+                except Exception:  # noqa: BLE001 - a batch's ask is never worth the gateway
+                    logger.warning("could not ask again the batches left waiting", exc_info=True)
 
     async def _init_inbox(self) -> None:
         """Construct the Inbox service (state + store + on-demand AI triage).
@@ -4426,14 +4436,17 @@ class GatewayOrchestrator:
 
             Both shapes carry the subagent (``subagent.approval_subagent_id``), so a stage's tool
             call is listed under its run like the stage's spawn is — which is what lets the run's
-            page show it and the decision path tell when that run has ended.
+            page show it and the decision path tell when that run has ended. A batch's one ask
+            starts no subagent yet: it is the chat's whose batch it is (`batch_start.asked_in`).
             """
+            from personalclaw.workflows.batch_start import asked_in
+
             agent_id = approval_subagent_id(request_id)
             info = self.subagent_mgr.get(agent_id) if self.subagent_mgr is not None else None
             session = (
                 info.parent_session_key.removeprefix("dashboard:")
                 if info and info.parent_session_key
-                else ""
+                else asked_in(request_id)
             )
             logger.info(
                 "_spawn_session_resolver: rid=%s agent_id=%s info=%s session=%s",
@@ -4535,7 +4548,18 @@ class GatewayOrchestrator:
                         session_name,
                     )
                 self.dashboard_state.broadcast_ws(etype, {**base, **extra})
-            elif etype == "subagent_chunk":
+                return
+            # A task of a chat's batch is that chat's work too: its events are shown in the chat
+            # that started the batch, beside the subagents it started itself, named by its step and
+            # marked with the batch's run (`batch_start.task_of_chat`).
+            from personalclaw.workflows.batch_start import task_of_chat
+
+            chat, run_id, step = task_of_chat(info.parent_session_key)
+            if chat:
+                base = {**base, "session": chat, "run": run_id}
+                if etype == "subagent_spawn":
+                    extra = {**extra, "title": step}
+            if etype == "subagent_chunk":
                 # Heavy data — only to subscribed clients
                 self.dashboard_state.broadcast_ws_subagent_subscribers(etype, {**base, **extra})
             else:

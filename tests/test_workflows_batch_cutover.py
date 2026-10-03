@@ -18,6 +18,7 @@ property rather than the implementation:
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -291,8 +292,10 @@ async def test_a_FAILED_save_never_starts_a_run(monkeypatch):
     monkeypatch.setattr(service, "start_run", start_run)
 
     compiled = batch_compile.compile_batch([leaf("cache"), leaf("queue")])
+    # A start that is allowed: the chat's own Trust starts a batch that only reads, unasked.
+    trusted = SimpleNamespace(subagents=SimpleNamespace(_start_grant=lambda _key: "parent_trust"))
     out = await batch_start.start(
-        None,
+        trusted,
         object(),
         name="subagent-batch-cache",
         root=compiled.spec["root"],

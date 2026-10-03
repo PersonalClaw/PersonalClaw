@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **909 registrations** over **736 distinct paths** — 902 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **910 registrations** over **737 distinct paths** — 903 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -27,7 +27,7 @@ The 128 families the surface divides into, largest first.
 | `/api/chat` | 80 | 68 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 49 | 41 |
-| `/api/workflows` | 47 | 42 |
+| `/api/workflows` | 48 | 43 |
 | `/api/models` | 38 | 30 |
 | `/api/loops` | 28 | 22 |
 | `/api/artifacts` | 25 | 16 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 902 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 903 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -1020,6 +1020,7 @@ The 902 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/workflows/attention` | per-template §4.4 attention summaries. |
 | `GET` | `/api/workflows/audit` | Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default |
 | `POST` | `/api/workflows/batches` | start a batch `subagent_run` compiled (`batch_start`). |
+| `GET` | `/api/workflows/batches/{name}` | where a `subagent_run` batch stands (`batch_start`). |
 | `GET` | `/api/workflows/manifest` | the machine-readable self-description of this instance. |
 | `GET` | `/api/workflows/runs` | Paginated run list. Reads the store directly: this is a projection for a table, not |
 | `POST` | `/api/workflows/runs` | _(no summary)_ |

@@ -69,7 +69,6 @@ from personalclaw.subagent_tier import (
     run_agent,
     tier_for,
 )
-from personalclaw.task_modes import declared_level
 from personalclaw.textfmt import extract_options
 from personalclaw.usage_ledger import spent_rows
 from personalclaw.validation import _AGENT_NAME_RE
@@ -738,8 +737,6 @@ class SubagentManager:
         """
         if info.app:  # its `agent` permission, agreed to at install: the start alone, too
             return approval_grants.APP
-        if self._is_yolo and self._is_yolo():
-            return approval_grants.YOLO
         if info.approval_mode == "auto":
             return approval_grants.APPROVAL_MODE
         if info.trigger_id:
@@ -749,16 +746,27 @@ class SubagentManager:
                 return approval_grants.TRIGGER
         if info.parent_run and approval_grants.batch_allowed(info.parent_run):  # so is a batch's
             return approval_grants.BATCH_ALLOWED  # task, on her Allow of the batch (`batch_start`)
-        if info.parent_session_key and self._sessions.get_approval_policy(
-            info.parent_session_key
-        ) in ("auto", "yolo"):
-            return approval_grants.PARENT_TRUST
+        if grant := self._start_grant(info.parent_session_key):
+            return grant
+        return approval_grants.APPROVED_BEFORE_RESUME if self._allowed_before(info) else ""
+
+    def _start_grant(self, session_key: str) -> str:
+        """What starts work *session_key* asks for unasked, read now (YOLO, its Trust, the hook
+        setting), or ``""``; unbounded (the caller asks `stands`). A batch that only reads too."""
         hooks = self._ctx_builder.hooks if self._ctx_builder else None
-        if hooks is not None and hooks.auto_approve_subagent_spawn is True:
-            return approval_grants.HOOK_SETTING
-        if self._allowed_before(info):
-            return approval_grants.APPROVED_BEFORE_RESUME
-        return ""
+        if self._is_yolo and self._is_yolo():
+            return approval_grants.YOLO
+        if session_key and self._sessions.get_approval_policy(session_key) in ("auto", "yolo"):
+            return approval_grants.PARENT_TRUST
+        spawns = hooks is not None and hooks.auto_approve_subagent_spawn is True
+        return approval_grants.HOOK_SETTING if spawns else ""
+
+    async def _ask_to_start(self, event: LLMEvent, session_key: str) -> ToolDecision:
+        """Ask *event*, a start *session_key* asks for, through the start's relay; refused with
+        nowhere to ask. A spawn asks with it, and a batch that only reads (`batch_start`)."""
+        if self._on_spawn_approval is None:
+            return ToolDecision(False, "rejected", approval_grants.NO_SURFACE)
+        return decision_of(await self._on_spawn_approval(event, session_key))
 
     def _allowed_before(self, info: SubagentInfo) -> bool:
         """Whether the owner allowed this same start before, recently enough to stand for it.
@@ -1163,13 +1171,12 @@ class SubagentManager:
 
         Approval priority (first match wins), read when the spawn is admitted:
 
-        1. A standing grant (:meth:`_spawn_grant`: YOLO, ``approval_mode="auto"`` from the
-           caller, the Allow of the trigger whose action starts it, the parent chat's Trust,
-           ``auto_approve_subagent_spawn``, the owner's Allow of this same start before a
-           restart) → immediate
-           execution, but only if the operator ceiling lets that grant stand
-           (``approval_grants.stands``). Under ``approval: ask`` none does, and the spawn is
-           asked like any other.
+        1. A standing grant (:meth:`_spawn_grant`: ``approval_mode="auto"`` from the caller, the
+           Allow of the trigger whose action starts it, the Allow of the batch it is a task of,
+           YOLO, the parent chat's Trust, ``auto_approve_subagent_spawn``, the owner's Allow of
+           this same start before a restart) → immediate execution, but only if the operator
+           ceiling lets that grant stand (``approval_grants.stands``). Under ``approval: ask``
+           none does, and the spawn is asked like any other.
         2. ``on_spawn_approval`` callback → interactive approval
         3. Otherwise → rejected
 
@@ -1752,21 +1759,12 @@ class SubagentManager:
             asyncio.get_event_loop().call_later(2.0, self._drain_queue)
 
     async def _spawn_with_approval(self, info: SubagentInfo) -> None:
-        """Request approval before starting the subagent.
-
-        If approval is denied the subagent is marked as done with an
-        error and the running count is decremented without executing.
-
-        Args:
-            info (SubagentInfo): The subagent metadata.
-        """
-        assert self._on_spawn_approval is not None
+        """Ask to start *info* (:meth:`_ask_to_start`): refused, it ends with why, giving back its
+        slot without running."""
         request_id: str = spawn_approval_id(info.id)
         try:
-            decision = decision_of(
-                await self._on_spawn_approval(
-                    spawn_ask(request_id, info.task, info.agent), info.parent_session_key
-                )
+            decision = await self._ask_to_start(
+                spawn_ask(request_id, info.task, info.agent), info.parent_session_key
             )
         except Exception:
             logger.exception("Spawn approval failed for %s", info.id)
@@ -2366,21 +2364,19 @@ class SubagentManager:
                     )
                     await self._fire_granted(info, event, approval_grants.HOOK_PATTERN, call_inputs)
                     continue
-                # A call whose tool declares it only reads asks nobody, as a native agent's never
-                # does: an ACP child asks about every call, so it is answered here, past the
-                # grants and hooks above, and never relayed to a person.
-                if declared_level(event.risk_level) == "safe":
+                # A call whose tool declares it only reads, or that its work asks for itself, asks
+                # nobody, as a native agent's never does: an ACP child asks about every call, so it
+                # is answered here, past the grants and hooks above, and never relayed to a person.
+                if unasked := approval_grants.declared_answer(event):
                     await self._approve_and_log(
                         client,
                         event.request_id,
                         session_key,
                         event,
-                        decided_by=approval_grants.DECLARED_READ,
-                        metadata={"subagent_id": info.id, "reason": approval_grants.DECLARED_READ},
+                        decided_by=unasked,
+                        metadata={"subagent_id": info.id, "reason": unasked},
                     )
-                    await self._fire_granted(
-                        info, event, approval_grants.DECLARED_READ, call_inputs
-                    )
+                    await self._fire_granted(info, event, unasked, call_inputs)
                     continue
                 # A standing grant, read at THIS call (it may have been revoked since the agent
                 # started) and bounded by the ceiling.

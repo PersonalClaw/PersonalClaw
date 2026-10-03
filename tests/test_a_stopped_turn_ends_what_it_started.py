@@ -14,11 +14,15 @@ What that session started since its turn began is the turn's. So the Stop ends e
 turn's Stop: the run is cancelled saying so, its step's subagent is stopped, and the approval it was
 waiting on ends naming why, on every surface.
 
-The first test drives the REAL chain: a turn on the real chat runner whose scripted model calls
-``subagent_run`` with two tasks through the real tool, which saves and starts the batch through the
-real workflow routes with the turn's session header, under a real supervisor. So the batch's steps
-are a real ``RunController`` over a real ``SubagentManager`` whose spawns ask the real approval
-registry. Then the real Stop route.
+A batch now asks once before any of it starts (`workflows.batch_start`), so a Stop while it asks
+ends that ask, saying why, and the batch never starts. Under an operator ceiling that has every
+start ask, a started batch's steps still each ask, and the Stop ends those too.
+
+The first tests drive the REAL chain: a turn on the real chat runner whose scripted model calls
+``subagent_run`` with two tasks through the real tool, which hands the batch to the real workflow
+routes with the turn's session header, under a real supervisor. Its one ask goes through the start's
+relay to the real approval registry, and its steps are a real ``RunController`` over a real
+``SubagentManager`` whose spawns ask that registry too. Then the real Stop route.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ import json
 import time
 from typing import Any
 from unittest.mock import MagicMock
+from urllib.parse import quote
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -52,6 +57,7 @@ from personalclaw.llm.base import (
     LLMEvent,
 )
 from personalclaw.session import SessionManager, _Session
+from personalclaw.workflows import batch_start
 from personalclaw.workflows import controller as controller_mod
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices
@@ -93,10 +99,12 @@ TASKS = [
 
 class _ScriptedTurn:
     """The turn's model, scripted: it says what it will do, calls ``subagent_run`` with two tasks
-    (the real tool, run off the event loop as a tool call is), then asks to run a command and
-    waits on that ask. A Stop ends the wait with a refusal, and the turn ends."""
+    (the real tool, run off the event loop as a tool call is), which asks its owner once to start
+    them, then asks to run a command and waits on that ask. A Stop ends the wait with a refusal,
+    and the turn ends."""
 
     def __init__(self) -> None:
+        #: The batch, by its definition's name, as the tool's answer names it.
         self.batch: str = ""
 
     def __call__(self, *_a: Any, **_kw: Any):
@@ -111,8 +119,8 @@ class _ScriptedTurn:
             )
         finally:
             mcp_core.reset_current_session_key(token)
-        assert out.startswith("{"), f"the batch did not start: {out}"
-        self.batch = json.loads(out.splitlines()[0])["run_id"]
+        assert out.startswith("{"), f"the batch was not asked for: {out}"
+        self.batch = json.loads(out.splitlines()[0])["batch"]
         yield LLMEvent(
             kind=EVENT_PERMISSION_REQUEST,
             title="bash",
@@ -207,27 +215,75 @@ def _waiting_spawns(w) -> list[str]:
 
 
 async def _start_the_turn(w, model: _ScriptedTurn):
+    """The turn, parked on its own ask once the batch it handed `subagent_run` asks to start."""
     session = _chat(w)
     w.client.stream = model
     turn = asyncio.create_task(run_chat(w.state, session, "check the release notes"))
     session.task = turn
     await _until(lambda: "req-1" in session._approval_futures, "the turn never asked", tries=4000)
-    await _until(lambda: len(_waiting_spawns(w)) == 2, "the batch's steps never asked", tries=4000)
+    await _until(
+        lambda: f"batch:{model.batch}" in w.state._pending_approvals,
+        "the batch never asked to start",
+        tries=4000,
+    )
     return turn
 
 
 @pytest.mark.asyncio
-async def test_stopping_a_turn_ends_the_batch_it_started(gateway, monkeypatch):
+async def test_stopping_a_turn_ends_the_batch_it_is_still_asking_to_start(gateway, monkeypatch):
     w = gateway
     model = _ScriptedTurn()
     async with TestClient(TestServer(w.app)) as http:
         _route_tool_calls_to(monkeypatch, http, asyncio.get_running_loop())
         turn = await _start_the_turn(w, model)
+        ask = f"batch:{model.batch}"
+        # Premises: the batch asks once, in the turn's chat and on the Inbox, and nothing of it
+        # exists yet, so a green cannot be a batch that never reached the measured state.
+        assert w.state._pending_approvals[ask]["session"] == CHAT
+        assert _open_rows(w, ask), "the batch's ask never reached the Inbox"
+        assert _waiting_spawns(w) == []
+        assert store.list_runs(workflow_name=model.batch, limit=1)[0] == []
+
+        _hold_the_runtime(w)
+        resp = await http.post(f"/api/chat/sessions/{CHAT}/stop")
+        assert resp.status == 200, await resp.text()
+        await asyncio.wait_for(turn, timeout=10)
+        await _until(lambda: ask not in w.state._pending_approvals, "the batch still asks")
+
+    (frame,) = _resolved(w, ask)
+    assert frame["outcome"] == "cancelled", frame
+    assert frame["ended"] == "its chat turn was stopped", frame
+    assert not _open_rows(w, ask), "the Inbox still offers the ask"
+    # It never starts, its card says why, and no gateway asks it again.
+    assert store.list_runs(workflow_name=model.batch, limit=1)[0] == []
+    state = batch_start.state_of(model.batch)
+    assert state["status"] == batch_start.NOT_STARTED, state
+    assert "its chat turn was stopped" in state["error"], state
+    await w.state.workflows.stop()
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_turn_ends_the_batch_it_started(gateway, monkeypatch):
+    """Under an operator ceiling that has every start ask, the batch's Allow starts its run and each
+    step then asks to start: the Stop ends the run, its steps and their asks."""
+    w = gateway
+    model = _ScriptedTurn()
+    monkeypatch.setattr(
+        "personalclaw.guardrails.policy.ceiling_permits_approval", lambda _level: False
+    )
+    async with TestClient(TestServer(w.app)) as http:
+        _route_tool_calls_to(monkeypatch, http, asyncio.get_running_loop())
+        turn = await _start_the_turn(w, model)
+        resp = await http.post(f"/api/approvals/{quote(f'batch:{model.batch}')}/approve")
+        assert resp.status == 200, await resp.text()
+        await _until(
+            lambda: len(_waiting_spawns(w)) == 2, "the batch's steps never asked", tries=4000
+        )
         spawns = _waiting_spawns(w)
+        (run,), _total = store.list_runs(workflow_name=model.batch, limit=1)
         # Premises: the batch is the turn's, started from its session, and its steps' asks are
         # on the Inbox, so a green cannot be a run that never reached the measured state.
-        run = store.get(model.batch)
-        assert run is not None and run.origin.session_key == KEY, run
+        assert run.origin.session_key == KEY, run
         assert run.status is RunStatus.RUNNING, run.status
         for approval_id in spawns:
             assert _open_rows(w, approval_id), "a step's ask never reached the Inbox"
@@ -237,14 +293,14 @@ async def test_stopping_a_turn_ends_the_batch_it_started(gateway, monkeypatch):
         assert resp.status == 200, await resp.text()
         await asyncio.wait_for(turn, timeout=10)
         await _until(
-            lambda: store.get(model.batch).status is RunStatus.CANCELLED,
+            lambda: store.get(run.id).status is RunStatus.CANCELLED,
             "the batch the stopped turn started is still going",
             tries=4000,
         )
 
-    run = store.get(model.batch)
+    run = store.get(run.id)
     assert run.error_message == RUN_ENDING, run.error_message
-    states = {inst.state for inst in store.read_state(model.batch).values()}
+    states = {inst.state for inst in store.read_state(run.id).values()}
     assert states == {InstanceState.CANCELLED}, states
     for approval_id in spawns:
         info = w.manager.get(approval_id.removeprefix("spawn:"))

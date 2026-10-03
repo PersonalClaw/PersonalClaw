@@ -45,7 +45,8 @@ export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKill
   const counts = { files: activity.files.length, links: activity.links.length }
 
   // Ordered tab descriptors — drive both the tablist render and arrow-key nav.
-  // Subagents tab appears only once at least one has been spawned this session.
+  // Subagents tab appears only once at least one has been spawned this session: by the chat itself,
+  // or as a task of a batch it started.
   const TABS: { key: Tab; label: string; icon: typeof FileText; count: number }[] = [
     { key: 'files', label: 'Files', icon: FileText, count: counts.files },
     { key: 'links', label: 'Links', icon: Link2, count: counts.links },
@@ -133,10 +134,12 @@ export function ChatActivityPanel({ activity, onOpenFile, subagents = [], onKill
           subagents.length === 0
             ? <Empty icon={Bot} text="No subagents spawned yet." />
             : <div className="flex flex-col gap-1.5">
-                {onKillFanout && subagents.some((s) => !s.done) && (
+                {/* A batch's tasks stop with their batch's run (its card's Open), not with the chat's
+                    fan-out, so the button counts and stops the chat's own subagents alone. */}
+                {onKillFanout && subagents.some((s) => !s.done && !s.run) && (
                   <Button variant="danger" size="sm" onClick={onKillFanout} className="mb-0.5 self-end"
-                    title="Stop every running subagent in this chat">
-                    <OctagonX size={13} /> Stop fan-out ({subagents.filter((s) => !s.done).length})
+                    title="Stop every running subagent this chat started itself">
+                    <OctagonX size={13} /> Stop fan-out ({subagents.filter((s) => !s.done && !s.run).length})
                   </Button>
                 )}
                 {subagents.map((s, i) => <SubagentRow key={s.id} sub={s} index={i} />)}
@@ -175,9 +178,10 @@ function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) 
           {status === 'running' ? <Loader2 size={14} className="animate-spin" /> : failed ? <AlertTriangle size={14} /> : <Check size={14} />}
         </span>
         <span className="min-w-0 flex-1">
-          <span data-type="label-s" className="block truncate text-on-surface" style={fvs(500)} title={sub.task}>{sub.task || '(task)'}</span>
+          <span data-type="label-s" className="block truncate text-on-surface" style={fvs(500)} title={sub.task}>{sub.title || sub.task || '(task)'}</span>
           <span data-type="caption" className="block truncate text-on-surface-low">
             {sub.agent || 'subagent'}
+            {sub.run ? ' · a task of a batch' : ''}
             {status === 'running' && sub.lastTool ? ` · ${sub.lastTool}` : ''}
             {sub.done && sub.elapsed !== undefined ? ` · ${sub.elapsed.toFixed(1)}s` : ''}
             {sub.done && sub.costUsd !== undefined && sub.costUsd > 0 ? ` · $${sub.costUsd < 0.01 ? sub.costUsd.toFixed(4) : sub.costUsd.toFixed(2)}` : ''}

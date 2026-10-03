@@ -891,12 +891,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "A policy override key is not in the overridable set; the detail names the "
         "offending keys and the keys a run may override."
     ),
-    # 409 from the same translation: a batch that may change things starts only on the owner's
-    # own Allow, and the session that started it has nobody to ask (it acts on its own, or there
-    # is nowhere to ask). The message names its tasks and why.
+    # 409 from the same translation: a batch starts only once its owner allows it (or a grant
+    # lets it start without asking), and the session that started it has nobody to ask (it acts on
+    # its own, or there is nowhere to ask). The message names what its tasks may do and why.
     "nobody_to_ask": (
-        "A batch whose tasks may change things starts only on your own Allow, and nobody can "
-        "be asked for it from where it was started."
+        "A batch starts only once you allow it, and nobody can be asked for it from where it "
+        "was started."
     ),
     # 409 from the same translation: an agent's save that would let a workflow's steps do more is
     # made only on the owner's own Allow, and the session that asked has nobody to ask

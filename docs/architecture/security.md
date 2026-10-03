@@ -506,7 +506,13 @@ from nothing else except a shell command's own text:
   itself (`approval_grants.DECLARED_READ`) at each place that would otherwise ask a person: the
   chat's gate, a background agent's and a room member's, each past the refusals that come first.
   The declaration decides there, never the effective risk, so a read-only shell command is still
-  Trust reads' to approve. No tool switches between reading and changing on an argument: a listing
+  Trust reads' to approve. **Nor does a call whose work asks for itself** (`_meta`
+  `WORK_ASKS_META_KEY`, read only from PersonalClaw's own tools): `subagent_run` starts what asks
+  her, one task's start or a batch's one ask naming every task, so the call is not asked about
+  first (`requires_approval` false on PersonalClaw's runtime; over an agent CLI the host answers it,
+  `approval_grants.WORK_ASKS`). It is no read: Ask mode, Trust reads, a dry run and a `read` grant
+  still treat it as the change it is, and the operator ceiling bounds the grants that start its
+  work, never the call. No tool switches between reading and changing on an argument: a listing
   is its own tool (`triage_rules_list`) and so is each preview — `workflow_check` (a spec
   `workflow_author` would save), `workflow_edit_preview`, `workflow_audit` (beside
   `workflow_repair`) and `automation_dry_run` — and a call that sends a preview argument to the
@@ -603,7 +609,9 @@ the ceiling did not bound.
   patterns, a listed source, the `--approval` flag, a remembered or policy-approved workflow gate,
   a workflow step's start its owner allowed before a restart cut the step off (for the same
   request, within the step's time limit, `approval_grants.APPROVED_BEFORE_RESUME`), a subagent
-  batch's tasks starting on the owner's Allow of that batch (`approval_grants.BATCH_ALLOWED`),
+  batch's tasks starting on what allowed that batch's start (`approval_grants.BATCH_ALLOWED`: her
+  answer to its one ask, or, for a batch that only reads, the grant that starts its chat's
+  subagents),
   the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
   unattended ACP CLI approving its own calls, a session policy that never asks, and the eval
   runner's allowlist of read-only tools. Under

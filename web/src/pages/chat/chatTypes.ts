@@ -421,12 +421,17 @@ export function unaskedStepCount(work: Segment[]): number {
 }
 
 /** A subagent spawned during this session — driven by the subagent_spawn /
- *  subagent_tool / subagent_done WS events (fire-and-forget async subagents).
+ *  subagent_tool / subagent_done WS events (fire-and-forget async subagents), and a task of a batch
+ *  this chat started, which runs as a step of the batch's run (`run`).
  *  Shown as live cards in the activity panel's Subagents tab. */
 export interface SubagentCard {
   id: string
   task: string
   agent: string
+  /** What it is called where a person reads it: a batch task's step name. Absent: name it by its task. */
+  title?: string
+  /** The batch run it is a task of. Stopped with that run, not with this chat's own subagents. */
+  run?: string
   lastTool?: string      // most recent tool title (subagent_tool)
   done: boolean
   error?: string | null

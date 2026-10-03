@@ -71,7 +71,7 @@ import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { withoutFence } from '../lib/untrustedFence'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
-import { WorkflowProgressCard, workflowRefFromTool } from './chat/WorkflowProgressCard'
+import { WorkflowProgressCard, liveWorkflowCards, workflowRefFromTool } from './chat/WorkflowProgressCard'
 import { ManualAutomationCard, manualAutomationFromTool } from './chat/ManualAutomationCard'
 import { ApprovalCard } from './chat/ApprovalCard'
 import { RoomView } from './chat/RoomView'
@@ -89,6 +89,7 @@ import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, ty
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
+import { waitsPastItsTurn } from './chat/approvalSegment'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
@@ -1796,8 +1797,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'subagent_spawn': {
         const id = String(d.id ?? '')
         if (!id) break
+        // A task of a batch this chat started arrives with its batch's run and its step's name.
+        const batchTask = d.run ? { run: String(d.run), title: String(d.title ?? '') } : {}
         setSubagents((prev) => prev.some((s) => s.id === id) ? prev
-          : [...prev, { id, task: String(d.task ?? ''), agent: String(d.agent ?? ''), done: false }])
+          : [...prev, { id, task: String(d.task ?? ''), agent: String(d.agent ?? ''), done: false, ...batchTask }])
         break
       }
       case 'subagent_tool': {
@@ -2981,6 +2984,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // activity panel: the Files / Links tabs, derived from the transcript. No navigation —
   // the Session Map's rail and drawer are the session's only jump surface.
   const activity = useMemo(() => deriveActivity(turns), [turns])
+  // The tool results that show a run's live card: the first to name each run, however often the
+  // agent read it after (`liveWorkflowCards`). Every later read keeps its plain tool card.
+  const liveCards = useMemo(() => liveWorkflowCards(turns), [turns])
   // The Session Map's entries — one per USER message, each owning the turns of its exchange.
   // Derived ONCE, here, and handed to both forms, so the rail and the coarse-pointer drawer index
   // the identical array (a "Message 3 of 7" that means a different 7 in each form is two maps).
@@ -3018,11 +3024,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }
 
   // Kill EVERY running subagent of this chat's fan-out in one click.
-  // Optimistically mark the running cards done; the subagent_done WS events reconcile.
+  // Optimistically mark the running cards done; the subagent_done WS events reconcile. A batch's
+  // tasks are its run's, and stop with that run, so they are not marked.
   async function killFanout() {
     const s = sessionRef.current
     if (!s) return
-    setSubagents((prev) => prev.map((c) => (c.done ? c : { ...c, done: true, error: 'cancelled' })))
+    setSubagents((prev) => prev.map((c) => (c.done || c.run ? c : { ...c, done: true, error: 'cancelled' })))
     await api.cancelFanout(s).catch(reportActionFailure('cancel the subagents'))
   }
 
@@ -3876,7 +3883,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} />
+                            <AssistantSegments segments={turn.segments} liveCards={liveCards} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips under the last assistant turn only,
@@ -4562,8 +4569,10 @@ const LEDGER_ACTIVITY = ['context', 'learned', 'stats']
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution }: {
+function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution }: {
   segments: Segment[]; isLast: boolean
+  /** The tool results of the whole chat that show a run's live card, one per run. */
+  liveCards: Set<Segment>
   messageTs?: string
   streaming?: boolean
   onApprove: (id: string, action: ApproveAction) => void
@@ -4623,8 +4632,9 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       const sdlc = t.done ? sdlcRefFromTool(t.tool, t.output) : null
       if (sdlc) return <SdlcProgressCard key={seg.id || i} refObj={sdlc} />
       // A workflow run started or inspected from chat renders as a live progress card for
-      // the same reason: a run is a living thing, not the frozen JSON the tool returned.
-      const wf = t.done ? workflowRefFromTool(t.tool, t.output) : null
+      // the same reason: a run is a living thing, not the frozen JSON the tool returned. Once,
+      // where the chat first names it: every status read the agent made after is its tool card.
+      const wf = liveCards.has(seg) ? workflowRefFromTool(t.tool, t.output) : null
       if (wf) return <WorkflowProgressCard key={seg.id || i} refObj={wf} />
       // An automation made to run when she runs it ("a button that runs …") is shown with its
       // Run now, the button she asked for.
@@ -4692,10 +4702,10 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   const isSdlc = (s: Segment) => s.kind === 'tool'
     && !!(s as ToolSegment).done && !!sdlcRefFromTool((s as ToolSegment).tool, (s as ToolSegment).output)
   // A workflow card is live too, so it gets the same exemption: burying an auto-refreshing
-  // widget inside a collapsed disclosure hides the one thing the user came back to check.
-  const isWorkflow = (s: Segment) => s.kind === 'tool'
-    && !!(s as ToolSegment).done && !!workflowRefFromTool((s as ToolSegment).tool, (s as ToolSegment).output)
-  const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s)
+  // widget inside a collapsed disclosure hides the one thing the user came back to check. So is
+  // an ask still waiting for work the chat started (`waitsPastItsTurn`).
+  const isWorkflow = (s: Segment) => liveCards.has(s)
+  const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s) || waitsPastItsTurn(s)
   const sdlcNodes = segments.filter(isLiveCard).map(renderItem).filter(Boolean)
   const workNodes = workSegs.filter((s) => !isLiveCard(s)).map(renderItem).filter(Boolean)
   const finalNodes = finalSegs.map(renderItem).filter(Boolean)

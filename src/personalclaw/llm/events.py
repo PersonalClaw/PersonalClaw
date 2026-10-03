@@ -211,8 +211,8 @@ class AgentEvent:
 
     Every ``acp.types.AcpEvent`` field is here under the same name and default,
     so the chat runner consumes either without change. ``risk_level``, ``builds``,
-    ``proposes``, ``tells_owner``, ``served_model_ref``, ``audit_ids`` and ``output_cap`` have no
-    ACP twin, since an ACP agent reports none of them.
+    ``proposes``, ``tells_owner``, ``work_asks``, ``served_model_ref``, ``audit_ids`` and
+    ``output_cap`` have no ACP twin, since an ACP agent reports none of them.
     ``tool_input``/``tool_output`` are typed ``Any`` (the native loop may pass
     structured values; ACP passes str).
     """
@@ -312,3 +312,8 @@ class AgentEvent:
     #: model ran into, which the turn's ending names (:func:`out_of_room`). 0 for every other
     #: ending, and from a backend that does not say. Last, so no field moves.
     output_cap: int = 0
+    #: With ``builds`` and ``proposes``, what the tool behind a PERMISSION_REQUEST declares: that
+    #: what the call starts asks the owner itself (``tool_providers.base.WORK_ASKS_META_KEY``), so
+    #: the host answers the call without asking anyone (``approval_grants.declared_answer``).
+    #: False from a backend that declares nothing. Last, so no field moves.
+    work_asks: bool = False

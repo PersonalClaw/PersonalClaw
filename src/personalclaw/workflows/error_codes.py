@@ -518,10 +518,11 @@ WF_ERROR_CODES: dict[str, str] = {
     ),
     # ── workflows/batch_start.py — a subagent batch's one Allow ───────────
     "WF_BATCH_NOBODY_TO_ASK": (
-        "A batch with a task that may change things starts only on its owner's own Allow, and "
-        "the session that started it has nobody to ask (it acts on its own, or nowhere can ask); "
-        "the message names those tasks and why."
+        "A batch starts only once its owner allows it, or a grant lets it start without asking, "
+        "and the session that started it has nobody to ask (it acts on its own, or nowhere can "
+        "ask); the message names what its tasks may do and why."
     ),
+    "WF_BATCH_NOT_FOUND": "No batch with that name is waiting, started or recorded as ended.",
     # ── workflows/definition_ask.py — an agent's save that needs the owner's Allow ──
     "WF_DEF_NOBODY_TO_ASK": (
         "An agent's save would let a step do more, which only its owner's own Allow saves, and "

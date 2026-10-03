@@ -12,12 +12,12 @@ is owned by ``mcp_core`` and reused here.
 """
 
 import json
-import re
+import secrets
 import time
 from typing import Any
 
 from personalclaw.mcp_core import _get, _post, _resolve_session_key
-from personalclaw.tool_providers.base import ToolFailure, tool_failure
+from personalclaw.tool_providers.base import WORK_ASKS_META_KEY, ToolFailure, tool_failure
 from personalclaw.workflows import batch_compile
 from personalclaw.workflows.batch_compile import LeafTask
 
@@ -60,13 +60,11 @@ def _to_leaf(text: str, spec: dict[str, Any], agent: str) -> LeafTask:
     return batch_compile.leaf_from_item(spec or text, agent=agent)
 
 
-#: Compiled-batch def names are minted per call and must satisfy `models.valid_name` (lowercase,
-#: digits, hyphens — it becomes a directory).
-_NAME_UNSAFE = re.compile(r"[^a-z0-9-]+")
-
-
 def _batch_def_name() -> str:
-    return f"subagent-batch-{int(time.time() * 1000)}"
+    """A name no other batch has: the millisecond it was started in, which two batches started at
+    once share, and a random part, so neither saves its definition over the other's. Minted per
+    call, within `models.valid_name` (lowercase, digits, hyphens: it becomes a directory)."""
+    return f"subagent-batch-{int(time.time() * 1000)}-{secrets.token_hex(3)}"
 
 
 def _findings_report(result: batch_compile.CompileResult) -> str:
@@ -159,9 +157,11 @@ def _run_compiled_batch(
     path every other workflow run already uses. Per-branch retry is likewise the existing
     `run-from` route over the compiled node ids.
 
-    The gateway starts a batch that only reads at once. One with a task that may change things
-    waits for the owner's own Allow, which this tool never gives: the save of a step that may write
-    asks for her consent, so the gateway asks her, once, and starts it on her answer.
+    The gateway decides the batch's start once, for all its tasks, and this call asks nobody
+    itself: a batch that only reads starts on the grant that starts this conversation's subagents,
+    else on the owner's answer to one ask; one with a task that may change things waits for her
+    own Allow, which this tool never gives (the save of a step that may write asks for her
+    consent). A batch that waits is named in the reply, so the chat can follow it to its run.
     """
     name = _batch_def_name()
     leaves, result = _compile(
@@ -196,12 +196,24 @@ def _run_compiled_batch(
         # Named by the gateway, which read them off the spec it asks about: one reading of which
         # tasks may change things, the ask's.
         changing = [str(label) for label in answer.get("may_change") or []]
+        why = (
+            f"{len(changing)} of its {len(leaves)} tasks may change things "
+            f"({'; '.join(changing)}), so it waits for your owner's own Allow"
+            if changing
+            else f"it waits for your owner to allow its {len(leaves)} tasks, which only read"
+        )
         lines += [
-            json.dumps({"status": "awaiting_approval", "approval": answer.get("approval", "")}),
-            f"Not started yet: {len(changing)} of its {len(leaves)} tasks may change things "
-            f"({'; '.join(changing)}), so it waits for your owner's own Allow, asked once, the way "
-            "every approval is asked. It starts when they allow it; nothing runs before. Do not "
-            "start it another way.",
+            # As JSON, the batch by name: the chat follows it from this ask to its run.
+            json.dumps(
+                {
+                    "status": "awaiting_approval",
+                    "approval": answer.get("approval", ""),
+                    "batch": answer.get("batch", name),
+                }
+            ),
+            f"Not started yet: {why}, asked once for the whole batch, the way every approval is "
+            "asked. It starts when they allow it; nothing runs before. Do not start it another "
+            "way.",
         ]
     else:
         run_id = str(answer.get("run_id", "") or "")
@@ -237,14 +249,18 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "subagent_run",
             "annotations": {"readOnlyHint": False},
+            # What it starts asks the owner itself, once: one task's start, or one ask for a whole
+            # batch naming every task. So the call is not asked about first (`WORK_ASKS_META_KEY`).
+            "_meta": {WORK_ASKS_META_KEY: True},
             "description": (
                 "Spawn subagent(s) to run tasks in the background. One task ('task') returns "
                 "at once, and its result arrives as a [Subagent completion event] message in "
                 "your conversation: WAIT for it before responding to the user. Two or more "
                 "('tasks') run in parallel as one batch run, each task a contract the batch is "
                 "checked against before it starts, and their results arrive together in your "
-                "conversation when the batch ends. A batch with a task that may change things "
-                "starts only once your owner allows it, and you hear if they do not. More tasks "
+                "conversation when the batch ends. Your owner is asked once before anything "
+                "starts: one task's start, or one ask for a whole batch, unless what they have "
+                "set lets it start without asking; you hear if they do not allow it. More tasks "
                 "than may run at once wait their turn."
             ),
             "inputSchema": {
@@ -486,6 +502,14 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                         parts.append(f"{turns} turns")
                     if tool:
                         parts.append(tool)
+                    # Waiting on its owner, not stuck: say for what, so the answer to "why is
+                    # it slow" is read here rather than guessed.
+                    if waiting := _redact(a.get("waiting_for", "")):
+                        parts.append(
+                            "waiting for your owner to allow its start"
+                            if waiting == "its start"
+                            else f"waiting for your owner's answer on {waiting}"
+                        )
                     progress = f" ({', '.join(parts)})"
                 lines.append(f"{a['id']}  [{status}]{err}{progress}  {_redact(a['task'])[:60]}")
         # Append configured agent names from AppConfig

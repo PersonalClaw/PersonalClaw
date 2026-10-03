@@ -140,6 +140,18 @@ and your message is answered again by what you picked. The chat says so where th
 conversation is: "Moved to oncall-triage — it is answering your message." If the answer had
 already arrived, it stands, and the change applies from your next message.
 
+### Subagents the agent starts
+
+When the agent hands work to subagents with `subagent_run`, you are asked once before anything
+starts: about the one subagent, or, for a batch of tasks, one ask naming every task and what each
+may change. A batch whose tasks only read starts without asking where the chat's own subagents
+would, on its Trust or YOLO; one whose tasks may change things always asks, and only Allow or Deny
+answers it. The chat shows one card per batch: while it waits, it says so and links to the Inbox;
+once it starts, it follows the run and names a step that waits and what for. Its tasks are listed
+under Subagents in the chat's Activity panel by their step names. An ask still waiting when
+PersonalClaw restarts is asked again, or, if its window passed meanwhile, the chat is told the
+batch never started.
+
 ## 5. Find in the conversation
 
 **Where:** `⌘F` (`Ctrl+F` on Windows/Linux) with a chat open.

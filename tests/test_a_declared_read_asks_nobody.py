@@ -159,11 +159,25 @@ def test_a_tool_that_declares_a_read_asks_nobody():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module", _MODULES)
 async def test_personalclaws_own_tools_ask_exactly_when_they_declare_a_change(module):
-    """🔴 Red before the fix: every one of these was built with `requires_approval=True`."""
+    """🔴 Red before the fix: every one of these was built with `requires_approval=True`. A change
+    whose work asks the owner itself (`WORK_ASKS_META_KEY`: `subagent_run`) is the one change the
+    call is not asked about, since what it starts asks."""
+    import importlib
+
+    from personalclaw.tool_providers.base import WORK_ASKS_META_KEY
+
     defs = await InProcessMcpToolProvider(module=module, provider_name="under-test").list_tools()
     assert defs, f"{module} listed no tools"
+    asks_itself = {
+        str(t.get("name"))
+        for t in importlib.import_module(module)._list_tools()
+        if (t.get("_meta") or {}).get(WORK_ASKS_META_KEY) is True
+    }
     wrong = sorted(
-        d.name for d in defs if d.requires_approval is not (d.risk_level is not RiskLevel.SAFE)
+        d.name
+        for d in defs
+        if d.requires_approval
+        is not (d.risk_level is not RiskLevel.SAFE and d.name not in asks_itself)
     )
     assert not wrong, f"asking does not follow the declaration for: {wrong}"
 

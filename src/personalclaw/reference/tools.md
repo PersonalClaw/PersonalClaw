@@ -1782,11 +1782,11 @@ List all running and completed subagents (read-only, no commands executed)
 
 ### `subagent_run`
 
-Spawn subagent(s) to run tasks in the background. One task ('task') returns at once, and its result arrives as a [Subagent completion event] message in your conversation: WAIT for it before responding to the user. Two or more ('tasks') run in parallel as one batch run, each task a contract the batch is checked against before it starts, and their results arrive together in your conversation when the batch ends. A batch with a task that may change things starts only once your owner allows it, and you hear if they do not. More tasks than may run at once wait their turn.
+Spawn subagent(s) to run tasks in the background. One task ('task') returns at once, and its result arrives as a [Subagent completion event] message in your conversation: WAIT for it before responding to the user. Two or more ('tasks') run in parallel as one batch run, each task a contract the batch is checked against before it starts, and their results arrive together in your conversation when the batch ends. Your owner is asked once before anything starts: one task's start, or one ask for a whole batch, unless what they have set lets it start without asking; you hear if they do not allow it. More tasks than may run at once wait their turn.
 
 **Response type:** `subagent.run.result`
 
-**Safety:** requires approval, risk: caution
+**Safety:** risk: caution
 
 **Parameters:**
 - `agent` (string, optional) — Agent name for the subagent. Use subagent_list to see available agents.

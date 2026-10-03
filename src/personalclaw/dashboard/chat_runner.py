@@ -145,7 +145,6 @@ from personalclaw.security import (
 from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
-from personalclaw.task_modes import declared_level
 from personalclaw.usage_ledger import Attribution, recorder, spent_rows
 from personalclaw.validation import ValidationError, validate_ask_user_question
 
@@ -4398,20 +4397,21 @@ async def run_chat(
                     event.tool_kind,
                     event.tool_input,
                 )
-                # A call whose tool declares it only reads asks nobody, as a native call to it
-                # never does: an ACP CLI asks the host about every call, so the host answers
-                # this one itself (`approval_grants.DECLARED_READ`, whoever's conversation it
-                # is). The DECLARATION decides, never the effective risk: a read-only shell
-                # command is Trust reads' to approve below, as it is in a native chat.
+                # A call whose tool declares it only reads, or that what it starts asks the owner
+                # itself, asks nobody, as a native call to it never does: an ACP CLI asks the host
+                # about every call, so the host answers this one itself
+                # (`approval_grants.declared_answer`, whoever's conversation it is). The
+                # DECLARATION decides, never the effective risk: a read-only shell command is
+                # Trust reads' to approve below, as it is in a native chat.
                 #
                 # Trust reads approves an EFFECTIVE-SAFE call — which, with declared reads
                 # answered here, is a read-only shell command. A tool that declares nothing
                 # (an ACP CLI's own, an untrusted MCP server's) is CAUTION, so it prompts like
                 # every other change.
-                if declared_level(getattr(event, "risk_level", "") or "") == "safe":
-                    _unasked_by = approval_grants.DECLARED_READ
-                elif (
-                    session._trust_reads
+                _unasked_by = approval_grants.declared_answer(event)
+                if (
+                    not _unasked_by
+                    and session._trust_reads
                     and not session._trust
                     and not yolo_active
                     and effective_risk == "safe"
@@ -4420,8 +4420,6 @@ async def run_chat(
                     )
                 ):
                     _unasked_by = approval_grants.TRUST_READS
-                else:
-                    _unasked_by = ""
                 if _unasked_by:
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)

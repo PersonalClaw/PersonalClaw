@@ -146,6 +146,12 @@ def _who_asked(entry: dict[str, Any]) -> str:
         # A workflow step's agent asks under its run's key: the step is named as the run page, and
         # the Inbox's "Run this step again", name it — by its label.
         return f"The “{_step_name(*step)}” step of a workflow run"
+    from personalclaw.workflows.batch_start import asker
+
+    if batch := asker(str(entry.get("id") or ""), title):
+        # A batch waiting to start: what waits is the batch its chat's agent asked for, not a
+        # subagent, which none of its tasks is yet.
+        return batch
     session = str(entry.get("session") or "")
     if entry.get("source") == "subagent" and session.startswith("app:"):
         # An app's background agent (`SubagentInfo.app`), named by the app it works for.
@@ -555,7 +561,12 @@ class DashboardApprovalState:
             # Where it came from, in the words every surface shows it by: the dashboard's cards,
             # its Inbox row, and the tag a channel's prompt carries.
             "source_label": approval_source_label(
-                source=source, session=session, trigger=trigger, trigger_name=named, title=title
+                source=source,
+                session=session,
+                trigger=trigger,
+                trigger_name=named,
+                title=title,
+                approval_id=approval_id,
             ),
             "asked_by": asked_by,
             "ts": time.time(),
@@ -875,6 +886,18 @@ class DashboardApprovalState:
             if str(entry.get("session") or "").startswith(session_prefix)
         ]
         return sum(self.cancel_approval(aid, reason=reason) for aid in owned)
+
+    def asks_under(self, session_prefix: str) -> list[dict[str, Any]]:
+        """The pending approvals raised under a session key starting with *session_prefix*, as
+        every surface lists them: what a workflow run's steps (``workflow:<run>:``) wait on their
+        owner's answer for, which a status read of the run says (`workflows.service.status`)."""
+        if not session_prefix:
+            return []
+        return [
+            dict(entry)
+            for entry in self._pending_approvals.values()
+            if str(entry.get("session") or "").startswith(session_prefix)
+        ]
 
     def refuse_ended_owner(self, approval_id: str) -> str:
         """If the work that asked for this approval has ended, cancel it and return why; else "".

@@ -154,12 +154,22 @@ def _real_manager(state):
     ctx.hooks.auto_approve_subagent_spawn = False  # the interactive gate, as on the day-8 host
     holder: dict[str, Any] = {}
 
-    async def _spawn_approve(event: Any, parent_key: str = "") -> bool:
+    async def _spawn_approve(event: Any, parent_key: str = "") -> Any:
+        from personalclaw import approval_grants as grants
+        from personalclaw.workflows.batch_start import asked_in
+
         request_id = str(event.request_id)
         info = holder["manager"].get(request_id.removeprefix("spawn:"))
-        return await state.request_approval(
-            request_id, "subagent", event.title, session=info.parent_session_key if info else ""
+        # Listed where the gateway lists it (`_spawn_session_resolver`): a spawn under its parent,
+        # the ask of a batch that only reads under the chat whose batch it is.
+        session = info.parent_session_key if info else asked_in(request_id)
+        approved = await state.request_approval(
+            request_id, "subagent", event.title, session=session
         )
+        # How it ended, as the gateway reads it (`_asked_decision`): a cancelled ask is no Deny.
+        ended = state.ended_as(request_id) or ("approved" if approved else "rejected")
+        who = grants.YOU if ended in ("approved", "rejected") else grants.NOBODY
+        return grants.ToolDecision(ended == "approved", ended, who)
 
     manager = SubagentManager(
         sessions=sessions, ctx_builder=ctx, on_spawn_approval=_spawn_approve, is_yolo=lambda: False

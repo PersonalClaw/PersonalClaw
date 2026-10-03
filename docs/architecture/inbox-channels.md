@@ -243,18 +243,23 @@ A subagent's start asks the same way a tool call does (`subagent_ask.spawn_ask`)
 `subagent_run`, `tool_purpose` says what allowing it does ("Starts a subagent on this task."),
 `tool_input` is the whole redacted task, and `risk` is `caution`. The Inbox row shows each line
 cut at a word (`textfmt.clip_words`), and the decision under it (`ApprovalDecision`) shows the
-whole input from the live entry whenever the row could not. A batch whose tasks may change things
-asks once for its start (`workflows.batch_start`): `tool_input` names each task and what it may
-change, and only a decision on it answers it, so a Trust or YOLO switch, which answers every
-pending approval it covers, leaves it asking (`request_approval(answered_alone=True)`). In the
-chat that started the work, the card for an ask a subagent or a batch raised answers through the
-approvals queue, with Allow or Deny for that ask alone (`ApprovalSegment.queued`): the chat's own
-approve route holds only the chat's own asks.
+whole input from the live entry whenever the row could not. The `subagent_run` call itself asks
+nobody (`approval_grants.WORK_ASKS`): what it starts asks. A batch asks once for its start, for
+all its tasks (`workflows.batch_start`), and its row names it as the batch it is ("A batch of 2
+subagent tasks from “Retry ceiling” is waiting…"): `tool_input` names each task and what it may
+change. One whose tasks only read asks through the start's relay, so a Trust or YOLO switch
+answers it as it answers a start; one whose tasks may change things is answered only by a decision
+on it, so such a switch, which answers every pending approval it covers, leaves it asking
+(`request_approval(answered_alone=True)`). In the chat that started the work, the card for an ask
+a subagent or a batch raised answers through the approvals queue, with Allow or Deny for that ask
+alone (`ApprovalSegment.queued`): the chat's own approve route holds only the chat's own asks.
+Such an ask outlives the turn that started the work, so the turn keeps its card out of the work it
+folds once it has answered, until the ask is answered (`approvalSegment.waitsPastItsTurn`).
 
 The entry also says where the call came from, in words (`source_label`, from
 `approval_source.approval_source_label`): `chat “Trip planning”`, `loop “Fix the README”`,
 `workflow “deep-research” · step “sweep”`, `trigger “Friday digest”`, `subagent of chat “…”`,
-`MCP server “…”`. Every surface that answers an approval renders the one approval card
+`batch of chat “…”` (a batch's ask, before any of its tasks exists), `MCP server “…”`. Every surface that answers an approval renders the one approval card
 (`pages/chat/ApprovalCard`;
 `app/PendingApprovalCard` for the queue surfaces: the workflow run view, Mission Control, Home's To
 triage, the Inbox row and its notification): the tool and its risk, what it can touch, its whole

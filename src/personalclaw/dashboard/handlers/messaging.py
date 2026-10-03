@@ -205,6 +205,22 @@ async def api_spawn_list(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     if not state.subagents:
         return web.json_response({"agents": []})
+    # What each agent waits on its owner's answer for, from the asks it is listed under: its start,
+    # or a call by its tool's name. The list said "running" through the wait, and the agent that
+    # started it guessed why.
+    from personalclaw.subagent import approval_subagent_id
+
+    waits: dict[str, str] = {}
+    for approval_id, ask in list(state._pending_approvals.items()):
+        if agent_id := approval_subagent_id(approval_id):
+            waits.setdefault(
+                agent_id,
+                (
+                    "its start"
+                    if approval_id.startswith("spawn:")
+                    else str(ask.get("tool") or "a call")
+                ),
+            )
     agents = []
     for info in state.subagents.all_agents:
         entry: dict[str, object] = {
@@ -225,6 +241,8 @@ async def api_spawn_list(request: web.Request) -> web.Response:
             entry["turns"] = info.turns
             entry["last_tool"] = _redact(info.last_tool)
             entry["elapsed"] = round(time.time() - info.started)
+            if info.id in waits:
+                entry["waiting_for"] = _redact(waits[info.id])
         agents.append(entry)
     return web.json_response({"agents": agents})
 

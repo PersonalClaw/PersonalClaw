@@ -1,6 +1,6 @@
 import type { PendingApproval } from '../../lib/api'
 import { approvalRiskOf, blastRadiusOf } from './approvalMeta'
-import type { ApprovalSegment } from './chatTypes'
+import type { ApprovalSegment, Segment } from './chatTypes'
 
 /** An approval's input as text: the registry sends a string, a native call's dict as JSON. */
 export function approvalInputText(raw: unknown): string {
@@ -31,4 +31,11 @@ export function approvalSegmentOf(a: ApprovalCardInput): ApprovalSegment {
     reach: a.reach || '',
     ...(a.deny_effect ? { denyEffect: a.deny_effect } : {}),
   }
+}
+
+/** Whether *seg* is a card still waiting on her answer for work this chat started (`queued`: a
+ *  subagent's ask, a batch's), which outlives the turn that started it. Its turn keeps it out of
+ *  the work it folds once it has answered: folded, the card she answers from was out of sight. */
+export function waitsPastItsTurn(seg: Segment): boolean {
+  return seg.kind === 'approval' && !!seg.queued && !seg.resolved
 }

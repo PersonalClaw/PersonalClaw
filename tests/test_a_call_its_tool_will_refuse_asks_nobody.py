@@ -707,8 +707,9 @@ def started(monkeypatch):
 @pytest.mark.asyncio
 async def test_a_batch_that_does_not_compile_is_refused_without_asking(started):
     """🔴 Before: the owner approved a "Writes files" card four times, and each batch then
-    failed to compile. The compiler's answer does not depend on hers, so it comes first, in the
-    compiler's own words."""
+    failed to compile. The compiler's answer does not depend on hers, so nothing asks her: the
+    call asks nobody itself (what it starts asks, `WORK_ASKS_META_KEY`), and the tool refuses it
+    in the compiler's own words before anything is handed on to start."""
     seen = await _drive(
         [_subagents()],
         [_call("s1", "subagent_run", {"tasks": ["check the inbox", "check the calendar"]})],
@@ -719,20 +720,20 @@ async def test_a_batch_that_does_not_compile_is_refused_without_asking(started):
     text = str(result.tool_output)
     assert "the batch did not compile" in text
     assert "leaf_contract_missing" in text
-    _refused_unasked(result)
+    assert result.tool_meta.get("ok") is False
     assert started == []
 
 
 @pytest.mark.asyncio
-async def test_a_batch_that_compiles_is_still_asked(started):
-    """The control. Declined here, so nothing starts: what matters is that it was asked."""
-    seen = await _drive(
-        [_subagents()], [_call("s1", "subagent_run", {"tasks": _LEAVES})], answer="reject"
-    )
+async def test_a_batch_that_compiles_is_handed_on_to_ask_once(started):
+    """The control: the call asks nobody here either, and the batch it compiled is handed to the
+    gateway, where its one ask is asked before any of it starts (`workflows.batch_start`)."""
+    seen = await _drive([_subagents()], [_call("s1", "subagent_run", {"tasks": _LEAVES})])
 
-    [ask] = _asks(seen)
-    assert ask.title == "subagent_run"
-    assert started == []
+    assert _asks(seen) == []
+    [(path, body)] = started
+    assert path == "/api/workflows/batches"
+    assert body["name"].startswith("subagent-batch-"), body
 
 
 @pytest.mark.asyncio

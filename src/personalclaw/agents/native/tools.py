@@ -113,6 +113,7 @@ class InProcessMcpToolProvider(ToolProvider):
             BUILDS_META_KEY,
             PROPOSES_META_KEY,
             TELLS_OWNER_META_KEY,
+            WORK_ASKS_META_KEY,
             RiskLevel,
             risk_from_annotations,
         )
@@ -153,9 +154,12 @@ class InProcessMcpToolProvider(ToolProvider):
                     # does (`read_file`, `knowledge_search`, `task_list`). Asking about it asked
                     # in a chat where those do not, and declined it wherever nobody can be asked
                     # (`personalclaw run`, a dry run, an unattended agent): the postures that
-                    # exist to run reads. Everything else asks. The runtime's deny-list,
-                    # task-mode, tool-grant and hook gates run before either.
-                    requires_approval=risk is not RiskLevel.SAFE,
+                    # exist to run reads. Nor does a call whose work asks the owner itself
+                    # (`WORK_ASKS_META_KEY`): asking about it too asked her twice. Everything
+                    # else asks. The runtime's deny-list, task-mode, tool-grant and hook gates
+                    # run before either.
+                    requires_approval=risk is not RiskLevel.SAFE
+                    and meta.get(WORK_ASKS_META_KEY) is not True,
                     risk_level=risk,
                     builds=meta.get(BUILDS_META_KEY) is True,
                     proposes=meta.get(PROPOSES_META_KEY) is True,

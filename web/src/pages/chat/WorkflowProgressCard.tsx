@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowUpRight, Workflow } from 'lucide-react'
-import { api, ApiError } from '../../lib/api'
+import { api, ApiError, type PendingApproval, type WorkflowBatchState } from '../../lib/api'
+import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { messageEnter } from '../../design/motion'
 import { accentChip } from '../../design/accent'
 import { fvs } from '../../design/fontWeight'
 import { Meter } from '../../ui/Meter'
 import { Button } from '../../ui/Button'
+import { workflowApprovalSession } from '../../app/approvalDestination'
 import { attentionLine, readAttention, stoppedAtBudget } from '../workflows/attentionMeta'
 import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/workflowFold'
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
 import { fmtElapsed, isTerminal, nodeLabel, nodeLook, runLook } from '../workflows/workflowMeta'
 import { TextLink } from '../../ui/TextLink'
+import type { ChatTurn, Segment, ToolSegment } from './chatTypes'
 
 // Tools whose result means "a workflow run now exists worth watching". `workflow_start`
 // creates one, and so does `subagent_run` given two or more tasks: they run as one batch run,
@@ -21,27 +24,139 @@ import { TextLink } from '../../ui/TextLink'
 const CREATING_TOOLS = new Set(['workflow_start', 'subagent_run'])
 const WORKFLOW_TOOLS = new Set([...CREATING_TOOLS, 'workflow_status', 'workflow_observe'])
 
-export interface WorkflowRunRef { runId: string; created: boolean }
+/** A run a chat's tool result names. `batch` is a `subagent_run` batch still waiting for its one
+ *  ask, before it has a run (its card follows it to one); `workflow` is the definition a status
+ *  read names, which is how a read of a batch's run is known for that batch's. */
+export interface WorkflowRunRef { runId: string; created: boolean; batch?: string; workflow?: string }
 
 /** The step states a finished run can carry that mean the step did not do its work. */
 const FAILED_STEP_STATES = new Set(['failed', 'scope_violation', 'blocked', 'escalated'])
 /** How many of them a chat card names before it counts the rest: a card is a glance. */
 const FAILED_STEPS_SHOWN = 3
 
-/** Recognize a workflow tool segment and pull the run id out of its output.
+/** Recognize a workflow tool segment and pull the run id out of its output, or the batch it
+ *  waits to start.
  *
- *  Matches the JSON the tools actually return (`"run_id": "<8 hex>"`) rather than a deep
- *  link, because these tools return structured results for a model to read — unlike the
- *  SDLC tools, which return a `/#/…` URL for a human. Anchoring on the real shape is what
+ *  Matches the JSON the tools actually return (`"run_id": "<8 hex>"`, `"batch": "<name>"`) rather
+ *  than a deep link, because these tools return structured results for a model to read — unlike
+ *  the SDLC tools, which return a `/#/…` URL for a human. Anchoring on the real shape is what
  *  keeps this from silently stopping when a description is reworded. */
 export function workflowRefFromTool(
   toolName: string | undefined,
   output: string | undefined,
 ): WorkflowRunRef | null {
   if (!toolName || !WORKFLOW_TOOLS.has(toolName) || !output) return null
+  const created = CREATING_TOOLS.has(toolName)
+  const workflow = output.match(/"workflow"\s*:\s*"([a-z0-9][a-z0-9-]*)"/)?.[1]
   const m = output.match(/"run_id"\s*:\s*"([0-9a-f]{6,})"/i)
-  if (!m) return null
-  return { runId: m[1], created: CREATING_TOOLS.has(toolName) }
+  if (m) return { runId: m[1], created, ...(workflow ? { workflow } : {}) }
+  const batch = toolName === 'subagent_run' ? output.match(/"batch"\s*:\s*"([a-z0-9][a-z0-9-]*)"/)?.[1] : undefined
+  return batch ? { runId: '', created, batch } : null
+}
+
+/** The tool segments of a chat that show a run's live card: the first to name each run, one card
+ *  per run however often the agent read it. A status read of a run already shown (by its id, or by
+ *  the batch it is the run of) keeps its plain tool card, in the order the transcript reads. */
+export function liveWorkflowCards(turns: ChatTurn[]): Set<Segment> {
+  const shown = new Set<string>()
+  const cards = new Set<Segment>()
+  for (const turn of turns) {
+    for (const seg of turn.segments) {
+      if (seg.kind !== 'tool' || !(seg as ToolSegment).done) continue
+      const ref = workflowRefFromTool((seg as ToolSegment).tool, (seg as ToolSegment).output)
+      if (!ref) continue
+      const keys = [ref.runId && `run:${ref.runId}`, ref.batch && `batch:${ref.batch}`].filter(Boolean) as string[]
+      if (keys.some((k) => shown.has(k)) || (ref.workflow && shown.has(`batch:${ref.workflow}`))) continue
+      keys.forEach((k) => shown.add(k))
+      cards.add(seg)
+    }
+  }
+  return cards
+}
+
+/** The card of a batch waiting for its one ask, until it has a run, which its card becomes.
+ *
+ *  Read off the batch's own record (`GET /api/workflows/batches/<name>`): it is what survives a
+ *  reload and a restart, and what says why a batch never started. The ask is answered on the
+ *  approvals queue, so the card reads again when one ends there, with a slow poll behind it. */
+export function BatchStartCard({ name }: { name: string }) {
+  const [state, setState] = useState<WorkflowBatchState | null>(null)
+  const [gone, setGone] = useState(false)
+  const load = useCallback(async () => {
+    try {
+      setState(await api.workflowBatch(name))
+    } catch (e) {
+      // Only a 404 means there is no such batch; any other miss keeps what the card has.
+      if (e instanceof ApiError && e.status === 404) setGone(true)
+    }
+  }, [name])
+  useEffect(() => { load() }, [load])
+  useChatSocket((m: WsMessage) => {
+    if (m.type === 'approval_resolved' || m.type === 'approval') load()
+  }, load)
+  const settled = state?.status === 'started' || state?.status === 'not_started'
+  useEffect(() => {
+    if (settled) return
+    const t = window.setInterval(load, 5_000)
+    return () => window.clearInterval(t)
+  }, [settled, load])
+
+  if (gone) return null
+  if (state?.status === 'started' && state.run_id) {
+    return <WorkflowProgressCard refObj={{ runId: state.run_id, created: true }} />
+  }
+  const count = state?.tasks ? `${state.tasks} tasks` : 'its tasks'
+  const line = !state
+    ? 'Loading…'
+    : state.status === 'not_started'
+      ? (state.error ? `${state.error[0].toUpperCase()}${state.error.slice(1)}.` : 'It never started.')
+      : state.status === 'starting'
+        ? `Allowed. Starting ${count}…`
+        : `Waits for your Allow before any of ${count} start.`
+  return (
+    <motion.div {...messageEnter} className="my-s flex flex-col gap-s rounded-xl border border-outline-variant p-m">
+      <div className="flex min-w-0 items-center gap-s">
+        <Workflow size={15} className="shrink-0 text-on-surface-low" />
+        <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(500)}>
+          Batch of subagents
+        </span>
+        {/* The Inbox lists the ask for as long as it waits, a reload and a restart included. */}
+        {state?.status === 'asking' && (
+          <TextLink href="#/inbox" size="xs" icon={ArrowUpRight} iconPosition="trailing" iconSize={12}
+            className="shrink-0 transition-colors" title="Answer its ask in your Inbox">
+            Answer in Inbox
+          </TextLink>
+        )}
+      </div>
+      <p data-type="caption" className={state?.status === 'asking' ? 'text-warning' : 'text-on-surface-var'}>{line}</p>
+    </motion.div>
+  )
+}
+
+/** The asks *runId*'s steps are waiting on her answer for, from the approvals queue: each one a
+ *  step's start or one of its agent's calls, listed under the step's own key. Re-read when an ask
+ *  is raised or ends, on the socket every surface hears them on, while the run is live. */
+function useWaitingSteps(runId: string, live: boolean): PendingApproval[] {
+  const [waiting, setWaiting] = useState<PendingApproval[]>([])
+  const load = useCallback(async () => {
+    if (!live) { setWaiting([]); return }
+    try {
+      const all = await api.approvals()
+      setWaiting(all.filter((a) => workflowApprovalSession(a.session)?.runId === runId))
+    } catch {
+      /* A failed read keeps what the card has: the next frame or poll reads again. */
+    }
+  }, [runId, live])
+  useEffect(() => { load() }, [load])
+  useChatSocket((m: WsMessage) => {
+    if (m.type === 'approval' || m.type === 'approval_resolved') load()
+  }, load)
+  return waiting
+}
+
+/** What one step waiting on her answer is waiting for, in words: its start, or a call by name. */
+function waitingFor(ask: PendingApproval): string {
+  return ask.id.startsWith('spawn:') ? 'your Allow to start' : `your answer on ${ask.tool}`
 }
 
 /** Live in-chat progress widget for a workflow run the agent started or inspected.
@@ -52,8 +167,15 @@ export function workflowRefFromTool(
  *  inline switches that drift (the exact problem `runFold.ts` was extracted to solve).
  *
  *  A terminal run does not subscribe: its stream closes immediately anyway, and its status
- *  is final. */
+ *  is final. A batch still waiting for its one ask has no run yet: its card follows the batch
+ *  until it has one (:func:`BatchStartCard`). */
 export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
+  return refObj.batch && !refObj.runId
+    ? <BatchStartCard name={refObj.batch} />
+    : <RunProgressCard refObj={refObj} />
+}
+
+function RunProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
   const [vm, setVm] = useState<WorkflowViewModel | null>(null)
   const [gone, setGone] = useState(false)
   // A fetch miss that is NOT a 404: the run still exists, we just could not read it.
@@ -96,6 +218,10 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
     const t = window.setInterval(load, 15_000)
     return () => window.clearInterval(t)
   }, [live, load])
+
+  // A step waiting on her answer is the one thing a Running card would otherwise hide: its
+  // agent asked, on the approvals queue, under the step's own key, and nothing here said so.
+  const waiting = useWaitingSteps(refObj.runId, live)
 
   if (gone) return null
 
@@ -249,6 +375,30 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
           </div>
         )
       })()}
+
+      {/* Each step that waits on her answer says so, and for what, where its ask is answered: the
+          run's page lists the step's asks with Allow and Deny (`RunToolApprovals`). */}
+      {vm && !isTerminal(vm.status) && waiting.length > 0 && (
+        <div className="flex flex-col gap-xs">
+          {waiting.slice(0, FAILED_STEPS_SHOWN).map((ask) => {
+            const nodeId = workflowApprovalSession(ask.session)?.nodeId ?? ''
+            const node = vm.nodes.find((n) => n.node_id === nodeId)
+            const line = `${node ? nodeLabel(node) : nodeId || 'A step'} waits for ${waitingFor(ask)}`
+            return (
+              <p key={ask.id} data-type="caption" className="flex min-w-0 items-center gap-s text-warning">
+                <span className="min-w-0 flex-1 truncate" title={line}>{line}</span>
+                <TextLink href={`#/workflows/runs/${refObj.runId}?node=${encodeURIComponent(nodeId)}`}
+                  size="xs" className="shrink-0" aria-label={`Answer it: ${line}`}>
+                  Answer it
+                </TextLink>
+              </p>
+            )
+          })}
+          {waiting.length > FAILED_STEPS_SHOWN && (
+            <p data-type="caption" className="text-on-surface-low">and {waiting.length - FAILED_STEPS_SHOWN} more</p>
+          )}
+        </div>
+      )}
 
       {vm && (vm.tokens > 0 || vm.elapsedSecs > 0) && (
         <div data-type="caption" className="flex items-center gap-m text-on-surface-low">

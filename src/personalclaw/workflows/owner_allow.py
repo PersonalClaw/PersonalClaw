@@ -83,11 +83,14 @@ def audit(
     session_key: str, *, source: str, tool: str, decision: Any, metadata: dict[str, Any]
 ) -> None:
     """The ask's ending as one audit row, in the words the audit log's filters read
-    (`audit_outcome_families`): nobody answering, or the work stopping first, is not a Deny."""
+    (`audit_outcome_families`): nobody answering, or the work stopping first, is not a Deny, and a
+    grant that let it start without asking (a batch that only reads, `batch_start`) is no person's
+    answer."""
+    from personalclaw.approval_grants import YOU
     from personalclaw.sel import sel
 
     if decision:
-        outcome = "approved"
+        outcome = "approved" if decision.decided_by == YOU else "auto_approved"
     elif decision.outcome in ("expired", "cancelled"):
         outcome = decision.outcome
     else:
@@ -116,4 +119,11 @@ def end_asks(state: Any, ended: Callable[[str, float], bool], *, reason: str) ->
         if approval_id.startswith(PREFIXES)
         and ended(str(entry.get("session") or ""), float(entry.get("ts") or 0.0))
     ]
+    if any(approval_id.startswith(BATCH_PREFIX) for approval_id in asks):
+        # A batch keeps the record of its ask until it ends, which says why, first: the wait this
+        # wakes then knows its owner ended it, and no gateway asks it again (`batch_start`).
+        from personalclaw.workflows.batch_start import ended_unanswered
+
+        for approval_id in asks:
+            ended_unanswered(approval_id, reason)
     return sum(1 for approval_id in asks if state.cancel_approval(approval_id, reason=reason))

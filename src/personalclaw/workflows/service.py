@@ -2406,6 +2406,7 @@ def _escalations(run_id: str) -> list[dict[str, Any]]:
 def _nodes_of(run_id: str) -> list[dict[str, Any]]:
     instances = store.read_state(run_id)
     spec = store.read_spec(run_id)
+    waits = _steps_waiting(run_id)
     ids: dict[str, str] = {}
     labels: dict[str, str] = {}
     if spec:
@@ -2483,8 +2484,42 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             row["item_total"] = total
             if inst.item_label:
                 row["item_label"] = inst.item_label
+        # A step that waits on its owner says so, and for what: it reads "running" meanwhile.
+        if (wait := waits.get(row["node_id"])) and inst.state not in TERMINAL_STATES:
+            row["waiting_for"] = wait
         out.append(row)
     return out
+
+
+def _steps_waiting(run_id: str) -> dict[str, str]:
+    """What each step of *run_id* waits on its owner's answer for, by node id: its start, or one
+    of its agent's calls, by the tool's name. Read from the approval registry its asks are listed
+    in, under the step's own key (``workflow:<run>:<node>``), where this process holds it (the
+    gateway's `ActionServices.state`); a process that holds none says nothing it cannot know."""
+    from personalclaw.action_providers.services import get_action_services
+    from personalclaw.workflows import ownership
+
+    asks_under = getattr(getattr(get_action_services(), "state", None), "asks_under", None)
+    if not callable(asks_under):
+        return {}
+    waits: dict[str, str] = {}
+    try:
+        asks = asks_under(f"{ownership.OWNED_PREFIX}{run_id}:")
+    except Exception:  # noqa: BLE001 - a status read says what it can
+        logger.debug("run %s: its steps' asks could not be read", run_id, exc_info=True)
+        return {}
+    for ask in asks:
+        step = ownership.parse_owned(str(ask.get("session") or ""))
+        if step is not None:
+            waits.setdefault(
+                step[1],
+                (
+                    "its owner's Allow to start"
+                    if str(ask.get("id") or "").startswith("spawn:")
+                    else f"its owner's answer on {ask.get('tool') or 'a call'}"
+                ),
+            )
+    return waits
 
 
 def _completion_summary(run: Any, status: RunStatus) -> str:
