@@ -55,9 +55,15 @@ _MAX_SUPPRESSED_PER_JOB = _MAX_RECORDS_PER_JOB // 4
 #: automation vanished from the dashboard's cross-schedule view.
 _MAX_INDEX_PER_JOB = _MAX_RECORDS_PER_JOB
 
-#: The one status a row is settled FROM (`ScheduleRunStore.settle_sync`): the run only started work
-#: that ends later. A row that already says how it went is never rewritten.
-_UNSETTLED_STATUS = "launched"
+#: The statuses a row is settled FROM (`ScheduleRunStore.settle_sync`): the run only started work
+#: that ends later (`launched`), or queued it behind a run already in flight (`queued`). Such a run
+#: has not ended, so nothing reads it as a success or a failure yet (`autopause.ending_decision`).
+#: A row that already says how it went is never rewritten.
+UNSETTLED_STATUSES: frozenset[str] = frozenset({"launched", "queued"})
+
+#: What a row's typed exit (`ScheduleRun.trigger`) is for a run by hand: a settle keeps it, so the
+#: hourly cap and the failure count go on passing over that run (`triggers.run_record`).
+_BY_HAND = "manual"
 
 #: Endings that arrived before the row they settle, by `(history dir, job id, work id)`. A fire's
 #: row is written after its action returns, while the agent it started goes on by itself, so an
@@ -85,7 +91,10 @@ class ScheduleRun:
     # and by this once the trigger has left the list: a one-shot retires after its run, and a
     # deleted trigger keeps its history.
     job_name: str = ""
-    trigger: str = "scheduled"  # "scheduled" | "manual"
+    # "manual" for a run by hand. A fire's row carries its typed exit (`autopause.ExitType`, what
+    # the failure count reads) or, for a fire that did not run its action, its outcome; a
+    # `launched` or `queued` row takes the exit its work ended with when it settles.
+    trigger: str = "scheduled"
     started_at: float = 0.0
     finished_at: float = 0.0
     duration_ms: int = 0
@@ -106,12 +115,16 @@ class ScheduleRun:
     #   (`ScheduleRunStore.settle_sync`). Their own decision, not a failure.
     # "refused": the agent a launched run started had calls refused by its own limits
     #   (`triggers.settle`): not a success, and not a failure either.
+    # "stopped": someone stopped the work a launched or queued run started before it finished:
+    #   its owner stopped the agent, or cancelled the workflow run (`triggers.settle`). Their own
+    #   decision, not a failure.
     status: str = "success"
     summary: str = ""
     trace: str = ""
     error: str = ""
-    # The work a `launched` run started (`ActionResult.work_id`), which ends later: when it does,
-    # this row says how it went instead of "launched" (`ScheduleRunStore.settle_sync`).
+    # The work a `launched` or `queued` run started (`ActionResult.work_id`), which ends later:
+    # `subagent:<id>` for an agent, `workflow:<id>` for a workflow run. When it ends, this row says
+    # how it went instead (`ScheduleRunStore.settle_sync`).
     work_id: str = ""
 
     def to_dict(self, *, include_trace: bool = True) -> dict[str, Any]:
@@ -262,8 +275,9 @@ def _redact_stored(text: str | None) -> str:
 
 
 def _settle_row(row: dict[str, Any], ending: dict[str, Any], *, with_trace: bool) -> None:
-    """Write an ending (`ScheduleRunStore.settle_sync`) onto a stored row, in place. The index's
-    rows carry no trace, and are given none."""
+    """Write an ending (`ScheduleRunStore.settle_sync`) onto a stored row, in place: its status,
+    what it said, when it finished, and the exit it ended with, which a run by hand's row does not
+    take (:func:`_exit_after`). The index's rows carry no trace, and are given none."""
     started = float(row.get("started_at") or 0.0)
     finished = max(started, float(ending["finished_at"]))
     row.update(
@@ -272,9 +286,18 @@ def _settle_row(row: dict[str, Any], ending: dict[str, Any], *, with_trace: bool
         error=ending["error"],
         finished_at=finished,
         duration_ms=int((finished - started) * 1000),
+        trigger=_exit_after(str(row.get("trigger") or ""), ending),
     )
     if with_trace:
         row["trace"] = ending["trace"]
+
+
+def _exit_after(tag: str, ending: dict[str, Any]) -> str:
+    """A settled row's typed exit: the one its work ended with, and ``manual`` for a run by hand,
+    which stays a hand run whatever its work did."""
+    if tag == _BY_HAND or not ending["exit"]:
+        return tag
+    return str(ending["exit"])
 
 
 def _newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -371,7 +394,7 @@ class ScheduleRunStore:
             # The work this row names ended before the row was written: it is written as it ended.
             early = (
                 _EARLY_ENDINGS.pop((str(self._dir), run.job_id, run.work_id), None)
-                if run.work_id and run.status == _UNSETTLED_STATUS
+                if run.work_id and run.status in UNSETTLED_STATUSES
                 else None
             )
             if early is not None:
@@ -379,6 +402,7 @@ class ScheduleRunStore:
                 run.summary, run.trace, run.error = early["summary"], early["trace"], early["error"]
                 run.finished_at = max(run.started_at, early["finished_at"])
                 run.duration_ms = int((run.finished_at - run.started_at) * 1000)
+                run.trigger = _exit_after(run.trigger, early)
             # Full record (with trace) on the per-job file.
             with job_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(run.to_dict(include_trace=True), ensure_ascii=False) + "\n")
@@ -411,18 +435,22 @@ class ScheduleRunStore:
         trace: str = "",
         error: str = "",
         finished_at: float = 0.0,
+        exit_type: str = "",
     ) -> bool:
-        """Say how the work a `launched` run started went, on that run's row.
+        """Say how the work a `launched` or `queued` run started went, on that run's row.
 
-        A fire whose action starts an agent records its run the moment the agent starts, as
-        `launched` (started is not succeeded), naming the agent in `work_id`. When the agent
-        ends, this writes how on the same row — its `status`, what it said or why it failed, when
-        it finished — in the per-job file and the cross-job index both, redacted as `append_sync`
-        redacts. Only a row that still says `launched` changes: an ending that arrives twice
+        A fire whose action starts an agent or a workflow run records its run the moment the work
+        starts, as `launched` (started is not succeeded), or `queued` behind a run in flight,
+        naming the work in `work_id`. When the work ends, this writes how on the same row — its
+        `status`, what it said or why it failed, when it finished — in the per-job file and the
+        cross-job index both, redacted as `append_sync` redacts. *exit_type* is the exit the work
+        ended with, which becomes the row's typed exit (`ScheduleRun.trigger`) unless the run was
+        one by hand: the fire's own exit said only that the work started, and the failure count
+        reads this one. Only a row that has not settled changes: an ending that arrives twice
         changes nothing the second time.
 
         Returns whether the ending was taken: written now, or held until its row is written (the
-        agent ended before its fire recorded the run, see `_EARLY_ENDINGS`). False when there is
+        work ended before its fire recorded the run, see `_EARLY_ENDINGS`). False when there is
         nothing to settle.
         """
         if not job_id or not work_id:
@@ -435,6 +463,7 @@ class ScheduleRunStore:
             "trace": _redact_stored(trace or summary)[:_TRACE_CAP],
             "error": _redact_stored(error),
             "finished_at": finished_at or time.time(),
+            "exit": exit_type,
         }
         job_path = self._job_path(job_id)
         with self._lock():
@@ -447,7 +476,7 @@ class ScheduleRunStore:
                     _EARLY_ENDINGS.pop(next(iter(_EARLY_ENDINGS)))
                 return True
             row = named[-1]
-            if row.get("status") != _UNSETTLED_STATUS:
+            if row.get("status") not in UNSETTLED_STATUSES:
                 return False
             run_id = row.get("run_id")
             _settle_row(row, ending, with_trace=True)
@@ -460,7 +489,7 @@ class ScheduleRunStore:
         return True
 
     def unsettled_row(self, job_id: str, work_id: str) -> dict[str, Any] | None:
-        """The row of *job_id* that still says `launched` about *work_id*, or None.
+        """The row of *job_id* that has not settled about *work_id* yet, or None.
 
         What a run cut off before its work ended needs to know of that run: whose it was (its
         ``trigger`` tag says whether it was a run by hand), when it started, and its id.
@@ -469,7 +498,7 @@ class ScheduleRunStore:
             return None
         rows = self._read_jsonl(self._job_path(job_id))
         named = [row for row in rows if row.get("work_id") == work_id]
-        if not named or named[-1].get("status") != _UNSETTLED_STATUS:
+        if not named or named[-1].get("status") not in UNSETTLED_STATUSES:
             return None
         return named[-1]
 

@@ -105,9 +105,9 @@ def test_the_RECORDED_error_carries_the_envelope_in_both_persisted_sinks(tmp_pat
     # sink to it byte-for-byte proves the WHOLE envelope survives — in particular the FIX
     # line, which renders LAST (~char 250) and was silently cut mid-word by the old 200-char
     # slice (its `FIX: ` label sat under 200, so a substring check would have missed the cut).
-    # Equality also pins the S162 "error, not the lifecycle reason" contract: no "consecutive
-    # failures" restatement leaks in. Lower `run_record.ERROR_MAX` back below the envelope and
-    # both equalities fail.
+    # Equality also pins the S162 "error, not the lifecycle reason" contract: no "failed runs"
+    # restatement (the pause's words) leaks in. Lower `run_record.ERROR_MAX` back below the
+    # envelope and both equalities fail.
     from personalclaw.action_providers import provider_failure
 
     expected = provider_failure("notify", RuntimeError("boom")).render()
@@ -117,7 +117,7 @@ def test_the_RECORDED_error_carries_the_envelope_in_both_persisted_sinks(tmp_pat
 
     # `last_error_summary` (the attention card / detail panel line) is exactly the envelope.
     assert trigger.last_error_summary == expected
-    assert "consecutive failures" not in trigger.last_error_summary
+    assert "failed runs" not in trigger.last_error_summary
 
     # The run-ledger row records the same full envelope, not the bare `TypeName: msg`.
     runs, total = asyncio.run(ScheduleRunStore(tmp_path).list_for_job("clock:env", 0, 5))

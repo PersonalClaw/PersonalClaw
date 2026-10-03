@@ -1106,6 +1106,13 @@ class RunOrigin:
         )
 
 
+def run_work_id(run_id: str) -> str:
+    """How a trigger's history row names the workflow run its fire started
+    (`ActionResult.work_id`), so the row can say how that run ended when it does
+    (`triggers.settle.settle_workflow_run`)."""
+    return f"workflow:{run_id}"
+
+
 @dataclass
 class WorkflowRun:
     """One execution. `root_run_id` is propagated through subworkflow spawns and forks

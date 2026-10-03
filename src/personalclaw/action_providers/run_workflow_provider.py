@@ -18,7 +18,8 @@ that lets a trigger validate, save, and then fail at fire time with nothing acti
 **`outcome: "launched"`, not success.** A background run has only STARTED when this
 returns; its real outcome lands in the run's own ledger. Reporting it as plain success
 would make an unverified run look verified — the honesty contract `ActionResult.outcome`
-exists for.
+exists for. The result names the run (`work_id`, launched or queued), so the trigger's own run
+says how it went when it ends and counts toward its pause (`triggers.settle`).
 
 **Its inputs are checked where the trigger is SAVED, and again when it fires.** `config_problem`
 asks the question `service.start_run` asks before it spends anything — the workflow exists, every
@@ -95,6 +96,7 @@ class RunWorkflowActionProvider(ActionProvider):
                 RunOrigin,
                 RunStatus,
                 WorkflowRun,
+                run_work_id,
             )
         except Exception as exc:  # the engine should always import; be explicit if not
             return ActionResult(
@@ -287,6 +289,8 @@ class RunWorkflowActionProvider(ActionProvider):
                     f"Queued “{name}” as run {run.id}; it starts when {_ahead(active)} "
                     f"{'ends' if len(active) == 1 else 'end'}."
                 ),
+                # The run, so the fire's row says how it went once it has run (`triggers.settle`).
+                work_id=run_work_id(run.id),
             )
 
         if action == Act.CANCEL_THEN_START:
@@ -315,6 +319,8 @@ class RunWorkflowActionProvider(ActionProvider):
             stdout=json.dumps({"run_id": run.id, "workflow": name, "started": True}),
             duration_ms=int((time.monotonic() - started) * 1000),
             summary=f"{said}.",
+            # The run, so the fire's row says how it went when it ends (`triggers.settle`).
+            work_id=run_work_id(run.id),
         )
 
 

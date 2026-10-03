@@ -124,33 +124,48 @@ _UNREPORTED_ENDINGS: frozenset[RunStatus] = frozenset({RunStatus.CANCELLED, RunS
 
 
 def report_to_its_trigger(services: Any, run: WorkflowRun, status: RunStatus) -> None:
-    """Say how a run a trigger started went, on the trigger's route, now that it has ended.
+    """Say how a run a trigger started went, on the trigger's run and route, now that it has ended.
 
     The fire that started it only said it launched the run, or queued it, which is not news yet
-    (`delivery.says_nothing_now`), so this is when the trigger's route hears: "<name> finished" and
-    what the run said it produced, or "<name> failed" and why, for a run that failed or stopped
-    before it finished. Only a trigger's own start (`OriginKind.HOOK`) carries a trigger id; a
-    sub-run's origin names its parent's node instead.
+    (`delivery.says_nothing_now`). So this is when the trigger's run says how it went, and the
+    trigger takes that ending as it takes any run's (`triggers.settle.settle_workflow_run`): a
+    failure counts toward pausing the automation, a success starts the count over, and a run its
+    owner stopped or declined counts for neither. Its route then hears: "<name> finished" and what
+    the run said it produced, or "<name> failed" and why, for a run that failed or stopped before
+    it finished. Only a trigger's own start (`OriginKind.HOOK`) carries a trigger id; a sub-run's
+    origin names its parent's node instead.
 
     Asked by every terminal write: the controller's (`RunController._finish`) and the two the
     watchdog makes with no controller (a run whose spec cannot be read, and one whose steps all
-    ended while nothing drove it), so a run's trigger hears however it ended. Inert unless the
-    gateway wired its delivery into `EngineServices.report_to_trigger`, and fully guarded: a
-    failure costs the report, never the run's terminal status.
+    ended while nothing drove it), so a run's trigger hears however it ended. The report is inert
+    unless the gateway wired its delivery into `EngineServices.report_to_trigger`, and the card
+    for an automation the run's failure paused unless it wired `EngineServices.on_attention`. Fully
+    guarded: a failure costs the report, never the run's terminal status.
     """
-    report = getattr(services, "report_to_trigger", None)
     origin = run.origin
-    if report is None or origin.kind != OriginKind.HOOK or not origin.trigger_id:
-        return
-    if status in _UNREPORTED_ENDINGS:
+    if origin.kind != OriginKind.HOOK or not origin.trigger_id:
         return
     try:
+        from personalclaw.triggers.settle import settle_workflow_run
+
         error = ""
         if status != RunStatus.COMPLETE:
             error = str(run.error_message or "").strip() or (
                 f"The workflow run {run_ending(status)}."
             )
-        report(origin.trigger_id, error=error, summary=_completion_summary(run), run_id=run.id)
+        summary = _completion_summary(run)
+        settle_workflow_run(
+            origin.trigger_id,
+            run.id,
+            status,
+            error=error,
+            summary=summary,
+            on_attention=getattr(services, "on_attention", None),
+        )
+        report = getattr(services, "report_to_trigger", None)
+        if report is None or status in _UNREPORTED_ENDINGS:
+            return
+        report(origin.trigger_id, error=error, summary=summary, run_id=run.id)
     except Exception:
         logger.debug("run %s: could not report to its trigger", run.id, exc_info=True)
 

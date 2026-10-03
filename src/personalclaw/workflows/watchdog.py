@@ -185,6 +185,8 @@ class WorkflowWatchdog:
             memory=base.memory,
             # A run a trigger started says how it went on the trigger's route when it ends.
             report_to_trigger=base.report_to_trigger,
+            # And the automation that run's failure paused says so.
+            on_attention=base.on_attention,
             # What waits on a run hears when it ends, whichever controller drives it.
             run_ended=base.run_ended,
             # The chat that started a subagent batch hears how its tasks ended.

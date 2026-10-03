@@ -73,6 +73,11 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # never counts toward autopause. Its `error` says what stopped it, and it waits on the review
     # for the user to run it again or dismiss it.
     "interrupted": Outcome.INTERRUPTED.value,
+    # A launched run whose work someone stopped before it finished: its owner stopped the agent
+    # (`SubagentInfo.cancelled`) or cancelled the workflow run (`triggers.settle`). Its own outcome,
+    # for the reasons `interrupted` has one, and not that one: no restart cut it off, and it waits
+    # on no review, since whoever stopped it decided. Its summary says what stopped it.
+    "stopped": Outcome.STOPPED.value,
     # A run standing in for a slot that did not run on time (`triggers.run_record`): the review's
     # Run now, which `missed.resolve_missed` records as late, or a fire the tick reached late.
     "ran_late": Outcome.RAN_LATE.value,
@@ -256,6 +261,9 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
         from personalclaw.triggers.settle import DECLINED_LINE
 
         reason = reason or DECLINED_LINE
+    elif status == "stopped":
+        # The settle writes what stopped it into `summary`; only a row that lost it needs words.
+        reason = reason or "stopped before it finished"
     elif status == "queued":
         reason = reason or "queued behind a run already in flight; it starts when that one ends"
     elif status == "waiting":

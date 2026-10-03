@@ -2050,16 +2050,18 @@ class GatewayOrchestrator:
         control flow here is "if card: send it" — the module deliberately makes it impossible to
         write a card that says nothing.
 
-        Deduped on the card's own FINGERPRINT, not the delivery event id: a fingerprint is
-        `(trigger_id, state)`, so re-entering the same paused state does not re-alert, while a
-        trigger that goes autopaused → resumed → autopaused legitimately alerts twice.
-        `is_duplicate_card` owns that comparison; the seen-set lives here as the delivery one does.
+        Handed one decision per episode: the recorder calls this when a run's ending moves the
+        trigger INTO a state that needs attention (`run_record._take`), never for one that leaves
+        it there, so a trigger that goes autopaused → resumed → autopaused alerts twice and a paused
+        one nothing more. The card says why with what the run that failed last said, masked as every
+        note a trigger sends is (`delivery`'s R18 redaction): an agent's error is the agent's text.
 
         Goes through `state.notify` like every other substrate notification (R18: no second path),
         so a muted channel stays muted. Never raises — the pause already happened, and failing to
         announce it must not undo it.
         """
         try:
+            from personalclaw.security import redact_or_withhold
             from personalclaw.triggers import autopause
 
             state = getattr(self, "dashboard_state", None)
@@ -2073,14 +2075,10 @@ class GatewayOrchestrator:
             )
             if card is None:
                 return
-            if not hasattr(self, "_attention_fingerprints"):
-                self._attention_fingerprints: set[str] = set()
-            if autopause.is_duplicate_card(card.fingerprint, self._attention_fingerprints):
-                return
             state.notify(
                 kind="warning",
-                title=card.title,
-                body=card.body,
+                title=redact_or_withhold(card.title),
+                body=redact_or_withhold(card.body),
                 meta={
                     "event": "automation.needs_attention",
                     "statusUrl": f"#/triggers?open={card.trigger_id}",
@@ -2089,7 +2087,6 @@ class GatewayOrchestrator:
                     "actions": list(card.actions),
                 },
             )
-            self._attention_fingerprints.add(card.fingerprint)
         except Exception:  # noqa: BLE001 - see the docstring
             logger.debug("could not surface the attention card for %s", trigger, exc_info=True)
 
@@ -3347,6 +3344,8 @@ class GatewayOrchestrator:
                     # A run a trigger started says how it went on the trigger's route when it
                     # ends; the fire that started it only said it launched.
                     report_to_trigger=self._report_to_its_trigger,
+                    # And the automation its failure paused says so, as a fire's does.
+                    on_attention=self._surface_attention_card,
                     # What waits on a run (`run_completed`) runs when the run ends.
                     run_ended=self._chain_after_workflow_run,
                     # The chat that started a subagent batch hears how its tasks ended.
@@ -3938,8 +3937,17 @@ class GatewayOrchestrator:
             if started_by_a_trigger:
                 from personalclaw.triggers.settle import settle_agent_run
 
+                # Its ending is its trigger's run ending: a failure counts toward pausing the
+                # automation, and the card for one it paused goes out on this loop, since the
+                # settle runs off it.
+                loop = asyncio.get_running_loop()
+
+                def _stopped_itself(trigger: Any, decision: Any) -> None:
+                    loop.call_soon_threadsafe(self._surface_attention_card, trigger, decision)
+
                 settled = [
-                    await asyncio.to_thread(settle_agent_run, m) for m in started_by_a_trigger
+                    await asyncio.to_thread(settle_agent_run, m, on_attention=_stopped_itself)
+                    for m in started_by_a_trigger
                 ]
                 if any(settled):
                     self._push_trigger_refresh()
@@ -3965,6 +3973,10 @@ class GatewayOrchestrator:
                 trigger_id = getattr(member, "trigger_id", "")
                 if not isinstance(trigger_id, str) or getattr(member, "silent", False):
                     return False
+                # A trigger's agent someone stopped: whoever stopped it knows, as a trigger's
+                # workflow run they cancelled tells nobody (`run_finish.report_to_its_trigger`).
+                if trigger_id and getattr(member, "cancelled", False) is True:
+                    return True
                 from personalclaw.triggers.settle import what_it_said, why_it_failed
 
                 return self._report_to_its_trigger(

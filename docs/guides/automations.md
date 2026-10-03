@@ -63,6 +63,29 @@ with a warning, and says it is not firing, until a check reads something it can 
 - `src/personalclaw/triggers/web_poll.py` — `report_checks` reports the stretch through
   `report_run`; `last_check` is the record the page and `automation_list` read.
 
+**An automation that keeps failing pauses itself.** After 5 failed runs in a row (or the number
+its `failure_policy.autopause_after` sets), it stops firing and says so: the bell reads
+"<name> paused itself" with "paused after 5 failed runs: <why the last one failed>", and the
+Triggers page "Stopped by the system after repeated failures". A run counts as failed however it
+went wrong: the command it ran, or the agent (**Invoke Agent**, **Run Prompt**) or workflow run
+(**Run workflow**) it started, whose failure comes later than the fire that started it. Until that
+work ends its run reads `launched` and counts for nothing; when it ends, its row and the automation's
+last run say how it went. A run that succeeds starts the count over. A run you start by hand, a run
+a restart cut off, a run you stopped (it reads `stopped`, and sends no note), a refusal and a skip
+count for neither.
+
+Switching it back on resumes it: it fires on its own again. The failures that stopped it are still
+its last runs, so one more failure stops it again, and says so again; a run that succeeds starts the
+count over. A quarantined automation is not switched back on: re-author it.
+
+- `src/personalclaw/triggers/autopause.py` — `ending_decision`, the one decision every run's ending
+  takes, over the failure count its history derives (`consecutive_failures_from`).
+- `src/personalclaw/triggers/run_record.py` — `record_run` for a run that ended with its action,
+  `record_ending` for the work a run only started; `src/personalclaw/triggers/settle.py` writes
+  that work's ending onto its run's row, for an agent and a workflow run.
+- `src/personalclaw/triggers/tools.py` — `set_paused`, every switch's path, resumes what paused
+  itself (`autopause.resume_state`).
+
 ### 2. A run that did NOTHING is labelled inert — not green
 
 **In your words:** *"A tick that was skipped must not look like a tick that worked. I need to be able

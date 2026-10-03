@@ -46,6 +46,7 @@ RUN_SAID: dict[str, str] = {
     "degraded": "ran without something it needs",
     "launched": "started work that has not reported back yet",
     "declined": "you declined to let it start",
+    "stopped": "stopped before it finished",
     "refused": "its limits refused some of what it tried",
     "queued": "queued behind a run already in progress",
     "blocked_injection": "blocked: what it was given matched an injection pattern",
@@ -60,8 +61,9 @@ RUN_SAID: dict[str, str] = {
 }
 
 #: The statuses whose record keeps its reason in `summary` rather than `error`: a run that stopped
-#: for the owner keeps its question there, and a degraded one what it went without.
-_SUMMARY_REASONS = frozenset({"waiting", "degraded"})
+#: for the owner keeps its question there, a degraded one what it went without, and one someone
+#: stopped what stopped it.
+_SUMMARY_REASONS = frozenset({"waiting", "degraded", "stopped"})
 
 #: How much of a run's reason the list repeats; its history has the rest.
 _REASON_CHARS = 160

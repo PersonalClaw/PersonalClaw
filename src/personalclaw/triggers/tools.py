@@ -1545,13 +1545,21 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
     A resumed clock trigger with no next fire is ARMED here (`arm.next_fire_after_edit`), for the
     page, the chat and the CLI alike: the clock only fires a trigger that carries one, and the
     chat's resume used to leave a trigger created switched off on and inert until a restart.
+
+    Switching on is the owner's Resume (`autopause.resume_state`): a trigger that stopped itself
+    after repeated failures fires on its own again, and one quarantined is refused, since
+    re-running what matched an injection pattern takes re-authoring it. The switch used to go on
+    and leave the state `autopaused`, so the automation never fired again while this said
+    "Resumed".
     """
     from personalclaw.triggers import grants
+    from personalclaw.triggers.autopause import resume_state
     from personalclaw.triggers.legacy_import import needs_review
 
     row = store.get(trigger_id)
     if row is None:
         return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
+    resumed = str(row.trigger.state or "")
     if not paused and not row.errors:
         if needs_review(row.trigger):
             return _awaiting_review_refusal(row.trigger)
@@ -1562,6 +1570,9 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
                 "Error: " + grants.refusal(row.trigger, missing, elsewhere=True, switching_on=True),
                 {"needs_grant": grants.labels(row.trigger)},
             )
+        resumed, refusal = resume_state(resumed)
+        if refusal:
+            return AutomationToolResult(False, f"Error: {refusal[:1].upper()}{refusal[1:]}.")
     saved = store.set_enabled(trigger_id, not paused)
     if saved is not None and not paused:
         from personalclaw.triggers.arm import next_fire_after_edit
@@ -1575,7 +1586,12 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
         armed = rearmed is not None and rearmed != saved.next_fire_at
         if armed:
             saved.next_fire_at = str(rearmed)
-        if reset or armed:
+        # And it fires on its own again: the state an earlier decision left it in is the owner's
+        # Resume now.
+        woke = saved.state != resumed
+        if woke:
+            saved.state = resumed
+        if reset or armed or woke:
             store.upsert(saved)
     if saved is not None:
         # A report's automation switched on or off is its report switched on or off.

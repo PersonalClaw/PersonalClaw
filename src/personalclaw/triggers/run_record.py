@@ -20,6 +20,14 @@ trigger cannot tell two stories about one run:
   by hand never drives these: testing a broken automation by hand must neither pause it nor clear
   a real failure streak.
 
+A run whose action only started its work — an agent (Invoke Agent, Run prompt) or a workflow run —
+has not ended when its action returns: its row reads `launched` (or `queued`), and decides nothing
+about how the automation is going. When that work ends, its row says how
+(`triggers.settle`), and :func:`record_ending` takes that ending onto the trigger as this recorder
+takes any other: its stamps, and for a fire the lifecycle decision, so a failed agent counts toward
+the pause exactly as a failed command does. Both go through one decision
+(`autopause.ending_decision`), read from the history the run's row is in.
+
 A run whose action never returned, because a stop or a restart cut it off or it ran past its
 deadline, has nothing to hand this recorder: `triggers.reaper` closes it, and moves the same stamps
 (:func:`stamp_run`), so its row is the trigger's last run too.
@@ -56,6 +64,10 @@ ERROR_MAX = 512
 #: cut off is one: it is not a failure, and it did not do what it was for, so the trigger's last run
 #: is dated by it and says what stopped it.
 _WENT_WRONG = frozenset({Outcome.FAILED.value, Outcome.REFUSED.value, Outcome.INTERRUPTED.value})
+
+#: How many of a trigger's newest runs its failure count is read from: the most a declared
+#: `failure_policy.autopause_after` can count.
+STREAK_WINDOW = 20
 
 
 def count_fire(trigger: Any, *, at: float) -> None:
@@ -144,6 +156,7 @@ def _row(
     ``ran_late``, and every row of one that did not fail says first why it was late.
     """
     from personalclaw.schedule_history import (
+        UNSETTLED_STATUSES,
         ScheduleRun,
         failure_for_result,
         late_summary,
@@ -169,9 +182,9 @@ def _row(
             if status == "success":
                 status = "ran_late"
             summary = late_summary(late, summary)
-        if status == "launched":
-            # The agent a launched run started, so its row says how it went when it ends
-            # (`triggers.settle`).
+        if status in UNSETTLED_STATUSES:
+            # The agent or the workflow run a launched (or queued) run started, so its row says
+            # how it went when it ends (`triggers.settle`).
             work_id = str(getattr(result, "work_id", "") or "")
     return ScheduleRun(
         run_id=run_id,
@@ -221,16 +234,18 @@ async def record_run(
     (`trigger_runs._dispatch_store_action`). Its row is tagged ``manual``, which the hourly cap
     (`ScheduleRunStore.count_since`) and the failure streak (`autopause.consecutive_failures_from`)
     both pass over, and it leaves the trigger's health, state and switch alone. A fire's row is
-    tagged with its exit type, and the fire walks the autopause decision: the streak is read from
-    the history, row first, so it is DERIVED from the runs it summarises rather than kept as a
-    second count beside them. The streak handed on is the one BEFORE this fire, because
-    `autopause.evaluate` adds this fire itself.
+    tagged with its exit type, and the fire walks the autopause decision
+    (`autopause.ending_decision`): the streak is read from the history, row first, so it is DERIVED
+    from the runs it summarises rather than kept as a second count beside them. A fire that only
+    started its work (`launched`, `queued`) decides nothing yet: its work's ending does, when it
+    comes (:func:`record_ending`), unless that work ended before this row was written, which is
+    then written as the work ended, and decides here.
 
     *store* and *runs* are the trigger store and the run history to write, by default the active
     home's, the trigger store routed so that a row an app serves keeps its stamps where it lives.
     *state* is the dashboard a park's question is raised through (`parks.settle`). *on_attention*
-    is handed the trigger and the lifecycle decision after a fire is recorded: the gateway raises
-    the attention card for a trigger that stopped itself from it.
+    is handed the trigger and the lifecycle decision when a fire stops it, once (`_take`): the
+    gateway raises the attention card for a trigger that stopped itself from it.
 
     A one-shot that retires after its run leaves the list last, once its run is written, so no
     write above can put it back (`service.retire_after_run`).
@@ -274,7 +289,6 @@ async def _record(
     from personalclaw.config.loader import config_dir
     from personalclaw.schedule_history import ScheduleRunStore
     from personalclaw.triggers import autopause, parks
-    from personalclaw.triggers.models import TriggerState
     from personalclaw.triggers.routing import routed
     from personalclaw.triggers.service import retire_after_run
     from personalclaw.triggers.store import TriggerStore
@@ -314,37 +328,138 @@ async def _record(
     why = run.error if status == "failure" else (run.summary if status == "degraded" else "")
     runs = runs if runs is not None else ScheduleRunStore(config_dir())
     await runs.append(run)
+    if run.status != status:
+        # The work it started ended before its row was written, and the row was written as that
+        # work ended (`ScheduleRunStore.append_sync`): that ending is this run's.
+        status = run.status
+        why = run.error if status == "failure" else ""
     # A park asks you, once, with the action's own card; a run that went through withdraws the
     # question an earlier one asked.
     parks.settle(trigger, result, state=state)
 
-    decision = None
+    rows: list[dict[str, Any]] = []
     if not by_hand:
-        rows, _total = await runs.list_for_job(trigger_id, 0, 20)
-        decision = autopause.evaluate(
-            exit_type=tag,
-            consecutive_failures=max(0, autopause.consecutive_failures_from(rows) - 1),
-            now=time.time(),
-            # The trigger's own `failure_policy.autopause_after`, which a budget left out would
-            # silently widen to the default.
-            budget=autopause.budget_for(trigger),
-            quarantined=str(getattr(trigger, "state", "")) == TriggerState.QUARANTINED.value,
-        )
-
+        rows, _total = await runs.list_for_job(trigger_id, 0, STREAK_WINDOW)
     store = store if store is not None else routed(TriggerStore(base_dir=config_dir()))
+    # Read just before it is written, with nothing awaited in between: the work this run started
+    # can end meanwhile, and what its ending wrote (`record_ending`) must not be written over.
     loaded = store.get(trigger_id)
     if loaded is None:
         return run_id
     live = loaded.trigger
+    decision = None if by_hand else autopause_decision(live, rows, run_id)
+    _take(
+        store,
+        live,
+        decision,
+        status=status,
+        why=why,
+        run_id=run_id,
+        at=finished,
+        on_attention=on_attention,
+    )
+    retire_after_run(store, live, status=status, from_review=by_hand and bool(late))
+    return run_id
+
+
+def record_ending(
+    trigger_id: str,
+    work_id: str,
+    *,
+    status: str,
+    why: str,
+    store: Any,
+    runs: Any,
+    on_attention: Callable[[Any, Any], None] | None = None,
+) -> Any:
+    """What the work *work_id* a run only started did to its trigger, now that it has ended.
+    Returns the trigger as written, or None when the store has no row for it. Never raises.
+
+    The run's row already says how the work ended (`ScheduleRunStore.settle_sync`): *status*, *why*
+    for a failure, the exit it ended with and when. Its trigger takes that ending as it takes a run
+    that ended with its action (`record_run`): the lifecycle decision, from the history that row is
+    in (`autopause.ending_decision`), so a failed agent counts toward the pause as a failed command
+    does, and the stamps. Its row is still the one its last run opens, so ``last_run_id`` is left
+    as it is. An ending that came before its row was written decides nothing here: the recorder
+    writes that row as the work ended, and decides from it.
+
+    A trigger switched off while its work ran takes no decision: an ending that comes in after its
+    owner switched it off, or after it paused itself, neither resumes it nor stops it again.
+    """
+    try:
+        loaded = store.get(trigger_id)
+        if loaded is None:
+            return None
+        live = loaded.trigger
+        rows, _total = runs._list_for_job_sync(trigger_id, 0, STREAK_WINDOW)
+        row = next((r for r in rows if r.get("work_id") == work_id), None)
+        decision = None
+        if row is not None and live.enabled:
+            decision = autopause_decision(live, rows, str(row.get("run_id") or ""))
+        _take(
+            store,
+            live,
+            decision,
+            status=status,
+            why=why,
+            run_id="",
+            at=float(row.get("finished_at") or 0.0) if row is not None else 0.0,
+            on_attention=on_attention,
+        )
+        return live
+    except Exception:  # noqa: BLE001 - the work has ended whether or not its trigger says so
+        logger.warning("could not record how the work of %s ended", trigger_id, exc_info=True)
+        return None
+
+
+def autopause_decision(trigger: Any, rows: list[dict[str, Any]], run_id: str) -> Any:
+    """The lifecycle decision run *run_id*'s ending takes for *trigger*, from its newest-first
+    history *rows* (`autopause.ending_decision`)."""
+    from personalclaw.triggers import autopause
+    from personalclaw.triggers.models import TriggerState
+
+    return autopause.ending_decision(
+        rows,
+        run_id,
+        now=time.time(),
+        # The trigger's own `failure_policy.autopause_after`, which a budget left out would
+        # silently widen to the default.
+        budget=autopause.budget_for(trigger),
+        quarantined=str(getattr(trigger, "state", "")) == TriggerState.QUARANTINED.value,
+    )
+
+
+def _take(
+    store: Any,
+    live: Any,
+    decision: Any,
+    *,
+    status: str,
+    why: str,
+    run_id: str,
+    at: float,
+    on_attention: Callable[[Any, Any], None] | None,
+) -> None:
+    """Write what a run's ending did onto its trigger *live*, the stored row: the lifecycle
+    *decision* when it took one, and the stamps (:func:`stamp_run`).
+
+    A trigger already stopped by an earlier decision (autopaused, quarantined) keeps that: a run
+    that ends after it stopped neither resumes it nor stops it again. *on_attention* is handed the
+    trigger and the decision when the decision moves it INTO a state that needs attention, once
+    per episode (`autopause.AttentionCard`): the gateway raises the card that says it stopped.
+    """
+    from personalclaw.triggers import autopause
+    from personalclaw.triggers.models import TriggerState
+
+    if decision is not None and autopause.needs_attention(str(getattr(live, "state", ""))):
+        decision = None
     if decision is not None:
         live.health_status = decision.health
         live.state = decision.state
         if autopause.needs_attention(decision.state):
             # The pause itself: a state that needs attention must stop firing.
             live.enabled = False
-            logger.warning(
-                "trigger %s autopaused: %s", trigger_id, decision.reason or decision.state
-            )
+            logger.warning("trigger %s autopaused: %s", live.id, decision.reason or decision.state)
         # The park cooldown `autopause.unpark_due` reads, cleared on any outcome but a park so a
         # recovered trigger carries no stale one into its next outage.
         live.park_retry_after = (
@@ -352,16 +467,13 @@ async def _record(
         )
     # A failure keeps its error; one with none says the lifecycle's reason rather than nothing.
     reason = decision.reason if decision is not None else ""
-    stamp_run(live, status=status, why=why or reason, run_id=run_id, at=finished)
+    stamp_run(live, status=status, why=why or reason, run_id=run_id, at=at)
     store.upsert(live)
-    if decision is not None:
-        if autopause.needs_attention(decision.state):
-            # A report's automation the clock paused is its report paused: the Reports page must
-            # not say it runs (`knowledge.report_schedules.adopt`).
-            from personalclaw.knowledge import report_schedules
+    if decision is not None and autopause.needs_attention(decision.state):
+        # A report's automation the clock paused is its report paused: the Reports page must
+        # not say it runs (`knowledge.report_schedules.adopt`).
+        from personalclaw.knowledge import report_schedules
 
-            report_schedules.adopt(live)
+        report_schedules.adopt(live)
         if on_attention is not None:
             on_attention(live, decision)
-    retire_after_run(store, live, status=status, from_review=by_hand and bool(late))
-    return run_id

@@ -331,7 +331,7 @@ def evaluate(
             state=TriggerState.AUTOPAUSED.value,
             consecutive_failures=count,
             health=TriggerHealth.FAILING.value,
-            reason=f"paused after {count} consecutive failures",
+            reason=f"paused after {count} failed runs",
         )
     return PauseDecision(
         state=TriggerState.ACTIVE.value,
@@ -356,7 +356,12 @@ def consecutive_failures_from(runs: list[dict[str, Any]]) -> int:
     Outcomes that neither fail nor succeed — a skipped or deferred fire — are SKIPPED rather than
     treated as either. A quiet-hours window is not a recovery (it would silently forgive a real
     failure streak) and not a failure (it would pause a healthy trigger for being configured).
+    So is a run whose work has not ended (`schedule_history.UNSETTLED_STATUSES`): its fire only
+    started an agent or a workflow run, and its row takes the exit that work ends with when it
+    does. Its fire's own exit, a clean one, read as a success, so an automation whose agent failed
+    on every fire never paused.
     """
+    from personalclaw.schedule_history import UNSETTLED_STATUSES
     from personalclaw.triggers.models import Outcome
 
     count = 0
@@ -366,6 +371,8 @@ def consecutive_failures_from(runs: list[dict[str, Any]]) -> int:
         # The typed field wins when present, because it distinguishes a true failure from an outage.
         exit_type = str(run.get("trigger") or run.get("outcome") or "")
         status = str(run.get("status") or "")
+        if status in UNSETTLED_STATUSES:
+            continue
 
         if exit_type in {ExitType.OK.value, Outcome.RAN.value, Outcome.RAN_LATE.value}:
             break
@@ -389,6 +396,64 @@ def consecutive_failures_from(runs: list[dict[str, Any]]) -> int:
     return count
 
 
+def ending_decision(
+    rows: list[dict[str, Any]],
+    run_id: str,
+    *,
+    now: float,
+    budget: int = FAILURE_BUDGET,
+    quarantined: bool = False,
+) -> PauseDecision | None:
+    """The lifecycle decision the ending of run *run_id* takes, read from its trigger's history.
+
+    *rows* is the history newest first, with that run's row as it ended. Whatever ended the run —
+    its action, or the agent or workflow run the action only started, which ends later — its
+    ending decides the same way (:func:`evaluate`), over the failure count its history derives
+    (:func:`consecutive_failures_from`): a failure that comes in later counts as a direct one does.
+
+    It decides when it is the newest ending that does: no run that started after it has ended with
+    an exit of its own. A failure decides also when every run after it that ended failed too, since
+    the run of failures it belongs to has grown. Otherwise a newer run has decided past it, and the
+    next run that ends walks the history that holds it.
+
+    None for an ending that decides nothing: a run by hand, work that has not ended yet, and an
+    ending that is neither a success nor a failure — a refusal, the owner's Deny or Stop, a
+    restart's cut, a suppression.
+    """
+    position = next(
+        (index for index, row in enumerate(rows) if str(row.get("run_id") or "") == run_id), -1
+    )
+    if position < 0:
+        return None
+    exit_type = _deciding_exit(rows[position])
+    if not exit_type:
+        return None
+    newer = [e for e in (_deciding_exit(row) for row in rows[:position]) if e]
+    failed = ExitType.FAILED.value
+    if newer and not (exit_type == failed and all(e == failed for e in newer)):
+        return None
+    return evaluate(
+        exit_type=exit_type,
+        # The count before this run: `evaluate` adds the run itself.
+        consecutive_failures=max(0, consecutive_failures_from(rows) - 1),
+        now=now,
+        budget=budget,
+        quarantined=quarantined,
+    )
+
+
+def _deciding_exit(row: dict[str, Any]) -> str:
+    """The typed exit a history row's run ended with, when it is one that decides its trigger's
+    lifecycle (:data:`EXIT_TYPES`); "" for work that has not ended, a run by hand, and a row whose
+    run ended as neither a success nor a failure (it carries that outcome instead)."""
+    from personalclaw.schedule_history import UNSETTLED_STATUSES
+
+    if str(row.get("status") or "") in UNSETTLED_STATUSES:
+        return ""
+    exit_type = str(row.get("trigger") or "")
+    return exit_type if exit_type in EXIT_TYPES else ""
+
+
 def unpark_due(*, retry_after: float, now: float) -> bool:
     """Whether a parked trigger's cooldown has elapsed.
 
@@ -408,8 +473,11 @@ def resume_state(state: str) -> tuple[str, str]:
     A quarantined trigger is NOT resumable from a button. Quarantine means a payload matched an
     injection pattern, and one click is too cheap a gesture for "run the thing that looked like an
     attack" — that needs an explicit re-authoring of the trigger, which is a different action with a
-    different confirmation. Everything else resumes and gets a clean counter, because a user
-    pressing Resume has decided the cause is addressed.
+    different confirmation. Everything else resumes, because a user pressing Resume has decided the
+    cause is addressed: it fires on its own again (`triggers.tools.set_paused`, every switch's
+    path). The failures that stopped it stay in its history, which is what the count is read from
+    (:func:`consecutive_failures_from`), so one more failure stops it again and says so, and a run
+    that succeeds starts the count over.
     """
     if state == TriggerState.QUARANTINED.value:
         return state, (
@@ -433,29 +501,16 @@ def needs_attention(state: str) -> bool:
 
 # ── Runs-inbox surfacing (the second half) ──
 
-#: Deep-link ref key for the trigger an inbox card is about. `InboxItem.refs` is free-form by design
-#: (S51), so a structured payload rides there rather than widening the inbox schema, which is shared
-#: with channel messages.
-TRIGGER_REF = "trigger"
-
-
-def inbox_fingerprint(trigger_id: str, state: str) -> str:
-    """The dedup key for one attention episode.
-
-    Keyed on `(trigger, state)` and NOT on the fire, deliberately. An autopaused trigger stops
-    firing, so per-fire keying would produce exactly one card — but a trigger that autopauses, gets
-    resumed, and autopauses again is a SECOND episode the user must see. Re-keying on the state
-    transition gives one card per episode: no spam while paused, a new card when it re-enters.
-    """
-    return f"trigger-attention:{trigger_id}:{state}"
-
 
 @dataclass
 class AttentionCard:
     """What the Runs inbox shows for a trigger that stopped on its own.
 
     Built as a record rather than written here: the store belongs to the service, and keeping this
-    pure means the copy and the dedup rule are testable without an inbox on disk.
+    pure means the copy is testable without an inbox on disk. One goes out per episode: when a
+    decision moves the trigger INTO a state that needs attention (`run_record`), never for a
+    decision that leaves it there. An autopaused trigger stops firing, so that is no spam while it
+    is paused; and one that is resumed and pauses again is a second episode the user must see.
     """
 
     trigger_id: str
@@ -463,7 +518,6 @@ class AttentionCard:
     state: str
     title: str
     body: str
-    fingerprint: str
     actions: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -473,7 +527,6 @@ class AttentionCard:
             "state": self.state,
             "title": self.title,
             "body": self.body,
-            "fingerprint": self.fingerprint,
             "actions": list(self.actions),
         }
 
@@ -492,8 +545,9 @@ def attention_card(
 
     The offered ACTIONS differ by state, and that difference is the point: a quarantined trigger
     gets no Resume, because `resume_state` refuses it and offering a button that returns a refusal
-    is worse than not offering it. `last_error` rides the body because "paused after 5 consecutive
-    failures" without the error is an alert the user has to go digging to act on.
+    is worse than not offering it. The body says why it stopped, then the cause, *last_error*: the
+    reason of the run that failed last, "paused after 5 failed runs: the model provider answered
+    503". "paused after 5 failed runs" alone is an alert the user has to go digging to act on.
     """
     if not needs_attention(decision.state):
         return None
@@ -507,23 +561,12 @@ def attention_card(
 
     body = decision.reason or f"the trigger entered {decision.state}"
     if last_error:
-        body = f"{body}. Last error: {last_error}"
+        body = f"{body}: {last_error}"
     return AttentionCard(
         trigger_id=trigger_id,
         trigger_name=trigger_name,
         state=decision.state,
         title=title,
         body=body,
-        fingerprint=inbox_fingerprint(trigger_id, decision.state),
         actions=actions,
     )
-
-
-def is_duplicate_card(fingerprint: str, existing: set[str] | frozenset[str]) -> bool:
-    """Whether this episode already has a card.
-
-    A set membership test, exposed as a function so the rule lives with the fingerprint that defines
-    it — the failure it prevents (one card per fire on a trigger that keeps failing) is invisible at
-    a call site that just does `in`.
-    """
-    return fingerprint in existing

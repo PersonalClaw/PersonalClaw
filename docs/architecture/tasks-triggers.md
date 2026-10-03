@@ -727,16 +727,43 @@ and the agent's ending rewrites `launched` into `success` and the reply, or
 agent that ends before its fire wrote the row still lands on it. An agent whose
 start you declined is `declined` (`SubagentInfo.declined`, mapped to
 `skipped_gate`): your own decision, so it sends no note and never reads as a
-failure. A workflow run reports the same way from its
+failure. An agent you stopped (`SubagentInfo.cancelled`) is `stopped`
+(`Outcome.STOPPED`), saying what stopped it, and sends no note either: it read
+"failure · Cancelled by user". A workflow run reports the same way from its
 terminal write (`workflows/run_finish.report_to_its_trigger`, wired as
 `EngineServices.report_to_trigger`) and links to the run, including the two
 endings the workflow watchdog writes with no controller: a run whose spec cannot
 be read, and one whose steps all ended while nothing drove it. A run that was
-cancelled or declined says nothing, since whoever stopped it knows. A Run now
-that starts either reports the same way. A spawn the subagent manager refuses on
-the spot (low memory, an incident, the day's budget) is the fire's own failure
-(`action_providers.services.spawn_refusal`), and a fire that stopped for you
-asks in the Inbox (`triggers/parks.py`).
+cancelled or declined says nothing, since whoever stopped it knows. Its trigger's
+row names the run (`workflow:<id>`, launched or queued) and settles the same way
+(`settle.settle_workflow_run`): `success`, `failure` (a failed or escalated run),
+`stopped` (cancelled) or `declined`. It used to read `launched` for good, and so
+did its trigger's last run. A Run now that starts either reports the same way. A
+spawn the subagent manager refuses on the spot (low memory, an incident, the
+day's budget) is the fire's own failure (`action_providers.services.spawn_refusal`),
+and a fire that stopped for you asks in the Inbox (`triggers/parks.py`).
+
+**The work's ending is the run's ending.** A settled row takes the exit its work
+ended with as its typed exit (`ScheduleRun.trigger`, `settle_sync(exit_type=…)`):
+`ok` for a success, `failed` for a failure, and for every other ending its outcome,
+which is no exit. Its trigger then takes the ending as it takes a run that ended
+with its action (`run_record.record_ending`): its stamps, and for a fire the
+autopause decision, read from the history (`autopause.ending_decision`, the one
+decision `record_run` takes too). So an automation whose agent or workflow run
+fails on every fire pauses itself, as one whose command fails does; the row kept
+the fire's own clean exit, so the count read every such run as a success, and
+without "Collapse repeat failures" it said so on every fire, for good. A run whose
+work has not ended (`launched`, `queued`) counts for nothing yet, where it used to
+reset the count and the trigger's health at the launch. An ending decides when no
+newer run has ended with an exit of its own, or, for a failure, when every newer
+one failed too; a trigger switched off while its work ran, or already paused,
+takes no decision. The pause says why, "paused after 5 failed runs: <the last
+run's reason>", in one card per episode: when a decision moves the trigger into
+`autopaused`, never for one that leaves it there (`run_record._take`). Switching a
+paused trigger back on resumes it (`tools.set_paused`, `autopause.resume_state`):
+the switch went on and the state stayed `autopaused`, so it never fired again. The
+failures that stopped it stay in its history, so one more failure stops it again;
+a quarantined trigger is refused.
 
 **An agent a trigger starts carries the trigger.** Both store-trigger dispatches
 set `ActionContext.trigger_id`, and so does a lifecycle hook's fire and its Test

@@ -191,6 +191,11 @@ class EngineServices:
     #: gateway wires its trigger delivery here, since the fire that started the run only said it
     #: launched; every test and CLI path leaves it None.
     report_to_trigger: Any = None
+    #: `(trigger, decision) -> None` — handed the trigger a run's ending stopped, when that run's
+    #: failure was the one that paused it (`triggers.settle.settle_workflow_run`). The gateway
+    #: wires the card that says the automation stopped itself here; every test and CLI path leaves
+    #: it None, and the pause happens either way.
+    on_attention: Any = None
     #: `(run, *, status, summary) -> None` — hands a run's end to the triggers waiting on it
     #: (`run_finish.chain_after_run`). The gateway wires its trigger dispatch here; every test and
     #: CLI path leaves it None.

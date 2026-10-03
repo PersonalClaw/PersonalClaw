@@ -383,12 +383,14 @@ def test_last_error_summary_holds_the_ERROR_not_the_LIFECYCLE_REASON(tmp_path, m
 
     The one field carrying evidence repeated the sentence beside it, so the actual exception never
     reached the user. `attention_card`'s own docstring says why the slot exists: *"'paused after 5
-    consecutive failures' without the error is an alert the user has to go digging to act on."*
+    failed runs' alone is an alert the user has to go digging to act on."* (The pause's own words
+    are now "paused after 5 failed runs"; the check follows them.)
     """
     trigger = _drive(tmp_path, monkeypatch, ["raise"])
     assert "RuntimeError" in trigger.last_error_summary
     assert "boom" in trigger.last_error_summary
-    assert "consecutive failures" not in trigger.last_error_summary
+    assert "failed runs" not in trigger.last_error_summary
+    assert "failure 1 of" not in trigger.last_error_summary
 
 
 def test_the_ATTENTION_CARD_carries_the_real_cause(tmp_path, monkeypatch):
@@ -402,7 +404,8 @@ def test_the_ATTENTION_CARD_carries_the_real_cause(tmp_path, monkeypatch):
         last_error=trigger.last_error_summary,
     )
     assert "RuntimeError: boom" in card.body
-    assert card.body.count("consecutive failures") == 1, "the reason must appear once, not twice"
+    # The pause's own words, which now read "paused after 5 failed runs: <the cause>".
+    assert card.body.count("failed runs") == 1, "the reason must appear once, not twice"
 
 
 def test_a_success_FALSE_result_uses_its_error_STRING(tmp_path, monkeypatch):

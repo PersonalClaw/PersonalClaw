@@ -1,4 +1,4 @@
-import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff, Ban, TriangleAlert } from 'lucide-react'
+import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, CircleStop, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff, Ban, TriangleAlert } from 'lucide-react'
 import { epochSeconds, localDateTimeSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
@@ -164,6 +164,10 @@ export function statusMeta(s?: string | null): StatusMeta {
   // A launched run whose agent asked you to let it start, and you declined (`triggers/settle.py`).
   // Your own decision, not a fault: neutral, as the `skipped_gate` the runs feed maps it to.
   if (s === 'declined') return { label: 'declined', tone: 'var(--color-on-surface-low)', icon: Ban, noFault: true }
+  // A launched run whose work was stopped before it finished: you stopped its agent, or cancelled
+  // its workflow run (`triggers/settle.py`, `Outcome.STOPPED`). A decision, not a fault: neutral,
+  // as `declined` is, with its reason beside it saying what stopped it. It used to read "error".
+  if (s === 'stopped') return { label: 'stopped', tone: 'var(--color-on-surface-low)', icon: CircleStop, noFault: true }
   // 🔴 A SCREENED payload. The backend writes `blocked_injection` rows now, and without
   // this branch they fell through to "never run" — the worst possible label for a blocked attack:
   // the user reads "this automation has never run" when it in fact refused a hostile payload, and

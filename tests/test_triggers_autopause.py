@@ -27,8 +27,6 @@ from personalclaw.triggers.autopause import (
     classify_exception,
     counts_toward_autopause,
     evaluate,
-    inbox_fingerprint,
-    is_duplicate_card,
     needs_attention,
     outcome_for_exit,
     resume_state,
@@ -284,32 +282,17 @@ def test_a_card_falls_back_to_the_id_when_the_trigger_is_unnamed():
     assert card is not None and "t-42" in card.title
 
 
-def test_one_card_per_episode_but_a_new_one_on_re_entry():
-    """Keyed on (trigger, state), NOT on the fire.
-
-    Per-fire keying yields exactly one card ever, because an autopaused trigger stops firing — so a
-    trigger that pauses, gets resumed, and pauses again would never surface the second time.
-    """
+def test_the_card_says_why_it_paused_then_the_cause():
+    """One sentence: the pause, then what the run that failed last said."""
     decision = evaluate(exit_type=ExitType.FAILED.value, consecutive_failures=FAILURE_BUDGET - 1)
-    first = attention_card(trigger_id="t1", trigger_name="N", decision=decision)
-    assert first is not None
-    seen = {first.fingerprint}
-    repeat = attention_card(trigger_id="t1", trigger_name="N", decision=decision)
-    assert repeat is not None
-    assert is_duplicate_card(repeat.fingerprint, seen) is True
-
-    quarantined = evaluate(
-        exit_type=ExitType.FAILED.value, consecutive_failures=0, quarantined=True
-    )
-    other = attention_card(trigger_id="t1", trigger_name="N", decision=quarantined)
-    assert other is not None
-    assert is_duplicate_card(other.fingerprint, seen) is False
+    card = attention_card(trigger_id="t1", trigger_name="N", decision=decision, last_error="503")
+    assert card is not None
+    assert card.body == f"paused after {FAILURE_BUDGET} failed runs: 503"
 
 
-def test_fingerprints_are_per_trigger():
-    a = inbox_fingerprint("t1", TriggerState.AUTOPAUSED.value)
-    b = inbox_fingerprint("t2", TriggerState.AUTOPAUSED.value)
-    assert a != b
+# One card per episode — a new one when a resumed trigger pauses again, none for a decision that
+# leaves it paused — is the recorder's to keep (`run_record._take`), and is driven end to end in
+# `test_autopause_wiring` and `test_an_automation_whose_work_keeps_failing_pauses_itself`.
 
 
 def test_needs_attention_excludes_working_and_self_healing_states():
@@ -471,4 +454,4 @@ def test_the_reason_string_reports_the_REAL_budget():
     degraded = evaluate(exit_type="failed", consecutive_failures=0, budget=3)
     assert "of 3" in degraded.reason
     paused = evaluate(exit_type="failed", consecutive_failures=2, budget=3)
-    assert "3 consecutive failures" in paused.reason
+    assert "3 failed runs" in paused.reason

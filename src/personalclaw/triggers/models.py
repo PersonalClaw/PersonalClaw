@@ -148,6 +148,10 @@ class Outcome(str, Enum):
     #: which, and it waits on the Triggers page's review to be run again or dismissed. Not a
     #: failure, so it never counts toward autopause: the automation did nothing wrong.
     INTERRUPTED = "interrupted"
+    #: Someone stopped the work it started before it finished: its owner stopped the agent, or
+    #: cancelled the workflow run. Their own decision, so it is not a failure, never counts toward
+    #: autopause and sends no note; its reason says what stopped it.
+    STOPPED = "stopped"
     #: A genuine failure — the only outcome that counts toward autopause.
     FAILED = "failed"
 
