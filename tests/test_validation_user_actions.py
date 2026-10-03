@@ -155,7 +155,8 @@ class TestMcpCoreUserActions:
 
     def test_learn_remove(self):
         with patch("personalclaw.mcp_memory._delete") as mock_del:
-            mock_del.return_value = {"removed": 1}
+            # The lessons route names each memory it removed from (every chat's, or a folder's).
+            mock_del.return_value = {"removed": [{"partition": "", "folder": ""}]}
             result = self._simulate_tool_call(
                 "memory_forget",
                 {
