@@ -2113,9 +2113,10 @@ class GatewayOrchestrator:
 
         For an agent task (`_subagent_done`) and a workflow run (`EngineServices.
         report_to_trigger`): the fire, or the Run now, that started either said nothing, since
-        nothing had happened yet (`delivery.says_nothing_now`). Returns whether its route has told
-        it (`delivery.report_run`): a repeat its trigger collapses was told when it first failed. A
-        trigger whose route is ``none`` sends nothing.
+        nothing had happened yet (`delivery.says_nothing_now`). Returns whether the trigger has
+        spoken for it (`delivery.report_run`): its note went out, a repeat it collapses was told
+        when it first failed, or its route is ``none`` and says nothing. False when the trigger
+        cannot be read or its note could not go out, and then the agent's own note tells it.
 
         A one-shot that retires after its run (`delete_after_run`) and only started this work
         leaves the list here, once the work has done what it was for and the note has gone out:
@@ -3961,8 +3962,8 @@ class GatewayOrchestrator:
 
             # A trigger's own agent says how it went on the trigger's route now that it has ended,
             # wherever its reply goes: the fire, or the Run now, that started it said nothing
-            # (`delivery.says_nothing_now`). When every member has, the plain subagent note would
-            # say it twice.
+            # (`delivery.says_nothing_now`). The route speaks for it, a silent one included, so the
+            # plain subagent note is about the members no trigger spoke for, and only those.
             def _reported(member: "SubagentInfo") -> bool:
                 # Its owner declined its start: it never ran, by their own decision, and they know.
                 # No note says so, least of all one calling it a failure.
@@ -3981,10 +3982,10 @@ class GatewayOrchestrator:
                     trigger_id, error=why_it_failed(member), summary=what_it_said(member)
                 )
 
-            # Told: on each member's trigger route, or, the same failure, by a note within the hour.
-            told = all([_reported(m) for m in batch]) or failure_notes.already_told(
-                parent_key, batch
-            )
+            # Told: every member was spoken for by its trigger, or, the same failure, the rest were
+            # told by a note within the hour.
+            unreported = [m for m in batch if not _reported(m)]
+            told = not unreported or failure_notes.already_told(parent_key, unreported)
             # Why the parent was not handed the result, when its announce was refused
             # (`AnnounceRefused`): news a trigger's own note does not carry.
             _refusal = ""
@@ -4044,15 +4045,18 @@ class GatewayOrchestrator:
                     f"{n_failed} failed]\n\n" + "\n\n---\n\n".join(blocks)
                 )
             # The note a PERSON reads is not that event: it is named by the run and says what
-            # happened (`subagent_notes`). An automation's run links back to the automation.
-            title, body = subagent_notes.note_for(batch, details)
+            # happened (`subagent_notes`). An automation's run links back to the automation. It is
+            # about the members no trigger spoke for; when every one was, it goes out only to say
+            # the announce was refused, beside them all.
+            noted = unreported or batch
+            title, body = subagent_notes.note_for(noted, details)
             notice_meta = self._notif_meta(parent_key)
-            if len(batch) == 1 and info.trigger_id:
+            if len(noted) == 1 and noted[0].trigger_id:
                 from personalclaw.triggers.delivery import status_url as _trigger_status_url
 
                 notice_meta = {
                     **(notice_meta or {}),
-                    "statusUrl": _trigger_status_url(trigger_id=info.trigger_id),
+                    "statusUrl": _trigger_status_url(trigger_id=noted[0].trigger_id),
                 }
             title, _ = redact_exfiltration_urls(title)
             title, _ = redact_credentials(title)
@@ -4445,9 +4449,9 @@ class GatewayOrchestrator:
                             "Cron session %s: reset failed after last subagent", parent_key
                         )
 
-            # Dashboard notification — suppressed only when EVERY member is silent, or every one
-            # has just said how it went on its trigger's route and the announce was not refused.
-            if self.dashboard_state and not all(m.silent for m in batch) and (not told or _refusal):
+            # Dashboard notification — suppressed when every member it is about is silent, or every
+            # one was spoken for by its trigger and the announce was not refused.
+            if self.dashboard_state and not all(m.silent for m in noted) and (not told or _refusal):
                 self.dashboard_state.notify(
                     notification_kinds.SUBAGENT,
                     title,

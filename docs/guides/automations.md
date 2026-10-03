@@ -26,6 +26,11 @@ defaults to your inbox. So an automation set to `delivery: none` that starts fai
 otherwise "quiet" would mean "I will not tell you when I stop working", which is the opposite of what
 anyone means by it.
 
+The silence covers the work an automation starts, too. When the agent it started (**Invoke Agent**,
+**Run Prompt**) or its workflow run (**Run workflow**) finishes well, no note says so, from the
+automation or from the agent: its run history does. That is what keeps an app's scheduled job quiet,
+since an app's job always runs with delivery `none`.
+
 | | |
 |---|---|
 | **Checked on** | the **Inbox** (an item for the failure, saying why, which the bell also shows once), and the automation's **run history** on the Schedule page (the run is recorded `failure`) |
@@ -34,7 +39,10 @@ anyone means by it.
 How it is implemented, in the order the fire path runs it:
 
 - `src/personalclaw/triggers/delivery.py` — `report_run`, called once per run with the outcome:
-  by a scheduled fire, and by every run you start by hand (**Run now**).
+  by a scheduled fire, and by every run you start by hand (**Run now**), and again when the work a
+  run only started ends. Its answer says whether the automation has spoken for the outcome, a
+  `none` route's silence included, and the agent's own completion note goes out only when it has
+  not.
 - `report_run` asks for the destination **per outcome**: `destination=route_for(trigger, ok=ok)`.
   This is the line that makes the guarantee real; it used to pass `trigger.delivery`
   unconditionally, which routed a failure through the silent channel.

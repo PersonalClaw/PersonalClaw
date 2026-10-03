@@ -701,11 +701,12 @@ approval asks you in the Inbox, whatever your YOLO, Trust or Approval mode say.
 It reports to the app (`app:<name>`), so no turn of your own agent is handed
 its result. A subagent, a batch or a workflow run the job's agent starts is the
 app's work too (`apps/app_work.py`), and every ask it raises names the app and
-the job. Its run history says how each run went, and its completion and
-failure notes go out as any trigger's agent's do. Nothing of the job's step
-decides any of that: its action carries no approval or write-access posture,
-reconciliation takes one off a row registered with one, and no edit gives it
-one (`app_crons.posture_refusal`). See
+the job. Its run history says how each run went. A run that goes well posts no
+note, since the job's route is `none`, and a failed one reaches the Inbox on the
+job's failure route, as any silent trigger's agent's does. Nothing of the job's
+step decides any of that: its action carries no approval or write-access
+posture, reconciliation takes one off a row registered with one, and no edit
+gives it one (`app_crons.posture_refusal`). See
 [tasks-triggers.md](tasks-triggers.md#app-manifest-crons).
 
 ## MCP bridge

@@ -955,11 +955,15 @@ def report_run(
 
     ``summary`` is what the work produced (a command's output, an agent task's reply, a workflow
     run's summary), and ``run_id`` the workflow run the note links to; a failure's ``error`` is its
-    summary. Returns whether the route has told this outcome: a note went out now, or, for a
-    failure the trigger collapses as a repeat, one went out about it within the reminder window. A
-    caller with a note of its own (an agent task's, `gateway._subagent_done`) sends it only when
-    this is false, so a collapsed repeat stays collapsed. *state* is the dashboard state whose
-    `notify` every note goes through; with none, nothing is sent.
+    summary. *state* is the dashboard state whose `notify` every note goes through; with none,
+    nothing is sent.
+
+    Returns whether the trigger has spoken for this outcome: a note went out now; a failure it
+    collapses as a repeat went out within the reminder window; or its route says nothing of it —
+    ``none``, which its owner chose, or an action whose own note was the word. False only when no
+    note could go out. A caller with a note of its own (an agent task's, `gateway._subagent_done`)
+    sends it only when this is false, so neither a collapsed repeat nor an outcome its route keeps
+    quiet about reaches the bell another way.
 
     Routes through `state.notify` (:func:`deliver`): R18 says "the substrate does not build a
     second notification path", so the existing `notification_allowed` gate and the per-(source,
@@ -977,7 +981,7 @@ def report_run(
         # sent; the action's note carries the trigger link instead (`ActionContext.status_url`).
         # A failure still reports: in that case the action's own note never went out.
         if ok and notifies_on_its_own(trigger):
-            return False
+            return True
         # 🔴 SUPPRESS A REPEATED IDENTICAL FAILURE (R7's `dedupe_hash`). `event_id` dedupes the
         # same event REDELIVERED (same run_id), not different runs carrying an identical error:
         # the same error on 6 consecutive fires produced 6 notifications. Opt-in via
@@ -1010,6 +1014,12 @@ def report_run(
             # carries webhook, event, file and web_watch outcomes, and those are not scheduled jobs.
             scheduled=is_scheduled(trigger),
         )
+        # 🔴 A ROUTE OF `none` HAS SAID ALL IT WILL. `deliver` sends nothing on it, and answering
+        # that as "not told" handed the outcome to the agent's own completion note, so a silent
+        # trigger's agent posted one on every run: every app's scheduled job, whose route is
+        # always `none`, among them.
+        if is_muted(note.destination):
+            return True
         return deliver(state, note, delivered_ids=_DELIVERED_EVENT_IDS)
     except Exception:  # noqa: BLE001 - see the docstring
         logger.debug("could not report the run of %s", trigger, exc_info=True)

@@ -196,12 +196,14 @@ async def test_the_report_goes_out_wherever_the_reply_goes(home):
 
 
 @pytest.mark.asyncio
-async def test_a_quiet_trigger_leaves_the_plain_note(home):
-    """`delivery: none` stays quiet about a success; the agent's own note is unchanged."""
+async def test_a_quiet_trigger_says_nothing_of_a_success(home):
+    """`delivery: none` stays quiet about a success, and so does the agent's own note.
+
+    🔴 Before: the plain subagent note went out in the route's place, on every run."""
     _store_trigger(home, delivery="none")
     orch, on_done = _on_done()
     await on_done([_agent()])
-    assert [kind for kind, _t, _b in _notes(orch)] == [notification_kinds.SUBAGENT]
+    assert _notes(orch) == []
 
 
 @pytest.mark.asyncio

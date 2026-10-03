@@ -690,10 +690,23 @@ to report to a chat channel told that channel nothing.
 **A collapsed repeat stays collapsed.** "Collapse repeat failures"
 (`failure_policy.dedupe_hash`) tells the same error once an hour
 (`delivery.FAILURE_REMINDER_SECS`). The agent task a fire starts reports through
-the same reporter when it ends, and its own note goes out only when its trigger's
-route has not told the outcome, which `report_run` counts a collapsed repeat as
+the same reporter when it ends, and its own note goes out only when its trigger
+has not spoken for the outcome, which `report_run` counts a collapsed repeat as
 having done when it first failed. The repeat used to reach the bell anyway, as
 the agent's own note.
+
+**Silent means silent about the work too.** A trigger whose results route is
+`none` (the Triggers page's Silent) has spoken for a run that went well by
+saying nothing, and `report_run` answers so, so the agent it started posts no
+completion note of its own either: no note reaches the bell, the Inbox or a chat
+channel, and the run's history row says how it went. (An agent a chat's event
+started still answers in that chat: that is its reply, not a note.) The same
+holds for a workflow run it started, a run by hand, and every agent in a batch
+that ends together: a batch's note names only the runs no trigger spoke for. A
+failure takes the failure route ("If it fails"), the Inbox unless the owner
+chose otherwise, once per failed run, and a pause and an ask reach the owner as
+they always do. The agent's own note used to go out on every run, so an app's
+scheduled job, whose route is always `none`, posted one each time it ran.
 
 **A report says what the run produced.** "X finished" carries the action's
 sentence for a person, else what it printed (`schedule_history.summary_for_result`),
@@ -1042,9 +1055,12 @@ the same scope a run resolves (`research_reports.sources_shown`).
 Apps can declare crons in their manifest; `apps/app_crons.py` reconciles them
 on every app lifecycle transition and registers them with delivery `none` always
 (headless — nothing reads the manifest's `silent` flag; a failing app cron must
-not spam the owner's DM). A job is registered only for an app that holds the `cron`
-permission and an agent tier, and each fire runs the job's agent at that tier,
-as the app's work, approving none of its calls (`app_crons.start_job`). See
+not spam the owner's DM). So a job's run that goes well posts no note at all
+(see "Silent means silent about the work too" above), and a failed one reaches
+the Inbox on the job's failure route. A job is registered only for an app that
+holds the `cron` permission and an agent tier, and each fire runs the job's
+agent at that tier, as the app's work, approving none of its calls
+(`app_crons.start_job`). See
 [app-platform.md](app-platform.md#crons).
 
 ## Workflows

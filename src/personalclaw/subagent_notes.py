@@ -14,8 +14,8 @@ same reason as `triggers.delivery.failure_hash` reads it, within
 `triggers.delivery.FAILURE_REMINDER_SECS` of the note that told it, is not told again: the window
 an automation's "Collapse repeat failures" re-alerts on, so one still failing an hour on is told
 again, and a run that ended well in between makes the next failure news. An automation's own runs
-follow their trigger's setting instead: told on its route (`gateway._report_to_its_trigger`), they
-never reach this note.
+follow their trigger's setting instead: told on its route (`gateway._report_to_its_trigger`), or
+not at all when that route is ``none``, they never reach this note, alone or in a batch.
 """
 
 from __future__ import annotations
