@@ -1,7 +1,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { INSTALL_KIND, buildGatewayEnv } = require("../gatewayEnv");
+const { AUTH_SWITCHES, INSTALL_KIND, buildGatewayEnv } = require("../gatewayEnv");
 
 /**
  * The gateway spawn environment (DC-1 T1.3 / DISTRIBUTION C1).
@@ -51,10 +51,38 @@ describe("buildGatewayEnv", () => {
     assert.strictEqual(env.HOME, "/Users/someone");
   });
 
-  it("sets the loopback auth bypass and the project dir it was given", () => {
-    const env = built();
-    assert.strictEqual(env.PERSONALCLAW_DEV_NO_AUTH, "1");
-    assert.strictEqual(env.PERSONALCLAW_PROJECT_DIR, "/app/resources");
+  it("sets the project dir it was given", () => {
+    assert.strictEqual(built().PERSONALCLAW_PROJECT_DIR, "/app/resources");
+  });
+
+  it("sets no authentication switch, so the gateway asks every request for a sign-in", () => {
+    // The shell signs its windows in with the session the ready line carries (localSignIn.js).
+    // Any key here that changed how the gateway admits a request would hand the app's gateway,
+    // and every approval waiting on it, to any process on the computer.
+    const added = Object.keys(built()).filter((key) => !(key in base));
+    assert.deepStrictEqual(added.sort(), ["PERSONALCLAW_INSTALL_KIND", "PERSONALCLAW_PROJECT_DIR"]);
+  });
+
+  it("passes on no inherited switch that would weaken the sign-in or leave loopback", () => {
+    // `npm start` from a terminal that exports one of these must still start a local-token
+    // gateway on loopback: none-mode admits every caller as the owner, the local-network bypass
+    // admits any loopback caller with no token, and a bind host puts the gateway on the network.
+    const env = buildGatewayEnv({
+      env: {
+        ...base,
+        PERSONALCLAW_AUTH_MODE: "none",
+        PERSONALCLAW_BYPASS_LOCAL_NETWORKS: "1",
+        PERSONALCLAW_BIND_HOST: "0.0.0.0",
+      },
+      loginPath: "/usr/bin",
+      projectDir: "/app/resources",
+    });
+    for (const key of AUTH_SWITCHES) assert.ok(!(key in env), `${key} reached the gateway`);
+    assert.deepStrictEqual(
+      [...AUTH_SWITCHES].sort(),
+      ["PERSONALCLAW_AUTH_MODE", "PERSONALCLAW_BIND_HOST", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"],
+    );
+    assert.strictEqual(env.HOME, "/Users/someone", "the rest of the environment still reaches it");
   });
 
   it("never mutates the environment it was handed", () => {

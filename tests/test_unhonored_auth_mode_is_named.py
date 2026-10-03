@@ -42,7 +42,6 @@ _MODES_LOGGER = "personalclaw.auth.modes"
 
 def _clear_auth_env(monkeypatch) -> None:
     monkeypatch.delenv("PERSONALCLAW_AUTH_MODE", raising=False)
-    monkeypatch.delenv("PERSONALCLAW_DEV_NO_AUTH", raising=False)
     monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
 
 

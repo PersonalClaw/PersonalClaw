@@ -61,8 +61,7 @@ def _isolated(tmp_path, monkeypatch):
     (tmp_path / "config.json").write_text(json.dumps({"auth": {}}), encoding="utf-8")
     assert ss.sessions_path().is_relative_to(tmp_path), "the session store escaped tmp_path"
     assert pairing.codes_path().is_relative_to(tmp_path), "the code store escaped tmp_path"
-    for var in ("PERSONALCLAW_DEV_NO_AUTH", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
     token_auth.use_persistent_secret()
     token_auth.revoke_all_sessions()
     auth_h.reset_lockouts()

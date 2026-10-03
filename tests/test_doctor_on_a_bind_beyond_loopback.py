@@ -68,8 +68,8 @@ def _run_doctor(
     monkeypatch.setenv("PERSONALCLAW_BIND_HOST", "0.0.0.0")
     monkeypatch.setenv("PERSONALCLAW_PORT", str(_PORT))
     for name in (
+        "PERSONALCLAW_AUTH_MODE",
         "PERSONALCLAW_BYPASS_LOCAL_NETWORKS",
-        "PERSONALCLAW_DEV_NO_AUTH",
         "SSH_CONNECTION",
         "SSH_CLIENT",
     ):
@@ -157,7 +157,7 @@ def test_with_no_address_beyond_loopback_it_says_the_check_did_not_run(capsys, m
             " (PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1); a token everywhere else",
         ),
         (
-            {"PERSONALCLAW_DEV_NO_AUTH": "1"},
+            {"PERSONALCLAW_AUTH_MODE": "none"},
             "auth:        ❌ off — every request is served without a token",
         ),
     ],

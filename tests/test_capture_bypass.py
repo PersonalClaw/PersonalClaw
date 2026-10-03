@@ -45,15 +45,14 @@ _SURFACES = ("OPENAI", "MCP", "A2A", "CAPTURE", "BRIDGE")
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    """Private home, no surface token leaking, and both blanket bypasses OFF.
+    """Private home, no surface token leaking, and the local-network bypass OFF.
 
-    Clearing `PERSONALCLAW_DEV_NO_AUTH` / `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` is the
-    vacuity floor for the floor: either one makes `token_auth` pass EVERYTHING through
-    from a private address, so with one set in the environment the `/api/status` denial
-    below would silently stop being a denial and the whole file would prove nothing.
+    Clearing `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` is the vacuity floor for the floor: it
+    makes `token_auth` pass EVERYTHING through from a private address, so with it set in
+    the environment the `/api/status` denial below would silently stop being a denial and
+    the whole file would prove nothing.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    monkeypatch.delenv("PERSONALCLAW_DEV_NO_AUTH", raising=False)
     monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
     for surface in _SURFACES:
         monkeypatch.delenv(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", raising=False)

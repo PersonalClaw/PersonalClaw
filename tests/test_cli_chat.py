@@ -161,8 +161,7 @@ async def _gateway(tmp_path: Path, model: _ScriptedModel, monkeypatch) -> AsyncI
     from personalclaw.dashboard.origin import build_allowed_origins
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
-    for var in ("PERSONALCLAW_DEV_NO_AUTH", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
     token_auth.use_ephemeral_secret(secrets.token_bytes(32))
     token_auth.revoke_all_sessions()
 

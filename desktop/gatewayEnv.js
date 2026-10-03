@@ -24,6 +24,13 @@
  * user's shell profile must not make a desktop install describe itself as a container, so the
  * explicit keys are spread AFTER the inherited environment.
  *
+ * 🔒 THE GATEWAY ASKS EVERY REQUEST FOR A SIGN-IN, as every install does. Nothing here turns
+ * authentication off, and the switches that would weaken it are not passed on even when the
+ * shell inherited them (`AUTH_SWITCHES`): an `npm start` from a terminal that exports
+ * `PERSONALCLAW_AUTH_MODE=none` must not hand the app's gateway to every process on the
+ * computer. The shell signs its own windows in with the owner session the gateway's ready line
+ * carries (`localSignIn.js`), so it has no use for any of them.
+ *
  * A separate pure module rather than an object literal inside `startGateway`: an inline literal
  * is only assertable by reading `main.js` as text, and this env is a CONTRACT with the Python
  * side (`self_update.INSTALL_KINDS`). `desktop/test/gatewayEnv.test.js` executes it, and
@@ -32,6 +39,18 @@
 
 /** The install kind a shell-spawned gateway reports. Must be a `self_update.INSTALL_KINDS` member. */
 const INSTALL_KIND = "desktop";
+
+/**
+ * Inherited variables that would change how the gateway admits a request or where it listens.
+ * The app's gateway is local-token on loopback, always: `PERSONALCLAW_AUTH_MODE=none` would admit
+ * every caller as the owner, the local-network bypass would admit any caller on loopback without a
+ * token, and a bind host would put the gateway on the network.
+ */
+const AUTH_SWITCHES = Object.freeze([
+  "PERSONALCLAW_AUTH_MODE",
+  "PERSONALCLAW_BYPASS_LOCAL_NETWORKS",
+  "PERSONALCLAW_BIND_HOST",
+]);
 
 /**
  * Build the child environment for the gateway spawn.
@@ -43,18 +62,21 @@ const INSTALL_KIND = "desktop";
  * @returns {Record<string, string|undefined>} a NEW object; `opts.env` is never mutated.
  */
 function buildGatewayEnv({ env = {}, loginPath = "", projectDir = "" } = {}) {
-  // Drop any inherited PERSONALCLAW_PORT so the gateway honors `--port auto`.
-  const { PERSONALCLAW_PORT: _ignored, ...inherited } = env;
+  // Drop any inherited PERSONALCLAW_PORT so the gateway honors `--port auto`, and every inherited
+  // switch that would weaken how it asks for a sign-in.
+  const { PERSONALCLAW_PORT: _ignored, ...rest } = env;
+  const inherited = Object.fromEntries(
+    Object.entries(rest).filter(([key]) => !AUTH_SWITCHES.includes(key))
+  );
   return {
     ...inherited,
     // Restore the user's real login-shell PATH so the backend can resolve provider CLIs
     // (claude, node, npx) that live outside the minimal PATH a Finder-launched .app
     // inherits from launchd.
     PATH: loginPath,
-    PERSONALCLAW_DEV_NO_AUTH: "1",
     PERSONALCLAW_PROJECT_DIR: projectDir,
     PERSONALCLAW_INSTALL_KIND: INSTALL_KIND,
   };
 }
 
-module.exports = { INSTALL_KIND, buildGatewayEnv };
+module.exports = { AUTH_SWITCHES, INSTALL_KIND, buildGatewayEnv };

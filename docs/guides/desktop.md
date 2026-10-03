@@ -57,6 +57,38 @@ change, the switch says so and stays where the OS actually left it.
 In a browser tab there is no switch: registering a login item needs the desktop app, and
 a toggle that could not do anything would be worse than an honest absence.
 
+## How the app signs in to the gateway it starts
+
+The gateway the app starts asks every request for a sign-in, exactly as a gateway started any
+other way does: token sign-in is on, and it listens on this computer only. The app does not turn
+that off, and it does not pass on the variables that would (`PERSONALCLAW_AUTH_MODE`,
+`PERSONALCLAW_BYPASS_LOCAL_NETWORKS`, `PERSONALCLAW_BIND_HOST`), even when it is started from a
+terminal that sets them.
+
+Each time the gateway starts it hands the app a sign-in made for that start, on a pipe only the
+app reads, and the app signs its windows in with it:
+
+- **It is kept in memory only.** The windows carry it as the gateway's session cookie, which the
+  app holds for as long as it runs and never writes to disk; the app's own requests, such as the
+  menu bar's counts, carry it in a header. It is never put in an address, so no window's history
+  holds it, and the app never writes it to its log.
+- **Every window is signed in.** The main window, a new tab, a page a link opens in its own
+  window, and the menu bar's and notifications' links into the dashboard all share it.
+- **Quitting signs it out.** While the app runs, Settings → Devices lists it as "PersonalClaw
+  desktop app". Quitting ends that sign-in, and the next launch makes a new one.
+- **A restart signs the windows in again.** When the gateway restarts in place, it comes back on
+  a new port with a new sign-in. The app follows it there: each window reloads the page it was
+  on, signed in, and the sign-in from before the restart is ended.
+
+So everything else on this computer meets the same door a browser does. Another program cannot
+list or answer your approvals without signing in, an app you installed reaches only the routes
+its permissions declare, and the credential an agent CLI's tools hold opens only the operations
+it exists for.
+
+If the app is signed out from another device (Settings → Devices), or its sign-in runs out
+(`auth.session_ttl`, 30 days by default), the window says so. Quit PersonalClaw and open it again
+to sign it back in.
+
 ## Connecting to a gateway you did not start
 
 By default the desktop app starts its own gateway on this computer and loads that. That has not

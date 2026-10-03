@@ -5,8 +5,8 @@
  * from a unit test that never launches Electron — and each one is a claim the report makes:
  *
  *   - the capability bridge is attached only under a `shouldAttachBridge` decision;
- *   - `.local_secret` and the shell token are only ever sent by `postGateway`, which asserts
- *     loopback first;
+ *   - `.local_secret`, the shell token and the shell's sign-in are only ever sent by
+ *     `postGateway` and `getGateway`, which assert loopback first;
  *   - the paired-gateway URL is never handed to a credential-bearing call;
  *   - the spawn-local readiness path is untouched;
  *   - there is no second retry timer racing the SPA's own reconnect.
@@ -25,6 +25,7 @@ const MAIN = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 const PRELOAD_MAIN = fs.readFileSync(path.join(__dirname, "..", "preload.js"), "utf8");
 /** The child env moved into its own pure module so a test could EXECUTE it (issue 2673). */
 const GATEWAY_ENV = fs.readFileSync(path.join(__dirname, "..", "gatewayEnv.js"), "utf8");
+const { AUTH_SWITCHES } = require("../gatewayEnv");
 
 describe("the scans below are not vacuous", () => {
   it("is reading a main.js that still contains the things it looks for", () => {
@@ -102,58 +103,90 @@ describe("machine-local credentials never leave loopback", () => {
     assert.ok(assertAt > 0, "postGateway does not assert its target");
     assert.ok(writeAt > assertAt, "postGateway writes a body before it checks where it is going");
   });
+
+  it("asserts loopback inside `getGateway`, before its signed-in request is made", () => {
+    const start = MAIN.indexOf("function getGateway(");
+    const body = MAIN.slice(start, MAIN.indexOf("\n}\n", start));
+    const assertAt = body.indexOf("assertLoopbackTarget");
+    const requestAt = body.indexOf("http.request(");
+    assert.ok(assertAt > 0, "getGateway does not assert its target");
+    assert.ok(requestAt > assertAt, "getGateway sends the shell's sign-in before it checks where");
+  });
+
+  it("sends the shell's sign-in only through `postGateway` and `getGateway`", () => {
+    // The session the ready line hands out is the owner's. Read from one place (`localSignIn`),
+    // and put on a request by the two helpers that target the spawned gateway and nothing else.
+    const sites = [...MAIN.matchAll(/localSignIn\.authorization\(\)/g)];
+    assert.strictEqual(sites.length, 2, `expected two sites, found ${sites.length}`);
+    for (const m of sites) {
+      const before = MAIN.slice(0, m.index);
+      const opener = Math.max(before.lastIndexOf("function postGateway("), before.lastIndexOf("function getGateway("));
+      const closer = MAIN.indexOf("\n}\n", opener);
+      assert.ok(opener > 0 && m.index < closer, "the sign-in is sent outside the two loopback helpers");
+    }
+    // A sign-out is its own session ending itself, still through postGateway.
+    const signOut = MAIN.slice(MAIN.indexOf("async function signOutLocalSession("));
+    const body = signOut.slice(0, signOut.indexOf("\n}\n"));
+    assert.match(body, /signOutRequest\(/);
+    assert.match(body, /postGateway\(/, "a sign-out is sent by something other than postGateway");
+  });
+
+  it("puts no token in any URL the shell loads or requests", () => {
+    // The gateway's `/?token=` link would leave the session in the window's history, and the cookie
+    // the gateway sets for it would outlive the app in its cookie file.
+    assert.strictEqual(/[?&](app_)?token=/.test(MAIN), false, "main.js composes a URL with a token in it");
+    assert.match(MAIN, /wc\.loadURL\(localGatewayUrl\)/, "the window no longer loads the bare origin");
+  });
 });
 
 describe("the spawn-local path is unchanged", () => {
   it("still waits on the spawned gateway's own readiness probe", () => {
-    // `waitForBackend` is the ORIGINAL readiness wait and an acceptance clause says it is untouched:
-    // `/api/status` with `checkBackend`'s `< 500` tolerance. Connect-mode added `waitForEndpoint`
-    // beside it rather than generalising it, precisely so this stays true.
+    // `waitForBackend` is the ORIGINAL readiness wait, with `checkBackend`'s `< 500` tolerance.
+    // Connect-mode added `waitForEndpoint` beside it rather than generalising it, precisely so this
+    // stays true. It asks `/api/healthz`, which needs no sign-in: the gateway asks every other
+    // request for one, so a credential-free probe of `/api/status` was a refusal in its audit log
+    // at every launch and every new tab.
     const start = MAIN.indexOf("function waitForBackend(");
     const body = MAIN.slice(start, MAIN.indexOf("\n}\n", start));
-    assert.match(body, /\$\{localGatewayUrl\}\/api\/status/);
+    assert.match(body, /\$\{localGatewayUrl\}\/api\/healthz/);
     assert.match(body, /checkBackend\(healthUrl\)/);
     assert.strictEqual(/probeEndpoint/.test(body), false, "the spawn-local wait now goes through the connect-mode probe");
     assert.match(MAIN, /function waitForEndpoint\(/, "the paired-gateway wait is missing");
   });
 
-  it("still spawns with the same argv and the same loopback auth-off env", () => {
+  it("still spawns with the same argv", () => {
     assert.match(MAIN, /\["gateway", "--port", "auto", "--json-ready", "--no-open"\]/);
-    // The env literal moved to `gatewayEnv.js` (issue 2673) so a node test could execute it
-    // instead of grepping it. The auth-off key is still exactly one setting — it just lives in
-    // the module that owns the child env, which nothing but the spawn calls.
-    assert.match(GATEWAY_ENV, /PERSONALCLAW_DEV_NO_AUTH: "1"/);
   });
 
-  it("keeps `PERSONALCLAW_DEV_NO_AUTH` out of every non-local path", () => {
-    // Auth-off is only ever sound because the gateway it applies to is a private loopback child.
-    // Exactly one SETTING of it, in the env of the child this shell owns; connect-mode must never
-    // carry it to a gateway it did not spawn. (Prose mentions are counted separately so a comment
-    // cannot mask a second real assignment.)
-    const assignments = [...GATEWAY_ENV.matchAll(/PERSONALCLAW_DEV_NO_AUTH\s*:/g)];
-    assert.strictEqual(assignments.length, 1, `expected one assignment, found ${assignments.length}`);
-    // main.js must not have grown a second one back, in a connect-mode path or anywhere else.
-    assert.strictEqual(
-      [...MAIN.matchAll(/PERSONALCLAW_DEV_NO_AUTH\s*[:=]/g)].length, 0,
-      "main.js sets auth-off directly again — the child env belongs to gatewayEnv.js",
-    );
-    // And the builder that carries it is reached from ONE place: the spawn of the child this shell
-    // owns. A second call site is how auth-off would reach a gateway the shell did not spawn.
+  it("builds the child env in one place, the spawn, and names no auth switch in main.js", () => {
+    // The env literal moved to `gatewayEnv.js` (issue 2673) so a node test could execute it
+    // instead of grepping it, and that test holds it to passing on no authentication switch. A
+    // switch named here instead would be invisible to it.
+    for (const name of AUTH_SWITCHES) {
+      assert.strictEqual(MAIN.includes(name), false, `main.js names ${name} — the child env belongs to gatewayEnv.js`);
+    }
     const calls = [...MAIN.matchAll(/buildGatewayEnv\(/g)];
     assert.strictEqual(calls.length, 1, `expected one buildGatewayEnv call, found ${calls.length}`);
     const spawnAt = MAIN.indexOf("gatewayProcess = spawn(");
     assert.ok(spawnAt > 0, "the spawn call is gone — this rail is now blind");
-    assert.ok(calls[0].index > spawnAt, "auth-off is built somewhere other than the spawn env");
-    assert.strictEqual(
-      /activeUrl/.test(MAIN.slice(spawnAt, calls[0].index)), false,
-      "auth-off is near a user-supplied endpoint",
-    );
-    // Stronger than the window: the module that OWNS the child env cannot even name a
-    // user-supplied endpoint, so no future edit there can hand auth-off to one.
+    assert.ok(calls[0].index > spawnAt, "the child env is built somewhere other than the spawn");
+    // The module that OWNS the child env cannot even name a user-supplied endpoint, so no edit
+    // there can describe a gateway the shell did not spawn.
     assert.strictEqual(
       /activeUrl|connect/i.test(GATEWAY_ENV), false,
       "gatewayEnv.js mentions connect-mode — it must only ever describe the spawned child",
     );
+  });
+
+  it("reads every ready line, so a restart in place is followed rather than lost", () => {
+    // The gateway's Restart re-executes the same process on a NEW port with a new sign-in, and
+    // prints a second ready line. Reading only the first left every window on a dead address.
+    const start = MAIN.indexOf('gatewayProcess.stdout.on("data"');
+    assert.ok(start > 0, "the stdout reader is gone — this rail is now blind");
+    const body = MAIN.slice(start, MAIN.indexOf("\n    });\n", start));
+    assert.match(body, /parseReadyLine\(line\)/);
+    assert.match(body, /if \(settled\) \{\s*followRestartedGateway\(ready\)/, "a later ready line is dropped");
+    assert.match(body, /adoptLocalGateway\(ready\)/, "the first ready line signs nothing in");
   });
 });
 
@@ -202,7 +235,7 @@ describe("every `desktop/main.js:N` citation in the repo still resolves", () => 
   /** The lines those files are allowed to cite, identified by content rather than by number. */
   const ANCHORS = [
     "wc.loadURL(localGatewayUrl)",
-    "localGatewayUrl = `http://localhost:${payload.port}`",
+    "localGatewayUrl = ready.url;",
   ];
 
   const lines = MAIN.split("\n");

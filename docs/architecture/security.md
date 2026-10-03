@@ -49,6 +49,34 @@ sets `request["app"]` so `app_permission_middleware` and the WS event filter
 scope the request. The app token only *narrows* the dev owner's reach — the
 permission model holds in every auth mode.
 
+### The desktop app's gateway
+
+The Electron shell starts its own gateway in the default `local_token` mode on loopback, as
+every install runs. Its environment builder (`desktop/gatewayEnv.js`) sets no authentication
+switch, and drops an inherited `PERSONALCLAW_AUTH_MODE`, `PERSONALCLAW_BYPASS_LOCAL_NETWORKS`
+or `PERSONALCLAW_BIND_HOST`, so a shell started from a terminal that exports one still starts a
+gateway that asks for a sign-in. App tokens, the internal credential's operation list and the
+rule that only you answer an approval therefore hold on a desktop install exactly as elsewhere.
+
+The shell signs itself in with the owner session the gateway's `--json-ready` line mints for each
+start (`desktop/localSignIn.js`), which it reads from the child's stdout pipe and keeps in
+main-process memory:
+
+- its windows carry it as the `pc_token_<port>` session cookie: `HttpOnly`, `SameSite=Lax`,
+  host-only, and with no expiry, so Chromium keeps it in memory and never writes it to the app's
+  cookie file;
+- its own requests (the tray's counts, the capability registration) carry it as
+  `Authorization: Bearer`;
+- it is never put in a URL, a log line, a file or a message to a renderer. The `?token=` link
+  would have left it in the window's history and a 30-day cookie on disk.
+
+A restart in place prints a new ready line: the shell moves the cookie to the new port, reloads
+each window that showed the old address, re-registers its capabilities and signs the previous
+session out. Quitting signs the session out (`POST /api/auth/logout` with that session's own
+cookie) before the gateway stops. A gateway started on a port the system picks names its session
+cookie for the port it serves on (`token_auth.session_cookie_name`), which is the name the shell
+sets.
+
 ## Token scoping
 
 `dashboard/token_auth.py`:

@@ -53,6 +53,7 @@
       "nativeNotifications.js",
       "gatewayShutdown.js",
       "gatewayEnv.js",
+      "localSignIn.js",
       "gatewayUrl.js",
       "endpointRegistry.js",
       "shellStore.js",

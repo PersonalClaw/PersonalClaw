@@ -39,8 +39,7 @@ def _isolated(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(session_store, "config_dir", lambda: tmp_path, raising=False)
-    for var in ("PERSONALCLAW_DEV_NO_AUTH", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
     token_auth.use_persistent_secret()
     token_auth.revoke_all_sessions()
     yield tmp_path

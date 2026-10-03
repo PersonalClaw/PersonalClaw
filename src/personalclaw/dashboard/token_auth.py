@@ -976,6 +976,11 @@ def _how_to_sign_back_in(via: str, kind: str = "") -> str:
     """The door back in for a session that came through *via* on a *kind* of device, given what
     this gateway offers. A door nobody recorded (*via* empty) names both the link and pairing."""
     password = _login_offered()
+    if via == ISSUER_READY and kind == "desktop":
+        # The desktop app's own window: the app signs it in each time it starts its gateway, and
+        # the window has no address bar to open a printed link in.
+        again = "To sign it back in, quit PersonalClaw and open it again"
+        return f"{again}, or sign in with your password." if password else f"{again}."
     if via in (ISSUER_PAIR, ISSUER_ENROLL):
         if kind == "desktop":
             # The desktop app redeems a pairing link in its own Gateways window, not in a
@@ -1314,6 +1319,39 @@ class _Credentials:
         return self.error_code or self.reason
 
 
+def served_port(request: Any) -> int:
+    """The port *request* reached this gateway on, read off its connection; 0 when it cannot say.
+
+    The listening socket's port, never the ``Host`` header: the header is the client's to write,
+    and behind a forwarded port (an SSH tunnel, a container's published port) it names a port the
+    gateway is not listening on. The session cookie's name and the dashboard's content security
+    policy both read it, and a response read after the handler may have lost its connection, so
+    read it while the request is live.
+    """
+    transport = getattr(request, "transport", None)
+    try:
+        sockname = transport.get_extra_info("sockname") if transport is not None else None
+    except Exception:  # noqa: BLE001 — a connection that cannot say names no port
+        return 0
+    if isinstance(sockname, tuple) and len(sockname) >= 2 and isinstance(sockname[1], int):
+        return sockname[1]
+    return 0
+
+
+def session_cookie_name(request: Any, port: int) -> str:
+    """The cookie that carries a browser's session to this gateway: ``pc_token_<port>``.
+
+    *port* is the port the gateway was started on. One started on a port the system picks
+    (``--port auto``) is started on 0 and learns its port only once it listens, so its cookie is
+    named for the port the request arrived on, which is the port its ready line names. Every such
+    gateway used to call it ``pc_token_0``: two of them on one computer shared one cookie, a
+    password sign-in or a pairing set a cookie under the default port's name that the gateway's own
+    check never read, and the desktop app could not sign its window in by the port its gateway
+    reported.
+    """
+    return f"pc_token_{port or served_port(request)}"
+
+
 def _select_request_credentials(request: Any, port: int) -> _Credentials:
     """The one answer to "which credential authorizes this request".
 
@@ -1348,7 +1386,7 @@ def _select_request_credentials(request: Any, port: int) -> _Credentials:
     existed (a DISCOVERY recorded with the change: that fall-through keeps the owner's reach).
     """
     query_token = request.query.get("token") or ""
-    cookie_token = request.cookies.get(f"pc_token_{port}", "")
+    cookie_token = request.cookies.get(session_cookie_name(request, port), "")
     presented, bearer = _bearer_credential(request)
     # Judged once, against the SESSION lifetime: a header is a session carrier like the cookie
     # (``exp`` is only the entry link's click window, which is the query token's).
@@ -1932,7 +1970,7 @@ def token_auth_middleware(
         more identical "Chrome on Mac" row in Settings → Devices for every restart. Only an
         owner session in THIS browser's cookie is retired; a token held anywhere else is not.
         """
-        previous = request.cookies.get(f"pc_token_{port}", "")
+        previous = request.cookies.get(session_cookie_name(request, port), "")
         if not previous or hmac.compare_digest(previous.encode(), token.encode()):
             return
         valid, _user, _reason, app = validate_token_with_app(previous, use_session_exp=True)
@@ -1943,10 +1981,6 @@ def token_auth_middleware(
 
     @web.middleware
     async def middleware(request: web.Request, handler: object) -> web.StreamResponse:
-        if os.environ.get("PERSONALCLAW_DEV_NO_AUTH") == "1":
-            request["user"] = request.get("user") or "dev-local"
-            return await handler(request)  # type: ignore[operator]
-
         path = request.path
         routed = request.rel_url.path_safe
         _matches_strict = any(route.admits(request.method, routed) for route in strict_routes)
@@ -2184,7 +2218,7 @@ def token_auth_middleware(
 
         # Set cookie after handler (needs response object)
         if from_query:
-            cookie_name = f"pc_token_{port}"
+            cookie_name = session_cookie_name(request, port)
             remaining = int(session_exp - time.time()) if session_exp else MAX_SESSION_TTL_SECS
             resp.set_cookie(
                 cookie_name,
@@ -2197,7 +2231,7 @@ def token_auth_middleware(
                 max_age=min(max(0, remaining), MAX_SESSION_TTL_SECS) + SIGNED_OUT_NOTICE_GRACE_SECS,
                 secure=secure_cookies(),
             )
-            # Clear the non-port-specific cookie so only pc_token_{port} is used.
+            # Clear the non-port-specific cookie so only the port's own is used.
             resp.set_cookie("pc_token", "", max_age=0, path="/")
 
         _log_auth(request, user_id, "ok", "", identity=request["session_nonce"])

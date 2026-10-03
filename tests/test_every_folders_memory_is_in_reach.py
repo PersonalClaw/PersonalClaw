@@ -328,7 +328,6 @@ async def _gateway(
     for name in (
         "PERSONALCLAW_AUTH_MODE",
         "PERSONALCLAW_BYPASS_LOCAL_NETWORKS",
-        "PERSONALCLAW_DEV_NO_AUTH",
         "PERSONALCLAW_SESSION_KEY",
     ):
         monkeypatch.delenv(name, raising=False)

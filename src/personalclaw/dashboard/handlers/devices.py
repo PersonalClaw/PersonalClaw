@@ -341,7 +341,7 @@ async def pair_page(request: web.Request) -> web.Response:
     """
     from personalclaw.dashboard.handlers.auth import has_valid_session
 
-    if has_valid_session(request, int(request.app.get("port") or 0)):
+    if has_valid_session(request):
         raise web.HTTPFound(landing_for(_described(request)[1]))
     return web.Response(
         text=_PAIR_HTML,

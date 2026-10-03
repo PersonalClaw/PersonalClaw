@@ -401,8 +401,7 @@ async def test_a_run_authenticates_every_request_with_the_header_and_no_url_toke
 
     from personalclaw.dashboard import token_auth
 
-    for var in ("PERSONALCLAW_DEV_NO_AUTH", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
     token_auth.use_ephemeral_secret(b"cli-run-header-contract-key-0001")
     token_auth.revoke_all_sessions()
     session = "inbound:cli:header"

@@ -885,9 +885,8 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         # A local BIND is not a token-free loopback: the default `local_token`
         # gateway still refuses a tokenless loopback request (403 `session_required`,
         # saying how to sign in). Only claim "no token required" when the token gate is
-        # actually bypassed (AuthMode.NONE / PERSONALCLAW_DEV_NO_AUTH=1, or
-        # PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1) — mirror the middleware, don't
-        # infer from the bind alone (#2860).
+        # actually bypassed (AuthMode.NONE, or PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1) —
+        # mirror the middleware, don't infer from the bind alone (#2860).
         if loopback_requires_token():
             print(
                 "  auth:        🔒 token required (run: personalclaw token, for a signed-in link)"

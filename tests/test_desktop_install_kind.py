@@ -96,11 +96,10 @@ def test_main_js_builds_the_spawn_env_through_the_shared_builder() -> None:
     src = _source("main.js")
     assert 'require("./gatewayEnv")' in src, "main.js must require ./gatewayEnv"
     assert "buildGatewayEnv({" in src, "main.js must build the spawn env through the builder"
-    # PERSONALCLAW_DEV_NO_AUTH is the tell: it belongs to the env the builder owns, so an
-    # ASSIGNMENT of it in main.js means a second env literal has grown back. Prose about it
-    # (the `startGateway` docstring explains the loopback bypass) is not an assignment.
+    # The keys the builder sets are the tell: an ASSIGNMENT of one in main.js means a second env
+    # literal has grown back.
     for lineno, line in enumerate(src.splitlines(), start=1):
-        if re.search(r"PERSONALCLAW_DEV_NO_AUTH\s*[:=]", line):
+        if re.search(r"PERSONALCLAW_(INSTALL_KIND|PROJECT_DIR)\s*[:=]", line):
             raise AssertionError(
                 f"desktop/main.js:{lineno} sets a spawn-env key directly again — those belong "
                 "in gatewayEnv.js, where a test can see them"

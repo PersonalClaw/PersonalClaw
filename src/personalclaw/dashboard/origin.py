@@ -308,16 +308,13 @@ def tailscale_cli_present() -> bool:
 def auth_is_off(auth_cfg: AuthConfig | None = None) -> bool:
     """Return ``True`` when the gateway serves requests with NO authentication.
 
-    Two ways auth is genuinely off: ``AuthMode.NONE`` (pass-through), or the
-    blanket ``PERSONALCLAW_DEV_NO_AUTH=1`` middleware skip. Both are dev-only and
-    both are normally safe because ``effective_bind`` forces NONE to loopback —
-    but the ``PERSONALCLAW_BIND_HOST`` escape hatch can override that bind, which
-    is exactly the exposed-without-auth misconfiguration the reachability probe
-    warns about. ``local_token``/``api_key``/``oauth2`` are NOT "off": a
-    non-loopback bind under those still requires a token/credential.
+    The one way auth is genuinely off is ``AuthMode.NONE`` (pass-through), a
+    development convenience that is normally safe because ``effective_bind``
+    forces it to loopback — but the ``PERSONALCLAW_BIND_HOST`` escape hatch can
+    override that bind, which is exactly the exposed-without-auth
+    misconfiguration the reachability probe warns about. ``local_token`` is NOT
+    "off": a non-loopback bind under it still requires a token.
     """
-    if os.environ.get("PERSONALCLAW_DEV_NO_AUTH") == "1":
-        return True
     cfg = auth_cfg if auth_cfg is not None else AuthConfig.from_env()
     return cfg.mode == AuthMode.NONE
 
@@ -325,7 +322,7 @@ def auth_is_off(auth_cfg: AuthConfig | None = None) -> bool:
 def local_network_bypass_enabled() -> bool:
     """Return ``True`` when the opt-in local-network token bypass is armed.
 
-    The MIRROR of the ``token_auth`` middleware's second short-circuit: with
+    The MIRROR of the ``token_auth`` middleware's one short-circuit: with
     ``PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`` any request whose *resolved* client
     address is private (``is_private_network(_resolved_client_ip(request))``,
     ``dashboard/token_auth.py``) skips token validation entirely. The middleware
@@ -370,10 +367,9 @@ def loopback_requires_token(auth_cfg: AuthConfig | None = None) -> bool:
     """Return ``True`` when a request from loopback still needs a token.
 
     A loopback (indeed any private-network) request skips the token gate only in
-    the three cases the ``token_auth`` middleware short-circuits on: auth is
-    genuinely off (``AuthMode.NONE`` / ``PERSONALCLAW_DEV_NO_AUTH=1`` — both via
-    :func:`auth_is_off`) or the opt-in local-network bypass
-    (``PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`` — via
+    the two cases the gateway admits it without one: auth is genuinely off
+    (``AuthMode.NONE``, via :func:`auth_is_off`) or the opt-in local-network
+    bypass (``PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`` — via
     :func:`local_network_bypass_enabled`). Under the default ``local_token``
     mode a token IS required even on loopback — the middleware refuses a tokenless
     loopback request with ``403 session_required`` and the sentence saying how to sign in. This is

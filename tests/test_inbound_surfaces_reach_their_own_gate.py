@@ -39,10 +39,9 @@ _SURFACES = ("OPENAI", "MCP", "A2A", "CAPTURE", "BRIDGE")
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
-    """A private home, no surface token leaking in or out, and both blanket bypasses OFF — either
-    one passes everything through, which would make every refusal below vacuous."""
+    """A private home, no surface token leaking in or out, and the local-network bypass OFF — it
+    passes everything through, which would make every refusal below vacuous."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    monkeypatch.delenv("PERSONALCLAW_DEV_NO_AUTH", raising=False)
     monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
     for surface in _SURFACES:
         monkeypatch.delenv(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", raising=False)

@@ -42,10 +42,9 @@ def _isolated(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(session_store, "config_dir", lambda: tmp_path, raising=False)
-    # 🪤 Either variable admits every request below without looking at a credential, and the
-    # suite would then read as a pass for a middleware it never exercised.
-    for var in ("PERSONALCLAW_DEV_NO_AUTH", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"):
-        monkeypatch.delenv(var, raising=False)
+    # 🪤 The local-network bypass admits every request below without looking at a credential,
+    # and the suite would then read as a pass for a middleware it never exercised.
+    monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
     token_auth.use_ephemeral_secret(b"owner-bearer-contract-key-0001")
     token_auth.revoke_all_sessions()
     yield tmp_path

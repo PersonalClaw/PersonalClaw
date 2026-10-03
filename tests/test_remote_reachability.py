@@ -66,21 +66,13 @@ def test_tailscale_cli_present_is_patchable(monkeypatch):
 
 
 def test_auth_is_off_true_for_none_mode(monkeypatch):
-    monkeypatch.delenv("PERSONALCLAW_DEV_NO_AUTH", raising=False)
     monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", "none")
     assert auth_is_off() is True
 
 
 def test_auth_is_off_false_for_default_local_token(monkeypatch):
-    monkeypatch.delenv("PERSONALCLAW_DEV_NO_AUTH", raising=False)
     monkeypatch.delenv("PERSONALCLAW_AUTH_MODE", raising=False)
     assert auth_is_off() is False
-
-
-def test_auth_is_off_true_for_dev_no_auth_flag(monkeypatch):
-    monkeypatch.setenv("PERSONALCLAW_DEV_NO_AUTH", "1")
-    monkeypatch.delenv("PERSONALCLAW_AUTH_MODE", raising=False)
-    assert auth_is_off() is True
 
 
 # ── the doctor probe: three outcomes ─────────────────────────────────────────

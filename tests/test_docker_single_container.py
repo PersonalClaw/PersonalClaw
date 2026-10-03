@@ -109,7 +109,6 @@ def test_readme_command_does_not_disable_auth() -> None:
     command = smoke.readme_docker_run(_README)
     assert "PERSONALCLAW_AUTH_MODE" not in command
     assert "PERSONALCLAW_BYPASS_LOCAL_NETWORKS" not in command
-    assert "PERSONALCLAW_DEV_NO_AUTH" not in command
 
 
 # ---------------------------------------------------------------------------

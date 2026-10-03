@@ -16,7 +16,7 @@ from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
 from personalclaw.dashboard.handlers.research_reports import setup_research_report_routes
 from personalclaw.dashboard.origin import build_allowed_origins, check_origin, resolve_bind_host
 from personalclaw.dashboard.state import _DEFAULT_PORT, DashboardState
-from personalclaw.dashboard.token_auth import token_auth_middleware
+from personalclaw.dashboard.token_auth import served_port, token_auth_middleware
 from personalclaw.hooks import ScriptHookStore, set_global_hook_store
 from personalclaw.workflows import agent_routes
 
@@ -290,15 +290,6 @@ def dashboard_csp(port: int | None = None) -> str:
     )
 
 
-def _served_port(request: web.Request) -> int | None:
-    """The port *request* reached this server on, read off the listening socket — never off
-    the ``Host`` header, which the client writes."""
-    sock = request.transport.get_extra_info("sockname") if request.transport else None
-    if isinstance(sock, tuple) and len(sock) >= 2 and isinstance(sock[1], int) and sock[1] > 0:
-        return sock[1]
-    return None
-
-
 @web.middleware  # type: ignore[misc]
 async def _security_headers_middleware(
     request: web.Request,
@@ -312,7 +303,7 @@ async def _security_headers_middleware(
     hardening change here can never downgrade a response that was already tighter.
     """
     # Read before the handler runs: a finished response may already have lost its transport.
-    port = _served_port(request)
+    port = served_port(request)
     resp = await handler(request)  # type: ignore[operator]
     if hasattr(resp, "headers"):
         if request.path.startswith(_IMMUTABLE_ASSET_PREFIX):

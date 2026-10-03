@@ -245,9 +245,8 @@ def _set_session_cookie(request: web.Request, resp: web.Response, token: str, tt
     the same Max-Age rule: the session plus the grace that lets its end be explained
     (``SIGNED_OUT_NOTICE_GRACE_SECS``) — the gateway refuses it when the session ends.
     """
-    port = _cookie_port(request)
     resp.set_cookie(
-        f"pc_token_{port}",
+        _cookie_name(request),
         token,
         httponly=True,
         samesite="Lax",
@@ -259,14 +258,21 @@ def _set_session_cookie(request: web.Request, resp: web.Response, token: str, tt
     resp.set_cookie("pc_token", "", max_age=0, path="/")
 
 
-def _cookie_port(request: web.Request) -> int:
-    from personalclaw.dashboard.token_auth import _DEFAULT_PORT
+def _cookie_name(request: web.Request) -> str:
+    """The session cookie the middleware reads on this gateway (``session_cookie_name``).
+
+    The gateway's port as it was started, so one started on a port the system picks (0) names
+    the cookie for the port it serves on, as the middleware does. An app that records no port at
+    all is the default port's.
+    """
+    from personalclaw.dashboard.token_auth import _DEFAULT_PORT, session_cookie_name
 
     port = request.app.get("port")
     try:
-        return int(port) if port else _DEFAULT_PORT
+        started_on = int(port) if port is not None else _DEFAULT_PORT
     except (TypeError, ValueError):
-        return _DEFAULT_PORT
+        started_on = _DEFAULT_PORT
+    return session_cookie_name(request, started_on)
 
 
 async def api_auth_logout(request: web.Request) -> web.Response:
@@ -282,8 +288,8 @@ async def api_auth_logout(request: web.Request) -> web.Response:
     if not check_origin(request):
         return json_error(ERR_ORIGIN, status=403)
 
-    port = _cookie_port(request)
-    token = request.cookies.get(f"pc_token_{port}", "") or request.query.get("token", "")
+    cookie = _cookie_name(request)
+    token = request.cookies.get(cookie, "") or request.query.get("token", "")
     caller = request.get("user") or (request.remote or "unknown")
     revoked = False
     if token:
@@ -304,7 +310,7 @@ async def api_auth_logout(request: web.Request) -> web.Response:
         )
 
     resp = web.json_response({"ok": True, "revoked": revoked})
-    resp.set_cookie(f"pc_token_{port}", "", max_age=0, path="/")
+    resp.set_cookie(cookie, "", max_age=0, path="/")
     resp.set_cookie("pc_token", "", max_age=0, path="/")
     return resp
 
@@ -477,7 +483,7 @@ async def login_page(request: web.Request) -> web.Response:
         raise web.HTTPFound("/")
     # A browser sent here because its session ended still carries that session's cookie; say
     # why it ended above the form, in the words every other surface uses for it.
-    notice = signed_out_notice(request.cookies.get(f"pc_token_{_cookie_port(request)}", ""))
+    notice = signed_out_notice(request.cookies.get(_cookie_name(request), ""))
     notice_block = (
         f"<p class='notice' role='status'>{notice_html(notice.message)}</p>" if notice else ""
     )
@@ -490,9 +496,9 @@ async def login_page(request: web.Request) -> web.Response:
     )
 
 
-def has_valid_session(request: web.Request, port: int) -> bool:
+def has_valid_session(request: web.Request) -> bool:
     """Whether *request* already carries a valid session (used by the redirect decision)."""
-    token = request.query.get("token") or request.cookies.get(f"pc_token_{port}", "")
+    token = request.query.get("token") or request.cookies.get(_cookie_name(request), "")
     if not token:
         return False
     valid, _uid, _reason = validate_token(token, use_session_exp=True)

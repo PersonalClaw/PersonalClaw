@@ -7,11 +7,11 @@ loopback request is refused by the `token_auth` middleware (`403 session_require
 saying how to sign in). The diagnostic told the user they could reach the API without a token
 when they could not.
 
-A token is genuinely NOT required on loopback only in the three cases the middleware
-short-circuits on: `AuthMode.NONE` (`PERSONALCLAW_AUTH_MODE=none`), the blanket
-`PERSONALCLAW_DEV_NO_AUTH=1` skip, or the opt-in local-network bypass
-(`PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`). `loopback_requires_token` is the predicate
-that mirrors that logic; doctor consults it instead of inferring from the bind alone.
+A token is genuinely NOT required on loopback only in the two cases the gateway admits a
+request without one: `AuthMode.NONE` (`PERSONALCLAW_AUTH_MODE=none`), or the opt-in
+local-network bypass (`PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`). `loopback_requires_token` is
+the predicate that mirrors that logic; doctor consults it instead of inferring from the bind
+alone.
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ _NO_TOKEN = "loopback trusted (no token required)"
 
 def _clear_auth_env(monkeypatch) -> None:
     monkeypatch.delenv("PERSONALCLAW_AUTH_MODE", raising=False)
-    monkeypatch.delenv("PERSONALCLAW_DEV_NO_AUTH", raising=False)
     monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
 
 
@@ -46,12 +45,6 @@ def test_default_local_token_gateway_requires_a_token_on_loopback(monkeypatch):
 def test_auth_mode_none_needs_no_token(monkeypatch):
     _clear_auth_env(monkeypatch)
     monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", "none")
-    assert loopback_requires_token() is False
-
-
-def test_dev_no_auth_flag_needs_no_token(monkeypatch):
-    _clear_auth_env(monkeypatch)
-    monkeypatch.setenv("PERSONALCLAW_DEV_NO_AUTH", "1")
     assert loopback_requires_token() is False
 
 
@@ -107,7 +100,6 @@ def test_doctor_default_loopback_says_token_required(monkeypatch, capsys):
     "env",
     [
         {"PERSONALCLAW_AUTH_MODE": "none"},
-        {"PERSONALCLAW_DEV_NO_AUTH": "1"},
         {"PERSONALCLAW_BYPASS_LOCAL_NETWORKS": "1"},
     ],
 )

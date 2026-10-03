@@ -66,10 +66,9 @@ def _isolated(tmp_path, monkeypatch):
     # that bound the symbol at import time, and a leaked write would land in the real home.
     assert ss.sessions_path().is_relative_to(tmp_path), "the session store escaped tmp_path"
     assert pairing.codes_path().is_relative_to(tmp_path), "the code store escaped tmp_path"
-    # 🪤 Either of these turns every authorization leg below into a no-op that reads as a pass.
-    for var in ("PERSONALCLAW_DEV_NO_AUTH", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"):
-        monkeypatch.delenv(var, raising=False)
-    assert os.environ.get("PERSONALCLAW_DEV_NO_AUTH") != "1"
+    # 🪤 The local-network bypass turns every authorization leg below into a no-op that reads
+    # as a pass.
+    monkeypatch.delenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", raising=False)
     assert os.environ.get("PERSONALCLAW_BYPASS_LOCAL_NETWORKS") != "1"
     token_auth.use_persistent_secret()
     token_auth.revoke_all_sessions()

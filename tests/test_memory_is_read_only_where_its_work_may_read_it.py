@@ -45,7 +45,6 @@ from personalclaw.tool_providers.registry import create_memory_provider, create_
 _AUTH_SHORTCUTS = (
     "PERSONALCLAW_AUTH_MODE",
     "PERSONALCLAW_BYPASS_LOCAL_NETWORKS",
-    "PERSONALCLAW_DEV_NO_AUTH",
     "PERSONALCLAW_SESSION_KEY",
 )
 

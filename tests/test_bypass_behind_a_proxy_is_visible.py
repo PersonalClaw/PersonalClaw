@@ -62,7 +62,6 @@ def _isolated(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.delenv(BYPASS, raising=False)
-    monkeypatch.delenv("PERSONALCLAW_DEV_NO_AUTH", raising=False)
     monkeypatch.delenv("PERSONALCLAW_AUTH_MODE", raising=False)
     # A plain local install unless a test says otherwise, so the probe's three pre-existing
     # outcomes stay out of the way of the one being asserted.

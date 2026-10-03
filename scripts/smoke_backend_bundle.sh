@@ -40,7 +40,7 @@ mkdir -p "$SMOKE_HOME"
 BOOT_OUT="$(mktemp)"
 echo "smoke: home=$SMOKE_HOME"
 
-# Spawn the gateway the way the SHELL does, minus the shell. `desktop/main.js:177` passes
+# Spawn the gateway the way the SHELL does, minus the shell. `startGateway` in `desktop/main.js` passes
 # `projectDir: path.resolve(__dirname, "..")` — i.e. `…/Contents/Resources` — and without
 # it the `git fetch` defect is UNREACHABLE: `_do_update_check` returns at its
 # "no project dir" guard, so that arm of this smoke would pass vacuously. With

@@ -104,12 +104,13 @@ async def _page(request: web.Request) -> web.Response:
     return web.Response(text="<html>the dashboard</html>", content_type="text/html")
 
 
-def _gateway_app() -> web.Application:
-    """The real token middleware in front of the real sign-in, token and device routes."""
-    app = web.Application(middlewares=[token_auth.token_auth_middleware(port=PORT)])
-    app["port"] = PORT
+def _gateway_app(port: int = PORT) -> web.Application:
+    """The real token middleware in front of the real sign-in, token and device routes, on a
+    gateway started on *port* (0: a port the system picks, as ``--port auto`` starts one)."""
+    app = web.Application(middlewares=[token_auth.token_auth_middleware(port=port)])
+    app["port"] = port
     app["local_secret"] = SECRET
-    app["allowed_origins"] = {f"http://localhost:{PORT}"}
+    app["allowed_origins"] = {f"http://localhost:{port}"}
     app.router.add_get("/", _page)
     app.router.add_get("/api/status", _status)
     app.router.add_get("/api/token/local", core_h.api_token_local)
@@ -150,8 +151,8 @@ class Device:
 class Gateway:
     """A running gateway plus the ways the persona gets a device into it."""
 
-    def __init__(self) -> None:
-        self.server = TestServer(_gateway_app())
+    def __init__(self, port: int = PORT) -> None:
+        self.server = TestServer(_gateway_app(port))
         self.devices: list[Device] = []
 
     async def __aenter__(self) -> "Gateway":
@@ -577,6 +578,72 @@ async def test_a_paired_desktop_app_is_told_where_it_pairs_again() -> None:
         assert (await browser.post(f"/api/devices/{device_id}/revoke")).status == 200
         message = (await _refusal(desktop))["message"]
         assert "Pair a device" in message and "Gateway → Gateways…" in message, message
+
+
+async def _desktop_window(gw: Gateway, *, ttl: int = 3600) -> tuple[Device, str]:
+    """The desktop app's own window: signed in with the session its gateway's ready line hands
+    out, carried as the session cookie the app sets. Returns the window and its device id."""
+    window = gw.device(DESKTOP)
+    minted = token_auth.mint_session("local-startup", ttl, issuer=ss.ISSUER_READY)
+    window.http.cookie_jar.update_cookies({COOKIE: minted.token}, gw.server.make_url("/"))
+    assert await window.signed_in(), "the window the app signed in is not signed in"
+    return window, minted.session_id
+
+
+@pytest.mark.asyncio
+async def test_the_desktop_apps_own_window_is_told_to_open_the_app_again() -> None:
+    """The app signs its own window in each time it starts its gateway, and the window has no
+    address bar: "open the link it prints here" would name a door it does not have."""
+    async with Gateway() as gw:
+        browser = gw.device(CHROME)
+        await gw.sign_in_with_link(browser)
+        window, device_id = await _desktop_window(gw)
+
+        assert (await browser.post(f"/api/devices/{device_id}/revoke")).status == 200
+
+        error = await _refusal(window)
+        assert error["detail"]["reason"] == "signed_out_elsewhere", error
+        message = error["message"]
+        assert "To sign it back in, quit PersonalClaw and open it again." in message, message
+        assert "personalclaw token" not in message, message
+
+
+@pytest.mark.asyncio
+async def test_the_desktop_apps_own_window_whose_sign_in_ran_out_is_told_the_same() -> None:
+    async with Gateway() as gw:
+        window, _device_id = await _desktop_window(gw, ttl=1)
+        await asyncio.sleep(1.5)
+
+        error = await _refusal(window)
+        assert error["code"] == "session_expired", error
+        assert "quit PersonalClaw and open it again" in error["message"], error["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_on_a_port_the_system_picks_keeps_every_sign_in_it_hands_out(
+    _isolated,
+) -> None:
+    """``--port auto`` starts a gateway on port 0. Its cookie was ``pc_token_0`` for a link, while
+    a password sign-in and a pairing set the default port's name, which nothing read: the browser
+    and the phone they signed in were signed out on their next request."""
+    creds.set_password("jordan", PASSWORD)
+    (_isolated / "config.json").write_text(
+        json.dumps({"auth": {"login_enabled": True}}), encoding="utf-8"
+    )
+    async with Gateway(port=0) as gw:
+        served = f"pc_token_{gw.server.port}"
+        linked = gw.device(CHROME)
+        await gw.sign_in_with_link(linked)
+        password = gw.device(FIREFOX)
+        resp = await password.post("/api/auth/login", {"username": "jordan", "password": PASSWORD})
+        assert resp.status == 200, await resp.text()
+        phone = gw.device(IPHONE)
+        await gw.pair(phone, using=linked)
+
+        for device in (linked, password, phone):
+            names = {c.key for c in device.http.cookie_jar if c.value}
+            assert names == {served}, (device.user_agent[:40], names)
+            assert await device.signed_in(), f"{device.user_agent[:40]} was signed out at once"
 
 
 @pytest.mark.asyncio

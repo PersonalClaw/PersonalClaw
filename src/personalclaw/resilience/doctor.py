@@ -1375,8 +1375,8 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
       NEVER mints or prints a live token — a read-only health check must not
       generate a secret, and evidence strings are redacted anyway.
     * **exposed without auth** → not ok. The bind host is non-loopback AND auth is
-      off (``AuthMode.NONE`` / ``PERSONALCLAW_DEV_NO_AUTH``). That is the one
-      genuine misconfiguration: anything that reaches the interface walks in.
+      off (``AuthMode.NONE``). That is the one genuine misconfiguration: anything
+      that reaches the interface walks in.
       (``effective_bind`` forces NONE to loopback, so this only arises when
       ``PERSONALCLAW_BIND_HOST`` overrode the bind.)
     * **bypass behind a declared proxy** → not ok (RUA-5). The opt-in

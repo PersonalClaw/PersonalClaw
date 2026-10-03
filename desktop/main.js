@@ -1,4 +1,4 @@
-const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification, globalShortcut, webContents } = require("electron");
+const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification, globalShortcut, webContents, session } = require("electron");
 const fs = require("fs");
 const os = require("os");
 const { spawn, execFileSync } = require("child_process");
@@ -22,6 +22,7 @@ const {
 } = require("./nativeNotifications");
 const { shutdownGateway } = require("./gatewayShutdown");
 const { buildGatewayEnv } = require("./gatewayEnv");
+const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
 const { loadRegistry } = require("./endpointRegistry");
 const {
@@ -108,12 +109,20 @@ let presenceTimer = null;
  *
  * 🔒 EVERY CREDENTIAL-BEARING CALL TARGETS THIS URL AND NOTHING ELSE. `.local_secret` and the
  * capability `shell_token` prove "I am a process running as this user on this machine", a claim
- * that is false for any other gateway by construction, so `postGateway`/`getGateway` are bound
+ * that is false for any other gateway by construction, and the shell's sign-in (`localSignIn`) is
+ * the owner's session on this one gateway. So `postGateway`/`getGateway` are bound
  * here and re-assert it with `assertLoopbackTarget` before every send. Connect-mode added
  * a SECOND url to this file; keeping the two apart by name is what stops the day someone points a
  * registration call at the one the user typed.
  */
 let localGatewayUrl = null;
+
+/**
+ * The shell's sign-in to that gateway: the owner session its ready line hands out for this start,
+ * held in this process's memory and nowhere else (`localSignIn.js`). Built once Electron is ready,
+ * because it writes the window cookie through the app's session.
+ */
+let localSignIn = null;
 
 /**
  * What the WebView actually loads. Defaults to `localGatewayUrl` — spawn-local is still
@@ -142,9 +151,12 @@ function sendStatus(msg) {
 
 /**
  * Spawn the bundled gateway on an OS-assigned ephemeral port and resolve once
- * it prints its `PERSONALCLAW_READY:{...}` line. The gateway is a private child
- * process bound to loopback, so auth is disabled via PERSONALCLAW_DEV_NO_AUTH
- * and the dashboard loads without a token.
+ * it prints its `PERSONALCLAW_READY:{...}` line. The gateway asks every request
+ * for a sign-in, as every install does: the ready line carries the owner session
+ * it minted for this start, and the shell signs its windows in with that
+ * (`adoptLocalGateway`). Every LATER ready line is the same process restarted in
+ * place, on a new port with a new session, and the shell follows it there
+ * (`followRestartedGateway`).
  */
 function startGateway() {
   return new Promise((resolve, reject) => {
@@ -197,19 +209,21 @@ function startGateway() {
       while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
         const line = stdoutBuf.slice(0, nl);
         stdoutBuf = stdoutBuf.slice(nl + 1);
-        const m = line.match(/^PERSONALCLAW_READY:(.*)$/);
-        if (m && !settled) {
-          try {
-            const payload = JSON.parse(m[1]);
-            localGatewayUrl = `http://localhost:${payload.port}`;
-            settled = true;
-            clearTimeout(timer);
-            sendStatus("Connected ✓");
-            resolve(localGatewayUrl);
-          } catch {
-            // Keep scanning later lines for a valid READY payload.
-          }
+        // Nothing read from this pipe is logged: the ready line carries a live owner session.
+        const ready = parseReadyLine(line);
+        if (!ready) continue;
+        if (settled) {
+          followRestartedGateway(ready).catch((err) =>
+            console.warn(`desktop: could not follow the restarted gateway: ${err.message}`)
+          );
+          continue;
         }
+        settled = true;
+        clearTimeout(timer);
+        adoptLocalGateway(ready).then(() => {
+          sendStatus("Connected ✓");
+          resolve(localGatewayUrl);
+        });
       }
     });
     gatewayProcess.stderr.on("data", (c) => console.error("gateway:", c.toString().trim()));
@@ -266,6 +280,71 @@ async function stopGateway() {
       (result.groupSwept ? " (residual process-group members were killed)" : "")
   );
   return result;
+}
+
+// ── Signing the windows in ──
+
+/** `origin` of *url*, or "" for anything that is not one. */
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Take the gateway at *ready*'s address as this shell's own, and sign its windows in with the
+ * session its ready line carries. Resolves the session that replaced one (a restart's), or null.
+ * A failure to write the cookie is logged and leaves the window to the gateway's sign-in page:
+ * an honest "you're signed out" rather than a window that never loads.
+ */
+async function adoptLocalGateway(ready) {
+  localGatewayUrl = ready.url;
+  try {
+    return await localSignIn.adopt(ready);
+  } catch (err) {
+    console.warn(`desktop: could not sign the window in to ${ready.url}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * End *held* — a sign-in this shell holds — at the gateway it runs now. Best-effort: quitting and
+ * a restart both carry on whatever the gateway answers. The request carries only that session's
+ * own cookie, so it is the session ending itself (`/api/auth/logout`).
+ */
+async function signOutLocalSession(held) {
+  if (!held || !localGatewayUrl) return false;
+  const { path: route, headers } = signOutRequest(held, Number(new URL(localGatewayUrl).port));
+  const res = await postGateway(route, {}, headers, { signedIn: false });
+  return Boolean(res && res.revoked);
+}
+
+/**
+ * The gateway restarted in place — Settings → Restart, or an applied update re-executes the same
+ * process — and printed a new ready line: a new port, and a new session for the new start.
+ *
+ * Every piece of this shell that pointed at the old address moves to the new one: the window
+ * cookie (`adopt`), the switcher's local row, the capability registration (the registry is the
+ * gateway's memory, so it did not survive), and every window that showed the old address, which
+ * loads the same route at the new one, signed in. The session the old start handed out is signed
+ * out, so a restart leaves one desktop sign-in in Settings → Devices, not one more each time.
+ */
+async function followRestartedGateway(ready) {
+  const previousOrigin = originOf(localGatewayUrl);
+  const replaced = await adoptLocalGateway(ready);
+  console.log(`desktop: the gateway restarted; it is now at ${localGatewayUrl}`);
+  if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
+  if (replaced) await signOutLocalSession(replaced);
+  shellToken = null;
+  await registerWithGateway();
+  if (originOf(activeUrl) === previousOrigin) activeUrl = localGatewayUrl;
+  for (const wc of webContents.getAllWebContents()) {
+    if (wc.isDestroyed()) continue;
+    const next = movedUrl(wc.getURL(), previousOrigin, localGatewayUrl);
+    if (next) wc.loadURL(next);
+  }
 }
 
 // ── Capability bridge ↔ gateway registration ──
@@ -384,13 +463,17 @@ function readLocalSecret() {
 /** POST JSON to the loopback gateway. Resolves the parsed body, or null on any
  * failure — capability registration must never be able to break app startup.
  *
- * 🔒 THE TARGET IS RE-ASSERTED, NOT ASSUMED. Every caller carries either `.local_secret` or
- * the capability `shell_token`, both of which are claims about THIS machine. Connect-mode put a
- * second, user-supplied URL in this file, so the loopback property is checked here rather than
- * left to the reader of the variable name. A failed assertion resolves `null` — the same answer as
- * any other failure, and crucially *nothing is sent* — instead of throwing into a startup path
- * that has no handler for it. */
-function postGateway(pathname, body, headers = {}) {
+ * 🔒 THE TARGET IS RE-ASSERTED, NOT ASSUMED. Every caller carries the shell's sign-in, and
+ * most carry `.local_secret` or the capability `shell_token` beside it, all of them claims about
+ * THIS machine. Connect-mode put a second, user-supplied URL in this file, so the loopback
+ * property is checked here rather than left to the reader of the variable name. A failed
+ * assertion resolves `null` — the same answer as any other failure, and crucially *nothing is
+ * sent* — instead of throwing into a startup path that has no handler for it.
+ *
+ * The gateway asks every request for a sign-in, so each carries the shell's session as a Bearer
+ * header; `signedIn: false` leaves it off, for the one request that must present only the
+ * session it ends (`signOutLocalSession`). */
+function postGateway(pathname, body, headers = {}, { signedIn = true } = {}) {
   return new Promise((resolve) => {
     if (!localGatewayUrl) return resolve(null);
     try {
@@ -416,6 +499,7 @@ function postGateway(pathname, body, headers = {}) {
         headers: {
           "Content-Type": "application/json",
           "Content-Length": payload.length,
+          ...(signedIn ? localSignIn.authorization() : {}),
           ...headers,
         },
       },
@@ -481,12 +565,12 @@ async function pushCapabilityState() {
 }
 
 /** Tell the gateway the shell is going away, so a still-open tab stops claiming
- * the desktop can do anything. Best-effort: quit does not wait on it. */
+ * the desktop can do anything. Best-effort: resolves whatever the gateway answers. */
 function unregisterFromGateway() {
-  if (!shellToken) return;
+  if (!shellToken) return Promise.resolve(null);
   const token = shellToken;
   shellToken = null;
-  postGateway("/api/desktop/unregister", {}, { "X-Shell-Token": token });
+  return postGateway("/api/desktop/unregister", {}, { "X-Shell-Token": token });
 }
 
 function checkBackend(healthUrl) {
@@ -500,8 +584,13 @@ function checkBackend(healthUrl) {
   });
 }
 
+/**
+ * Wait for the spawned gateway to answer. The probe is `/api/healthz`, the one route that needs no
+ * sign-in: the gateway asks every other request for one, and a credential-free probe of another
+ * route would write a refusal to its audit log at every launch and every new tab.
+ */
 function waitForBackend(targetWin) {
-  const healthUrl = `${localGatewayUrl}/api/status`;
+  const healthUrl = `${localGatewayUrl}/api/healthz`;
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const poll = () => {
@@ -1028,13 +1117,15 @@ const trayPresence = makeTrayPresence({
   },
 });
 
-/** GET JSON from the loopback gateway. Resolves null on any failure — a menu-bar
- * refresh must never be able to throw into the app. */
+/** GET JSON from the loopback gateway, signed in with the shell's session. Resolves null on
+ * any failure — a menu-bar refresh must never be able to throw into the app. */
 function getGateway(pathname) {
   return new Promise((resolve) => {
     if (!localGatewayUrl) return resolve(null);
     let url;
     try {
+      // The same re-assertion `postGateway` makes: this request carries the owner's session.
+      assertLoopbackTarget(localGatewayUrl, `GET ${pathname}`);
       url = new URL(pathname, localGatewayUrl);
     } catch {
       return resolve(null);
@@ -1046,6 +1137,7 @@ function getGateway(pathname) {
         path: `${url.pathname}${url.search}`,
         method: "GET",
         timeout: 3000,
+        headers: localSignIn.authorization(),
       },
       (res) => {
         let buf = "";
@@ -1446,6 +1538,11 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    // Before anything can talk to the gateway: every request to it carries this sign-in.
+    localSignIn = makeLocalSignIn({
+      cookies: session.defaultSession.cookies,
+      log: (msg) => console.warn(`desktop: ${msg}`),
+    });
     const appMenu = Menu.buildFromTemplate([
       { role: "appMenu" },
       { role: "editMenu" },
@@ -1581,9 +1678,21 @@ app.on("before-quit", (event) => {
   // A pending reachability re-check would otherwise fire during teardown and call `loadURL` on a
   // window that is being destroyed.
   cancelReachProbe();
-  unregisterFromGateway();
+  // The windows are going away. Hidden first, so none of them draws "You're signed out" for the
+  // moment between the sign-out below and the gateway stopping.
+  for (const win of BaseWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.hide();
+  }
 
-  stopGateway()
+  unregisterFromGateway()
+    // End this start's sign-in while its gateway can still be asked to, so quitting leaves no
+    // live owner session behind in Settings → Devices that nothing holds.
+    .then(async () => {
+      const held = localSignIn ? await localSignIn.release() : null;
+      if (held) await signOutLocalSession(held);
+    })
+    .catch((err) => console.warn(`desktop: sign-out on quit failed: ${err.message}`))
+    .then(() => stopGateway())
     .catch((err) => console.warn(`gateway shutdown failed: ${err.message}`))
     .finally(() => {
       trayPresence.destroy();

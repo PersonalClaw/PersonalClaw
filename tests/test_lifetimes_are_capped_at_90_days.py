@@ -280,8 +280,7 @@ def test_personalclaw_doctor_says_so_too(tmp_path, monkeypatch, capsys):
     from personalclaw.cli_doctor import _doctor
 
     (tmp_path / "config.json").write_text(json.dumps({"auth": {"session_ttl": "365d"}}))
-    for var in ("PERSONALCLAW_AUTH_MODE", "PERSONALCLAW_DEV_NO_AUTH"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("PERSONALCLAW_AUTH_MODE", raising=False)
     ran = SimpleNamespace(returncode=0, stdout="Python 3.13.14", stderr="")
     with (
         patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/bin/{b}"),
