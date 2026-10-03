@@ -20,13 +20,11 @@ These tests hold the replacement's contract through the real lifecycle entry poi
 * the boot repair reinstalls what a new interpreter (a new image) finds missing.
 
 The fake pip replaces ``subprocess.run`` on the ``subprocess`` MODULE, so it intercepts the pip
-call wherever the installer makes it, in every form the installer runs pip: ``python -m pip``, or
-pip straight from the interpreter's bundled wheel when the environment has no pip module (a
-uv-synced environment has none). The fixture also decides which form that is instead of reading
-it from the environment running the suite, so the argv the tests read is the same on every host
-and no install ever reaches a real package index. The ``TestRealPip`` cases run the real pip,
-offline, against wheels built in the test, because a fake cannot witness what pip actually does
-with a prefix.
+call wherever the installer makes it. The fixture also says the environment has its pip module
+instead of reading that from the environment running the suite, so the argv the tests read is the
+same on every host and no install ever reaches a real package index. The ``TestRealPip`` cases run
+the real pip, offline, against wheels built in the test, because a fake cannot witness what pip
+actually does with a prefix.
 """
 
 from __future__ import annotations
@@ -37,16 +35,21 @@ import hashlib
 import http.server
 import importlib
 import importlib.metadata
+import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import sysconfig
 import threading
+import tomllib
+import types
 import zipfile
 from pathlib import Path
 
 import pytest
+from packaging.utils import canonicalize_name
 
 from personalclaw.apps import app_manager, manager
 from personalclaw.apps.manifest import AppManifest
@@ -150,9 +153,8 @@ def _fake_dist(name: str, version: str, *, requires: list[str] = (), module: str
 
 
 def _is_package_install(argv) -> bool:
-    """A package install in any form an installer runs: ``python -m pip install``, ``uv pip
-    install``, or ``python <bundled pip wheel>/pip install``. The last is what a pip-less
-    environment runs, and a fake that missed it handed the install to the real pip."""
+    """A package install in any form an installer runs: ``python -m pip install`` or ``uv pip
+    install``. A fake that missed a form handed the install to the real pip."""
     return (
         isinstance(argv, list)
         and "install" in argv
@@ -186,7 +188,7 @@ class _FakePip:
 @pytest.fixture
 def fake_pip(monkeypatch):
     """Install the fake, with the environment's pip a module: whether the suite's own environment
-    has one is not what these tests are about (``test_installer_resolution`` covers both forms)."""
+    has one is not what these tests are about (``test_installer_resolution`` covers its absence)."""
     from personalclaw import _installer
 
     monkeypatch.setattr(_installer, "_have_pip", lambda: True)
@@ -640,6 +642,65 @@ class TestRealPip:
         assert f"PersonalClaw runs packaging {have}" in message, message
         assert importlib.metadata.version("packaging") == have
         assert not (_site() / "pclaw_badpin").exists()
+
+
+# ── a Python without ensurepip's wheels: Debian's and Ubuntu's system Python ─────────────────────
+#
+# Measured on Ubuntu 24.04's Python 3.12.3 (`uv sync` on it, as CI does): every app with Python
+# packages was refused, "… has no `pip` module and its Python ships no bundled pip wheel". Debian
+# and Ubuntu strip ensurepip's wheels. With `python3-venv` installed `ensurepip` is there and its
+# `_bundled` folder is not; without it there is no `ensurepip` at all. And uv builds an environment
+# out of what the project declares, nothing more, so it has pip exactly when PersonalClaw declares
+# pip. Both halves are reproduced here, and the install runs the real pip, offline.
+
+_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+
+def _ensurepip_as_debian_ships_it(monkeypatch, tmp_path: Path, form: str) -> None:
+    """``ensurepip`` the way a Debian or Ubuntu system Python has it, in either *form*."""
+    if form == "no-python3-venv":
+        monkeypatch.setitem(sys.modules, "ensurepip", None)  # `import ensurepip` fails
+        return
+    stripped = tmp_path / "stdlib" / "ensurepip"  # the files Ubuntu 24.04's package installs
+    stripped.mkdir(parents=True)
+    for name in ("__init__.py", "__main__.py", "_uninstall.py"):
+        (stripped / name).write_text("", encoding="utf-8")
+    module = types.ModuleType("ensurepip")
+    module.__file__ = str(stripped / "__init__.py")
+    monkeypatch.setitem(sys.modules, "ensurepip", module)
+
+
+def _an_environment_uv_built(monkeypatch) -> None:
+    """The environment uv builds: PersonalClaw's declared dependencies and nothing more, so pip is
+    importable in it exactly when ``pyproject.toml`` declares pip."""
+    with _PYPROJECT.open("rb") as fh:
+        specs = tomllib.load(fh)["project"]["dependencies"]
+    declared = {canonicalize_name(re.match(r"[A-Za-z0-9][\w.-]*", s).group(0)) for s in specs}
+    if "pip" in declared:
+        return
+    real = importlib.util.find_spec
+
+    def find_spec(name, *args, **kwargs):
+        return None if name == "pip" else real(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+
+
+@pytest.mark.parametrize("form", ["python3-venv", "no-python3-venv"])
+def test_a_python_without_ensurepips_wheels_installs_an_apps_packages(tmp_path, monkeypatch, form):
+    wheels = tmp_path / "wheels"
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    monkeypatch.setenv("PIP_FIND_LINKS", str(wheels))
+    monkeypatch.setenv("PIP_NO_CACHE_DIR", "1")
+    _wheel(wheels, "pclaw-fixture-dep", "1.0")
+    _ensurepip_as_debian_ships_it(monkeypatch, tmp_path, form)
+    _an_environment_uv_built(monkeypatch)
+
+    assert app_manager._install_python_deps(_manifest(["pclaw-fixture-dep==1.0"])) == []
+
+    assert (_site() / "pclaw_fixture_dep" / "__init__.py").is_file()
+    assert importlib.import_module("pclaw_fixture_dep").VERSION == "1.0"
+    sys.modules.pop("pclaw_fixture_dep", None)
 
 
 # ── what an install leaves outside the home: nothing ──────────────────────────────────

@@ -82,3 +82,15 @@ def rebuild_command(requires: str) -> str:
     if (environment_root() / UV_TOOL_RECEIPT).is_file():
         return f"uv tool upgrade --python '{requires}' {DISTRIBUTION}"
     return ""
+
+
+def reinstall_command() -> str:
+    """The one command that reinstalls this install with every dependency it declares, or ``""``.
+
+    Only a uv tool environment has one: ``uv tool upgrade --reinstall`` reinstalls every package
+    in it, on the Python and with the options it was installed with. A pip venv, a pipx install or
+    a checkout is reinstalled by whoever made it.
+    """
+    if (environment_root() / UV_TOOL_RECEIPT).is_file():
+        return f"uv tool upgrade --reinstall {DISTRIBUTION}"
+    return ""

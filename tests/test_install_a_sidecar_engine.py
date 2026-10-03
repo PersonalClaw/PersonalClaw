@@ -210,6 +210,62 @@ async def test_install_engine_puts_the_engine_where_the_sidecar_runs_it(tmp_path
     assert not list(
         (tmp_path / "app-python").rglob("pclaw_fixture_engine")
     ), "it went into app-python"
+    own_pip = subprocess.run(
+        [str(sidecar.venv_python(live / "venv")), "-c", "import pip"], capture_output=True
+    )
+    assert own_pip.returncode != 0, (
+        "the engine's environment was given a pip by ensurepip, which a Debian or Ubuntu system "
+        "Python does not have: making it that way fails there"
+    )
+
+
+def test_an_engine_install_with_no_pip_to_run_says_what_broke_and_what_to_do(tmp_path, monkeypatch):
+    """The engine card shows "The install stopped: <error> <remediation>", so a missing pip is
+    split between them: the problem once, the reinstall once, and nothing started."""
+    from personalclaw import _installer
+
+    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+    (tmp_path / "uv-receipt.toml").write_text("[tool]\n", encoding="utf-8")
+    monkeypatch.setattr("personalclaw.python_support.environment_root", lambda: tmp_path)
+    started = tmp_path / "started"
+    venv = tmp_path / "venv"
+    _stub_python(venv, f"touch {started}\n")
+    install = sidecar.SidecarInstall(APP, requirements=["omnivoice>=0.2"], venv=venv)
+
+    assert install.run() is False
+    assert not started.exists(), "something ran with no pip to install with"
+    status = install.status()
+    assert status["error"] == (
+        f"{sys.executable} has no `pip` module, though pip is one of PersonalClaw's own "
+        "dependencies"
+    )
+    assert status["remediation"] == (
+        "Reinstall PersonalClaw (`uv tool upgrade --reinstall personalclaw`) to put it back, "
+        "then re-run the install."
+    )
+
+
+def test_an_engine_installs_into_an_environment_with_no_pip_of_its_own(tmp_path):
+    """Without ``python3-venv``, a Debian or Ubuntu system Python makes only environments with no
+    pip: ``python -m venv`` asks ensurepip for one and fails, ``--without-pip`` works (measured on
+    Ubuntu 24.04). PersonalClaw's own pip installs the engine into such an environment."""
+    wheel = _wheel(tmp_path / "wheels", "pclaw-fixture-engine", "1.0")
+    venv = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+    (venv / sidecar._MARKER).write_text("{}\n", encoding="utf-8")
+    install = sidecar.SidecarInstall(
+        APP, requirements=[f"pclaw-fixture-engine @ {wheel.as_uri()}"], venv=venv
+    )
+
+    assert install.run() is True, install.status()
+
+    probe = "import pclaw_fixture_engine as e; print(e.VERSION)"
+    engine = subprocess.run(
+        [str(sidecar.venv_python(venv)), "-c", probe],
+        capture_output=True,
+        text=True,
+    )
+    assert engine.stdout.strip() == "1.0", engine.stderr
 
 
 # ── what the user sees while it runs ─────────────────────────────────────────────────────────

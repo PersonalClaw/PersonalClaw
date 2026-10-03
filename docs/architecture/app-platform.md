@@ -174,9 +174,12 @@ backend**.
   `app-python`, and only when the owner presses **Install engine** on the app's card in
   Settings → Providers or on its Configure page. The install is a job
   (`POST /api/models/sidecar/{app}/install`): the environment, then pip, each step skipped
-  when already done, so a stopped install resumes. pip's output reaches the job's log tail as
-  it is written, the pip step may run for `DEPS_TIMEOUT_SECS` (two hours) before it is stopped,
-  and cancelling (`DELETE /api/models/downloads/{id}`) kills pip and what it started. A
+  when already done, so a stopped install resumes. The environment is made with no pip of its
+  own (`python -m venv --without-pip`), and the gateway's own pip installs the engine into it
+  (`pip --python <its interpreter>`): making it with pip asks `ensurepip`, which a Debian or
+  Ubuntu system Python has only with `python3-venv` installed. pip's output reaches the job's
+  log tail as it is written, the pip step may run for `DEPS_TIMEOUT_SECS` (two hours) before it
+  is stopped, and cancelling (`DELETE /api/models/downloads/{id}`) kills pip and what it started. A
   finished install re-measures the app's availability. While it runs, an update or a removal
   of the app answers 409 `engine_installing`: pip is writing into the folder those replace or
   delete. **Remove engine** deletes an environment PersonalClaw made, never one someone else

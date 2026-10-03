@@ -214,6 +214,7 @@ _GATEWAY_ENV: dict[str, str] = {
     # else wrote nor keeps or forwards its environment.
     "cli_doctor.py::_doctor::subprocess.run": "doctor host probes",
     "cli_doctor.py::_probe_python_version::subprocess.run": "`python --version`",
+    "cli_doctor.py::_pip_row::subprocess.run": "`import pip` on the gateway's interpreter",
     "acp/cli_resolve.py::resolve_node_ge::subprocess.run": "`node --version`",
     "acp/transport.py::_direct_children::subprocess.check_output": "ps child probe",
     "acp/transport.py::_get_start_time::subprocess.check_output": "ps start-time probe",

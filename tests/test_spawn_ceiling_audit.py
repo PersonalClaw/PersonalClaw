@@ -351,6 +351,10 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # `shutil.which("python3")` resolves on the OPERATOR's PATH; no agent input reaches
     # this argv.
     "cli_doctor.py::_probe_python_version::subprocess.run": "operator: doctor python probe",
+    # The `pip:` row's probe, the same class: a fixed argv (`<python> -c 'import pip; print(
+    # pip.__version__)'`), no shell, read-only, bounded by a timeout, the one variable the same
+    # interpreter path the `deps:` row checks; no agent input reaches this argv.
+    "cli_doctor.py::_pip_row::subprocess.run": "operator: doctor pip probe",
     "cli_server.py::_spawn_detached_gateway::subprocess.Popen": (
         "operator: launch the gateway itself"
     ),

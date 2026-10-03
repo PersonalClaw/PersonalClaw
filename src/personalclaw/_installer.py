@@ -15,7 +15,7 @@ detection drifting apart. Order (first available wins):
    the active environment (``VIRTUAL_ENV``, or a discovered ``.venv``), which can
    be a *different* env than the one the gateway is importing from — installing
    there would report success while the import still fails.
-2. **stdlib ``pip``** as an importable module → the historical command. Probed by
+2. **``pip``** as an importable module → the historical command. Probed by
    spec, not by running it, so detection costs no subprocess.
 3. Neither → :class:`NoInstallerError`, which names both remedies. Previously this
    surfaced as a bare ``No module named pip`` that pointed at the wrong problem.
@@ -28,7 +28,15 @@ prevent.
 App packages are the one install that does NOT target this environment: they go into
 ``<home>/app-python`` with ``--prefix`` (``apps/app_python.py``), resolved AGAINST this
 environment. That install is pip-only — :func:`prefix_install_argv` — because uv's
-``--prefix`` does not treat the running environment's packages as installed.
+``--prefix`` does not treat the running environment's packages as installed. An app's
+engine goes into the app's own environment, installed by this environment's pip run under
+that environment's interpreter (:func:`env_install_argv`).
+
+Both run the pip of this environment, which is why pip is one of PersonalClaw's own declared
+dependencies. Undeclared, it was there only by accident of how the environment was made: a
+``python -m venv`` environment gets one from ``ensurepip``, uv seeds none, and Debian and Ubuntu
+strip ``ensurepip``'s wheels from their system Python, so on that Python (measured: Ubuntu
+24.04's 3.12.3) no app with Python packages could be installed.
 """
 
 from __future__ import annotations
@@ -112,10 +120,16 @@ def installer_env() -> dict[str, str]:
 class NoInstallerError(RuntimeError):
     """No usable package installer for the running interpreter.
 
-    Raised instead of letting a ``No module named pip`` escape, because that
-    message sends the reader after pip when the real answer is usually "this is a
-    uv venv, and uv isn't on PATH".
+    Raised instead of letting a ``No module named pip`` escape: it names the
+    interpreter and the fix, where that message named neither. A missing pip also
+    carries the sentence's two halves, ``problem`` and ``fix`` (:func:`missing_pip`),
+    for a surface that shows what broke and what to do apart (an engine's install).
     """
+
+    def __init__(self, message: str, *, problem: str = "", fix: str = "") -> None:
+        super().__init__(message)
+        self.problem = problem
+        self.fix = fix
 
 
 def _have_uv() -> bool:
@@ -142,6 +156,39 @@ def installer_name() -> str:
     if _have_pip():
         return "pip"
     return ""
+
+
+def missing_pip(python: str = "") -> tuple[str, str]:
+    """``(problem, fix)`` for *python* (the running interpreter by default) having no ``pip``
+    module: the words every refusal here uses and ``personalclaw doctor`` prints, so the
+    installer and the doctor say the same thing.
+
+    pip is one of PersonalClaw's own dependencies, so an environment without it is an install
+    missing part of itself, and the fix is the reinstall that puts it back. Never ``ensurepip``,
+    which a Debian or Ubuntu system Python does not have, nor the distribution's ``python3-pip``,
+    which installs into the system's own packages rather than this environment.
+    """
+    from personalclaw.python_support import reinstall_command
+
+    problem = (
+        f"{python or sys.executable} has no `pip` module, though pip is one of "
+        "PersonalClaw's own dependencies"
+    )
+    command = reinstall_command()
+    if command:
+        return problem, f"reinstall PersonalClaw (`{command}`) to put it back"
+    return problem, "reinstall PersonalClaw into that environment to put it back"
+
+
+def _pip() -> list[str]:
+    """``python -m pip`` on the running interpreter. Raises :class:`NoInstallerError`, naming
+    the fix, when this environment has no ``pip`` module."""
+    if not _have_pip():
+        problem, fix = missing_pip()
+        raise NoInstallerError(
+            f"{problem}. {fix[0].upper()}{fix[1:]}, then try again", problem=problem, fix=fix
+        )
+    return [sys.executable, "-m", "pip"]
 
 
 # pip flags that ``uv pip install`` does not accept. uv has no version self-check
@@ -173,27 +220,11 @@ def install_argv(args: list[str]) -> list[str]:
         return ["uv", "pip", "install", "--python", sys.executable, *kept]
     if _have_pip():
         return [sys.executable, "-m", "pip", "install", *args]
+    problem, fix = missing_pip()
     raise NoInstallerError(
-        "No package installer is available for this environment: "
-        f"{sys.executable} has no `pip` module and `uv` is not on PATH. "
-        "Install uv (https://docs.astral.sh/uv/) or add pip to the environment "
-        "(`python -m ensurepip --upgrade`), then retry."
+        f"No package installer is available for this environment: {problem}, and `uv` is not "
+        f"on PATH. Install uv (https://docs.astral.sh/uv/), or {fix}, then retry."
     )
-
-
-def _bundled_pip_wheel() -> Path | None:
-    """The pip wheel this Python's ``ensurepip`` ships, or ``None``.
-
-    pip runs straight from its wheel (``python pip-X.whl/pip install …`` — the wheel is a zip
-    whose ``pip/__main__.py`` bootstraps itself), which is how ``ensurepip`` itself installs pip.
-    Distributions that strip ``ensurepip`` simply answer ``None``.
-    """
-    try:
-        import ensurepip
-    except Exception:  # noqa: BLE001 — a stripped or broken ensurepip is "no bundled wheel"
-        return None
-    wheels = sorted((Path(ensurepip.__file__).parent / "_bundled").glob("pip-*.whl"))
-    return wheels[-1] if wheels else None
 
 
 def prefix_install_argv(args: list[str]) -> list[str]:
@@ -209,18 +240,23 @@ def prefix_install_argv(args: list[str]) -> list[str]:
     on a version only the running environment has (the image's ``torch …+cpu``) cannot be
     satisfied from an index at all.
 
-    Order: the ``pip`` module of this environment; else the pip wheel bundled with this Python's
-    ``ensurepip`` — a uv-created environment (``uv tool install personalclaw``, the recommended
-    install) has no pip module, but its Python ships that wheel. Neither →
-    :class:`NoInstallerError`.
+    Raises:
+        NoInstallerError: this environment has no ``pip`` module (see :func:`missing_pip`).
     """
-    if _have_pip():
-        return [sys.executable, "-m", "pip", "install", *args]
-    wheel = _bundled_pip_wheel()
-    if wheel is not None:
-        return [sys.executable, str(wheel / "pip"), "install", *args]
-    raise NoInstallerError(
-        f"{sys.executable} has no `pip` module and its Python ships no bundled pip wheel, so "
-        "there is nothing to install packages with. Add pip to that environment "
-        "(`python -m ensurepip --upgrade`, or your system's python3-pip package) and try again"
-    )
+    return [*_pip(), "install", *args]
+
+
+def env_install_argv(python: str | Path, args: list[str]) -> list[str]:
+    """The argv that runs ``pip install <args>`` into the environment *python* belongs to (an app
+    engine's own), with the pip of this environment.
+
+    pip's ``--python`` runs this copy of pip under that interpreter, so that environment needs no
+    pip of its own and is made without one (``python -m venv --without-pip``). Making it with one
+    asks ``ensurepip``, and a Debian or Ubuntu system Python has none unless ``python3-venv`` is
+    installed: ``python -m venv`` fails there, ``--without-pip`` does not (measured on Ubuntu
+    24.04). pip only, for the reason :func:`prefix_install_argv` gives.
+
+    Raises:
+        NoInstallerError: this environment has no ``pip`` module (see :func:`missing_pip`).
+    """
+    return [*_pip(), "--python", str(python), "install", *args]

@@ -1003,9 +1003,14 @@ class SidecarInstall:
                 raise InstallCancelled("the install was cancelled")
             step.status, step.detail = handler()
         except Exception as exc:  # noqa: BLE001 — a step failure is reported, not raised
+            from personalclaw._installer import NoInstallerError
+
             step.status = "cancelled" if isinstance(exc, InstallCancelled) else "error"
-            step.detail = str(exc)[:200]
-            self.error = str(exc)[:200]
+            # A missing pip's fix is the remediation, so the error is only what broke: the
+            # card shows the two together.
+            broke = exc.problem if isinstance(exc, NoInstallerError) and exc.problem else str(exc)
+            step.detail = broke[:200]
+            self.error = broke[:200]
             self.reason, self.remediation = _classify_install_failure(
                 exc, step.name, "\n".join(self.log_tail)
             )
@@ -1018,8 +1023,11 @@ class SidecarInstall:
         if python.is_file():
             return "skipped", "venv already present"
         self.venv.parent.mkdir(parents=True, exist_ok=True)
+        # No pip of its own: the engine installs with the gateway's (`_step_deps`), and a venv
+        # made WITH pip asks ensurepip for one, which a Debian or Ubuntu system Python lacks
+        # unless `python3-venv` is installed, so `python -m venv` fails there.
         self._run(
-            [sys.executable, "-m", "venv", str(self.venv)],
+            [sys.executable, "-m", "venv", "--without-pip", str(self.venv)],
             label="python -m venv",
             timeout=_VENV_TIMEOUT_SECS,
         )
@@ -1041,21 +1049,17 @@ class SidecarInstall:
                 f"{unreadable[0][:80]!r} is not a requirement pip can read, so nothing was "
                 "installed"
             )
-        python = venv_python(self.venv)
-        # `--` ends pip's options: a requirement can never be read as one, whatever it says.
-        # `--no-input`: an index that wants a login fails instead of waiting on a prompt nobody
-        # sees until the step's timeout.
+        from personalclaw._installer import env_install_argv
+
+        # The gateway's pip, run under the engine's interpreter (`pip --python`), so the venv
+        # needs no pip of its own. `--` ends pip's options: a requirement can never be read as
+        # one, whatever it says. `--no-input`: an index that wants a login fails instead of
+        # waiting on a prompt nobody sees until the step's timeout.
         self._run(
-            [
-                str(python),
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-input",
-                "--",
-                *self.requirements,
-            ],
+            env_install_argv(
+                venv_python(self.venv),
+                ["--disable-pip-version-check", "--no-input", "--", *self.requirements],
+            ),
             label="pip",
             timeout=DEPS_TIMEOUT_SECS,
         )
@@ -1223,6 +1227,10 @@ def _classify_install_failure(exc: Exception, step: str, log: str = "") -> tuple
     """
     if isinstance(exc, InstallCancelled):
         return "cancelled", "Install engine starts it again, from the step it stopped at."
+    from personalclaw._installer import NoInstallerError
+
+    if isinstance(exc, NoInstallerError) and exc.fix:
+        return "pip_failed", f"{exc.fix[0].upper()}{exc.fix[1:]}, then re-run the install."
     from personalclaw.sandbox import login_left_out_note
 
     login = login_left_out_note(log, installer="pip") if step == "deps" else ""

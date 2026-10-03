@@ -80,31 +80,43 @@ _ROW = re.compile(r"^ {2}([a-z][a-z ]*):", re.MULTILINE)
 _FAKE_VENV_PY = Path("/opt/personalclaw/.venv/bin/python3")
 
 
-def _doctor_output(
-    capsys, *, venv_install: bool, runs: list[list[str]] | None = None
-) -> tuple[str, int]:
-    """Run ``_doctor()`` with its probes stubbed; return everything it printed and its exit status.
-
-    `venv_install` picks the branch: True renders the `venv python:` row, False the
-    block a pipx, uv tool or container install gets. `runs`, when given, collects the argv
-    of every subprocess doctor started.
-    """
-    from personalclaw.cli_doctor import _doctor
-
-    answer = type(
+def _answer(stdout: str, returncode: int = 0):
+    return type(
         "R",
         (),
         {
-            "returncode": 0,
-            "stdout": "Python 3.13.14",
+            "returncode": returncode,
+            "stdout": stdout,
             "stderr": "",
             "check_returncode": lambda self: None,
         },
     )()
 
+
+def _doctor_output(
+    capsys,
+    *,
+    venv_install: bool,
+    runs: list[list[str]] | None = None,
+    pip: str | None = "26.2.1",
+) -> tuple[str, int]:
+    """Run ``_doctor()`` with its probes stubbed; return everything it printed and its exit status.
+
+    `venv_install` picks the branch: True renders the `venv python:` row, False the
+    block a pipx, uv tool or container install gets. `runs`, when given, collects the argv
+    of every subprocess doctor started. `pip` is the version the interpreter's pip reports,
+    or None for an interpreter with no `pip` module.
+    """
+    from personalclaw.cli_doctor import _doctor
+
+    answer = _answer("Python 3.13.14")
+    no_pip = _answer("", returncode=1)
+
     def run(argv, *a, **kw):  # noqa: ANN001 — subprocess.run's own signature
         if runs is not None:
             runs.append([str(part) for part in argv])
+        if any("import pip" in str(part) for part in argv):
+            return no_pip if pip is None else _answer(f"{pip}\n")
         return answer
 
     with (
@@ -330,3 +342,52 @@ def test_the_venv_interpreter_is_judged_by_the_same_range(capsys):
         block = _runtime_block(capsys, venv_install=True)
     row = _python_row(block, "venv python")
     assert "❌" in row and "3.13.14" in row and ">=3.0,<3.13" in row, row
+
+
+# ── the pip every app's Python packages and engine install with ─────────────────────────────
+#
+# pip is one of PersonalClaw's own dependencies: the installer runs it for an app's packages and
+# for an app's engine. An interpreter without it cannot install either, and the row says so in
+# the words the installer refuses with.
+
+
+@pytest.mark.parametrize("venv_install", [True, False], ids=["venv", "non-venv"])
+def test_the_pip_row_reads_the_interpreter_the_gateway_runs_on(capsys, venv_install):
+    runs: list[list[str]] = []
+    block = _runtime_block(capsys, venv_install=venv_install, runs=runs)
+    row = _python_row(block, "pip")
+    assert row == "  pip:         ✅ 26.2.1 — installs the Python packages apps declare", row
+    probes = [argv for argv in runs if any("import pip" in part for part in argv)]
+    expected = str(_FAKE_VENV_PY) if venv_install else sys.executable
+    assert probes and all(argv[0] == expected for argv in probes), runs
+
+
+@pytest.mark.parametrize("uv_tool", [True, False], ids=["uv-tool-install", "other-install"])
+def test_an_interpreter_without_pip_fails_the_doctor_in_the_installers_words(
+    capsys, monkeypatch, tmp_path, uv_tool
+):
+    from personalclaw import _installer
+
+    if uv_tool:
+        (tmp_path / "uv-receipt.toml").write_text("[tool]\n", encoding="utf-8")
+    with patch("personalclaw.python_support.environment_root", return_value=tmp_path):
+        out, code = _doctor_output(capsys, venv_install=False, pip=None)
+        monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+        with pytest.raises(_installer.NoInstallerError) as refused:
+            _installer.prefix_install_argv(["pclaw-fixture-dep"])
+
+    problem = (
+        f"{sys.executable} has no `pip` module, though pip is one of PersonalClaw's own "
+        "dependencies"
+    )
+    fix = (
+        "reinstall PersonalClaw (`uv tool upgrade --reinstall personalclaw`) to put it back"
+        if uv_tool
+        else "reinstall PersonalClaw into that environment to put it back"
+    )
+    row = _python_row(out.split("\nRuntime\n", 1)[1], "pip")
+    assert row == f"  pip:         ❌ {problem}\n               Fix: {fix}", row
+    assert str(refused.value) == f"{problem}. {fix[0].upper()}{fix[1:]}, then try again"
+    assert (
+        code == 1 and "pip" in out.rsplit("❌ Fix these issues:", 1)[-1]
+    ), f"an interpreter that cannot install app packages must fail the doctor (exit {code})"

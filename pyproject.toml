@@ -75,6 +75,16 @@ dependencies = [
     # `tests/test_app_installer_deps_declared.py`, which asserts the DECLARATION rather
     # than importability, since importability is true in dev either way.
     "packaging>=23.0",
+    # 🔴 pip is a CORE dep because the APP INSTALLER runs it: an app's `pythonDependencies`
+    # install with `python -m pip install --prefix <home>/app-python`, resolved against this
+    # environment (uv's `--prefix` treats nothing as installed, so it cannot do that install),
+    # and an app's engine installs into its own venv with this same pip (`pip --python`, hence
+    # the floor: 22.3 added it). Undeclared, pip was there only by accident: `python -m venv`
+    # puts one in through ensurepip, uv (`uv tool install`, `uv sync`) seeds none, and Debian
+    # and Ubuntu strip ensurepip's wheels from their system Python, so on that Python no app
+    # with Python packages could be installed. The rail is
+    # `tests/test_app_installer_deps_declared.py`, which asserts the declaration.
+    "pip>=22.3",
     "pysqlite3-binary>=0.5.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
     # sqlite-vec is a CORE dep, and NOT faiss. The knowledge store
     # is SQLite-first (items + FTS5 + graph tables in one file), so a vector index shipped as a

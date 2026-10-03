@@ -75,6 +75,7 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "cli_doctor.py::_doctor::subprocess.run": _PROBE,
     "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": _GIT,
     "cli_doctor.py::_probe_python_version::subprocess.run": _PROBE,
+    "cli_doctor.py::_pip_row::subprocess.run": _PROBE,
     "cli_run.py::start_transient_gateway::subprocess.Popen": "PersonalClaw's own gateway",
     "cli_server.py::_install::subprocess.run": _COMPOSED,
     "cli_server.py::_logs_cmd::os.execvp": "journalctl or tail, from the owner's CLI",

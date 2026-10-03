@@ -59,53 +59,38 @@ def test_pip_failure_raises_lifecycle_error(monkeypatch):
 # ── installer resolution for app packages (issues #46, #51) ─────────────────────────
 
 
-def test_a_pip_less_venv_runs_pip_from_the_bundled_wheel_never_uv(monkeypatch):
-    """The #46 repro, kept honest for the new target. A uv-created venv (`uv tool install
-    personalclaw`, the recommended install) ships no pip module. App packages install into a
-    separate --prefix resolved AGAINST the running environment, which uv's --prefix does not do
-    (it treats nothing as installed), so the installer runs the pip wheel this Python's ensurepip
-    bundles — even though uv is right there on PATH."""
+@pytest.mark.parametrize("uv_tool", [True, False], ids=["uv-tool-install", "other-install"])
+def test_an_environment_without_pip_refuses_naming_the_fix(monkeypatch, tmp_path, uv_tool):
+    """pip is one of PersonalClaw's own dependencies, so an environment without it is an
+    incomplete install, and the sentence says how to complete it.
+
+    It surfaced first as ``No module named pip``, which named nothing to act on, and then as
+    advice a Debian or Ubuntu system Python cannot follow: ``python -m ensurepip`` (stripped
+    there), or the distribution's ``python3-pip``, which installs into the system's own packages
+    and never into this environment. uv is on PATH here and is no way out: its ``--prefix``
+    treats nothing as installed, so the install refuses before it starts anything."""
     from personalclaw import _installer
 
     monkeypatch.setattr(_installer, "_have_uv", lambda: True)
     monkeypatch.setattr(_installer, "_have_pip", lambda: False)
-
-    calls: list[list[str]] = []
-
-    class _OK:
-        returncode = 0
-        stdout = ""
-        stderr = ""
-
-    monkeypatch.setattr(
-        app_manager.subprocess, "run", lambda cmd, **kw: (calls.append(cmd), _OK())[1]
-    )
-    # pip "succeeds" without installing, so the post-install check reports it — the argv is
-    # what this test is about.
-    with pytest.raises(app_manager.AppLifecycleError, match="still cannot be found"):
-        app_manager._install_python_deps(_manifest(["totally-not-a-real-pkg-xyz==9.9.9"]))
-    argv = calls[0]
-    assert argv[0] == sys.executable and argv[1].endswith(".whl/pip"), argv
-    assert argv[2] == "install" and "uv" not in argv
-    assert "--disable-pip-version-check" in argv
-
-
-def test_no_installer_raises_actionable_lifecycle_error(monkeypatch):
-    """Previously surfaced as ``pip install failed …: No module named pip``, which named
-    nothing the user could act on."""
-    from personalclaw import _installer
-
-    monkeypatch.setattr(_installer, "_have_uv", lambda: False)
-    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
-    monkeypatch.setattr(_installer, "_bundled_pip_wheel", lambda: None)
+    if uv_tool:
+        (tmp_path / "uv-receipt.toml").write_text("[tool]\n", encoding="utf-8")
+    monkeypatch.setattr("personalclaw.python_support.environment_root", lambda: tmp_path)
 
     def unreachable(cmd, **kw):  # pragma: no cover — must fail before spawning
-        raise AssertionError("attempted a subprocess with no installer available")
+        raise AssertionError(f"started {cmd} with no pip to install with")
 
     monkeypatch.setattr(app_manager.subprocess, "run", unreachable)
     with pytest.raises(app_manager.AppLifecycleError) as ei:
         app_manager._install_python_deps(_manifest(["totally-not-a-real-pkg-xyz==9.9.9"]))
-    message = str(ei.value)
-    assert message.startswith("Couldn't install dep-app's Python packages")
-    assert "ensurepip" in message and sys.executable in message
+
+    fix = (
+        "Reinstall PersonalClaw (`uv tool upgrade --reinstall personalclaw`) to put it back"
+        if uv_tool
+        else "Reinstall PersonalClaw into that environment to put it back"
+    )
+    assert str(ei.value) == (
+        f"Couldn't install dep-app's Python packages: {sys.executable} has no `pip` module, "
+        f"though pip is one of PersonalClaw's own dependencies. {fix}, then try again."
+    )
     assert ei.value.log_excerpt == ""

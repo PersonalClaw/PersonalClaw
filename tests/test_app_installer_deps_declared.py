@@ -98,6 +98,22 @@ def test_packaging_is_a_declared_core_dependency() -> None:
     )
 
 
+def test_pip_is_a_declared_core_dependency() -> None:
+    """The installer does not import pip, it RUNS it (``python -m pip``), so the import scan below
+    cannot see it — and it was undeclared, present only by accident of how an environment was made.
+
+    ``python -m venv`` puts pip in an environment through ``ensurepip``; uv (``uv tool install``,
+    ``uv sync``) puts in what the project declares and nothing else; and Debian and Ubuntu strip
+    ``ensurepip``'s wheels from their system Python. So on that Python no app with Python packages
+    could be installed. Declared, pip is in every environment PersonalClaw is installed into.
+    """
+    assert "pip" in _declared_core_dependencies(), (
+        "the app installer runs `python -m pip`, for an app's packages and for its engine; "
+        "undeclared, a uv-built environment has no pip, and a Debian or Ubuntu system Python "
+        "has no ensurepip wheels to bring one. Declare it in [project].dependencies."
+    )
+
+
 @pytest.mark.parametrize("module", INSTALLER_MODULES, ids=lambda p: p.name)
 def test_every_third_party_module_the_installer_imports_is_declared(module: Path) -> None:
     """The general rule, so the next such import cannot ship undeclared either."""

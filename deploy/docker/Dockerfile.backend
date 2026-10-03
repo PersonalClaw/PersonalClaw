@@ -21,8 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG UV_VERSION=0.12.19
 RUN pip install --no-cache-dir --root-user-action=ignore "uv==${UV_VERSION}"
 
+# pip is one of PersonalClaw's own dependencies (the app installer runs it), so the locked one
+# replaces this venv's in the layer below, with the rest of them.
 RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --upgrade pip wheel
+    /opt/venv/bin/pip install --upgrade wheel
 
 # Third-party dependencies only (not the package itself), so the layer stays cached across
 # source changes, and EXACTLY the versions uv.lock pins, so the image runs what CI tested.

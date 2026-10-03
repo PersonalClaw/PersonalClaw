@@ -24,7 +24,11 @@ You do **not** need to install Python or Node yourself for the recommended
 paths: they ask `uv` for Python 3.13, which it downloads when your machine has
 none, and the release wheel ships the prebuilt dashboard. The base Python
 package also carries the IANA timezone database, so minimal Linux installs do
-not need an operating-system `tzdata` package before `personalclaw setup`.
+not need an operating-system `tzdata` package before `personalclaw setup`. And
+it brings pip, which installs the Python packages and engines apps declare, so a
+system Python whose `ensurepip` is stripped (Debian's and Ubuntu's) needs no
+`python3-venv` or `python3-pip` package for them. `personalclaw doctor` shows that
+pip on its `pip:` row, and if it is missing, the reinstall that puts it back.
 (Contributors who build from source need Python 3.12 or 3.13 and Node 18+ — see
 [CONTRIBUTING](../../CONTRIBUTING.md#development-setup).)
 

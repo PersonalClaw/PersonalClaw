@@ -713,6 +713,31 @@ def _interpreter_row(label: str, interpreter: object, version: str, issues: list
     issues.append(f"{label} version")
 
 
+def _pip_row(python: str | Path, issues: list[str]) -> None:
+    """The pip *python* (the interpreter the gateway runs on) has: every app's Python packages and
+    every app's engine install with it. Without it the row fails the doctor, in the words the
+    installer refuses with (``_installer.missing_pip``)."""
+    from personalclaw._installer import missing_pip
+
+    try:
+        probe = subprocess.run(
+            [str(python), "-c", "import pip; print(pip.__version__)"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        version = probe.stdout.strip() if probe.returncode == 0 else ""
+    except Exception:
+        version = ""
+    if version:
+        print(f"  pip:         ✅ {version} — installs the Python packages apps declare")
+        return
+    problem, fix = missing_pip(str(python))
+    print(f"  pip:         ❌ {problem}")
+    print(f"               Fix: {fix}")
+    issues.append("pip")
+
+
 def _doctor(*, start_agent_clis: bool = False) -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity.
 
@@ -1003,6 +1028,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
             except Exception:
                 print("  deps:        ❌ missing modules (websockets/aiohttp)")
                 issues.append("python deps")
+            _pip_row(venv_py, issues)
     else:
         # No checkout beside the sources — pipx, `uv tool`, the container image. Such an install
         # has ONE interpreter, the one running doctor (the `python:` row), so its dependencies
@@ -1019,6 +1045,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         except Exception:
             print("  deps:        ❌ missing modules (websockets/aiohttp)")
             issues.append("python deps")
+        _pip_row(sys.executable, issues)
 
     # WSL note: the background service depends on systemd, which WSL2 only runs
     # when /etc/wsl.conf opts in. Detect it here so a Windows user knows whether

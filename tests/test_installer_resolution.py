@@ -56,9 +56,11 @@ def test_neither_available_raises_an_actionable_error(env):
     with pytest.raises(_installer.NoInstallerError) as ei:
         _installer.install_argv(["x"])
     msg = str(ei.value)
-    # Names BOTH remedies and the interpreter, so the reader isn't sent after pip
-    # when the real answer is "this is a uv venv and uv isn't on PATH".
-    assert "uv" in msg and "ensurepip" in msg
+    # Names BOTH remedies and the interpreter. pip is one of PersonalClaw's own dependencies, so
+    # the remedy for its absence is the reinstall that puts it back, never `ensurepip`, which a
+    # Debian or Ubuntu system Python does not have.
+    assert "uv" in msg and "reinstall PersonalClaw" in msg
+    assert "ensurepip" not in msg
     assert sys.executable in msg
 
 
@@ -154,37 +156,45 @@ def test_prefix_installs_use_pip_even_when_uv_is_present(env):
     ]
 
 
-def test_a_pip_less_environment_runs_the_bundled_pip_wheel(env, tmp_path, monkeypatch):
-    """`uv tool install personalclaw` makes a venv with no pip module; its Python still ships
-    ensurepip's pip wheel, and pip runs straight from that wheel."""
+def test_a_prefix_install_without_pip_refuses_even_with_uv_present(env):
+    """No pip, so no app package can install: uv cannot do this install in its place, and the
+    refusal names the reinstall that puts pip back."""
     env(uv=True, pip=False)
-    wheel = tmp_path / "pip-99.0-py3-none-any.whl"
-    monkeypatch.setattr(_installer, "_bundled_pip_wheel", lambda: wheel)
-    assert _installer.prefix_install_argv(["pkg"]) == [
-        sys.executable,
-        str(wheel / "pip"),
-        "install",
-        "pkg",
-    ]
-
-
-def test_the_bundled_wheel_is_found_where_ensurepip_keeps_it():
-    """The real lookup, on the interpreter running the tests — the vacuity floor for the case
-    above: if this Python ships a bundled wheel at all, the probe must find it."""
-    import ensurepip
-    from pathlib import Path
-
-    bundled = sorted((Path(ensurepip.__file__).parent / "_bundled").glob("pip-*.whl"))
-    assert _installer._bundled_pip_wheel() == (bundled[-1] if bundled else None)
-
-
-def test_no_pip_and_no_bundled_wheel_names_the_remedy(env, monkeypatch):
-    env(uv=True, pip=False)
-    monkeypatch.setattr(_installer, "_bundled_pip_wheel", lambda: None)
     with pytest.raises(_installer.NoInstallerError) as ei:
         _installer.prefix_install_argv(["pkg"])
     message = str(ei.value)
-    assert "ensurepip" in message and sys.executable in message
+    assert sys.executable in message and "Reinstall PersonalClaw" in message
+    assert "ensurepip" not in message
+
+
+# ── an app's engine: its own environment, installed with PersonalClaw's pip ────────────────────
+
+
+def test_an_engine_install_runs_personalclaws_pip_against_the_engines_interpreter(env):
+    """``pip --python`` runs this environment's pip under the engine's interpreter, so the
+    engine's environment needs no pip of its own, and so no ensurepip to have made it with."""
+    env(uv=True, pip=True)
+    engine = Path("/data/apps/voice/venv/bin/python")
+    assert _installer.env_install_argv(engine, ["--no-input", "--", "omnivoice"]) == [
+        sys.executable,
+        "-m",
+        "pip",
+        "--python",
+        str(engine),
+        "install",
+        "--no-input",
+        "--",
+        "omnivoice",
+    ]
+
+
+def test_an_engine_install_without_pip_refuses_as_an_app_package_install_does(env):
+    env(uv=True, pip=False)
+    with pytest.raises(_installer.NoInstallerError) as engine:
+        _installer.env_install_argv(Path("/data/apps/voice/venv/bin/python"), ["omnivoice"])
+    with pytest.raises(_installer.NoInstallerError) as package:
+        _installer.prefix_install_argv(["omnivoice"])
+    assert str(engine.value) == str(package.value)
 
 
 # ── what an install or build PersonalClaw runs keeps outside the home: nothing ────────────────
@@ -284,11 +294,12 @@ def test_what_the_installers_keep_is_in_the_home_where_the_inventory_ignores_it(
 
 
 # The rail. A spawn is a package install or build when its argv starts with npm, runs
-# `python -m pip`, or comes from `install_argv`/`prefix_install_argv` in the same function.
+# `python -m pip`, or comes from `install_argv`/`prefix_install_argv`/`env_install_argv` in the
+# same function.
 
 _SPAWN_FUNCS = {"run", "Popen", "call", "check_call", "check_output", "create_subprocess_exec"}
 _INSTALLER_ENVS = ("installer_env(", "installer_cache_env(", "_pip_env(")
-_INSTALLER_ARGV_FUNCS = {"install_argv", "prefix_install_argv"}
+_INSTALLER_ARGV_FUNCS = {"install_argv", "prefix_install_argv", "env_install_argv"}
 
 
 def _callee(node) -> str:
