@@ -1,7 +1,7 @@
 {
   "version": 1,
   "description": "Baseline bash denied-command regexes, always enforced. Categories, in order: credential exfiltration (S3/env/wire), cloud metadata SSRF, pipe-to-shell, destructive filesystem, destructive cloud, disk/partition writes, reverse shells, credential env export, destructive SQL, unreviewed pushes, credential-file reads, and self-tampering with the running gateway. User config may only ADD to this set.",
-  "sha256": "2b7db3c6d0be84890aff1ad3bf2bcbcbf3bdf5cb6b991079734db1ee10c6e872",
+  "sha256": "3686ca77610db85c0e0d1187d2fecaf3161a36449b9c09466ecce6965887eda6",
   "patterns": [
     "aws s3 cp .* s3://.*",
     "aws s3 mv .* s3://.*",
@@ -11,6 +11,12 @@
     ".*echo.*\\$AWS_ACCESS.*",
     ".*printenv.*AWS.*",
     ".*personalclaw.*token",
+    ".*\\bgh\\s+auth\\s+token\\b.*",
+    ".*\\bglab\\s+auth\\s+token\\b.*",
+    ".*\\bgcloud\\s+auth\\s+print-(access|identity)-token\\b.*",
+    ".*\\baws\\s+.*\\bget-login-password\\b.*",
+    ".*\\baz\\s+account\\s+get-access-token\\b.*",
+    ".*\\bsecurity\\s+find-generic-password\\b.*\\s-w(\\s|$).*",
     ".*env.*grep.*AWS.*",
     ".*python.*boto3.*get_credentials.*",
     ".*python.*botocore.*credentials.*",

@@ -51,6 +51,7 @@ def register_acp_cli_entry(
     self_sandboxing: bool = False,
     env_passthrough: list[str] | None = None,
     session_meta: dict[str, object] | None = None,
+    credential_files: tuple[str, ...] = (),
 ) -> ProviderEntry | None:
     """Register (idempotently) an ``acp_agent`` entry named ``acp:<cli>``.
 
@@ -174,6 +175,10 @@ def register_acp_cli_entry(
             cli,
         )
         return None
+    if credential_files:
+        from personalclaw.security import register_agent_sign_in_files
+
+        register_agent_sign_in_files(cli, credential_files)
     _held_to_the_review(command, requires_executable)
     meta = _session_meta(cli, session_meta)
 
@@ -327,4 +332,7 @@ def unregister_acp_cli_entry(cli: str) -> None:
     an ACP session sees is passed per ``session/new`` (prong A), so it vanishes
     with the session rather than needing a teardown.
     """
+    from personalclaw.security import unregister_agent_sign_in_files
+
+    unregister_agent_sign_in_files(cli)
     get_default_registry().unregister_entry(f"acp:{cli}")

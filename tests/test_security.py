@@ -698,6 +698,22 @@ class TestIsSensitiveBashCommand:
         result = is_sensitive_bash_command("base64 ~/.gnupg/secring.gpg")
         assert "blocked" in result.lower()
 
+    def test_agent_declared_sign_in_file_is_blocked(self, monkeypatch, tmp_path) -> None:
+        from personalclaw import security
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        security.register_agent_sign_in_files(
+            "example-agent", ("~/.local/share/example-agent/data.sqlite3",)
+        )
+        try:
+            result = is_sensitive_bash_command(
+                f"cat {tmp_path}/.local/share/example-agent/data.sqlite3"
+            )
+            assert "blocked" in result.lower()
+            assert is_sensitive_bash_command("example-agent auth status") is None
+        finally:
+            security.unregister_agent_sign_in_files("example-agent")
+
 
 class TestAuditBashCommand:
     """Tests for audit_bash_command()."""

@@ -36,7 +36,8 @@
    {"annotation": "dict[str, str] | None", "default": "None", "kind": "keyword_only", "name": "requires_executable"},
    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "self_sandboxing"},
    {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "env_passthrough"},
-   {"annotation": "dict[str, object] | None", "default": "None", "kind": "keyword_only", "name": "session_meta"}
+   {"annotation": "dict[str, object] | None", "default": "None", "kind": "keyword_only", "name": "session_meta"},
+   {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "credential_files"}
   ],
   "returns": "ProviderEntry | None"
  },

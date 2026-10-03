@@ -748,7 +748,8 @@ Before the agent's shell runs a command, PersonalClaw reads it and refuses it
   (`.env`) and its session key, session table, `auth/`, `credentials/` and governance files, in the
   home in use and in the default `~/.personalclaw`; its security-log key, loopback secret and
   telemetry salt, wherever they sit; and the sign-in another tool keeps: Codex's, Claude Code's,
-  Gemini CLI's, the GitHub and GitLab CLIs', Hugging Face's, and any a provider app declares, each
+  Gemini CLI's, the GitHub and GitLab CLIs', Hugging Face's, and any an agent or provider app
+  declares from its vendor's documentation, each
   found where its tool looks for it (a folder `CODEX_HOME`, `GH_CONFIG_DIR` or the tool's other
   variable moved included). The path is read the way the shell would find it: from the folder the
   command runs in and from every folder a `cd` in it moves to, through a link, a glob or a brace
@@ -760,6 +761,9 @@ Before the agent's shell runs a command, PersonalClaw reads it and refuses it
   (`ls ~/.aws`, `find ~/.ssh`, a `cd` into it), or a glob the shell expands to the folder or into
   it (`ls ~/.a*`, `ls ~/.ssh/*`). A folder that only shares a name with one (`~/src/ssh-helper`)
   is not one.
+- **asks a signed-in tool to print its credential**: token-printing auth commands from the GitHub,
+  GitLab, Google Cloud, AWS, Azure and macOS credential CLIs are refused. Their ordinary status,
+  identity and account-listing commands still run.
 
 The agent's file tools and the dashboard refuse all of these files. The shell's screen is defence in
 depth, not a fence:
@@ -768,6 +772,9 @@ depth, not a fence:
   your home, not the file in it.
 - **A path built while the command runs is not seen.** A variable the command sets, a command
   substitution, or strings a script joins as it runs never spell the file in the text.
+- **A credential-printing command the baseline does not name is not inferred from its output.**
+  The screen refuses known command forms before they run; it does not run an unknown command and
+  decide afterward whether its output was a credential.
 - **The OS sandbox hides the credential store at its `cc` and `strict` levels only.** The native
   agent's shell runs at the standard level, which hides no single file, and where the operating
   system offers no sandbox none runs. An agent CLI's own sign-in stays readable inside its sandbox,

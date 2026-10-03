@@ -8,6 +8,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+- **The agent shell refuses commands that print live sign-in credentials, and agent apps can protect their documented sign-in stores (`kiro-cli-agent` uses it).**
+
 ### Added
 
 - **When an agent needs your decision to go on, it asks you a question with options and waits: the question shows as a card in its chat, where you choose, write your own answer or skip it, and as a Needs you item in the Inbox and Mission Control's Your turn. PersonalClaw's own agent asks with its new `ask_user` tool, and Claude Code asks its own questions there too; your Stop withdraws a question still waiting.**

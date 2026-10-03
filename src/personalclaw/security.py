@@ -250,6 +250,15 @@ def credential_store_paths() -> list[str]:
 #: ``auth.json`` or ``hosts.yml`` does not: those are refused only where their tool keeps them
 #: (:func:`_sign_in_files`).
 SIGN_IN_FILE_BASENAMES: frozenset[str] = frozenset({".credentials.json", "oauth_creds.json"})
+_DECLARED_AGENT_SIGN_IN_FILES: dict[str, tuple[str, ...]] = {}
+
+
+def register_agent_sign_in_files(agent: str, paths: tuple[str, ...]) -> None:
+    _DECLARED_AGENT_SIGN_IN_FILES[agent] = paths
+
+
+def unregister_agent_sign_in_files(agent: str) -> None:
+    _DECLARED_AGENT_SIGN_IN_FILES.pop(agent, None)
 
 
 def _sign_in_files(home: str) -> list[str]:
@@ -303,6 +312,11 @@ def _sign_in_files(home: str) -> list[str]:
     for folder in folders(os.path.join(home, ".cache", "huggingface"), str(huggingface_home())):
         files.extend((os.path.join(folder, "token"), os.path.join(folder, "stored_tokens")))
     files.extend(folders(moved("HF_TOKEN_PATH")))
+    for declared_paths in _DECLARED_AGENT_SIGN_IN_FILES.values():
+        for declared in declared_paths:
+            path = os.path.expanduser(os.path.expandvars(declared))
+            if "$" not in path:
+                files.append(path)
     for source in registered_sources():
         for declared in source.credential_files:
             path = os.path.expanduser(os.path.expandvars(declared))
