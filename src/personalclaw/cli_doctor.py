@@ -568,6 +568,32 @@ def _doctor_external_vector_store() -> list[str]:
     return []
 
 
+def _doctor_backups() -> None:
+    """Print whether the scheduled snapshot and export are working, in the Doctor's words.
+
+    The Doctor's own check (``durability.backups``), not a second reading: this and the Doctor page
+    say one failure one way, with what a restore can still bring back. It reads this home's backup
+    record, which the running gateway writes, so no gateway has to be asked. Not appended to
+    ``issues``: like a failed check under Maintenance, a failing backup is reported here, and the
+    setup check that follows still runs.
+    """
+    print("\nBackups")
+    try:
+        import asyncio
+
+        from personalclaw.resilience.doctor import DoctorContext, _probe_backups
+
+        res = asyncio.run(_probe_backups(DoctorContext()))
+    except Exception as exc:
+        print(f"  backups:     ⚠️  could not read ({str(exc)[:120]})")
+        return
+    print(f"  backups:     {'✅' if res.ok else '❌'} {res.detail}")
+    if res.remedy:
+        # The remedy names its own next step ("No automatic fix — …"), on the continuation line
+        # Maintenance prints a failed check's remedy on.
+        print(f"               {res.remedy}")
+
+
 def _doctor_maintenance(gateway: _GatewayReading) -> None:
     """Print the remediation engine's health score and the deficits behind it.
 
@@ -1108,6 +1134,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         print("  embeddings:  ⏹ disabled (pick an embedding model in Settings → Models)")
     issues.extend(_doctor_external_vector_store())
 
+    _doctor_backups()
     _doctor_maintenance(gateway)
 
     # ── Speech-to-Text ──

@@ -88,8 +88,11 @@ function stubPanel(conflicts: () => Promise<DurabilityConflicts>) {
   vi.spyOn(api, 'personalclawConfig').mockResolvedValue({ durability: { auto_backup: true, sync_enabled: true, sync_transport: 'git-sync' } })
   vi.spyOn(api, 'durabilityStatus').mockResolvedValue({
     enabled: true,
-    export: { last_run: 0, due_in_secs: 0, due: false },
-    snapshot: { last_run: 0, due_in_secs: 0, due: false, detail: '' },
+    export: { last_run: 0, due_in_secs: 0, due: false, ok: null, last_success: 0, problem: null },
+    snapshot: {
+      last_run: 0, due_in_secs: 0, due: false, ok: null, last_success: 0, problem: null,
+      detail: '', folder: '/tmp/snapshots', newest: null,
+    },
     drill: { last_run: 0, due_in_secs: 0, due: false },
     sync: {
       last_run: 0, due_in_secs: 0, due: false, enabled: true, transport: 'git-sync', encrypt: 'auto', encrypted: false,

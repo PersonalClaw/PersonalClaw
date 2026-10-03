@@ -6,6 +6,8 @@ import {
   api,
   type DurabilityArchive,
   type DurabilityArchives,
+  type DurabilityExportJob,
+  type DurabilitySnapshotJob,
   type DurabilityStatus,
   type DurabilitySyncStatus,
   type SettingsProvider,
@@ -21,6 +23,10 @@ import {
 //    since a passphrase is what it needs — take one right there, before the first run as well as after.
 //  • After "Run now › Export" or "Snapshot" succeeded, the page kept the old "Last run" and the old
 //    archive list until a reload: the run's answer was a toast, and nothing re-read the status.
+//  • A snapshot that failed every night read "Last run 2 days ago", the success before it: a failed
+//    run stamped nothing, and the stamp was all the line read. A failed export the same. Each line
+//    must say the run FAILED, why, and what is still good beside it: when the job last worked, and
+//    for a snapshot which one a restore can still bring back.
 
 const NOW = () => Math.floor(Date.now() / 1000)
 const CREDENTIAL = 'PERSONALCLAW_SYNC_PASSPHRASE'
@@ -37,11 +43,23 @@ function sync(over: Partial<DurabilitySyncStatus> = {}): DurabilitySyncStatus {
   }
 }
 
+function exportJob(over: Partial<DurabilityExportJob> = {}): DurabilityExportJob {
+  return { last_run: 0, due_in_secs: 0, due: false, ok: null, last_success: 0, problem: null, ...over }
+}
+
+function snapshotJob(over: Partial<DurabilitySnapshotJob> = {}): DurabilitySnapshotJob {
+  return {
+    last_run: 0, due_in_secs: 0, due: false, ok: null, last_success: 0, problem: null,
+    detail: '', folder: '/tmp/snapshots', newest: null,
+    ...over,
+  }
+}
+
 function status(over: Partial<DurabilityStatus> = {}): DurabilityStatus {
   return {
     enabled: true,
-    export: { last_run: 0, due_in_secs: 0, due: false },
-    snapshot: { last_run: 0, due_in_secs: 0, due: false, detail: '' },
+    export: exportJob(),
+    snapshot: snapshotJob(),
     drill: { last_run: 0, due_in_secs: 0, due: false },
     sync: sync(),
     ...over,
@@ -94,6 +112,7 @@ function jobLine(label: string): string {
 
 beforeEach(() => {
   invalidateKeys('settings:durability')
+  invalidateKeys('settings:durability-card')
   invalidateKeys('settings:history')
   invalidateKeys('settings:history:config:all')
 })
@@ -102,8 +121,8 @@ afterEach(() => { vi.restoreAllMocks() })
 
 describe('Run now shows the run it just did', () => {
   it('re-reads the status after an export, so "Last run" is the run just made', async () => {
-    const before = status({ export: { last_run: NOW() - 22 * 60, due_in_secs: 2280, due: false } })
-    const after = status({ export: { last_run: NOW(), due_in_secs: 3600, due: false } })
+    const before = status({ export: exportJob({ last_run: NOW() - 22 * 60, due_in_secs: 2280, ok: true }) })
+    const after = status({ export: exportJob({ last_run: NOW(), due_in_secs: 3600, ok: true }) })
     const { statusCall } = stubPanel([before, after])
     vi.spyOn(api, 'durabilityRun').mockResolvedValue({ job: 'export', ok: true, skipped: '', detail: 'exported', duration_secs: 1 })
 
@@ -143,8 +162,8 @@ describe('a snapshot says what it removed, and the drill line follows the file i
 
   it('keeps the run’s report under the snapshot’s last run, as well as in the toast', async () => {
     const report = `Created ${newer} (558.0 MB). Removed ${older}, replaced by a newer snapshot from the same day.`
-    const before = status({ snapshot: { last_run: NOW() - 16 * 3600, due_in_secs: 0, due: false, detail: '' } })
-    const after = status({ snapshot: { last_run: NOW(), due_in_secs: 86400, due: false, detail: report } })
+    const before = status({ snapshot: snapshotJob({ last_run: NOW() - 16 * 3600, ok: true }) })
+    const after = status({ snapshot: snapshotJob({ last_run: NOW(), due_in_secs: 86400, ok: true, detail: report }) })
     stubPanel([before, after])
     vi.spyOn(api, 'durabilityRun').mockResolvedValue({ job: 'snapshot', ok: true, skipped: '', detail: report, duration_secs: 40 })
     const toasts: string[] = []
@@ -206,6 +225,148 @@ describe('a snapshot says what it removed, and the drill line follows the file i
     expect(within(row).getByText('verified')).toBeTruthy()
     const other = screen.getByText(newer).closest('li') as HTMLElement
     expect(within(other).queryByText(/Kept beyond the settings above/)).toBeNull()
+  })
+})
+
+/** A snapshot into a folder this account may not write to, failing for an hour. */
+const unwritable = {
+  code: 'unwritable',
+  message: 'The snapshot was not taken: PersonalClaw may not write to /Volumes/Backup/pc (permission denied).',
+  remedy: 'Make that folder writable for the account PersonalClaw runs as, or choose another with personalclaw config set snapshot_dir <folder>.',
+  since: NOW() - 3600, failures: 13,
+}
+
+describe('a failed export or snapshot reads as failed, beside what is still good', () => {
+  const newest = 'personalclaw-snapshot-20261001T030000Z.tar.gz'
+
+  it('says the snapshot failed and why, when one last worked, and what a restore can bring back', async () => {
+    stubPanel([status({
+      snapshot: snapshotJob({
+        last_run: NOW() - 120, ok: false, due: true, last_success: NOW() - 2 * 86400,
+        detail: `Created ${newest} (12 MB). No snapshot was removed.`,
+        problem: unwritable, newest: { name: newest, taken_at: NOW() - 2 * 86400 },
+      }),
+    })])
+
+    render(<DurabilityPanel />)
+
+    await waitFor(() => expect(jobLine('Nightly snapshot')).toMatch(/failed 2 min ago · 13 runs in a row$/))
+    expect(screen.getByText(unwritable.message)).toBeTruthy()
+    expect(screen.getByText(unwritable.remedy)).toBeTruthy()
+    expect(screen.getByText('The last snapshot that worked was 2 days ago.')).toBeTruthy()
+    expect(screen.getByText(`A restore can still bring back ${newest}, taken 2 days ago.`)).toBeTruthy()
+  })
+
+  it('says when nothing has worked and there is nothing to restore', async () => {
+    stubPanel([status({
+      snapshot: snapshotJob({
+        last_run: NOW() - 30, ok: false, due: true, folder: '/Volumes/Backup/pc',
+        problem: { ...unwritable, code: 'disk_full', failures: 1,
+          message: 'The snapshot was not taken: the disk that holds /Volumes/Backup/pc is full.',
+          remedy: 'Free some space on that disk.' },
+      }),
+    })])
+
+    render(<DurabilityPanel />)
+
+    await waitFor(() => expect(jobLine('Nightly snapshot')).toMatch(/failed just now$/))
+    expect(screen.getByText('No snapshot has worked yet.')).toBeTruthy()
+    expect(screen.getByText('There is no snapshot in /Volumes/Backup/pc to restore from.')).toBeTruthy()
+  })
+
+  it('says the export failed and when it last worked', async () => {
+    stubPanel([status({
+      export: exportJob({
+        last_run: NOW() - 300, ok: false, due: true, last_success: NOW() - 5 * 3600,
+        problem: {
+          code: 'disk_full', since: NOW() - 300, failures: 1,
+          message: 'The export was not written: the disk that holds /home/user/.personalclaw/shards is full.',
+          remedy: 'Free some space on that disk.',
+        },
+      }),
+    })])
+
+    render(<DurabilityPanel />)
+
+    await waitFor(() => expect(jobLine('Incremental export')).toMatch(/failed 5 min ago$/))
+    expect(screen.getByText(/the disk that holds \/home\/user\/\.personalclaw\/shards is full/)).toBeTruthy()
+    expect(screen.getByText('The last export that worked was 5 hours ago.')).toBeTruthy()
+  })
+
+  it('keeps a snapshot that works as it was: when, and its report', async () => {
+    const report = `Created ${newest} (12 MB). No snapshot was removed.`
+    stubPanel([status({
+      snapshot: snapshotJob({
+        last_run: NOW() - 3 * 3600, ok: true, last_success: NOW() - 3 * 3600, detail: report,
+        newest: { name: newest, taken_at: NOW() - 3 * 3600 },
+      }),
+    })])
+
+    render(<DurabilityPanel />)
+
+    await waitFor(() => expect(jobLine('Nightly snapshot')).toMatch(/3 hours ago$/))
+    expect(screen.getByText(report)).toBeTruthy()
+    expect(screen.queryByText(/failed/)).toBeNull()
+    expect(screen.queryByText(/A restore can still bring back/)).toBeNull()
+  })
+
+  it('shows a Run now snapshot that failed as failed once it returns', async () => {
+    const before = status({ snapshot: snapshotJob({ last_run: NOW() - 3600, ok: true, last_success: NOW() - 3600 }) })
+    const after = status({
+      snapshot: snapshotJob({
+        last_run: NOW(), ok: false, due: true, last_success: NOW() - 3600,
+        problem: { ...unwritable, failures: 1 },
+      }),
+    })
+    stubPanel([before, after])
+    vi.spyOn(api, 'durabilityRun').mockResolvedValue({
+      job: 'nightly_snapshot', ok: false, skipped: '', detail: unwritable.message, duration_secs: 1,
+    })
+    const toasts: { message: string; kind?: string }[] = []
+    const onToast = (e: Event) => toasts.push((e as CustomEvent<{ message: string; kind?: string }>).detail)
+    window.addEventListener('ne:toast', onToast)
+    try {
+      render(<DurabilityPanel />)
+      await waitFor(() => expect(jobLine('Nightly snapshot')).toMatch(/1 hour ago$/))
+
+      fireEvent.click(screen.getByRole('button', { name: /^snapshot$/i }))
+
+      await waitFor(() => expect(jobLine('Nightly snapshot')).toMatch(/failed just now$/))
+      expect(toasts.map((t) => t.message)).toContain(unwritable.message)
+      expect(screen.getByText('The last snapshot that worked was 1 hour ago.')).toBeTruthy()
+    } finally {
+      window.removeEventListener('ne:toast', onToast)
+    }
+  })
+})
+
+describe('the Backups tile on the Settings landing says a backup is failing', () => {
+  async function mountTile() {
+    const { SETTINGS_WIDGETS } = await import('./settingsWidgets')
+    const tile = SETTINGS_WIDGETS.find((w) => w.id === 'durability')
+    if (!tile) throw new Error('the Backups tile is gone')
+    function Host() { return <>{tile!.render('', () => {})}</> }
+    render(<Host />)
+  }
+
+  it('names the failing job instead of "Nightly + hourly, automatic"', async () => {
+    stubPanel([status({
+      snapshot: snapshotJob({ last_run: NOW() - 60, ok: false, due: true, problem: unwritable }),
+    })], [archives([archive('personalclaw-snapshot-20261001T030000Z.tar.gz')])])
+
+    await mountTile()
+
+    expect(await screen.findByText('The last snapshot failed')).toBeTruthy()
+    expect(screen.queryByText('Nightly + hourly, automatic')).toBeNull()
+  })
+
+  it('says the schedule when every backup works', async () => {
+    stubPanel([status()], [archives([archive('personalclaw-snapshot-20261001T030000Z.tar.gz')])])
+
+    await mountTile()
+
+    expect(await screen.findByText('Nightly + hourly, automatic')).toBeTruthy()
+    expect(screen.queryByText(/failed/)).toBeNull()
   })
 })
 

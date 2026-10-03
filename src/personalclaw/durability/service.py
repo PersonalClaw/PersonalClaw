@@ -20,13 +20,18 @@ So the schedule is boring and automatic:
 Everything here is defensive on purpose. A snapshot service that can crash a gateway,
 block a request, or double-run concurrently is worse than no service, so every job is
 budgeted, single-flighted across processes, and swallows its own failures into an
-audited report.
+audited report. Swallowed is not silent: every run that happened is recorded with what it
+did (:func:`record_job`), a failed one in plain words beside the last one that worked, and
+the owner is told once when a job starts failing and once when it works again.
 """
 
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
+import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,6 +123,15 @@ def load_state() -> dict:
     # so retention holds that snapshot from the first run after an update, not the next drill.
     if "last_verified_archive" not in state and state.get("last_drill_ok") is True:
         state.update(_verified_fields(state.get("last_drill_archive"), state))
+    # The backfill for a run recorded before each run kept an outcome of its own: the schedule
+    # stamp was written only by a run that worked, so it IS the last run known to have worked.
+    # Idempotent, and the next run writes what it did.
+    for job in ("export", "snapshot"):
+        stamp = state.get(_STAMP_KEYS[job])
+        if stamp and f"last_{job}_run" not in state:
+            state.update(
+                {f"last_{job}_run": stamp, f"last_{job}_ok": True, f"last_{job}_success": stamp}
+            )
     return state
 
 
@@ -132,7 +146,7 @@ def save_state(state: dict) -> None:
         logger.debug("durability: could not persist service state", exc_info=True)
 
 
-def job_stamp_fields(job: str, result: JobResult, *, at: float) -> dict:
+def job_stamp_fields(job: str, result: JobResult, *, at: float, previous: dict) -> dict:
     """The `durability_state.json` fields ONE finished job contributes — or `{}`.
 
     🔴 THE STAMP RULE LIVES HERE, ONCE, because there are two callers and they disagreed:
@@ -142,10 +156,21 @@ def job_stamp_fields(job: str, result: JobResult, *, at: float) -> dict:
     stale, and `_due()` reads the same stamp, so the scheduler redid the job on the next
     tick (#361). One rule table, so a third caller cannot invent a fourth behaviour.
 
+    A job keeps two records, and reading one as the other is how a failed snapshot read as the
+    success before it: the SCHEDULE stamp `_due()` measures, and what a run DID
+    (:func:`_outcome_fields` — when, whether it worked, why not, and for how long), for the three
+    jobs the Backups page shows a run of: the export, the snapshot and sync. The outcome is read
+    against *previous*, because a failure extends a streak.
+
     The rules are NOT uniform and the difference is deliberate:
 
-    * `export`/`snapshot` stamp only on a real success — a failed export must stay due
-      and be retried on the next tick, which is the whole point of an hourly cadence.
+    * `export`/`snapshot` stamp the schedule only on a real success — a failed one must stay due
+      and be retried on the next tick, which is the whole point of an hourly cadence. Their
+      outcome is written on every run that happened, a failure included, so "Last run" is the
+      run that happened and the last one that worked stays beside it.
+    * an export that ran and left a file out keeps its schedule all the same: another try in five
+      minutes cannot carry a file that is still unreadable, and the store it is in stays changed
+      (`shards.Changes.except_for`), so the next hourly export reads it again.
     * `drill` stamps on ANY non-skip, failure included: a failing drill must not retry
       every tick and bury the user in notifications. The warning is already delivered,
       so the VERDICT is stamped with it (§6's "validate status") and the archive browser
@@ -154,10 +179,25 @@ def job_stamp_fields(job: str, result: JobResult, *, at: float) -> dict:
       failing drill cannot erase it: retention holds that snapshot until a newer one passes.
     * `snapshot` keeps its report too, which names what the run removed and kept and why, so a
       nightly pass is as visible on the Backups page as one run from Run now.
+    * `sync` stamps its schedule on EVERY attempt, a skip and a failure included, so an erroring
+      or unconfigured sync is held to the staleness window instead of reaching for the remote
+      every tick. A skip records its reason and leaves the last outcome as it was.
 
-    A skip always returns `{}` — "another run already holds the lock" is not a run, and
+    A skip of any other job returns `{}` — "another run already holds the lock" is not a run, and
     stamping it would let a collision satisfy the schedule.
     """
+    if job == "sync":
+        fields: dict = {"last_sync": at, "last_sync_skipped": result.skipped}
+        if result.skipped:
+            return fields
+        fields.update(_outcome_fields(job, result, at=at, previous=previous))
+        if result.ok:
+            # Why the run could not remove the copies a newer one replaced: they stay, and the
+            # Backups card says so rather than that the store keeps only the newest.
+            fields["sync_removal_failed"] = str(
+                (result.extra or {}).get("removal_failed", "") or ""
+            )
+        return fields
     if result.skipped:
         return {}
     if job == "drill":
@@ -173,11 +213,52 @@ def job_stamp_fields(job: str, result: JobResult, *, at: float) -> dict:
             fields.update(_verified_fields(fields["last_drill_archive"], fields))
         return fields
     key = _STAMP_KEYS.get(job, "")
-    if not key or not result.ok:
+    if not key:
         return {}
-    if job == "snapshot":
-        return {key: at, "last_snapshot_detail": result.detail}
-    return {key: at}
+    if job == "history":
+        return {key: at} if result.ok else {}
+    fields = {}
+    if result.ok or (result.extra or {}).get("failure") == "left_out":
+        fields[key] = at
+    if result.ok and job == "snapshot":
+        fields["last_snapshot_detail"] = result.detail
+    fields.update(_outcome_fields(job, result, at=at, previous=previous))
+    return fields
+
+
+def _outcome_fields(job: str, result: JobResult, *, at: float, previous: dict) -> dict:
+    """What one run of *job* did: when, whether it worked, and, when it did not, the failure's code,
+    the system's or the transport's own words, the folder it was writing to, and how long the
+    streak has lasted (read against *previous*). Written only by a run that happened."""
+    fields: dict = {f"last_{job}_run": at, f"last_{job}_ok": bool(result.ok)}
+    if result.ok:
+        fields.update(
+            {
+                f"last_{job}_success": at,
+                f"{job}_failure": "",
+                f"{job}_failure_reason": "",
+                f"{job}_failure_folder": "",
+                f"{job}_failing_since": 0.0,
+                f"{job}_failures": 0,
+            }
+        )
+        return fields
+    extra = result.extra or {}
+    streak = previous.get(f"last_{job}_ok") is False
+    fields.update(
+        {
+            # The code and the system's own words, not a finished sentence: `PROBLEMS` stays the
+            # one source of the wording, including for a record written before it changed.
+            f"{job}_failure": str(extra.get("failure", "") or "error"),
+            f"{job}_failure_reason": str(extra.get("reason", "") or result.detail),
+            f"{job}_failure_folder": str(extra.get("folder", "") or ""),
+            f"{job}_failing_since": (
+                float(previous.get(f"{job}_failing_since", 0) or 0) if streak else at
+            ),
+            f"{job}_failures": (int(previous.get(f"{job}_failures", 0) or 0) if streak else 0) + 1,
+        }
+    )
+    return fields
 
 
 def _verified_fields(archive: object, drill: dict) -> dict:
@@ -190,14 +271,29 @@ def _verified_fields(archive: object, drill: dict) -> dict:
     }
 
 
-def persist_job_result(job: str, result: JobResult, *, at: float | None = None) -> None:
-    """Record one job outcome for callers that do not own a `save_state` of their own."""
-    fields = job_stamp_fields(job, result, at=at if at is not None else time.time())
-    if not fields:
-        return
-    state = load_state()
+def record_job(state: dict, job: str, result: JobResult, *, at: float, notifier=None) -> dict:
+    """Record one finished run of *job* in *state*, and raise the note it is news for.
+
+    🔴 THE ONE PATH EVERY JOB'S OUTCOME TAKES, the tick's and Run now's alike, the four jobs the
+    owner is told about (the export, the snapshot, the drill and sync) included: the stamp rule
+    (:func:`job_stamp_fields`) and the note rule (:func:`_note`) are each defined once, so the
+    schedule and the button cannot record or announce one run two ways. The note reads the run
+    before this one, so it is raised before the record is folded in. Returns the fields recorded.
+    """
+    fields = job_stamp_fields(job, result, at=at, previous=state)
+    _notify(job, state, fields, notifier)
     state.update(fields)
-    save_state(state)
+    return fields
+
+
+def persist_job_result(
+    job: str, result: JobResult, *, at: float | None = None, notifier=None
+) -> None:
+    """Record one job outcome for callers that do not own a `save_state` of their own."""
+    state = load_state()
+    at = at if at is not None else time.time()
+    if record_job(state, job, result, at=at, notifier=notifier):
+        save_state(state)
 
 
 def last_drill() -> dict:
@@ -263,17 +359,72 @@ def _audit(
 
 # ── the jobs ───────────────────────────────────────────────────────────────────
 
+#: What a full disk raises, and what a refused write raises.
+_DISK_FULL = frozenset({errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)})
+_REFUSED = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
+def _failure(exc: BaseException, folder: Path | None) -> dict:
+    """What *exc*, raised by a job writing into *folder*, means: the code :data:`PROBLEMS` has
+    words for, the system's own words, and the folder the sentence names.
+
+    A full disk is ``disk_full``, wherever it filled. A refusal on the job's own folder, or on one
+    it had to make on the way there, is ``unwritable``. Anything else is ``error``, quoted as it
+    was raised: a refused read of some file in the home is not a folder the owner should change.
+    """
+    where = str(folder or "")
+    if isinstance(exc, OSError) and folder is not None:
+        words = str(exc.strerror or exc)
+        reason = words[:1].lower() + words[1:]
+        if exc.errno in _DISK_FULL:
+            return {"failure": "disk_full", "reason": reason, "folder": _filled(exc, folder)}
+        if exc.errno in _REFUSED and _on_the_way(exc.filename, folder):
+            return {"failure": "unwritable", "reason": reason, "folder": where}
+    return {"failure": "error", "reason": str(exc) or type(exc).__name__, "folder": where}
+
+
+def _on_the_way(path: object, folder: Path) -> bool:
+    """Whether *path* is *folder*, a path inside it, or a folder above it that a write there
+    needs."""
+    if not isinstance(path, (str, bytes)) or not path:
+        return False
+    named = Path(os.path.realpath(os.fsdecode(path)))
+    target = Path(os.path.realpath(folder))
+    return named == target or named.is_relative_to(target) or target.is_relative_to(named)
+
+
+def _filled(exc: OSError, folder: Path) -> str:
+    """The folder on the disk that filled: the job's own, unless the system named a path elsewhere —
+    a snapshot copies the home into the temporary folder before it writes the archive."""
+    for name in (exc.filename2, exc.filename):
+        if isinstance(name, (str, bytes)) and name and not _on_the_way(name, folder):
+            path = Path(os.path.realpath(os.fsdecode(name)))
+            temporary = Path(os.path.realpath(tempfile.gettempdir()))
+            return str(temporary if path.is_relative_to(temporary) else path.parent)
+    return str(folder)
+
+
+def _failed(job: str, name: str, failure: dict, started: float) -> JobResult:
+    """A failed run of *job*: its answer is the sentence the Backups page keeps (Run now shows it),
+    and its record keeps the code and the words the sentence is made from."""
+    sentence, _remedy = job_problem(job, failure["failure"], failure["reason"], failure["folder"])
+    return JobResult(
+        name, ok=False, detail=sentence, duration_secs=time.monotonic() - started, extra=failure
+    )
+
 
 def run_incremental_export() -> JobResult:
     """Hourly: export only the shards whose content changed.
 
     A copy of the records to review and diff, and not a backup: a restore reads the nightly
     snapshot (``durability.shards``). It re-exports changed stores only, so a quiet hour costs
-    a fingerprint comparison.
+    a fingerprint comparison. What changed is recorded as exported only once the export of it
+    is written, so a run that fails is tried again in full rather than reading "nothing changed".
     """
     from personalclaw.concurrency import single_flight
 
     started = time.monotonic()
+    out_dir: Path | None = None
     with single_flight("durability:export") as acquired:
         if not acquired:
             return JobResult("incremental_export", skipped="another export is already running")
@@ -283,6 +434,7 @@ def run_incremental_export() -> JobResult:
                 dirty_entries,
                 export_shards,
                 left_out_sentence,
+                mark_exported,
             )
 
             home = active_home()
@@ -291,27 +443,26 @@ def run_incremental_export() -> JobResult:
             # Only the entries whose content moved — that's what makes this hourly
             # rather than nightly. A missing state file reports everything dirty,
             # which is the safe direction.
-            dirty = dirty_entries(home, state_path)
+            changes = dirty_entries(home, state_path)
             # The empty case must return EARLY: `export_shards(entries=[])` reads the
             # empty list as falsy and exports everything, turning the cheap hourly
             # job into a full re-export.
-            if not dirty:
+            if not changes.entries:
+                mark_exported(state_path, changes)
                 return JobResult(
                     "incremental_export",
                     detail="nothing changed",
                     duration_secs=time.monotonic() - started,
                     extra={"entries_exported": 0, "manifest_shards": 0},
                 )
-            result = export_shards(home, out_dir, entries=dirty)
+            result = export_shards(home, out_dir, entries=changes.entries)
+            # A store whose file the export could not carry stays changed, so every export reads
+            # it again until it can, rather than one export of another store reading as whole.
+            mark_exported(state_path, changes.except_for(result.left_out_entries))
         except Exception as exc:  # noqa: BLE001 — a failed backup must not kill the loop
             logger.warning("durability: incremental export failed", exc_info=True)
             _audit("durability_export", f"failed: {exc}", outcome="denied")
-            return JobResult(
-                "incremental_export",
-                ok=False,
-                detail=str(exc),
-                duration_secs=time.monotonic() - started,
-            )
+            return _failed("export", "incremental_export", _failure(exc, out_dir), started)
     # Report the WORK DONE (entries re-exported), not the manifest size: the manifest
     # carries every shard including the untouched ones it merges forward, so quoting
     # its length would make an idle hour look like a full backup.
@@ -319,21 +470,19 @@ def run_incremental_export() -> JobResult:
     manifest_shards = len(getattr(result, "shards", ()) or ())
     left_out = dict(getattr(result, "left_out", {}) or {})
     _audit("durability_export", f"entries={exported} manifest_shards={manifest_shards}")
-    detail = f"{exported} store(s) re-exported"
+    extra = {"entries_exported": exported, "manifest_shards": manifest_shards, "left_out": left_out}
     if left_out:
         # A file the export could not carry is said, never dropped in silence: an export that
-        # lacks it is not the backup it reads as.
-        detail += f"; {left_out_sentence(left_out)}"
+        # lacks it is not the copy it reads as.
+        failure = {"failure": "left_out", "reason": left_out_sentence(left_out), "folder": ""}
+        failed = _failed("export", "incremental_export", failure, started)
+        failed.extra.update(extra)
+        return failed
     return JobResult(
         "incremental_export",
-        ok=not left_out,
-        detail=detail,
+        detail=f"{exported} store(s) re-exported",
         duration_secs=time.monotonic() - started,
-        extra={
-            "entries_exported": exported,
-            "manifest_shards": manifest_shards,
-            "left_out": left_out,
-        },
+        extra=extra,
     )
 
 
@@ -401,6 +550,7 @@ def run_nightly_snapshot(
     from personalclaw.durability import retention
 
     started = time.monotonic()
+    out_dir = ""
     with single_flight("durability:snapshot") as acquired:
         if not acquired:
             return JobResult("nightly_snapshot", skipped="another snapshot is already running")
@@ -417,20 +567,12 @@ def run_nightly_snapshot(
         except Exception as exc:  # noqa: BLE001
             logger.warning("durability: nightly snapshot failed", exc_info=True)
             _audit("durability_snapshot", f"failed: {exc}", outcome="denied")
-            return JobResult(
-                "nightly_snapshot",
-                ok=False,
-                detail=str(exc),
-                duration_secs=time.monotonic() - started,
-            )
+            failure = _failure(exc, Path(out_dir) if out_dir else None)
+            return _failed("snapshot", "nightly_snapshot", failure, started)
         if code != 0:
             _audit("durability_snapshot", f"exit={code}", outcome="denied")
-            return JobResult(
-                "nightly_snapshot",
-                ok=False,
-                detail=f"snapshot exited {code}",
-                duration_secs=time.monotonic() - started,
-            )
+            failure = {"failure": "error", "reason": f"snapshot exited {code}", "folder": out_dir}
+            return _failed("snapshot", "nightly_snapshot", failure, started)
         taken = next(
             (s for s in retention.list_snapshots(Path(out_dir)) if s.name not in before), None
         )
@@ -502,13 +644,14 @@ def _snapshot_report(taken: Snapshot | None, plan: dict) -> str:
     return " ".join(parts)
 
 
-def run_restore_drill(*, notifier=None) -> JobResult:
+def run_restore_drill() -> JobResult:
     """Monthly: prove the newest snapshot can actually be restored.
 
     Restores into a temp directory and checks three independent things — the shard
     manifest validates, every SQLite copy passes `integrity_check`, and the archive
     actually contained something. A drill NEVER touches live state; it only ever
-    reads the archive and writes to its own temp dir.
+    reads the archive and writes to its own temp dir. Its verdict is announced where every
+    job's outcome is (:func:`record_job`).
     """
     import shutil
     import tarfile
@@ -569,7 +712,6 @@ def run_restore_drill(*, notifier=None) -> JobResult:
         else f"{newest.name}: " + "; ".join(problems[:4])
     )
     _audit("durability_drill", detail, outcome="allowed" if ok else "denied")
-    _notify_drill(ok, detail, notifier)
     return JobResult(
         "restore_drill",
         ok=ok,
@@ -579,61 +721,137 @@ def run_restore_drill(*, notifier=None) -> JobResult:
     )
 
 
-#: The Backups page's address, where every sync failure note sends the reader.
-SYNC_STATUS_URL = "#/settings/durability"
+#: The Backups page's address, where every note about a backup job sends the reader.
+BACKUPS_URL = "#/settings/durability"
 
-#: Each way a sync run fails, in the words the Backups card, the Doctor and the failure note all
-#: use, and what to do about it. One table, so the three cannot describe one failure three ways.
-#: ``{reason}`` is the transport's own error, or the refusal's sentence, where the step has one.
-SYNC_PROBLEMS: dict[str, tuple[str, str]] = {
-    "passphrase": (
-        "Nothing was synced: shards are encrypted for this transport, and no sync passphrase was "
-        "saved on this machine.",
-        "Save a sync passphrase under Settings → Backups → Sync, and use the same one on every "
-        "machine that syncs with this one.",
-    ),
-    "salt": (
-        "Nothing was synced: the shared store's encryption salt could not be read or written.",
-        "Check that this machine can write to the transport's storage; the next sync tries again.",
-    ),
-    "pull": (
-        "Nothing was synced: reading the shared store failed ({reason}).",
-        "Check the transport's settings under Settings → Providers and that its storage is "
-        "reachable; the next sync tries again.",
-    ),
-    "push": (
-        "This machine's changes were not sent: writing to the shared store failed ({reason}).",
-        "Check the transport's settings under Settings → Providers and that its storage is "
-        "writable; the next sync tries again.",
-    ),
-    "refused": (
-        "The sync ran, and {reason}.",
-        "Nothing was written for those paths. Check what the other machine is sending.",
-    ),
-    "error": (
-        "The sync stopped with an error ({reason}).",
-        "The gateway log has the details; the next sync tries again.",
-    ),
+#: Each way a job fails, in the words the Backups page, the Doctor and the failure note all use, and
+#: what to do about it. One table, so no two of them can describe one failure two ways. ``{reason}``
+#: is the transport's or the system's own words, or the refusal's sentence, where the step has one,
+#: and ``{folder}`` the folder the job was writing to.
+PROBLEMS: dict[str, dict[str, tuple[str, str]]] = {
+    "sync": {
+        "passphrase": (
+            "Nothing was synced: shards are encrypted for this transport, and no sync passphrase "
+            "was saved on this machine.",
+            "Save a sync passphrase under Settings → Backups → Sync, and use the same one on every "
+            "machine that syncs with this one.",
+        ),
+        "salt": (
+            "Nothing was synced: the shared store's encryption salt could not be read or written.",
+            "Check that this machine can write to the transport's storage; the next sync tries "
+            "again.",
+        ),
+        "pull": (
+            "Nothing was synced: reading the shared store failed ({reason}).",
+            "Check the transport's settings under Settings → Providers and that its storage is "
+            "reachable; the next sync tries again.",
+        ),
+        "push": (
+            "This machine's changes were not sent: writing to the shared store failed ({reason}).",
+            "Check the transport's settings under Settings → Providers and that its storage is "
+            "writable; the next sync tries again.",
+        ),
+        "refused": (
+            "The sync ran, and {reason}.",
+            "Nothing was written for those paths. Check what the other machine is sending.",
+        ),
+        "error": (
+            "The sync stopped with an error ({reason}).",
+            "The gateway log has the details; the next sync tries again.",
+        ),
+    },
+    "export": {
+        "unwritable": (
+            "The export was not written: PersonalClaw may not write to {folder} ({reason}).",
+            "Make that folder writable for the account PersonalClaw runs as.",
+        ),
+        "disk_full": (
+            "The export was not written: the disk that holds {folder} is full.",
+            "Free some space on that disk.",
+        ),
+        "left_out": (
+            "The export ran, but {reason}.",
+            "Mend or remove those files and the next export is whole; a snapshot holds them as "
+            "they are.",
+        ),
+        "error": (
+            "The export stopped with an error ({reason}).",
+            "The gateway log has the details.",
+        ),
+    },
+    "snapshot": {
+        "unwritable": (
+            "The snapshot was not taken: PersonalClaw may not write to {folder} ({reason}).",
+            "Make that folder writable for the account PersonalClaw runs as, or choose another "
+            "with personalclaw config set snapshot_dir <folder>.",
+        ),
+        "disk_full": (
+            "The snapshot was not taken: the disk that holds {folder} is full.",
+            "Free some space on that disk.",
+        ),
+        "error": (
+            "The snapshot was not taken: it stopped with an error ({reason}).",
+            "The gateway log has the details.",
+        ),
+    },
 }
 
-#: A transport's error is quoted, not pasted: a cap keeps one sentence one sentence.
+#: A system's or a transport's error is quoted, not pasted: a cap keeps one sentence one sentence.
 _REASON_CHARS = 240
 
 
-def sync_problem(code: str, reason: str = "") -> tuple[str, str]:
-    """The sentence and the remedy for one failure code (:data:`SYNC_PROBLEMS`).
+def job_problem(job: str, code: str, reason: str = "", folder: str = "") -> tuple[str, str]:
+    """The sentence and the remedy for one way *job* failed (:data:`PROBLEMS`).
 
-    The one place a transport's error enters words a person reads, so it is masked here: an
-    error that quotes a storage address can carry the login in it, and the card, the Doctor and
-    the note must not show it.
+    The one place a system's or a transport's error enters words a person reads, so it is masked
+    here: an error that quotes a storage address can carry the login in it, and the Backups page,
+    the Doctor and the note must not show it.
     """
+    table = PROBLEMS[job]
+    sentence, remedy = table.get(code, table["error"])
+    return (
+        sentence.format(
+            reason=_quoted(reason) or "no reason given", folder=_quoted(folder) or "its folder"
+        ),
+        remedy,
+    )
+
+
+def _quoted(text: str) -> str:
+    """*text* masked, on one line, and capped at :data:`_REASON_CHARS`."""
     from personalclaw.security import redact_or_withhold
 
-    sentence, remedy = SYNC_PROBLEMS.get(code, SYNC_PROBLEMS["error"])
-    reason = " ".join(redact_or_withhold(str(reason or "")).split())
-    if len(reason) > _REASON_CHARS:
-        reason = reason[: _REASON_CHARS - 1] + "…"
-    return sentence.format(reason=reason or "no reason given"), remedy
+    words = " ".join(redact_or_withhold(str(text or "")).split())
+    return words if len(words) <= _REASON_CHARS else words[: _REASON_CHARS - 1] + "…"
+
+
+def _snapshots_now() -> dict:
+    """The snapshot folder, and the newest snapshot in it: what a restore can bring back now.
+
+    Read from the folder, not from the last run's record: a snapshot taken from the command line
+    is one too, and a snapshot removed by hand is not.
+    """
+    from personalclaw.durability import retention
+    from personalclaw.snapshot import _default_snapshot_dir
+
+    folder = _default_snapshot_dir()
+    snapshots = retention.list_snapshots(Path(folder))
+    newest = (
+        {"name": snapshots[0].name, "taken_at": snapshots[0].taken_at.timestamp()}
+        if snapshots
+        else None
+    )
+    return {"folder": folder, "newest": newest}
+
+
+def restorable(snapshot: dict) -> str:
+    """What a restore can still bring back, from a status's ``snapshot`` entry (or
+    :func:`_snapshots_now`): in the words the failure note, the Doctor and the CLI use."""
+    newest = snapshot.get("newest") or {}
+    if newest.get("name"):
+        return f"The newest snapshot a restore can bring back is {newest['name']}."
+    folder = snapshot.get("folder") or "the snapshot folder"
+    return f"There is no snapshot in {folder} to restore from."
 
 
 def run_sync_job() -> JobResult:
@@ -723,83 +941,84 @@ def run_sync_job() -> JobResult:
     )
 
 
-def sync_stamp_fields(result: JobResult, *, at: float, previous: dict) -> dict:
-    """The `durability_state.json` fields one scheduled sync attempt contributes.
+@dataclass(frozen=True)
+class _Notes:
+    """The notes one job raises: the title of a failed run's, and the title and body of a run that
+    worked. ``every_run`` says each verdict is news, not only a failure that starts and one that
+    ends."""
 
-    Sync keeps two records, and reading one as the other is how a run that sent nothing read
-    "Last sync just now":
+    failed: str
+    working: str
+    #: The body of a note about a run that worked; ``""`` takes the run's own report.
+    working_body: str = ""
+    every_run: bool = False
 
-    * ``last_sync`` is the SCHEDULE stamp `_due()` measures. Every attempt writes it, a skip
-      and a failure included, so an erroring or unconfigured sync is held to the staleness
-      window instead of reaching for the remote every tick.
-    * ``last_sync_run`` … ``sync_failures`` are what a run DID, written only when one ran. A
-      skip records its reason and leaves the last outcome as it was.
 
-    Kept apart from :func:`job_stamp_fields` because a failure here extends a STREAK
-    (``sync_failing_since``, ``sync_failures``), so it is read against ``previous``.
+#: The four jobs the owner is told about, and the titles they are told in.
+NOTES: dict[str, _Notes] = {
+    "export": _Notes("Export failed", "Export is working again", "The last export went through."),
+    "snapshot": _Notes("Snapshot failed", "Snapshots are working again"),
+    "drill": _Notes("Backup restore drill FAILED", "Backup restore drill passed", every_run=True),
+    "sync": _Notes("Sync failed", "Sync is working again", "The last sync went through."),
+}
+
+
+def _note(job: str, previous: dict, fields: dict) -> tuple[str, str, str] | None:
+    """The note one finished run of *job* raises, as ``(kind, title, body)``, or ``None``.
+
+    A failure is a ``warning``: a backup that is not being taken is what a minimum-severity or
+    quiet-hours filter must not hide. A run that fails the way the last one did says nothing new,
+    so it raises nothing — the Backups page and the Doctor keep saying it for as long as it lasts —
+    while a NEW reason is news, and so is the first run that works again. Every drill verdict is
+    news: the drill runs once a month, and it is the proof a snapshot restores.
     """
-    fields: dict = {"last_sync": at, "last_sync_skipped": result.skipped}
-    if result.skipped:
-        return fields
-    fields.update(last_sync_run=at, last_sync_ok=bool(result.ok))
-    extra = result.extra or {}
-    if result.ok:
-        fields.update(
-            last_sync_success=at,
-            sync_failure="",
-            sync_failure_reason="",
-            sync_failing_since=0.0,
-            sync_failures=0,
-            # Why the run could not remove the copies a newer one replaced: they stay, and the
-            # Backups card says so rather than that the store keeps only the newest.
-            sync_removal_failed=str(extra.get("removal_failed", "") or ""),
-        )
-        return fields
-    streak = previous.get("last_sync_ok") is False
-    fields.update(
-        # The code and the transport's own words, not a finished sentence: `SYNC_PROBLEMS` stays
-        # the one source of the wording, including for a record written before it changed.
-        sync_failure=str(extra.get("failure", "") or "error"),
-        sync_failure_reason=str(extra.get("reason", "") or result.detail),
-        sync_failing_since=float(previous.get("sync_failing_since", 0) or 0) if streak else at,
-        sync_failures=(int(previous.get("sync_failures", 0) or 0) if streak else 0) + 1,
+    notes = NOTES.get(job)
+    ok_key = f"last_{job}_ok"
+    if notes is None or ok_key not in fields:
+        return None
+    was_failing = previous.get(ok_key) is False
+    if fields[ok_key] is False:
+        code = fields.get(f"{job}_failure", "")
+        if not notes.every_run and was_failing and previous.get(f"{job}_failure") == code:
+            return None
+        return "warning", notes.failed, _failure_body(job, fields)
+    if notes.every_run or was_failing:
+        report = str(fields.get(f"last_{job}_detail", "") or "")
+        return "info", notes.working, notes.working_body or report
+    return None
+
+
+def _failure_body(job: str, fields: dict) -> str:
+    """What a failure note says: the sentence and the remedy, and for a snapshot what a restore can
+    still bring back. The drill says its own report."""
+    if job == "drill":
+        return str(fields.get("last_drill_detail", "") or "")
+    sentence, remedy = job_problem(
+        job,
+        fields[f"{job}_failure"],
+        fields[f"{job}_failure_reason"],
+        fields[f"{job}_failure_folder"],
     )
-    return fields
+    body = f"{sentence} {remedy}"
+    return f"{body} {restorable(_snapshots_now())}" if job == "snapshot" else body
 
 
-def _notify_sync(previous: dict, fields: dict, notifier=None) -> None:
-    """Say a sync started failing, or started working again — once each, not once a run.
+def _notify(job: str, previous: dict, fields: dict, notifier=None) -> None:
+    """Deliver :func:`_note`'s note for one run, through the dashboard's notification gate.
 
-    The same delivery the restore drill uses (`DashboardState.notify`), and `warning` for the
-    same reason: a sync that sends nothing is exactly what a minimum-severity filter must not
-    hide. A run that fails the way the last one did says nothing new, so it raises nothing —
-    the Backups card and the Doctor keep saying it for as long as it lasts. A NEW reason is
-    news, and says so.
+    Delivery goes through `DashboardState.notify`, so the entity-settings gate stays the one gate;
+    with no dashboard bound (CLI use) the run is still recorded and audited — it just has nobody to
+    tell. Every note links to the Backups page.
     """
-    if notifier is None or "last_sync_ok" not in fields:
+    if notifier is None:
         return
-    was_failing = previous.get("last_sync_ok") is False
     try:
-        if fields["last_sync_ok"] is False:
-            code = fields["sync_failure"]
-            if was_failing and previous.get("sync_failure") == code:
-                return
-            sentence, remedy = sync_problem(code, fields["sync_failure_reason"])
-            notifier(
-                "warning",
-                "Sync failed",
-                f"{sentence} {remedy}",
-                meta={"statusUrl": SYNC_STATUS_URL},
-            )
-        elif was_failing:
-            notifier(
-                "info",
-                "Sync is working again",
-                "The last sync went through.",
-                meta={"statusUrl": SYNC_STATUS_URL},
-            )
+        note = _note(job, previous, fields)
+        if note is not None:
+            kind, title, body = note
+            notifier(kind, title, body, meta={"statusUrl": BACKUPS_URL})
     except Exception:  # noqa: BLE001
-        logger.debug("durability: sync notification skipped", exc_info=True)
+        logger.debug("durability: %s notification skipped", job, exc_info=True)
 
 
 def _draft_conflict_proposals(home: Path) -> None:
@@ -823,27 +1042,6 @@ def _draft_conflict_proposals(home: Path) -> None:
         logger.info("durability: conflict merge pass — %s", report.detail)
     except Exception:  # noqa: BLE001 — a draft is a suggestion; never fail the sync for it
         logger.warning("durability: conflict merge pass failed", exc_info=True)
-
-
-def _notify_drill(ok: bool, detail: str, notifier=None) -> None:
-    """Surface a drill outcome through the dashboard's notification gate.
-
-    A FAILED drill is a `warning`, not `info`: it means the backups are not
-    known-good, which is exactly what a minimum-severity or quiet-hours filter must
-    not hide. Delivery goes through `DashboardState.notify` so the entity-settings
-    gate stays the one gate; with no dashboard bound (CLI use) the drill still runs
-    and still audits — it just has nobody to tell.
-    """
-    if notifier is None:
-        return
-    try:
-        notifier(
-            "info" if ok else "warning",
-            "Backup restore drill passed" if ok else "Backup restore drill FAILED",
-            detail,
-        )
-    except Exception:  # noqa: BLE001
-        logger.debug("durability: drill notification skipped", exc_info=True)
 
 
 # ── the loop ───────────────────────────────────────────────────────────────────
@@ -1041,31 +1239,28 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
     stamp = now or time.time()
     results: list[JobResult] = []
 
-    # Every branch stamps through `job_stamp_fields` rather than assigning its own key:
-    # the rule (including "export only on success" vs "drill even on failure") is defined
-    # once there, so the tick and `POST /api/durability/run` cannot diverge (#361).
-    if force == "export" or _due(state, "last_export", HOURLY_SECS, now=stamp):
-        result = run_incremental_export()
+    def run(job: str, runner) -> None:
+        result = runner()
         results.append(result)
-        state.update(job_stamp_fields("export", result, at=stamp))
+        record_job(state, job, result, at=stamp, notifier=notifier)
+
+    # Every branch records through `record_job` rather than assigning its own key: the stamp
+    # rule (including "export only on success" vs "drill even on failure") and the note rule are
+    # defined once there, so the tick and `POST /api/durability/run` cannot diverge (#361).
+    if force == "export" or _due(state, "last_export", HOURLY_SECS, now=stamp):
+        run("export", run_incremental_export)
 
     # Time-travel's hourly memory commit. Its own cadence key so an export
     # failure never starves it and vice versa — they mitigate different losses.
     if force == "history" or _due(state, "last_history", HOURLY_SECS, now=stamp):
-        result = run_history_commit()
-        results.append(result)
-        state.update(job_stamp_fields("history", result, at=stamp))
+        run("history", run_history_commit)
 
     if force == "snapshot" or _due(state, "last_snapshot", NIGHTLY_SECS, now=stamp):
-        result = run_nightly_snapshot()
-        results.append(result)
-        state.update(job_stamp_fields("snapshot", result, at=stamp))
+        run("snapshot", run_nightly_snapshot)
 
     drills_on = _cfg().restore_drills
     if force == "drill" or (drills_on and _due(state, "last_drill", DRILL_SECS, now=stamp)):
-        result = run_restore_drill(notifier=notifier)
-        results.append(result)
-        state.update(job_stamp_fields("drill", result, at=stamp))
+        run("drill", run_restore_drill)
 
     # Sync: the staleness window is the schedule — pull+push no more often than
     # sync_stale_after_secs. `run_sync_job` is self-guarding (disabled/unconfigured →
@@ -1074,11 +1269,7 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
     if getattr(cfg, "sync_enabled", False):
         stale = float(getattr(cfg, "sync_stale_after_secs", 900) or 900)
         if force == "sync" or _due(state, "last_sync", stale, now=stamp):
-            result = run_sync_job()
-            results.append(result)
-            fields = sync_stamp_fields(result, at=stamp, previous=state)
-            _notify_sync(dict(state), fields, notifier)
-            state.update(fields)
+            run("sync", run_sync_job)
 
     if results:
         save_state(state)
@@ -1100,19 +1291,49 @@ def _resolved_encryption(cfg) -> bool:
     return encryption_enabled_for(name, str(getattr(cfg, "sync_encrypt", "auto") or "auto"))
 
 
+def _schedule(state: dict, key: str, interval: float, now: float) -> dict:
+    """When the schedule stamp *key* was last written, and whether the job is due again."""
+    last = float(state.get(key, 0) or 0)
+    return {
+        "last_run": last,
+        "due_in_secs": max(0.0, interval - (now - last)) if last else 0.0,
+        "due": _due(state, key, interval, now=now),
+    }
+
+
+def backup_status(state: dict | None = None, *, now: float | None = None) -> dict:
+    """Whether automatic backups are on, and the export's and the snapshot's last runs.
+
+    The half of :func:`status` the Doctor's backups check reads, and nothing of sync's: it asks no
+    transport and no credential store. For each job `due` runs on the schedule stamp and
+    `last_run` is the last run that HAPPENED, so a failed snapshot is never read as the success
+    before it, and a skip (another run held the lock) never reads as a run.
+    """
+    state = load_state() if state is None else state
+    now = time.time() if now is None else now
+    return {
+        "enabled": enabled(),
+        "export": {
+            **_schedule(state, "last_export", HOURLY_SECS, now),
+            **_outcome(state, "export"),
+        },
+        "snapshot": {
+            **_schedule(state, "last_snapshot", NIGHTLY_SECS, now),
+            **_outcome(state, "snapshot"),
+            # What the last snapshot that worked removed and kept: a nightly pass has no Run now
+            # answer, so this line is the only place a person sees what it deleted.
+            "detail": str(state.get("last_snapshot_detail", "") or ""),
+            # The snapshot folder and the newest snapshot in it, which a restore can bring back
+            # whatever the last run did.
+            **_snapshots_now(),
+        },
+    }
+
+
 def status() -> dict:
     """Last-run times + what's due, for the settings surface and diagnostics."""
     state = load_state()
     now = time.time()
-
-    def _entry(key: str, interval: float) -> dict:
-        last = float(state.get(key, 0) or 0)
-        return {
-            "last_run": last,
-            "due_in_secs": max(0.0, interval - (now - last)) if last else 0.0,
-            "due": _due(state, key, interval, now=now),
-        }
-
     cfg = _cfg()
     stale = float(getattr(cfg, "sync_stale_after_secs", 900) or 900)
     from personalclaw.durability.crypto import PASSPHRASE_CREDENTIAL, passphrase_stored
@@ -1122,20 +1343,14 @@ def status() -> dict:
     chosen = get_transport(str(getattr(cfg, "sync_transport", "") or ""))
 
     return {
-        "enabled": enabled(),
-        "export": _entry("last_export", HOURLY_SECS),
-        # What the last snapshot removed and kept, beside when it ran: a nightly pass has no
-        # Run now answer, so this line is the only place a person sees what it deleted.
-        "snapshot": {
-            **_entry("last_snapshot", NIGHTLY_SECS),
-            "detail": str(state.get("last_snapshot_detail", "") or ""),
-        },
-        "drill": _entry("last_drill", DRILL_SECS),
+        **backup_status(state, now=now),
+        "drill": _schedule(state, "last_drill", DRILL_SECS, now),
         "sync": {
-            # `due` runs on the schedule stamp; `last_run` is the last run that HAPPENED, so a
-            # skip (no transport installed, a held lock) never reads as a sync.
-            **_entry("last_sync", stale),
-            **_sync_outcome(state),
+            # The schedule stamp is written on a skip too; the run is the last one that happened.
+            **_schedule(state, "last_sync", stale, now),
+            **_outcome(state, "sync"),
+            "skipped": str(state.get("last_sync_skipped", "") or ""),
+            "removal_failed": str(state.get("sync_removal_failed", "") or ""),
             "enabled": bool(getattr(cfg, "sync_enabled", False)),
             "transport": getattr(cfg, "sync_transport", "") or "",
             # The RESOLVED encryption verdict, not the raw tri-state: "auto" tells a user
@@ -1154,33 +1369,37 @@ def status() -> dict:
     }
 
 
-def _sync_outcome(state: dict) -> dict:
-    """What the last sync run did, from :func:`sync_stamp_fields`' record.
+def _outcome(state: dict, job: str) -> dict:
+    """What the last run of *job* did, from :func:`_outcome_fields`' record.
 
     ``ok`` is ``None`` until a run has happened: "never ran" is neither a pass nor a failure.
-    ``problem`` carries the plain sentence and its remedy (:data:`SYNC_PROBLEMS`) and how long
-    it has lasted, so a sync that keeps failing reads as one that keeps failing.
+    ``problem`` carries the plain sentence and its remedy (:data:`PROBLEMS`) and how long it has
+    lasted, so a job that keeps failing reads as one that keeps failing; ``last_success`` is the
+    last run that worked, which stays beside a failure.
     """
-    ran = float(state.get("last_sync_run", 0) or 0)
-    failed = bool(ran) and state.get("last_sync_ok") is False
+    ran = float(state.get(f"last_{job}_run", 0) or 0)
+    failed = bool(ran) and state.get(f"last_{job}_ok") is False
     problem = None
     if failed:
-        code = str(state.get("sync_failure", "") or "error")
-        message, remedy = sync_problem(code, str(state.get("sync_failure_reason", "") or ""))
+        code = str(state.get(f"{job}_failure", "") or "error")
+        message, remedy = job_problem(
+            job,
+            code,
+            str(state.get(f"{job}_failure_reason", "") or ""),
+            str(state.get(f"{job}_failure_folder", "") or ""),
+        )
         problem = {
             "code": code,
             "message": message,
             "remedy": remedy,
-            "since": float(state.get("sync_failing_since", 0) or ran),
-            "failures": int(state.get("sync_failures", 0) or 1),
+            "since": float(state.get(f"{job}_failing_since", 0) or ran),
+            "failures": int(state.get(f"{job}_failures", 0) or 1),
         }
     return {
         "last_run": ran,
         "ok": (not failed) if ran else None,
-        "last_success": float(state.get("last_sync_success", 0) or 0),
+        "last_success": float(state.get(f"last_{job}_success", 0) or 0),
         "problem": problem,
-        "skipped": str(state.get("last_sync_skipped", "") or ""),
-        "removal_failed": str(state.get("sync_removal_failed", "") or ""),
     }
 
 

@@ -337,13 +337,13 @@ class TestIncrementalExport:
         the store being measured still has an open connection (see the class docstring)
         or change detection has genuinely broken.
         """
-        from personalclaw.durability.shards import default_shard_dir, dirty_entries
+        from personalclaw.durability.shards import default_shard_dir, dirty_entries, mark_exported
 
         self._seed_and_close()
         home = Path(service.active_home())
         state_path = default_shard_dir(home) / "export_state.json"
-        dirty_entries(home, state_path)
-        assert dirty_entries(home, state_path) == []
+        mark_exported(state_path, dirty_entries(home, state_path))
+        assert dirty_entries(home, state_path).entries == []
 
     def test_a_new_fact_is_picked_up(self):
         # Keeps the store open on purpose — it has to write. Safe here because the
@@ -519,7 +519,9 @@ class TestRestoreDrill:
         with tarfile.open(snap_dir / "personalclaw-snapshot-20260728T030000Z.tar.gz", "w:gz"):
             pass
         seen: list = []
-        service.run_restore_drill(notifier=lambda kind, title, body: seen.append(kind))
+        service.persist_job_result(
+            "drill", service.run_restore_drill(), notifier=lambda kind, *_a, **_k: seen.append(kind)
+        )
         assert seen == ["warning"]
 
     def test_a_pass_notifies_as_info(self):
@@ -531,12 +533,14 @@ class TestRestoreDrill:
         (Path(config_dir()) / "config.json").write_text(json.dumps({"agent": {}}))
         service.run_nightly_snapshot()
         seen: list = []
-        service.run_restore_drill(notifier=lambda kind, title, body: seen.append(kind))
+        service.persist_job_result(
+            "drill", service.run_restore_drill(), notifier=lambda kind, *_a, **_k: seen.append(kind)
+        )
         assert seen == ["info"]
 
     def test_no_notifier_is_fine(self):
         """CLI/headless: the drill still runs and audits, it just has nobody to tell."""
-        service.run_restore_drill(notifier=None)  # must not raise
+        service.persist_job_result("drill", service.run_restore_drill())  # must not raise
 
 
 # ── Scheduling ──

@@ -209,7 +209,7 @@ def test_a_file_the_export_cannot_carry_is_named_with_why(tmp_path, monkeypatch)
 
     job = service.run_incremental_export()
     assert not job.ok
-    assert "2 file(s) could not be exported" in job.detail
+    assert "2 files could not be exported" in job.detail
     assert "tasks/broken.json (not valid JSON)" in job.detail
 
 
@@ -222,4 +222,4 @@ def test_the_sync_report_names_a_file_it_could_not_carry(tmp_path):
     report = run_sync_cycle(SharedStore(), home, self_id="A", now="t1")
     assert report.ok, report.error
     assert report.left_out == {"tasks/broken.json": "not valid JSON"}
-    assert "1 file(s) could not be synced: tasks/broken.json (not valid JSON)" in report.detail
+    assert "1 file could not be synced: tasks/broken.json (not valid JSON)" in report.detail

@@ -376,15 +376,11 @@ export interface DurabilityJob {
   due_in_secs: number
   due: boolean
 }
-/** The snapshot job also keeps its last run's report: the archive it made, each snapshot it
- *  removed and why, and the verified one it kept. `''` before any snapshot has run. */
-export interface DurabilitySnapshotJob extends DurabilityJob {
-  detail: string
-}
-/** Why the last sync run failed, in the server's words (the same sentence the Doctor and the
+/** Why a job's last run failed, in the server's words (the same sentence the Doctor and the
  *  failure note say), what to do about it, and how long it has lasted. */
-export interface DurabilitySyncProblem {
-  /** `passphrase` · `salt` · `pull` · `push` · `refused` · `error`. */
+export interface DurabilityRunProblem {
+  /** The export and the snapshot: `unwritable` · `disk_full` · `left_out` (the export) · `error`.
+   *  Sync: `passphrase` · `salt` · `pull` · `push` · `refused` · `error`. */
   code: string
   message: string
   remedy: string
@@ -393,24 +389,39 @@ export interface DurabilitySyncProblem {
   /** Failed runs in a row. */
   failures: number
 }
+/** What the last RUN of a job did, for the jobs the Backups page shows a run of (the export, the
+ *  snapshot and sync). `last_run` is then the last run that HAPPENED, a failed one included and a
+ *  skip not, and `ok` its outcome: `null` until a run has happened. `due` still follows the
+ *  schedule: a failed export or snapshot stays due, and is tried again at the next check. */
+export interface DurabilityRunOutcome {
+  ok: boolean | null
+  /** Epoch seconds of the last run that worked; 0 = none has. It stays beside a failure. */
+  last_success: number
+  problem: DurabilityRunProblem | null
+}
+export interface DurabilityExportJob extends DurabilityJob, DurabilityRunOutcome {}
+/** The snapshot job also keeps the report of its last run that worked: the archive it made, each
+ *  snapshot it removed and why, and the verified one it kept (`''` before one has). `newest` is
+ *  the newest snapshot in `folder`, what a restore can bring back whatever the last run did;
+ *  `null` when the folder holds none. */
+export interface DurabilitySnapshotJob extends DurabilityJob, DurabilityRunOutcome {
+  detail: string
+  folder: string
+  newest: { name: string; taken_at: number } | null
+}
 /** The sync leg of the schedule. `transport` is the CONFIGURED transport's provider
  *  name — empty means none is chosen, which is why "no conflicts" on this instance means
  *  "sync never ran" rather than "sync is healthy". `encrypted` is the RESOLVED verdict for
  *  that transport, not the `encrypt` tri-state, so the panel can answer "are my bytes
  *  readable in that store?" instead of echoing "auto".
  *
- *  `last_run` is the last run that HAPPENED (a skip is not one), and `ok` its outcome: `null`
- *  until a run has happened. `due` still follows the schedule, skips included. The passphrase
- *  travels as a credential NAME and a presence flag, never a value. */
-export interface DurabilitySyncStatus extends DurabilityJob {
+ *  Its run (`DurabilityRunOutcome`) is the other jobs' shape; `due` follows the schedule, skips
+ *  included. The passphrase travels as a credential NAME and a presence flag, never a value. */
+export interface DurabilitySyncStatus extends DurabilityJob, DurabilityRunOutcome {
   enabled: boolean
   transport: string
   encrypt: 'auto' | 'on' | 'off' | string
   encrypted: boolean
-  ok: boolean | null
-  /** Epoch seconds of the last run that went through; 0 = none has. */
-  last_success: number
-  problem: DurabilitySyncProblem | null
   /** Why the latest scheduled attempt did no work; '' when it ran. */
   skipped: string
   passphrase_credential: string
@@ -426,7 +437,7 @@ export interface DurabilitySyncStatus extends DurabilityJob {
 }
 export interface DurabilityStatus {
   enabled: boolean
-  export: DurabilityJob
+  export: DurabilityExportJob
   snapshot: DurabilitySnapshotJob
   drill: DurabilityJob
   sync: DurabilitySyncStatus

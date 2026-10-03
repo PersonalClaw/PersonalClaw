@@ -1035,8 +1035,8 @@ async def start_dashboard(
 
     # Scheduled backups: nightly snapshot with tiered
     # retention, hourly incremental shard export, monthly restore drill. Started
-    # here so durability never depends on remembering to run a command; the drill
-    # reports through state.notify so a FAILED one is a warning the user sees.
+    # here so durability never depends on remembering to run a command; every job
+    # reports through state.notify, so a FAILED one is a warning the user sees.
     try:
         from personalclaw.durability.service import DurabilityService
 

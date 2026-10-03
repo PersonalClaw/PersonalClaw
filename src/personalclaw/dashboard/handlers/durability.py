@@ -150,7 +150,11 @@ def _reject_app(request: web.Request) -> web.Response | None:
 
 
 async def api_durability_status(request: web.Request) -> web.Response:
-    """GET /api/durability/status — schedule state + what's due."""
+    """GET /api/durability/status — schedule state + what's due, and what each job's last run did.
+
+    A run that failed reads as failed, in the words the Doctor and the failure note use, beside the
+    last run that worked and, for the snapshot, the newest one a restore can bring back.
+    """
     from personalclaw.durability import service
 
     status = await asyncio.get_event_loop().run_in_executor(None, service.status)
@@ -401,11 +405,12 @@ def _audit_api(request: web.Request, operation: str, outcome: str, resources: st
 
 
 async def api_durability_run(request: web.Request) -> web.Response:
-    """POST /api/durability/run {job} — run one backup job now.
+    """POST /api/durability/run {job} — run one backup job now, recorded as a scheduled run is.
 
     For "back up before I do something risky" and for verifying the schedule works
     without waiting a month for the drill. Each job is single-flighted, so a
-    concurrent scheduled run reports a skip rather than colliding.
+    concurrent scheduled run reports a skip rather than colliding. A run that fails
+    is recorded and announced the way a scheduled one is, through the same path.
     """
     from personalclaw.durability import service
 
@@ -424,18 +429,19 @@ async def api_durability_run(request: web.Request) -> web.Response:
     runners = {
         "export": service.run_incremental_export,
         "snapshot": service.run_nightly_snapshot,
-        "drill": lambda: service.run_restore_drill(notifier=notifier),
+        "drill": service.run_restore_drill,
     }
     result = await asyncio.get_event_loop().run_in_executor(None, runners[job])
-    # 🔴 EVERY job stamps, not just the drill. A hand-run job is a real run: the same
-    # `durability_state.json` key the tick writes is what "Last run of each job" reads AND
-    # what `_due()` measures, so an unstamped manual run left the panel showing the old
-    # timestamp seconds after a success and let the scheduler redo the work — a redundant
-    # full snapshot — on the next tick (#361). `job_stamp_fields` owns which jobs stamp on
-    # failure (drill, with its verdict) and which only on success (export, snapshot), and a
-    # skip never stamps, so a single-flight collision cannot satisfy the schedule.
+    # 🔴 EVERY job is recorded, not just the drill. A hand-run job is a real run: the same
+    # `durability_state.json` key the tick writes is what `_due()` measures, and what it did is
+    # what "Last run of each job" reads, so an unrecorded manual run left the panel showing the
+    # old run seconds after this one and let the scheduler redo the work — a redundant full
+    # snapshot — on the next tick (#361). `service.record_job` owns which jobs stamp their
+    # schedule on failure (drill, with its verdict) and which only on success (export,
+    # snapshot), what every run records of itself, and the note it raises; a skip never stamps,
+    # so a single-flight collision cannot satisfy the schedule.
     await asyncio.get_event_loop().run_in_executor(
-        None, lambda: service.persist_job_result(job, result)
+        None, lambda: service.persist_job_result(job, result, notifier=notifier)
     )
     _audit_api(
         request,

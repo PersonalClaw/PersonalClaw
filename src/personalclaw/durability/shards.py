@@ -169,6 +169,8 @@ class ExportResult:
     databases: list[DbCopy] = field(default_factory=list)  # sync-only whole-DB copies
     #: A store's files this export could not carry, by home-relative path, with why (:class:`Read`).
     left_out: dict[str, str] = field(default_factory=dict)
+    #: The ids of the stores those files are in.
+    left_out_entries: set[str] = field(default_factory=set)
     #: The sync-only file of what this home last agreed on with each machine (``agreements``).
     agreements: ShardFile | None = None
 
@@ -406,7 +408,8 @@ def left_out_sentence(left_out: dict[str, str], *, what: str = "exported") -> st
     first few with why."""
     shown = ", ".join(f"{path} ({why})" for path, why in sorted(left_out.items())[:3])
     more = f" and {len(left_out) - 3} more" if len(left_out) > 3 else ""
-    return f"{len(left_out)} file(s) could not be {what}: {shown}{more}"
+    count = len(left_out)
+    return f"{count} file{'s' if count != 1 else ''} could not be {what}: {shown}{more}"
 
 
 def refused_sentence(refused: dict[str, str]) -> str:
@@ -674,7 +677,7 @@ def export_shards(
                         result.databases.append(staged)
             elif entry.kind == inv.KIND_JSON_ENTITY_DIR:
                 read = read_entity_dir(entry, src)
-                result.left_out.update(read.left_out)
+                _note_left_out(result, entry, read)
                 rows = read.rows
                 if for_sync and entry.machine_local_within:
                     rows = [r for r in rows if not inv.stays_here(entry, str(r.get("id", "")))]
@@ -686,7 +689,7 @@ def export_shards(
                 result.shards.extend(_write_shard(out_dir, f"{entry.id}/entities.jsonl", rows))
             elif entry.kind == inv.KIND_JSON_FILE:
                 read = read_json_file(entry, src)
-                result.left_out.update(read.left_out)
+                _note_left_out(result, entry, read)
                 gone_rows = _tombstones(gone, _record_ids(entry, read.rows), unread(entry, read))
                 result.shards.extend(
                     _write_shard(out_dir, f"{entry.id}/value.jsonl", read.rows + gone_rows)
@@ -727,6 +730,13 @@ def export_shards(
     _drop_earlier_folder_copies(out_dir)
     _write_manifest(home, out_dir, result)
     return result
+
+
+def _note_left_out(result: ExportResult, entry: inv.StateEntry, read: Read) -> None:
+    """Add what *read* of *entry* could not carry to *result*, with the store it is in."""
+    if read.left_out:
+        result.left_out.update(read.left_out)
+        result.left_out_entries.add(entry.id)
 
 
 def _tombstones(gone: Mapping[str, Deletion], held: set[str], unknown: Unread) -> list[dict]:
@@ -1166,13 +1176,34 @@ def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> Impor
     return result
 
 
-def dirty_entries(home: Path, state_path: Path) -> list[str]:
-    """Inventory entry ids whose content changed since the last export.
+@dataclass(frozen=True)
+class Changes:
+    """What changed since the last export (:func:`dirty_entries`): the ids of the stores to export
+    again, and every store's fingerprint as it was measured, which :func:`mark_exported` records
+    once that export has been written."""
+
+    entries: list[str]
+    fingerprints: dict[str, str]
+
+    def except_for(self, entry_ids: set[str]) -> "Changes":
+        """These changes with *entry_ids* left unrecorded, so the next pass reads them as changed:
+        a store whose file the export could not carry is read again until it can."""
+        kept = {k: v for k, v in self.fingerprints.items() if k not in entry_ids}
+        return Changes(entries=self.entries, fingerprints=kept)
+
+
+def dirty_entries(home: Path, state_path: Path) -> Changes:
+    """Inventory entry ids whose content changed since the last export, and what each store was.
 
     Uses an mtime fingerprint per entry so the hourly incremental export writes
     only what moved. A missing/corrupt state file means "everything is dirty",
     which is the safe direction — a needless full export costs time, a missed one
     costs data.
+
+    🔴 It only reads. It recorded what it measured before the export ran, so an export that failed
+    part way found "nothing changed" on its next try: the stores it never wrote stayed out of the
+    export, and the run read as a success. :func:`mark_exported` records the fingerprints once the
+    export of them has been written.
     """
     try:
         previous = json.loads(state_path.read_text(encoding="utf-8"))
@@ -1191,11 +1222,19 @@ def dirty_entries(home: Path, state_path: Path) -> list[str]:
         current[entry.id] = fingerprint
         if previous.get(entry.id) != fingerprint:
             dirty.append(entry.id)
+    return Changes(entries=dirty, fingerprints=current)
+
+
+def mark_exported(state_path: Path, changes: Changes) -> None:
+    """Record *changes*' fingerprints as exported: called once the export of them is written.
+
+    The fingerprints are the ones measured BEFORE the export read the stores, so a write that lands
+    while it runs reads as a change on the next pass rather than as exported.
+    """
     try:
-        atomic_write(state_path, json.dumps(current, indent=2, sort_keys=True) + "\n")
+        atomic_write(state_path, json.dumps(changes.fingerprints, indent=2, sort_keys=True) + "\n")
     except OSError:
         logger.debug("shards: could not persist the dirty-state fingerprint", exc_info=True)
-    return dirty
 
 
 def _fold_wal(db_path: Path) -> None:
@@ -1341,9 +1380,13 @@ def backup_cmd(args) -> int:
                 print("⏭  Another shard export is already running — skipping.")
                 return 0
             entries = None
+            changes: Changes | None = None
+            state_path = home / ".shard-state.json"
             if incremental:
-                entries = dirty_entries(home, home / ".shard-state.json")
+                changes = dirty_entries(home, state_path)
+                entries = changes.entries
                 if not entries:
+                    mark_exported(state_path, changes)
                     print("✅ Nothing changed since the last export.")
                     return 0
                 print(
@@ -1357,6 +1400,8 @@ def backup_cmd(args) -> int:
                     print(f"❌ {exc}.", file=sys.stderr)
                     return 1
             result = export_shards(home, out_dir, entries=entries)
+            if changes is not None:
+                mark_exported(state_path, changes)
         print(
             f"✅ Exported {result.entries} store(s) → "
             f"{len(result.shards)} shard(s), {result.rows:,} row(s)"

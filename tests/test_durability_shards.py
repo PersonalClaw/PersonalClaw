@@ -186,10 +186,21 @@ class TestIncremental:
         home = _home(tmp_path)
         state = tmp_path / "state.json"
         first = shards.dirty_entries(home, state)
-        assert "tasks" in first  # everything is dirty on the first pass
-        assert shards.dirty_entries(home, state) == []  # nothing changed
+        assert "tasks" in first.entries  # everything is dirty on the first pass
+        shards.mark_exported(state, first)
+        assert shards.dirty_entries(home, state).entries == []  # nothing changed
         (home / "tasks" / "t-3.json").write_text('{"id": "t-3"}')
-        assert shards.dirty_entries(home, state) == ["tasks"]
+        assert shards.dirty_entries(home, state).entries == ["tasks"]
+
+    def test_what_changed_stays_changed_until_it_is_marked_exported(self, tmp_path):
+        """Measuring is not exporting: what changed is still changed on the next pass until the
+        export of it is written, so an export that failed is tried again in full."""
+        home = _home(tmp_path)
+        state = tmp_path / "state.json"
+        shards.mark_exported(state, shards.dirty_entries(home, state))
+        (home / "tasks" / "t-3.json").write_text('{"id": "t-3"}')
+        assert shards.dirty_entries(home, state).entries == ["tasks"]
+        assert shards.dirty_entries(home, state).entries == ["tasks"], "a read marks nothing"
 
     def test_incremental_export_still_validates(self, tmp_path):
         """REGRESSION: an incremental export used to rewrite the manifest with only
@@ -199,9 +210,9 @@ class TestIncremental:
         out = tmp_path / "s"
         state = tmp_path / "state.json"
         shards.export_shards(home, out)
-        shards.dirty_entries(home, state)  # prime the fingerprint
+        shards.mark_exported(state, shards.dirty_entries(home, state))  # prime the fingerprint
         (home / "tasks" / "t-9.json").write_text('{"id": "t-9"}')
-        changed = shards.dirty_entries(home, state)
+        changed = shards.dirty_entries(home, state).entries
         shards.export_shards(home, out, entries=changed)
         result = shards.validate(out)
         assert result.ok, result.problems

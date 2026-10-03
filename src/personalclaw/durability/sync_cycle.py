@@ -71,7 +71,7 @@ class SyncCycleReport:
     pushed: PushReport | None = None
     error: str = ""
     #: Which step stopped a failed cycle, as a code the service puts into words
-    #: (``service.SYNC_PROBLEMS``): ``passphrase`` (encryption is on and none is stored),
+    #: (``service.PROBLEMS``): ``passphrase`` (encryption is on and none is stored),
     #: ``salt``, ``pull`` or ``push``. Empty when the cycle did not fail.
     failure: str = ""
     skipped: str = ""

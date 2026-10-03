@@ -1288,10 +1288,10 @@ async def _probe_sync(_ctx: DoctorContext) -> ProbeResult:
     🔴 WHY THIS EXISTS. A folder sync set up with the default encryption failed every run for want
     of a passphrase, and the Doctor said nothing: the only words for it were in the gateway log. A
     sync that keeps failing is a health state, so it is a row here; the failure note is the event,
-    raised once per streak (``durability.service._notify_sync``).
+    raised once per streak (``durability.service.record_job``).
 
     Reads the one status projection the Backups card reads (``durability.service.status``), so the
-    two cannot disagree, and says the failure in the same sentence (``SYNC_PROBLEMS``). Sync off,
+    two cannot disagree, and says the failure in the same sentence (``PROBLEMS``). Sync off,
     or on with no transport chosen, is idle rather than broken. A failure FAILS this tier-3 check,
     which degrades the durability card and nothing else.
     """
@@ -1340,12 +1340,69 @@ async def _probe_sync(_ctx: DoctorContext) -> ProbeResult:
                 "passphrase is saved on this machine."
             ),
             evidence=evidence,
-            remedy=_no_automatic_fix(service.SYNC_PROBLEMS["passphrase"][1]),
+            remedy=_no_automatic_fix(service.PROBLEMS["sync"]["passphrase"][1]),
         )
     last = float(sync.get("last_run") or 0)
     if not last:
         return ProbeResult(ok=True, detail="no sync has run yet", evidence=evidence)
     return ProbeResult(ok=True, detail=f"last synced {_minutes_ago(last)}", evidence=evidence)
+
+
+async def _probe_backups(_ctx: DoctorContext) -> ProbeResult:
+    """durability — are the scheduled snapshot and export doing what the Backups page says?
+
+    🔴 WHY THIS EXISTS. A snapshot into a folder this account may not write to failed every night,
+    and the Backups page kept "Last run" at the success before it; the only words for it were a
+    gateway log line and a security log row, so a person could believe a recent backup existed. A
+    backup that keeps failing is a health state, so it is a row here; the failure note is the
+    event, raised once per streak (``durability.service.record_job``).
+
+    Reads the status projection the Backups page reads (``durability.service.backup_status``, its
+    export and snapshot half, which asks no transport and no credential store), says the failure
+    in the same sentence (``PROBLEMS``), and says what a restore can still bring back.
+    Automatic backups off is the owner's choice, not a failure. A failure FAILS this tier-3 check,
+    which degrades the durability card and nothing else.
+    """
+    from personalclaw.durability import service
+
+    try:
+        status = await asyncio.to_thread(service.backup_status)
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise
+        return ProbeResult(
+            ok=False, detail=f"backup status unreadable: {exc}", remedy=_CHECK_CRASHED_REMEDY
+        )
+    snapshot, export = status["snapshot"], status["export"]
+    evidence = {
+        "enabled": bool(status.get("enabled")),
+        "last_snapshot": snapshot.get("last_success"),
+        "last_export": export.get("last_success"),
+        "newest_snapshot": (snapshot.get("newest") or {}).get("name", ""),
+    }
+    failing = [job for job in ("snapshot", "export") if status[job].get("problem")]
+    if failing:
+        parts = []
+        for job in failing:
+            problem = status[job]["problem"]
+            failures = int(problem.get("failures", 1) or 1)
+            streak = f" The last {failures} runs all failed." if failures > 1 else ""
+            parts.append(f"{problem.get('message', '')}{streak}")
+        parts.append(service.restorable(snapshot))
+        return ProbeResult(
+            ok=False,
+            detail=" ".join(parts),
+            evidence={**evidence, "failing": failing},
+            remedy=_no_automatic_fix(str(status[failing[0]]["problem"].get("remedy", ""))),
+        )
+    if not status.get("enabled"):
+        return ProbeResult(
+            ok=True,
+            detail="automatic backups are off: a snapshot is taken only when you run one",
+            evidence=evidence,
+        )
+    last = float(snapshot.get("last_success") or 0)
+    if not last:
+        return ProbeResult(ok=True, detail="no snapshot has been taken yet", evidence=evidence)
+    return ProbeResult(ok=True, detail=f"last snapshot {_minutes_ago(last)}", evidence=evidence)
 
 
 def _no_automatic_fix(remedy: str) -> str:
@@ -2401,6 +2458,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_sync,
             "Sync is sending and receiving",
+        )
+    )
+    register_probe(
+        Probe(
+            "durability.backups",
+            "durability",
+            Tier.CAPABILITY,
+            _probe_backups,
+            "Scheduled snapshots and exports are working",
         )
     )
     register_probe(

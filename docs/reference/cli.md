@@ -238,6 +238,12 @@ Doctor starts no agent CLI unless you ask it to. For each one it reports whether
 is installed and what its last Test found (the Test on its card in Settings → Providers);
 one nobody has tested reads as installed and not started, which is not an issue.
 
+Its **Backups** row is the Doctor page's check of the scheduled backups: whether the last
+snapshot and the last export worked, a failure in the words Settings → Backups uses, how many
+runs in a row it has lasted, what to do about it, and the newest snapshot a restore can still
+bring back. It reads the backup record of this home, which the gateway writes, so it needs no
+gateway running. A failure is reported there and does not fail the setup check.
+
 With a gateway of this home running, the **Maintenance** score and deficits and each model
 provider's row under **Provider Health** are the gateway's own: the score its Doctor page shows,
 and each instance as its connection test found it (one that cannot be used says why, in its own
@@ -440,6 +446,21 @@ Security audit and deny list.
 | `personalclaw restore [SNAPSHOT] [--mode replace\|merge] [--dry-run] [--components LIST] [--list-components] [--force]` | Restore state from a snapshot `.tar.gz`, or from an export `.zip` (Settings → Import / Export), which is restored whole, so `--components` does not apply to it. With the gateway running, a merge of either kind runs, here or from the dashboard, and a replace is refused by both in the same words, naming this command. A merge brings each log's entries in where they belong in time — notifications, run history, feedback, the model-call audit and the security log — so a log's newest entries stay its newest, and its bound lets the oldest go. A merge that leaves a part unchanged (a store it could not read, a table it had to skip, or a log that kept changing while it was merged) names each one in its last line instead of `✅ Merge complete.` and exits 1, an export archive's as a snapshot's; the dashboard's merge and import name them too. An export archive's merge says what became of each store it holds: merged (the knowledge library, the vocabulary and each project's memories row by row, tags by name), copied into a home without it, or left unchanged and why (this home's settings, learning log, feedback and any other single-file store it already has stay its own). A refused replace names the running gateway's pid and port. A replace (of a snapshot or an export archive) brings each automation that runs on its own back paused, and says how many and why (`--dry-run` says how many it would): a snapshot names the PersonalClaw home that took it, and one from another home may still be running there, so resume them with **Resume all** on the Triggers page once that home is retired. Restoring this home's own snapshot at a terminal asks whether to resume them now; a snapshot that names no home is treated as another's. A merge brings automations in switched off already. `--force` replaces even while the gateway runs. It names each restored app whose engine is not installed here; Install engine, on the app's card in Settings → Providers, puts it back. `--mode replace` moves the current state into `pre-restore-<timestamp>/`, except each app's engine: an app the snapshot brings back keeps the engine it has here, since an engine is built for this machine and a snapshot never carries one, and the restore names those apps. An app the snapshot does not have is set aside in that folder with its engine, whose size the restore names, and deleting the folder reclaims it. |
 | `personalclaw backup export [OUT_DIR] [--incremental]` | Export your records as **deterministic shards** — canonical JSONL per store plus a SHA-256 manifest, byte-identical for identical state (so it diffs cleanly), in the format sync carries between machines. It is not a backup: it holds no folder of files (skills, scripts, uploads, the workspace, installed apps), each database is rows, and nothing restores from it. The backup is `personalclaw snapshot`. Defaults to `<home>/shards`; `OUT_DIR` must be empty or hold an earlier export, of which only what the export wrote is replaced. It names each file it could not carry, and exits non-zero when there is one. `--incremental` re-exports only the stores whose content changed. Secrets are never exported. Every shard and the manifest are readable only by you. |
 | `personalclaw backup validate [SHARD_DIR]` | Verify an export end to end: the manifest parses, every declared shard exists, and each one's byte length, row count, and SHA-256 re-derive — plus every row re-parses. **Exits non-zero on any problem**, so it works as a cron/CI check. A snapshot is verified by the restore drill (Settings → Backups → Verify a restore). |
+
+**Scheduled backups say when they fail.** While automatic backups are on
+(`durability.auto_backup`), the gateway takes a snapshot every night, into `<home>/snapshots` or
+`snapshot_dir`, exports your records every hour into `<home>/shards`, and runs a restore drill
+once a month (`durability.restore_drills`). Each run is recorded with what it did, whether it was
+a scheduled one or Run now on Settings → Backups. When a snapshot or an export fails, for example
+because its folder may not be written or its disk is full, its line on Settings → Backups reads as
+failed, with the reason in plain words, what to do and how many runs in a row it has failed. When
+that job last worked stays beside the failure, and for the snapshot so does the newest snapshot a
+restore can still bring back. A note says so when a job starts failing, again when it fails for a
+new reason, and once when it works again. The Doctor page and `personalclaw doctor` report it for
+as long as it lasts. A scheduled snapshot or export that fails stays due, so it is tried again at
+the next check, every five minutes. An export that could not carry a file keeps its hour instead:
+it names the file, and each hourly export reads that store again until the file can be carried.
+The restore drill notes every verdict, passed or failed.
 
 ## Disk footprint
 

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { epochSeconds } from '../../lib/epoch'
 import { AlertTriangle, History, HardDriveDownload, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
@@ -11,7 +11,10 @@ import {
   type DurabilityHistoryDiffFile,
   type DurabilityHistoryEntry,
   type DurabilityHistoryPreview,
+  type DurabilityJob,
   type DurabilityRestoreResult,
+  type DurabilityRunOutcome,
+  type DurabilitySnapshotJob,
   type DurabilityStatus,
   type DurabilitySyncStatus,
   type SettingsProvider,
@@ -617,9 +620,13 @@ function ScheduleSection({ cfg, setCfg, status, onChanged }: {
                 : 'Automatic backups are off — these are the last runs from when they were on.'}
             </div>
             <div className="flex flex-col gap-1.5">
-              <JobLine label="Incremental export" when={status.export.last_run} due={status.export.due} />
-              <JobLine label="Nightly snapshot" when={status.snapshot.last_run} due={status.snapshot.due}
-                detail={status.snapshot.detail} />
+              <RunLine label="Incremental export" run={status.export}>
+                <LastGood what="export" at={status.export.last_success} />
+              </RunLine>
+              <RunLine label="Nightly snapshot" run={status.snapshot} detail={status.snapshot.detail}>
+                <LastGood what="snapshot" at={status.snapshot.last_success} />
+                <Restorable snapshot={status.snapshot} />
+              </RunLine>
               <JobLine label="Restore drill" when={status.drill.last_run} due={status.drill.due} />
             </div>
           </div>
@@ -975,12 +982,8 @@ function CopiesKept({ sync }: { sync: DurabilitySyncStatus }) {
   )
 }
 
-/** The last sync RUN — what it did, not when the schedule last looked.
- *
- *  A failed run read "Last sync just now", because the line showed the schedule's stamp and the
- *  stamp is written on a failure too. It now reads as failed, with the server's sentence for why
- *  and what to do: the same words the Doctor and the failure note use, so the three cannot
- *  disagree. A streak says how many runs it has lasted. */
+/** The last sync RUN, on the line every job with a run shares (`RunLine`), with the reason the
+ *  latest attempt did no work when it was skipped. */
 function SyncRunLine({ sync }: { sync: DurabilitySyncStatus }) {
   const problem = sync.problem
   if (!problem) {
@@ -996,19 +999,69 @@ function SyncRunLine({ sync }: { sync: DurabilitySyncStatus }) {
   // The passphrase prompt above already asks for what this failure needs; once one is saved the
   // failure is history, and the line says the next run will use it rather than repeat the remedy.
   const remedy = problem.code !== 'passphrase'
-    ? problem.remedy
+    ? undefined
     : sync.passphrase_stored ? 'A passphrase is saved now, and the next scheduled sync uses it.' : ''
+  return (
+    <RunLine label="Last sync" run={sync} remedy={remedy}>
+      <LastGood what="sync" at={sync.last_success} />
+    </RunLine>
+  )
+}
+
+/** The last RUN of a job — what it did, not when the schedule last looked.
+ *
+ *  A failed run read as the run before it. The export's and the snapshot's lines showed the
+ *  schedule's stamp, which a failed run never writes, so a snapshot that failed every night read
+ *  "2 days ago" as if one had been taken; a failed sync read "Last sync just now", because its stamp
+ *  is written on a failure too. Each reads as failed now, with the server's sentence for why and
+ *  what to do (the words the Doctor and the failure note use) and how many runs in a row it has
+ *  lasted, and `children` say what is still good beside it. */
+function RunLine({ label, run, detail = '', remedy, children }: {
+  label: string
+  run: DurabilityJob & DurabilityRunOutcome
+  /** What the last run that worked reported, under a line that did not fail. */
+  detail?: string
+  /** The remedy to say instead of the server's; `''` says none. */
+  remedy?: string
+  children?: ReactNode
+}) {
+  const problem = run.problem
+  if (!problem) return <JobLine label={label} when={run.last_run} due={run.due} detail={detail} />
+  const advice = remedy ?? problem.remedy
   return (
     <div className="flex flex-col gap-xs">
       <div data-type="body-s" className="flex items-baseline justify-between gap-m">
-        <span className="text-on-surface-var">Last sync</span>
+        <span className="text-on-surface-var">{label}</span>
         <span data-type="caption" className="shrink-0" style={{ color: 'var(--color-error)' }}>
-          failed {relativeTime(sync.last_run)}{problem.failures > 1 ? ` · ${problem.failures} runs in a row` : ''}
+          failed {relativeTime(run.last_run)}{problem.failures > 1 ? ` · ${problem.failures} runs in a row` : ''}
         </span>
       </div>
-      <p data-type="body-s" style={{ color: 'var(--color-error)' }}>{problem.message}</p>
-      {remedy && <p data-type="caption" className="text-on-surface-low">{remedy}</p>}
+      <p data-type="body-s" className="break-words" style={{ color: 'var(--color-error)' }}>{problem.message}</p>
+      {advice && <p data-type="caption" className="text-on-surface-low">{advice}</p>}
+      {children}
     </div>
+  )
+}
+
+/** When a job last worked, kept beside its failure: what the owner still has. */
+function LastGood({ what, at }: { what: string; at: number }) {
+  return (
+    <p data-type="caption" className="text-on-surface-low">
+      {at ? `The last ${what} that worked was ${relativeTime(at)}.` : `No ${what} has worked yet.`}
+    </p>
+  )
+}
+
+/** The newest snapshot in the snapshot folder: what a restore can still bring back, whatever the
+ *  last run did. Read from the folder, so one taken from the command line counts too. */
+function Restorable({ snapshot }: { snapshot: DurabilitySnapshotJob }) {
+  const newest = snapshot.newest
+  return (
+    <p data-type="caption" className="break-words text-on-surface-low">
+      {newest
+        ? `A restore can still bring back ${newest.name}, taken ${relativeTime(newest.taken_at)}.`
+        : `There is no snapshot in ${snapshot.folder} to restore from.`}
+    </p>
   )
 }
 

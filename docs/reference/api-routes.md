@@ -433,8 +433,8 @@ The 911 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/durability/history/{root}/timeline` | the timeline. |
 | `POST` | `/api/durability/history/{root}/{op}` | {sha, paths?, confirm?, expected_head?, |
 | `POST` | `/api/durability/import` | validate, then apply, an export zip (§6). |
-| `POST` | `/api/durability/run` | {job} — run one backup job now. |
-| `GET` | `/api/durability/status` | schedule state + what's due. |
+| `POST` | `/api/durability/run` | {job} — run one backup job now, recorded as a scheduled run is. |
+| `GET` | `/api/durability/status` | schedule state + what's due, and what each job's last run did. |
 | `GET` | `/api/evals/ablation` | the newest keep/remove/lighten report (ES-7 §3.1). |
 | `GET` | `/api/evals/field-metrics` | Loop-3 field metrics beside lab results (E3 / ES-9). |
 | `GET` | `/api/evals/judge-bench` | the newest tier-recommendation table. |

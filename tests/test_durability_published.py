@@ -301,13 +301,16 @@ def test_a_run_that_could_not_remove_old_copies_is_said_on_the_card(monkeypatch)
     failed = service.JobResult(
         "sync", ok=True, detail="", extra={"removal_failed": "the store refused the removal"}
     )
-    state = service.sync_stamp_fields(failed, at=100.0, previous={})
+    state = service.job_stamp_fields("sync", failed, at=100.0, previous={})
     monkeypatch.setattr(service, "_cfg", lambda: _Cfg(""))
     monkeypatch.setattr(service, "load_state", lambda: state)
     assert service.status()["sync"]["removal_failed"] == "the store refused the removal"
 
-    cleared = service.sync_stamp_fields(
-        service.JobResult("sync", ok=True, extra={"removal_failed": ""}), at=200.0, previous=state
+    cleared = service.job_stamp_fields(
+        "sync",
+        service.JobResult("sync", ok=True, extra={"removal_failed": ""}),
+        at=200.0,
+        previous=state,
     )
     assert cleared["sync_removal_failed"] == ""
 

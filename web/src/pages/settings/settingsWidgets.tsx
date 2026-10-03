@@ -1429,11 +1429,17 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: s } = useDurability()
       return `backups backup durability snapshot snapshots retention restore drill schedule automatic ${
         s ? (s.status?.enabled ? 'on enabled' : 'off disabled') : ''
-      } ${s?.snaps ? `${s.snaps.archives.length} snapshots` : ''}`
+      } ${s?.snaps ? `${s.snaps.archives.length} snapshots` : ''} ${
+        s?.status?.snapshot?.problem || s?.status?.export?.problem ? 'failed failing' : ''
+      }`
     },
     render(query, go) {
       const { data: s, stale: sStale, status: sStatus, error: sErr, refresh: sRefresh } = useDurability()
       const count = s?.snaps?.archives.length
+      // A failing backup comes first: the count of snapshots kept says nothing about whether
+      // tonight's was taken, and "Nightly + hourly, automatic" above a snapshot that fails every
+      // night is the lie the Backups page used to tell.
+      const failing = s?.status?.snapshot?.problem ? 'snapshot' : s?.status?.export?.problem ? 'export' : ''
       return (
         <BentoCard icon={HardDriveDownload} title="Backups" query={query} onClick={() => go('durability')} loading={s === undefined} stale={sStale} failed={sStatus === 'error'} error={sErr} onRetry={sRefresh}>
           {s && (count === undefined
@@ -1441,7 +1447,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             : <>
                 <BigStat value={count} caption={count === 1 ? 'snapshot kept' : 'snapshots kept'} />
                 <div data-type="caption" className="mt-1.5 text-on-surface-low">
-                  {s.status?.enabled ? 'Nightly + hourly, automatic' : 'Automatic backups are off'}
+                  {failing
+                    ? <StatusPill query={query} label={`The last ${failing} failed`} tone="warn" />
+                    : s.status?.enabled ? 'Nightly + hourly, automatic' : 'Automatic backups are off'}
                 </div>
               </>)}
         </BentoCard>
