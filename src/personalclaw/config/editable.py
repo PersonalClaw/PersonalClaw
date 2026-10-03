@@ -23,6 +23,8 @@ from personalclaw.config.edit_spec import (
     ConfigValueError,
     NotASecurityControl,
     SecurityControl,
+    counted,
+    in_dollars,
     loosens_egress,
     loosens_toward,
     loosens_when,
@@ -32,6 +34,8 @@ from personalclaw.config.edit_spec import (
     loosens_when_raised,
     loosens_when_removed,
     loosens_when_shorter,
+    named,
+    shown,
 )
 from personalclaw.config.loader import (
     APPROVAL_TIMEOUT_MINUTES_MAX,
@@ -207,6 +211,31 @@ def _scratchpad_path_sanitizer(value: str) -> str:
     return canonicalize(value.strip())
 
 
+def _transport_named(name: object) -> str:
+    """A sync transport as the Backups page names it — its app's display name, ``Folder Sync`` —
+    in the consent that sends the home through it. A name no installed transport answers to is
+    shown as it is: sync stays idle on it, and the owner should see exactly what was typed."""
+    if not isinstance(name, str) or not name.strip():
+        return "None"
+    from personalclaw.sync_transports.registry import get_transport
+
+    transport = get_transport(name)
+    return (getattr(transport, "display_name", "") or name) if transport else f"“{name}”"
+
+
+def _sync_switch(on: object) -> str:
+    """The "Sync this instance" switch as its consent shows it: turned on, it names the transport
+    the home leaves through, or says none is chosen yet — "the configured transport" named none."""
+    if on is not True:
+        return shown(on)
+    from personalclaw.config.loader import AppConfig
+
+    transport = AppConfig.load().durability.sync_transport
+    if not transport.strip():
+        return "On, with no transport chosen yet"
+    return f"On, through {_transport_named(transport)}"
+
+
 _AUTONOMY_OFFER_ONLY = (
     "decides when a promotion is OFFERED; granting one is still the owner's click on the "
     "owner-only POST /api/autonomy/grant"
@@ -244,6 +273,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             "agent no chat started (a trigger's Invoke Agent agent, a subagent started outside a "
             "chat) approve every tool call it makes, file changes and shell commands included, "
             "without asking you; chats still ask.",
+            shows=named(
+                {"interactive": "Ask each time", "trust_reads": "Trust reads", "auto": "Auto"}
+            ),
         ),
     },
     "agent.yolo": {
@@ -311,6 +343,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "security": SecurityControl(
             loosens_when_raised(unlimited=0),
             "A process the agent starts may use more memory — 0 removes the limit.",
+            shows=counted("MB"),
         ),
     },
     # Opt into the Linux-only second enforcement tier (a transient systemd user
@@ -423,6 +456,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "security": SecurityControl(
             loosens_when_raised(unlimited=0),
             "A single run may spend more tokens — 0 removes the limit.",
+            shows=counted("tokens"),
         ),
     },
     "guardrails.budgets.max_tokens_per_day": {
@@ -432,6 +466,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "security": SecurityControl(
             loosens_when_raised(unlimited=0),
             "The agent may spend more tokens per day — 0 removes the limit.",
+            shows=counted("tokens"),
         ),
     },
     "guardrails.budgets.max_dollars_per_day": {
@@ -441,6 +476,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "security": SecurityControl(
             loosens_when_raised(unlimited=0),
             "The agent may spend more money per day — 0 removes the limit.",
+            shows=in_dollars,
         ),
     },
     "guardrails.breaker.failure_threshold": {
@@ -478,6 +514,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             loosens_toward("block", "redact", "warn"),
             "Secrets or personal data found in a prompt bound for a remote model provider get "
             "less protection — 'redact' replaces them, 'warn' only logs them.",
+            shows=named({"block": "Block", "redact": "Redact", "warn": "Warn"}),
         ),
     },
     # Model routing (MODEL-ROUTING-TELEMETRY §7 wiring point (d)) — the runtime-editable
@@ -584,6 +621,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "security": SecurityControl(
             loosens_when(True),
             "Your home starts syncing off this machine through the configured transport.",
+            shows=_sync_switch,
         ),
     },
     "durability.sync_transport": {
@@ -592,6 +630,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "security": SecurityControl(
             loosens_when_changed(),
             "Sync will send your home through a different transport.",
+            shows=_transport_named,
         ),
     },
     "durability.sync_stale_after_secs": {"type": "int", "min": 30, "max": 86400},
@@ -607,6 +646,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
             loosens_toward("on", "auto", "off"),
             "Synced data may leave this machine unencrypted — 'auto' leaves a private git "
             "repository readable, and 'off' leaves every transport readable.",
+            shows=named(
+                {
+                    "on": "Always encrypt",
+                    "auto": "Automatic (per transport)",
+                    "off": "Never encrypt",
+                }
+            ),
         ),
     },
     # The runtime-editable evals subset. These are the
@@ -719,7 +765,7 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "min": 0,
         "max": 10000,
         "security": SecurityControl(
-            loosens_when_raised(unlimited=0),
+            loosens_when_raised(unlimited=0, unlimited_reads="Never"),
             "An external surface tolerates more breaches before it switches itself off — 0 "
             "means it never does.",
         ),

@@ -162,6 +162,7 @@ def test_a_loosened_posture_alone_keeps_its_own_heading(home):
 
     assert asked["title"] == "Loosen a security setting?"
     assert "approve its own tool calls" in asked["consent"]
+    assert asked["change"] == "Asks you → Approves its own calls"
 
 
 def test_a_question_with_two_halves_is_headed_with_both(home):
@@ -173,6 +174,8 @@ def test_a_question_with_two_halves_is_headed_with_both(home):
 
     assert asked["title"] == "Allow what it runs, and loosen a security setting?"
     assert "“Invoke Agent”" in asked["consent"] and "approve its own tool calls" in asked["consent"]
+    # The loosened half says what it changes, after the sentences — its own is the last of them.
+    assert asked["change"] == "Asks you → Approves its own calls"
 
 
 def test_every_caller_names_its_question():

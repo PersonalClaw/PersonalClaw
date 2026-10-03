@@ -199,7 +199,7 @@ const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surfac
  *  screen-reader user tabbing the field heard nothing about it and discovered the requirement by failing.
  *  (WCAG 3.3.2, level A: instructions are provided when content requires user input.) A VISIBLE marker is
  *  a separate, owner-facing decision; this is the invisible half, which is unambiguous. */
-export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max, autoComplete = 'off' }: {
+export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max, step, autoComplete = 'off' }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
@@ -232,6 +232,10 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   /** Native `min`/`max` — the numeric bounds, meaningful only with `type="number"`. */
   min?: number
   max?: number
+  /** Native `step`, with `type="number"`: the granularity a value must have to be valid. Unset, the
+   *  browser's is 1, so a field that takes fractions (a price, $0.075 per million tokens) marked
+   *  every fractional value invalid although it saved — `'any'` for those. */
+  step?: number | 'any'
   size?: FieldSize
   surface?: FieldSurface
   /** `password` masks a secret (API keys, tokens); `number` is the full-width numeric text field.
@@ -291,7 +295,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId}
       aria-required={required || undefined}
-      maxLength={maxLength} minLength={minLength} pattern={pattern} min={min} max={max}
+      maxLength={maxLength} minLength={minLength} pattern={pattern} min={min} max={max} step={step}
       disabled={disabled}
       title={disabled ? disabledReason || undefined : undefined}
       onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
@@ -381,7 +385,12 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
 // every migrated call-site is byte-identical.
 export function NumberField({ value, onChange, min, max, step, width = 'w-24', ariaLabel }: {
   value: number
-  onChange: (n: number) => void
+  /** Commit a parsed, clamped number. A caller whose save can be refused returns how it went —
+   *  `false`, or a promise that settles `false` or rejects, when nothing was stored — and the box
+   *  then shows `value`, the stored number, again. 🔴 It used to keep what was typed: a consent the
+   *  owner declined, or a save the gateway refused, left the box reading a number that was never
+   *  in effect, while the value it was given (what is stored) had not moved, so nothing re-synced. */
+  onChange: (n: number) => unknown
   min?: number
   max?: number
   step?: number
@@ -394,6 +403,13 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
   // Re-synced when the committed value CHANGES out from under us (external patch, clamp, another
   // editor), never on mount — see `useSyncedDraft` (the #624 rollback rail flaked ~7% on that).
   const [local, setLocal] = useSyncedDraft(String(value))
+  // A commit that was not stored: the text it sent, for the effect below to put the stored value
+  // back over — only while the box still holds that text, never over a new edit.
+  const [unstored, setUnstored] = useState<{ sent: string } | null>(null)
+  useEffect(() => {
+    if (unstored) setLocal((cur) => (cur === unstored.sent ? String(value) : cur))
+    // Read when the refusal lands, against the value as it then stands (a rollback included).
+  }, [unstored])
   // Every field carries an id: without an id or a name the browser cannot tell one field from
   // another (for autofill, or for a `<label for>`), and flags the form for it.
   const fieldId = useId()
@@ -401,8 +417,13 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
     const n = Number(local)
     if (local === '' || Number.isNaN(n)) { setLocal(String(value)); return }
     const clamped = Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n))
-    setLocal(String(clamped))
-    if (clamped !== value) onChange(clamped)
+    const sent = String(clamped)
+    setLocal(sent)
+    if (clamped === value) return
+    const putBack = () => setUnstored({ sent })
+    const outcome = onChange(clamped)
+    if (outcome === false) putBack()
+    else if (outcome instanceof Promise) outcome.then((stored) => { if (stored === false) putBack() }, putBack)
   }
   return (
     <input type="number" id={fieldId} autoComplete="off" value={local} min={min} max={max} step={step ?? 1}

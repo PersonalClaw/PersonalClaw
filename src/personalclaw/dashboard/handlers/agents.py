@@ -19,6 +19,7 @@ from personalclaw.config.edit_spec import (
     SecurityControl,
     coerce_edit_value,
     loosens_toward,
+    named,
     unconsented_loosening,
 )
 from personalclaw.config.loader import (
@@ -825,6 +826,15 @@ _AGENT_FIELD_SPECS: dict[str, dict] = {
             loosens_toward("interactive", "", "trust_reads", "auto"),
             "A looser approval mode for this agent lets its chats run tools without asking you "
             "first — 'trust_reads' for read-only tools, 'auto' for every tool.",
+            # The agent editor's names for the two it offers; the other two are set elsewhere.
+            shows=named(
+                {
+                    "": "Default (hook-based)",
+                    "auto": "Auto-approve all",
+                    "interactive": "Ask each time",
+                    "trust_reads": "Trust reads",
+                }
+            ),
         ),
     },
     "skills": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
@@ -935,10 +945,10 @@ def _unconsented_agent_loosening(
     effect before the write — the stored value, or the profile default for a new agent."""
     for key, new in staged.items():
         field = f"agents.{name}.{key}"
-        consent = unconsented_loosening(
+        loosening = unconsented_loosening(
             field, _AGENT_FIELD_SPECS[key], current=current.get(key), new=new, body=body
         )
-        if consent:
+        if loosening is not None:
             _sel().log_api_access(
                 caller="dashboard",
                 operation="agent.write",
@@ -946,7 +956,13 @@ def _unconsented_agent_loosening(
                 source="dashboard",
                 resources=f"{field}: loosening without confirm",
             )
-            return consent_required(field, consent, title=LOOSEN_TITLE)
+            return consent_required(
+                field,
+                loosening.consent,
+                title=LOOSEN_TITLE,
+                change=loosening.change,
+                caution=loosening.caution,
+            )
     return None
 
 
@@ -1217,13 +1233,13 @@ async def api_personalclaw_agents_sync(request: web.Request) -> web.Response:
 def _sync_consent(loosening: list[tuple[str, str]]) -> str:
     """The consent sentence for a sync that would add agents with a looser approval mode."""
     what = {"auto": "every tool", "trust_reads": "read-only tools"}
-    named = ", ".join(
+    agents = ", ".join(
         f"{name} ('{mode}' — {what.get(mode, 'a mode PersonalClaw does not recognise')})"
         for name, mode in loosening
     )
     return (
         f"Adding these agents from your agent files lets their chats run tools without asking you "
-        f"first: {named}."
+        f"first: {agents}."
     )
 
 

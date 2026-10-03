@@ -332,6 +332,19 @@ async def api_def_save(request: web.Request) -> web.Response:
         return await _save_def(request, body, name, root)
 
 
+def _posture_question(refusal: dict[str, Any]) -> web.Response:
+    """The consent question a posture screen's refusal (``WF_DEF_NEEDS_OWNER_YES``, or
+    ``WF_MUT_NEEDS_OWNER_YES`` for a running workflow's edit) is answered with at the owner's own
+    door: the first such step's sentence, and what the write changes it from and to."""
+    return consent_required(
+        str(refusal.get("field") or ""),
+        str(refusal.get("consent") or ""),
+        title=LOOSEN_TITLE,
+        change=str(refusal.get("change") or ""),
+        caution=str(refusal.get("caution") or ""),
+    )
+
+
 async def _save_def(
     request: web.Request, body: dict[str, Any], name: str, root: dict[str, Any]
 ) -> web.Response:
@@ -393,9 +406,9 @@ async def _save_def(
         owner_allowed=confirm_granted(body),
     )
     if result.get("code") == "WF_DEF_NEEDS_OWNER_YES":
-        field, consent = str(result.get("field") or ""), str(result.get("consent") or "")
+        field = str(result.get("field") or "")
         _audit(request, "workflow_def_save", "denied", f"{field}: loosening without confirm")
-        return consent_required(field, consent, title=LOOSEN_TITLE)
+        return _posture_question(result)
     _audit(
         request,
         "workflow_def_save",
@@ -1329,9 +1342,9 @@ async def api_run_edit(request: web.Request) -> web.Response:
         owner_allowed=confirm_granted(body),
     )
     if result.get("code") == "WF_MUT_NEEDS_OWNER_YES":
-        field, consent = str(result.get("field") or ""), str(result.get("consent") or "")
+        field = str(result.get("field") or "")
         _audit(request, "workflow_run_edit", "denied", f"{field}: loosening without confirm")
-        return consent_required(field, consent, title=LOOSEN_TITLE)
+        return _posture_question(result)
     _audit(request, "workflow_run_edit", "success" if result.get("ok") else "failure", run_id)
     return _reply(result)
 
@@ -1398,9 +1411,15 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
             body=body,
         )
         if loosened is not None:
-            field, consent = loosened
+            field, loosening = loosened
             _audit(request, "workflow_run_policy_overrides", "denied", f"{field}: without confirm")
-            return consent_required(field, consent, title=LOOSEN_TITLE)
+            return consent_required(
+                field,
+                loosening.consent,
+                title=LOOSEN_TITLE,
+                change=loosening.change,
+                caution=loosening.caution,
+            )
     result = service.set_policy_overrides(run_id, overrides)
     _audit(
         request,

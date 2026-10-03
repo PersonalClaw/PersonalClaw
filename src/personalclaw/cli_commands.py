@@ -387,7 +387,7 @@ def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
         provider=str(inline.get("provider") or ""),
     )
     if loosened is not None:
-        sentences.append(loosened[1])
+        sentences.append(loosened[1].consent)
     return sentences
 
 

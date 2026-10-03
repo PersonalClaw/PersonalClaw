@@ -54,8 +54,9 @@ second list — and two rules follow from being on it, decided here and nowhere 
   ``confirm: true``**, the JSON literal (``safety_flags.confirm_granted``). This records that
   the owner was asked, on the wire, so a UI surface added tomorrow cannot skip the question
   by not knowing the field is sensitive: it gets ``400 confirmation_required`` carrying the
-  consent sentence instead. Tightening never needs it — revoking a grant is the direction a
-  broken or confused client must always be able to take.
+  consent sentence instead, and what this write changes it from and to (:class:`LooseningAsk`).
+  Tightening never needs it — revoking a grant is the direction a broken or confused client
+  must always be able to take.
 
 :data:`SECURITY_SECTIONS` is the rail's handle: every editable field in one of those sections
 must declare ``"security"``, so a field added to ``auth``/``security``/``sandbox``/
@@ -85,12 +86,16 @@ _EGRESS_HOST_RE = re.compile(
 )
 
 __all__ = [
+    "LARGE_JUMP",
     "SECURITY_SECTIONS",
     "ConfigValueError",
+    "LooseningAsk",
     "NotASecurityControl",
     "SecurityControl",
     "app_write_refusal",
     "coerce_edit_value",
+    "counted",
+    "in_dollars",
     "loosens_egress",
     "loosens_toward",
     "loosens_when",
@@ -100,7 +105,9 @@ __all__ = [
     "loosens_when_raised",
     "loosens_when_removed",
     "loosens_when_shorter",
+    "named",
     "security_control",
+    "shown",
     "unconsented_loosening",
 ]
 
@@ -114,6 +121,69 @@ SECURITY_SECTIONS: frozenset[str] = frozenset(
 )
 
 
+#: A raise to this many times the value in effect, or more, adds one plain sentence to the consent
+#: (:attr:`LooseningAsk.caution`). An extra digit, or a select-all that missed and left the old
+#: number in front of the new one, reads in the dialog like any other raise unless it says how big
+#: it is.
+LARGE_JUMP = 10
+
+#: How many entries of a list a change line names before it counts the rest.
+_NAMED_ENTRIES = 5
+
+
+@dataclass(frozen=True)
+class LooseningAsk:
+    """A write that loosens a security setting, sent without the owner's yes: what they are asked.
+
+    ``consent`` is the field's own sentence, what the looser value does. ``change`` is what this
+    write changes, in the words the dialog shows under it: ``"$33.50 → $10,033.50"``, ``"Off →
+    On"``, ``"Adds “~/Projects”"``. The sentence alone asked the same question of a one-dollar
+    raise and of a typo three hundred times the cap. ``caution`` is one more sentence, for a raise
+    of :data:`LARGE_JUMP` times or more, and empty otherwise.
+    """
+
+    consent: str
+    change: str
+    caution: str = ""
+
+
+def shown(value: Any) -> str:
+    """How a value reads in a consent's change line when its field says nothing more about it."""
+    if isinstance(value, bool):
+        return "On" if value else "Off"
+    if _is_number(value):
+        return _number(value)
+    if isinstance(value, str):
+        # As stored, not trimmed: a denied pattern's trailing space is part of what it matches.
+        return value if value.strip() else "None"
+    return "Not set" if value is None else str(value)
+
+
+def in_dollars(value: Any) -> str:
+    """A dollar amount as the owner reads one: ``$33.50``, ``$10,033.50``."""
+    if not _is_number(value):
+        return shown(value)
+    return f"${value:,.2f}" if round(value, 2) == value else f"${value:,}"
+
+
+def counted(unit: str) -> Callable[[Any], str]:
+    """A count with its unit, as the change line shows it: ``2,000,000 tokens``, ``4,096 MB``."""
+    return lambda value: f"{_number(value)} {unit}" if _is_number(value) else shown(value)
+
+
+def named(labels: Mapping[str, str]) -> Callable[[Any], str]:
+    """A choice whose values have names in Settings: each reads as its name, and a value with none
+    (a hand edit) as itself, quoted."""
+    table = dict(labels)
+
+    def reads(value: Any) -> str:
+        if isinstance(value, str):
+            return table.get(value) or f"“{value}”"
+        return shown(value)
+
+    return reads
+
+
 @dataclass(frozen=True)
 class SecurityControl:
     """A field that is part of the owner's security posture.
@@ -125,10 +195,28 @@ class SecurityControl:
     ``consent`` is what the owner agrees to, in one sentence. It is shown in the consent dialog
     of any surface that did not ask its own question, so it must be TRUE of what the looser
     value does — product copy, not a description of the field.
+
+    ``shows`` is how one of the field's values reads in that dialog, beside the sentence, where it
+    says what this write changes it from and to (:meth:`loosening`): ``in_dollars``, ``counted(
+    "tokens")``, ``named({...})`` for a choice whose values have names in Settings, or ``None``
+    for the value as it is (:func:`shown`).
     """
 
     loosens: Callable[[Any, Any], bool]
     consent: str
+    shows: Callable[[Any], str] | None = None
+
+    def loosening(self, current: Any, new: Any) -> LooseningAsk | None:
+        """What the owner is asked when writing *new* over *current* loosens this control, or
+        ``None`` when the write does not loosen it."""
+        if not self.loosens(current, new):
+            return None
+        show = self.shows or shown
+        describe = getattr(self.loosens, "change", None)
+        if describe is None:
+            return LooseningAsk(self.consent, f"{show(current)} → {show(new)}")
+        change, caution = describe(current, new, show)
+        return LooseningAsk(self.consent, change, caution)
 
 
 #: The consent dialog's heading for a write that loosens a :class:`SecurityControl` — and only
@@ -147,50 +235,114 @@ class NotASecurityControl:
     reason: str
 
 
+# ── which way loosens, and what a loosening write changes ─────────────────────────────────────
+#
+# Each rule is an object rather than a closure so the consent can say what the write changes in the
+# rule's own terms (`change`): a ceiling compares numbers and knows its "no limit" value, a list
+# names the entries that come and go. A rule with no `change` is read as "old → new".
+
+
+@dataclass(frozen=True)
+class _Switch:
+    opens: Any
+
+    def __call__(self, current: Any, new: Any) -> bool:
+        return bool(new == self.opens and current != self.opens)
+
+
 def loosens_when(value: Any) -> Callable[[Any, Any], bool]:
     """A switch whose *value* side is the open one: writing it loosens, from anything else."""
-    return lambda current, new: new == value and current != value
+    return _Switch(value)
 
 
-def loosens_when_raised(*, unlimited: float | None = None) -> Callable[[Any, Any], bool]:
-    """A ceiling: a higher number loosens it, and so does *unlimited*, the value meaning none.
+@dataclass(frozen=True)
+class _Ceiling:
+    unlimited: float | None
+    unlimited_reads: str
+
+    def __call__(self, current: Any, new: Any) -> bool:
+        if not _is_number(current):
+            return True
+        if self.unlimited is not None:
+            if current == self.unlimited:
+                return False
+            if new == self.unlimited:
+                return True
+        return bool(new > current)
+
+    def change(self, current: Any, new: Any, show: Callable[[Any], str]) -> tuple[str, str]:
+        def reads(value: Any) -> str:
+            if self.unlimited is not None and _is_number(value) and value == self.unlimited:
+                return self.unlimited_reads
+            return show(value)
+
+        caution = ""
+        if (
+            _is_number(current)
+            and _is_number(new)
+            and current > 0
+            and new != self.unlimited
+            and new >= LARGE_JUMP * current
+        ):
+            caution = (
+                f"That is {_times(new / current)} the current limit, so check the number before "
+                "you allow it."
+            )
+        return f"{reads(current)} → {reads(new)}", caution
+
+
+def loosens_when_raised(
+    *, unlimited: float | None = None, unlimited_reads: str = "No limit"
+) -> Callable[[Any, Any], bool]:
+    """A ceiling: a higher number loosens it, and so does *unlimited*, the value meaning none —
+    which the consent's change line reads as *unlimited_reads*.
 
     From *unlimited* nothing is looser, so every write there tightens or keeps it.
     """
-
-    def loosens(current: Any, new: Any) -> bool:
-        if not _is_number(current):
-            return True
-        if unlimited is not None:
-            if current == unlimited:
-                return False
-            if new == unlimited:
-                return True
-        return new > current
-
-    return loosens
+    return _Ceiling(unlimited, unlimited_reads)
 
 
-def loosens_when_added() -> Callable[[Any, Any], bool]:
-    """An allowlist: an entry the stored list lacks is a new grant."""
-
-    def loosens(current: Any, new: Any) -> bool:
+@dataclass(frozen=True)
+class _Allowlist:
+    def __call__(self, current: Any, new: Any) -> bool:
         if not _is_str_list(current):
             return True
         return bool(set(new) - set(current))
 
-    return loosens
+    def change(self, current: Any, new: Any, show: Callable[[Any], str]) -> tuple[str, str]:
+        return _list_change(current, new, show), ""
 
 
-def loosens_when_removed() -> Callable[[Any, Any], bool]:
-    """A denylist: dropping a stored entry un-denies whatever it matched."""
+def loosens_when_added() -> Callable[[Any, Any], bool]:
+    """An allowlist: an entry the stored list lacks is a new grant."""
+    return _Allowlist()
 
-    def loosens(current: Any, new: Any) -> bool:
+
+@dataclass(frozen=True)
+class _Denylist:
+    def __call__(self, current: Any, new: Any) -> bool:
         if not _is_str_list(current):
             return True
         return bool(set(current) - set(new))
 
-    return loosens
+    def change(self, current: Any, new: Any, show: Callable[[Any], str]) -> tuple[str, str]:
+        return _list_change(current, new, show), ""
+
+
+def loosens_when_removed() -> Callable[[Any, Any], bool]:
+    """A denylist: dropping a stored entry un-denies whatever it matched."""
+    return _Denylist()
+
+
+@dataclass(frozen=True)
+class _Ordered:
+    strict_to_loose: tuple[str, ...]
+
+    def __call__(self, current: Any, new: Any) -> bool:
+        order = self.strict_to_loose
+        if current not in order or new not in order:
+            return True
+        return order.index(new) > order.index(current)
 
 
 def loosens_toward(*strict_to_loose: str) -> Callable[[Any, Any], bool]:
@@ -199,52 +351,121 @@ def loosens_toward(*strict_to_loose: str) -> Callable[[Any, Any], bool]:
     A value outside the order, on either side, counts as loosening: a free-text field (an agent
     profile's ``approval_mode``) can hold one, and its direction cannot be proven safe.
     """
-    rank = {v: i for i, v in enumerate(strict_to_loose)}
+    return _Ordered(strict_to_loose)
 
-    def loosens(current: Any, new: Any) -> bool:
-        if current not in rank or new not in rank:
+
+@dataclass(frozen=True)
+class _Duration:
+    longer_loosens: bool
+
+    def __call__(self, current: Any, new: Any) -> bool:
+        cur = _duration_minutes(current)
+        if cur is None:
             return True
-        return rank[new] > rank[current]
+        after = _duration_minutes(new)
+        return after > cur if self.longer_loosens else after < cur  # type: ignore[operator]
 
-    return loosens
+    def change(self, current: Any, new: Any, show: Callable[[Any], str]) -> tuple[str, str]:
+        return f"{_duration_reads(current, show)} → {_duration_reads(new, show)}", ""
 
 
 def loosens_when_longer() -> Callable[[Any, Any], bool]:
     """A duration (``30d``/``12h``/``15m``) where longer is looser — a session lifetime."""
-
-    def loosens(current: Any, new: Any) -> bool:
-        cur = _duration_minutes(current)
-        return cur is None or _duration_minutes(new) > cur  # type: ignore[operator]
-
-    return loosens
+    return _Duration(longer_loosens=True)
 
 
 def loosens_when_shorter() -> Callable[[Any, Any], bool]:
     """A duration where shorter is looser — a lockout that ends sooner."""
+    return _Duration(longer_loosens=False)
 
-    def loosens(current: Any, new: Any) -> bool:
-        cur = _duration_minutes(current)
-        return cur is None or _duration_minutes(new) < cur  # type: ignore[operator]
 
-    return loosens
+@dataclass(frozen=True)
+class _Destination:
+    def __call__(self, current: Any, new: Any) -> bool:
+        return bool(new != current)
 
 
 def loosens_when_changed() -> Callable[[Any, Any], bool]:
     """Any change loosens — the value is a DESTINATION, and a new one is a new recipient."""
-    return lambda current, new: new != current
+    return _Destination()
 
 
-def loosens_egress(current: Any, new: Any) -> bool:
+@dataclass(frozen=True)
+class _Egress:
     """The ``security.egress`` overrides: the guard reaches further when private addresses are
     allowed, a host joins the allow list (it becomes reachable even on a private address), or a
     host leaves the deny list (a deny wins over every allow)."""
-    if not isinstance(current, Mapping):
-        return True
-    return (
-        (bool(new["allow_private"]) and not bool(current.get("allow_private")))
-        or loosens_when_added()(current.get("allow_hosts", []), new["allow_hosts"])
-        or loosens_when_removed()(current.get("deny_hosts", []), new["deny_hosts"])
-    )
+
+    def __call__(self, current: Any, new: Any) -> bool:
+        if not isinstance(current, Mapping):
+            return True
+        return (
+            (bool(new["allow_private"]) and not bool(current.get("allow_private")))
+            or loosens_when_added()(current.get("allow_hosts", []), new["allow_hosts"])
+            or loosens_when_removed()(current.get("deny_hosts", []), new["deny_hosts"])
+        )
+
+    def change(self, current: Any, new: Any, show: Callable[[Any], str]) -> tuple[str, str]:
+        before = current if isinstance(current, Mapping) else {}
+        lines: list[str] = []
+        was, now = bool(before.get("allow_private")), bool(new["allow_private"])
+        if was != now:
+            reads = {True: "allowed", False: "blocked"}
+            lines.append(f"Private and LAN addresses: {reads[was]} → {reads[now]}")
+        for key, name in (("allow_hosts", "Allowed hosts"), ("deny_hosts", "Denied hosts")):
+            edits = _list_edits(before.get(key, []), new[key], show)
+            if edits:
+                lines.append(f"{name}: {'; '.join(edits)}")
+        return "\n".join(lines), ""
+
+
+loosens_egress = _Egress()
+
+
+def _number(value: float) -> str:
+    """``1,024``, ``0.5``, ``100,000`` — a whole float without its ``.0``."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return f"{value:,}"
+
+
+def _times(ratio: float) -> str:
+    """``10 times``, ``about 300 times``: a ratio of :data:`LARGE_JUMP` or more, as said aloud."""
+    whole = round(ratio)
+    return f"{whole:,} times" if abs(ratio - whole) < 0.05 else f"about {whole:,} times"
+
+
+def _list_edits(current: Any, new: Any, show: Callable[[Any], str]) -> list[str]:
+    """``["adds “a”, “b”", "removes “c”"]`` — what a list write puts in and takes out."""
+    before = list(current) if _is_str_list(current) else []
+    after = list(new) if _is_str_list(new) else []
+    edits: list[str] = []
+    for verb, entries in (
+        ("adds", [v for v in after if v not in before]),
+        ("removes", [v for v in before if v not in after]),
+    ):
+        if entries:
+            named_ = ", ".join(f"“{show(v)}”" for v in entries[:_NAMED_ENTRIES])
+            rest = len(entries) - _NAMED_ENTRIES
+            edits.append(f"{verb} {named_}" + (f" and {rest:,} more" if rest > 0 else ""))
+    return edits
+
+
+def _list_change(current: Any, new: Any, show: Callable[[Any], str]) -> str:
+    text = "; ".join(_list_edits(current, new, show)) or "empties the list"
+    return text[:1].upper() + text[1:]
+
+
+_DURATION_UNIT = {"m": "minute", "h": "hour", "d": "day"}
+
+
+def _duration_reads(value: Any, show: Callable[[Any], str]) -> str:
+    """``30 days``, ``1 hour``, ``15 minutes`` — a ``duration`` value as the owner reads it."""
+    if not isinstance(value, str) or not re.fullmatch(r"\d+[mhd]", value.strip()):
+        return show(value)
+    text = value.strip()
+    count = int(text[:-1])
+    return f"{count:,} {_DURATION_UNIT[text[-1]]}{'' if count == 1 else 's'}"
 
 
 def _is_number(value: Any) -> bool:
@@ -286,17 +507,17 @@ def app_write_refusal(field: str, spec: Mapping[str, Any], app: str) -> str:
 
 def unconsented_loosening(
     field: str, spec: Mapping[str, Any], *, current: Any, new: Any, body: Any
-) -> str:
-    """The consent sentence when writing *new* over *current* loosens *field* and *body* does
-    not carry ``confirm: true``; ``""`` otherwise.
+) -> LooseningAsk | None:
+    """What the owner is asked (:class:`LooseningAsk`) when writing *new* over *current* loosens
+    *field* and *body* does not carry ``confirm: true``; ``None`` otherwise.
 
     *new* is the value AFTER :func:`coerce_edit_value`, so the direction is judged on exactly
     what would be stored. *current* is the value in effect, defaults included.
     """
     control = security_control(spec)
     if control is None or confirm_granted(body):
-        return ""
-    return control.consent if control.loosens(current, new) else ""
+        return None
+    return control.loosening(current, new)
 
 
 class ConfigValueError(ValueError):

@@ -978,13 +978,20 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         # Inside the transaction, and against the value IN EFFECT (defaults included): "is this
         # looser?" is a question about what is stored at the moment of the write, and a check
         # before the lock could compare against a value a concurrent write has already replaced.
+        # The same value is what the question names as the one being changed from.
         #
         # A record that the owner was asked, not authorization — anything holding the owner's
         # session can send the flag. The authorization half is `app_write_refusal` above.
-        consent = unconsented_loosening(path_key, spec, current=current, new=value, body=body)
-        if consent:
+        loosening = unconsented_loosening(path_key, spec, current=current, new=value, body=body)
+        if loosening is not None:
             raise RefusedInConfigTransaction(
-                consent_required(path_key, consent, title=LOOSEN_TITLE),
+                consent_required(
+                    path_key,
+                    loosening.consent,
+                    title=LOOSEN_TITLE,
+                    change=loosening.change,
+                    caution=loosening.caution,
+                ),
                 audit=_audit("denied", f"{path_key}: loosening without confirm"),
             )
 

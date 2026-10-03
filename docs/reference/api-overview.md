@@ -203,7 +203,10 @@ has cost someone a debugging session.
   `{source, consent}` installs only those bytes. A request without it installs nothing.
 - **A write that needs the owner's yes answers with the question.** Sent without
   `"confirm": true`, it is refused `400 confirmation_required` with `{field, consent, title}` in
-  `error.detail`, and nothing is written. A client that will ask the owner itself sends
+  `error.detail`, and nothing is written. A write that loosens a security setting also carries
+  `change`, what it changes from and to (`"$33.50 → $10,033.50"`, `"Off → On"`, `"Adds “~/Projects”"`),
+  and for a raise of ten times the value in effect or more, `caution`, one more sentence to show
+  with it; the error's `message` says both. A client that will ask the owner itself sends
   `X-PersonalClaw-Consent: ask` and gets the same body as a `200` marked
   `X-PersonalClaw-Consent-Asked: 1`, which the dashboard does for every write, so its Allow
   dialogs log no failed request. Treat that `200` as the question, never as a success.

@@ -407,8 +407,10 @@ export function NumberRow({ label, hint, cfg, field, min, max, step = 1, patch }
   step?: number
   /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. The
    *  label travels so a rejected save can name the control rather than its config key; see
-   *  `ToggleRow` for the measurement. */
-  patch: (k: string, v: never, cb: () => void, label?: string) => void
+   *  `ToggleRow` for the measurement. A panel that paints only what is stored (it rolls nothing
+   *  back) returns the save's outcome, and the field shows the stored number again when it is
+   *  `false` (`NumberField`): a declined consent must not leave the unsaved number in the box. */
+  patch: (k: string, v: never, cb: () => void, label?: string) => unknown
 }) {
   const [saved, setSaved] = useState(false)
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }

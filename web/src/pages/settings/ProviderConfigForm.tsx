@@ -193,7 +193,7 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
       // the stepper's `value: number` cannot express "unset" and reverts an empty entry to the last
       // good value, so adopting it here would make an optional bound permanent once typed.
       <TextInput id={id} type="number" size="md" surface="high" value={value == null ? '' : String(value)}
-        min={prop.minimum} max={prop.maximum}
+        min={prop.minimum} max={prop.maximum} step={prop.type === 'number' ? 'any' : undefined}
         onChange={(v) => onChange(v === '' ? undefined : Number(v))}
         placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} />
     )

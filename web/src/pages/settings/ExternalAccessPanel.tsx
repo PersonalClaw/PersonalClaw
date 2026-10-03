@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { AlertTriangle, KeyRound, Plug2, ShieldOff, Trash2 } from 'lucide-react'
 import { api, type ExternalAccessClient, type ExternalAccessSurface } from '../../lib/api'
+import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { ConsentDeclined } from '../../lib/securityConsent'
 import { Button } from '../../ui/Button'
 import { PanelHeader, Section, RowGroup, Row, Toggle, NumberRow, StrListField } from './settingsUI'
 import { LoadError, Skeleton, LoadingStatus } from '../../ui/ListScaffold'
@@ -81,17 +83,23 @@ export function ExternalAccessPanel() {
   const [error, setError] = useState('')
   const [freshToken, setFreshToken] = useState<{ label: string; token: string } | null>(null)
 
-  const act = async (fn: () => Promise<unknown>, tag: string) => {
+  // Resolves whether the change landed: a number field shows the stored value again when it did not
+  // (`NumberField`), since nothing here paints a value before the gateway has stored it.
+  const act = async (fn: () => Promise<unknown>, tag: string): Promise<boolean> => {
     setBusy(tag)
     setError('')
     try {
       await fn()
       invalidateKeys(CACHE_KEY)
       refresh()
+      return true
     } catch (e) {
-      // Named, not swallowed: a kill switch that silently failed to flip is the worst
+      // The owner declining the gateway's question changed nothing and is not a failure. Anything
+      // else is named, not swallowed: a kill switch that silently failed to flip is the worst
       // outcome on this page — the user believes a surface is off when it is serving.
-      setError(e instanceof Error ? e.message : 'That change could not be saved.')
+      if (e instanceof ConsentDeclined) notify(e.message)
+      else setError(e instanceof Error ? e.message : 'That change could not be saved.')
+      return false
     } finally {
       setBusy('')
     }

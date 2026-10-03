@@ -295,6 +295,9 @@ class TestTheOwnerConsentsToEveryLoosening:
         # know this field was sensitive can still ask the right question.
         assert body["error"]["detail"]["field"] == field
         assert body["error"]["detail"]["consent"].strip()
+        # …and what THIS write changes, from and to: the sentence alone is the same question
+        # whatever value was typed (`test_a_loosening_consent_names_what_it_changes.py`).
+        assert body["error"]["detail"]["change"].strip()
         assert config_file.read_text(encoding="utf-8") == before, "nothing may be written"
 
     @pytest.mark.asyncio
@@ -418,6 +421,8 @@ class TestAnAgentsApprovalModeIsTheOwners:
         body = json.loads(unconfirmed.body)
         assert body["error"]["code"] == "confirmation_required"
         assert body["error"]["detail"]["field"] == "agents.a1.approval_mode"
+        # In the agent editor's own names for the two values.
+        assert body["error"]["detail"]["change"] == "Default (hook-based) → Auto-approve all"
         assert not (agents_home / "config.json").exists()
 
         assert (await api_personalclaw_agents_create(_agent_request({"name": "a1"}))).status == 200

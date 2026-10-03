@@ -309,3 +309,41 @@ describe('the page says when an integration token stopped working', () => {
     expect(screen.queryByText('not serving')).toBeNull()
   })
 })
+
+describe('a rate cap whose raise is declined or refused keeps the stored cap', () => {
+  // Raising a cap is asked about (`external_access.rate_*` are security controls). This panel paints
+  // only what the endpoint reports, so a declined question or a refused save moved nothing — and the
+  // box kept the number that was typed while the cap in effect was the old one. The save now tells
+  // the field it was not stored, and the field shows the cap again.
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+    externalAccess.mockResolvedValue(STATE)
+    saveListEdits.mockResolvedValue([])
+  })
+
+  async function raise(to: string) {
+    render(<ExternalAccessPanel />)
+    const box = (await screen.findByLabelText('Requests per second')) as HTMLInputElement
+    await userEvent.clear(box)
+    await userEvent.type(box, to)
+    await userEvent.tab()
+    return box
+  }
+
+  it('a declined consent puts the stored cap back, with a note and no alarm', async () => {
+    const { ConsentDeclined } = await import('../../lib/securityConsent')
+    patchConfig.mockRejectedValue(new ConsentDeclined('external_access.rate_rps'))
+    const box = await raise('100')
+    await waitFor(() => expect(patchConfig).toHaveBeenCalledWith('external_access.rate_rps', 100))
+    await waitFor(() => expect(box.value).toBe('1'))
+    expect(screen.queryByRole('alert'), 'declining is a choice, not a failure').toBeNull()
+  })
+
+  it('a refused save puts it back too, and the refusal is named', async () => {
+    patchConfig.mockRejectedValue(new Error('must be between 0.01 and 1000.0'))
+    const box = await raise('5000')
+    await waitFor(() => expect(box.value).toBe('1'))
+    expect((await screen.findByRole('alert')).textContent).toContain('must be between 0.01 and 1000.0')
+  })
+})

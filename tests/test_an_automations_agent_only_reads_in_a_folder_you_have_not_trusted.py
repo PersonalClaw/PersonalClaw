@@ -177,7 +177,8 @@ def test_the_consent_to_write_access_in_a_folder_you_have_not_trusted_waits_for_
     loosened = unconsented_step_loosening(
         "action", current={}, new=config, body={}, provider="run-prompt"
     )
-    assert loosened == ("action.capability", WRITE_ACCESS_ONCE_TRUSTED)
+    assert loosened is not None
+    assert (loosened[0], loosened[1].consent) == ("action.capability", WRITE_ACCESS_ONCE_TRUSTED)
     # The chat's door says it in the same words.
     action = {"provider": "run-prompt", "config": config}
     refused = posture_refusal(action, stored={}, creating=True)
@@ -187,7 +188,8 @@ def test_the_consent_to_write_access_in_a_folder_you_have_not_trusted_waits_for_
     loosened = unconsented_step_loosening(
         "action", current={}, new=config, body={}, provider="run-prompt"
     )
-    assert loosened == ("action.capability", WRITE_ACCESS)
+    assert loosened is not None
+    assert (loosened[0], loosened[1].consent) == ("action.capability", WRITE_ACCESS)
 
 
 def test_a_workflows_agent_step_waits_for_its_folder_and_a_stage_does_not(home, asked):
@@ -209,8 +211,11 @@ def test_a_workflows_agent_step_waits_for_its_folder_and_a_stage_does_not(home, 
 
     [step] = workflow_loosenings("site", current_root=None, new_root=spec(action))
     assert step.consent == WRITE_ACCESS_ONCE_TRUSTED
+    # What the save changes, as the editor's question says it under the sentence.
+    assert step.change == "Not set → Write access"
     [step] = workflow_loosenings("site", current_root=None, new_root=spec(stage))
     assert step.consent == WRITE_ACCESS
+    assert step.change == "Not set → Write access"
 
 
 # ── invoke-agent: the same check ────────────────────────────────────────────────────────────────

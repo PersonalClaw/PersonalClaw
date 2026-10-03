@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type CallerHealth, type ProviderHealth } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { ConsentDeclined } from '../../lib/securityConsent'
 import { PanelHeader, Section, RowGroup, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
 import { Button } from '../../ui/Button'
@@ -26,6 +27,8 @@ type GuardrailsCfg = {
   loop_breaker?: { circuit_threshold?: number }
   scan_mode?: string
 }
+type Budget = keyof NonNullable<GuardrailsCfg['budgets']>
+type Breaker = keyof NonNullable<GuardrailsCfg['breaker']>
 
 export function GuardrailsPanel() {
   const [cfg, setCfg] = useState<GuardrailsCfg | null>(null)
@@ -44,14 +47,27 @@ export function GuardrailsPanel() {
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg) return <FormSkeleton sections={3} what="settings" />
 
-  // 🪤 This panel's rows use an `onSave` callback rather than `settingsUI`'s `patch` contract, so the
-  // label has to be threaded here separately — but the defect was identical: a rejected save said
-  // "Couldn't save budgets.max_dollars_per_day" about a control the UI calls "Max dollars / day". The
-  // label is on the very JSX element that fires this, one line above each call.
-  const patchNum = (path: string, value: number, label?: string) =>
-    api.patchConfig(`guardrails.${path}`, value).catch((e) => {
-      notify(`Couldn't save ${label ?? path}: ${String((e as Error)?.message || e)}`, 'error')
+  // 🔴 A ROW SHOWS WHAT IS STORED. Each value used to be painted into `cfg` BEFORE its PATCH, and
+  // nothing put it back: decline the gateway's "Loosen a security setting?" question, or have the
+  // save refused, and Max dollars / day kept the unsaved 10033.5 while the cap in effect stayed 33.5
+  // — under a "Saved ✓" that flashed either way. Now a value is painted once the gateway has stored
+  // it, a row flashes only then, and a number field puts the stored value back in its box when this
+  // resolves `false` (`NumberField`). The label is the row's own, so a refusal names the control
+  // ("Max dollars / day"), never its config key.
+  const save = (path: string, value: number | string, apply: (c: GuardrailsCfg) => GuardrailsCfg, label?: string) =>
+    api.patchConfig(`guardrails.${path}`, value).then(() => {
+      setCfg((c) => apply(c ?? {}))
+      return true
+    }, (e) => {
+      // Declining the question is the owner's choice, not a failure: it reads as the note it is.
+      if (e instanceof ConsentDeclined) notify(e.message)
+      else notify(`Couldn't save ${label ?? path}: ${String((e as Error)?.message || e)}`, 'error')
+      return false
     })
+  const budget = (key: Budget) => (v: number, label: string) =>
+    save(`budgets.${key}`, v, (c) => ({ ...c, budgets: { ...c.budgets, [key]: v } }), label)
+  const breaker = (key: Breaker) => (v: number, label: string) =>
+    save(`breaker.${key}`, v, (c) => ({ ...c, breaker: { ...c.breaker, [key]: v } }), label)
 
   return (
     <div>
@@ -66,14 +82,13 @@ export function GuardrailsPanel() {
       <Section title="Daily budget" hint="Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. Each ceiling resets at midnight. 0 = unlimited.">
         <RowGroup>
           <NumberRow label="Max tokens / day" hint="Counts every unattended call, local models' too. At the ceiling, unattended runs are skipped (a cron fire is paused, a subagent spawn refused) until it resets."
-            value={cfg.budgets?.max_tokens_per_day ?? 0} min={0} step={1000}
-            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_day: v } })); return patchNum('budgets.max_tokens_per_day', v, 'Max tokens / day') }} />
+            value={cfg.budgets?.max_tokens_per_day ?? 0} min={0} step={1000} onSave={budget('max_tokens_per_day')} />
+          {/* Cents: the gateway takes a cap in dollars and cents, and at a step of 1 the browser
+              marked a saved $33.50 invalid. */}
           <NumberRow label="Max dollars / day" hint="A call that costs money starts only when what it may cost fits in what is left beside what the calls already running have set aside, so calls running together stay within it; one can still cost more than it set aside. A model with no price is refused, and one that costs nothing keeps running. Prices are estimates, set in Settings → Usage → Model prices."
-            value={cfg.budgets?.max_dollars_per_day ?? 0} min={0} step={1} dollars
-            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_dollars_per_day: v } })); return patchNum('budgets.max_dollars_per_day', v, 'Max dollars / day') }} />
+            value={cfg.budgets?.max_dollars_per_day ?? 0} min={0} step={0.01} dollars onSave={budget('max_dollars_per_day')} />
           <NumberRow label="Max tokens / run" hint="Per single unattended run (a goal-loop cycle, a cron fire). 0 = unlimited."
-            value={cfg.budgets?.max_tokens_per_run ?? 0} min={0} step={1000}
-            onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_run: v } })); return patchNum('budgets.max_tokens_per_run', v, 'Max tokens / run') }} />
+            value={cfg.budgets?.max_tokens_per_run ?? 0} min={0} step={1000} onSave={budget('max_tokens_per_run')} />
         </RowGroup>
       </Section>
 
@@ -81,7 +96,7 @@ export function GuardrailsPanel() {
         <RowGroup>
           <Field label="Scan mode" hint="warn = log & send · redact = substitute & send · block = refuse the call.">
             <SegPills ariaLabel="Scan mode" value={String(cfg.scan_mode ?? 'redact')}
-              onChange={(v) => { setCfg((c) => ({ ...c, scan_mode: v })); api.patchConfig('guardrails.scan_mode', v).catch((e) => notify(`Couldn't save scan mode: ${String((e as Error)?.message || e)}`, 'error')) }}
+              onChange={(v) => { void save('scan_mode', v, (c) => ({ ...c, scan_mode: v }), 'scan mode') }}
               options={[{ key: 'warn', label: 'Warn' }, { key: 'redact', label: 'Redact' }, { key: 'block', label: 'Block' }]} />
           </Field>
         </RowGroup>
@@ -90,11 +105,9 @@ export function GuardrailsPanel() {
       <Section title="Provider circuit breaker" hint="Per-provider fail-fast: after N consecutive failures a provider's breaker opens, so unattended runs fail in microseconds during an outage instead of stacking timeouts.">
         <RowGroup>
           <NumberRow label="Failure threshold" hint="Consecutive failures before the breaker opens."
-            value={cfg.breaker?.failure_threshold ?? 5} min={1} step={1}
-            onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, failure_threshold: v } })); return patchNum('breaker.failure_threshold', v, 'Failure threshold') }} />
+            value={cfg.breaker?.failure_threshold ?? 5} min={1} step={1} onSave={breaker('failure_threshold')} />
           <NumberRow label="Recovery seconds" hint="How long an open breaker waits before a half-open probe."
-            value={cfg.breaker?.recovery_secs ?? 30} min={0} step={5}
-            onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, recovery_secs: v } })); return patchNum('breaker.recovery_secs', v, 'Recovery seconds') }} />
+            value={cfg.breaker?.recovery_secs ?? 30} min={0} step={5} onSave={breaker('recovery_secs')} />
         </RowGroup>
       </Section>
 
@@ -102,7 +115,7 @@ export function GuardrailsPanel() {
         <RowGroup>
           <NumberRow label="Abort after tool failures" hint="Counts every failing tool call in one run, not just repeats of the same one. Applies to built-in tools and to an external CLI agent's alike."
             value={cfg.loop_breaker?.circuit_threshold ?? 30} min={1} step={1}
-            onSave={(v) => { setCfg((c) => ({ ...c, loop_breaker: { ...c?.loop_breaker, circuit_threshold: v } })); return patchNum('loop_breaker.circuit_threshold', v, 'Abort after tool failures') }} />
+            onSave={(v, label) => save('loop_breaker.circuit_threshold', v, (c) => ({ ...c, loop_breaker: { ...c.loop_breaker, circuit_threshold: v } }), label)} />
         </RowGroup>
       </Section>
 
@@ -421,13 +434,15 @@ export function HealthRow({ p }: { p: ProviderHealth }) {
 // ── number field renderer (built on the shared NumberField stepper) ─────────
 function NumberRow({ label, hint, value, min, step, dollars, onSave }: {
   label: string; hint?: string; value: number; min: number; step: number; dollars?: boolean
-  onSave: (v: number) => Promise<unknown>
+  /** Store `v`, named by this row's label; resolves whether it was stored. */
+  onSave: (v: number, label: string) => Promise<boolean>
 }) {
   const [saved, setSaved] = useState(false)
-  const commit = (n: number) => {
-    if (n === value) return
-    onSave(n).then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) })
-  }
+  // The outcome goes back to the field, which shows the stored value again when it was not stored.
+  const commit = (n: number) => onSave(n, label).then((stored) => {
+    if (stored) { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+    return stored
+  })
   return (
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">

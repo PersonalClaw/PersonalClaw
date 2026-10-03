@@ -1275,7 +1275,9 @@ def json_error(
 CONSENT_QUESTION = "personalclaw.consent_question"
 
 
-def consent_required(field: str, consent: str, *, title: str) -> web.Response:
+def consent_required(
+    field: str, consent: str, *, title: str, change: str = "", caution: str = ""
+) -> web.Response:
     """The ``400 confirmation_required`` a write that needs the owner's yes answers when it did
     not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
     approval mode, an automation's posture, a grant for what a trigger runs), because the SPA's
@@ -1285,13 +1287,26 @@ def consent_required(field: str, consent: str, *, title: str) -> web.Response:
     reads "Loosen a security setting?" (``config/edit_spec.LOOSEN_TITLE``), which is the heading
     of a loosening alone.
 
+    A loosening also says what the write changes (*change*, ``"$33.50 → $10,033.50"``) and, for a
+    raise far past the value in effect, one more sentence (*caution*) — ``config/edit_spec.
+    LooseningAsk``. Both ride ``detail`` when there is one, and the message carries them too, so a
+    client that reads only the message is asked the same question.
+
     A client that says it asks (`dashboard.consent_ask`) receives the same body as a ``200``:
     the question, not a failure. Every other client keeps the ``400``."""
+    detail = {"field": field, "consent": consent, "title": title}
+    said = [consent]
+    if change:
+        detail["change"] = change
+        said.append(change.replace("\n", "; ") + ".")
+    if caution:
+        detail["caution"] = caution
+        said.append(caution)
     response = json_error(
         "confirmation_required",
-        message=f'send {{"confirm": true}} to confirm — {consent}',
+        message=f'send {{"confirm": true}} to confirm — {" ".join(said)}',
         status=400,
-        error_extra={"detail": {"field": field, "consent": consent, "title": title}},
+        error_extra={"detail": detail},
     )
     response[CONSENT_QUESTION] = True
     return response

@@ -37,12 +37,19 @@ have what the Allow named for that case, never more, and a run held back says wh
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from personalclaw.config.edit_spec import SecurityControl, loosens_toward, unconsented_loosening
+from personalclaw.config.edit_spec import (
+    LooseningAsk,
+    SecurityControl,
+    loosens_toward,
+    named,
+    unconsented_loosening,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +69,15 @@ POSTURE_SPECS: dict[str, dict[str, Any]] = {
             loosens_toward("", "auto"),
             "This automation's agent will approve its own tool calls instead of asking you "
             "first.",
+            shows=named({"": "Asks you", "auto": "Approves its own calls"}),
         ),
     },
     "capability": {
-        "security": SecurityControl(loosens_toward("research", "", "mutating"), _WRITE_ACCESS),
+        "security": SecurityControl(
+            loosens_toward("research", "", "mutating"),
+            _WRITE_ACCESS,
+            shows=named({"research": "Read only", "": "Not set", "mutating": "Write access"}),
+        ),
     },
 }
 
@@ -326,27 +338,27 @@ def unconsented_step_loosening(
     new: Mapping[str, Any],
     body: Any,
     provider: str = "",
-) -> tuple[str, str] | None:
-    """``(field, consent)`` when the step config *new* loosens a posture key over *current* and
-    *body* does not carry ``confirm: true``; ``None`` otherwise. *current* is ``{}`` for a step
-    that did not exist, which is what an unset key means at run time.
+) -> tuple[str, LooseningAsk] | None:
+    """``(field, what the owner is asked)`` when the step config *new* loosens a posture key over
+    *current* and *body* does not carry ``confirm: true``; ``None`` otherwise. *current* is ``{}``
+    for a step that did not exist, which is what an unset key means at run time.
 
     *provider* is the action the step runs, when it runs one. The write access an agent-starting
     action (:data:`AGENT_STARTING_PROVIDERS`) is given waits for its working folder's trust
     (``project_trust.held_to``), and its consent says so (:func:`_write_access_as_it_stands`)."""
     for key, spec in POSTURE_SPECS.items():
         field = f"{where}.{key}"
-        consent = unconsented_loosening(
+        loosening = unconsented_loosening(
             field,
             spec,
             current=_posture_value(current, key),
             new=_posture_value(new, key),
             body=body,
         )
-        if consent:
+        if loosening is not None:
             if key == "capability" and provider in AGENT_STARTING_PROVIDERS:
-                consent = _write_access_as_it_stands(new)
-            return field, consent
+                loosening = dataclasses.replace(loosening, consent=_write_access_as_it_stands(new))
+            return field, loosening
     return None
 
 
@@ -400,9 +412,10 @@ class Loosening:
     """A step of a workflow that a save would let do more than the same step does now.
 
     ``keys`` are the posture keys it loosens, and ``may`` what each then lets its agent do, after
-    "it", as an ask for the owner's Allow says it (:func:`what_it_may_do`). ``field`` and
-    ``consent`` are the first key's, as the editor's consent dialog asks about it
-    (:func:`unconsented_step_loosening`)."""
+    "it", as an ask for the owner's Allow says it (:func:`what_it_may_do`). ``field``, ``consent``,
+    ``change`` and ``caution`` are the first key's, as the editor's consent dialog asks about it
+    (:func:`unconsented_step_loosening`): its sentence, and what the save changes it from and to
+    (``edit_spec.LooseningAsk``)."""
 
     path: str
     label: str
@@ -411,6 +424,8 @@ class Loosening:
     may: tuple[str, ...]
     field: str
     consent: str
+    change: str = ""
+    caution: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -421,6 +436,8 @@ class Loosening:
             "may": list(self.may),
             "field": self.field,
             "consent": self.consent,
+            "change": self.change,
+            "caution": self.caution,
         }
 
 
@@ -480,7 +497,9 @@ def workflow_loosenings(
                 keys=keys,
                 may=tuple(what_it_may_do(key, provider, config) for key in keys),
                 field=first[0],
-                consent=first[1],
+                consent=first[1].consent,
+                change=first[1].change,
+                caution=first[1].caution,
             )
         )
     return out

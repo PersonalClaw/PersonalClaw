@@ -502,7 +502,7 @@ def posture_refusal(
     )
     if loosened is None:
         return None
-    _field, sentence = loosened
+    sentence = loosened[1].consent
     where = "create it" if creating else "make that change"
     return AutomationToolResult(
         False,

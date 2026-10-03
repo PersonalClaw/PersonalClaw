@@ -25,7 +25,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config import loader as config_loader
-from personalclaw.config.edit_spec import LOOSEN_TITLE
+from personalclaw.config.edit_spec import LOOSEN_TITLE, LooseningAsk
 from personalclaw.dashboard.handlers import trigger_callbacks, trigger_revisions, trigger_runs
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
@@ -807,11 +807,11 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
 
 def _unconsented_loosening(
     request: web.Request, body: dict, *, where: str, stored: dict[str, Any]
-) -> tuple[str, str] | None:
-    """``(field, consent)`` when *body*'s action loosens whether the trigger's agent asks you — an
-    ``approval_mode: "auto"``, a ``capability: "mutating"`` write grant — over the *stored* action
-    (``{provider, config}``, ``{}`` for a new trigger) without ``confirm: true``; ``None``
-    otherwise. The refusal is written to the security audit; the caller answers
+) -> tuple[str, LooseningAsk] | None:
+    """``(field, what the owner is asked)`` when *body*'s action loosens whether the trigger's
+    agent asks you — an ``approval_mode: "auto"``, a ``capability: "mutating"`` write grant — over
+    the *stored* action (``{provider, config}``, ``{}`` for a new trigger) without ``confirm:
+    true``; ``None`` otherwise. The refusal is written to the security audit; the caller answers
     ``consent_required``.
 
     The owner's half of the rule; an app cannot define a trigger at all
@@ -835,7 +835,7 @@ def _unconsented_loosening(
     )
     if loosened is None:
         return None
-    field, _consent = loosened
+    field, _loosening = loosened
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="trigger.write",
@@ -1046,8 +1046,8 @@ def _creation_consent(
         asks.append((field, grant.sentence, grant.title))
     loosened = _unconsented_loosening(request, body, where=f"triggers.{label}.action", stored={})
     if loosened is not None:
-        asks.append((*loosened, LOOSEN_TITLE))
-    return _asked(asks)
+        asks.append((loosened[0], loosened[1].consent, LOOSEN_TITLE))
+    return _asked(asks, loosened[1] if loosened else None)
 
 
 #: The heading of the one question a write asks when its action needs a grant AND it loosens
@@ -1055,19 +1055,27 @@ def _creation_consent(
 _GRANT_AND_LOOSEN_TITLE = "Allow what it runs, and loosen a security setting?"
 
 
-def _asked(asks: list[tuple[str, str, str]]) -> web.Response | None:
+def _asked(
+    asks: list[tuple[str, str, str]], loosening: LooseningAsk | None = None
+) -> web.Response | None:
     """One ``confirmation_required`` for everything a write needs the owner's yes for, or None.
 
     *asks* holds ``(field, sentence, title)`` per question — the grant for what the action runs,
     a loosened posture — so a single Allow is never consent to a sentence the dialog did not show,
     and its heading names what the owner is agreeing to: the question's own title when there is
-    one, both halves when there are two.
+    one, both halves when there are two. *loosening* is the posture question's own, when it is one
+    of them: the dialog says what it changes from and to after the sentences, the last of which is
+    its own.
     """
     if not asks:
         return None
     title = asks[0][2] if len(asks) == 1 else _GRANT_AND_LOOSEN_TITLE
     return consent_required(
-        asks[0][0], " ".join(sentence for _field, sentence, _title in asks), title=title
+        asks[0][0],
+        " ".join(sentence for _field, sentence, _title in asks),
+        title=title,
+        change=loosening.change if loosening else "",
+        caution=loosening.caution if loosening else "",
     )
 
 
@@ -1528,8 +1536,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         stored=_stored_action(state, kind, raw),
     )
     if loosened is not None:
-        asks.append((*loosened, LOOSEN_TITLE))
-    asked = _asked(asks)
+        asks.append((loosened[0], loosened[1].consent, LOOSEN_TITLE))
+    asked = _asked(asks, loosened[1] if loosened else None)
     if asked is not None:
         return asked
 

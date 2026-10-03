@@ -136,7 +136,7 @@ export function EvalsPanel() {
             min={0} max={1} step={0.05}
             hint="Below this position-swap agreement rate a study's verdict is 'judge_unreliable' — it files a judge-calibration item instead of a template verdict, so a noisy judge never produces a fake win." />
           <NumberRow label="Default eval budget (USD)" cfg={cfg} field="default_budget_usd" patch={patch}
-            min={0} max={1000} step={0.5}
+            min={0} max={1000} step={0.01}
             hint="The default hard spend cap a matrix/study run refuses to exceed. 0 means no default cap — each study still declares its own budget at registration." />
         </RowGroup>
       </Section>

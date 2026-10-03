@@ -47,6 +47,48 @@ describe('consentAsked', () => {
   })
 })
 
+describe('a loosening is asked with what it changes, from and to', () => {
+  // The gateway's sentence is written once per field, so on its own it asked the same thing
+  // whatever was typed: a daily cap of $33.50 typed as $10,033.50 read exactly like a raise to
+  // $100. A loosening's question now carries `change` and, for a raise of ten times or more,
+  // `caution` (`config/edit_spec.LooseningAsk`), and the dialog says both under the sentence.
+  const CAP = 'The agent may spend more money per day — 0 removes the limit.'
+  const CHANGE = '$33.50 → $10,033.50'
+  const CAUTION = 'That is about 300 times the current limit, so check the number before you allow it.'
+  const loosening = (extra: Record<string, unknown>) =>
+    new ApiError('send {"confirm": true} to confirm', 400, 'confirmation_required', {
+      field: 'guardrails.budgets.max_dollars_per_day', consent: CAP, title: LOOSEN, ...extra,
+    })
+
+  it('reads the change and the caution the gateway sends', () => {
+    expect(consentAsked(loosening({ change: CHANGE, caution: CAUTION }))).toEqual({
+      field: 'guardrails.budgets.max_dollars_per_day', consent: CAP, title: LOOSEN, change: CHANGE, caution: CAUTION,
+    })
+    // A question that is not a loosening carries neither, and reads as it always did.
+    expect(consentAsked(asked())).toEqual({ field: 'agent.yolo', consent: CONSENT, title: LOOSEN })
+  })
+
+  it('the dialog says the sentence, then the change, then the second look — one paragraph each', async () => {
+    const send = vi.fn(async (c: boolean) => {
+      if (!c) throw loosening({ change: CHANGE, caution: CAUTION })
+      return 'written'
+    })
+    await withSecurityConsent(send)
+    const opts = confirmSpy.mock.calls[0][0] as { title: string; body: string }
+    expect(opts.title).toBe(LOOSEN)
+    expect(opts.body).toBe(`${CAP}\n\n${CHANGE}\n\n${CAUTION}`)
+  })
+
+  it('a raise under ten times has no second look, only the change', async () => {
+    const send = vi.fn(async (c: boolean) => {
+      if (!c) throw loosening({ change: '$33.50 → $100.00' })
+      return 'written'
+    })
+    await withSecurityConsent(send)
+    expect((confirmSpy.mock.calls[0][0] as { body: string }).body).toBe(`${CAP}\n\n$33.50 → $100.00`)
+  })
+})
+
 describe('withSecurityConsent', () => {
   it('a write the gateway accepts is sent once and asks nothing', async () => {
     const send = vi.fn(async (_c: boolean) => 'ok')

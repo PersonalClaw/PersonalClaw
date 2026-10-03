@@ -103,6 +103,8 @@ def posture_refusal(
         "message": message,
         "field": loosened[0].field,
         "consent": loosened[0].consent,
+        "change": loosened[0].change,
+        "caution": loosened[0].caution,
         "steps": [step.to_dict() for step in loosened],
         "issues": [{"code": "WF_MUT_NEEDS_OWNER_YES", "message": message, "node_id": ""}],
     }

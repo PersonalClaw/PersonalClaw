@@ -489,6 +489,7 @@ class TestTheOwnerConsentsToAWorkflowStepThatApprovesItself:
         error = json.loads(refused.body)["error"]
         assert error["code"] == "confirmation_required"
         assert error["detail"]["field"] == "workflows.w.root.children[0].approval_mode"
+        assert error["detail"]["change"] == "Asks you → Approves its own calls"
         assert not stored_defs, "nothing may be saved"
 
         # A dry run writes nothing, so it is never asked; it says which step a save would ask for.
@@ -544,6 +545,7 @@ class TestTheOwnerConsentsToAWorkflowStepThatApprovesItself:
         assert refused.status == 400
         detail = json.loads(refused.body)["error"]["detail"]
         assert detail["field"] == "workflows.runs.r1.policy_overrides.max_cycles"
+        assert detail["change"] == "3 → No limit", "the cap the template declared, and none"
         assert not applied
 
         assert (

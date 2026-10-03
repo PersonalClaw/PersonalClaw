@@ -18,6 +18,8 @@ import { PRELAUNCH_RUN_STATUSES, isPrelaunch } from './workflowMeta'
 let calls: Array<{ id: string; overrides: Record<string, unknown> }>
 let bases: string[]
 let respond: (overrides: Record<string, unknown>) => Record<string, unknown>
+/** What the write rejects with instead of persisting — a declined consent, a refusal — or null. */
+let refuse: Error | null
 
 /** An overlay as the run-detail read hands it to the panel: the value and that read's revision. */
 const read = (value: Record<string, unknown>) => ({ value, revision: 'v0' })
@@ -31,6 +33,7 @@ vi.mock('../../lib/api', async (importActual) => {
       setWorkflowRunPolicyOverrides: (id: string, overrides: Record<string, unknown>, base: string) => {
         calls.push({ id, overrides })
         bases.push(base)
+        if (refuse) return Promise.reject(refuse)
         // The gateway answers with what it persisted and that overlay's new revision.
         return Promise.resolve({
           run_id: id, status: 'draft', policy_overrides: respond(overrides),
@@ -46,6 +49,7 @@ beforeEach(() => {
   bases = []
   // Echo by default: the server persisted exactly what was sent.
   respond = (overrides) => overrides
+  refuse = null
 })
 
 describe('the editor covers the whole overridable vocabulary', () => {
@@ -124,6 +128,30 @@ describe('every write is a REPLACE of the whole overlay', () => {
     fireEvent.blur(input)
     await waitFor(() => expect(calls).toHaveLength(1))
     expect(calls[0].overrides).toEqual({ success_criteria: 'PR opened' })
+  })
+})
+
+describe('a raise of Max cycles the owner declines leaves the stored cap', () => {
+  // Lifting a run's cycle cap is asked about (`supervisor_policy.POLICY_OVERRIDE_SECURITY`). Cancel
+  // stored nothing, and the box kept the number that was typed: `stored` had not moved, so nothing
+  // re-synced it. The commit now reports that it was not stored, and the field shows the cap again.
+  it('puts the stored number back in the box, and says nothing changed rather than failed', async () => {
+    const { ConsentDeclined } = await import('../../lib/securityConsent')
+    refuse = new ConsentDeclined('workflows.runs.r1.policy_overrides.max_cycles')
+    const toasts: Array<{ message: string; level: string }> = []
+    const listen = (e: Event) => toasts.push((e as CustomEvent).detail)
+    window.addEventListener('ne:toast', listen)
+    try {
+      render(<PolicyOverridesPanel runId="r1" initial={read({ max_cycles: 3 })} />)
+      const box = screen.getByLabelText('Max cycles override') as HTMLInputElement
+      fireEvent.change(box, { target: { value: '30' } })
+      fireEvent.blur(box)
+      await waitFor(() => expect(calls).toHaveLength(1))
+      await waitFor(() => expect(box.value).toBe('3'))
+      expect(toasts).toEqual([{ message: 'Not changed — you kept the current setting.', level: 'info' }])
+    } finally {
+      window.removeEventListener('ne:toast', listen)
+    }
   })
 })
 

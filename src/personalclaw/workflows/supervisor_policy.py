@@ -45,6 +45,7 @@ from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.config.edit_spec import (
+    LooseningAsk,
     NotASecurityControl,
     SecurityControl,
     loosens_when_raised,
@@ -862,9 +863,9 @@ def unconsented_override_loosening(
     current: dict[str, Any] | None,
     new: dict[str, Any],
     body: Any,
-) -> tuple[str, str] | None:
-    """``(field, consent)`` when replacing the overlay *current* with *new* loosens a control on
-    any loop node of the run's spec without ``confirm: true``; ``None`` otherwise.
+) -> tuple[str, LooseningAsk] | None:
+    """``(field, what the owner is asked)`` when replacing the overlay *current* with *new* loosens
+    a control on any loop node of the run's spec without ``confirm: true``; ``None`` otherwise.
 
     Per loop node, because each declares its own ``supervisor:`` block and one overlay applies to
     all of them: an overlay of ``max_cycles: 10`` tightens a node declaring ``0`` (uncapped) and
@@ -892,11 +893,11 @@ def unconsented_override_loosening(
                 continue
             read = _OVERRIDE_READERS[knob]
             field = f"workflows.runs.{run_id}.policy_overrides.{knob}"
-            consent = unconsented_loosening(
+            loosening = unconsented_loosening(
                 field, {"security": control}, current=read(before), new=read(after), body=body
             )
-            if consent:
-                return field, consent
+            if loosening is not None:
+                return field, loosening
     return None
 
 

@@ -257,7 +257,7 @@ function TierRows({ draft, setTiers }: {
             <TextInput value={tier.quality} onChange={edit(i, 'quality')} size="md" surface="high" placeholder="any quality" />
           </Field>
           <Field label={`$ per image, price ${i + 1}`}>
-            <TextInput type="number" min={0} value={tier.price} onChange={edit(i, 'price')} required size="md" surface="high" />
+            <TextInput type="number" min={0} step="any" value={tier.price} onChange={edit(i, 'price')} required size="md" surface="high" />
           </Field>
           <Button size="sm" variant="ghost" ariaLabel={`Remove price ${i + 1}`}
             disabled={draft.tiers.length === 1} disabledReason="An image price needs one size and quality."
@@ -321,16 +321,16 @@ function RateForm({ initial, keyLocked, onSaved, onCancel }: {
       {draft.unit === 'token' && (
         <div className="grid grid-cols-2 gap-m">
           <Field label="Input, $ per 1M tokens">
-            <TextInput type="number" min={0} value={draft.input} onChange={set('input')} required size="md" surface="high" />
+            <TextInput type="number" min={0} step="any" value={draft.input} onChange={set('input')} required size="md" surface="high" />
           </Field>
           <Field label="Output, $ per 1M tokens">
-            <TextInput type="number" min={0} value={draft.output} onChange={set('output')} required size="md" surface="high" />
+            <TextInput type="number" min={0} step="any" value={draft.output} onChange={set('output')} required size="md" surface="high" />
           </Field>
           <Field label="Cache read, $ per 1M tokens" hint="Optional. Unset, a cached token costs what an input token does.">
-            <TextInput type="number" min={0} value={draft.cacheRead} onChange={set('cacheRead')} size="md" surface="high" />
+            <TextInput type="number" min={0} step="any" value={draft.cacheRead} onChange={set('cacheRead')} size="md" surface="high" />
           </Field>
           <Field label="Cache write, $ per 1M tokens" hint="Optional. Unset, a cached token costs what an input token does.">
-            <TextInput type="number" min={0} value={draft.cacheWrite} onChange={set('cacheWrite')} size="md" surface="high" />
+            <TextInput type="number" min={0} step="any" value={draft.cacheWrite} onChange={set('cacheWrite')} size="md" surface="high" />
           </Field>
         </div>
       )}
@@ -356,7 +356,7 @@ function RateForm({ initial, keyLocked, onSaved, onCancel }: {
       )}
       {draft.unit !== 'token' && !(draft.unit === 'image' && draft.byTier) && (
         <Field label={`Price, $ ${PER[draft.unit]}`}>
-          <TextInput type="number" min={0} value={draft.price} onChange={set('price')} required size="md" surface="high" />
+          <TextInput type="number" min={0} step="any" value={draft.price} onChange={set('price')} required size="md" surface="high" />
         </Field>
       )}
       {failed && <FieldError>{failed}</FieldError>}

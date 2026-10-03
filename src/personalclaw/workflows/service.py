@@ -595,14 +595,17 @@ async def _write_definition(
     if loosened and not owner_allowed:
         name = str(spec.get("name") or "")
         said = "; ".join(f"“{s.label}” {', and '.join(s.may)}" for s in loosened)
-        # Its failure carries ``field`` and ``consent`` (the first such step's, as the editor's
-        # consent dialog asks it) and ``steps`` (each such step, ``Loosening.to_dict``).
+        # Its failure carries ``field``, ``consent``, ``change`` and ``caution`` (the first such
+        # step's, as the editor's consent dialog asks it) and ``steps`` (each such step,
+        # ``Loosening.to_dict``).
         return {}, _service_failure(
             "WF_DEF_NEEDS_OWNER_YES",
             f"{name!r} was not saved: its steps would then do more ({said}), and only your own "
             "yes saves that: save it in the workflow's editor, which asks you.",
             field=loosened[0].field,
             consent=loosened[0].consent,
+            change=loosened[0].change,
+            caution=loosened[0].caution,
             steps=[step.to_dict() for step in loosened],
         )
     writable = [

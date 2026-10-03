@@ -208,6 +208,7 @@ async def test_the_owners_edit_asks_her_and_her_confirm_lets_it_through(tmp_path
         error = json.loads(asked.body)["error"]
         assert error["code"] == "confirmation_required", error
         assert error["detail"]["field"].endswith("root.children[2].approval_mode"), error
+        assert error["detail"]["change"] == "Asks you → Approves its own calls", error
         assert c._pending_mutations == []
 
         allowed = await handlers.api_run_edit(_Req({**body, "confirm": True}))

@@ -52,7 +52,9 @@ describe('a rejected settings save names the control', () => {
     expect(rows.length, 'the shared-row matcher must find the rows').toBeGreaterThanOrEqual(5)
     // `ToggleRow` alone adds an optional FIFTH argument after the label — `confirmed`, set when its
     // `confirmOn` dialog was accepted so the panel can forward the owner's consent to the gateway.
-    const sigs = [...UI.matchAll(/patch: \(k: string, v: never, cb: \(\) => void, label\?: string(?:, confirmed\?: boolean)?\) => void/g)]
+    // `NumberRow`'s patch may return the save's outcome (`unknown`): its field shows the stored
+    // number again when a save was not stored.
+    const sigs = [...UI.matchAll(/patch: \(k: string, v: never, cb: \(\) => void, label\?: string(?:, confirmed\?: boolean)?\) => (?:void|unknown)/g)]
     expect(sigs.length, `every shared row carries the 4th argument (rows: ${rows.join(', ')})`)
       .toBe(rows.length)
   })
@@ -130,7 +132,7 @@ describe('a rejected settings save names the control', () => {
         // …or the panel's own rows forward it explicitly
         || /undefined, l\)/.test(src)
         || /onCommit\(\w+, (label|'[^']+')\)/.test(src)
-        || /patchNum\('[^']+', v, '[^']+'\)/.test(src)
+        || /onSave\(n, label\)/.test(src)
       if (!supplies) missing.push(f)
     }
     expect(missing, 'these panels accept a label but nothing gives them one').toEqual([])
@@ -171,17 +173,19 @@ describe('a rejected settings save names the control', () => {
   it('GuardrailsPanel is included, though it uses a different row contract', () => {
     // Its rows fire `onSave`, not `settingsUI`'s `patch`, so the label had to be threaded separately.
     // Leaving it out would have made the family "fixed except one", which is the split this session's
-    // coherence rules forbid.
+    // coherence rules forbid. The row hands its OWN label to `onSave`, so no row can save unnamed.
     const g = readFileSync(join(SETTINGS, 'GuardrailsPanel.tsx'), 'utf8')
-    expect(g).toContain('const patchNum = (path: string, value: number, label?: string)')
+    expect(g).toContain('const commit = (n: number) => onSave(n, label)')
+    expect(g).toContain("notify(`Couldn't save ${label ?? path}:")
     // Measured as a RATIO, not a count. A hardcoded total reds this test on any new knob even
     // when that knob labels itself correctly — which is the opposite of what it is here to
     // catch. The floor keeps it from going vacuous if the rows are ever refactored away.
-    // `patchNum(` with no space only ever matches a CALL — the declaration reads `patchNum = (`.
-    const sites = [...g.matchAll(/patchNum\(/g)].length
-    const labelled = [...g.matchAll(/patchNum\('[^']+', v, '[^']+'\)/g)]
-    expect(sites, 'the call sites must stay discoverable').toBeGreaterThanOrEqual(5)
-    expect(labelled.length, 'every patchNum call names its control').toBe(sites)
+    // `save(` after a word boundary only ever matches a CALL — the declaration reads `save = (`,
+    // and the case-sensitive match never takes a row's `onSave(` for one.
+    const sites = [...g.matchAll(/\bsave\(/g)].length
+    const labelled = [...g.matchAll(/\bsave\([^\n]*, (?:label|'[^']+')\)/g)]
+    expect(sites, 'the call sites must stay discoverable').toBeGreaterThanOrEqual(4)
+    expect(labelled.length, 'every save call names its control').toBe(sites)
   })
 
   it('the label is still used for accessibility, not moved off the control', () => {

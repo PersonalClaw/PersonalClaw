@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
 import { api, type WorkflowRunDetailData } from '../../lib/api'
 import { notify } from '../../app/appSdk'
+import { ConsentDeclined } from '../../lib/securityConsent'
 import type { Rebase, Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
@@ -152,13 +153,18 @@ export function PolicyOverridesPanel({ runId, initial, onSaved }: {
 
   // One writer for every mutation: the edit as an operation on the overlay, PUT as the whole overlay
   // (replace semantics) and re-synced from what the server persisted, so a refused write never
-  // leaves the UI claiming it won.
-  const commit = async (op: Rebase<Overlay>) => {
+  // leaves the UI claiming it won. It resolves whether the edit was stored, and a number field
+  // shows the stored value again when it was not — lifting Max cycles asks first, and declining
+  // that question used to leave the unsaved number in the box.
+  const commit = async (op: Rebase<Overlay>): Promise<boolean> => {
     setBusy(true)
     try {
-      await guard.apply(stored, op)
+      return await guard.apply(stored, op)
     } catch (e) {
-      notify(e instanceof Error ? e.message : 'Saving policy overrides failed', 'error')
+      // Declining the question is the owner's choice: a note that nothing changed, not an error.
+      if (e instanceof ConsentDeclined) notify(e.message)
+      else notify(e instanceof Error ? e.message : 'Saving policy overrides failed', 'error')
+      return false
     } finally {
       setBusy(false)
     }
