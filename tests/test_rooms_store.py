@@ -1022,6 +1022,7 @@ def test_a_member_cannot_break_the_fence_with_a_literal_closing_tag(enabled, sin
             store.require_room(room.id).member("skeptic"),
             store.read_messages(room.id),
             since_last_turn=since_last_turn,
+            reach="",
         )
     )
     assert prompt.count("</untrusted_content>") == 1, "the member's forged closer was neutralised"
@@ -1265,8 +1266,8 @@ def test_an_empty_feed_is_stated_rather_than_fenced_as_nothing(enabled):
     room = store.require_room(room_id)
     member = room.member("skeptic")
 
-    since = turn.build_member_prompt(room, member, [], since_last_turn=True)
-    whole = turn.build_member_prompt(room, member, [], since_last_turn=False)
+    since = turn.build_member_prompt(room, member, [], since_last_turn=True, reach="")
+    whole = turn.build_member_prompt(room, member, [], since_last_turn=False, reach="")
 
     for prompt in (since, whole):
         assert "<untrusted_content" not in _fed(prompt)
@@ -1706,10 +1707,15 @@ def test_a_long_room_is_folded_to_fit_each_members_own_window(
     member = room.member("skeptic")
     messages = store.read_messages(room_id)
 
-    whole = turn.build_member_prompt(room, member, messages, since_last_turn=False)
+    whole = turn.build_member_prompt(room, member, messages, since_last_turn=False, reach="")
     folded = asyncio.run(
         turn.member_context(
-            room, member, messages, since_last_turn=False, serving=_StreamingProvider("k")
+            room,
+            member,
+            messages,
+            since_last_turn=False,
+            serving=_StreamingProvider("k"),
+            reach="",
         )
     )
 
@@ -1739,11 +1745,16 @@ def test_a_room_that_fits_is_not_folded_at_all(enabled, monkeypatch, fresh_fold_
 
     out = asyncio.run(
         turn.member_context(
-            room, member, messages, since_last_turn=False, serving=_StreamingProvider("k")
+            room,
+            member,
+            messages,
+            since_last_turn=False,
+            serving=_StreamingProvider("k"),
+            reach="",
         )
     )
 
-    assert out == turn.build_member_prompt(room, member, messages, since_last_turn=False)
+    assert out == turn.build_member_prompt(room, member, messages, since_last_turn=False, reach="")
 
 
 def test_the_member_that_summarized_is_the_member_charged(enabled, monkeypatch, fresh_fold_history):
@@ -1862,6 +1873,7 @@ def test_the_compaction_digest_is_not_attributed_to_the_human(
             store.read_messages(room_id),
             since_last_turn=False,
             serving=_StreamingProvider("k"),
+            reach="",
         )
     )
 
@@ -1885,11 +1897,16 @@ def test_compaction_stops_when_it_stops_helping(enabled, monkeypatch, fresh_fold
 
     out = asyncio.run(
         turn.member_context(
-            room, member, messages, since_last_turn=False, serving=_StreamingProvider("k")
+            room,
+            member,
+            messages,
+            since_last_turn=False,
+            serving=_StreamingProvider("k"),
+            reach="",
         )
     )
 
-    assert out == turn.build_member_prompt(room, member, messages, since_last_turn=False)
+    assert out == turn.build_member_prompt(room, member, messages, since_last_turn=False, reach="")
 
 
 def test_an_overflow_that_folding_cannot_fix_still_takes_the_turn(

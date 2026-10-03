@@ -736,13 +736,13 @@ class TestAcpLoopBreaker:
         the original defect exactly — an abort that announces itself and does nothing."""
         import logging
 
-        from personalclaw.dashboard.chat_runner import _abort_acp_turn
+        from personalclaw.acp.ungated import stop_turn
 
         class _NoCancel:
             pass
 
-        with caplog.at_level(logging.WARNING, logger="personalclaw.dashboard.chat_runner"):
-            await _abort_acp_turn(_NoCancel(), "breaker trip")
+        with caplog.at_level(logging.WARNING, logger="personalclaw.acp.ungated"):
+            await stop_turn(_NoCancel(), "breaker trip")
         assert any("exposes no cancel() seam" in r.getMessage() for r in caplog.records), [
             r.getMessage() for r in caplog.records
         ]
@@ -751,11 +751,11 @@ class TestAcpLoopBreaker:
     async def test_abort_helper_drives_the_provider_cancel_seam(self):
         """Positive control on the helper itself: it awaits `cancel` fire-and-forget
         (``wait_ack_timeout=0.0``), matching `SessionManager.cancel_current`."""
-        from personalclaw.dashboard.chat_runner import _abort_acp_turn
+        from personalclaw.acp.ungated import stop_turn
 
         provider = AsyncMock()
         del provider.cancel_session
-        await _abort_acp_turn(provider, "breaker trip")
+        await stop_turn(provider, "breaker trip")
         provider.cancel.assert_awaited_once_with(wait_ack_timeout=0.0)
 
     @pytest.mark.asyncio

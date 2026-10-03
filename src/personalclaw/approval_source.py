@@ -1,8 +1,8 @@
 """Where a pending approval came from, in the few words every surface names it by.
 
 An approval is raised by a chat's own call, a loop's worker (which asks on the chat path, with no
-source of its own), a workflow run's step, a trigger's run, a subagent, or an MCP server's
-question. The registry's entry carries those words as ``source_label``
+source of its own), a workflow run's step, a trigger's run, a subagent, a room member, or an MCP
+server's question. The registry's entry carries those words as ``source_label``
 (``dashboard.approval_state``), the dashboard's cards say "From <label>", the approval's Inbox row
 keeps them, and a channel's prompt is tagged with them (``ChannelDelivery.request_approval``'s
 ``source``). The gateway asks a channel for a background call before the entry exists, and names
@@ -16,6 +16,29 @@ from __future__ import annotations
 from typing import Any
 
 from personalclaw.security import redact_field
+
+#: The registry's ``source`` for a room member's call (``rooms.posture.registry_approver``). The
+#: entry's ``session`` is then the member's own session key (``rooms.turn.session_key``).
+ROOM_SOURCE = "room"
+
+
+def room_member_of(session: str) -> tuple[str, str] | None:
+    """The member whose room session *session* is, and its room's title, masked ("" for a room
+    that is gone or cannot be read), or None when *session* is not a room member's."""
+    from personalclaw.rooms.turn import parse_session_key
+
+    parsed = parse_session_key(session)
+    if parsed is None:
+        return None
+    room_id, member = parsed
+    try:
+        from personalclaw.rooms import store
+
+        room = store.get_room(room_id)
+    except Exception:  # noqa: BLE001 - a wording helper never fails the approval it describes
+        return member, ""
+    title = str(getattr(room, "title", "") or "") if room is not None else ""
+    return member, redact_field(title)
 
 
 def loop_name_of(session: str) -> str | None:
@@ -79,7 +102,8 @@ def approval_source_label(
     (``ChannelDelivery.request_approval``'s ``source``): ``chat “Trip planning”``,
     ``loop “Fix the README”``, ``workflow “deep-research” · step “sweep”``,
     ``trigger “Friday digest”``, ``subagent of chat “Trip planning”``,
-    ``batch of chat “Trip planning”``, ``MCP server “deepwiki”``; a chat's own agent asking
+    ``batch of chat “Trip planning”``, ``MCP server “deepwiki”``,
+    ``room “Is the demo worth it?” · member “talk-editor”``; a chat's own agent asking
     through the queue (*source* ``agent``) is its chat. A name that is not known leaves the bare
     kind (``chat``, ``loop``), which is still true. The work is read in the order that decides it:
     the trigger
@@ -114,6 +138,9 @@ def approval_source_label(
         return _quoted("trigger", redact_field(name_of_trigger(session.split(":")[1])))
     if source.startswith("mcp:"):
         return _quoted("MCP server", source.removeprefix("mcp:"))
+    if source == ROOM_SOURCE and (seat := room_member_of(session)) is not None:
+        member, room = seat
+        return f"{_quoted('room', room)} · member “{member}”"
     if source == "subagent":
         return f"{started} of {_quoted('chat', title)}" if title else started
     if not source:

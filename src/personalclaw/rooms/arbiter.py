@@ -72,6 +72,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.notification_kinds import AGENT
+from personalclaw.rooms.posture import registry_approver
 from personalclaw.rooms.store import (
     RoomMember,
     begin_turn,
@@ -370,7 +371,11 @@ async def _drain(state: Any, sessions: "SessionManager", room_id: str, spoke: li
             logger.info("rooms: %s left room %s before its turn — skipped", name, room_id)
             continue
         try:
-            reply = await run_member_turn(sessions, room_id, name)
+            # The member's calls ask you through the registry every approval is listed in, the
+            # one a chat's call asks through; with no registry here, nobody can be asked.
+            reply = await run_member_turn(
+                sessions, room_id, name, approver=registry_approver(state, room_id, name)
+            )
         except Exception as exc:
             end_turn(room_id, spoke=False)
             now = require_room(room_id)

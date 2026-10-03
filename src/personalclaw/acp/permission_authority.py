@@ -514,18 +514,24 @@ def coverage_for(provider: str) -> ProviderCoverage | None:
     return NOT_GATEABLE.get(normalize_provider(provider))
 
 
+def ungated_call_why(agent: str, *, excused: bool) -> str:
+    """Why ``agent`` ran a call without asking the host first, as a clause: its own settings
+    allowed it, or, for an accepted residual (``excused``), it never asks about that tool. The one
+    wording a chat's card (:func:`ungated_call_note`) and a room's note
+    (``rooms.posture.UnaskedCall``) both say it in."""
+    who = agent.strip() or "The agent"
+    return f"{who} never asks about this tool" if excused else f"allowed by {who}'s own settings"
+
+
 def ungated_call_note(agent: str, *, excused: bool, stopped_in: str = "") -> str:
     """What the chat says on the row of a call ``agent`` ran without asking the host first.
 
     Product copy, shown on the call's own card live and after a reload, so it says what happened
-    and why in her words: the agent ran it without asking her, because its own settings allowed
-    it, or, for an accepted residual (``excused``), because it never asks about that tool. When
-    the call changed something under a read-only task mode (``stopped_in``, ``"ask"`` or
-    ``"plan"``) the turn was stopped for it, and the note says that too.
+    and why in her words: the agent ran it without asking her, for :func:`ungated_call_why`'s
+    reason. When the call changed something under a read-only task mode (``stopped_in``,
+    ``"ask"`` or ``"plan"``) the turn was stopped for it, and the note says that too.
     """
-    who = agent.strip() or "The agent"
-    why = f"{who} never asks about this tool" if excused else f"allowed by {who}'s own settings"
-    note = f"Ran without asking you — {why}."
+    note = f"Ran without asking you — {ungated_call_why(agent, excused=excused)}."
     if stopped_in:
         note += f" {stopped_in.capitalize()} mode allows no changes, so the turn was stopped."
     return note

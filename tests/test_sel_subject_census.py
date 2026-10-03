@@ -104,7 +104,7 @@ def test_the_census_reads_the_whole_surface():
         "subagent.py",
         "llm_helpers.py",
         "eval/runner.py",
-        "dashboard/ungated_calls.py",
+        "acp/ungated.py",
         "dashboard/handlers/tools.py",
         "mcp_shared.py",
     ):

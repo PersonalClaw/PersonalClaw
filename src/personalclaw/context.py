@@ -664,6 +664,7 @@ _RUNTIME_DISPLAY = {
     "dashboard": "PersonalClaw dashboard",
     "cron": "PersonalClaw cron job",
     "subagent": "PersonalClaw subagent",
+    "room": "PersonalClaw agent room",
     "channel": "messaging channel",
 }
 
@@ -701,6 +702,8 @@ def _runtime_display_name(session_key: str) -> str:
         source = "cron"
     elif session_key.startswith("subagent:"):
         source = "subagent"
+    elif session_key.startswith("room:"):
+        source = "room"
     else:
         source = "channel"
     return _RUNTIME_DISPLAY.get(source, source)

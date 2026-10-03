@@ -338,14 +338,19 @@ async def api_room_update(request: web.Request) -> web.Response:
 
 
 async def api_room_archive(request: web.Request) -> web.Response:
-    """POST /api/rooms/{room_id}/archive — archive a room. Idempotent."""
+    """POST /api/rooms/{room_id}/archive — archive a room. Idempotent.
+
+    Every ask its members are still waiting on ends with it, as cancelled, on every surface it is
+    listed on (``rooms.posture.end_asks``): an archived room answers nothing."""
     room_id = request.match_info["room_id"]
     try:
         _require_enabled()
         room = store.archive_room(room_id)
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room, _gateway_state(request))})
+    state = _gateway_state(request)
+    posture.end_asks(state, room_id, why=posture.ROOM_ARCHIVED)
+    return web.json_response({"room": _room_payload(room, state)})
 
 
 async def api_room_member_add(request: web.Request) -> web.Response:
@@ -383,7 +388,9 @@ async def api_room_member_add(request: web.Request) -> web.Response:
 
 
 async def api_room_member_remove(request: web.Request) -> web.Response:
-    """DELETE /api/rooms/{room_id}/members/{name} — remove a member."""
+    """DELETE /api/rooms/{room_id}/members/{name} — remove a member.
+
+    An ask the member is still waiting on ends with its seat (``rooms.posture.end_asks``)."""
     room_id = request.match_info["room_id"]
     name = request.match_info["name"]
     try:
@@ -391,7 +398,9 @@ async def api_room_member_remove(request: web.Request) -> web.Response:
         room = store.remove_member(room_id, name)
     except store.RoomError as exc:
         return _refusal(exc)
-    return web.json_response({"room": _room_payload(room, _gateway_state(request))})
+    state = _gateway_state(request)
+    posture.end_asks(state, room_id, member=name, why=posture.member_left(name))
+    return web.json_response({"room": _room_payload(room, state)})
 
 
 async def api_room_message_post(request: web.Request) -> web.Response:

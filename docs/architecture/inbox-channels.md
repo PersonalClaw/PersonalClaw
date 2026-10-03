@@ -218,14 +218,14 @@ never an edit to review.
 
 ## Pending approvals: one registry, every surface
 
-A tool call waiting on a human decision — from a chat, a subagent, a workflow stage, or an MCP
-server's elicitation — is **one entry** in `DashboardState._pending_approvals`
+A tool call waiting on a human decision — from a chat, a subagent, a workflow stage, a room
+member, or an MCP server's elicitation — is **one entry** in `DashboardState._pending_approvals`
 (`dashboard/approval_state.py`, the registry `DashboardState` mixes in), and every surface
 reads that entry:
 
 | Surface | Reads |
 |---|---|
-| Home's approvals count and **To triage**, Mission Control, the phone companion, the workflow run view, a loop's cockpit, the desktop tray, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
+| Home's approvals count and **To triage**, Mission Control, the phone companion, the workflow run view, a loop's cockpit, a room's view, the desktop tray, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
 | The chat card, the out-of-context nudge | the `approval` WS frame — the same entry |
 | The phone push, the `ApprovalRequest` lifecycle hook | fired from the registration |
 | The Inbox, and that row's notification (the bell, Notifications) | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}`; its notification carries the same refs |
@@ -259,7 +259,8 @@ folds once it has answered, until the ask is answered (`approvalSegment.waitsPas
 The entry also says where the call came from, in words (`source_label`, from
 `approval_source.approval_source_label`): `chat “Trip planning”`, `loop “Fix the README”`,
 `workflow “deep-research” · step “sweep”`, `trigger “Friday digest”`, `subagent of chat “…”`,
-`batch of chat “…”` (a batch's ask, before any of its tasks exists), `MCP server “…”`. Every surface that answers an approval renders the one approval card
+`batch of chat “…”` (a batch's ask, before any of its tasks exists), `MCP server “…”`,
+`room “…” · member “…”`. Every surface that answers an approval renders the one approval card
 (`pages/chat/ApprovalCard`;
 `app/PendingApprovalCard` for the queue surfaces: the workflow run view, Mission Control, Home's To
 triage, the Inbox row and its notification): the tool and its risk, what it can touch, its whole
@@ -268,6 +269,17 @@ to that work on a surface that lists approvals from everywhere. A channel's prom
 the same words (`ChannelDelivery.request_approval`'s `source`), for a chat's approval asked on a
 channel and for a background one the gateway asks alike; a loop's worker asks on the chat path,
 and its prompt names the loop. The approval's Inbox row keeps the words in `refs.source_label`.
+
+A room member's call asks the same way (`rooms.posture.registry_approver`, bound by the round):
+its `session` is the member's own key (`room:<room>:<member>`), its `source` is `room`, and its
+Inbox row reads "talk-editor in the room “…” is waiting for your decision on …". The room's view
+lists and answers its members' asks (`RoomApprovals`), and the nudge, the Inbox row and a queue
+card link to the room (`approvalDestination`). Only a decision on it answers it
+(`answered_alone`): a Trust or YOLO switch leaves it asking, because a room's approval posture is
+`ask` whatever the rest of the gateway's is. Archiving the room or removing the member ends its
+ask as cancelled ("the room that asked for it was archived"), and an answer that arrives anyway is
+refused (`dashboard/approval_owner.py`). With no registry to ask through, the call is refused and
+the room says so; an ask nobody answered is refused for that, never as a Deny.
 
 Mission Control labels each card by the work that asked (`attentionLanes.inboxRaisedBy`): an
 approval by its `source_label`, and an Inbox row by the refs its emitter stamped (`workflow`,

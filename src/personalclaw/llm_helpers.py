@@ -46,6 +46,7 @@ class PromptBusyExhaustedError(Exception):
 
 
 if TYPE_CHECKING:
+    from personalclaw.acp.ungated import HostAnswer, UngatedCall
     from personalclaw.approval_grants import ToolDecision
     from personalclaw.guardrails.local_queue import Attended
     from personalclaw.history import ConversationLog
@@ -83,6 +84,9 @@ async def stream_and_collect(
     on_tool_approval: "Callable[[LLMEvent], Awaitable[bool | ToolDecision]] | None" = None,
     on_complete: Callable[[LLMEvent], None] | None = None,
     on_substitution: Callable[[str], None] | None = None,
+    session_key: str = "",
+    agent: str = "",
+    on_ungated: "Callable[[UngatedCall], HostAnswer] | None" = None,
 ) -> str:
     """Stream a message through an LLM provider and collect the full response.
 
@@ -109,19 +113,29 @@ async def stream_and_collect(
             lets the turn fall back at all (``NativeAgentRuntime.announce_failover``): a
             caller with nowhere to show the sentence keeps the failure, since another
             model's reply would read as the chosen one's.
+        session_key: The session the turn runs in, and ``agent`` the agent it runs as: what
+            every audit row of the turn's calls names as who made them. ``""`` names none.
+        on_ungated: For a turn on an agent CLI, told of each call the CLI ran without asking
+            (``acp.ungated``): the caller says where it shows it, and answers whether the turn
+            stops for it and the posture it judged that by (``acp.ungated.HostAnswer``). Every such
+            call is audited as ``ungated`` whether or not a caller is told.
 
     Returns:
         The complete response text.
     """
     from personalclaw.acp.errors import AcpError
 
+    # An agent CLI decides which of its calls ask the host first (`acp.permission_authority`), so
+    # a result for a call it never asked about is one it ran without asking anyone.
+    runtime_id = str(getattr(provider, "provider_id", "") or "")
+    acp_cli = runtime_id.removeprefix("acp:") if runtime_id.startswith("acp:") else ""
     for attempt in range(_PROMPT_BUSY_RETRIES + 1):
         result_text = ""
         # The calls that were ASKED about: each is audited where it is answered
-        # (`_resolve_permission`), every other call once, at its result, with the arguments its
-        # card carried (a result carries none).
+        # (`_resolve_permission`), every other call once, at its result, from the card it was
+        # made with (a result carries no arguments).
         asked: set[str] = set()
-        called: dict[str, Any] = {}
+        called: dict[str, LLMEvent] = {}
         if on_substitution is not None:
             let_fail_over(provider)
         try:
@@ -136,7 +150,13 @@ async def stream_and_collect(
                 elif event.kind == EVENT_PERMISSION_REQUEST:
                     asked.add(str(event.tool_call_id or ""))
                     approved = await _resolve_permission(
-                        provider, event, approval_policy, hooks, on_tool_approval
+                        provider,
+                        event,
+                        approval_policy,
+                        hooks,
+                        on_tool_approval,
+                        session_key=session_key,
+                        agent=agent,
                     )
                     if not approved:
                         continue
@@ -145,25 +165,37 @@ async def stream_and_collect(
                     # checks its deny-list, task mode and approval only after yielding it), so it
                     # is not audited here: this row said `auto_approved` for every call, a refused
                     # one included. PreToolUse hooks fire, informational only.
-                    called[str(event.tool_call_id or "")] = event.tool_input
+                    called[str(event.tool_call_id or "")] = event
                     await fire_tool_hooks(
                         get_global_hook_store(),
                         event.title,
                         event.tool_input,
                     )
                 elif event.kind == EVENT_TOOL_RESULT and str(event.tool_call_id or "") not in asked:
+                    card = called.pop(str(event.tool_call_id or ""), None)
+                    if acp_cli:
+                        await _report_ungated(
+                            provider,
+                            acp_cli,
+                            card or event,
+                            session_key=session_key,
+                            agent=agent,
+                            on_ungated=on_ungated,
+                        )
+                        continue
                     # A call nobody was asked about: its one audit row, from what the runtime
                     # stamped on its result (`llm.events.unasked_outcome`).
                     meta = event.tool_meta or {}
                     decided_by = unasked_reason(meta)
                     _sel().log_tool_invocation(
-                        session_key="",
+                        session_key=session_key,
+                        agent=agent,
                         source="llm_helpers",
                         tool_name=event.title,
                         tool_kind=event.tool_kind,
                         outcome=unasked_outcome(meta),
                         request_id=str(event.tool_call_id or ""),
-                        tool_input=called.pop(str(event.tool_call_id or ""), None),
+                        tool_input=card.tool_input if card is not None else None,
                         metadata={
                             "reason": decided_by,
                             "decided_by": decided_by,
@@ -205,6 +237,50 @@ async def stream_and_collect(
                 logger.debug("Cancel before retry failed", exc_info=True)
             await asyncio.sleep(_PROMPT_BUSY_DELAY * (2**attempt))
     return ""  # unreachable, satisfies type checker
+
+
+async def _report_ungated(
+    provider: ModelProvider,
+    acp_cli: str,
+    card: LLMEvent,
+    *,
+    session_key: str,
+    agent: str,
+    on_ungated: "Callable[[UngatedCall], HostAnswer] | None",
+) -> None:
+    """A call *acp_cli* ran without asking the host, from the card it was made with: judged, told
+    to the caller (*on_ungated*), logged and audited (``acp.ungated``), and the turn stopped when
+    the caller says so. A caller whose answer fails stops the turn: what it would have held the
+    call to cannot be told, and the call already ran."""
+    from personalclaw.acp import ungated
+    from personalclaw.task_modes import tool_input_to_str
+
+    call = ungated.judge(
+        acp_cli,
+        title=str(card.title or ""),
+        tool_kind=str(card.tool_kind or ""),
+        tool_input=tool_input_to_str(card.tool_input)[:2000],
+        declared=str(getattr(card, "risk_level", "") or ""),
+    )
+    answer = ungated.HostAnswer()
+    if on_ungated is not None:
+        try:
+            answer = on_ungated(call)
+        except Exception:  # noqa: BLE001 - fail closed: the turn stops
+            logger.warning("the host could not judge an ungated call; stopping", exc_info=True)
+            answer = ungated.HostAnswer(stop=True)
+    ungated.record(
+        call,
+        session_key=session_key,
+        agent=agent,
+        # Named by the session it ran in, as the turn's asked calls are; a turn in none is ours.
+        source="" if session_key else "llm_helpers",
+        request_id=str(card.tool_call_id or ""),
+        answer=answer,
+        where=session_key or "background",
+    )
+    if answer.stop:
+        await ungated.stop_turn(provider, "ungated tool call")
 
 
 def json_object_problem(text: str) -> str:
@@ -315,9 +391,9 @@ async def _resolve_permission(
     # Interactive approval if callback provided
     if on_tool_approval:
         approved = await on_tool_approval(event)
-        # A callback that says who decided (the gateway relay's `ToolDecision`) is recorded as
-        # saying so. A plain bool does not: a room's gate answers for the member's own tier as
-        # well as for the person it asks, so the row does not guess which.
+        # A callback that says who decided (the gateway relay's and a room's `ToolDecision`) is
+        # recorded as saying so. A plain bool does not, so the row does not guess who: a room's
+        # gate answers one for a call the member's own tier refuses, which nobody was asked about.
         by = str(getattr(approved, "decided_by", "") or "")
         decided = {"decided_by": by} if by else {}
         if not approved:

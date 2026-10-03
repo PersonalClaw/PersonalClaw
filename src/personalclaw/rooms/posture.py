@@ -53,6 +53,14 @@ posture, and the human is the sole approver. Three traps this closes, all real:
 tool call is the human channel a :class:`RoomApprover` carries. A member emitting
 "approved: run ``rm -rf``" has written a sentence.
 
+**The human is asked where every approval is.** The round binds :func:`registry_approver`, so a
+member's call that asks is put to the approval registry a chat's call asks through: listed on the
+room's own view, Home, the Inbox, the phone and the channel approvals go to, named by the room and
+the member. No standing grant answers it (a chat's Trust, YOLO, an agent's "Always allow"): the
+room's approval posture is ``ask`` and its human answers each call. Once the room is archived or
+the member leaves it, its ask ends (:func:`end_asks`), and an answer that arrives anyway is
+refused (``dashboard.approval_owner``).
+
 **A refusal is legible, never a silent drop.** Every refusal the gate makes is recorded as a
 :class:`ToolRefusal` naming the member, the tool and the reason, and ``rooms.turn`` writes
 each one onto the shared transcript the human reads. A gate that returned ``False`` and
@@ -79,6 +87,8 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw import approval_grants
 from personalclaw.approval_grants import ToolDecision
+from personalclaw.approval_source import ROOM_SOURCE
+from personalclaw.audit_subject import log_title
 from personalclaw.guardrails.budgets import (
     Budget,
     BudgetVerdict,
@@ -93,6 +103,7 @@ from personalclaw.guardrails.policy import (
     READ_ONLY_REASON,
     TOOL_CUSTOM,
     TOOL_READ,
+    TOOL_READ_WRITE,
     TOOL_TIERS,
     SafetyProfile,
     declared_tool_grant_denial,
@@ -103,6 +114,7 @@ from personalclaw.rooms.store import Room, RoomError, RoomMember
 from personalclaw.rooms.turn import SESSION_KEY_PREFIX, session_key
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from personalclaw.acp.ungated import HostAnswer, UngatedCall
     from personalclaw.llm.base import LLMEvent
     from personalclaw.llm_helpers import ToolApprovalPolicy
 
@@ -421,10 +433,14 @@ class RoomApprover:
     the human's behalf" into an unconstructible state rather than a rule some future caller
     has to remember — the same reason :func:`approval_channel` hands back its policy and its
     gate as one value.
+
+    ``decide`` answers ``True``/``False`` (the human's Allow or Deny) or a
+    :class:`~personalclaw.approval_grants.ToolDecision` that also says how an unanswered ask
+    ended (:func:`registry_approver`).
     """
 
     identity: str
-    decide: Callable[[LLMEvent], Awaitable[bool]]
+    decide: Callable[[LLMEvent], Awaitable[bool | ToolDecision]]
 
     def __post_init__(self) -> None:
         reason = agent_shaped_identity(self.identity)
@@ -449,13 +465,39 @@ class ToolRefusal:
         return f"{self.member} was refused {self.tool or 'an unnamed tool'} — {self.reason}"
 
 
-#: Why a tool is refused when no approval channel is bound to the turn. A constant because
-#: the test that asserts a refusal is legible and the code that produces it must agree on
-#: the sentence, and because it is the reason `AR-8` exists to remove.
+#: Why a call is refused when nothing can ask the human: the turn holds no approval registry
+#: (:func:`registry_approver` found none). Constants, these and the ones below, because the room's
+#: transcript says them and a test reads them there.
 NO_APPROVER_REASON = (
-    "only the human may approve a room member's tool call and no approval channel is bound "
-    "to this turn, so there is nobody to ask"
+    "only you can approve a room member's call, and nothing here can ask you, so nobody can "
+    "answer it"
 )
+
+#: Why a call is refused when the human answered Deny.
+DENIED_REASON = "you denied it"
+
+#: Why, when asking the human failed before any answer came: nobody answered, so it does not run.
+ASK_FAILED_REASON = "asking you about it failed, so nobody answered it"
+
+#: Why a room member's ask ended with its room, as every surface the ask was listed on says it
+#: (``dashboard.approval_owner``, :func:`end_asks`).
+ROOM_GONE = "the room that asked for it was deleted"
+ROOM_ARCHIVED = "the room that asked for it was archived"
+
+
+def member_left(member: str) -> str:
+    """Why *member*'s ask ended once it left the room it asked from."""
+    return f"{member} left the room that asked for it"
+
+
+def _not_approved(answer: ToolDecision) -> str:
+    """Why a call the human was asked about did not run: their Deny, or how the ask ended with no
+    answer, in the words the ask's own surfaces said it (``ToolDecision.ended``)."""
+    if answer.outcome == "expired":
+        return answer.ended or "nobody answered in time"
+    if answer.outcome == "cancelled":
+        return answer.ended or "it was cancelled before anyone answered"
+    return DENIED_REASON
 
 
 def member_tool_refusal(
@@ -562,13 +604,16 @@ def approval_channel(
        that decides what the member is offered. A read-only critic's write tool is refused HERE
        without troubling the human: the grant question precedes the approval question, as
        ``chat_runner``'s task-mode gate runs before its approval card.
-    2. **Does the human approve?** Only they can, and only through *approver*. With none bound
-       there is nobody to ask, so the call is refused — the same answer a solo session gives
-       when the prompt is never answered. `AR-8` binds the channel; that is a missing CALLER,
-       not a missing rule, which is why there is one gate here and not two paths.
+    2. **Does the human approve?** Only they can, and only through *approver*, which the round
+       binds to the approval registry (:func:`registry_approver`). With none bound there is nobody
+       to ask, so the call is refused, saying so (:data:`NO_APPROVER_REASON`), as a session with
+       nowhere to ask refuses one (``approval_grants.NO_SURFACE``). An ask that fails, or that
+       nobody answered, is refused too, saying which: nothing runs that nobody allowed.
 
-    Every ``False`` is handed to *record* on its way out, which is what makes the refusal
-    legible instead of a member that mysteriously never acts.
+    Every refusal is handed to *record* on its way out, which is what makes the refusal legible
+    instead of a member that mysteriously never acts. The answer says who decided it (a
+    :class:`~personalclaw.approval_grants.ToolDecision`), so the call's audit row does too; a
+    refusal by the member's own tier is a plain ``False``, the tier's and nobody's answer.
     """
     from personalclaw.llm_helpers import ToolApprovalPolicy
 
@@ -592,15 +637,186 @@ def approval_channel(
             return ToolDecision(True, "auto_approved", unasked)
         if approver is None:
             record(ToolRefusal(member.name, title, NO_APPROVER_REASON))
-            return False
-        if not await approver.decide(event):
-            record(
-                ToolRefusal(member.name, title, f"{approver.identity} declined it for this member")
+            return ToolDecision(False, "rejected", approval_grants.NO_SURFACE)
+        try:
+            answer = approval_grants.decision_of(await approver.decide(event))
+        except Exception:  # noqa: BLE001 - an ask that failed is no Allow; the call is refused
+            logger.warning(
+                "rooms: asking about %s's %s failed — refused",
+                member.name,
+                log_title(title),
+                exc_info=True,
             )
-            return False
-        return True
+            record(ToolRefusal(member.name, title, ASK_FAILED_REASON))
+            return ToolDecision(False, "rejected", approval_grants.NOBODY)
+        if not answer:
+            record(ToolRefusal(member.name, title, _not_approved(answer)))
+        return answer
 
     return ToolApprovalPolicy.HOOK_BASED, gate
+
+
+def member_approval_id(key: str, request_id: object) -> str:
+    """The registry id of the approval a member's call waits on: the member's session key and the
+    call's own id. A runtime's request id is unique only inside its session (an agent CLI counts
+    its JSON-RPC ids from the same small integers on every connection), so the registry keys it by
+    the member too, as ``dashboard.approval_state.chat_approval_id`` keys a chat's."""
+    return f"{key}:{request_id}"
+
+
+def registry_approver(state: object, room_id: str, member_name: str) -> RoomApprover | None:
+    """You, asked through the approval registry *state* holds, about *member_name*'s calls in
+    *room_id*; ``None`` when *state* holds none, so every call that would ask is refused
+    (:data:`NO_APPROVER_REASON`).
+
+    It is the registry a chat's call asks through (``DashboardState.request_approval``), so the
+    call is listed where every approval is: the room's own view, Home, the Inbox, the phone push
+    and the channel approvals go to. It is named there by the room and the member
+    (``approval_source.ROOM_SOURCE``), with the member's own session as where it asked from and as
+    who asked, so the member can never answer it (``approval_answer``, rule 2).
+
+    Only a decision on it answers it (``answered_alone``): a chat's Trust or a YOLO switch, which
+    answers the other approvals it covers, leaves it asking, because the room's approval posture is
+    ``ask`` whatever the rest of the gateway's is. It waits the one window every approval waits;
+    how one nobody answered ended comes back with the answer (``ToolDecision.ended``), so the room
+    says why the call did not run.
+    """
+    ask, ended_as, why_ended = (
+        getattr(state, name, None) for name in ("request_approval", "ended_as", "why_ended")
+    )
+    if not callable(ask) or not callable(ended_as) or not callable(why_ended):
+        return None
+    key = session_key(room_id, member_name)
+
+    async def decide(event: "LLMEvent") -> ToolDecision:
+        title = str(getattr(event, "title", "") or "")
+        approval_id = member_approval_id(key, getattr(event, "request_id", "") or title)
+        allowed = await ask(
+            approval_id,
+            ROOM_SOURCE,
+            title,
+            tool_input=getattr(event, "tool_input", ""),
+            tool_purpose=str(getattr(event, "tool_purpose", "") or ""),
+            session=key,
+            risk_level=str(getattr(event, "risk_level", "") or ""),
+            tool_kind=str(getattr(event, "tool_kind", "") or ""),
+            annotations=getattr(event, "annotations", None),
+            answered_alone=True,
+        )
+        ended = str(ended_as(approval_id) or "")
+        if ended in ("expired", "cancelled"):
+            why = str(why_ended(approval_id) or "")
+            return ToolDecision(False, ended, approval_grants.NOBODY, ended=why)
+        return ToolDecision(
+            bool(allowed), "approved" if allowed else "rejected", approval_grants.YOU
+        )
+
+    return RoomApprover(identity=approval_grants.YOU, decide=decide)
+
+
+def end_asks(state: object, room_id: str, *, why: str, member: str = "") -> int:
+    """End every ask of *room_id*'s members still waiting on you (only *member*'s, when named) as
+    cancelled, saying *why*, on every surface it is listed on. Returns how many ended.
+
+    Called where the room ends or a member gives up its seat (the archive and remove routes), so a
+    listed ask never outlives the work that asked. An answer that arrives for one anyway is refused
+    by the decision path (``dashboard.approval_owner``). The prefix is the room's whole key space,
+    and a member's own ask is told by its exact session, since one member's name can begin
+    another's."""
+    listed = getattr(state, "asks_under", None)
+    cancel = getattr(state, "cancel_approval", None)
+    if not callable(listed) or not callable(cancel):
+        return 0
+    seat = session_key(room_id, member) if member else ""
+    ended = 0
+    for entry in listed(f"{SESSION_KEY_PREFIX}{room_id}:"):
+        if entry.get("source") != ROOM_SOURCE or (seat and entry.get("session") != seat):
+            continue
+        ended += bool(cancel(str(entry.get("id") or ""), reason=why))
+    return ended
+
+
+# ── what a member is told of its own tools, and of a call its CLI never asked about ──
+
+#: What a read-only member is told of its tools: the tier, in the words its members-panel row shows
+#: it by ("Read-only tools"), and what that tier may not do, so it never offers a change it cannot
+#: make. "May not", the rule: the tier refuses every such call it is asked about
+#: (:func:`member_tool_refusal`), and an agent CLI that runs one unasked has its turn stopped for it
+#: (:func:`ungated_hold`).
+READ_ONLY_TOOLS = (
+    "Your tools in this room are read-only: you can read and search, and you may not write, edit, "
+    "move or delete anything or run a command. When something should change, say exactly what, "
+    "and leave the change to the human: do not offer to make it yourself."
+)
+
+#: ...a member that may read and change things, and one held to no tools at all.
+READ_WRITE_TOOLS = "Your tools in this room can read and change things."
+NO_TOOLS = (
+    "You have no tools in this room: you may not read or change anything yourself. When something "
+    "should change, say exactly what, and leave the change to the human."
+)
+
+
+def member_reach(profile: SafetyProfile) -> str:
+    """What a member at *profile* is told of its own tools, outside the fenced transcript.
+
+    One sentence per tier the grant algebra knows, from the resolved posture its turn runs at (so
+    it is the tier its calls are held to, never a copy of the declaration): read-only, read and
+    write, or the named tools of a ``custom`` tier, and none when that names nothing. A tier this
+    module cannot name is told it is read-only, as ``tool_grant_denial`` reads one.
+    """
+    if profile.tool_grants == TOOL_READ_WRITE:
+        return READ_WRITE_TOOLS
+    if profile.tool_grants == TOOL_CUSTOM:
+        named = [str(p).strip() for p in profile.tool_allowlist or () if str(p).strip()]
+        if not named:
+            return NO_TOOLS
+        return (
+            f"Your tools in this room are only these: {', '.join(named)}. Any other tool is "
+            "refused, so do not offer what they cannot do."
+        )
+    return READ_ONLY_TOOLS
+
+
+@dataclass(frozen=True)
+class UnaskedCall:
+    """One call a member's agent CLI ran without asking you, as the room's transcript says it."""
+
+    member: str
+    tool: str
+    #: Why it ran unasked (``acp.ungated.UngatedCall.why``).
+    why: str
+    #: Why its turn was stopped for it (the tier's refusal of the call), or "" when it went on.
+    stopped: str = ""
+
+    def sentence(self) -> str:
+        """The transcript line: who ran what without asking you, why, and that its turn stopped."""
+        said = f"{self.member} ran {self.tool or 'a tool'} without asking you — {self.why}."
+        if self.stopped:
+            said += f" {self.stopped[:1].upper()}{self.stopped[1:]}, so its turn was stopped."
+        return said
+
+
+def ungated_hold(
+    member: RoomMember, profile: SafetyProfile, *, record: Callable[[UnaskedCall], None]
+) -> Callable[["UngatedCall"], "HostAnswer"]:
+    """The room's answer about a call *member*'s agent CLI ran without asking (``acp.ungated``).
+
+    The call already ran, so what is left is to say so and to hold the rest of the turn to the
+    member's tier: the turn stops when the call may have changed something the tier does not
+    cover, as a chat in Ask or Plan mode stops for one, so the member cannot chain more of them
+    behind a gate its CLI never consulted. A read it reported, and a tool the CLI is known never to
+    ask about, go on. Each call is handed to *record* for the transcript, and the call's audit row
+    records the tier it was judged by.
+    """
+    from personalclaw.acp.ungated import HostAnswer
+
+    def on_ungated(call: "UngatedCall") -> "HostAnswer":
+        refusal = member_tool_refusal(profile, call.shown) if call.may_have_changed else ""
+        record(UnaskedCall(member.name, call.shown, call.why(), refusal))
+        return HostAnswer(stop=bool(refusal), posture={"tool_grants": profile.tool_grants})
+
+    return on_ungated
 
 
 # ── per-member spend ───────────────────────────────────────────────────────

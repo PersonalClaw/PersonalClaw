@@ -175,6 +175,7 @@ async def test_a_room_summary_writes_one_row_for_the_member_that_summarized(call
         store.read_messages(long_room.id),
         since_last_turn=False,
         serving=SimpleNamespace(served_model_ref=REF),
+        reach="",
     )
 
     assert SUMMARY in fed, "the member was fed the summary"

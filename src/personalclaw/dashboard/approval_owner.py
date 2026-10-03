@@ -16,7 +16,9 @@ an answer. There is one grammar per owner kind, read off the registry entry:
 * a ``spawn:<id>`` / ``subagent:<id>:<request>`` id — a subagent (its start, or one of its calls);
 * a ``workflow:<run>:<node>`` session — a workflow run's stage, and the loop that started the
   run, if one did (``loop.children``);
-* a ``loop-<id>`` (or ``loop-<id>-<task>``) session — a loop's worker chat.
+* a ``loop-<id>`` (or ``loop-<id>-<task>``) session — a loop's worker chat;
+* a ``room:<room>:<member>`` session of a room member's call (``source`` ``room``) — the room, and
+  the member's seat in it.
 
 A chat's own turn needs no entry here: its future is pending exactly while its runner waits, and
 the decision path already refuses a future that is not.
@@ -50,6 +52,7 @@ def owner_ended(entry: dict[str, Any], *, subagents: Any) -> str:
         return (
             _run_ended(str(entry.get("session") or ""))
             or _loop_ended(str(entry.get("session") or ""))
+            or _room_ended(entry)
             or _subagent_ended(str(entry.get("id") or ""), subagents)
         )
     except Exception:
@@ -102,6 +105,35 @@ def _run_ended(session_key: str) -> str:
         return ended_because(
             "the workflow run that asked for it was cancelled", store.cancel_reason(run_id)
         )
+    return ""
+
+
+def _room_ended(entry: dict[str, Any]) -> str:
+    """Why the room a member's call asked from can no longer use an answer: the room is gone or
+    archived, or the member left it. Read strictly, so an unreadable room raises to the caller,
+    which refuses the answer (:data:`UNVERIFIABLE`)."""
+    from personalclaw.approval_source import ROOM_SOURCE
+
+    if entry.get("source") != ROOM_SOURCE:
+        return ""
+    from personalclaw.rooms import store
+    from personalclaw.rooms.posture import ROOM_ARCHIVED, ROOM_GONE, member_left
+    from personalclaw.rooms.turn import parse_session_key
+
+    seat = parse_session_key(str(entry.get("session") or ""))
+    if seat is None:
+        return ""
+    room_id, member = seat
+    try:
+        room = store.require_room(room_id)
+    except store.RoomError as exc:
+        if exc.code == "room_not_found":
+            return ROOM_GONE
+        raise
+    if room.archived:
+        return ROOM_ARCHIVED
+    if room.member(member) is None:
+        return member_left(member)
     return ""
 
 

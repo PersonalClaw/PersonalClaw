@@ -1099,6 +1099,10 @@ def _infer_source(session_key: str) -> str:
         return "cron"
     if session_key.startswith("subagent:"):
         return "subagent"
+    # A room member's own session (`rooms.turn.session_key`): its calls are the room's, and the
+    # catch-all would record them as a chat channel's.
+    if session_key.startswith("room:"):
+        return "room"
     return "channel"
 
 

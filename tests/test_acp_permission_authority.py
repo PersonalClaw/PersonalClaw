@@ -382,7 +382,7 @@ async def _drive(state, session, *, answer=None, sel_mock=None):
     audit = sel_mock or MagicMock()
     with (
         patch("personalclaw.dashboard.chat_runner.sel", audit),
-        patch("personalclaw.dashboard.ungated_calls.sel", audit),
+        patch("personalclaw.acp.ungated.sel", audit),
     ):
         await run_chat(state, session, "hello")
 

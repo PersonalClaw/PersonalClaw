@@ -116,10 +116,12 @@ async def test_one_warning_names_the_runtime_and_the_tool_and_never_the_argument
     with caplog.at_level(logging.WARNING):
         await _drive(state, session)
 
+    # Every PersonalClaw logger, not the chat's alone: the line is written where every host that
+    # runs an agent CLI writes it (`acp.ungated.record`), and a second one anywhere is a duplicate.
     said = [
         r.getMessage()
         for r in caplog.records
-        if r.name.startswith("personalclaw.dashboard.") and r.levelno == logging.WARNING
+        if r.name.startswith("personalclaw.") and r.levelno == logging.WARNING
     ]
     unasked = [line for line in said if "without asking" in line]
     assert len(unasked) == 1, said

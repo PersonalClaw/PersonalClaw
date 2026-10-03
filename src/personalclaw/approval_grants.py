@@ -139,12 +139,15 @@ class ToolDecision:
     ``outcome`` is one of ``approved``/``auto_approved``/``rejected``/``expired``/``cancelled``;
     ``decided_by`` is :data:`YOU` (a person answered), :data:`NOBODY` (the window closed, or the
     work stopped first) or a grant's name. Truthy exactly when the call may run, so a relay
-    returning one is also the ``bool`` the approval callbacks have always returned.
+    returning one is also the ``bool`` the approval callbacks have always returned. ``ended`` is
+    why one nobody answered ended, in the words its surfaces say it ("nobody answered within 2
+    hours"), when the relay knows; ``""`` otherwise.
     """
 
     approved: bool
     outcome: str
     decided_by: str
+    ended: str = ""
 
     def __bool__(self) -> bool:
         return self.approved

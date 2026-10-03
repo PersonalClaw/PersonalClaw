@@ -154,6 +154,18 @@ describe('refTarget', () => {
     expect(refLabel(stage)).toBe('Open the workflow run')
   })
 
+  it("sends a room member's approval row to its room, never to a chat route that 404s", () => {
+    // A member asks under its own session (`room:<room>:<member>`), which no chat route renders.
+    const member = { refs: { approval: 'room:demo-room:talk-editor:c1', session: 'room:demo-room:talk-editor' } }
+    expect(refTarget(member)).toBe('chat/room/demo-room')
+    expect(refLabel(member)).toBe('Open the room')
+    // An unanswered ask's note names the same session, so it goes to the same room.
+    const note = { refs: { auto_denied: 'x', session: 'room:demo-room:talk-editor' } }
+    expect(refTarget(note)).toBe('chat/room/demo-room')
+    // A chat whose key merely starts with the word is still a chat.
+    expect(refTarget({ refs: { approval: 'c:1', session: 'room-notes' } })).toBe('chat/room-notes')
+  })
+
   it('sends the review item for triggers an upgrade brought over to the Triggers page', () => {
     // `legacy_import.announce` lists the waiting triggers in `refs.triggers`; they are reviewed and
     // switched on where they are listed. LAST in the chain, so an older ref still wins; an empty

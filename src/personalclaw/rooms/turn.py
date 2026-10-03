@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, AsyncIterator, Callable, NamedTuple
 
 from personalclaw import context_headroom
 from personalclaw.agents.instructions import agent_instructions
+from personalclaw.audit_subject import audit_text
 from personalclaw.context_compaction import compact, should_compact
 from personalclaw.history import speaker_of
 from personalclaw.llm.base import ModelSubstitution
@@ -69,7 +70,7 @@ from personalclaw.security import fence_untrusted
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.llm.base import ModelProvider
-    from personalclaw.rooms.posture import RoomApprover, ToolRefusal
+    from personalclaw.rooms.posture import RoomApprover, ToolRefusal, UnaskedCall
     from personalclaw.session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,26 @@ def session_key(room_id: str, member_name: str) -> str:
     escaping of its own.
     """
     return f"{SESSION_KEY_PREFIX}{room_id}:{member_name}"
+
+
+def parse_session_key(key: str) -> tuple[str, str] | None:
+    """``(room_id, member_name)`` for a key :func:`session_key` made, or None for any other.
+
+    Read by the surfaces that name a member's call (an approval's source, the Inbox row) and by
+    the decision path that asks whether the room that asked still stands. Both parts are checked
+    against what :func:`session_key` can be given, so a key that merely starts with the prefix is
+    not taken for a member's.
+    """
+    from personalclaw.agent_metadata import _SAFE_NAME_RE
+    from personalclaw.rooms.store import _ROOM_ID_RE
+
+    rest = (key or "").removeprefix(SESSION_KEY_PREFIX)
+    if rest == key:
+        return None
+    room_id, sep, member_name = rest.partition(":")
+    if not sep or not _ROOM_ID_RE.fullmatch(room_id) or not _SAFE_NAME_RE.fullmatch(member_name):
+        return None
+    return room_id, member_name
 
 
 class HeldSession(NamedTuple):
@@ -262,7 +283,7 @@ def render_transcript(room: Room, messages: list[dict]) -> str:
 
 
 def build_member_prompt(
-    room: Room, member: RoomMember, messages: list[dict], *, since_last_turn: bool
+    room: Room, member: RoomMember, messages: list[dict], *, since_last_turn: bool, reach: str
 ) -> str:
     """One member's turn prompt: its own standing instructions, then the FENCED feed.
 
@@ -271,6 +292,11 @@ def build_member_prompt(
     one of the owner's agents, and it used to be sent its role line alone, so whatever its
     instructions say it must do or never do held everywhere but in a room. Its session keeps that
     first message, so a later slice does not repeat them.
+
+    **The instruction names the member's own tools** (*reach*, ``rooms.posture.member_reach``): its
+    tier and what that tier may not do, on every turn, beside its role. A member that was not told
+    it is read-only offered to make the very change its tier then refused, and a peer that read the
+    offer told it to go ahead.
 
     **The fence is not optional and not a formality.** Every line in that transcript is
     model text (or human text quoting model text) about to be handed to another model, so a
@@ -321,6 +347,8 @@ def build_member_prompt(
         body = f"{nothing}\n\n"
     role = f" You {member.role_blurb}." if member.role_blurb else ""
     head = f'You are "{member.name}", a member of the room "{room.title}".{role}\n'
+    if reach:
+        head += f"{reach}\n"
     if not since_last_turn:
         own = agent_instructions(member.name).composed()
         opening = f"{own}\n\n{head}" if own else head
@@ -481,6 +509,7 @@ async def member_context(
     *,
     since_last_turn: bool,
     serving: object,
+    reach: str,
 ) -> str:
     """One member's prompt, sized against ITS OWN window on the one shared token counter.
 
@@ -500,7 +529,9 @@ async def member_context(
     for good, and the provider's own length error is the truthful backstop for a prompt the
     estimate got wrong — the reading ``workflows/compaction``'s proactive layer takes too.
     """
-    prompt = build_member_prompt(room, member, messages, since_last_turn=since_last_turn)
+    prompt = build_member_prompt(
+        room, member, messages, since_last_turn=since_last_turn, reach=reach
+    )
     window = await context_headroom.resolve_window(serving=serving)
     label = f"the room as fed to {member.name}"
     before = context_headroom.check(
@@ -523,7 +554,9 @@ async def member_context(
     ref = getattr(serving, "served_model_ref", "")
     model_ref = ref.strip() if isinstance(ref, str) else ""
     folded = await _fold(room, member, messages, model_ref=model_ref)
-    compacted = build_member_prompt(room, member, folded, since_last_turn=since_last_turn)
+    compacted = build_member_prompt(
+        room, member, folded, since_last_turn=since_last_turn, reach=reach
+    )
     # Chars, not tokens: this is the RATIO `should_compact` reads, not a budget, so it needs no
     # second counter — the measure `workflows/compaction` feeds the same rule.
     saved = (len(prompt) - len(compacted)) / len(prompt)
@@ -592,9 +625,16 @@ async def run_member_turn(
     is shown only the tools its tier allows, and its file tools reach the folders the owner allowed
     agents to work in (``file_scope``, read at every call) as well as its workspace.
 
-    *approver* is the human's channel. With none bound every tool call is refused rather than
-    waved through, and each refusal is written onto the transcript so the human can see which
-    member wanted which tool and why it did not happen. `AR-8` builds the UI that binds one.
+    *approver* is the human's channel, which the round binds to the approval registry
+    (:func:`~personalclaw.rooms.posture.registry_approver`), so a call that asks is listed where
+    every approval is and is answered there. With none bound every call that would ask is refused
+    rather than waved through, and each refusal is written onto the transcript so the human can see
+    which member wanted which tool and why it did not happen.
+
+    **The member is told its own tools** (:func:`~personalclaw.rooms.posture.member_reach`), and a
+    call its agent CLI ran without asking anyone is audited as one, said on the transcript, and
+    stops the turn when it may have changed something the member's tier does not cover
+    (:func:`~personalclaw.rooms.posture.ungated_hold`), as a chat's call of that kind is.
 
     **A member whose model fails before it replies is answered by the next model of its chain**,
     as a chat turn is (``agents/native/failover.py``), and the room says which model answered, in
@@ -634,8 +674,10 @@ async def run_member_turn(
             "rooms: member %s in room %s is near its own budget (%s)", member_name, room_id, reason
         )
 
-    refusals: list["ToolRefusal"] = []
-    policy, gate = posture.approval_channel(member, profile, approver, record=refusals.append)
+    # What the room says of the turn's calls, in the order they happened: each refusal, and each
+    # call the member's agent CLI ran without asking.
+    notes: list["ToolRefusal | UnaskedCall"] = []
+    policy, gate = posture.approval_channel(member, profile, approver, record=notes.append)
     messages = read_messages(room_id)
     read_from = cursors.cursor_for(room_id, member_name)
     if read_from > len(messages):
@@ -659,12 +701,17 @@ async def run_member_turn(
         feed, since_last_turn = member_feed(messages, read_from, member_name, remembers=remembers)
         with (
             posture.member_spend_scope(key, profile),
-            posture.member_tools_held(provider, member, profile, record=refusals.append),
+            posture.member_tools_held(provider, member, profile, record=notes.append),
         ):
             # Inside the member's spend scope because fitting the feed to its window may itself
             # be a model call (the fold's summary), and that call is this member's to pay for.
             prompt = await member_context(
-                room, member, feed, since_last_turn=since_last_turn, serving=provider
+                room,
+                member,
+                feed,
+                since_last_turn=since_last_turn,
+                serving=provider,
+                reach=posture.member_reach(profile),
             )
             reply = await stream_and_collect(
                 provider,
@@ -675,15 +722,23 @@ async def run_member_turn(
                 # said as it happens, in the member's slot, for the same reason as the note above.
                 on_substitution=lambda sentence: _note(room_id, member_name, sentence),
                 on_complete=_usage_recorder(key, member_name, provider),
+                # Every call's audit row names the member that made it, in its room.
+                session_key=key,
+                agent=member_name,
+                on_ungated=posture.ungated_hold(member, profile, record=notes.append),
             )
 
     cursors.advance(room_id, member_name, len(messages))
 
-    # Refusals first: they happened DURING the turn, so they belong before the reply the
+    # The turn's notes first: they happened DURING the turn, so they belong before the reply the
     # member wrote around them. Written after the stream rather than inside the gate so a
-    # transcript write can never raise into the provider's permission loop.
-    for refusal in refusals:
-        _note_refusal(room_id, refusal)
+    # transcript write can never raise into the provider's permission loop. A call run without
+    # asking was logged where it was audited (`acp.ungated.record`); a refusal is logged here.
+    for said in notes:
+        if isinstance(said, posture.ToolRefusal):
+            _note_refusal(room_id, said)
+        else:
+            _note(room_id, said.member, said.sentence())
 
     if not reply.strip():
         logger.info("rooms: member %s in room %s produced no text", member_name, room_id)
@@ -776,7 +831,7 @@ def _note_refusal(room_id: str, refusal: "ToolRefusal") -> None:
     also reaches the other members on their next turn, fenced like every other line, which is
     deliberate: a critic that learns its write tool was refused stops proposing writes.
     """
-    logger.warning("rooms: %s (room %s)", refusal.sentence(), room_id)
+    logger.warning("rooms: %s (room %s)", audit_text(refusal.sentence()), room_id)
     _note(room_id, refusal.member, refusal.sentence())
 
 
@@ -791,15 +846,28 @@ def _note(room_id: str, about: str, sentence: str) -> None:
     swallowing is right here: the alternative is a transcript-bookkeeping error replacing the
     round's own flow — losing the next member's turn to protect this one's footnote. What the
     note describes already happened, so nothing is granted or hidden by its failing; the log
-    line carries the sentence the room could not.
+    line carries the sentence the room could not, written as the audit log writes a call's
+    command (``audit_subject.audit_text``), since a refusal's sentence names the call by its title.
+
+    A room the human archived, or a member they removed, while the turn ran takes no more lines,
+    by their decision rather than by a fault (the round ends the turn the same way, ``arbiter``):
+    that note is logged at INFO, never as an error.
     """
     try:
         append_message(room_id, role=ROOM_NOTE_ROLE, content=sentence, speaker=about)
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, RoomError) and exc.code in ("room_archived", "room_member_not_found"):
+            logger.info(
+                "rooms: %r is not written on room %s's transcript: %s",
+                audit_text(sentence),
+                room_id,
+                exc.message,
+            )
+            return
         logger.error(
             "rooms: could not record %r on room %s's transcript — it is in this log but the "
             "human will not see it in the room",
-            sentence,
+            audit_text(sentence),
             room_id,
             exc_info=True,
         )

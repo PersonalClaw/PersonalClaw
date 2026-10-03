@@ -81,6 +81,31 @@ export function loopApprovalOf(session: string, loopId: string): boolean {
   return parsed !== null && parsed.loopId === loopId
 }
 
+/** The session key a room member's call asks under: `room:<room>:<member>`
+ *  (`rooms/turn.session_key`). A room id is a lowercase slug and a member name an agent binding's
+ *  plain name, so neither holds a colon, and a chat whose key merely starts with the word is not
+ *  mistaken for one. */
+const ROOM_SESSION = /^room:([a-z0-9][a-z0-9-]{0,63}):([A-Za-z0-9_-]+)$/
+
+export interface RoomApprovalSession {
+  roomId: string
+  /** The member whose call it is, by its binding name (`talk-editor`). */
+  member: string
+}
+
+/** Decode a room member's approval session, or `null` for anything else. */
+export function roomApprovalSession(session: string): RoomApprovalSession | null {
+  const m = ROOM_SESSION.exec(session)
+  return m ? { roomId: m[1], member: m[2] } : null
+}
+
+/** Is this approval one *roomId*'s members asked? The room's own view claims its members' asks out
+ *  of `/api/approvals` with the same parse the nudge links with (`RoomApprovals`). */
+export function roomApprovalOf(session: string, roomId: string): boolean {
+  const parsed = roomApprovalSession(session)
+  return parsed !== null && parsed.roomId === roomId
+}
+
 export interface ApprovalDestination {
   /** The in-app hash route that ANSWERS this approval. */
   href: string
@@ -118,6 +143,16 @@ export function approvalDestination(session: string): ApprovalDestination {
       href: `#/loops/${loop.loopId}`,
       label: `loop ${loop.loopId}`,
       linkLabel: 'Open the loop',
+    }
+  }
+  // A room member asks in its room (`RoomApprovals`): its key is no chat anyone opened. The room is
+  // named by the sentence's own "from" (`source_label`, the room's title), so the place is "the room".
+  const room = roomApprovalSession(session)
+  if (room) {
+    return {
+      href: `#/chat/room/${encodeURIComponent(room.roomId)}`,
+      label: 'the room',
+      linkLabel: 'Open the room',
     }
   }
   // A chat session (including a subagent escalating to its parent). Encoded the way every

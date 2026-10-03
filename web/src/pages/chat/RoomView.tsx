@@ -20,6 +20,7 @@ import { MessageAssistant } from '../../ui/chat/MessageAssistant'
 import { MessageUser } from '../../ui/chat/MessageUser'
 import { NumberField } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
+import { RoomApprovals } from './RoomApprovals'
 import { RoomPauseCard } from './RoomPauseCard'
 import { RoomMembersPanel } from './RoomMembersPanel'
 import {
@@ -107,6 +108,9 @@ export function RoomView({ roomId, navigate, setQuery }: {
   // for a refusal (`room_member_limit` at 8/8) no retry of anything could succeed.
   const [actionError, setActionError] = useState<{ error: unknown; retry?: () => void } | null>(null)
   const [membersOpen, setMembersOpen] = useState(false)
+  // How many of the members' calls are waiting on you (`RoomApprovals`), so the newest card is
+  // kept in view as one arrives, the way a reply is.
+  const [asks, setAsks] = useState(0)
   const endRef = useRef<HTMLDivElement>(null)
 
   const room = data?.room
@@ -143,7 +147,7 @@ export function RoomView({ roomId, navigate, setQuery }: {
   // right behaviour: a smooth animation per arriving line would fight the next one.
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })
-  }, [lines.length])
+  }, [lines.length, asks])
 
   const send = useCallback(async () => {
     const content = draft.trim()
@@ -340,6 +344,9 @@ export function RoomView({ roomId, navigate, setQuery }: {
             ) : (
               lines.map((line, i) => <RoomTranscriptLine key={`${line.ts}-${i}`} line={line} />)
             )}
+            {/* A member's call that asks waits here, where its turn would have answered, as a
+                chat's waits on its card. */}
+            <RoomApprovals roomId={room.id} onCount={setAsks} />
             {(state === 'paused' || state === 'interrupted') && (
               <RoomPauseCard
                 room={room}

@@ -163,6 +163,12 @@ def _who_asked(entry: dict[str, Any]) -> str:
     if entry.get("source") == "agent":
         # A session's own agent asking for an Allow it cannot give itself (`owner_allow`).
         return f"The agent in “{title}”" if title else "An agent"
+    from personalclaw.approval_source import ROOM_SOURCE, room_member_of
+
+    if entry.get("source") == ROOM_SOURCE and (seat := room_member_of(session)) is not None:
+        # A room member, named as the room's members panel names it, in the room it asked from.
+        member, room = seat
+        return f"{member} in the room “{room}”" if room else f"{member} in a room"
     return "A background task"
 
 
@@ -184,7 +190,8 @@ def _step_name(run_id: str, node_id: str) -> str:
 def _background_asker(*, source: str, session: str, trigger: str) -> str:
     """Who raised a background origin's approval, as the principal an answer is compared with
     (``approval_answer``, rule 2): the trigger whose run asked, the workflow run whose step asked,
-    else the agent (a subagent, an MCP server's question) under its source."""
+    a room member by its own session, else the agent (a subagent, an MCP server's question) under
+    its source."""
     if trigger:
         return approval_answer.trigger(trigger).label
     from personalclaw.workflows.ownership import parse_owned
@@ -192,6 +199,10 @@ def _background_asker(*, source: str, session: str, trigger: str) -> str:
     step = parse_owned(session)
     if step is not None:
         return approval_answer.run(step[0]).label
+    from personalclaw.approval_source import ROOM_SOURCE
+
+    if source == ROOM_SOURCE and session:
+        return approval_answer.agent(session).label
     return approval_answer.agent(source or session).label
 
 
@@ -674,7 +685,7 @@ class DashboardApprovalState:
             raise ValueError(f"an approval that ended {outcome} says why it ended")
         entry = self._pending_approvals.pop(approval_id, None) or {}
         if entry:
-            self._record_ending(approval_id, outcome)
+            self._record_ending(approval_id, outcome, ended)
         self.__dict__.get("_channel_asked", set()).discard(approval_id)
         self.__dict__.get("_answered_alone", set()).discard(approval_id)
         # A prompt still open on the owner's channel is closed with how it ended — one of the four
@@ -721,10 +732,10 @@ class DashboardApprovalState:
     #: record from growing with every approval it ever asked.
     _ENDINGS_KEPT = 512
 
-    def _record_ending(self, approval_id: str, outcome: str) -> None:
-        endings: dict[str, str] = self.__dict__.setdefault("_endings", {})
+    def _record_ending(self, approval_id: str, outcome: str, ended: str = "") -> None:
+        endings: dict[str, tuple[str, str]] = self.__dict__.setdefault("_endings", {})
         endings.pop(approval_id, None)
-        endings[approval_id] = outcome
+        endings[approval_id] = (outcome, ended)
         while len(endings) > self._ENDINGS_KEPT:
             endings.pop(next(iter(endings)))
 
@@ -736,7 +747,14 @@ class DashboardApprovalState:
         to its caller (the subagent manager's audit row, ``approval_grants.ToolDecision``) reads it
         here.
         """
-        return str(self.__dict__.get("_endings", {}).get(approval_id, ""))
+        return str(self.__dict__.get("_endings", {}).get(approval_id, ("", ""))[0])
+
+    def why_ended(self, approval_id: str) -> str:
+        """Why an approval this registry held ended with no answer, in the words its surfaces said
+        it ("nobody answered within 2 hours", "the room that asked for it was archived"), or ``""``
+        for one that was answered or never held. A relay that says where the asking work is why
+        a call did not run (a room's transcript) reads it here, beside :meth:`ended_as`."""
+        return str(self.__dict__.get("_endings", {}).get(approval_id, ("", ""))[1])
 
     def settle_granted(
         self, *, tool: str, tool_input: object = "", session: str = "", trigger: str = "", by: str

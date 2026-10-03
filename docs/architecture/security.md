@@ -572,8 +572,12 @@ from nothing else except a shell command's own text:
   was given. A call to any other tool, by a name the model has from elsewhere, is refused before
   any approval as outside its read-only tools, and a shell command that does more than read is
   refused the same way (`granted_call_refusal`). A room member's `read` tier is stricter: it is
-  not shown the shell (`rooms.posture.member_tool_refusal`). A subagent whose every call was
-  refused did nothing it was asked, so it ends not done, naming the tools and why
+  not shown the shell (`rooms.posture.member_tool_refusal`), and its instructions say its tools
+  are read-only and what that tier may not do, on every turn (`rooms.posture.member_reach`), so it
+  never offers a change it cannot make. A room member's call that asks is put to you through the
+  approval registry, as a chat's is, and nothing else answers it
+  (`rooms.posture.registry_approver`, [inbox-channels.md](inbox-channels.md)). A subagent whose
+  every call was refused did nothing it was asked, so it ends not done, naming the tools and why
   (`subagent_tier.refused_every_call`), and the workflow step it ran for fails as a refusal.
   A subagent on an agent CLI is held to the same tier: its session hands the tier to the
   `personalclaw-core` tool server (`mcp_shared.TOOL_TIER_KEY`, declared in the server's own
@@ -589,7 +593,12 @@ from nothing else except a shell command's own text:
   tool." for an accepted residual, `acp.permission_authority.ungated_call_note`), and so does the
   chat's export. The folded work counts such steps, the audit
   row reads `ungated`, and one log line names the runtime and the tool (WARNING; INFO for an
-  accepted residual), never the call's arguments.
+  accepted residual), never the call's arguments. Every host that runs an agent CLI judges and
+  audits such a call the same way (`acp/ungated.py`): a room member's is said on the room's
+  transcript ("talk-editor ran Terminal without asking you — …") and its row names the member, and
+  a background turn's (the heartbeat, a subagent's result in its chat) is audited `ungated` too. A
+  call that may have changed something stops the turn under a posture that allows no change: a
+  chat in Ask or Plan mode, or a room member whose tier does not cover it.
 - **A gateway log line that names a tool call writes its title masked** (`audit_subject.log_title`).
   An agent CLI titles a shell call with its command, so a line that named a call by its raw title
   (a permission asked or refused, a call refused with its batch or on an unattended run, a source's

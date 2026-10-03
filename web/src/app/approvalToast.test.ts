@@ -24,6 +24,20 @@ describe('approvalToastMessage', () => {
       .toContain('(reads only)')
   })
 
+  it("sends a room member's ask to its room, which the sentence names by its title", () => {
+    // `who` is the registry's words for where the call came from (`source_label`), so the room and
+    // the member are named there; the place to answer is the room, never the member's session key.
+    const msg = approvalToastMessage({
+      who: 'Room “Is the demo worth it?” · member “talk-editor”',
+      tool: 'edit_file',
+      session: 'room:is-the-demo-worth-it:talk-editor',
+      blastRadius: radius({ writes: true }),
+    })
+    expect(msg).toBe(
+      'Room “Is the demo worth it?” · member “talk-editor” needs approval to run edit_file (writes files) — open the room to respond.',
+    )
+  })
+
   it('uses the SAME facet words as the card, so the two cannot drift', () => {
     expect(approvalToastMessage({ who: 'Another chat session', tool: 'web_fetch', session: 's1', blastRadius: radius({ network: true }) }))
       .toContain('(uses the network)')
