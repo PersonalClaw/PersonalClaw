@@ -1762,7 +1762,7 @@ def no_agent_work(app_name: str) -> str:
         return f"app {app_name!r} {gone.removeprefix('app ')}"
     checker = checker_for(app_name)
     if checker is None:
-        return f"app {app_name!r}'s permissions cannot be read"
+        return f"the permissions of app {app_name!r} cannot be read"
     raw = checker.permissions.agent_declared_raw
     if raw:
         return (

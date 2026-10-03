@@ -1007,10 +1007,14 @@ class SidecarInstall:
 
             step.status = "cancelled" if isinstance(exc, InstallCancelled) else "error"
             # A missing pip's fix is the remediation, so the error is only what broke: the
-            # card shows the two together.
-            broke = exc.problem if isinstance(exc, NoInstallerError) and exc.problem else str(exc)
-            step.detail = broke[:200]
-            self.error = broke[:200]
+            # card shows the two together. That sentence is whole however long the interpreter's
+            # path is; only an exception's own text, which can be any length, is cut.
+            if isinstance(exc, NoInstallerError) and exc.problem:
+                broke = exc.problem
+            else:
+                broke = str(exc)[:200]
+            step.detail = broke
+            self.error = broke
             self.reason, self.remediation = _classify_install_failure(
                 exc, step.name, "\n".join(self.log_tail)
             )
