@@ -90,11 +90,25 @@ def _runs_on_the_instructions(request: list[dict]) -> str:
 # ── an agent no chat runs ────────────────────────────────────────────────────────────────────
 
 
+def _a_run_record(run_id: str) -> None:
+    """The record a workflow run has from its start: the run is created in the run store before
+    its first stage is dispatched (``workflows.service.start_run``), and a stage's mode is read
+    from the run its session names (``memory_writes.session_mode``)."""
+    from personalclaw.workflows import store
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    store.create(WorkflowRun(id=run_id, workflow_name="pond-survey", status=RunStatus.RUNNING))
+
+
 def _spawned(tmp_path: Path, *, parent_agent: str = "", **spawn) -> list[dict]:
     """The first request a spawned agent's model is handed: the real manager, assembler and
     runtime. *parent_agent* is the agent the session that spawned it runs."""
     from personalclaw.subagent import SubagentManager
+    from personalclaw.workflows import ownership
 
+    stage = ownership.parse_owned(spawn.get("parent_session_key", ""))
+    if stage is not None:
+        _a_run_record(stage[0])
     sessions = _Sessions(tmp_path)
     manager_sessions = sessions.manager()
     manager_sessions.get_agent = MagicMock(return_value=parent_agent)
