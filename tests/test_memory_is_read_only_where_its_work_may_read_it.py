@@ -410,8 +410,9 @@ def _builder(home: Path):
         memory=markdown,
         skills=SkillsLoader(skills_path=home / "skills", install_builtins=False),
     )
+    # Called as the real one is, by the turn's readers and by the after-turn review (``writes``).
     builder.get_memory_for = staticmethod(  # type: ignore[method-assign]
-        lambda cwd=None, memory_store=None: markdown
+        lambda cwd=None, memory_store=None, *, writes=False: markdown
     )
     return builder, store
 

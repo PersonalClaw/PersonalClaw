@@ -1321,6 +1321,13 @@
      {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
     ],
     "returns": "None"
+   },
+   "why_nothing_is_kept": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
+    ],
+    "returns": "str"
    }
   }
  },

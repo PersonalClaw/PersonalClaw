@@ -9,10 +9,11 @@ triggers waiting on the run, the `on_overlap: queue` drain and the end of what i
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import project_context
+from personalclaw import memory_reads, memory_writes, project_context
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import ownership
 from personalclaw.workflows.models import OriginKind, RunStatus, WorkflowRun, run_ending
@@ -83,7 +84,8 @@ def capture_run_end(ctl: RunController) -> None:
     `self_model_observer.observe_turn` no-ops without `has_vector`. The gate is what honors
     success criterion 10: an incognito/temporary session's terminal run is denied here (via
     the session-key restriction registry) and writes nothing through this cadence, and
-    `learning.run_end_enabled=False` turns the cadence off without touching the others.
+    `learning.run_end_enabled=False` turns the cadence off without touching the others. So is a
+    run that is the work of an app not given your memory.
     """
     service = getattr(ctl.services, "memory", None)
     if service is None or not getattr(service, "has_vector", False):
@@ -104,8 +106,20 @@ def capture_run_end(ctl: RunController) -> None:
         # `is_restricted=False` there would re-open the gate an incognito origin closed. Belt
         # (record) and suspenders (registry), fail-closed by construction.
         restricted = ownership.run_mode(ctl.run) in ownership.WRITE_SUPPRESSED
+        # Whose work the run is: an app's when its scheduled job started it, or its conversation or
+        # agent did (`memory_reads.reach_of`). An app's run teaches nothing unless the app was
+        # given your memory, and with it what it teaches names the app (`memory_writes`).
+        origin = ctl.run.origin
+        whose = memory_reads.reach_of(
+            getattr(ctl.services, "attention_state", None),
+            origin.session_key,
+            app=memory_reads.job_app(origin.trigger_id),
+        ).app
         session = SimpleNamespace(
-            key=ctl.run.origin.session_key, is_restricted=restricted, _ephemeral=False
+            key=origin.session_key,
+            is_restricted=restricted,
+            _ephemeral=False,
+            created_by_app=whose,
         )
         decision = LearningGate.for_session(session, cfg).decide(
             Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))
@@ -113,7 +127,9 @@ def capture_run_end(ctl: RunController) -> None:
         if not decision.allowed:
             logger.debug("run %s: run-end capture gated (%s)", ctl.run.id, decision.reason.value)
             return
-        run_end.capture(ctl.run, service, journal=journal_mod)
+        own = ownership.owned_key(ctl.run.id, "run-end")
+        with memory_writes.derived_from(own, app=whose) if whose else contextlib.nullcontext():
+            run_end.capture(ctl.run, service, journal=journal_mod)
     except Exception:
         logger.debug("run %s: run-end capture failed", ctl.run.id, exc_info=True)
 

@@ -59,12 +59,27 @@ chat, channel thread, loop worker, webhook, subagent).
   reads nothing, as a Temporary chat's work does, and says why. Two
   kinds of work read none of your memory: a Temporary chat's, and an app's that
   does not hold the `memory` permission (a conversation the app started, an agent
-  run it asked for, every agent working for either). The context a turn and a
-  subagent's first prompt are assembled with, active recall and the push reflex,
-  `memory_recall`, `memory_list`, `get_context`'s memory tier and the Learning
-  page's facts all ask it, and a refused read says why (`Reach.refusal`). A turn
-  that read none says so in its details: its context line is
-  `context_without_memory` (`memory_reads.fed`), kept on its answer for a reload.
+  run it asked for, an agent its scheduled job started, every agent working for
+  any of them). An agent a job's fire started carries the job's id
+  (`SubagentInfo.trigger_id`), and so do the job's own session (`cron:<id>`) and a
+  run it started, so the app is found by it (`app_crons.app_of`). The context a
+  turn, a subagent's first prompt and a job's announce turn are assembled with,
+  active recall and the push reflex, `memory_recall`, `memory_list`,
+  `triage_rules_list`, `get_context`'s memory tier and the Learning page's facts
+  all ask it, and a refused read says why (`Reach.refusal`). A turn that read none
+  says so in its details: its context line is `context_without_memory`
+  (`memory_reads.fed`), kept on its answer for a reload.
+
+  The same grant is what lets an app's work change your memory. The write scope
+  (`memory_writes.derived_from`) names the app whose work it is: the turn's
+  (`runs_as_its_session`), a request's (the memory-write middleware, asking
+  `reach_of` only when the request writes), a consolidation pass's (the app its
+  transcript records). Without the grant the memory store refuses the change
+  (`check_memory_statement`, and the markdown memory files through
+  `refuse_memory_write`), the lesson and triage-rule routes refuse first with the
+  app's reason, the learning gate denies every cadence (`app_without_memory`) and
+  the consolidator runs no pass. With it, what the work writes names the app
+  (`written_by`).
 
   The agent's own search of your chats (`chat_search`, served by
   `GET /api/sessions/recall` over `chat_recall.py`) runs the same

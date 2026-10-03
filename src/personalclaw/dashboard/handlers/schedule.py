@@ -21,6 +21,7 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import MaskConflict, redact_values_for_display, stored_name
 
 from ._shared import (
+    _change_refused_for_the_app,
     _get_memory,
     _is_restricted_session,
     _memory_refusal,
@@ -46,6 +47,10 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
+    # An app's work saves a lesson only when the app was given your memory.
+    refused = _change_refused_for_the_app(state, request, "memory_remember")
+    if refused is not None:
+        return refused
     # Block lesson writes from restricted (incognito/temporary/guest) sessions.
     sk = request.headers.get("X-Session-Key", "")
     if not sk:
@@ -209,7 +214,11 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
     """DELETE /api/lessons — remove lessons by substring."""
     state: DashboardState = request.app["state"]
     # Block lesson deletes from a Temporary chat's work only (the chat, and the subagents and steps
-    # working for it). Incognito allows memory_forget (active user action).
+    # working for it). Incognito allows memory_forget (active user action). An app's work removes
+    # one only when the app was given your memory.
+    refused = _change_refused_for_the_app(state, request, "lessons.delete")
+    if refused is not None:
+        return refused
     sk = request.headers.get("X-Session-Key", "")
     if memory_reads.reach_of(state, sk).temporary:
         _sel().log_api_access(

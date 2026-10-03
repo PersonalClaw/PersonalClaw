@@ -19,8 +19,9 @@ would have made a fourth.
 The gate separates the two questions those sites had conflated:
 
 **Permission** (may this event teach us anything at all?) is a property of the
-*session*: learning enabled, not ephemeral, not incognito/temporary. It is
-identical for every cadence, and a denial suppresses everything downstream.
+*session*: learning enabled, not ephemeral, not incognito/temporary, and not the work
+of an app that was not given your memory. It is identical for every cadence, and a
+denial suppresses everything downstream.
 
 **Worthwhileness** (is this event worth paying an LLM for?) is a property of the
 *turn*, and legitimately differs per cadence: a free heuristic runs on every
@@ -81,6 +82,9 @@ class GateReason(str, Enum):
     EPHEMERAL = "ephemeral_session"
     #: Incognito or temporary — writes suppressed by the restrictions registry.
     RESTRICTED = "restricted_session"
+    #: The work of an app that does not hold the ``memory`` permission (a conversation or a run
+    #: it started): it changes nothing in your memory (``memory_reads.app_refusal``).
+    APP_WITHOUT_MEMORY = "app_without_memory"
     #: Permitted, but this cadence's cost threshold wasn't met.
     NOT_WORTHWHILE = "below_threshold"
     #: Permitted, but this specific cadence is disabled by config.
@@ -134,10 +138,13 @@ class LearningGate:
         is_restricted: bool = False,
         min_tool_calls: int = 4,
         correction_heuristic: bool = True,
+        app_refusal: str = "",
     ) -> None:
         self.enabled = bool(enabled)
         self.is_ephemeral = bool(is_ephemeral)
         self.is_restricted = bool(is_restricted)
+        #: Why the session's work, an app's, may change none of your memory ("" when it may).
+        self.app_refusal = str(app_refusal or "")
         self.min_tool_calls = int(min_tool_calls)
         self.correction_heuristic = bool(correction_heuristic)
 
@@ -168,7 +175,7 @@ class LearningGate:
 
         restricted = bool(getattr(session, "is_restricted", False))
         key = getattr(session, "key", None)
-        from personalclaw import memory_writes
+        from personalclaw import memory_reads, memory_writes
 
         if key:
             # Its mode as the one reader of a session's mode reads it, holding the session's own:
@@ -181,6 +188,12 @@ class LearningGate:
         # Work for an Incognito or Temporary session (the turn, a task it started) is restricted
         # whatever the session object says: the same answer the stores give its writes.
         restricted = restricted or memory_writes.writes_refused()
+        # The work of an app not given your memory teaches nothing: the app the session's work is
+        # for (the scope it runs in), or the one that started the conversation.
+        app = getattr(session, "created_by_app", "")
+        app_refused = memory_writes.app_change_refusal() or (
+            memory_reads.app_refusal(app, changing=True) if isinstance(app, str) and app else ""
+        )
 
         return cls(
             enabled=bool(getattr(cfg, "enabled", True)),
@@ -188,6 +201,7 @@ class LearningGate:
             is_restricted=restricted,
             min_tool_calls=int(getattr(cfg, "min_tool_calls", 4) or 4),
             correction_heuristic=bool(getattr(cfg, "correction_heuristic", True)),
+            app_refusal=app_refused,
         )
 
     # ── The decision ──
@@ -214,6 +228,8 @@ class LearningGate:
             return GateDecision(False, False, GateReason.EPHEMERAL, cadence)
         if self.is_restricted:
             return GateDecision(False, False, GateReason.RESTRICTED, cadence)
+        if self.app_refusal:
+            return GateDecision(False, False, GateReason.APP_WITHOUT_MEMORY, cadence)
 
         # Permitted from here on: a cheap path may proceed even when the
         # expensive threshold below is not met.

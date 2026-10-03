@@ -1058,8 +1058,8 @@ class MemoryService:
                         "record_ref": ref,
                     }
                 )
-                # The log is a write: never inside an Incognito or Temporary chat's work.
-                if log_events and not memory_writes.writes_refused():
+                # The log is a write: never inside work that may change no memory.
+                if log_events and not memory_writes.changes_no_memory():
                     vs.graph.log_volunteer(
                         entity_id=cand.entity_id,
                         entity_name=cand.name,
@@ -1953,7 +1953,9 @@ class MemoryService:
         """S5 gate: reject an untrusted memory write carrying a high-confidence injection
         / bidi-steering payload. Returns True (block) only on a DANGEROUS verdict — a
         lower-band signal is allowed (a lesson legitimately mentioning "ignore" prose
-        shouldn't be lost). No-op for trusted (user) sources and empty text."""
+        shouldn't be lost). No-op for trusted (user) sources and empty text. An app's work is
+        never one: it writes as the app (``memory_writes.written_by``), whatever it names."""
+        source = memory_writes.written_by(source)
         if not text or source in self._TRUSTED_WRITE_SOURCES:
             return False
         try:
@@ -2027,10 +2029,12 @@ class MemoryService:
         scope_ref: str | None = None,
     ) -> bool:
         """Write a lesson. ``scope``/``scope_ref`` come from
-        :func:`resolve_lesson_scope` — ``None`` means GLOBAL (every existing caller)."""
+        :func:`resolve_lesson_scope` — ``None`` means GLOBAL (every existing caller). An app's
+        work writes it as the app (``memory_writes.written_by``), and is scanned as such."""
         vs = self._vs
         if vs is None:
             return False
+        source = memory_writes.written_by(source)
         if self._memory_write_blocked(rule, source) or (
             negative and self._memory_write_blocked(negative, source)
         ):

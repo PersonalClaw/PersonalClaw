@@ -553,9 +553,13 @@ Data leaving the running system:
   work may read memory at all is one answer, `memory_reads.reach_of`: a
   Temporary chat's work reads none (its subagents, theirs, and the steps of a run
   it started included), and neither does an app's (a conversation it started, an
-  agent run it asked for, an agent working for either) unless the app holds the
-  `memory` permission — otherwise an app's own conversation would be a second door
-  to the memory its token is refused.
+  agent run it asked for, an agent its scheduled job started, an agent working for
+  any of them) unless the app holds the `memory` permission — otherwise an app's
+  own conversation, or its job, would be a second door to the memory its token is
+  refused. The same grant governs writes: the memory store refuses every change an
+  app's work makes without it (`memory_writes.check_memory_statement`), and with
+  it records the app as the source (`memory_writes.written_by`), so an app cannot
+  write as you.
 
 ## OWASP Agentic Security (ASI) Top-10 mapping
 

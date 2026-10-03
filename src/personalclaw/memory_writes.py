@@ -22,6 +22,18 @@ That promise is kept at the stores, not by each caller remembering to ask:
   every statement that would change them (:func:`check_statement`, run by their connection) and
   the markdown memory files are not written (:func:`refuse_write`).
 
+An app's work changes your memory only when the app holds the ``memory`` permission, the one grant
+that lets it read your memory too (install consent: "Read and change your memory"): a conversation
+the app started, an agent run it asked for, an agent its scheduled job started, every agent working
+for any of them, and the app's own requests. The scope names the app whose work it is
+(``derived_from(app=...)``, the app :func:`personalclaw.memory_reads.reach_of` finds for the work)
+and why it may change nothing (:func:`app_change_refusal`), found when the work first asks.
+The memory database refuses its changes (:func:`check_memory_statement`) and the markdown memory
+files are not written (:func:`refuse_memory_write`), the knowledge library and the vocabulary being
+your content rather than your memory. What such work writes with the grant names the app as its
+source (:func:`written_by`), so it never reads as yours: not as a fact you set or a lesson you
+taught, which outrank everything else written, nor as one of PersonalClaw's own passes.
+
 Nothing of such a session is handed to a background model either: its title, tags and suggested
 follow-ups, a condensed copy of its history, the suggestions built from recent chats. Each of those
 chores asks :func:`blocks_background_models`, the same answer, before it reads the session to a
@@ -115,10 +127,12 @@ REFUSAL = "Memory writes are not allowed in this session mode."
 
 class MemoryWriteRefused(Exception):
     """A write to long-term memory was refused because the work derives from a session that keeps
-    nothing (see the module docstring). Raised by the stores, answered 403 on the API."""
+    nothing, or is an app's that may not change your memory (see the module docstring). Raised by
+    the stores, answered 403 on the API with :attr:`reason`."""
 
-    def __init__(self, what: str = "") -> None:
-        super().__init__(f"{REFUSAL} ({what})" if what else REFUSAL)
+    def __init__(self, what: str = "", *, reason: str = "") -> None:
+        self.reason = reason or REFUSAL
+        super().__init__(f"{self.reason} ({what})" if what else self.reason)
         self.what = what
 
 
@@ -136,13 +150,33 @@ class OtherModelRefused(RuntimeError):
 class _Source:
     """One session the current work derives from: the spellings of its key, the mode the code
     that named it holds (``None`` when it holds none), the model its turn runs on as
-    ``"<entry>:<model>"`` once the turn has named it (``""`` until then), and whether the work is
-    reading what the person gave the chat (:func:`reading_their_input`)."""
+    ``"<entry>:<model>"`` once the turn has named it (``""`` until then), whether the work is
+    reading what the person gave the chat (:func:`reading_their_input`), and the app whose work it
+    is (:class:`_Whose`; ``None`` for yours)."""
 
     keys: tuple[str, ...]
     mode: str | None
     model: str = ""
     their_input: bool = False
+    whose: "_Whose | None" = None
+
+
+class _Whose:
+    """The app whose work a scope is (``""`` for yours) and why that app's work may change none of
+    your memory (``""`` when it may): found when first asked and kept for the work's whole length,
+    so work that writes nothing (most of a tool's calls) never looks."""
+
+    __slots__ = ("_find", "_found")
+
+    def __init__(self, find: Callable[[], str]) -> None:
+        self._find = find
+        self._found: tuple[str, str] | None = None
+
+    def get(self) -> tuple[str, str]:
+        if self._found is None:
+            app = (self._find() or "").strip()
+            self._found = (app, _app_may_not_change(app))
+        return self._found
 
 
 _SCOPE: contextvars.ContextVar[_Source | None] = contextvars.ContextVar(
@@ -355,12 +389,19 @@ def blocks_background_models(
 
 
 @contextmanager
-def derived_from(session_key: str, *aliases: str, memory_mode: str | None = None) -> Iterator[None]:
+def derived_from(
+    session_key: str,
+    *aliases: str,
+    memory_mode: str | None = None,
+    app: str | Callable[[], str] = "",
+) -> Iterator[None]:
     """Run the enclosed work as deriving from ``session_key``.
 
     ``aliases`` are other spellings of the same session's key (a chat's name and its transcript's
     key); the session is restricted when any of them is. ``memory_mode`` is the mode the caller
-    holds for it, if any.
+    holds for it, if any. ``app`` is the app whose work it is (``""`` for yours), or a function
+    that finds it: it and whether it may change your memory are asked when the work first needs
+    them, once, for the work's whole length.
 
     Scopes nest, and the innermost names the session the work is for: a pass that consolidates
     one session is that session's work wherever it was started from, and a long-lived loop that a
@@ -370,11 +411,20 @@ def derived_from(session_key: str, *aliases: str, memory_mode: str | None = None
     nothing either.
     """
     keys = tuple(k for k in ((session_key or "").strip(), *(a.strip() for a in aliases if a)) if k)
-    token = _SCOPE.set(_Source(keys or ("",), memory_mode))
+    token = _SCOPE.set(_Source(keys or ("",), memory_mode, whose=_whose_of(app)))
     try:
         yield
     finally:
         _SCOPE.reset(token)
+
+
+def _whose_of(app: str | Callable[[], str]) -> _Whose | None:
+    """The app a scope's work is for (:class:`_Whose`), from what its caller names: the app, a
+    function that finds it, or ``""`` for yours (``None``)."""
+    if callable(app):
+        return _Whose(app)
+    named = (app or "").strip()
+    return _Whose(lambda: named) if named else None
 
 
 def _source_blocks(source: _Source) -> bool:
@@ -391,6 +441,64 @@ def refuse_write(what: str) -> None:
     """Raise :class:`MemoryWriteRefused` when the current work may not write ``what``."""
     if writes_refused():
         raise MemoryWriteRefused(what)
+
+
+# ── an app's work ───────────────────────────────────────────────────────────────────────────
+
+#: The source a record an app's work writes names: ``app:<name>``.
+APP_SOURCE_PREFIX = "app:"
+
+
+def _app_may_not_change(app: str) -> str:
+    """Why the app *app*'s work may change none of your memory, ``""`` when it may or there is no
+    app (``memory_reads.app_refusal``, the one check of the app's grant)."""
+    if not app:
+        return ""
+    from personalclaw.memory_reads import app_refusal
+
+    return app_refusal(app, changing=True)
+
+
+def _whose() -> tuple[str, str]:
+    """The current work's app and why it may change none of your memory (:class:`_Whose`)."""
+    source = _SCOPE.get()
+    if source is None or source.whose is None:
+        return "", ""
+    return source.whose.get()
+
+
+def app_change_refusal() -> str:
+    """Why the current work, an app's, may change none of your memory: the app does not hold the
+    ``memory`` permission, or is not installed, or is off. ``""`` when it may, and for work that
+    is no app's or derives from no session."""
+    return _whose()[1]
+
+
+def changes_no_memory() -> bool:
+    """Whether the current work may change none of your memory: it derives from a session that
+    keeps nothing (:func:`writes_refused`), or it is an app's not given your memory. Asked where a
+    read would leave a mark on memory (a recall's count, an episode's last read), so such work
+    reads without leaving one rather than being refused part-way through a read."""
+    return writes_refused() or bool(app_change_refusal())
+
+
+def refuse_memory_write(what: str) -> None:
+    """Raise :class:`MemoryWriteRefused` when the current work may not write ``what`` to your
+    memory: it derives from a session that keeps nothing (:func:`refuse_write`), or it is an app's
+    that may change none of your memory, refused in the app's words."""
+    refuse_write(what)
+    refused = app_change_refusal()
+    if refused:
+        raise MemoryWriteRefused(what, reason=refused)
+
+
+def written_by(source: str) -> str:
+    """The source a record the current work writes names: ``app:<name>`` for an app's work,
+    whatever *source* the code writing it gives (``user_explicit`` included), else *source*. Asked
+    where the memory store decides a record's source, before anything reads it: so an app's write
+    is weighed as an app's, never as yours."""
+    app = _whose()[0]
+    return f"{APP_SOURCE_PREFIX}{app}" if app else source
 
 
 # ── the models a session's work reaches ─────────────────────────────────────────────────────
@@ -438,18 +546,23 @@ def model_of(session_key: str) -> str:
     return ownership.run_model(run)
 
 
-def _work_of(session_key: str, memory_mode: str | None) -> _Source:
+def _work_of(
+    session_key: str, memory_mode: str | None, app: str | Callable[[], str] = ""
+) -> _Source:
     key = (session_key or "").strip()
-    return _Source((key,), memory_mode, model_of(key))
+    return _Source((key,), memory_mode, model_of(key), whose=_whose_of(app))
 
 
 @contextmanager
-def as_work_of(session_key: str, *, memory_mode: str | None = None) -> Iterator[None]:
+def as_work_of(
+    session_key: str, *, memory_mode: str | None = None, app: str | Callable[[], str] = ""
+) -> Iterator[None]:
     """Run the enclosed work as the work of ``session_key`` away from that session's own turn: a
     request its agent's tool makes (``dashboard/memory_write_gate``), a workflow run's work
-    (``workflows/run_start.run_context``). As :func:`derived_from` does, and when the session keeps
-    nothing, on the one model its work stays on (:func:`model_of`)."""
-    token = _SCOPE.set(_work_of(session_key, memory_mode))
+    (``workflows/run_start.run_context``). As :func:`derived_from` does, the app whose work it is
+    included, and when the session keeps nothing, on the one model its work stays on
+    (:func:`model_of`)."""
+    token = _SCOPE.set(_work_of(session_key, memory_mode, app))
     try:
         yield
     finally:
@@ -610,9 +723,10 @@ _Turn = TypeVar("_Turn", bound=Callable[..., Awaitable[None]])
 
 def runs_as_its_session(turn: _Turn) -> _Turn:
     """Run each call of a turn engine ``turn(state, session, message, ...)`` as deriving from
-    ``session``, under the mode the session holds: the turn and every task and worker thread it
-    starts. The chat is named by its transcript's key first (a channel thread's own key when that
-    is the one with a transcript, else the dashboard's) and by the key it was given."""
+    ``session``, under the mode the session holds and as the work of the app that started it, if
+    one did: the turn and every task and worker thread it starts. The chat is named by its
+    transcript's key first (a channel thread's own key when that is the one with a transcript,
+    else the dashboard's) and by the key it was given."""
 
     @functools.wraps(turn)
     async def _as_its_session(state: Any, session: Any, message: str, *args: Any, **kw: Any):
@@ -621,8 +735,14 @@ def runs_as_its_session(turn: _Turn) -> _Turn:
 
         mode = getattr(session, "memory_mode", None)
         key = str(getattr(session, "key", "") or "")
+        app = getattr(session, "created_by_app", "")
         transcript = key if key and session_path(key).exists() else dashboard_history_key(key)
-        with derived_from(transcript, key, memory_mode=mode if isinstance(mode, str) else None):
+        with derived_from(
+            transcript,
+            key,
+            memory_mode=mode if isinstance(mode, str) else None,
+            app=app if isinstance(app, str) else "",
+        ):
             await turn(state, session, message, *args, **kw)
 
     return _as_its_session  # type: ignore[return-value]
@@ -753,6 +873,17 @@ def check_statement(sql: str, *, script: bool = False) -> None:
     if not script and reads_only(sql):
         return
     refuse_write("a change to the database")
+
+
+def check_memory_statement(sql: str, *, script: bool = False) -> None:
+    """The memory database's check, run before every statement: :func:`check_statement`, and an
+    app's work that may change none of your memory changes nothing in it either. The knowledge and
+    vocabulary databases are not your memory, so they run :func:`check_statement` alone."""
+    if _SCOPE.get() is None:
+        return
+    if not script and reads_only(sql):
+        return
+    refuse_memory_write("a change to the database")
 
 
 # ── the scope follows work into worker threads ──────────────────────────────────────────────

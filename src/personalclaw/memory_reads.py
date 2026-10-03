@@ -11,26 +11,30 @@ Two kinds of work read none of your memory, by any path:
   turns, the subagents it starts and theirs, the steps of a workflow it runs, and every tool call
   any of them makes.
 * **An app's, unless the app holds the memory permission.** A conversation an app started, an agent
-  run the app asked for, and every agent working for either read your memory only when the app's
-  manifest declares ``memory`` and you allowed it when you installed the app: its install consent
-  says "Read and change your memory". An app that is not installed, is turned off, or whose
-  permissions cannot be read holds nothing.
+  run the app asked for, an agent its scheduled job started, and every agent working for any of
+  them read your memory only when the app's manifest declares ``memory`` and you allowed it when you
+  installed the app: its install consent says "Read and change your memory". An app that is not
+  installed, is turned off, or whose permissions cannot be read holds nothing. The same grant is
+  what lets such work change your memory (:mod:`personalclaw.memory_writes`).
 
 An Incognito chat reads memory as any chat does, and writes nothing back
 (:mod:`personalclaw.memory_writes`).
 
 :func:`reach_of` is the answer for the work a session key names. It follows a subagent to the
-session it works for, an app's agent run to its app, and a workflow step to the chat that started
-its run, up to the chat at the top, and reads each one's mode as the one reader of a session's mode
-reads it (``memory_writes.session_mode``): the live chat first, then the in-process registry a
-channel, a run or a subagent's start marks (:mod:`session_restrictions`), then the mode its
-transcript records, and for a step its run's. A mode nothing can say reads nothing, as it writes
-nothing: a record that cannot be read, and a chat the gateway does not hold that nothing records,
-as for a Temporary chat that has ended. Every reader asks it: the context a chat's turn and a
-subagent's first prompt are assembled with (memory, lessons, standing instructions, episodes,
-active recall and the push reflex), the memory tools' routes (``memory_recall``, ``memory_list``),
+session it works for, an app's agent run to its app, an agent a scheduled job started (and the
+job's own session) to the app whose job it is, by the job's id the work carries, and a workflow
+step to the chat or the app's job that started its run, up to the chat at the top, and reads each
+one's mode as the one reader of a session's mode reads it (``memory_writes.session_mode``): the
+live chat first, then the in-process registry a channel, a run or a subagent's start marks
+(:mod:`session_restrictions`), then the mode its transcript records, and for a step its run's. A
+mode nothing can say reads nothing, as it writes nothing: a record that cannot be read, and a chat
+the gateway does not hold that nothing records, as for a Temporary chat that has ended. Every
+reader asks it: the context a chat's turn, a subagent's first prompt and a scheduled job's announce
+turn are assembled with (memory, lessons, standing instructions, episodes, active recall and the
+push reflex), the memory tools' routes (``memory_recall``, ``memory_list``, ``triage_rules_list``),
 ``get_context``'s memory tier and the Learning page's facts. ``chat_search`` asks it too: a
-Temporary chat's work searches no chat, and an app's searches only that app's conversations.
+Temporary chat's work searches no chat, and an app's searches only that app's conversations. The
+write scope asks it for the app whose work a request is (:mod:`personalclaw.memory_writes`).
 
 A refusal is said in words (:attr:`Reach.refusal`), so a tool asked for a memory answers why there
 is none rather than "nothing found".
@@ -43,10 +47,12 @@ from typing import Any
 
 #: The key the dashboard's own pages send: the owner, not a session.
 _DASHBOARD_UI = "dashboard:ui"
-#: A subagent's key (``subagent.agent_work_id``) and an app's agent run's parent key
-#: (``handlers.apps``: ``app:<name>``).
+#: A subagent's key (``subagent.agent_work_id``), an app's agent run's parent key
+#: (``handlers.apps``: ``app:<name>``) and a trigger's own session (``triggers.wakeup``:
+#: ``cron:<trigger id>``).
 _SUBAGENT = "subagent:"
 _APP = "app:"
+_TRIGGER = "cron:"
 
 #: Why a Temporary chat's work reads no memory, as the agent is told it.
 TEMPORARY = (
@@ -134,9 +140,11 @@ def fed(chars: int, reach: Reach) -> dict[str, str]:
     }
 
 
-def app_refusal(app: str) -> str:
-    """Why the app *app*'s work reads none of your memory, ``""`` when it may: the app holds the
-    ``memory`` permission and is installed and on. Your own work (no app) may."""
+def app_refusal(app: str, *, changing: bool = False) -> str:
+    """Why the app *app*'s work reads none of your memory (*changing*: may change none of it),
+    ``""`` when it may: the app holds the ``memory`` permission and is installed and on. One grant
+    for both, as its install consent says ("Read and change your memory"), so both answers are
+    this one check, said for what was asked. Your own work (no app) may."""
     if not app:
         return ""
     from personalclaw.apps.permissions import app_lifecycle_denial, checker_for
@@ -148,9 +156,17 @@ def app_refusal(app: str) -> str:
         gone, checker = "", None
     if gone or checker is None:
         why = gone or "its permissions cannot be read"
+        if changing:
+            return f"This work is for the app {app}, so it may not change your memory: {why}."
         return f"This work is for the app {app}, so nothing is read from your memory for it: {why}."
     if checker.can_use_memory():
         return ""
+    if changing:
+        return (
+            f"This work is for the app {app}, which was not given your memory, so nothing is saved "
+            "to it or removed from it. An app's conversations and agents change your memory only "
+            "when the app asks for the memory permission and you allow it when you install it."
+        )
     return (
         f"This work is for the app {app}, which was not given your memory, so nothing is read from "
         "it. An app's conversations and agents read your memory only when the app asks for the "
@@ -168,18 +184,32 @@ def _step(state: Any, key: str) -> tuple[str | None, str, str]:
     if key.startswith(_SUBAGENT):
         subagents = getattr(state, "subagents", None)
         info = subagents.get(key[len(_SUBAGENT) :]) if subagents else None
-        app = str(getattr(info, "app", "") or "")
+        # The app whose agent permission started it, or whose scheduled job's fire did.
+        app = str(getattr(info, "app", "") or "") or job_app(getattr(info, "trigger_id", ""))
         return mode, app, str(getattr(info, "parent_session_key", "") or "")
     if key.startswith(_APP):
         return mode, key[len(_APP) :], ""
     run = run_of_step(key)
     if run is not NOT_A_STEP:
-        return mode, "", str(getattr(getattr(run, "origin", None), "session_key", "") or "")
-    app = ""
-    if state is not None:
+        origin = getattr(run, "origin", None)
+        app = job_app(getattr(origin, "trigger_id", ""))  # a run an app's scheduled job started
+        return mode, app, str(getattr(origin, "session_key", "") or "")
+    app = job_app(key[len(_TRIGGER) :]) if key.startswith(_TRIGGER) else ""
+    creating_app = getattr(state, "session_creating_app", None)
+    if not app and callable(creating_app):
         name = key.split(":", 1)[-1]
-        app = state.session_creating_app(name) or state.session_creating_app(key)
+        app = creating_app(name) or creating_app(key)
     return mode, app, ""
+
+
+def job_app(trigger_id: object) -> str:
+    """The app whose scheduled job the trigger *trigger_id* is (``app_crons.app_of``), or ``""``:
+    the work the job's fire started is that app's, wherever it carries the job's id."""
+    if not isinstance(trigger_id, str) or not trigger_id:
+        return ""
+    from personalclaw.apps.app_crons import app_of
+
+    return app_of(trigger_id)
 
 
 def _blank(mode: str | None) -> str:

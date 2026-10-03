@@ -607,10 +607,11 @@ class MemoryStore:
     def _persist(self, path: Path, content: str) -> None:
         """Write one memory file and index it: every change to a memory file comes through here.
 
-        Refused inside work that derives from an Incognito or Temporary session
-        (:mod:`personalclaw.memory_writes`): such a session writes nothing to memory.
+        Refused inside work that derives from an Incognito or Temporary session, or that is an
+        app's not given your memory (:mod:`personalclaw.memory_writes`): such work writes nothing
+        to memory.
         """
-        memory_writes.refuse_write("a memory file")
+        memory_writes.refuse_memory_write("a memory file")
         atomic_write(path, content)
         self._index_file(path, content)
 

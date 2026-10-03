@@ -1171,7 +1171,11 @@ chat's notice says so. Who may read memory at all is one answer
 (`memory_reads.reach_of`) every reader asks: a Temporary chat's work reads none
 (its subagents, their subagents and the steps of a run it started included), and
 neither does an app's — a conversation it started, an agent run it asked for, an
-agent working for either — unless the app holds the `memory` permission its
-install consent showed you. Details in
+agent its scheduled job started, an agent working for any of them — unless the app
+holds the `memory` permission its install consent showed you. The same grant
+governs what such work changes: without it the memory store refuses every change
+made in the app's work (`memory_writes.check_memory_statement`), and with it each
+record names the app as its source (`memory_writes.written_by`), so an app's
+write never outranks one of yours. Details in
 [chat-sessions.md](chat-sessions.md#session-model) and
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard).

@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 # the driver with a local try/except reproduced that hazard by construction: two
 # independent decisions can disagree, and the platform where they disagree is the one
 # without a runner. Importing the module object makes agreement structural.
+from personalclaw import memory_writes
 from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
@@ -368,6 +369,8 @@ class MemoryGraph:
         clean_name = (name or "").strip()
         if not clean_name:
             raise ValueError("entity name must not be empty")
+        # An app's work declares as the app, never as you: it brings no deleted name back.
+        source = memory_writes.written_by(source)
         now = _now()
         row = self.db.execute(
             "SELECT id, aliases FROM mem_entities WHERE LOWER(name) = LOWER(?) AND is_deleted = 0",

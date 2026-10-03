@@ -182,6 +182,37 @@ def _memory_refusal(state: DashboardState, request: "Any") -> str:
     return memory_reads.reach_of(state, caller, app=str(request.get("app") or "")).refusal
 
 
+def _change_refused_for_the_app(
+    state: DashboardState, request: "Any", operation: str
+) -> web.Response | None:
+    """The 403 for a change to your memory made for an app's work that may change none of it,
+    said in the app's words (``memory_reads.app_refusal``) with its security-log row; ``None`` when
+    the work may. The app is found as :func:`_memory_refusal` finds it: the one whose token made
+    the request, or whose conversation, agent or scheduled job its ``X-Session-Key`` names. Asked
+    before anything else the change does, so nothing of it happens. A Temporary or Incognito
+    chat's change is :func:`_is_restricted_session`'s to answer."""
+    from personalclaw import memory_reads
+
+    caller = request.headers.get("X-Session-Key", "")
+    token_app = str(request.get("app") or "")
+    app = memory_reads.reach_of(state, caller, app=token_app).app
+    refused = memory_reads.app_refusal(app, changing=True)
+    if not refused:
+        return None
+    # Resolved per call: tests replace the package's `sel`.
+    import personalclaw.dashboard.handlers as _pkg  # noqa: F811 — circular import
+
+    _pkg.sel().log_api_access(
+        caller=caller or f"app:{token_app}",
+        operation=operation,
+        outcome="denied",
+        source="dashboard",
+        resources="app_memory_not_granted",
+        error=refused,
+    )
+    return web.json_response({"error": refused}, status=403)
+
+
 def _session_has_persisted_history(session_name: str) -> bool:
     """Return True iff the session has a JSONL file in ~/.personalclaw/sessions/.
 

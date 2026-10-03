@@ -37,6 +37,24 @@ logger = logging.getLogger(__name__)
 _APP_JOB_PREFIX = "app:"
 
 
+def job_id(app: str, cron: str) -> str:
+    """The id the app *app*'s scheduled job *cron* is registered under: ``app:<app>:<cron>``."""
+    return f"{_APP_JOB_PREFIX}{app}:{cron}"
+
+
+def app_of(trigger_id: str) -> str:
+    """The app whose scheduled job the trigger *trigger_id* is, or ``""`` for any other trigger.
+
+    The inverse of :func:`job_id`. Every ``app:`` id is this module's (no other writer mints one,
+    and reconciliation removes any it did not register), and an app's name holds no ``:``. Read
+    from the id rather than the store, so work a job started is still that app's after the job is
+    removed: the agent its fire started carries the id (``SubagentInfo.trigger_id``), as do the
+    trigger's own session (``cron:<id>``) and a run it started (``RunOrigin.trigger_id``)."""
+    head, _, rest = (trigger_id or "").partition(":")
+    app, sep, cron = rest.partition(":")
+    return app if f"{head}:" == _APP_JOB_PREFIX and app and sep and cron else ""
+
+
 def schedules(manifest: Any, cron: Any) -> bool:
     """Whether reconciliation registers ``cron`` as a live, ENABLED trigger once ``manifest``'s
     app is installed and on. The one predicate for it: the install-consent disclosure
@@ -70,7 +88,7 @@ def _desired_app_crons() -> dict[str, dict]:
             # `schedules` is the same predicate install consent discloses.
             if not schedules(manifest, cron):
                 continue
-            job_name = f"{_APP_JOB_PREFIX}{meta.name}:{cron.name}"
+            job_name = job_id(meta.name, cron.name)
             desired[job_name] = {
                 # The action in the STORE's shape, matching what the migration produces for an
                 # `invoke-agent` cron — verified field-for-field against a real conversion, so an

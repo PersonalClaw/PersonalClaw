@@ -1229,9 +1229,10 @@ class VectorMemoryStore(MemoryProvider):
                 self._db.commit()
                 logger.info("Applied memory schema migration v%s", ver)
         # From here on every statement passes the one memory-write check: inside work that
-        # derives from an Incognito or Temporary session, anything that would change memory is
-        # refused. Set after the schema is in place, which no session's work writes.
-        self._db.statement_check = memory_writes.check_statement
+        # derives from an Incognito or Temporary session, or an app's that was not given your
+        # memory, anything that would change memory is refused. Set after the schema is in place,
+        # which no session's work writes.
+        self._db.statement_check = memory_writes.check_memory_statement
 
         # Load persisted FAISS index (or rebuild from SQLite embeddings)
         try:
@@ -1817,7 +1818,11 @@ class VectorMemoryStore(MemoryProvider):
         §4.2). ``None`` means "don't touch": a plain write leaves an existing row's
         attribution alone rather than silently converting a recorded claim into an
         unattributed fact.
+
+        An app's work writes as the app (``memory_writes.written_by``), whatever ``source`` it
+        names: it is validated, weighed against what is stored and recorded as the app's.
         """
+        source = memory_writes.written_by(source)
         value_json = json.dumps(value)
         result = self.validate_semantic(key, value, confidence, source, value_json=value_json)
         if result is not None:
@@ -2435,8 +2440,8 @@ class VectorMemoryStore(MemoryProvider):
         Drives the L1 manifest's ranking (most-recalled-first). Best-effort — a
         failure to record a recall must never break retrieval.
         """
-        if not keys or memory_writes.writes_refused():
-            # A session that keeps nothing reads memory without leaving a mark on it: a recall
+        if not keys or memory_writes.changes_no_memory():
+            # Work that may change no memory reads it without leaving a mark on it: a recall
             # count is the heat that promotes a record, and its reads must not promote anything.
             return
         try:
@@ -2509,7 +2514,9 @@ class VectorMemoryStore(MemoryProvider):
         new_value: str | None,
         source: str,
     ) -> None:
-        """Append to the audit trail."""
+        """Append to the audit trail, under the source the current work writes as
+        (``memory_writes.written_by``: an app's work is recorded as the app's)."""
+        source = memory_writes.written_by(source)
         try:
             self.db.execute(
                 "INSERT INTO memory_events (event_type, memory_type, memory_key, "
@@ -3701,9 +3708,9 @@ class VectorMemoryStore(MemoryProvider):
     def _note_accessed(self, rows: list[dict]) -> None:
         """Stamp the episodic rows a search returned as read now (recency feeds ranking).
 
-        Not inside work for a session that keeps nothing: its reads leave no mark on memory.
+        Not inside work that may change no memory: its reads leave no mark on memory.
         """
-        if not rows or memory_writes.writes_refused():
+        if not rows or memory_writes.changes_no_memory():
             return
         now = _now_iso()
         for row in rows:
@@ -3930,10 +3937,15 @@ class VectorMemoryStore(MemoryProvider):
         supersede or suppress a wider record. Without it a workspace lesson could
         delete a global one that every other workspace still depends on, and a
         global write would behave differently than it does today.
+
+        An app's work writes its lesson as the app (``memory_writes.written_by``): the source is
+        settled here, before it sets the lesson's confidence and counts as a sighting.
         """
         import hashlib
 
         from personalclaw.memory_record import MemoryScope
+
+        source = memory_writes.written_by(source)
 
         if scope is None:
             scope = MemoryScope.GLOBAL

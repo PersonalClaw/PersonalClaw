@@ -609,10 +609,15 @@ item vector).
   A **temporary** chat's work reads nothing (the chat, its subagents and their
   own, the steps of a run it started), and neither does an **app's** work unless
   the app holds the `memory` permission: a conversation the app started, an agent
-  run it asked for, an agent working for either, and the app's own requests. A
-  refused read answers why, in words the agent passes on, rather than "nothing
-  found". The knowledge library is your content, not memory, and is read as your
-  files are. Both
+  run it asked for, an agent its scheduled job started, an agent working for any
+  of them, and the app's own requests. A refused read answers why, in words the
+  agent passes on, rather than "nothing found". The same grant governs what such
+  work changes: without it the memory store refuses its writes, its lesson and
+  triage-rule tools say why, the after-turn review and the run-end learner learn
+  nothing from it and its conversation is never consolidated; with it, each record
+  it writes names the app as its source (`app:<name>`), so it is weighed as the
+  app's and never as yours (`memory_writes.written_by`). The knowledge library is
+  your content, not memory, and is read as your files are. Both
   temporary and **incognito** sessions keep nothing: the memory, knowledge and
   vocabulary stores refuse every write made in their name, by any path, and
   nothing from them reaches the embedding model, so an incognito chat's memory

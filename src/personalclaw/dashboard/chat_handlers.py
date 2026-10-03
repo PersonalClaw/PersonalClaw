@@ -47,7 +47,8 @@ from personalclaw.dashboard.chat_utils import (
     persisted_history_key,
     take_in_the_users_links,
 )
-from personalclaw.dashboard.state import CREATED_BY_APP_META_KEY, DashboardState, _ChatSession
+from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.own_words import OWN_WORDS, RAN_PROMPT, pasted_blocks, typed_text

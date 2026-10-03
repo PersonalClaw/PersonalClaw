@@ -323,6 +323,10 @@ def _triage_rules_list() -> str:
     tool declares one effect, and a listing that shared a tool with the writes was asked
     about, and refused in Ask mode, as the write it is not."""
     d = _get("/api/memory/approval-rules")
+    # Work that reads no memory (a Temporary chat's, an app's not given it) is told why: that is
+    # not "no rules".
+    if d.get("withheld"):
+        return str(d["withheld"])
     if d.get("error"):
         return tool_failure(f"{d['error']}")
     rules = d.get("rules") or []

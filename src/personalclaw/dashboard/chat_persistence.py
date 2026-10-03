@@ -22,7 +22,8 @@ from personalclaw.dashboard.chat_utils import (
     persisted_history_key,
     resolve_history_key,
 )
-from personalclaw.dashboard.state import CREATED_BY_APP_META_KEY, DashboardState, _ChatSession
+from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import VALID_TASK_MODES
 

@@ -27,6 +27,7 @@ from personalclaw.dashboard.desktop_registry import DesktopRegistry
 from personalclaw.dashboard.sse import SseRegistry
 from personalclaw.dashboard.ws_state import DashboardWebSocketState
 from personalclaw.guardrails.loop_breaker import LoopBreaker
+from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.memory_reads import reach_of
 from personalclaw.own_words import OWN_WORDS
@@ -171,11 +172,6 @@ SUBAGENT_COMPLETION_PREFIX = "[Subagent completion event]"
 # carry the marker. This pattern stays so the Board keeps stripping it out of
 # `prompt_preview` rather than showing a raw tag.
 _OPTIONS_RE = re.compile(r"\[OPTIONS:\s*([^\]]+)\]")
-
-#: The meta-line key a conversation's creating app is persisted under
-#: (``_ChatSession.created_by_app``). Written by ``chat_persistence.save_session_to_history`` and
-#: read back by :meth:`DashboardState.session_creating_app` and the session-creation chokepoint.
-CREATED_BY_APP_META_KEY = "created_by_app"
 
 
 def _redact(text: str) -> str:

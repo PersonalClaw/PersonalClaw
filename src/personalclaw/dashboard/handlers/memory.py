@@ -10,7 +10,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import memory_locality, memory_service, memory_writes
+from personalclaw import memory_locality, memory_service
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import ConfigWriteError
@@ -31,6 +31,7 @@ from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.vector_memory import SemanticRejectCode
 
 from ._shared import (
+    _change_refused_for_the_app,
     _get_memory,
     _is_restricted_session,
     _memory_refusal,
@@ -526,7 +527,20 @@ async def api_memory_approval_rules(request: web.Request) -> web.Response:
     """
     from personalclaw.proactive.approval import APPROVAL_KEY_PREFIX, rule_from_row, rule_to_value
 
-    svc = _get_service(request.app["state"])
+    state = request.app["state"]
+    # The rules are your memory (`user.approval.*`): a Temporary chat's work, and an app's not
+    # given your memory, read none of them, and are told why (`triage_rules_list`).
+    withheld = _memory_refusal(state, request)
+    if withheld:
+        _sel().log_api_access(
+            caller=request.headers.get("X-Session-Key", ""),
+            operation="approval_rule.list",
+            outcome="denied",
+            source="dashboard",
+            resources="memory_withheld",
+        )
+        return web.json_response({"rules": [], "unreadable": [], "withheld": withheld})
+    svc = _get_service(state)
     rules: list[dict] = []
     unreadable: list[str] = []
     for entry in svc.get_all_semantic():
@@ -568,6 +582,9 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
+    refused = _change_refused_for_the_app(request.app["state"], request, "approval_rule.write")
+    if refused is not None:
+        return refused
     try:
         body = await request.json()
     except Exception:
@@ -655,6 +672,9 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
+    refused = _change_refused_for_the_app(request.app["state"], request, "approval_rule.delete")
+    if refused is not None:
+        return refused
     key = request.match_info["key"]
     if not key.startswith(APPROVAL_KEY_PREFIX):
         # Scoped on purpose: this route revokes approval rules, so it must not
@@ -1261,10 +1281,12 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
     if not key:
         return web.json_response({"error": "session key required"}, status=400)
     include_history = bool_field(body, "include_history", default=True)
-    if state.consolidator.keeps_nothing_from(key):
-        # An Incognito or Temporary chat (or one whose mode cannot be read): nothing from it is
-        # written to memory, so there is nothing to consolidate.
-        return web.json_response({"error": memory_writes.REFUSAL}, status=403)
+    nothing = state.consolidator.why_nothing_is_kept(key)
+    if nothing:
+        # An Incognito or Temporary chat (or one whose mode cannot be read), or a conversation an
+        # app started when the app was not given your memory: nothing from it is written to
+        # memory, so there is nothing to consolidate, and the answer says which.
+        return web.json_response({"error": nothing}, status=403)
     # Fire consolidation in background
     if key in state.consolidator._running:
         return web.json_response({"error": "consolidation already running"}, status=409)

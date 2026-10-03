@@ -60,6 +60,8 @@ def config_dir() -> Path:
 
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from personalclaw.memory import MemoryStore
     from personalclaw.memory_service import MemoryService
     from personalclaw.skills import SkillsLoader
@@ -69,6 +71,11 @@ logger = logging.getLogger(__name__)
 
 SESSIONS_DIR_NAME = "sessions"
 ARCHIVE_DIR_NAME = "archive"
+#: The metadata-line key a conversation an app started records its app under
+#: (``_ChatSession.created_by_app``): written by ``chat_persistence.save_session_to_history``, read
+#: back by ``DashboardState.session_creating_app``, the session-creation chokepoint and the
+#: consolidator (``HistoryConsolidator._as_its_work``).
+CREATED_BY_APP_META_KEY = "created_by_app"
 #: The background-compression record beside a transcript: ``{safe_key}.summary.json``.
 SUMMARY_SUFFIX = ".summary.json"
 _CONSOLIDATION_THRESHOLD = 30  # preferences/projects update threshold (messages)
@@ -1498,16 +1505,40 @@ class HistoryConsolidator:
         return True
 
     def keeps_nothing_from(self, key: str) -> bool:
-        """Whether session ``key`` (or the work asking) must leave nothing in long-term memory.
+        """Whether session ``key`` (or the work asking) must leave nothing in long-term memory
+        (:meth:`why_nothing_is_kept`). A pass over one never runs: not its model call, not its
+        writes, not its seal."""
+        return bool(self.why_nothing_is_kept(key))
+
+    def why_nothing_is_kept(self, key: str) -> str:
+        """Why nothing of session ``key`` is kept in long-term memory, ``""`` when it may be.
 
         Incognito and Temporary sessions, and any whose mode cannot be read
-        (:func:`~personalclaw.memory_writes.blocks_memory_writes`). A pass over one never
-        runs: not its model call, not its writes, not its seal.
+        (:func:`~personalclaw.memory_writes.blocks_memory_writes`), answer
+        :data:`~personalclaw.memory_writes.REFUSAL`. A conversation an app started answers, in the
+        app's words, when the app was not given your memory (:meth:`_as_its_work`).
         """
         from personalclaw import memory_writes
 
-        with memory_writes.derived_from(key, memory_mode=self._log.recorded_memory_mode(key)):
-            return memory_writes.writes_refused()
+        with self._as_its_work(key):
+            if memory_writes.writes_refused():
+                return memory_writes.REFUSAL
+            return memory_writes.app_change_refusal()
+
+    def _as_its_work(self, key: str) -> "AbstractContextManager[None]":
+        """The scope a pass over session ``key`` runs in (``memory_writes.derived_from``): the
+        mode its transcript records, and the app that started it (its metadata line), whose work
+        the pass is: what it writes names the app, and an app not given your memory has nothing
+        kept. A metadata line that cannot be read names no app, and its mode then reads as
+        unreadable, which keeps nothing."""
+        from personalclaw import memory_writes
+
+        app = self._log.get_metadata(key).get(CREATED_BY_APP_META_KEY, "")
+        return memory_writes.derived_from(
+            key,
+            memory_mode=self._log.recorded_memory_mode(key),
+            app=app if isinstance(app, str) else "",
+        )
 
     # The explicit session-end seam (E11): an idle-expire / channel-end / CLI
     # trigger calls this. Distinct from the fire-and-forget poll so call sites
@@ -1523,9 +1554,11 @@ class HistoryConsolidator:
         A consolidation no model answered is owed (``owed_chores``), and the seal waits for it:
         the session is sealed once its messages are consolidated, never before.
 
-        An Incognito or Temporary session ends with nothing kept: no pass, no seal."""
-        if self.keeps_nothing_from(key):
-            logger.info("Session %s ended; it keeps no memory, so nothing from it is kept", key)
+        An Incognito or Temporary session ends with nothing kept: no pass, no seal. So does a
+        conversation an app started when the app was not given your memory."""
+        nothing = self.why_nothing_is_kept(key)
+        if nothing:
+            logger.info("Session %s ended and nothing from it is kept: %s", key, nothing)
             return False
         ran = await self.consolidate_now(key)
         if self._owe_if_unanswered(key, ending=True):
@@ -1535,11 +1568,12 @@ class HistoryConsolidator:
 
     def _seal(self, key: str) -> None:
         """Seal the ended session *key* in the memory it keeps (:meth:`_kept_in`) and mirror
-        memory to the vault (:meth:`consolidate_session`). The seal is the session's own work."""
-        from personalclaw import memory_locality, memory_writes
+        memory to the vault (:meth:`consolidate_session`). The seal is the session's own work
+        (:meth:`_as_its_work`)."""
+        from personalclaw import memory_locality
 
         kept = self._kept_in(memory_locality.chat_folder(self._log.get_metadata(key)))
-        with memory_writes.derived_from(key, memory_mode=self._log.recorded_memory_mode(key)):
+        with self._as_its_work(key):
             try:
                 swept = kept.service.seal_session(key) if kept is not None else 0
                 if swept:
@@ -1629,16 +1663,23 @@ class HistoryConsolidator:
         lock we skip (clearing the in-memory guard the caller set), since a
         concurrent consolidation of the same key is redundant, not queued work.
 
-        Every trigger of a pass ends here, and the pass runs as deriving from ``key``: a session
-        that keeps nothing (Incognito, Temporary, or a mode that cannot be read) is skipped
-        before its transcript is read or a model is called, and the stores refuse every write
-        made in its name (:mod:`personalclaw.memory_writes`).
+        Every trigger of a pass ends here, and the pass runs as deriving from ``key``, as the
+        work of the app that started it if one did (:meth:`_as_its_work`): a session that keeps
+        nothing (Incognito, Temporary, or a mode that cannot be read), and an app's conversation
+        when the app was not given your memory, is skipped before its transcript is read or a
+        model is called, and the stores refuse every write made in its name
+        (:mod:`personalclaw.memory_writes`). What an app's pass writes names the app.
         """
         from personalclaw import memory_writes
 
-        with memory_writes.derived_from(key, memory_mode=self._log.recorded_memory_mode(key)):
+        with self._as_its_work(key):
             if memory_writes.writes_refused():
                 logger.info("Not consolidating %s: it keeps no memory", key)
+                self._running.discard(key)
+                return
+            app_refused = memory_writes.app_change_refusal()
+            if app_refused:
+                logger.info("Not consolidating %s: %s", key, app_refused)
                 self._running.discard(key)
                 return
             with single_flight(f"consolidate:{key}") as acquired:

@@ -68,8 +68,11 @@ describe('incognito copy matches the backend contract', () => {
     // away from the turn stays on it.
     expect(read('dashboard', 'chat_runner.py')).toMatch(/memory_writes\.answered_by\(turn_model_ref\(client\)\)/)
     expect(read('providers', 'provider_bridge.py')).toMatch(/served = getattr\(runtime, "served_model_ref", None\)/)
-    // Every consolidation pass runs as deriving from its session and is skipped for one.
-    expect(read('history.py')).toMatch(/with memory_writes\.derived_from\(key, memory_mode=self\._log\.recorded_memory_mode\(key\)\):\s*\n\s*if memory_writes\.writes_refused\(\):/)
+    // Every consolidation pass runs as deriving from its session (as the work of the app that
+    // started it, if one did) and is skipped for one: the pass, and the answer to whether one runs.
+    const history = read('history.py')
+    expect(history).toMatch(/return memory_writes\.derived_from\(\s*key,\s*memory_mode=self\._log\.recorded_memory_mode\(key\),/)
+    expect(history.match(/with self\._as_its_work\(key\):\s*\n\s*if memory_writes\.writes_refused\(\):/g)?.length).toBe(2)
     // The tools an agent CLI runs, in a process of their own, run as the chat they serve.
     expect(read('mcp_core.py')).toMatch(/run_mcp_stdio_loop\("personalclaw-core", "1\.0\.0", _aggregated_list_tools, _call_as_its_session\)/)
   })
@@ -84,8 +87,8 @@ describe('incognito copy matches the backend contract', () => {
     expect(read('dashboard', 'attachment_extract.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(2)
     expect(read('dashboard', 'chat_runner.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(1)
     // Dictation and read-aloud are the page's own requests, made as the dashboard and not as the
-    // chat, so no chat's scope reaches them.
-    expect(read('dashboard', 'memory_write_gate.py')).toMatch(/if not session_key or session_key == _DASHBOARD_UI:\s*\n\s*return await handler\(request\)/)
+    // chat (and by no app's token), so no chat's scope reaches them.
+    expect(read('dashboard', 'memory_write_gate.py')).toMatch(/if session_key == _DASHBOARD_UI:\s*\n\s*session_key = ""\s*\n\s*token_app = str\(request\.get\("app"\) or ""\)\s*\n\s*if not session_key and not token_app:\s*\n\s*return await handler\(request\)/)
     const client = readFileSync(join(__dirname, '..', '..', 'lib', 'api.ts'), 'utf8')
     expect(client).toMatch(/const SK = \{ 'X-Session-Key': 'dashboard:ui'/)
     expect(client).toMatch(/fetch\(url, \{ method: 'POST', headers: \{ \.\.\.SK \}, body: fd \}\)/)
