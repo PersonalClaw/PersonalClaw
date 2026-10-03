@@ -80,12 +80,19 @@ async def ask(
 
 
 def audit(
-    session_key: str, *, source: str, tool: str, decision: Any, metadata: dict[str, Any]
+    session_key: str,
+    *,
+    source: str,
+    tool: str,
+    tool_input: object,
+    decision: Any,
+    metadata: dict[str, Any],
 ) -> None:
     """The ask's ending as one audit row, in the words the audit log's filters read
     (`audit_outcome_families`): nobody answering, or the work stopping first, is not a Deny, and a
     grant that let it start without asking (a batch that only reads, `batch_start`) is no person's
-    answer."""
+    answer. *tool_input* is what the call that asked handed over, which the log reads as it reads
+    every call's (`SecurityEventLog.log_tool_invocation`)."""
     from personalclaw.approval_grants import YOU
     from personalclaw.sel import sel
 
@@ -100,6 +107,7 @@ def audit(
             session_key=session_key,
             source=source,
             tool_name=tool,
+            tool_input=tool_input,
             outcome=outcome,
             metadata={**metadata, "decided_by": decision.decided_by},
         )

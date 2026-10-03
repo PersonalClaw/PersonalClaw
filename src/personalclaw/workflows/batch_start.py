@@ -308,7 +308,7 @@ async def start(
     )
     changing = [task.label for task in asking.tasks if task.changes]
     if not changing and (grant := _start_grant(state, session_key, name)):
-        _audit(session_key, name, ToolDecision(True, "auto_approved", grant))
+        _audit(asking, ToolDecision(True, "auto_approved", grant))
         return await begin({"allowed_at": time.time(), "by": grant})
     why = _nobody_to_ask(state, session_key.removeprefix("dashboard:"), reads=not changing)
     if why:
@@ -429,7 +429,7 @@ async def _ask_then_start(state: Any, supervisor: Any, asking: _Asking, begin: A
     except Exception:
         logger.warning("batch %s: asking for its approval failed", name, exc_info=True)
         decision = ToolDecision(False, "rejected", "approval_failed")
-    _audit(session_key, name, decision)
+    _audit(asking, decision)
     if decision.outcome == "cancelled":
         # Its owner ended first (the loop or the turn that asked was stopped:
         # `owner_allow.end_asks`, which recorded why), so there is nobody left to tell, as a
@@ -474,13 +474,14 @@ def _tell(supervisor: Any, endings: list[SubagentInfo]) -> None:
         logger.warning("could not tell a batch's chat it never started", exc_info=True)
 
 
-def _audit(session_key: str, name: str, decision: Any) -> None:
+def _audit(asking: _Asking, decision: Any) -> None:
     owner_allow.audit(
-        session_key,
+        asking.session_key,
         source="subagent",
         tool="subagent_run",
+        tool_input={"batch": asking.name, "tasks": [task.label for task in asking.tasks]},
         decision=decision,
-        metadata={"batch": name},
+        metadata={"batch": asking.name},
     )
 
 

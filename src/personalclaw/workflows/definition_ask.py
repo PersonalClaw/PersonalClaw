@@ -139,7 +139,12 @@ async def _ask_then_save(
         state, ask_id=ask_id, source=ASK_SOURCE, tool=TOOL, purpose=purpose, said=said, session=chat
     )
     owner_allow.audit(
-        session_key, source="workflow", tool=TOOL, decision=decision, metadata={"workflow": name}
+        session_key,
+        source="workflow",
+        tool=TOOL,
+        tool_input=fields,
+        decision=decision,
+        metadata={"workflow": name},
     )
     if not decision:
         return
