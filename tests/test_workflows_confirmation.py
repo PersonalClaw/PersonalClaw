@@ -396,10 +396,15 @@ def test_an_absent_or_falsey_require_hitl_is_no_gate():
     assert requires_hitl({"require_hitl": False}) is False
 
 
-def test_require_hitl_must_be_the_BOOLEAN_true():
-    """A truthy string is an author mistake, and treating `"false"` as a gate would surprise them in
-    the direction of extra prompts they cannot explain."""
-    assert requires_hitl({"require_hitl": "yes"}) is False
+def test_require_hitl_is_read_as_the_word_it_spells_and_a_gate_stands_unless_it_says_no():
+    """An author, or an agent writing a definition, sends the flag as text as often as not.
+    `"false"` is a no, and asks nobody: reading it as a gate would surprise its author with prompts
+    they cannot explain. A yes in words is the gate they asked for, and a value that spells
+    neither is still a gate its author wrote, so a human gate fails closed: it stands."""
+    assert requires_hitl({"require_hitl": "false"}) is False
+    assert requires_hitl({"require_hitl": "no"}) is False
+    assert requires_hitl({"require_hitl": "yes"}) is True
+    assert requires_hitl({"require_hitl": "maybe"}) is True
 
 
 # ── per-stage mute ──

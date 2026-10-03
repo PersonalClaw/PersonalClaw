@@ -1,8 +1,8 @@
 """Rails for the two commands the getting-started guide hands a newcomer first.
 
-PUBL-7 walked the published guide on a clean machine — a fresh anonymous clone of
+A walk of the published guide on a clean machine — a fresh anonymous clone of
 `github.com/PersonalClaw/PersonalClaw`, a brand-new venv, `personalclaw` 0.1.3 from PyPI —
-and both of the guide's own commands crashed with raw Python tracebacks in the state a
+found both of the guide's own commands crashing with raw Python tracebacks in the state a
 newcomer is actually in:
 
   * `personalclaw setup` (guide § "1. Install") died with `EOFError: EOF when reading a line`
@@ -11,14 +11,21 @@ newcomer is actually in:
     to bury an already well-composed `WHAT/WHY/FIX` message, because a fresh install has no
     chat model bound yet — which is precisely the state that step runs in.
 
+`personalclaw chat` is now a chat of the gateway the guide starts in § "2. First run". With no
+gateway running there is nothing to chat with, and it says so with the command that starts one;
+with a gateway and no chat model bound, the turn's own sentence says what to bind
+(`test_a_send_with_no_model_says_what_to_do.py`).
+
 These tests drive the REAL entry point in a subprocess with an isolated `PERSONALCLAW_HOME`,
 so they reproduce the newcomer's state rather than a reimplementation of it, and can never
-touch the developer's real home. They are fully offline: provider resolution fails before
-any network call, and the URL rail below asserts *shape*, never reachability.
+touch the developer's real home. They are fully offline: the chat finds no gateway on a port
+nothing listens on and reaches nothing, and the URL rail below asserts *shape*, never
+reachability.
 """
 
 import os
 import re
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -31,9 +38,11 @@ _RUN_CLI = "from personalclaw.cli import main; main()"
 
 
 def _run_cli(
-    args: list[str], home: Path, stdin_devnull: bool = True
+    args: list[str], home: Path, stdin_devnull: bool = True, port: int | None = None
 ) -> subprocess.CompletedProcess:
     env = {**os.environ, "PERSONALCLAW_HOME": str(home)}
+    if port is not None:
+        env["PERSONALCLAW_PORT"] = str(port)
     # A stray real-home token/browser-open would make these tests environment-dependent.
     env.pop("PERSONALCLAW_PROJECT_DIR", None)
     return subprocess.run(
@@ -142,16 +151,25 @@ def test_no_wizard_prompt_bypasses_the_guard() -> None:
 # ── Guide step 4: `personalclaw chat -m "hello"` ──────────────────────────────
 
 
-def test_chat_with_no_provider_prints_the_fix_not_a_traceback(tmp_path) -> None:
-    """The guide's first-chat command in the state the guide leaves you in."""
-    proc = _run_cli(["chat", "-m", "hello"], tmp_path)
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def test_chat_with_no_gateway_prints_the_fix_not_a_traceback(tmp_path) -> None:
+    """The guide's first-chat command in a fresh home with no gateway running: there is nothing
+    to chat with, and it says so and names the guide's own command that starts one (§ "2. First
+    run"). The gateway's port is one nothing listens on, so a gateway this machine happens to run
+    on the default port cannot answer in the newcomer's place."""
+    port = _free_port()
+    proc = _run_cli(["chat", "-m", "hello"], tmp_path, port=port)
 
     assert proc.returncode == 1, f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}"
     assert "Traceback" not in proc.stderr, proc.stderr
     assert "asyncio" not in proc.stderr, proc.stderr
-    # The resolver's composed guidance survives intact.
-    assert "no model provider resolves for use case 'chat'" in proc.stderr, proc.stderr
-    assert "FIX:" in proc.stderr, proc.stderr
+    assert f"no gateway is running on port {port}" in proc.stderr, proc.stderr
+    assert "Start it with: personalclaw gateway" in proc.stderr, proc.stderr
 
 
 # ── Remote friction: GitHub owner casing ─────────────────────────────────────

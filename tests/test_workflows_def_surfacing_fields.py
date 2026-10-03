@@ -123,8 +123,8 @@ def test_a_NON_NUMERIC_cadence_is_zero_not_a_crash():
 
 
 def test_guided_must_be_the_BOOLEAN_true():
-    """Same rule §4 applies to `require_hitl`: a truthy string is an author mistake, and treating
-    `"false"` as guided would surprise them with a mode they cannot explain."""
+    """A truthy string is an author mistake, and treating `"false"` as guided would surprise them
+    with a mode they cannot explain."""
     assert _meta(guided="yes").guided is False
     assert _meta(guided=True).guided is True
 

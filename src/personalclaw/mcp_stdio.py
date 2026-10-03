@@ -153,7 +153,8 @@ async def stdio_streams(
     is sent on *write* is written to its stdin, one JSON message per line. On the way out the
     server's input is closed, which asks it to exit; one that has not ended after
     :data:`_END_GRACE_SECS` is stopped with its whole process group
-    (`cancellation.terminate_and_reap`), and leaving waits for that, bounded. The one exception is
+    (`cancellation.terminate_and_reap`: each signal goes to the group at once), and leaving waits,
+    bounded, for the server itself to end. The one exception is
     a program still starting whose connection stopped waiting for it
     (:meth:`StdioRun.stop_waiting`): it is left to finish (:attr:`StdioRun.left_to_finish`), and
     nothing it runs outlives :data:`FINISH_SECS`, the gateway, or its server being switched off,

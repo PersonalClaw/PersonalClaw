@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, TypeVar
 
-from personalclaw import memory_writes
+from personalclaw import memory_writes, notification_kinds
 from personalclaw.atomic_write import SQLITE_SIDECARS, atomic_write, make_private_dirs
 from personalclaw.config import loader as config_loader
 from personalclaw.home_paths import from_home
@@ -214,11 +214,17 @@ def _why(exc: BaseException) -> str:
 
 def _damage(db: Path) -> str:
     """What SQLite finds wrong with the database *db* beyond the keyword index, or "" when it finds
-    the rest sound or cannot tell (a lock, an index it cannot open).
+    the rest sound or cannot tell (a lock).
 
     Read-only. Damage confined to the index is the index's own and is mended by rebuilding it, so a
     problem SQLite names the index's tables in is not counted (FTS5's own check reports a corrupt
     index that way). A database is only ever moved aside on SQLite's word that it is damaged.
+
+    The whole database is checked at once, and that check opens the index. An FTS5 that reads the
+    index's structure as it opens it (SQLite 3.45's does) cannot open an index whose structure is
+    damaged: the check stops there, naming the index, where a later SQLite opens it and reports the
+    damage as one more finding. Each other table is then checked on its own, which never opens the
+    index, so every build says whether the rest is sound.
     """
     if not db.is_file():
         return ""
@@ -226,13 +232,34 @@ def _damage(db: Path) -> str:
         # as_uri() percent-encodes the path (see `context._holds_memory`).
         conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=2.0)
         try:
-            rows = conn.execute("PRAGMA quick_check").fetchall()
+            try:
+                rows = conn.execute("PRAGMA quick_check").fetchall()
+            except sqlite3.Error as exc:
+                if _FTS_TABLE not in str(exc):
+                    raise
+                rows = [row for table in _tables(conn) for row in _quick_check(conn, table)]
         finally:
             conn.close()
     except sqlite3.Error as exc:
-        return str(exc) if _is_damage(exc) else ""
+        return str(exc) if _is_damage(exc) and _FTS_TABLE not in str(exc) else ""
     found = [str(r[0]) for r in rows if str(r[0]) != "ok" and _FTS_TABLE not in str(r[0])]
     return "; ".join(found[:3])
+
+
+def _tables(conn: sqlite3.Connection) -> list[str]:
+    """Each table of *conn*'s database but the virtual ones, the keyword index among them. The
+    tables FTS5 keeps the index's rows in are ordinary ones, and are listed."""
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' "
+        "AND sql NOT LIKE 'CREATE VIRTUAL TABLE%'"
+    ).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+def _quick_check(conn: sqlite3.Connection, table: str) -> list[tuple]:
+    """SQLite's quick check of *table* alone: its pages and its indexes."""
+    quoted = '"' + table.replace('"', '""') + '"'
+    return conn.execute(f"PRAGMA quick_check({quoted})").fetchall()
 
 
 def _same_file(a: Path, b: Path) -> bool:
@@ -301,7 +328,7 @@ def _announce_set_aside(
         state = get_dashboard_state()
         if state is not None:
             state.notify(
-                "warning",
+                notification_kinds.WARNING,
                 "A damaged memory database was moved aside",
                 f"{from_home(db)} could not be read ({damage}). It was moved aside to "
                 f"{moved.name} beside it, not deleted, and a new one started. {after}",

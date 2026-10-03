@@ -184,15 +184,64 @@ def test_once_the_cause_is_gone_the_index_is_rebuilt_from_the_memory_files(home,
     assert _episodes(db) == [EPISODE]
 
 
+#: The two records FTS5 keeps of its own among the index's rows in ``memory_fts_data``: the
+#: averages (1) and the structure, which says where the index's pages are (10). Every other row is
+#: a page of the index.
+_AVERAGES, _STRUCTURE = 1, 10
+
+
 def _garble_the_index(db: Path) -> None:
-    """Damage the index and only the index: FTS5's structure record, which SQLite reports as a
-    corrupt index while every table of the database is sound."""
+    """Damage the index and only the index: the pages of its terms, which SQLite reports as a
+    corrupt index while every table of the database is sound. Every SQLite build still opens an
+    index damaged this way, so each can drop it and make it again."""
     conn = sqlite3.connect(str(db))
     try:
-        conn.execute("UPDATE memory_fts_data SET block = x'00ff00ff00ff' WHERE id = 10")
+        pages = conn.execute(
+            "UPDATE memory_fts_data SET block = x'00ff00ff00ff' WHERE id NOT IN (?, ?)",
+            (_AVERAGES, _STRUCTURE),
+        ).rowcount
         conn.commit()
     finally:
         conn.close()
+    assert pages, "the index had no pages to damage"
+
+
+def _garble_the_index_structure(db: Path) -> None:
+    """Damage the one record of the index that says where its pages are. SQLite reports the index
+    corrupt and every table of the database sound, on a build that can open the index at all."""
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute(
+            "UPDATE memory_fts_data SET block = x'00ff00ff00ff' WHERE id = ?", (_STRUCTURE,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _this_sqlite_opens_an_index_whose_structure_is_damaged(tmp_path: Path) -> bool:
+    """Whether this SQLite build can open, and so drop, an index whose structure record is
+    damaged. An FTS5 that reads the record as it opens the index (SQLite 3.45's does) cannot, and
+    then cannot drop the index either; a later one reads it only when the index is used."""
+    from personalclaw.memory import _CREATE_FTS
+
+    db = tmp_path / "structure-probe.db"
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute(_CREATE_FTS)
+        conn.execute("INSERT INTO memory_fts (path, content) VALUES ('a.md', 'a word')")
+        conn.commit()
+    finally:
+        conn.close()
+    _garble_the_index_structure(db)
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute("DROP TABLE memory_fts")
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        conn.close()
+    return True
 
 
 def _drop_the_index_settings(db: Path) -> None:
@@ -227,6 +276,37 @@ def test_a_damaged_index_is_rebuilt_in_place_beside_the_memories(home):
         assert conn.execute("PRAGMA quick_check").fetchall() == [("ok",)]
     finally:
         conn.close()
+
+
+def test_an_index_this_sqlite_cannot_open_never_moves_the_database_aside(home, tmp_path):
+    """🔴 Red on integration on a SQLite whose FTS5 reads the index's structure as it opens it
+    (3.45's): the whole-database check stopped at the index it could not open, naming it, that
+    was taken for SQLite's word that the DATABASE was damaged, and the partition's database was
+    moved aside with its fact and its episode.
+
+    A damaged structure record is the index's own on every build. A build that can open the index
+    rebuilds it in place. One that cannot open it cannot drop it either, so keyword search says
+    why it is off, as for any index SQLite can neither open nor drop. Neither moves the database.
+    """
+    partition, db = _remember_in_the_project(home)
+    store = MemoryStore(workspace=partition)
+    store.append_history("Shipped the newsletter draft")
+    assert store.search(SHIPPED)
+    _garble_the_index_structure(db)
+
+    store.append_history("Sent the newsletter")
+    hits = [h["path"] for h in store.search(SHIPPED)]
+
+    assert _set_aside_beside(db) == []
+    assert _facts(db) == {FACT[0]: FACT[1]}
+    assert _episodes(db) == [EPISODE]
+    assert "Sent the newsletter" in Path(_todays_history(partition)).read_text()
+    if _this_sqlite_opens_an_index_whose_structure_is_damaged(tmp_path):
+        assert hits == [_todays_history(partition)]
+        assert store.search_degraded() == ""
+    else:
+        assert hits == []
+        assert "memory_fts" in store.search_degraded()
 
 
 # ── a damaged database ──────────────────────────────────────────────────────────────────────────
@@ -347,6 +427,30 @@ def test_a_damaged_partition_database_is_moved_aside_with_its_memories(
     assert _facts(recovered) == {FACT[0]: FACT[1]}
     assert _episodes(recovered) == [EPISODE]
     # The partition goes on, on a new database whose index holds its memory files.
+    assert [h["path"] for h in store.search(SHIPPED)] == [_todays_history(partition)]
+    assert store.search_degraded() == ""
+
+
+def test_a_damaged_page_beside_an_index_this_sqlite_cannot_open_is_still_found(home, tmp_path):
+    """Where SQLite cannot open the index, its whole-database check stops there, so each other
+    table is checked on its own: a damaged page of the database is found beside that index too,
+    and the database is moved aside with its memories, as it is on a build that opens the index.
+    """
+    partition, db = _remember_in_the_project(home)
+    store = MemoryStore(workspace=partition)
+    store.append_history("Drafted the newsletter")  # the index is made, then the file is damaged
+    _garble_the_index_structure(db)
+    _, damaged = _break_a_page_of_the_index(db)
+
+    store.append_history("Shipped the newsletter draft")
+    store.search(SHIPPED)
+
+    (moved,) = _set_aside_beside(db)
+    assert moved.read_bytes() == damaged
+    recovered = tmp_path / "recovered.db"
+    recovered.write_bytes(damaged)  # the memories' own pages are sound
+    assert _facts(recovered) == {FACT[0]: FACT[1]}
+    assert _episodes(recovered) == [EPISODE]
     assert [h["path"] for h in store.search(SHIPPED)] == [_todays_history(partition)]
     assert store.search_degraded() == ""
 

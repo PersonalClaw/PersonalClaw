@@ -13,7 +13,6 @@ Every server here is a script this test wrote under ``tmp_path``.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 import textwrap
 import time
@@ -21,8 +20,11 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw import mcp_status
+from personalclaw import mcp_status, process_facts
 from personalclaw.mcp_stdio import CommandNotFound, StdioRun, stdio_streams
+
+#: How long a process the stop's kill reached may take to be gone once leaving has returned.
+_ENDS_WITHIN = 5.0
 
 
 def _script(root: Path, name: str, body: str) -> Path:
@@ -32,12 +34,11 @@ def _script(root: Path, name: str, body: str) -> Path:
     return path
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
+def _running(pid: int) -> bool:
+    """Whether *pid* still runs. One that has ended and waits to be collected (a zombie) does not:
+    it runs nothing and holds nothing, and once the server is gone its child is collected by the
+    process that adopts it, never by PersonalClaw."""
+    return process_facts.process(pid) is not None
 
 
 @pytest.mark.asyncio
@@ -79,10 +80,16 @@ async def test_a_server_that_will_not_exit_is_stopped_with_what_it_started(tmp_p
         deadline = time.monotonic() + 15
         while not pids.exists() and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
-    took = time.monotonic() - began
     server_pid, child_pid = (int(p) for p in pids.read_text().split())
     assert run.stopped and not run.exited and run.returncode is not None
-    assert not _alive(server_pid) and not _alive(child_pid), "something it started outlived it"
+    # The kill goes to the whole group at once, and leaving waits for the server itself. Its child
+    # got the same kill, and on Linux the kernel can still be ending it as leaving returns, so it
+    # is given a moment to be gone: one the kill missed sleeps on for two minutes.
+    deadline = time.monotonic() + _ENDS_WITHIN
+    while _running(child_pid) and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    took = time.monotonic() - began
+    assert not _running(server_pid) and not _running(child_pid), "something it started outlived it"
     assert took < 20, f"putting it away took {took:.1f}s"
 
 
