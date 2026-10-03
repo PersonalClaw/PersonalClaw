@@ -44,6 +44,7 @@ from personalclaw.file_scope import refusal as scope_refusal
 from personalclaw.file_scope import store_named_in
 from personalclaw.file_view import BINARY_SNIFF_BYTES, is_binary
 from personalclaw.knowledge_providers.dir_source import note_path
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.security import (
     MASK_CONFLICT,
     MaskConflict,
@@ -2356,10 +2357,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             bits.append(f"!{t.priority.value}")
         if t.project:
             bits.append(f"@{t.project}")
-        ec = t.exit_criteria or []
-        if ec:
-            met = sum(1 for e in ec if (e.get("status") == "complete" or e.get("met")))
-            bits.append(f"{met}/{len(ec)} criteria")
+        if t.exit_criteria:
+            met = len(t.exit_criteria) - len(t.incomplete_exit_criteria())
+            bits.append(f"{met}/{len(t.exit_criteria)} criteria")
         return " ".join(bits)
 
     async def _t_task_create(self, a: dict) -> ToolResult:
@@ -2432,7 +2432,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         return _ok_capped("\n".join(lines), session_key=self._session_key)
 
     async def _t_task_update(self, a: dict) -> ToolResult:
-        from personalclaw.tasks import reconcile, registry
+        from personalclaw.tasks import models, reconcile, registry
 
         item_id = str(a.get("id", "")).strip()
         if not item_id:
@@ -2505,7 +2505,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 error=str(e),
                 recovery_hints=["Remove the dependency that closes the loop."],
             )
-        except ValueError as e:
+        except models.UnfinishedExitCriteria as e:
             return ToolResult(
                 success=False,
                 error=str(e),
@@ -2603,7 +2603,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 name=name,
                 project_id=str(a.get("project_id", "")),
                 project_name=str(a.get("project_name", "")),
-                repeatable=bool(a.get("repeatable", False)),
+                repeatable=yes_or_no(a.get("repeatable")) is True,
             )
 
         try:

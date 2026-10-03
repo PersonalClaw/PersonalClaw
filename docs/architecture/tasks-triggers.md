@@ -23,8 +23,13 @@ relative to `PersonalClaw/src/personalclaw/`.
   is "resolved"). Graph walks are cycle-tolerant.
 - **Honest APIs** — completing a task with unfinished exit criteria fails
   loudly at the provider layer (`tasks/native.py`: "cannot complete:
-  unfinished exit criteria — …"); an invalid status on update is a 400 naming
-  the valid set.
+  unfinished exit criteria — …", raised as `models.UnfinishedExitCriteria`, so
+  the agent's `task_update` attaches its remedy to that refusal alone); an
+  invalid status on update is a 400 naming the valid set. A criterion is met
+  only on a yes: `met` sent as text is read as the word it spells
+  (`safety_flags.yes_or_no`), never by `bool()`, which takes `"false"` for
+  yes. A checklist element that is neither text nor an object is refused on
+  write, saying where it is, and dropped on read.
 - **One registry, every surface** (`tasks/registry.py`) — the chat
   `task_create` tool and the Tasks UI share the same provider registry, so
   a task created in conversation is the same object the board shows.

@@ -173,6 +173,13 @@ store's list fields behind every task write (`tasks.models.TASK_FIELD_COERCERS`)
 planner's lists (`loop.code_classify`). Text that is not a JSON list stays the one item it is,
 and each element of the list is checked as an element of a real list is.
 
+A model sends a declared boolean as text just as often. The task and loop tools read one as the
+word it spells (`safety_flags.yes_or_no`: `true`, `yes`, `on`, `1` and `false`, `no`, `off`, `0`,
+in any case), never by `bool()`, which takes `"false"` for yes: an exit criterion's `met`, a
+step's `completed`, `task_list_create.repeatable` and `project_run_create.attended`. A blank,
+any other word and a number spell neither, and each field reads that as its safe value: unmet,
+unfinished, not repeatable, attended.
+
 ## For an app author
 
 Write the schema the profile accepts and nothing is repaired or excluded: give every array

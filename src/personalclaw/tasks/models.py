@@ -13,6 +13,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.validation import decode_json_text
 
 
@@ -117,10 +118,28 @@ class ExitCriteriaStatus(str, enum.Enum):
     COMPLETE = "complete"
 
 
+class UnfinishedExitCriteria(ValueError):
+    """A task cannot be marked done while an exit criterion is unmet; the refusal names each one.
+
+    A ``ValueError``, so every door that answers a refused write with a 400 still does. Typed, so
+    the agent's ``task_update`` can tell this refusal from the others: the remedy it hands the
+    model, to complete the criteria first, is true of this refusal alone.
+    """
+
+    def __init__(self, unfinished: list[str]) -> None:
+        self.unfinished = unfinished
+        super().__init__("cannot complete: unfinished exit criteria — " + ", ".join(unfinished))
+
+
 def normalize_exit_criterion(item: Any) -> dict:
     """Canonical exit criterion: ``{description, status, comment}``. Accepts a plain string, the
     legacy ``{description, met: bool}`` shape, or the canonical shape. ``met`` is emitted
     (derived from ``status``) so older readers keep working.
+
+    ``met`` is met only on a yes (:func:`~personalclaw.safety_flags.yes_or_no`). A model sends it
+    as text as often as not, and read with ``bool()`` a criterion sent as ``"met": "false"`` was
+    met, so its task closed before the work was done; a no, a blank and an unrecognised value
+    are all unmet.
     """
     if isinstance(item, str):
         desc, status, comment = item, ExitCriteriaStatus.INCOMPLETE.value, ""
@@ -136,7 +155,7 @@ def normalize_exit_criterion(item: Any) -> dict:
         else:
             status = (
                 ExitCriteriaStatus.COMPLETE.value
-                if bool(item.get("met"))
+                if yes_or_no(item.get("met")) is True
                 else ExitCriteriaStatus.INCOMPLETE.value
             )
         comment = str(item.get("comment") or "")
@@ -153,13 +172,14 @@ def normalize_exit_criterion(item: Any) -> dict:
 def normalize_action_plan_item(item: Any, index: int) -> dict:
     """Canonical action-plan item: ``{sequence, content, completed}``. Accepts a plain string,
     the legacy ``{description, completed}`` shape, or the canonical ``{sequence, content}``
-    shape. ``description`` is emitted as an alias of ``content`` for older readers.
+    shape. ``description`` is emitted as an alias of ``content`` for older readers. A step is
+    finished only on a yes, read as an exit criterion's ``met`` is.
     """
     if isinstance(item, str):
         content, completed = item, False
     elif isinstance(item, dict):
         content = str(item.get("content") or item.get("description") or "")
-        completed = bool(item.get("completed"))
+        completed = yes_or_no(item.get("completed")) is True
     else:
         content, completed = "", False
     seq = item.get("sequence", index) if isinstance(item, dict) else index
@@ -578,6 +598,10 @@ BUILTIN_PROJECTS = (PERSONAL_PROJECT, REPEATABLE_PROJECT)
 #     item it became one criterion whose description was that JSON, so no later update could
 #     meet it and the task never closed. Every list coercer reads that text as the list
 #     (`decode_list_text`).
+#   * a model's `task_update` sent a criterion as `"met": "false"`; read with `bool()` it was met,
+#     and the task closed before its work was done. `met`, and a step's `completed`, are read as
+#     the word they spell (`safety_flags.yes_or_no`). An element that was neither text nor an
+#     object became an EMPTY criterion no update could meet; a write now refuses it.
 #
 # So the coercion is a TABLE, exhaustive over `Task`'s fields, and both paths go through it.
 # `tests/test_task_field_coercion.py` asserts the exhaustiveness, which is what makes this
@@ -677,18 +701,50 @@ def _as_text_list(value: Any, *, strict: bool) -> list[str]:
     return [_as_text(v, strict=strict) for v in items]
 
 
-def _as_dict_list(normalizer: Any, *, indexed: bool = False) -> Any:
-    """Build a coercer for a list-of-dict field from its existing per-item normalizer.
+def _json_kind(value: Any) -> str:
+    """What a refusal calls a value a caller sent: its JSON kind, never its contents."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, (int, float)):
+        return "a number"
+    if isinstance(value, (list, tuple)):
+        return "a list"
+    return f"a {type(value).__name__}"
+
+
+def _as_dict_list(
+    normalizer: Any, *, field: str, noun: str, text_key: str, indexed: bool = False
+) -> Any:
+    """Build a coercer for a checklist field from its existing per-item normalizer.
 
     Deliberately reuses `normalize_exit_criterion` / `normalize_action_plan_item` rather than
     restating their shapes: those ARE the canonical forms, they already accept the legacy
     spellings, and a second opinion here would let the read and the write disagree about what a
     criterion is. Notes get `_as_note_list` instead — same reuse of `normalize_note`, but they
     need `strict` forwarded so only a write dates them.
+
+    An element is text, or an object with its text under `text_key`. Anything else (a number, a
+    boolean, null, a list) is no item at all, and the normalizer made an EMPTY one of it: an empty
+    criterion has no words to show and no update can meet it, so its task could never close. A
+    write refuses such an element, saying where it is and what to send instead; a read drops it.
+    A lone value of that kind sent as the whole field is refused the same way, because read as no
+    items, `exit_criteria: true` on an update wiped the checklist and the task closed unmet.
     """
+    advice = f"send each {noun} as text, or as an object with its text in {text_key!r}"
 
     def _coerce(value: Any, *, strict: bool) -> list[dict]:
-        items = _as_item_list(value)
+        if isinstance(value, (bool, int, float)):
+            if strict:
+                raise ValueError(f"{field} is {_json_kind(value)}, not a list: {advice}")
+            return []
+        items: list = []
+        for at, item in enumerate(_as_item_list(value), 1):
+            if isinstance(item, (str, dict)):
+                items.append(item)
+            elif strict:
+                raise ValueError(f"{field} item {at} is {_json_kind(item)}: {advice}")
         if indexed:
             return [normalizer(item, i) for i, item in enumerate(items)]
         return [normalizer(item) for item in items]
@@ -816,8 +872,16 @@ TASK_FIELD_COERCERS: dict[str, Any] = {
     "due": _as_text,
     "due_reminder": _as_flag,
     "order": _as_number,
-    "exit_criteria": _as_dict_list(normalize_exit_criterion),
-    "action_plan": _as_dict_list(normalize_action_plan_item, indexed=True),
+    "exit_criteria": _as_dict_list(
+        normalize_exit_criterion, field="exit_criteria", noun="criterion", text_key="description"
+    ),
+    "action_plan": _as_dict_list(
+        normalize_action_plan_item,
+        field="action_plan",
+        noun="step",
+        text_key="content",
+        indexed=True,
+    ),
     "notes": _as_note_list,
     "research_notes": _as_note_list,
     "execution_notes": _as_note_list,

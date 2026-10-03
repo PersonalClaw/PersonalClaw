@@ -31,9 +31,18 @@ from __future__ import annotations
 import logging
 
 from personalclaw.loop import files as loop_files
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+def _attended(a: dict) -> bool:
+    """Whether a run the agent creates is attended: yes, unless the agent says no (the user chose
+    it with them). A model sends the boolean as text as often as not, and ``"false"`` was read as
+    attended; it is read as the word it spells (:func:`~personalclaw.safety_flags.yes_or_no`), and
+    a blank, an unrecognised word or a number is not a no, so the run asks."""
+    return yes_or_no(a.get("attended")) is not False
 
 
 def _state():
@@ -198,8 +207,7 @@ async def code_project_create(a: dict) -> ToolResult:
         # matching the classify call); stage/capability hygiene is the point here.
         "plan": _normalize_plan(a.get("stage_plan") or [], skill_ids, workflow_ids, None),
         "max_cycles": a.get("max_cycles", 60),
-        # Unattended only when the agent says so (the user chose it with them); else it asks.
-        "attended": a.get("attended") is not False,
+        "attended": _attended(a),
         "success_criteria": (str(a["success_criteria"]) if a.get("success_criteria") else None),
         # Kind-config fields the code strategy owns.
         "project_kind": project_kind,
@@ -298,8 +306,7 @@ async def goal_loop_create(a: dict) -> ToolResult:
         "task": goal,
         "name": str(a.get("name") or "").strip(),
         "max_cycles": a.get("max_cycles", 30),
-        # Unattended only when the agent says so (the user chose it with them); else it asks.
-        "attended": a.get("attended") is not False,
+        "attended": _attended(a),
         "success_criteria": (str(a["success_criteria"]) if a.get("success_criteria") else None),
         # Kind-config fields the goal strategy owns (ignored by general/design defaults
         # when not applicable — _build_loop_from_body layers them over the kind defaults).

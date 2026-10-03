@@ -25,6 +25,11 @@ applying and not applying. So this refuses to guess:
   **default**, which for every caller here is the safe value. An unreadable flag must not enable a
   control, and it must not do so quietly either.
 
+A model's tool argument is the same defect from another source: an exit criterion sent as
+``"met": "false"`` let its task close. :func:`yes_or_no` reads a declared boolean with the same
+words, but a blank and a number spell neither yes nor no there, and its caller resolves that to
+the field's own safe value (a criterion unmet, a run attended).
+
 Destructive consent — the ``confirm`` family — is the same defect on a sharper edge, and it
 lives here too
 ==============================================================================================
@@ -118,6 +123,32 @@ def strict_bool(value: object, *, field: str, default: bool = False) -> bool:
         default,
     )
     return default
+
+
+def yes_or_no(value: object) -> bool | None:
+    """The yes or no *value* spells for a field declared boolean, or ``None`` when it spells
+    neither, which its caller reads as that field's SAFE value.
+
+    For a model's tool arguments: a model sends a declared boolean as text as often as not, and
+    ``bool("false")`` is True, so an exit criterion sent as ``"met": "false"`` read as met and its
+    task closed before the work was done. A real ``bool`` is itself, and a string is read through
+    the two word sets above in any case, trimmed. Anything else is neither:
+
+    * a blank string, which says nothing. The word sets count it a no, which is the safe value of
+      an opt-in; a field whose safe value is yes (a run stays attended) must not read it as a no;
+    * a number: ``1`` where a boolean is declared is a caller confusing two types, and the words
+      cover every way to say yes (``workflows.contracts`` refuses one for the same reason);
+    * any other string, a list or an object.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word and word in BOOL_TRUE_WORDS:
+            return True
+        if word and word in BOOL_FALSE_WORDS:
+            return False
+    return None
 
 
 def confirm_granted(payload: Any, field: str = "confirm") -> bool:

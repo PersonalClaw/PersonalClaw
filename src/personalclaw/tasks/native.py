@@ -22,6 +22,7 @@ from personalclaw.tasks.models import (
     TaskComment,
     TaskPriority,
     TaskStatus,
+    UnfinishedExitCriteria,
     WorkflowTaskBinding,
 )
 from personalclaw.tasks.models import coerce_task_field as models_coerce
@@ -421,10 +422,7 @@ class NativeTaskProvider(TaskProvider):
             # with no unfinished criteria and no live prerequisite still creates (backfill).
             if task.status == TaskStatus.DONE:
                 if not task.can_mark_complete():
-                    raise ValueError(
-                        "cannot complete: unfinished exit criteria — "
-                        + ", ".join(task.incomplete_exit_criteria())
-                    )
+                    raise UnfinishedExitCriteria(task.incomplete_exit_criteria())
                 blocked = reconcile.block_reason(task, {**tasks, task.id: task})
                 if blocked["is_blocked"]:
                     raise ValueError(
@@ -543,10 +541,7 @@ class NativeTaskProvider(TaskProvider):
                     # Exit-criteria gate: a task can only be completed when every
                     # exit criterion is complete.
                     if not task.can_mark_complete():
-                        raise ValueError(
-                            "cannot complete: unfinished exit criteria — "
-                            + ", ".join(task.incomplete_exit_criteria())
-                        )
+                        raise UnfinishedExitCriteria(task.incomplete_exit_criteria())
                     # Dependency gate: a task cannot complete while a prerequisite is
                     # still open. The exit-criteria gate above enforced only the task's
                     # OWN checklist, so a kanban drag (or any PUT status=done) could mark
