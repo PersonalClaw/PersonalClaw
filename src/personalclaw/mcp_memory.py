@@ -14,6 +14,7 @@ import urllib.parse
 from typing import Any
 
 from personalclaw.mcp_core import GATEWAY_READ_TIMEOUT_SECS, _delete, _get, _post
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import tool_failure
 from personalclaw.validation import ALLOWED_LESSON_CATEGORIES, ALLOWED_LESSON_SCOPES
 
@@ -270,7 +271,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if not query:
             return tool_failure("query is required")
         qs = f"q={urllib.parse.quote(query)}"
-        if args.get("deep"):
+        if yes_or_no(args.get("deep")) is True:
             qs += "&deep=true"
         d = _get(f"/api/memory/recall?{qs}")
         if d.get("timed_out"):

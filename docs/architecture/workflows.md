@@ -425,6 +425,15 @@ DEGRADED ("not executing twice") and run nothing for the claim's 900s TTL. A
 node whose subagent is still RUNNING keeps its claim, so the re-dispatch is
 refused as the second execution it would be.
 
+A boolean a definition or an edit carries is read as the word it spells
+(`safety_flags.yes_or_no`): an agent writes one as text as often as not, and `bool("false")`
+is True. A value that spells neither reads as the safe value of what it guards. A step's
+`redo_effects` (the committed-effect boundary holds), `allow_failure` (a failed check holds
+what follows it), `self_judge` (the judge runs in a session of its own), `judge_contract` and
+an edit op's `force` and `redo_effects` are a yes only on a yes; `require_hitl` and
+`persists_memory` are a no only on a no or when left out (the step asks someone; a run that may
+write no memory skips the step); and a verify criterion is `hard` unless it says no.
+
 A finished run is one attempt and cannot be re-entered, so a retry is a
 **fork**, not a rewind: the child draft inherits only the steps that SUCCEEDED
 (their state, outputs and step records), and every other step starts `PENDING`

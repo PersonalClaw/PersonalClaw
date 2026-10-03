@@ -36,6 +36,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.security import redact_for_display, redact_values_for_display
 from personalclaw.triggers.standing import last_check, standing
 
@@ -273,6 +274,10 @@ PATCHABLE: frozenset[str] = frozenset(
 
 #: The patchable fields that hold a route (`delivery.written_route` checks each).
 ROUTE_FIELDS: frozenset[str] = frozenset({"delivery", "failure_delivery"})
+
+#: The patchable switches read as the word they spell (`safety_flags.yes_or_no`). `catch_up` is
+#: not one: it refuses anything but a real boolean (`catch_up_refusal`).
+PATCH_SWITCHES: frozenset[str] = frozenset({"enabled", "yield_to_user"})
 
 
 def asks_chat_channels(patch: Any) -> bool:
@@ -1367,6 +1372,16 @@ def update(
         }
     except MaskConflict:
         return AutomationToolResult(False, f"Error: {MASK_CONFLICT}")
+    # A switch is stored as the yes or no it spells. Stored as sent, the text `"false"` was truthy
+    # wherever the row was read, so a patch that switched an automation off left it running. One
+    # that spells neither is refused: there is no reading of it to store.
+    for key in sorted(PATCH_SWITCHES & set(applied)):
+        switch = yes_or_no(applied[key])
+        if switch is None:
+            return AutomationToolResult(
+                False, f"Error: nothing was changed: {key} is true or false.", {key: applied[key]}
+            )
+        applied[key] = switch
     # A route is checked where it is written, by the rule the store reads it with, and stored as
     # the route it names (`delivery.written_route`). Unchecked, `"telegram"` was saved as sent and
     # answered "Updated", and the store then read it back as `inbox`: results went to a
@@ -1411,9 +1426,7 @@ def update(
     # way `set_paused` does for a row a legacy import brought over and nobody has reviewed.
     from personalclaw.triggers.legacy_import import needs_review
 
-    # Truthiness, not `is True`: the value is stored as sent, and a `1` or a `"true"` switches the
-    # row on just the same.
-    if applied.get("enabled") and needs_review(row.trigger):
+    if applied.get("enabled") is True and needs_review(row.trigger):
         return _awaiting_review_refusal(row.trigger)
     if "catch_up" in applied:
         refusal = catch_up_refusal(row.trigger.kind, applied["catch_up"])
@@ -1467,7 +1480,7 @@ def update(
         trigger.enabled = False
         trigger.next_fire_at = ""
         note = grants.switched_off(trigger, missing, changed=changed)
-    elif missing and applied.get("enabled"):
+    elif missing and applied.get("enabled") is True:
         return AutomationToolResult(
             False,
             f"Error: {grants.refusal(trigger, missing, elsewhere=True, switching_on=True)}",

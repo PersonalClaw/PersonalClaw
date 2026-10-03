@@ -16,6 +16,7 @@ from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.artifacts import retakes
 from personalclaw.artifacts.models import ArtifactKindMismatch, is_valid_slug
 from personalclaw.mcp_core import _resolve_session_key
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import BUILDS_META_KEY, ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
 
@@ -869,7 +870,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             # cannot see it, because it matches on the NAME's slug and the two names
             # differ. Updated in place rather than refused with a hint: the worker is
             # ending its turn, so a hint has no next turn to land in.
-            if not args.get("slug") and not args.get("force"):
+            if not args.get("slug") and yes_or_no(args.get("force")) is not True:
                 same = artifact_dedupe.find_same_deliverable(
                     prov, tags=args.get("tags"), content=content or ""
                 )
@@ -893,7 +894,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             # List-before-save dedup (ARTIFACTS S1): a fresh save (no explicit slug,
             # not forced) whose name matches an existing artifact refuses with a hint
             # so the agent updates the existing one instead of minting a "-2" twin.
-            if not args.get("slug") and not args.get("force"):
+            if not args.get("slug") and yes_or_no(args.get("force")) is not True:
                 similar = prov.find_similar(args["name"], kind=args.get("kind", "widget"))
                 if similar is not None:
                     _audit("deduped", similar.slug)
@@ -1141,7 +1142,7 @@ def _image_request_refusal(
     version of the one it was asked to change.
     """
     slug = str(args.get("slug") or "").strip()
-    edit = args.get("edit") is True
+    edit = yes_or_no(args.get("edit")) is True
     if edit and not slug:
         return (
             "edit=true changes an existing image: pass its slug too, or leave out edit to make "
@@ -1223,7 +1224,7 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         return tool_failure("provide a non-empty prompt.")
     size = str(args.get("size", "")).strip()
     slug = str(args.get("slug", "")).strip()
-    edit = args.get("edit") is True
+    edit = yes_or_no(args.get("edit")) is True
     edits = image_model_edits()
     unmade = _image_request_refusal(prov, args, edits, model_ref)
     if unmade:
@@ -1610,7 +1611,7 @@ def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
     if prov is None or resolved is None:
         return None
     provider, model_id = resolved
-    edits = image_model_edits() if args.get("edit") is True else None
+    edits = image_model_edits() if yes_or_no(args.get("edit")) is True else None
     refusal = _image_request_refusal(prov, args, edits, f"{provider.name}:{model_id}")
     return tool_failure(refusal) if refusal else None
 

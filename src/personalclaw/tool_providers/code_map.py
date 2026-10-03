@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import RiskLevel, ToolDefinition, ToolProvider, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -208,8 +209,8 @@ def _open_index(arguments: dict):
     from personalclaw.codegraph import CodeGraphIndex
 
     index = CodeGraphIndex(workspace)
-    refresh = bool(arguments.get("refresh"))
-    if refresh or index.is_empty():
+    # Re-indexing walks the whole tree, so only a yes asks for it: `bool("false")` is True.
+    if yes_or_no(arguments.get("refresh")) is True or index.is_empty():
         stats = index.index()
         if index.is_empty():
             return None, ToolResult(

@@ -36,6 +36,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterator
 
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -217,7 +218,7 @@ def judge_ruling(ctl: RunController, node: Node, parent_path: str, iteration: in
     base = f"{parent_path}.body@{iteration}"
     ruling: Any = None
     for sub, child in walk(node.body):
-        if not child.id or not (child.config or {}).get("judge_contract"):
+        if not child.id or yes_or_no((child.config or {}).get("judge_contract")) is not True:
             continue
         inst = ctl.instances.get(base if sub == "root" else f"{base}{sub[len('root'):]}")
         if inst is None or inst.state not in SUCCESS_STATES:

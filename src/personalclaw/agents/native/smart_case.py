@@ -17,6 +17,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
+
 #: The regular-expression syntax whose letters name no text the pattern matches. It is taken out
 #: before looking for a capital (:func:`ignores_case`).
 _REGEX_SYNTAX = re.compile(
@@ -33,19 +35,17 @@ _REGEX_SYNTAX = re.compile(
 def case_override(raw: Any) -> bool | None:
     """A call's ``ignore_case`` as it was given, or None when it leaves smart case to decide.
 
-    A built-in tool reads its arguments leniently (``"5"`` reads as a number), so the words
-    ``"true"`` and ``"false"`` read as what they say, never as the True ``bool("false")`` is.
+    Read as the word it spells (:func:`~personalclaw.safety_flags.yes_or_no`), never as the True
+    ``bool("false")`` is. Left out or blank, it leaves the case to smart case. Anything else that
+    spells neither yes nor no, a number included, is refused: either guess would match by a case
+    the call never asked for.
     """
-    if raw is None:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
         return None
-    if isinstance(raw, (bool, int)):
-        return bool(raw)
-    word = str(raw).strip().lower()
-    if word in ("true", "false"):
-        return word == "true"
-    if not word:
-        return None
-    raise ValueError("ignore_case must be true or false, or left out for smart case")
+    said = yes_or_no(raw)
+    if said is None:
+        raise ValueError("ignore_case must be true or false, or left out for smart case")
+    return said
 
 
 def ignores_case(pattern: str, *, regex: bool = False, override: Any = None) -> bool:
@@ -74,14 +74,16 @@ def glob_case_sensitive(pattern: str, override: Any = None) -> bool | None:
 
 
 class LineQuery:
-    """A grep query as it matches a line, read as text or as a regular expression, its case
-    decided by :func:`ignores_case`. Raises :class:`re.error` for an expression that does not
-    compile, and ``ValueError`` for an ``ignore_case`` that is not true or false."""
+    """A grep query as it matches a line, read as text or, when the call's ``regex`` says yes
+    (:func:`~personalclaw.safety_flags.yes_or_no`; ``"false"`` is a no), as a regular expression,
+    its case decided by :func:`ignores_case`. Raises :class:`re.error` for an expression that does
+    not compile, and ``ValueError`` for an ``ignore_case`` that is not true or false."""
 
-    def __init__(self, query: str, *, regex: bool, ignore_case: Any = None) -> None:
-        self._fold = ignores_case(query, regex=regex, override=ignore_case)
+    def __init__(self, query: str, *, regex: Any = None, ignore_case: Any = None) -> None:
+        as_regex = yes_or_no(regex) is True
+        self._fold = ignores_case(query, regex=as_regex, override=ignore_case)
         flags = re.IGNORECASE if self._fold else 0
-        self._regex = re.compile(query, flags) if regex else None
+        self._regex = re.compile(query, flags) if as_regex else None
         self._text = query.casefold() if self._fold else query
 
     def _folded(self, text: str) -> str:

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import store
 from personalclaw.workflows.models import valid_name
 
@@ -288,7 +289,8 @@ def _static_signals(spec: dict[str, Any]) -> dict[str, bool]:
         return value if isinstance(value, dict) else {}
 
     has_gate = any(
-        node["kind"] in ("gate", "judge") or bool((node["config"] or {}).get("judge_contract"))
+        node["kind"] in ("gate", "judge")
+        or yes_or_no((node["config"] or {}).get("judge_contract")) is True
         for node in by_id.values()
     )
     hints = _sub(spec, "runtime_hints")

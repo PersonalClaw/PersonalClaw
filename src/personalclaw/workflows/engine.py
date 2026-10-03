@@ -38,7 +38,7 @@ from enum import Enum
 from typing import Any
 
 from personalclaw.guardrails.wire import capture_wire_prompt
-from personalclaw.safety_flags import strict_bool
+from personalclaw.safety_flags import strict_bool, yes_or_no
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 from personalclaw.workflows import (
     engine_support,
@@ -2135,7 +2135,7 @@ def apply_judge_contract(
     judging a run that keeps its document passes it: `stage_settlement._settled_stage_output`); a
     PASS it contradicts is escalated, the contract's standing cross-check.
     """
-    if not bool((node.config or {}).get("judge_contract", False)):
+    if yes_or_no((node.config or {}).get("judge_contract")) is not True:
         return result
     if result.state not in (InstanceState.DONE, InstanceState.DEGRADED):
         return result  # already failing; a verdict on top of it adds nothing

@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows.bindings import node_deps
 from personalclaw.workflows.models import (
     FROZEN_STATES,
@@ -176,8 +177,10 @@ class Op:
             fields=normalize_fields(raw.get("fields") or {}),
             node=raw.get("node") if isinstance(raw.get("node"), dict) else None,
             overrides=dict(raw.get("overrides") or raw.get("inputs") or {}),
-            redo_effects=bool(raw.get("redo_effects", False)),
-            force=bool(raw.get("force", False)),
+            # Only a yes asks for either: an op an agent writes carries `"false"` as often as
+            # `false`, and `bool("false")` is True.
+            redo_effects=yes_or_no(raw.get("redo_effects")) is True,
+            force=yes_or_no(raw.get("force")) is True,
             note=str(raw.get("note", "") or ""),
             checkpoint_id=str(raw.get("checkpoint_id", "") or ""),
             raw=raw,

@@ -186,12 +186,21 @@ store's list fields behind every task write (`tasks.models.TASK_FIELD_COERCERS`)
 planner's lists (`loop.code_classify`). Text that is not a JSON list stays the one item it is,
 and each element of the list is checked as an element of a real list is.
 
-A model sends a declared boolean as text just as often. The task and loop tools read one as the
-word it spells (`safety_flags.yes_or_no`: `true`, `yes`, `on`, `1` and `false`, `no`, `off`, `0`,
-in any case), never by `bool()`, which takes `"false"` for yes: an exit criterion's `met`, a
-step's `completed`, `task_list_create.repeatable` and `project_run_create.attended`. A blank,
-any other word and a number spell neither, and each field reads that as its safe value: unmet,
-unfinished, not repeatable, attended.
+A model sends a declared boolean as text just as often, and `bool()` takes `"false"` for yes.
+Every boolean a core tool declares is read as the word it spells (`safety_flags.yes_or_no`:
+`true`, `yes`, `on`, `1` and `false`, `no`, `off`, `0`, in any case), and
+`tests/test_tool_boolean_census.py` pins each one with the module that reads it, so a tool that
+starts declaring another fails until it is read the same way. A native tool reads it where it
+reads the call: `edit_file.replace_all`, `grep.regex`, `glob` and `grep`'s `ignore_case`,
+`knowledge_update.is_pinned` and `is_archived`, `code_map.refresh`, `reset_tools`' groups, an exit
+criterion's `met`, a step's `completed`, `task_list_create.repeatable` and
+`project_run_create.attended`. A blank, any other word and a number spell neither, and each field
+reads that as its safe value (one match replaced, a literal search, no re-index, a group left off,
+unmet, unfinished, not repeatable, attended) or, where it has none, refuses the call naming the
+field (`ignore_case`, `knowledge_update`'s two switches). An in-process tool's `bool` field spec
+refuses anything but a real boolean before the call runs, saying which field, and its handler
+reads what passes through `yes_or_no` all the same. Consent (`confirm`, `confirm_cascade`) is the
+JSON literal `true` and nothing else.
 
 ## For an app author
 

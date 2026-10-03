@@ -34,6 +34,7 @@ import logging
 import re
 
 from personalclaw.loop.files import file_inside
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.usage_ledger import Attribution, recorder
 from personalclaw.workflows.judge_contract import (
     JudgeVerdict,
@@ -467,8 +468,11 @@ def _parse_verdict(
     if data is None:
         logger.warning("judge returned unparseable verdict: %s", (raw or "")[:200])
         return None
-    done = bool(data.get("done") is True)
-    regressed = bool(data.get("regressed") is True)
+    # Each is a yes only when the judge said yes, as the word it spells or the literal: a
+    # model writes `"done": "true"` as often as `true`, and an identity check read that as
+    # not done, so a finished loop kept running cycles. The skeptic still has to agree.
+    done = yes_or_no(data.get("done")) is True
+    regressed = yes_or_no(data.get("regressed")) is True
     return JudgeVerdict(
         verdict=verdict_for_cycle(done, regressed),
         done_reason=str(data.get("done_reason", "")).strip()[:500],

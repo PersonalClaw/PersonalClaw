@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.safety_flags import strict_bool
+
 # ── the closed vocabularies ──
 
 #: Trigger kinds. `pulse`/`observe` are the plan's Phase 2 and are NOT accepted yet: a kind the
@@ -1345,6 +1347,10 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         delivery = "inbox"
 
     fatal = any(i.severity == "error" for i in issues)
+    # A stored switch is read as the word it spells (`strict_bool`): an agent's patch once stored
+    # one as sent, and `bool("false")` is True, so a row it switched off kept firing. One nothing
+    # can read is off.
+    switched_on = strict_bool(data.get("enabled", True), field="enabled", default=False)
     trigger = Trigger(
         id=str(data.get("id", "") or ""),
         name=str(data.get("name", "") or ""),
@@ -1353,7 +1359,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         # editable — which is what
         # makes the warning chip actionable — but the service will not try to dispatch something it
         # cannot interpret.
-        enabled=bool(data.get("enabled", True)) and not fatal,
+        enabled=switched_on and not fatal,
         created_by=str(data.get("created_by", "user") or "user"),
         # 🔴 THE ONE PLACE an old-shape row acquires an author. Absent in every row written
         # before the field existed AND in every row a `trigger` provider chooses not to attribute,
@@ -1396,7 +1402,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         failure_policy=(
             dict(data["failure_policy"]) if isinstance(data.get("failure_policy"), dict) else {}
         ),
-        yield_to_user=data.get("yield_to_user") is True,
+        yield_to_user=strict_bool(data.get("yield_to_user"), field="yield_to_user"),
         resource_slots=[str(s) for s in (data.get("resource_slots") or [])],
         skip_if_active=(
             dict(data["skip_if_active"]) if isinstance(data.get("skip_if_active"), dict) else {}
@@ -1416,7 +1422,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         health_status=str(data.get("health_status", TriggerHealth.OK.value) or "ok"),
         last_error_summary=str(data.get("last_error_summary", "") or ""),
         state=state,
-        restore_hold="" if data.get("enabled", True) else _restore_hold(data.get("restore_hold")),
+        restore_hold="" if switched_on else _restore_hold(data.get("restore_hold")),
     )
     return trigger, issues
 

@@ -40,6 +40,7 @@ from typing import Any
 from personalclaw import gateway_base
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import HOOK_SESSION_PREFIX
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import (
     BUILDS_META_KEY,
     PROPOSES_META_KEY,
@@ -1177,7 +1178,7 @@ def _message_payload(args: dict[str, Any]) -> dict[str, Any] | ToolFailure:
         payload["unfurl_media"] = args["unfurl_media"]
     if args.get("thread_ts"):
         payload["thread_ts"] = args["thread_ts"]
-    if args.get("reply_broadcast"):
+    if yes_or_no(args.get("reply_broadcast")) is True:
         payload["reply_broadcast"] = args["reply_broadcast"]
     # ───────────────────────────────────────────────────────────────
     # Cron delivery contract (see messaging.py:api_send_message for the

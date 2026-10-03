@@ -7,7 +7,8 @@ the shape :mod:`personalclaw.agents.native.decision_tool_defs` already establish
 lines held the controlling position with only 33 usable lines left — so an unrelated +34
 reddened the rail. The band is NOT the thing to move; the file is.
 
-Nothing about the tools changed. This module owns their SCHEMAS only: the category mapping
+Nothing about the tools changed. This module owns their SCHEMAS, and the reading of the two
+switches ``knowledge_update`` declares (:func:`knowledge_flags`): the category mapping
 (``_CATEGORY_OF``), the ``_t_*`` dispatch methods and the call-site rails all stay in
 ``builtin_tools``, and ``_all_tool_defs`` splices these definitions back in at the same
 position, so the advertised order is unchanged.
@@ -17,7 +18,29 @@ from __future__ import annotations
 
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import RiskLevel, ToolDefinition
+
+#: The switches ``knowledge_update`` declares boolean, by the store's column names.
+_FLAGS = ("is_pinned", "is_archived")
+
+
+def knowledge_flags(a: dict[str, Any]) -> dict[str, int]:
+    """The pin and archive switches a ``knowledge_update`` call sets, as the store's 0 or 1.
+
+    Each is read as the word it spells (:func:`~personalclaw.safety_flags.yes_or_no`): ``1 if
+    a[key] else 0`` took the text ``"false"`` for a yes, so an agent unarchiving an item archived
+    it. One that spells neither is refused, naming it: the call said nothing either way, and a
+    guess would change an item the agent may have meant to leave as it was.
+    """
+    flags: dict[str, int] = {}
+    for key in _FLAGS:
+        if key in a:
+            said = yes_or_no(a[key])
+            if said is None:
+                raise ValueError(f"knowledge_update: {key} is true or false")
+            flags[key] = int(said)
+    return flags
 
 
 def _structural_verbs() -> list[str]:
@@ -101,8 +124,7 @@ def knowledge_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDef
                     "url": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "gist_language": {"type": "string"},
-                    "is_pinned": {"type": "boolean"},
-                    "is_archived": {"type": "boolean"},
+                    **{flag: {"type": "boolean"} for flag in _FLAGS},
                 },
                 "required": ["id"],
             },

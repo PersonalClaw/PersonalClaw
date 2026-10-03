@@ -42,6 +42,7 @@ from enum import Enum
 from typing import Any
 
 from personalclaw.tool_providers.base import RiskLevel
+from personalclaw.workflows.confirmation import requires_hitl
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +328,7 @@ def type_attention(spec: dict[str, Any], hits: list[RiskHit] | None = None) -> d
             continue
         node_id = node.id or path
         cfg = node.config or {}
-        if cfg.get("require_hitl") is True:
+        if requires_hitl(cfg):
             out[node_id] = Attention.HITL
             continue
         if node_id in destructive_nodes:

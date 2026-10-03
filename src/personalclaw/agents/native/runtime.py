@@ -97,6 +97,7 @@ from personalclaw.llm.prompt_cache import (
     turn_note_message,
 )
 from personalclaw.routing.rates import CallPrice, summed
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.arguments import missing_arguments, missing_arguments_note
 from personalclaw.tool_providers.base import RiskLevel, ToolResult, only_tells_the_owner
 from personalclaw.tool_providers.portable_schema import (
@@ -695,7 +696,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         """Apply ``reset_tools`` — FINAL-STATE group activation (§5.2).
 
         One boolean per group; every non-``always_on`` group the caller omits (or
-        sets false) deactivates. Final-state rather than delta semantics because
+        sets to anything but a yes) deactivates. Final-state rather than delta semantics because
         deltas accumulate drift over a long session. Returns the new active set
         plus the instructions of each NEWLY activated group, so usage guidance
         arrives exactly when the tools do. A call it cannot apply marks *meta_sink*
@@ -710,7 +711,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 'e.g. {"groups": {"schedule": true, "memory": true}}.'
             )
         known = {g.name: g for g in self._groups}
-        wanted = {str(k) for k, v in raw.items() if bool(v)}
+        wanted = {str(k) for k, v in raw.items() if yes_or_no(v) is True}
         unknown = sorted(n for n in wanted if n not in known)
         wanted &= set(known)
         # A group whose capability doesn't resolve can't be activated — its tools

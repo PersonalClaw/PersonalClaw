@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.errors import AgentError
+from personalclaw.safety_flags import yes_or_no
 
 # ── Constants ──
 
@@ -1563,7 +1564,7 @@ def validate_ask_user_question(tool_input: Any) -> list[dict[str, Any]]:
         if not q_text:
             continue
         header = str(rq.get("header", "")).strip()[:_AUQ_LABEL_CAP]
-        multi = bool(rq.get("multiSelect", False))
+        multi = yes_or_no(rq.get("multiSelect")) is True
         raw_options = rq.get("options")
         options: list[dict[str, str]] = []
         if isinstance(raw_options, list):

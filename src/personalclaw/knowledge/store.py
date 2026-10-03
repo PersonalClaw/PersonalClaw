@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from personalclaw import memory_writes
 from personalclaw.instants import backfill_zone_less, utc_now_iso
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.sqlite_compat import FTS5_REMEDY, connect_shared, probe, sqlite3
 
 from .embedding_fingerprint import (
@@ -5662,7 +5663,12 @@ class KnowledgeStore:
             raise ValueError(
                 f"read_state requires state in {list(self.VALID_READ_STATES)}; got {state!r}"
             )
-        value = bool(args.get("value", True))
+        # `favorite`/`pin` set what `value` spells (on when it is left out): `bool("false")` is
+        # True, so a body unpinning items sent as text pinned them.
+        said = yes_or_no(args.get("value", True))
+        if said is None and op in ("favorite", "pin"):
+            raise ValueError(f"{op} requires value true or false; got {args.get('value')!r}")
+        value = said is True
 
         changed: list[str] = []
         unchanged: list[str] = []

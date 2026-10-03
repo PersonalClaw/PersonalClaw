@@ -874,7 +874,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                     path,
                     old=str(a.get(old_arg) or ""),
                     new=str(a.get(new_arg) or ""),
-                    replace_all=bool(a.get("replace_all")),
+                    replace_all=yes_or_no(a.get("replace_all")) is True,
                 )
         except Exception:  # noqa: BLE001
             logger.debug("read gate: post-write observation skipped", exc_info=True)
@@ -1228,7 +1228,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         if (refused := self._p_edit_file(a)) is not None:
             return refused
         old, new = str(a["old_str"]), str(a["new_str"])
-        replace_all = bool(a.get("replace_all"))
+        replace_all = yes_or_no(a.get("replace_all")) is True
         self._checkpoint_pre_edit(path, scope)
 
         def _edit() -> tuple[bool, str]:
@@ -1341,7 +1341,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         names = glob_case_sensitive(glob_pat, a.get("ignore_case"))
         # Compiled once; a bad pattern is a usable error, not a crash.
         try:
-            match = LineQuery(query, regex=bool(a.get("regex")), ignore_case=a.get("ignore_case"))
+            match = LineQuery(query, regex=a.get("regex"), ignore_case=a.get("ignore_case"))
         except _re.error as e:
             return ToolResult(
                 success=False,
@@ -2035,6 +2035,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         return _ok_capped(out, session_key=self._session_key)
 
     async def _t_knowledge_update(self, a: dict) -> ToolResult:
+        from personalclaw.agents.native.knowledge_tool_defs import knowledge_flags
+
         item_id = str(a.get("id", "")).strip()
         if not item_id:
             return ToolResult(success=False, error="knowledge_update requires 'id'")
@@ -2055,9 +2057,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 return ToolResult(success=False, error="knowledge_update: url must be http(s)")
         if "tags" in a and isinstance(a["tags"], list):
             fields["tags"] = [str(t) for t in a["tags"]]
-        for key in ("is_pinned", "is_archived"):
-            if key in a:
-                fields[key] = 1 if a[key] else 0
+        fields.update(knowledge_flags(a))
         # gist_language only applies to gist items — applied conditionally in _update
         # once the item type is known (mirrors the create-tool guard).
         want_lang = str(a["gist_language"]).strip() if "gist_language" in a else None

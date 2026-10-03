@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
+
 #: The key prefix for a run-owned session. A COLON separator, matching `cron:`/`subagent:` — the
 #: loop convention (`loop-<id>`, a hyphen) is the odd one out, and copying it would make a fourth
 #: parser needed for a fourth shape.
@@ -314,7 +316,10 @@ def skips_node(node_config: dict[str, Any], mode: MemoryMode) -> tuple[bool, str
     provider = str(cfg.get("provider", "") or "").strip().lower()
     if provider in LEARNING_PROVIDERS:
         return True, f"{mode.value} run: skipping `{provider}` (memory writes are suppressed)"
-    if cfg.get("persists_memory") is True:
+    # A declaration that is not a no skips the node: `"persists_memory": "true"` read as
+    # undeclared, and the run wrote memory it was told it must not.
+    declared = cfg.get("persists_memory")
+    if declared is not None and yes_or_no(declared) is not False:
         return True, f"{mode.value} run: node declares persists_memory"
     return False, ""
 

@@ -79,6 +79,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
+
 # `Limits` is named in `frontier()`'s signature but LIVES with the policy that enforces it
 # (`admission.Lane`), not with the projection that consults it — the lane caps ARE an admission
 # rule, which is the fact this seam makes structural.
@@ -217,7 +219,7 @@ def tolerate_failures(
         return child_states
     masked: list[InstanceState] = []
     for child, state in zip(children, child_states):
-        tolerated = bool((getattr(child, "config", None) or {}).get("allow_failure"))
+        tolerated = yes_or_no((getattr(child, "config", None) or {}).get("allow_failure")) is True
         if tolerated and state == InstanceState.FAILED:
             masked.append(InstanceState.DEGRADED)
         else:

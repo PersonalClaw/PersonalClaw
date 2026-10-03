@@ -37,6 +37,7 @@ from enum import Enum
 from typing import Any
 
 from personalclaw.cancellation import kill_timed_out
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import store
 from personalclaw.workflows.models import Failure, FailureClass
 
@@ -193,10 +194,14 @@ def redo_blocked(node_config: dict[str, Any], committed: EffectRecord | None, ep
     Only a DIFFERENT epoch triggers the gate: a same-epoch retry reuses the same
     idempotency key, which an idempotent receiver dedupes — that is the retry working as
     designed, not a double-fire.
+
+    The node re-fires only when its config says yes (`safety_flags.yes_or_no`). A definition an
+    agent writes carries `"redo_effects": "false"` as often as `false`, and `bool("false")` is
+    True, so that node fired its effect again; anything that spells neither keeps the boundary.
     """
     if committed is None or committed.epoch == epoch:
         return False
-    return not bool((node_config or {}).get("redo_effects", False))
+    return yes_or_no((node_config or {}).get("redo_effects")) is not True
 
 
 # ── BYOI output + teardown ───────────────────────────────────────────────────

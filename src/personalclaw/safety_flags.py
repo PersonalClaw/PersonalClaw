@@ -26,9 +26,13 @@ applying and not applying. So this refuses to guess:
   control, and it must not do so quietly either.
 
 A model's tool argument is the same defect from another source: an exit criterion sent as
-``"met": "false"`` let its task close. :func:`yes_or_no` reads a declared boolean with the same
-words, but a blank and a number spell neither yes nor no there, and its caller resolves that to
-the field's own safe value (a criterion unmet, a run attended).
+``"met": "false"`` let its task close, ``"replace_all": "false"`` replaced every match, and a
+workflow node configured ``"redo_effects": "false"`` fired its external effect again.
+:func:`yes_or_no` reads a declared boolean with the same words, but a blank and a number spell
+neither yes nor no there, and its caller resolves that to the field's own safe value (a criterion
+unmet, a run attended, an effect not fired twice). It reads every boolean a tool's schema declares
+(``tests/test_tool_boolean_census.py`` holds each one to it) and each one a model writes into what
+a tool saves: a workflow node's config, an edit op, an automation patch, a judge's verdict.
 
 Destructive consent — the ``confirm`` family — is the same defect on a sharper edge, and it
 lives here too

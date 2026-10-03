@@ -20,6 +20,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.ledger import outcomes
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import attention, ending_sentence
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import judge_calibration, mid_flight, mutations, revision, store
@@ -274,7 +275,7 @@ def tolerates_failure(node: Any) -> bool:
     gate's word about its check.
     """
     cfg = (getattr(node, "config", None) or {}) if node is not None else {}
-    return cfg.get("on_error") == "null_continue" or bool(cfg.get("allow_failure"))
+    return cfg.get("on_error") == "null_continue" or yes_or_no(cfg.get("allow_failure")) is True
 
 
 def _gate_kind(node: Any) -> str:

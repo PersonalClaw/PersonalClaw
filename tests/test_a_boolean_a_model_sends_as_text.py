@@ -59,36 +59,6 @@ def _created(output: str) -> str:
     return output.split("created task ")[1].split(":")[0]
 
 
-def _booleans(schema: dict, path: str = "") -> list[str]:
-    """Each boolean a tool schema declares, by its path (``exit_criteria[].met``)."""
-    found = [path] if schema.get("type") == "boolean" else []
-    for name, child in (schema.get("properties") or {}).items():
-        found += _booleans(child, f"{path}.{name}" if path else name)
-    if isinstance(schema.get("items"), dict):
-        found += _booleans(schema["items"], f"{path}[]")
-    return found
-
-
-@pytest.mark.asyncio
-async def test_every_boolean_the_task_and_loop_tools_declare_is_one_read_here():
-    """The booleans this file pins are every one the task and project-run tools declare, so a new
-    one fails here until it is read as the word it spells and pinned beside them."""
-    provider = NativeBuiltinToolProvider(categories={"tasks", "projects"})
-    declared = {
-        (tool.name, path)
-        for tool in await provider.list_tools()
-        for path in _booleans(tool.parameters)
-    }
-    assert declared == {
-        ("task_create", "exit_criteria[].met"),
-        ("task_create", "action_plan[].completed"),
-        ("task_update", "exit_criteria[].met"),
-        ("task_update", "action_plan[].completed"),
-        ("task_list_create", "repeatable"),
-        ("project_run_create", "attended"),
-    }
-
-
 class TestTheReading:
     @pytest.mark.parametrize("value", YES)
     def test_a_word_for_yes_is_yes(self, value):

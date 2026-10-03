@@ -83,6 +83,7 @@ from personalclaw.inbound.auth import BRIDGE_SURFACE, peer_allowed, token_env_ke
 from personalclaw.inbound.clients import InboundClient, log_binding_violation, lookup_by_token
 from personalclaw.inbound.framing import fence_payload
 from personalclaw.inbound.gate import admission_problem
+from personalclaw.safety_flags import yes_or_no
 
 logger = logging.getLogger(__name__)
 
@@ -266,8 +267,13 @@ async def _toggle_automation(state: Any, params: dict) -> dict:
         raise ValueError(f"unknown automation: {trigger_id}")
     target = params.get("enabled")
     # Absent `enabled` means TOGGLE, so the current value has to be read first — an
-    # unconditional `True` would make a second identical call a no-op instead of a flip.
-    enabled = (not loaded.trigger.enabled) if target is None else bool(target)
+    # unconditional `True` would make a second identical call a no-op instead of a flip. Sent, it
+    # is what it spells (`yes_or_no`): `bool("false")` is True, so the owner confirmed switching an
+    # automation off and it was switched on. One that spells neither is refused, not guessed.
+    said = None if target is None else yes_or_no(target)
+    if target is not None and said is None:
+        raise ValueError("enabled is true or false, or left out to switch the automation over")
+    enabled = (not loaded.trigger.enabled) if said is None else said
     # Through the one switch the Triggers page, the chat and the CLI use (`tools.set_paused`):
     # it refuses a row that cannot run or holds no grant for what it runs, arms one switched on,
     # and moves what the row mirrors — a report's own switch — with it.

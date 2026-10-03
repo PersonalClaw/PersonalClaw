@@ -63,15 +63,18 @@ def test_an_explicit_answer_wins_either_way():
 
 @pytest.mark.parametrize(
     "raw, read",
-    [(None, None), ("", None), ("  ", None), (True, True), (False, False), (1, True), (0, False)]
-    + [("true", True), (" TRUE ", True), ("false", False), ("False", False)],
+    [(None, None), ("", None), ("  ", None), (True, True), (False, False)]
+    + [("true", True), (" TRUE ", True), ("false", False), ("False", False)]
+    + [("yes", True), ("on", True), ("1", True), ("no", False), ("off", False), ("0", False)],
 )
 def test_ignore_case_reads_as_written(raw, read):
+    """Read through the one vocabulary every tool's booleans are (``safety_flags.yes_or_no``)."""
     assert case_override(raw) is read
 
 
-@pytest.mark.parametrize("raw", ["sometimes", "yes please", [True], {"x": 1}])
+@pytest.mark.parametrize("raw", ["sometimes", "yes please", [True], {"x": 1}, 1, 0])
 def test_any_other_ignore_case_is_refused_in_words(raw):
+    """A number included: where a boolean is declared it is a type confused with one."""
     with pytest.raises(ValueError, match="ignore_case must be true or false"):
         case_override(raw)
     # Even where case cannot matter, so a glob answers a bad argument as grep does.

@@ -38,7 +38,12 @@ from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import consent_required
 from personalclaw.request_validation import json_object_body, require_string
-from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
+from personalclaw.safety_flags import (
+    confirm_granted,
+    confirm_granted_query,
+    strict_bool,
+    yes_or_no,
+)
 from personalclaw.sel import sel
 from personalclaw.stale_write import (
     claimed_revision,
@@ -1601,8 +1606,8 @@ async def _reentry(request: web.Request, operation: str, fn: Any) -> web.Respons
         "confirm_cascade": confirm_granted(body, "confirm_cascade"),
     }
     if fn is service.rewind_run:
-        kwargs["redo_effects"] = bool(body.get("redo_effects"))
-        kwargs["force"] = bool(body.get("force"))
+        kwargs["redo_effects"] = yes_or_no(body.get("redo_effects")) is True
+        kwargs["force"] = yes_or_no(body.get("force")) is True
     result = fn(run_id, node_id, **kwargs)
     _audit(request, operation, "success" if result.get("ok") else "failure", run_id)
     return _reply(result)

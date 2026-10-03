@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows.judge_contract import Verdict
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,8 @@ def run_ladder(criteria: list[dict[str, Any]], evaluated: dict[str, Any]) -> Lad
             name = str(c.get("name", "") or "criterion")
             raw = evaluated.get(name)
             threshold = c.get("threshold")
-            hard = bool(c.get("hard", True))
+            # Hard unless it says no: a soft criterion lets a failed check pass the run.
+            hard = yes_or_no(c.get("hard", True)) is not False
             passed, score = _score(raw, threshold)
             result = CriterionResult(
                 criterion=name,
@@ -282,7 +284,7 @@ def requires_fresh_judge(node_config: dict[str, Any]) -> bool:
     Defaults to the safe reading: a gate is independent unless someone deliberately said
     otherwise.
     """
-    return not bool((node_config or {}).get("self_judge", False))
+    return yes_or_no((node_config or {}).get("self_judge")) is not True
 
 
 # ── the injected verifier ────────────────────────────────────────────────────

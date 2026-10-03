@@ -32,7 +32,7 @@ import logging
 from typing import Any
 
 from personalclaw import approval_answer
-from personalclaw.safety_flags import confirm_granted
+from personalclaw.safety_flags import confirm_granted, yes_or_no
 from personalclaw.tool_providers.base import ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
 from personalclaw.workflows import grill_protocol as grill_mod
@@ -790,8 +790,8 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
                 run_id,
                 str(args.get("node_id", "") or ""),
                 supervisor=_supervisor(),
-                redo_effects=bool(args.get("redo_effects")),
-                force=bool(args.get("force")),
+                redo_effects=yes_or_no(args.get("redo_effects")) is True,
+                force=yes_or_no(args.get("force")) is True,
                 confirm_cascade=confirm_granted(args, "confirm_cascade"),
             )
         )
@@ -831,7 +831,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
                 supervisor=_supervisor(),
                 token=str(args.get("resume_token", "") or ""),
                 answer=decode_json_text(args.get("answer")),
-                always_allow=bool(args.get("always_allow")),
+                always_allow=yes_or_no(args.get("always_allow")) is True,
             )
         )
 

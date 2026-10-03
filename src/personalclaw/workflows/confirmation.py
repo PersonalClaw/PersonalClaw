@@ -39,6 +39,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from personalclaw.safety_flags import yes_or_no
+
 #: Default lifetime of a pending confirmation. A week, because the realistic case is a user who is
 #: away — and a gate that expired overnight would turn "I was travelling" into lost work.
 DEFAULT_TTL_SECS = 7 * 24 * 3600
@@ -355,13 +357,19 @@ def on_expiry(request: ConfirmationRequest, now: float) -> tuple[Status, Resolut
 
 
 def requires_hitl(node_config: dict[str, Any]) -> bool:
-    """Whether a stage declares `require_hitl: true`.
+    """Whether a stage declares `require_hitl`.
 
     Approval as a PROPERTY of the step, so an author gates a stage without structurally inserting a
     gate node — which would change the graph shape, the progress widget, and every path-addressed
     binding downstream.
+
+    Left out, or a no, and the stage asks nobody. Any other value asks (`safety_flags.yes_or_no`):
+    a definition an agent writes carries `"require_hitl": "true"` as often as `true`, which an
+    identity check read as no gate at all, and a gate its author wrote is a gate even when the word
+    for it is not one that can be read.
     """
-    return bool((node_config or {}).get("require_hitl") is True)
+    declared = (node_config or {}).get("require_hitl")
+    return declared is not None and yes_or_no(declared) is not False
 
 
 #: Per-stage mute: gate kinds a run may suppress for a stage the user has decided not to be asked
