@@ -15,7 +15,10 @@ The row now names the agent (`ActionResult.work_id`), and when the agent ends
   asked, so it is not a success, and its limits held, so it is not a failure: the row names the
   calls, then what the agent said;
 * `declined`, when the owner answered its start with Deny. Their own decision is not a failure: the
-  row says they declined it, and no note calls it one (`SubagentInfo.declined`).
+  row says they declined it, and no note calls it one (`SubagentInfo.declined`);
+* `interrupted`, when the gateway's stop or restart cut the agent off (`settle_interrupted`). The
+  agent's own ending for that is "cancelled", which read as the run failing; the stop closes the
+  row first, with what stopped it, and the agent's ending then finds nothing to settle.
 
 A failure or a refusal is also stamped on the trigger (`last_failure_at`, `last_error_summary`),
 and a success moves `last_success_at`, through the stamps a run that ended with its action takes
@@ -123,6 +126,21 @@ def settle_agent_run(info: Any, *, base_dir: Path | None = None) -> bool:
     except Exception:  # noqa: BLE001 - see the docstring: the row is bookkeeping about the run
         logger.warning("could not settle the run of trigger %s", trigger_id, exc_info=True)
         return False
+
+
+def settle_interrupted(trigger_id: str, work_id: str, *, why: str, at: float, home: Path) -> bool:
+    """Write onto the `launched` run of *trigger_id* that a stop cut its work off, and *why*.
+
+    The row's status is `reaper.RESTART_INTERRUPTED_STATUS`, written as its word here so the status
+    rail reads what this module can write. Returns whether the row took it
+    (`ScheduleRunStore.settle_sync`). The caller (`reaper.record_stopped_work`) moves the trigger's
+    stamps and keeps the card.
+    """
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    return ScheduleRunStore(home).settle_sync(
+        trigger_id, work_id, status="interrupted", error=why, finished_at=at
+    )
 
 
 def _stamp(trigger_id: str, *, status: str, why: str, home: Path) -> None:

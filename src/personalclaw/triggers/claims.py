@@ -131,6 +131,28 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
     atomic_json_write(path, payload)
 
 
+#: What the claim of a run by hand is held as (:func:`hand_run_holder`): Run now, the review's Run
+#: now, an answer, a view's refresh or a webhook's fire, all through the attended dispatch
+#: (`trigger_runs._dispatch_store_action`). A fire's claim is held by the tick or the event that
+#: admitted it.
+_BY_HAND = "hand:"
+
+
+def hand_run_holder(event: str, *, at: float) -> str:
+    """The holder of the claim a run by hand takes: what started it, and when."""
+    return f"{_BY_HAND}{event}:{int(at)}"
+
+
+def held_by_hand(holder: str) -> bool:
+    """Whether a claim is a run by hand's (:func:`hand_run_holder`).
+
+    The passes that close a claim its run never gave back, the boot's and the deadline's
+    (`triggers.reaper`), record such a run as the hand run it was: tagged ``manual``, and leaving
+    its trigger's health alone, as a hand run's own record does (`run_record.record_run`).
+    """
+    return holder.startswith(_BY_HAND)
+
+
 def release_claim(trigger_id: str, *, base_dir: Path | str | None = None) -> bool:
     """Drop a trigger's claim. Idempotent — releasing an absent claim is success, not an error.
 

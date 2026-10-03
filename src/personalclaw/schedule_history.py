@@ -89,10 +89,11 @@ class ScheduleRun:
     started_at: float = 0.0
     finished_at: float = 0.0
     duration_ms: int = 0
-    # "success" | "failure" | "timeout": a verified synchronous outcome.
-    # "interrupted": a gateway restart cut the run off before it finished
-    #   (`triggers/reaper.RESTART_INTERRUPTED_STATUS`). Not retried on its own: it waits on
-    #   the Triggers page's review for the user to run it again or dismiss it.
+    # "success" | "failure" | "timeout": a verified synchronous outcome. "timeout" is also a run
+    #   the reaper closed past its deadline (`triggers/reaper.reap_one`).
+    # "interrupted": a stop or a restart cut the run off before it finished, or cut off the work a
+    #   `launched` run started (`triggers/reaper.RESTART_INTERRUPTED_STATUS`). Not retried on its
+    #   own: it waits on the Triggers page's review for the user to run it again or dismiss it.
     # "ran_late": the review's Run now — a run standing in for a slot that did not run.
     # "launched": the run only STARTED background work (a fire-and-forget spawn —
     #   run-prompt / run-workflow / invoke-agent); the spawned turn's real outcome
@@ -457,6 +458,20 @@ class ScheduleRunStore:
                     _settle_row(entry, ending, with_trace=False)
             self._write_jsonl(self._index, index)
         return True
+
+    def unsettled_row(self, job_id: str, work_id: str) -> dict[str, Any] | None:
+        """The row of *job_id* that still says `launched` about *work_id*, or None.
+
+        What a run cut off before its work ended needs to know of that run: whose it was (its
+        ``trigger`` tag says whether it was a run by hand), when it started, and its id.
+        """
+        if not job_id or not work_id:
+            return None
+        rows = self._read_jsonl(self._job_path(job_id))
+        named = [row for row in rows if row.get("work_id") == work_id]
+        if not named or named[-1].get("status") != _UNSETTLED_STATUS:
+            return None
+        return named[-1]
 
     # ── Read (TaskProvider-shaped: returns (rows, total)) ─────────────
 

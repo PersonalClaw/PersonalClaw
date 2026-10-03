@@ -3,11 +3,13 @@
 Three passes find work that did not happen. `service.boot` enumerates the slots a stopped gateway
 missed (`missed.review_at_boot`), `service.tick` the slots a gateway that was alive and asleep
 missed (the same `service.recover`, on a wake), and `reaper.terminalize_orphans` closes the runs a
-restart cut off. None is re-run on its own, deliberately: running the 3am backup at 9am is
-sometimes right and sometimes exactly wrong, and a run a restart interrupted may already have
-done part of its work, so running it again is the user's decision (§3.4 "review, don't
-auto-run"). A card says which it was (`ReviewCard.cause`), because "while PersonalClaw was not
-running" is false about a laptop whose lid was shut.
+crash or a restart left with no ending. A stop closes the runs it cuts off itself, as it cuts them
+(`reaper.record_stopped_run`, and `reaper.record_stopped_work` for the agent a run started), and
+the next start announces them in its one notice. None is re-run on its own, deliberately: running
+the 3am backup at 9am is sometimes right and sometimes exactly wrong, and a run a restart
+interrupted may already have done part of its work, so running it again is the user's decision
+(§3.4 "review, don't auto-run"). A card says which it was (`ReviewCard.cause`), because "while
+PersonalClaw was not running" is false about a laptop whose lid was shut.
 
 They used to end at a notification that said "Review them and choose what to run now" with
 nothing to review. The boot re-arms every schedule, which destroys the evidence of what was
@@ -17,8 +19,8 @@ or dismisses it. A card, not a row per slot: a laptop opened after a weekend mis
 one automation, and the decision is still one decision.
 
 Stored beside `triggers.json` (the store's own root), never at the ambient home, for the reason
-`reaper._write_interrupted_row` gives: a card describing a fire from `<base_dir>/triggers.json`
-belongs beside it.
+`reaper._write_row` gives: a card describing a fire from `<base_dir>/triggers.json` belongs beside
+it.
 """
 
 from __future__ import annotations
@@ -59,6 +61,10 @@ class ReviewCard:
     run started) and `oldest` the first; `count` is how many slots the card covers, and
     `count_is_floor` says the enumeration stopped early so the number is "at least". `cause` is why
     the slots did not run (`CAUSES`); an interrupted run's is always a stop.
+
+    `unannounced` marks a card kept by a stop for a run it cut off (`reaper.record_stopped_run`):
+    the stop sends no notice, and the next start counts the card in its one notice
+    (`take_unannounced`, `boot_notice`), once the gateway is back to deliver it.
     """
 
     trigger_id: str
@@ -69,6 +75,7 @@ class ReviewCard:
     reason: str = ""
     count_is_floor: bool = False
     cause: str = STOPPED
+    unannounced: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -86,6 +93,7 @@ class ReviewCard:
             count_is_floor=bool(raw.get("count_is_floor")),
             # A card kept before cards named their cause was a boot's: only a restart made cards.
             cause=cause if cause in CAUSES else STOPPED,
+            unannounced=bool(raw.get("unannounced")),
         )
 
 
@@ -137,7 +145,9 @@ def _merge(cards: list[ReviewCard], new: ReviewCard) -> None:
     """Fold `new` into the card already held for its trigger and kind, or add it.
 
     A second restart before the user decided adds its slots to the same card rather than stacking
-    a second one: the decision is still one decision.
+    a second one: the decision is still one decision. Whether a notice is still owed for it is the
+    newer card's to say: a stop's card waits for the next start's notice, and a boot's is in the
+    notice that boot sends.
     """
     for card in cards:
         if card.trigger_id == new.trigger_id and card.kind == new.kind:
@@ -147,6 +157,7 @@ def _merge(cards: list[ReviewCard], new: ReviewCard) -> None:
             card.reason = new.reason or card.reason
             card.count_is_floor = card.count_is_floor or new.count_is_floor
             card.cause = card.cause if card.cause == new.cause else STOPPED_OR_PAUSED
+            card.unannounced = new.unannounced
             return
     cards.append(new)
 
@@ -245,8 +256,12 @@ def missed_by_trigger(report: dict[str, Any]) -> list[ReviewCard]:
     return sorted(by_trigger.values(), key=lambda c: c.trigger_id)
 
 
-def cards_from_orphans(records: list[dict[str, Any]], *, now: float) -> list[ReviewCard]:
-    """One INTERRUPTED card per run `reaper.terminalize_orphans` closed."""
+def cards_from_orphans(
+    records: list[dict[str, Any]], *, now: float, unannounced: bool = False
+) -> list[ReviewCard]:
+    """One INTERRUPTED card per run the reaper closed as interrupted: by the boot's orphan pass
+    (`reaper.terminalize_orphans`), or by a stop that cut it off (`reaper.record_stopped_run`,
+    `reaper.record_stopped_work`), whose cards are *unannounced* until the next start."""
     cards: list[ReviewCard] = []
     for record in records or []:
         tid = str(record.get("trigger_id") or "")
@@ -261,6 +276,7 @@ def cards_from_orphans(records: list[dict[str, Any]], *, now: float) -> list[Rev
                 latest=started,
                 oldest=started,
                 reason=str(record.get("reason") or ""),
+                unannounced=unannounced,
             )
         )
     return cards
@@ -282,13 +298,14 @@ _WHILE: dict[str, str] = {
 def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, Any] | None:
     """The ONE notice about what a boot or a wake found, or None when it found nothing (§3.4).
 
-    *cards* are the ones kept for the Triggers page (`cards_from_boot`, plus `cards_from_orphans`
-    at a boot), so the sentence that sends the owner there counts exactly what waits there. A
-    trigger catching up on its own is counted as missed and named as firing by itself, and has no
-    card. One notice naming the count, not one per slot: a laptop opened after a weekend would
-    otherwise deliver hundreds. And none at all when nothing was missed: "0 automations missed a
-    run" on every restart trains the owner to dismiss the one that matters. The report's `cause`
-    says why they were missed (a wake's is PAUSED), in words true of it.
+    *cards* are the ones kept for the Triggers page (`cards_from_boot`, plus at a boot
+    `cards_from_orphans` and the runs the stop before it cut off, `take_unannounced`), so the
+    sentence that sends the owner there counts exactly what waits there. A trigger catching up on
+    its own is counted as missed and named as firing by itself, and has no card. One notice
+    naming the count, not one per slot: a laptop opened after a weekend would otherwise deliver
+    hundreds. And none at all when nothing was missed: "0 automations missed a run" on every
+    restart trains the owner to dismiss the one that matters. The report's `cause` says why they
+    were missed (a wake's is PAUSED), in words true of it.
     """
     every = missed_by_trigger(report)
     missed = sum(card.count for card in every)
@@ -297,7 +314,9 @@ def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, An
         return None
     cause = str(report.get("cause") or STOPPED)
     caught_up = len(catching_up(report))
-    waiting = sum(card.count for card in cards)
+    # What waits: each missed slot, and each interrupted run's card once. A card a second stop
+    # cut its run off again before you decided counts both times, and it is still one decision.
+    waiting = sum(card.count for card in cards if card.kind != INTERRUPTED) + cut_off
     said: list[str] = []
     if missed > 0:
         said.append(
@@ -358,6 +377,27 @@ def record(cards: list[ReviewCard], *, base_dir: Path | str | None = None) -> li
 def pending(*, base_dir: Path | str | None = None) -> list[ReviewCard]:
     """Every card still waiting for a decision, oldest trigger id first."""
     return sorted(_read(base_dir), key=lambda c: (c.trigger_id, c.kind))
+
+
+def take_unannounced(*, base_dir: Path | str | None = None) -> list[ReviewCard]:
+    """The cards a stop kept that no notice has counted yet, now counted. Never raises.
+
+    The start after a stop calls this once, for its one notice (`boot_notice`): each card is
+    returned once and stays on the review, waiting for its decision, with no notice still owed.
+    """
+    try:
+        with _locked(base_dir):
+            held = _read(base_dir)
+            owed = [card for card in held if card.unannounced]
+            if not owed:
+                return []
+            for card in owed:
+                card.unannounced = False
+            _write(held, base_dir)
+            return sorted(owed, key=lambda c: (c.trigger_id, c.kind))
+    except Exception:  # noqa: BLE001 - the cards still wait on the review; only the notice is lost
+        logger.warning("could not read the runs a stop left for the next notice", exc_info=True)
+        return []
 
 
 def take(trigger_id: str, kind: str, *, base_dir: Path | str | None = None) -> ReviewCard | None:

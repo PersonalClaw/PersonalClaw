@@ -478,6 +478,9 @@ class GatewayOrchestrator:
         #: What the stop is stopping at this moment (`_stopping_step`), for the log of a stop that
         #: runs out of time.
         self._stopping: set[str] = set()
+        #: The agents whose trigger runs this stop closed as interrupted before cutting them off
+        #: (`_record_stopped_agents`): their own ending, "cancelled", is not reported again.
+        self._stopped_agents: set[str] = set()
 
     # ------------------------------------------------------------------
     # GatewayServices contract (see personalclaw.gateway_services) — the
@@ -1864,60 +1867,75 @@ class GatewayOrchestrator:
                 hold_chain(trigger.id, payload)
 
     def _record_stopped_fire(self, trigger: Any, *, started_at: float) -> None:
-        """Record a fire a stop or a restart cut off, and tell the owner. Never raises.
+        """Record a fire a stop or a restart cut off. Never raises.
 
         Recorded as the boot pass records a run whose owner died — the `interrupted` row, the
-        trigger's health and the review card (`reaper.record_stopped_run`) — with a reason that
-        names the restart, or the stop. Synchronous: it runs inside the cancellation, where an
-        await could be cancelled again before the row is written.
+        trigger's stamps and health and the review card (`reaper.record_stopped_run`) — with a
+        reason that names the restart, or the stop. The next start announces it, in its one notice
+        (`_record_boot_review`). Synchronous: it runs inside the cancellation, where an await could
+        be cancelled again before the row is written.
         """
         try:
             from personalclaw import restart_request
             from personalclaw.triggers import reaper
+            from personalclaw.triggers.routing import routed
             from personalclaw.triggers.store import TriggerStore
 
             home = config_dir()
-            record = reaper.record_stopped_run(
+            reaper.record_stopped_run(
                 str(getattr(trigger, "id", "") or ""),
                 started_at=started_at,
                 restarting=restart_request.pending() is not None,
-                store=TriggerStore(base_dir=home),
+                # Routed, as a run's record is (`run_record.record_run`): a trigger an app serves
+                # keeps its stamps where it lives.
+                store=routed(TriggerStore(base_dir=home)),
                 base_dir=home,
             )
-            self._announce_stopped_run(trigger, record)
         except Exception:  # noqa: BLE001 - the stop goes on whether or not this lands
             logger.warning("could not record the fire a stop cut off: %s", trigger, exc_info=True)
 
-    def _announce_stopped_run(self, trigger: Any, record: dict[str, Any]) -> None:
-        """One notice for a run a stop cut off, as the boot's notice names the runs a restart cut
-        off. It goes out through `notify` while the dashboard is still up, and is kept with the
-        other notifications, so it is there when the gateway is back."""
-        state = getattr(self, "dashboard_state", None)
-        if state is None:
-            return
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
-        from personalclaw.triggers.delivery import status_url
+    def _record_stopped_agents(self) -> None:
+        """Close the runs of the triggers whose agents this stop is about to cut off. Never raises.
 
-        trigger_id = str(getattr(trigger, "id", "") or "")
-        name = str(getattr(trigger, "name", "") or "") or trigger_id
-        what = "by a restart" if record.get("restarting") else "when the gateway stopped"
-        title, _ = redact_exfiltration_urls(f"{name} was interrupted {what}")
-        title, _ = redact_credentials(title)
+        An agent a trigger's action started (`invoke-agent`, `run-prompt`) outlives the action,
+        which returned once it started it, so its run waits as `launched` on the agent's ending.
+        Cancelled by the stop, the agent ends "cancelled", and that ending read as the run failing:
+        "<name> failed · cancelled", in its history and on the bell. Each one is closed first, as
+        interrupted by the stop (`reaper.record_stopped_work`), and its agent is remembered so its
+        own ending is not reported again (`_subagent_done`). Synchronous, and run with nothing
+        awaited between it and the cancel, so no agent ends in between unrecorded.
+        """
+        manager = getattr(self, "subagent_mgr", None)
+        if manager is None:
+            return
         try:
-            # The same kind as the boot's notice: this run waits on the same review.
-            state.notify(
-                kind=notification_kinds.RUN_REVIEW,
-                title=title,
-                body=str(record.get("reason") or ""),
-                meta={
-                    "event": "automation.interrupted",
-                    "statusUrl": status_url(trigger_id=trigger_id),
-                },
-            )
-        except Exception:  # noqa: BLE001 - the run is recorded; a lost notice must not undo it
-            logger.warning(
-                "could not announce the interrupted run of %s", trigger_id, exc_info=True
-            )
+            from personalclaw import restart_request
+            from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+            from personalclaw.subagent import agent_work_id
+            from personalclaw.triggers import reaper
+            from personalclaw.triggers.routing import routed
+            from personalclaw.triggers.store import TriggerStore
+
+            home = config_dir()
+            store = routed(TriggerStore(base_dir=home))
+            restarting = restart_request.pending() is not None
+            for info in list(manager.running):
+                trigger_id = getattr(info, "trigger_id", "")
+                # A lifecycle hook's agent keeps no run rows (`triggers.settle`).
+                if not isinstance(trigger_id, str) or not trigger_id:
+                    continue
+                if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX):
+                    continue
+                if reaper.record_stopped_work(
+                    trigger_id,
+                    work_id=agent_work_id(info.id),
+                    restarting=restarting,
+                    store=store,
+                    base_dir=home,
+                ):
+                    self._stopped_agents.add(info.id)
+        except Exception:  # noqa: BLE001 - the stop goes on whether or not this lands
+            logger.warning("could not record the runs a stop cut off", exc_info=True)
 
     def _record_boot_review(
         self,
@@ -1933,6 +1951,10 @@ class GatewayOrchestrator:
         on its own: a missed slot is sometimes right to run late and sometimes exactly wrong, and an
         interrupted run may already have done part of its work. Never raises, like the passes it
         follows: the schedules are re-armed and the runs closed whether or not this lands.
+
+        The runs the stop before this start cut off are already on the review (the stop kept their
+        cards, `reaper.record_stopped_run`), and this notice is the first to count them
+        (`review.take_unannounced`): one notice per restart, sent once the gateway can deliver it.
         """
         cards: list[Any] = []
         try:
@@ -1942,6 +1964,7 @@ class GatewayOrchestrator:
                 interrupted, now=time.time()
             )
             _review.record(cards, base_dir=base_dir)
+            cards += _review.take_unannounced(base_dir=base_dir)
         except Exception:  # noqa: BLE001 - see the docstring
             logger.warning("could not keep the boot's trigger review", exc_info=True)
         if getattr(self, "dashboard_state", None) is None:
@@ -3749,6 +3772,12 @@ class GatewayOrchestrator:
             # representative used for routing/logging; per-child failures notify each
             # member. This replaces the old one-turn-per-completion path that
             # serialized behind the parent's Semaphore(1) and lost bursts.
+            #
+            # Not the agents a stop cut off: the stop closed their trigger runs as interrupted
+            # before it cancelled them (`_record_stopped_agents`), and their own ending,
+            # "cancelled", would read as each run failing, delivered into a gateway that stops.
+            stopped: set[str] = getattr(self, "_stopped_agents", set())
+            batch = [m for m in batch if m.id not in stopped]
             if not batch:
                 return
             info = batch[0]
@@ -4810,6 +4839,8 @@ class GatewayOrchestrator:
 
         last["the channel connections"] = unbind_inbound()
 
+        # The runs whose agents the cancel just below cuts off, closed as interrupted first.
+        self._record_stopped_agents()
         await asyncio.gather(*(self._stopping_step(what, aw) for what, aw in last.items()))
 
     async def _stopping_step(self, what: str, aw: Awaitable[Any]) -> None:

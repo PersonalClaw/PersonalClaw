@@ -143,11 +143,12 @@ export function statusMeta(s?: string | null): StatusMeta {
   if (s === 'degraded') return { label: 'degraded', tone: 'var(--color-warning)', icon: TriangleAlert }
   if (s === 'failed') return { label: 'failed', tone: 'var(--color-danger)', icon: XCircle }
   if (s === 'timeout') return { label: 'timed out', tone: 'var(--color-danger)', icon: Clock }
-  // A run a gateway restart cut off (`reaper.RESTART_INTERRUPTED_STATUS`). It was recorded as
-  // `timeout`, a deadline it never blew. Danger, like the `failed` the runs feed maps it to
-  // (`SCHEDULE_STATUS_TO_OUTCOME`): the run did not finish. The glyph and the label say why, and
-  // the run waits on the Triggers page's review to be run again or dismissed.
-  if (s === 'interrupted') return { label: 'interrupted by a restart', tone: 'var(--color-danger)', icon: PowerOff }
+  // A run a stop or a restart cut off (`reaper.RESTART_INTERRUPTED_STATUS`), and its outcome in the
+  // runs feed (`Outcome.INTERRUPTED`). It was recorded as `timeout`, a deadline it never blew, and
+  // then fed to the runs feed as `failed`. Warning, not danger: nothing failed, the run did not
+  // finish and waits on the Triggers page's review to be run again or dismissed. The glyph and the
+  // label say why, and its reason, beside it, names the restart or the stop.
+  if (s === 'interrupted') return { label: 'interrupted by a restart', tone: 'var(--color-warning)', icon: PowerOff }
   // The day-budget pause, the one writer of this run status (`gateway._fire_store_trigger`):
   // the fire was held because the daily token budget is spent. The runs feed maps it to
   // `deferred`, so it takes that tone; the row's `error` says when it resumes. It rendered as

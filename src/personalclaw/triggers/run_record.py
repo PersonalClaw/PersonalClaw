@@ -20,6 +20,10 @@ trigger cannot tell two stories about one run:
   by hand never drives these: testing a broken automation by hand must neither pause it nor clear
   a real failure streak.
 
+A run whose action never returned, because a stop or a restart cut it off or it ran past its
+deadline, has nothing to hand this recorder: `triggers.reaper` closes it, and moves the same stamps
+(:func:`stamp_run`), so its row is the trigger's last run too.
+
 The fire METERS, ``run_count`` (what ``max_fires`` spends) and ``last_fired_at`` (what spacing
 measures from), move where a fire is DECIDED, before its action runs (:func:`count_fire`):
 `service.admit_fire` for the clock and events, and :func:`note_fire` for the fires no admission
@@ -48,8 +52,10 @@ logger = logging.getLogger(__name__)
 ERROR_MAX = 512
 
 #: The statuses a run records as having gone wrong (`triggers.history.SCHEDULE_STATUS_TO_OUTCOME`):
-#: they stamp ``last_failure_at`` and keep why in ``last_error_summary``.
-_WENT_WRONG = frozenset({Outcome.FAILED.value, Outcome.REFUSED.value})
+#: they stamp ``last_failure_at`` and keep why in ``last_error_summary``. A run a stop or a restart
+#: cut off is one: it is not a failure, and it did not do what it was for, so the trigger's last run
+#: is dated by it and says what stopped it.
+_WENT_WRONG = frozenset({Outcome.FAILED.value, Outcome.REFUSED.value, Outcome.INTERRUPTED.value})
 
 
 def count_fire(trigger: Any, *, at: float) -> None:
@@ -88,11 +94,12 @@ def stamp_run(
     """Move *trigger*'s stamps for a run its history recorded as *status*, finished at *at*.
 
     A run that stopped for you stamps ``last_waiting_at``: it did nothing it was asked yet. One that
-    went wrong (`Outcome.FAILED`, `Outcome.REFUSED`) stamps ``last_failure_at`` and keeps *why* as
-    ``last_error_summary``. Every other run stamps ``last_success_at``, and a degraded one keeps
-    *why*, what it ran without, as ``last_error_summary``, so the trigger's row says why it reads
-    degraded. ``last_run_id`` becomes *run_id* when one is given: the ending of work a launched run
-    started is written onto that run's row, which stays the last one.
+    went wrong (`Outcome.FAILED`, `Outcome.REFUSED`, `Outcome.INTERRUPTED`) stamps
+    ``last_failure_at`` and keeps *why* as ``last_error_summary``. Every other run stamps
+    ``last_success_at``, and a degraded one keeps *why*, what it ran without, as
+    ``last_error_summary``, so the trigger's row says why it reads degraded. ``last_run_id``
+    becomes *run_id* when one is given: the ending of work a launched run started is written onto
+    that run's row, which stays the last one.
 
     The serializers redact ``last_error_summary`` on the way out (`_serialize_store`,
     `_schedule_row_for`).

@@ -629,7 +629,9 @@ async def _dispatch_store_action(
     # Run button's "already running" read a claim only a tick writes, so a second click ran the
     # action again beside the first, a tick could fire beside it whatever its `overlap` said, and
     # a gateway that died under it left nothing the boot pass could close.
-    holder = f"{event}:{int(started)}"
+    from personalclaw.triggers.claims import hand_run_holder
+
+    holder = hand_run_holder(event, at=started)
     claimed = _hold_claim(trigger_id, holder=holder, now=started)
     try:
         # The same floor a scheduled fire gets (`firepath.action_timeout`): this passed none, so a
@@ -718,21 +720,23 @@ def _give_back_claim(trigger_id: str, *, holder: str, root: Any) -> None:
 def _record_stopped_run(trigger_id: str, *, started: float) -> None:
     """Record a hand run a stop or a restart cut off (`reaper.record_stopped_run`). Never raises.
 
-    The row is the hand run's (`manual`) and the trigger's health is left alone, as a hand run's
-    record leaves it (`run_record.record_run`); the card waits on the review like any interrupted
-    run's.
+    The row is the hand run's (`manual`), its stamps move as a hand run's do, and the trigger's
+    health is left alone, as a hand run's record leaves it (`run_record.record_run`); the card
+    waits on the review like any interrupted run's, and the next start announces it.
     """
     try:
         from personalclaw import restart_request
         from personalclaw.dashboard.handlers.triggers import _trigger_store
         from personalclaw.triggers import reaper
 
+        store = _trigger_store()
         reaper.record_stopped_run(
             trigger_id,
             started_at=started,
             restarting=restart_request.pending() is not None,
             by_hand=True,
-            base_dir=_trigger_store().base_dir,
+            store=store,
+            base_dir=store.base_dir,
         )
     except Exception:  # noqa: BLE001 - the stop goes on whether or not this lands
         logger.warning("could not record a hand run a stop cut off: %s", trigger_id, exc_info=True)

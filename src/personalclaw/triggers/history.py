@@ -68,10 +68,11 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     "success": Outcome.RAN.value,
     "failure": Outcome.FAILED.value,
     "timeout": Outcome.FAILED.value,
-    # A run a gateway restart cut off (`reaper.RESTART_INTERRUPTED_STATUS`). It did not finish,
-    # which is `FAILED`'s meaning in this vocabulary; the row's own status and `error` say it was
-    # the restart, and it waits on the review for the user to run it again or dismiss it.
-    "interrupted": Outcome.FAILED.value,
+    # A run a stop or a restart cut off (`reaper.RESTART_INTERRUPTED_STATUS`). Its own outcome:
+    # it did not finish, but nothing failed, so the runs feed must not call it a failure and it
+    # never counts toward autopause. Its `error` says what stopped it, and it waits on the review
+    # for the user to run it again or dismiss it.
+    "interrupted": Outcome.INTERRUPTED.value,
     # A run standing in for a slot that did not run on time (`triggers.run_record`): the review's
     # Run now, which `missed.resolve_missed` records as late, or a fire the tick reached late.
     "ran_late": Outcome.RAN_LATE.value,

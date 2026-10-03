@@ -142,6 +142,10 @@ class Outcome(str, Enum):
     REFUSED = "refused"
     #: A pre-LLM injection-screen match. NEVER auto-retried, and it names the matched pattern.
     BLOCKED_INJECTION = "blocked_injection"
+    #: It was running when PersonalClaw stopped or restarted, and did not finish: its reason says
+    #: which, and it waits on the Triggers page's review to be run again or dismissed. Not a
+    #: failure, so it never counts toward autopause: the automation did nothing wrong.
+    INTERRUPTED = "interrupted"
     #: A genuine failure — the only outcome that counts toward autopause.
     FAILED = "failed"
 

@@ -114,9 +114,12 @@ Each terminalized run gets three writes, and all three are surfaces you read: th
 
 A **stop or a Restart** does not leave its runs for the boot pass: it records each run it cuts off
 as it stops, with the same row, health and card, and a reason that says which it was ("Interrupted
-by a gateway restart" or "Interrupted when the gateway stopped"). A notice names the run, and it
-is waiting in your notifications when the gateway is back. A run cut off this way starts no
-`run_completed` chain, because it did not complete.
+by a gateway restart" or "Interrupted when the gateway stopped"). That includes a run whose action
+only started an agent (**Invoke Agent**, **Run Prompt**) and was still waiting on it: the stop records
+the run as interrupted before it stops the agent, so its history does not read as a failure. The
+stop itself sends no notice; when the gateway is back, one notice in the bell says what it cut off
+("Runs interrupted by a restart"). A run cut off this way starts no `run_completed` chain, because
+it did not complete.
 
 A Restart starts the new gateway in the same process, so its pid is the old one's. Each claim also
 names the program image that took it, and a claim an earlier image left is closed at boot like one
@@ -132,27 +135,30 @@ work. It waits for you instead, with the times PersonalClaw missed (see
 [When a scheduled time is missed](#when-a-scheduled-time-is-missed)): the Triggers page lists both
 under **Waiting for your decision**, and each card offers **Run now** (once, however many times it
 covers, recorded as late) and **Dismiss** (recorded as your decision). One notice in the bell says
-what is waiting ("Missed scheduled runs"), even inside your quiet hours, where it is kept without a
-toast; its row in Settings → Notifications is **Missed or interrupted runs to review**.
+what is waiting ("Missed scheduled runs", or "Runs interrupted by a restart" when nothing was
+missed), even inside your quiet hours, where it is kept without a toast; its row in Settings →
+Notifications is **Missed or interrupted runs to review**.
 
 | | |
 |---|---|
 | **Checked on** | the **run history** (the run has a terminal `interrupted` status, labelled "interrupted by a restart", with a reason naming the restart), the Schedule row (it stops rendering as in flight), and the review card at the top of the **Triggers** page |
-| **The status** | `interrupted` — its own word, because the run did not blow a deadline |
+| **The status** | `interrupted` — its own word, because the run did not blow a deadline, and its own outcome in the runs feed: not a failure, and it never counts toward pausing the automation |
 
-- `src/personalclaw/triggers/reaper.py:242` — `terminalize_orphans_sync`, the boot pass, and its
-  three writes; `reaper.py:341` — `record_stopped_run`, the run a stop cuts off.
+- `src/personalclaw/triggers/reaper.py:326` — `terminalize_orphans_sync`, the boot pass, and its
+  three writes; `reaper.py:437` — `record_stopped_run`, the run a stop cuts off; `reaper.py:497` —
+  `record_stopped_work`, the run whose agent a stop cuts off.
 - `src/personalclaw/triggers/claims.py` — `orphaned_ids`, which judges a claim naming this very
   process by the image that took it.
-- `src/personalclaw/triggers/reaper.py:88` — `RESTART_INTERRUPTED_STATUS = "interrupted"`. The
-  frontend renders it (`web/src/pages/schedule/scheduleMeta.ts:146`), and
+- `src/personalclaw/triggers/reaper.py:98` — `RESTART_INTERRUPTED_STATUS = "interrupted"`. The
+  frontend renders it (`web/src/pages/schedule/scheduleMeta.ts:151`), and
   `web/src/pages/triggers/triggerStatusVocabulary.test.ts` fails if a run status the backend can
   record has no rendering there.
-- `src/personalclaw/triggers/review.py:191` — `cards_from_orphans`, the interrupted run's card, and
-  `review.py:151` — `cards_from_boot`, the missed slots' card (`missed.review_at_boot` walks a cron's
-  schedule as well as an interval's grid).
-- `src/personalclaw/dashboard/handlers/triggers.py:2227` — `api_trigger_review`, the cards and the
-  decision; the decision's outcome comes from `src/personalclaw/triggers/missed.py:432`,
+- `src/personalclaw/triggers/review.py:259` — `cards_from_orphans`, the interrupted run's card,
+  `review.py:204` — `cards_from_boot`, the missed slots' card (`missed.review_at_boot` walks a cron's
+  schedule as well as an interval's grid), and `review.py:382` — `take_unannounced`, the cards a
+  stop kept that the next start's notice counts.
+- `src/personalclaw/dashboard/handlers/triggers.py:2404` — `api_trigger_review`, the cards and the
+  decision; the decision's outcome comes from `src/personalclaw/triggers/missed.py:461`,
   `resolve_missed`.
 
 ---
@@ -286,7 +292,7 @@ export PERSONALCLAW_HOME="$PWD/.dev-home"
    - **The guarantee broken would look like:** a row stuck at *running* indefinitely, with the next
      scheduled fire silently suppressed by an overlap gate waiting on a run that ended when you
      killed the process.
-   - This is the boot pass at `src/personalclaw/triggers/reaper.py:231`.
+   - This is the boot pass at `src/personalclaw/triggers/reaper.py:326`.
 
 5. **Delete the automation.** The guarantees are checked; the broken trigger has no further use.
 

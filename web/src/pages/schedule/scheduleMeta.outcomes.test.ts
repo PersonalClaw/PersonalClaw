@@ -57,6 +57,15 @@ describe('statusMeta — the typed outcome vocabulary', () => {
     expect(m.tone).not.toBe('var(--color-danger)')
   })
 
+  it('renders a run a restart cut off as interrupted, not as a failure', () => {
+    // Its own outcome in the runs feed (`Outcome.INTERRUPTED`), which fed it in as `failed`. Nothing
+    // failed: it did not finish, and it waits on the review for you to run it again or dismiss it.
+    const m = statusMeta('interrupted')
+    expect(m.label).toBe('interrupted by a restart')
+    expect(m.tone).toBe('var(--color-warning)')
+    expect(m.tone).not.toBe(statusMeta('failed').tone)
+  })
+
   it('renders a degraded run as degraded, not as a plain success', () => {
     // A digest whose synthesis was unavailable still arrived: it ran, at its reduced tier. Neither
     // the ok-green of a run that did all it is for nor the red of one that broke.

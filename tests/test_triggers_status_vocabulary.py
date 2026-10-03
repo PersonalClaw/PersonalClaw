@@ -140,7 +140,8 @@ WRITERS: tuple[Writer, ...] = (
     ),
     Writer(
         # The ending of the agent a launched run started, written onto that run's row: `success`,
-        # `failure`, or `declined` for the owner's own Deny.
+        # `failure`, `refused` for calls its limits refused, `declined` for the owner's own Deny,
+        # and `interrupted` when a stop or a restart cut the agent off.
         label="triggers/settle.py settles a launched run's ScheduleRun row",
         path="triggers/settle.py",
         table=H.SCHEDULE_STATUS_TO_OUTCOME,
@@ -148,8 +149,22 @@ WRITERS: tuple[Writer, ...] = (
         kind="kwarg",
         name="status",
         call="settle_sync",
+        min_sites=2,
+        min_values=5,
+    ),
+    Writer(
+        # The rows of the runs whose action never returned, which the reaper closes: `interrupted`
+        # for a run a stop, a restart or a crash cut off, and `timeout` for one the deadline
+        # reaped. Both arrive pinned by `_write_row`'s own guard on `_ROW_STATUSES`.
+        label="triggers/reaper.py closes a run whose action never returned",
+        path="triggers/reaper.py",
+        table=H.SCHEDULE_STATUS_TO_OUTCOME,
+        table_name="SCHEDULE_STATUS_TO_OUTCOME",
+        kind="kwarg",
+        name="status",
+        call="ScheduleRun",
         min_sites=1,
-        min_values=3,
+        min_values=2,
     ),
     Writer(
         # The executor's runner is INJECTED, so its status source is open by design (an app's
@@ -499,13 +514,7 @@ def test_the_writer_file_census_is_pinned() -> None:
         "gateway.py",
         "triggers/service.py",
         "triggers/run_record.py",
-        # The boot sweep. Named here rather than added to `WRITERS` because it is the one
-        # writer with nothing for the table floors to catch: it writes a single module-level
-        # constant, `reaper.RESTART_INTERRUPTED_STATUS = "interrupted"`, which is a key of
-        # `SCHEDULE_STATUS_TO_OUTCOME` (→ `failed`), so there is no per-branch status to drift and
-        # no set of values for `min_values` to hold a floor under. A `min_sites=1, min_values=1`
-        # entry would assert the inference can resolve a named constant, which is a claim about
-        # this rail rather than about the writer.
+        # The reaper's passes, which close a run whose action never returned (`WRITERS` above).
         "triggers/reaper.py",
     }, f"the set of modules constructing a ScheduleRun changed: {sorted(call_files)}"
     # A row a launched run left is rewritten in one place, whose statuses the writer above pins.

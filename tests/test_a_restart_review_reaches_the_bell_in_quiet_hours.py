@@ -10,7 +10,8 @@ notice was thrown away.
 
 The runs a restart left undone wait for the owner to run or dismiss each one, so their notice is
 a decision the owner owes. Quiet hours keep it silent and still record it: it is in the bell,
-unread, without a toast. The same holds for the notice a stop sends about the run it cut off.
+unread, without a toast. The same holds for the notice the start after a stop sends about the
+runs the stop cut off.
 
 Driven through the real `DashboardState.notify`, because the delivery gate is exactly what the
 recording fakes in the neighbouring suites stand in for.
@@ -21,7 +22,6 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timedelta
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -124,16 +124,19 @@ def test_a_raised_minimum_severity_still_lets_it_through(tmp_path):
     assert len(_notes(state)) == 1
 
 
-def test_the_notice_a_stop_sends_about_the_run_it_cut_off_is_kept_too():
-    _quiet_hours(around_now=True)
-    state = _state()
-    trigger = SimpleNamespace(id="clock:backup", name="Nightly backup")
-    _gateway(state)._announce_stopped_run(
-        trigger, {"restarting": True, "reason": "Interrupted by a gateway restart."}
-    )
+def test_the_notice_about_the_runs_a_stop_cut_off_is_kept_too(tmp_path):
+    """The stop keeps the card of each run it cuts off, and the start after it says so, once."""
+    from personalclaw.triggers import reaper
 
-    (note,) = [n for n in state._notification_log if n.get("event") == "automation.interrupted"]
-    assert note["title"] == "Nightly backup was interrupted by a restart"
+    _quiet_hours(around_now=True)
+    reaper.record_stopped_run(
+        "clock:backup", started_at=time.time() - 30, restarting=True, base_dir=tmp_path
+    )
+    state = _state()
+    _gateway(state)._record_boot_review({}, [], base_dir=tmp_path)
+
+    (note,) = _notes(state)
+    assert note["title"] == "Runs interrupted by a restart"
     assert note["kind"] == nk.RUN_REVIEW
     assert note["badge_only"] is True
 

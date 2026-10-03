@@ -110,7 +110,10 @@ def _gateway(monkeypatch, provider: _Blocks) -> tuple[GatewayOrchestrator, _Note
 class TestAFireAStopCutsOff:
     def test_is_recorded_as_interrupted_by_the_restart(self, home, monkeypatch):
         """🔴 Red before: the cancellation passed the dispatch's `except Exception`, and the run
-        left no row, no card and no notice."""
+        left no row, no card and no notice.
+
+        The notice is the next start's, once, for every run the stop cut off: it is sent when the
+        gateway is back to deliver it, not by a stop that is closing the dashboard."""
         _restarting(monkeypatch, True)
         provider = _Blocks()
         orch, notes, _chained = _gateway(monkeypatch, provider)
@@ -128,10 +131,15 @@ class TestAFireAStopCutsOff:
         after = TriggerStore(base_dir=home).get(TID).trigger
         assert after.health_status == TriggerHealth.DEGRADED.value
         assert after.last_error_summary == row["error"]
+        assert after.last_run_id == row["run_id"]
+        assert notes.sent == []
+
+        orch._record_boot_review({}, [], base_dir=home)
+
         (note,) = notes.sent
-        assert note["title"] == "Nightly backup was interrupted by a restart"
-        assert note["body"] == row["error"]
-        assert note["meta"]["statusUrl"] == f"#/triggers?open={TID}"
+        assert note["title"] == "Runs interrupted by a restart"
+        assert note["body"].startswith("1 run was interrupted by the restart")
+        assert note["meta"]["statusUrl"] == "#/triggers"
 
     def test_a_plain_stop_says_it_stopped(self, home, monkeypatch):
         """A stop that is not a restart must not be called one: the gateway may never come back."""
@@ -145,7 +153,7 @@ class TestAFireAStopCutsOff:
         (row,) = _rows(home)
         assert row["error"].startswith("Interrupted when the gateway stopped: ")
         assert "restart" not in row["error"]
-        assert notes.sent[0]["title"] == "Nightly backup was interrupted when the gateway stopped"
+        assert notes.sent == [], "a stop announces nothing; the next start does"
 
     def test_starts_no_chain(self, home, monkeypatch):
         """🔴 Red before: the dispatch's `finally` fired the `run_completed` chain for a run that

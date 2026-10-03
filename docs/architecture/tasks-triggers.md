@@ -314,6 +314,16 @@ in warning tone): the morning digest whose synthesis was unavailable still
 arrives with its items, and its row and the trigger's `last_error_summary` say
 the synthesis was missing. A workflow step that does so is DEGRADED, a success
 with that reason.
+A run whose action never returned has nothing to hand the recorder, and
+`triggers/reaper.py` closes it through the same stamps (`run_record.stamp_run`):
+`interrupted` for a run a stop, a restart or a crash cut off, and `timeout` for
+one the deadline sweep reaped, which used to write no row at all. Its row is
+the trigger's last run, `last_failure_at` dates it and `last_error_summary`
+says what stopped it; a fire's trigger reads degraded, and a run by hand (its
+claim's holder, `claims.held_by_hand`, or its row's `manual` tag) is recorded
+as one and leaves the health alone. `interrupted` is its own outcome in the
+runs feed (`Outcome.INTERRUPTED`, warning tone), not a failure, and it never
+counts toward autopause.
 
 **A run's history row says what the action did.** The recorder writes the
 row's summary as the sentence the action wrote for a person
@@ -826,9 +836,17 @@ cut off may already have done part of its work.
   or a Restart records the runs it cancels itself, as it stops
   (`reaper.record_stopped_run`, from `GatewayOrchestrator._record_stopped_fire`
   and the Run now dispatch), since a cancelled run gives its claim back and
-  leaves the boot pass nothing to close. A Run now holds the trigger's claim
-  while it runs, so it reads as running and a second one is refused 409. It
-  gives back only its own claim: one a tick wrote over it meanwhile stays.
+  leaves the boot pass nothing to close. A run whose action only started an
+  agent (`invoke-agent`, `run-prompt`) is recorded `launched` and waits on the
+  agent, which the stop cancels and which ends "cancelled"; that ending used to
+  settle the row as a failure and the bell to read "<name> failed ·
+  cancelled". The stop closes each such run first, before it cancels the
+  agents (`reaper.record_stopped_work`, from
+  `GatewayOrchestrator._record_stopped_agents`, writing the row through
+  `settle.settle_interrupted`), and the agent's own ending is not delivered. A
+  Run now holds the trigger's claim while it runs, so it reads as running and a
+  second one is refused 409. It gives back only its own claim: one a tick wrote
+  over it meanwhile stays.
 
 Both land in `trigger-review.json` beside `triggers.json`
 (`triggers/review.py`): one card per trigger and kind, until you decide it. A
@@ -840,9 +858,12 @@ The "Missed scheduled runs" notice points at the Triggers page, where the
 cards sit above the list (`GET /api/triggers/review`). It is composed from the
 cards this boot kept (`review.boot_notice`, over the one reading of the report
 the cards come from, `review.missed_by_trigger`), so it counts what waits
-there. It and a stop's "… was interrupted" notice are the decision kind
-`cron/run_review` (warning), so quiet hours put them in the bell without a
-toast rather than dropping them. The boot passes run
+there. A stop sends no notice of its own: the cards it keeps are marked
+unannounced (`ReviewCard.unannounced`), and the next start's one notice counts
+them (`review.take_unannounced`), titled "Runs interrupted by a restart" when
+nothing was missed. It is the decision kind `cron/run_review` (warning), so
+quiet hours put it in the bell without a toast rather than dropping it. The
+boot passes run
 before the dashboard exists, so the gateway holds the notice and sends it once
 the dashboard is up (`GatewayOrchestrator._surface_held_boot_review`). **Run now** runs the
 action once, however many slots the card covers, and records it `ran_late`

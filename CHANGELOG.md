@@ -180,6 +180,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An automation run that a restart or a stop cuts off, an agent its Run now started included, reads "interrupted by a restart" in its history instead of "failed · cancelled", waits on the Triggers page with Run now and Dismiss, and the next start says once in the bell which runs were interrupted; a run the 30-minute deadline reaps now has its row in the history.**
 - **A sender you revoke in Settings → Sender trust is a stranger again at once: their next message gets the pairing note and you are told, where it got no reply and you heard nothing within a day of their first message. Sender trust also lists the people who messaged your agent and aren't paired, with how many messages and the last one's time, so someone who keeps writing after the one reply and the one notice is never lost.**
 - **What an app's backend, background worker and engine print reaches the gateway's log, masked and tagged with the app, instead of being thrown away, and an app's panel under Apps and the Doctor say how a process that is not running last ended, with the last lines it printed.**
 - **Ask the agent about your automations and it reads them: `automation_list` says whether each one runs now, when it last ran and how that went, and when it runs next, marks the ones that need you, and every turn says how many need attention and which tool reads them.**
