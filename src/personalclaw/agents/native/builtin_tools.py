@@ -1588,7 +1588,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         # What runs as the owner, and what they allowed (`owner_only`): refused here in words, and
         # fenced by the sandbox `_t_bash` runs it in, which refuses the write whatever this reading
         # misses.
-        from personalclaw import owner_only
+        from personalclaw import owner_only, sandbox
         from personalclaw.task_modes import is_read_only_bash
 
         named = owner_only.named_in(command, cwd=self._cwd)
@@ -1622,6 +1622,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         if offer is not None:
             said = security.redact_known_values(offer.reason, handed)
             return _refused_by("bash", "scheduler", said, said, [trigger_handoff.HANDOFF_HINT])
+        if said := sandbox.wrap_refusal(self._sandbox_mode):  # it never runs outside the sandbox
+            return _refused_by("bash", "sandbox", said, said)
         return None
 
     def _p_bash(self, a: dict) -> ToolResult | None:
@@ -1671,14 +1673,12 @@ class NativeBuiltinToolProvider(ToolProvider):
                 env=run_bounds.shell_env(site="native-bash", run=run.mark),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                # Its own process group. Two reasons, both load-bearing:
-                # a stop (or a timeout) can then kill the WHOLE tree — `bash -lc` is
-                # a shell, and killing only the shell leaves its children running,
-                # holding the lock or the file handle the user pressed stop to release;
-                # and `os.killpg` is only SAFE on a child that leads its own group,
-                # since a child sharing our group would mean signalling the gateway.
-                # Implemented in C between fork and exec, so it is not the
-                # preexec_fn-in-a-threaded-process hazard.
+                # Its own process group. Two reasons, both load-bearing: a stop (or a timeout) can
+                # then kill the WHOLE tree — `bash -lc` is a shell, and killing only the shell
+                # leaves its children running, holding the lock or the file handle the user pressed
+                # stop to release; and `os.killpg` is only SAFE on a child that leads its own group,
+                # since a child sharing our group would mean signalling the gateway. Implemented in
+                # C between fork and exec, so it is not the preexec_fn-in-a-threaded-process hazard.
                 start_new_session=True,
             )
             # Track the child for the duration of the call, so a stop arriving mid-command

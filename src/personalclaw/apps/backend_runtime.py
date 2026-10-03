@@ -14,9 +14,10 @@ still subject to the egress layer like any other.
 
 Process model: ``type`` selects the launcher — ``python`` runs
 ``python <entryPoint>``, ``node`` runs ``node <entryPoint>``; empty auto-detects
-from the entry-point suffix (``.py``→python, ``.js``/``.mjs``→node). The chosen
-port is passed via ``PORT`` env (the conventional contract) and recorded so the
-proxy can reach it.
+from the entry-point suffix (``.py``→python, ``.js``/``.mjs``→node) — :func:`launcher_kind`.
+The chosen port is passed via ``PORT`` env (the conventional contract) and recorded so the
+proxy can reach it. The desktop app has no interpreter to start a Python backend with, so it
+starts none (``python_children``).
 
 Output: what a backend prints on stdout and stderr is relayed into the gateway's log, masked and
 tagged with the app, and its last lines are kept with how it ended (``child_output``), which the
@@ -264,6 +265,16 @@ class BackendSupervisor:
                     "app %s backend entryPoint missing/escapes app dir: %s",
                     name,
                     backend.entryPoint,
+                )
+                return None
+            from personalclaw import python_children
+
+            if launcher_kind(backend.type, entry) == "python" and not python_children.available():
+                # The desktop app has no interpreter to start it with, so nothing is started. Its
+                # install and enable are refused, startup holds an installed one (so the watchdog
+                # does not come back here), and the Apps page says the same sentence.
+                logger.warning(
+                    "app %s backend not started: %s", name, python_children.app_refusal(manifest)
                 )
                 return None
 
@@ -558,14 +569,8 @@ class BackendSupervisor:
         Python child through ``app_python.child_argv``, which loads ``<home>/app-python`` AFTER
         the interpreter's own packages; ``PYTHONPATH`` would put them first, ahead of the
         resource-ceiling shim these children are started through."""
-        kind = backend_type.strip().lower()
-        if not kind:
-            suffix = entry.suffix.lower()
-            if suffix == ".py":
-                kind = "python"
-            elif suffix in (".js", ".mjs", ".cjs"):
-                kind = "node"
-        if kind in ("python", "asgi"):
+        kind = launcher_kind(backend_type, entry)
+        if kind == "python":
             if app_packages:
                 from personalclaw.apps import app_python
 
@@ -574,6 +579,24 @@ class BackendSupervisor:
         if kind == "node":
             return ["node", str(entry)]
         return None
+
+
+def launcher_kind(backend_type: str, entry: str | Path) -> str:
+    """What runs an app's backend or worker *entry*: ``"python"``, ``"node"``, or ``""`` when
+    nothing does. ``type`` names it (``asgi`` is Python's); left empty, the entry's suffix does."""
+    kind = backend_type.strip().lower()
+    if kind in ("python", "asgi"):
+        return "python"
+    if kind == "node":
+        return "node"
+    if kind:
+        return ""
+    suffix = Path(entry).suffix.lower()
+    if suffix == ".py":
+        return "python"
+    if suffix in (".js", ".mjs", ".cjs"):
+        return "node"
+    return ""
 
 
 _supervisor: BackendSupervisor | None = None

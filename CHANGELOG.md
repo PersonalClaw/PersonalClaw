@@ -186,6 +186,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **In the desktop app, what needs a Python program of its own is refused before it starts, saying the desktop app can't run it and the version installed with uv can, where it failed with a usage error or said nothing: an app with its own Python server, a worker, an engine, parse scripts or packages the desktop app does not carry (its Store card, Library card, install and Activate say so, and one already installed is never started), Install engine, an app's own tests, and on Linux a command in the sandbox, which never runs outside it.**
+- **Model and channel apps whose SDK the desktop app carries (OpenAI and the OpenAI-compatible ones, Anthropic, Slack) install in the desktop app, where their install asked for a pip it does not have; and `personalclaw doctor` there no longer reports its packages missing and its pip broken.**
+- **The desktop app leaves alone the Python packages the version installed with uv installs for its apps in the PersonalClaw folder they share, where it deleted them each time it started.**
+- **When the desktop app's gateway cannot start, the app says so at once, with how it exited and its last message, and Start Again starts it again, where Retry waited two more minutes for a gateway nothing had started.**
 - **Signing in to a remote tool server works in the desktop app: its sign-in page opens in your browser, and the Tools page says it opened there and when you are signed in; a sign-in page that did not open, in the app or in a browser that blocked its tab, is said, with its link.**
 - **Restart brings the desktop app's gateway back, where the restarted gateway used to exit at once and leave the app with no gateway until it was quit and opened again; and when its gateway stops on its own, the app says what happened and offers to start it again.**
 - **In the desktop app, MCP servers, agent CLI sessions, the commands an agent runs and computer use start instead of exiting at once with a usage error, and on a Mac the commands PersonalClaw sandboxes run inside the macOS sandbox, whose check always failed in the app.**

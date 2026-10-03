@@ -1,10 +1,14 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const {
   LAST_LINE_MAX,
   QUIT,
   START_AGAIN,
+  firstStartDialog,
   gatewayLostDialog,
   isUnasked,
   makeLastLine,
@@ -97,5 +101,77 @@ describe("gatewayLostDialog", () => {
   it("says a start that failed before there was a process failed to start", () => {
     const options = gatewayLostDialog({ startError: "spawn /app/backend ENOENT" });
     assert.match(options.detail, /could not be started again \(spawn \/app\/backend ENOENT\)/);
+  });
+});
+
+describe("firstStartDialog", () => {
+  it("says the gateway did not start, how it ended and its last message", () => {
+    const options = firstStartDialog({ code: 2, lastLine: "personalclaw: error: invalid choice" });
+    assert.equal(options.message, "PersonalClaw's gateway did not start.");
+    assert.match(options.detail, /exited with code 2, so the app has nothing to show/);
+    assert.match(options.detail, /Its last message was: personalclaw: error: invalid choice/);
+    assert.match(options.detail, /Start it again, or quit PersonalClaw and open it again later\./);
+  });
+
+  it("offers what the gateway-lost dialog offers: Start Again, the default, or Quit", () => {
+    const options = firstStartDialog({ code: 1 });
+    assert.deepEqual(options.buttons, gatewayLostDialog({ code: 1 }).buttons);
+    assert.equal(options.buttons[START_AGAIN], "Start Again");
+    assert.equal(options.defaultId, START_AGAIN);
+    assert.equal(options.cancelId, START_AGAIN);
+  });
+
+  it("says why a start failed before there was a process, without 'again'", () => {
+    const options = firstStartDialog({ startError: "spawn /app/backend ENOENT" });
+    assert.match(options.detail, /The gateway could not be started \(spawn \/app\/backend ENOENT\)/);
+    assert.doesNotMatch(options.detail, /started again/);
+  });
+
+  it("says a gateway that started and never answered, without saying it could not start", () => {
+    const options = firstStartDialog({ unanswered: true });
+    assert.match(options.detail, /^The gateway started and never answered, so the app has nothing to show\./);
+    assert.doesNotMatch(options.detail, /could not be started/);
+  });
+});
+
+/**
+ * The loading screen is `main.js` code, which no test launches, so its wiring is read as a FILE,
+ * with a floor that proves each pattern is still there to read (the `connectSeam.test.js` rule).
+ */
+describe("the loading screen starts the gateway again", () => {
+  const MAIN = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+  const body = (name) => {
+    const start = MAIN.indexOf(`async function ${name}(`);
+    assert.ok(start > 0, `${name} is gone — this rail is now blind`);
+    return MAIN.slice(start, MAIN.indexOf("\n}\n", start));
+  };
+  /** *first* comes before *then* in *text*, and both are there: a missing one is not "before". */
+  const comesBefore = (text, first, then) => {
+    const at = text.indexOf(first);
+    assert.ok(at >= 0, `${first} is gone — this rail is now blind`);
+    assert.ok(at < text.indexOf(then), `${first} no longer comes before ${then}`);
+  };
+
+  it("says a failed start at once, with the gateway-lost dialog's choices", () => {
+    const loading = body("showLoadingThenConnect");
+    assert.match(loading, /firstStartDialog\(/);
+    // A start that failed has nothing to wait for: the dialog comes before the two-minute wait,
+    // a failed Start Again after a gateway that never answered included (its address is still set).
+    comesBefore(loading, "if (startFailure) throw", "await waitForBackend(");
+    assert.match(loading, /const exit = startFailure \|\| \{ unanswered: true \};/);
+    assert.doesNotMatch(loading, /Try reopening the app/);
+  });
+
+  it("starts a new gateway on Start Again, not only waits again", () => {
+    const loading = body("showLoadingThenConnect");
+    assert.match(loading, /if \(response === START_AGAIN\) \{\s*await startAgain\(\);/);
+    const again = body("startAgain");
+    // Never two gateways on one home: a start that timed out can still be running.
+    comesBefore(again, "await stopGateway()", "await startGateway()");
+    assert.match(again, /startFailure = err\.exit \|\| \{ startError: err\.message \}/);
+  });
+
+  it("keeps the first start's failure for the dialog to say", () => {
+    assert.match(MAIN, /console\.error\("Gateway did not start:", err\.message\);\s*\/\/[^\n]*\n\s*startFailure = err\.exit/);
   });
 });

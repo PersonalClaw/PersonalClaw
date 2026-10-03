@@ -577,11 +577,11 @@ def _load_staged_manifest(staged: Path, *, action: str = "install") -> AppManife
 
     ``install`` calls this for the source peek AND the staged copy; ``update`` does the
     same, and so does ``preview``, the review a consent dialog shows — so the core
-    compatibility gate lives here rather than as a per-entry-point copy that
-    can drift. The peek runs only after :func:`_survey` has passed the source, so it reads a
-    tree whose every link stays inside it. ``enable`` and the boot backend launcher ask
-    :meth:`AppManifest.core_compatibility` directly (their manifest is already installed,
-    so there is nothing to stage)."""
+    compatibility gate and the desktop app's refusal of an app it cannot run live here rather
+    than as per-entry-point copies that can drift. The peek runs only after :func:`_survey` has
+    passed the source, so it reads a tree whose every link stays inside it. ``enable`` and the
+    boot backend launcher ask :func:`enable_refusal`'s two questions directly (their manifest
+    is already installed, so there is nothing to stage)."""
     mpath = staged / APP_MANIFEST_FILENAME
     if not mpath.is_file():
         raise AppLifecycleError(f"no {APP_MANIFEST_FILENAME} in source")
@@ -593,7 +593,22 @@ def _load_staged_manifest(staged: Path, *, action: str = "install") -> AppManife
     if errors:
         raise AppLifecycleError(f"manifest validation failed: {'; '.join(errors)}")
     _core_compatibility_gate(manifest, action=action)
+    _python_children_gate(manifest, action=action)
     return manifest
+
+
+def _python_children_gate(manifest: AppManifest, *, action: str) -> None:
+    """Raise, with the sentence the Store card shows, when this install cannot run the app.
+
+    The desktop app has no Python interpreter for an app's own server, worker, engine, parse
+    scripts or packages (``python_children.app_refusal``), so it refuses the app here, before the
+    bundle is staged or anything of it runs. Every other install passes."""
+    from personalclaw import python_children
+
+    refused = python_children.app_refusal(manifest)
+    if refused:
+        logger.warning("app %s: %s refused — %s", manifest.name, action, refused)
+        raise AppLifecycleError(refused)
 
 
 def _provider_registry():
@@ -1955,11 +1970,17 @@ def repair_app_packages() -> list[str]:
     of the apps it repaired: their import failed during discovery, and it now succeeds in place.
 
     Blocking (it can run pip for minutes), so the gateway calls it on a background thread; with
-    nothing missing — every boot of an unchanged image — it only collects, which is cheap.
+    nothing missing — every boot of an unchanged image — it only collects, which is cheap. The
+    desktop app has no pip (``python_children``), so there it does nothing: an enabled app
+    missing packages was refused at startup, saying so (``app_runtime.start_installed``), and
+    the folder's packages are the installed version's to keep (``app_python.collect``).
     Returns the names of the apps it repaired.
     """
+    from personalclaw import python_children
     from personalclaw.apps import app_python
 
+    if not python_children.available():
+        return []
     broken = app_python.broken_apps()
     if not broken:
         _collect_app_packages()
@@ -2006,6 +2027,28 @@ def _mark_provider_error(name: str, message: str) -> None:
         logger.debug("app %s: provider error annotation failed", name, exc_info=True)
 
 
+def _hosting_refusal(manifest: AppManifest) -> tuple[str, str]:
+    """Why this core does not switch *manifest*'s app on here: ``(audit outcome, sentence)``, or
+    ``("", "")`` when it does. A core older than the app needs, or the desktop app, which cannot
+    run what the app runs as a Python child (``python_children.app_refusal``)."""
+    from personalclaw import python_children
+
+    compat = manifest.core_compatibility()
+    if not compat.admits:
+        return "refused_core_version", compat.reason
+    refused = python_children.app_refusal(manifest)
+    if refused:
+        return "refused_needs_python", refused
+    return "", ""
+
+
+def enable_refusal(name: str) -> str:
+    """The sentence :func:`enable` refuses *name* with, or ``""`` when it would not refuse it, for
+    the surface that asked to switch it on to say."""
+    manifest = _manifest_of(name)
+    return _hosting_refusal(manifest)[1] if manifest is not None else ""
+
+
 def enable(name: str, *, caller: str = "app_manager") -> bool:
     meta = _read_installed(name)
     if meta is None:
@@ -2014,13 +2057,15 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
     if manifest is not None:
         # Core compatibility gate (#1778). Install-time refusal alone is not enough: the core
         # can be DOWNGRADED under an app that was installed against a newer one, and the
-        # app is then already on disk. Checked BEFORE onEnable, so no third-party hook
-        # runs for an app this core cannot host.
-        compat = manifest.core_compatibility()
-        if not compat.admits:
-            logger.warning("app %s: enable refused — %s", name, compat.reason)
-            _audit("enable", "refused_core_version", name, caller=caller, error=compat.reason)
+        # app is then already on disk. The same holds for an app installed where it could
+        # run and found by the desktop app, which cannot. Checked BEFORE onEnable, so no
+        # third-party hook runs for an app this core cannot host.
+        outcome, refused = _hosting_refusal(manifest)
+        if refused:
+            logger.warning("app %s: enable refused — %s", name, refused)
+            _audit("enable", outcome, name, caller=caller, error=refused)
             return False
+        compat = manifest.core_compatibility()
         if compat.reason:
             logger.warning("app %s: %s", name, compat.reason)
         try:

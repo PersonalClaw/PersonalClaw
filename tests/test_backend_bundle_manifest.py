@@ -184,6 +184,49 @@ class TestDynamicImportsReachTheBundle:
         assert module in manifest.sdk_submodules(_REPO_ROOT)
 
 
+class TestTheBundleDescribesWhatItCarries:
+    """``importlib.metadata`` in the bundle describes exactly what the bundle can import.
+
+    An app's declared packages are judged installed by it (``apps.app_python.unmet``), and the
+    bundle used to carry the metadata of a dozen distributions while carrying the modules of some
+    eighty: every model app's ``openai`` read as missing, so its install asked for a pip the
+    bundle does not have. The metadata is derived from the analysed modules, so it can neither
+    miss a bundled distribution nor claim one the bundle cannot import.
+    """
+
+    @staticmethod
+    def _dests(entries) -> set[str]:
+        return {dest for dest, _source, _kind in entries}
+
+    def test_a_bundled_package_carries_its_distributions_metadata(self, manifest):
+        import importlib.metadata
+
+        entries = manifest.metadata_datas(["aiohttp", "aiohttp.web", "json"])
+        record = {str(f) for f in importlib.metadata.distribution("aiohttp").files or []}
+        info = {f for f in record if f.split("/", 1)[0].endswith(".dist-info")}
+        assert info, "aiohttp's own metadata files are not listed — the check would be vacuous"
+        assert info <= self._dests(entries)
+        for dest, source, kind in entries:
+            assert kind == "DATA" and Path(source).is_file(), (dest, source)
+            assert dest.split("/", 1)[0].endswith(".dist-info"), dest
+
+    def test_a_compiled_module_names_its_package_by_its_path(self, manifest):
+        entries = manifest.metadata_datas(["aiohttp/_http_parser.cpython-313-darwin.so"])
+        assert any(d.startswith("aiohttp-") for d in self._dests(entries)), entries
+
+    def test_a_distribution_the_bundle_carries_no_module_of_carries_no_metadata(self, manifest):
+        """pytest is installed here, and is not in the bundle: its metadata would read as an
+        install the bundle cannot import."""
+        dests = self._dests(manifest.metadata_datas(["aiohttp", "json", "os"]))
+        assert not [d for d in dests if d.startswith(("pytest-", "pip-"))], sorted(dests)
+
+    def test_the_spec_adds_it_to_what_the_analysis_collected(self, spec_text):
+        assert "a.datas += manifest.metadata_datas(" in spec_text
+        assert spec_text.index("a.datas += manifest.metadata_datas(") > spec_text.index(
+            "a = Analysis("
+        ), "the metadata is derived from the analysis, so it is added after it"
+
+
 class TestTheSpecActuallyUsesTheDerivation:
     """A manifest nothing calls is a manifest that proves nothing.
 

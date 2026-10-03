@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from personalclaw import python_children
 from personalclaw.apps.core_version import version_tuple
 from personalclaw.apps.disclosure import describe
 from personalclaw.apps.manifest import AppManifest
@@ -297,13 +298,18 @@ class CatalogEntry:
     maintainer: str = ""
     lastValidated: str = ""  # noqa: N815
     lastScanVerdict: str = ""  # noqa: N815
-    # A registry listing names where its app downloads from, and that is third-party data. When
-    # it names a place PersonalClaw will not fetch from for someone else's listing (a folder on
-    # this machine, this computer, a private network, the cloud metadata service), the card is
-    # still shown, with this sentence saying why it cannot be installed, rather than dropped:
-    # a registry whose apps silently vanish reads as a broken Store. "" means installable.
-    # Judged here on what the Store read can see without the network: a host written as a NAME
-    # is judged when an install connects to it (`apps/source.resolve`, `net/git.py`).
+    # Why this card cannot be installed here, as one sentence; "" means installable. The card is
+    # still shown with the sentence rather than dropped: a Store whose apps silently vanish reads
+    # as broken. Two things refuse a card:
+    #
+    #   * A registry listing names where its app downloads from, and that is third-party data.
+    #     When it names a place PersonalClaw will not fetch from for someone else's listing (a
+    #     folder on this machine, this computer, a private network, the cloud metadata service),
+    #     it is refused. Judged on what the Store read can see without the network: a host written
+    #     as a NAME is judged when an install connects to it (`apps/source.resolve`, `net/git.py`).
+    #   * The desktop app cannot run what the app's manifest runs as a Python child: its own
+    #     server, worker, engine, parse scripts, or packages it does not carry
+    #     (`python_children.app_refusal`, the sentence its install and enable are refused with).
     refused: str = ""
     # The registry source whose listing named this card's download address. Set only when the
     # listing names its own ``repo``; "" when the app downloads from the owner's own source. The
@@ -1166,6 +1172,7 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
                     consentKnown=True,
                     **describe(m),
                     coreCompatibility=m.core_compatibility().to_dict(),
+                    refused=python_children.app_refusal(m),
                 )
             )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -1616,6 +1623,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
                     consentKnown=True,
                     **describe(m),
                     coreCompatibility=m.core_compatibility().to_dict(),
+                    refused=python_children.app_refusal(m),
                 )
             )
     return out
@@ -1685,6 +1693,7 @@ def available_bundled() -> list[CatalogEntry]:
                 consentKnown=True,
                 **describe(m),
                 coreCompatibility=m.core_compatibility().to_dict(),
+                refused=python_children.app_refusal(m),
             )
         )
     return out

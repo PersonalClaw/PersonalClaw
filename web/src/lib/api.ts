@@ -1079,6 +1079,11 @@ export interface AppSummary {
   backendExit?: AppProcessExit | null
   /** Its background workers (an app that holds `backgroundTasks`); absent for a core app. */
   workers?: AppWorkerStatus[]
+  /** Why the gateway does not run this app here, as one sentence, `""` (or absent) while it can:
+   *  it needs a newer core, or it runs a Python child the desktop app cannot start (its own server,
+   *  a worker, an engine, parse scripts, packages the app does not carry). Its enable is refused
+   *  with the same sentence, so its panel says it and offers no switch that can only be refused. */
+  refused?: string
   /** Why the gateway must restart before only the installed version of this app runs (what an
    *  update or reinstall could not take out of the process); `""` when nothing is left over. */
   restartReason?: string
@@ -1301,10 +1306,11 @@ export interface AppCatalogEntry {
   maintainer?: string
   lastValidated?: string
   lastScanVerdict?: string
-  /** Why this registry listing cannot be installed, as one sentence (`apps/catalog.py`), or
-   *  absent/empty when it can. A listing that names a folder on this machine, this computer, a
-   *  private network or the cloud metadata service is still listed so the Store can say so; its
-   *  card offers no Install. Render the sentence verbatim. */
+  /** Why this app cannot be installed here, as one sentence (`apps/catalog.py`), or absent/empty
+   *  when it can: a registry listing that names a folder on this machine, this computer, a private
+   *  network or the cloud metadata service, or an app the desktop app cannot run (its own Python
+   *  server, a worker, an engine, parse scripts, packages it does not carry). It is still listed so
+   *  the Store can say so; its card offers no Install. Render the sentence verbatim. */
   refused?: string
   /** The registry whose listing named where this app downloads from. The install dialog sends
    *  it back (`InstallTarget.listedBy`), so the gateway holds the fetch to the listing rules even

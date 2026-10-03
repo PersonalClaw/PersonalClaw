@@ -70,7 +70,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from personalclaw.apps.backend_runtime import _TERM_TIMEOUT, BackendSupervisor
+from personalclaw import python_children
+from personalclaw.apps.backend_runtime import _TERM_TIMEOUT, BackendSupervisor, launcher_kind
 
 # The app-facing contract, imported for the three facts the PARENT needs: which permission
 # gates a worker, what the entry file is called, and what the single worker is named. The
@@ -471,6 +472,14 @@ class WorkerSupervisor:
                 rec.app,
                 rec.worker,
             )
+            return False
+        if launcher_kind("", rec.entry) == "python" and not python_children.available():
+            # The desktop app has no interpreter to start it with: given up on before it ever
+            # starts, with the sentence the app's panel shows, and never revived.
+            if rec.state is not WorkerState.FAILED:
+                rec.state = WorkerState.FAILED
+                rec.reason = python_children.refusal("start this app's Python background worker")
+                logger.warning("app %s worker %s not started: %s", rec.app, rec.worker, rec.reason)
             return False
         pause_reason = _policy_pause_reason()
         if pause_reason:

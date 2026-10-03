@@ -601,13 +601,16 @@ _ENFORCEMENT_PATH_FALLBACK = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 
 class SandboxEnforcementUnavailable(RuntimeError):
-    """The host lacks a binary :func:`sandbox_exec_argv` needs to enforce anything.
+    """The sandbox this host offers cannot be applied to a command, so the command is refused.
 
-    Raised instead of returning an argv built from a name that will not resolve: from the
-    child's side a wrap that dies at ``exec`` is indistinguishable from a wrap that never
-    confined anything, and the diagnostic it leaves names the shim rather than the cause.
-    :func:`detect_backend` gates this — the capability probe requires *both* binaries — so
-    :func:`wrap_argv` never reaches it; it is the floor for a direct call.
+    Raised instead of returning an argv that cannot enforce anything. For
+    :func:`sandbox_exec_argv`, the host lacks a binary it needs: from the child's side a wrap
+    that dies at ``exec`` is indistinguishable from a wrap that never confined anything, and the
+    diagnostic it leaves names the shim rather than the cause. :func:`detect_backend` gates that
+    case (the capability probe requires *both* binaries), so it is the floor for a direct call.
+    For :func:`namespace_argv`, the desktop app cannot start the launcher on a Linux host whose
+    namespaces work, and :func:`wrap_argv` raises it: the caller refuses the command with this
+    message and never runs it unwrapped. ``str()`` is the sentence the owner reads.
     """
 
 
@@ -1126,13 +1129,30 @@ def _resolve_real_agent_bin(name: str) -> str:
     return resolved if resolved else name
 
 
+#: What the desktop app says it cannot do when a command would run in the Linux sandbox
+#: (``python_children.refusal``). The command is refused, never run outside it.
+NAMESPACE_REFUSAL = "start the Linux sandbox this command runs in, so it was not run"
+
+
 def namespace_argv(argv: list[str], sandbox_level: str = "strict") -> list[str]:
     """Wrap *argv* via the Python namespace launcher.
 
     The launcher forks, the parent writes identity UID/GID maps, and the
     child bind-mounts empty dirs over credential paths before exec.
     The child retains the real UID/GID.
+
+    The launcher is a generated script run by this interpreter, which the desktop app does not
+    have: its bundle's executable runs the CLI and nothing else (``python_children``). There the
+    command is refused before anything is written or started, and it never runs without the
+    sandbox: a host whose namespaces work gets them, or gets no command at all.
+
+    Raises:
+        SandboxEnforcementUnavailable: in the desktop app, with the sentence saying so.
     """
+    from personalclaw import python_children
+
+    if not python_children.available():
+        raise SandboxEnforcementUnavailable(python_children.refusal(NAMESPACE_REFUSAL))
     real_argv = list(argv)
     if real_argv:
         real_argv[0] = _resolve_real_agent_bin(real_argv[0])
@@ -1373,6 +1393,21 @@ def reset_backend() -> None:
     _probe_sandbox_exec.cache_clear()
 
 
+def wrap_refusal(mode: str = "auto") -> str:
+    """Why a command wrapped at *mode* would be refused here, or ``""`` when it would run.
+
+    The sentence :func:`wrap_argv` raises with, asked before anything is built, so a tool can
+    refuse the call in its pre-flight: the desktop app cannot start the Linux namespace launcher
+    (:func:`namespace_argv`) on a host whose namespaces work."""
+    if mode == "off":
+        return ""
+    from personalclaw import python_children
+
+    if python_children.available() or detect_backend(config_mode=mode) != "namespace":
+        return ""
+    return python_children.refusal(NAMESPACE_REFUSAL)
+
+
 def wrap_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | None]:
     """Wrap a command argv with OS-level sandbox if available.
 
@@ -1387,6 +1422,11 @@ def wrap_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | Non
         *cleanup_path* is a temp file to delete after the child exits
         (macOS seatbelt profile or Linux launcher script).
         ``None`` when no cleanup is needed.
+
+    Raises:
+        SandboxEnforcementUnavailable: the host's sandbox cannot be applied here (the desktop
+            app on a Linux host, :func:`namespace_argv`). The caller refuses the command with
+            the message, and never runs it without the sandbox.
     """
     if mode == "off":
         return argv, None

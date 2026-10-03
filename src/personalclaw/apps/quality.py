@@ -351,8 +351,14 @@ def run_bundle_tests(app_dir: Path, timeout: float = 900.0) -> tuple[bool, str]:
 
     A real subprocess, deliberately: the tested claim is about the bundle's tests
     PASSING, and importing them in-process would let one app's conftest/stubs leak into
-    the next. ``-p no:cacheprovider`` keeps the run from writing into the bundle.
+    the next. ``-p no:cacheprovider`` keeps the run from writing into the bundle. The desktop
+    app has no interpreter to run pytest with, so there the run is refused before it starts,
+    and the tail is the sentence saying so (``python_children``).
     """
+    from personalclaw import python_children
+
+    if not python_children.available():
+        return False, python_children.refusal("run an app's own tests")
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", str(app_dir), "-q", "-p", "no:cacheprovider"],

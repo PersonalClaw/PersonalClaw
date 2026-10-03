@@ -35,7 +35,13 @@ from personalclaw import gateway_base, run_processes
 from personalclaw.config import loader as config_loader
 from personalclaw.hooks import validate_file_path
 from personalclaw.mcp_core import InternalSecretUnavailable, _internal_secret
-from personalclaw.sandbox import PROFILE_TOOL, build_child_env, spawn_shim_argv, wrap_argv
+from personalclaw.sandbox import (
+    PROFILE_TOOL,
+    build_child_env,
+    spawn_shim_argv,
+    wrap_argv,
+    wrap_refusal,
+)
 
 
 def config_dir() -> Path:
@@ -305,9 +311,13 @@ def run_script_sandboxed(
     file, so the user script process never sees them in its environment.
 
     The child runs under all three isolation controls: the OS path sandbox, the ``tool``
-    resource ceiling, and the allowlisted child environment.
+    resource ceiling, and the allowlisted child environment. Where the sandbox cannot start (the
+    desktop app on a Linux host, ``sandbox.wrap_refusal``) the run is refused with the sentence
+    saying so before anything is written, and the script never runs outside it.
     """
     resolved, func = resolve_script_path(script_spec)
+    if refused := wrap_refusal("standard"):
+        return {"status": "error", "error": refused}
     timeout = timeout if timeout and timeout > 0 else _DEFAULT_SCRIPT_TIMEOUT
 
     # The port is resolved AT CALL TIME from the ONE owner, never from

@@ -578,7 +578,7 @@ def _pip_install(target: Declared, others: list[Declared], env: _Env) -> None:
             )
         except NoInstallerError as exc:
             raise PackageInstallError(
-                f"Couldn't install {target.label}'s Python packages: {exc}."
+                f"Couldn't install {target.label}'s Python packages: {str(exc).rstrip('.')}."
             ) from exc
         logger.info(
             "app %s: installing python packages %s into %s", target.name, requirements, here
@@ -810,9 +810,18 @@ def collect() -> list[str]:
     a directory an older installer left with two copies heals at the next boot. Removal is by
     each distribution's own RECORD, and never outside this directory. Returns ``"name version"``
     for what it removed.
+
+    The desktop app collects nothing (``python_children``). It has no pip, so it installs nothing
+    here, and every package in the folder was installed by the version installed with uv sharing
+    it, for that version's own packages. Judged against the bundle's instead, a copy of one the
+    bundle also carries (a model app's ``openai`` and all it requires) read as one no app needs,
+    and that version's Python layout as another's: collecting from the desktop app deleted what
+    the installed version still runs on.
     """
+    from personalclaw import python_children
+
     here = root()
-    if not here.is_dir():
+    if not here.is_dir() or not python_children.available():
         return []
     removed: list[str] = []
     with _locked():

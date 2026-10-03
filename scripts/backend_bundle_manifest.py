@@ -194,6 +194,43 @@ def child_modules(root: Path | None = None) -> list[str]:
     raise LookupError(f"{SRC_PREFIX}/_frozen_child.py declares no CHILD_MODULES")
 
 
+def _top_level(name: str) -> str:
+    """The import package a bundled module or extension belongs to: ``openai`` for
+    ``openai.types.chat``, ``numpy`` for ``numpy/_core/_multiarray_umath.cpython-313-darwin.so``."""
+    return name.replace("\\", "/").split("/", 1)[0].split(".", 1)[0]
+
+
+def metadata_datas(modules: list[str]) -> list[tuple[str, str, str]]:
+    """The installed metadata of every distribution whose packages the bundle carries, as the
+    ``(destination, source, "DATA")`` entries the spec adds to the analysis.
+
+    *modules* are what the analysis put in the bundle: its pure modules' names and its extension
+    modules' paths. Each import package among them is mapped to the distribution that installed it
+    (``importlib.metadata.packages_distributions``), and that distribution's ``.dist-info`` files
+    are carried, so ``importlib.metadata`` in the bundle describes exactly what the bundle can
+    import. Without them it described a dozen distributions, and an app's packages were judged
+    missing when the bundle carried them (every model app's ``openai``), so its install asked for
+    a pip the desktop app does not have. Derived from the analysis, never listed: a distribution
+    named but not bundled would read as installed while its import failed.
+    """
+    import importlib.metadata
+
+    tops = {_top_level(name) for name in modules}
+    distributions: set[str] = set()
+    for top, names in importlib.metadata.packages_distributions().items():
+        if top in tops:
+            distributions.update(names)
+    out: dict[str, tuple[str, str, str]] = {}
+    for name in sorted(distributions):
+        dist = importlib.metadata.distribution(name)
+        for file in dist.files or []:
+            rel = Path(file)
+            source = Path(str(dist.locate_file(file)))
+            if rel.parts and rel.parts[0].endswith(".dist-info") and source.is_file():
+                out[rel.as_posix()] = (rel.as_posix(), str(source), "DATA")
+    return sorted(out.values())
+
+
 def undeclared_package_files(root: Path | None = None) -> list[str]:
     """Non-Python files under the package tree that NO package-data glob carries.
 

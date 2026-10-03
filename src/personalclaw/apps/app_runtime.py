@@ -83,7 +83,8 @@ def start_installed(*, gateway: bool = True) -> list[str]:
     under ``providers`` alone.) Every enabled app is loaded in the one call, so every app's code
     is registered before any app's backend starts — one launching through another app's sandbox
     tier finds it. A disabled app is listed with its providers off (:func:`record`). An enabled
-    app this core cannot host is refused as an enable refuses it (:func:`_refuse`).
+    app this core cannot host is refused as an enable refuses it (:func:`_refuse`): one that needs
+    a newer core, and in the desktop app one that runs a Python child the app cannot start.
 
     ``gateway=False`` is the same walk for a process that is not the gateway, such as a CLI
     command that resolves a model: each enabled app's code and registrations
@@ -91,6 +92,8 @@ def start_installed(*, gateway: bool = True) -> list[str]:
 
     Returns the names of the apps it loaded.
     """
+    from personalclaw import python_children
+
     ready: list[AppManifest] = []
     for manifest, enabled in installed():
         if not enabled:
@@ -99,6 +102,10 @@ def start_installed(*, gateway: bool = True) -> list[str]:
         compat = manifest.core_compatibility()
         if not compat.admits:
             _refuse(manifest, compat.reason)
+            continue
+        refused = python_children.app_refusal(manifest)
+        if refused:
+            _refuse(manifest, refused)
             continue
         if compat.reason:
             logger.warning("app %s: %s", manifest.name, compat.reason)
@@ -166,9 +173,10 @@ def _refuse(manifest: AppManifest, reason: str) -> None:
     """Keep an enabled app this core cannot host from running: listed, off, and saying why.
 
     The refusal ``app_manager.enable`` makes, made at startup for an app that is already enabled —
-    the core was downgraded under it. Its providers are listed off with *reason* as their error
-    (Settings → Providers shows it), and its backend and worker are held, so neither watchdog
-    starts them from files this core cannot run.
+    the core was downgraded under it, or the desktop app found an app installed where it could
+    run. Its providers are listed off with *reason* as their error (Settings → Providers shows
+    it), and its backend and worker are held, so neither watchdog starts them from files this
+    core cannot run.
     """
     name = manifest.name
     logger.warning("app %s: not started — %s", name, reason)

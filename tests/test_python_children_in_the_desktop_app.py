@@ -16,9 +16,11 @@ So there are two ways a child starts, and each call site takes one:
   ``_frozen_child.CHILD_MODULES`` declares (and which the bundle therefore carries).
 
 What is left needs a real Python interpreter, which the desktop app does not have, and is named
-below with the reason. The census is an AST walk over every list or tuple whose first item is
-``sys.executable``: a new one reds :func:`test_every_interpreter_child_is_classified` until its
-author says which kind it is.
+below with the reason and where the desktop app refuses it before it starts (``python_children``,
+whose sentence each refusal says; ``test_the_desktop_app_refuses_python_children`` holds each
+one to it), or why the desktop app never reaches it. The census is an AST walk over every list or
+tuple whose first item is ``sys.executable``: a new one reds
+:func:`test_every_interpreter_child_is_classified` until its author says which kind it is.
 """
 
 from __future__ import annotations
@@ -47,24 +49,40 @@ _CLASSIFIED: dict[str, str] = {
     "sandbox.py::spawn_shim_argv": "module",
     "computer_use/service.py::_driver_argv": "module",
     "evals/runner.py::_spawn_cell": "module",
-    "_installer.py::_pip": "interpreter: pip, run as a module of this interpreter's environment",
-    "_installer.py::install_argv": "interpreter: pip installs into this interpreter's environment",
+    "_installer.py::_pip": (
+        "interpreter: pip, run as a module of this interpreter's environment; refused there"
+    ),
+    "_installer.py::install_argv": (
+        "interpreter: pip installs into this interpreter's environment; never reached in the "
+        "desktop app, whose update is a new download (self_update.detect_install_kind)"
+    ),
     "_installer.py::checkout_install_argv": "interpreter: installs a source checkout, never frozen",
     "apps/app_python.py::child_argv": (
-        "interpreter: an app's own Python entry script, with the packages the app declared"
+        "interpreter: an app's own Python entry script, with the packages the app declared; "
+        "refused with its app (python_children.app_refusal) and by both supervisors' starts"
     ),
     "apps/backend_runtime.py::BackendSupervisor._launch_cmd": (
-        "interpreter: an app's own Python entry script"
+        "interpreter: an app's own Python entry script; refused with its app and by "
+        "BackendSupervisor.start and WorkerSupervisor._spawn"
     ),
-    "apps/quality.py::run_bundle_tests": "interpreter: an app's own tests, under pytest",
-    "cli_doctor.py::_doctor": "interpreter: checks the packages of this interpreter's environment",
+    "apps/quality.py::run_bundle_tests": (
+        "interpreter: an app's own tests, under pytest; refused there"
+    ),
+    "cli_doctor.py::_doctor": (
+        "interpreter: checks the packages of this interpreter's environment; the desktop app's "
+        "rows are read in-process instead (cli_doctor._bundle_rows)"
+    ),
     "knowledge_providers/pack_parse.py::run_parse_script": (
-        "interpreter: a generated parse script, run in isolated mode"
+        "interpreter: a generated parse script, run in isolated mode; refused there"
     ),
     "local_models/sidecar.py::SidecarInstall._step_venv": (
-        "interpreter: makes a virtual environment from this interpreter"
+        "interpreter: makes a virtual environment from this interpreter; refused by Install "
+        "engine (ModelDownloadRegistry.start_install) and SidecarInstall.run_one"
     ),
-    "sandbox.py::namespace_argv": "interpreter: the Linux namespace launcher, a generated script",
+    "sandbox.py::namespace_argv": (
+        "interpreter: the Linux namespace launcher, a generated script; refused there, and the "
+        "command never runs without it"
+    ),
 }
 
 

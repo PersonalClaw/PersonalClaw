@@ -161,6 +161,10 @@ hidden += collect_submodules("personalclaw.computer_use")
 # LLM provider SDKs are lazy-imported inside provider classes.
 hidden += collect_submodules("openai")
 hidden += collect_submodules("anthropic")
+# openai requires tqdm and imports it only lazily, so the analysis left it out. Carried, so the
+# bundle holds every package openai requires, and an app that requires openai installs here
+# without asking for a pip the bundle does not have (`metadata_datas` below).
+hidden += ["tqdm"]
 # Snowball stemmer registers languages dynamically.
 hidden += collect_submodules("snowballstemmer")
 # slack_sdk has lots of conditional imports.
@@ -218,6 +222,14 @@ a = Analysis(
     ],
     noarchive=False,
     optimize=0,
+)
+# What `importlib.metadata` reads in the bundle: the metadata of every distribution the analysis
+# carries modules of. An app's declared packages are judged installed by it, so without it every
+# model app's `openai` read as missing and its install asked for a pip the bundle does not have.
+# Derived from what was analysed (`manifest.metadata_datas`), never listed.
+a.datas += manifest.metadata_datas(
+    [name for name, _src, _kind in a.pure]
+    + [name for name, _src, kind in a.binaries if kind == "EXTENSION"]
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

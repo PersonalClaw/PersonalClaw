@@ -23,7 +23,13 @@ const {
 const { shutdownGateway } = require("./gatewayShutdown");
 const { makeSystemBrowser, navigationGuard, registerSystemBrowserIpc, windowOpenHandler } = require("./systemBrowser");
 const { buildGatewayEnv } = require("./gatewayEnv");
-const { START_AGAIN, gatewayLostDialog, isUnasked, makeLastLine } = require("./gatewayLost");
+const {
+  START_AGAIN,
+  firstStartDialog,
+  gatewayLostDialog,
+  isUnasked,
+  makeLastLine,
+} = require("./gatewayLost");
 const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
 const { loadRegistry } = require("./endpointRegistry");
@@ -105,6 +111,8 @@ let mainWindow = null;
 let gatewayProcess = null;
 let isQuitting = false;
 let presenceTimer = null;
+/** How the latest start of the gateway failed (`startGateway`'s `err.exit`), until one succeeds. */
+let startFailure = null;
 
 /**
  * The gateway THIS shell spawned, resolved from its READY line once bound. Always loopback.
@@ -1431,26 +1439,35 @@ function connectHandlers() {
 
 // ── Loading screen ──
 
+/**
+ * Show the loading screen until the gateway this shell started answers, then the dashboard.
+ *
+ * A start that failed (`startFailure`) is said at once, not after the two-minute wait for an
+ * answer nothing would give, and so is a gateway that started and never answered: how it ended,
+ * the last thing it said, and Start Again, which starts a new gateway (`startAgain`), or Quit.
+ */
 async function showLoadingThenConnect(win) {
   const wc = win.webContents;
   wc.loadFile(path.join(__dirname, "loading.html"));
   win.show();
 
   try {
+    // A start that failed leaves nothing to wait for, a Start Again after one that never
+    // answered included (the address is still that gateway's).
+    if (startFailure) throw new Error("the gateway did not start");
     await waitForBackend(win);
     if (win.isDestroyed()) return;
     activeUrl = localGatewayUrl;
     wc.loadURL(localGatewayUrl);
   } catch {
     if (win.isDestroyed()) return;
-    const { response } = await dialog.showMessageBox(win, {
-      type: "error",
-      title: "PersonalClaw",
-      message: "Could not connect to the PersonalClaw backend.",
-      detail: "The gateway failed to start. Try reopening the app.",
-      buttons: ["Retry", "Quit"],
-    });
-    if (response === 0) return showLoadingThenConnect(win);
+    const exit = startFailure || { unanswered: true };
+    const { response } = await dialog.showMessageBox(win, firstStartDialog(exit));
+    if (isQuitting) return;
+    if (response === START_AGAIN) {
+      await startAgain();
+      return showLoadingThenConnect(win);
+    }
     if (win === mainWindow) {
       isQuitting = true;
       app.quit();
@@ -1458,6 +1475,30 @@ async function showLoadingThenConnect(win) {
       win.destroy();
     }
   }
+}
+
+/**
+ * Start the gateway again after a start that failed or never answered, as the gateway-lost
+ * dialog's Start Again does. A start that timed out can still be running, so it is stopped first:
+ * never two gateways on one home. A start that fails again is kept in `startFailure` for the
+ * dialog to say. The first ready line of a gateway the windows never had is taken the way the
+ * app's own start takes it; one that replaced a running gateway is followed there by
+ * `startGateway` itself, which registers the shell again.
+ */
+async function startAgain() {
+  const hadGateway = Boolean(localGatewayUrl);
+  if (gatewayProcess) await stopGateway();
+  try {
+    await startGateway();
+    startFailure = null;
+  } catch (err) {
+    console.error("Gateway did not start again:", err.message);
+    startFailure = err.exit || { startError: err.message };
+    return;
+  }
+  if (hadGateway) return;
+  if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
+  await registerWithGateway();
 }
 
 // ── New Tab — opens another view onto the ACTIVE gateway ──
@@ -1635,6 +1676,8 @@ if (!app.requestSingleInstanceLock()) {
       await startGateway();
     } catch (err) {
       console.error("Gateway did not start:", err.message);
+      // Said by the loading screen's dialog, which offers to start it again.
+      startFailure = err.exit || { startError: err.message };
     }
     // Needs localGatewayUrl from the READY line, so it follows the gateway start. A
     // failure here leaves the gateway reporting "not connected" — degraded but

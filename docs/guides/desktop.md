@@ -226,6 +226,43 @@ exited and the last thing it said, and two choices. **Start Again** starts a new
 window moves to it, signed in, the way it does after a restart. **Quit** quits the app. Dismissing
 the dialog starts it again too; a start that fails says so the same way.
 
+A gateway that cannot start when the app opens is the same news, said as soon as the start fails:
+**PersonalClaw's gateway did not start**, with how it exited and the last thing it said, and the
+same two choices. **Start Again** starts a new gateway; the window loads the dashboard once it
+answers. A gateway that started and never answered, within two minutes, is said the same way.
+
+## What the desktop app runs, and what needs the installed version
+
+The desktop app runs PersonalClaw's gateway from one bundled program. It carries the Python packages
+PersonalClaw is built with, the model SDKs among them, and it starts no other Python program. So what
+runs inside the gateway runs in the desktop app, and so does an app whose code runs there: every model
+app whose packages the bundle carries (OpenAI and the OpenAI-compatible ones, Anthropic) among them.
+An app whose server runs on Node runs too, when Node is installed.
+
+What needs a Python program of its own does not run in the desktop app. It is refused before
+anything of it starts, with one sentence that says what the desktop app can't run and that the
+installed version can:
+
+| What | Where the desktop app says so |
+|---|---|
+| An app that runs its own Python server or background worker, an engine in a Python environment of its own, connector-pack parse scripts, or Python packages the bundle does not carry | its Store card and details, which offer no Install; the install dialog; Activate. An app like this already installed, in a PersonalClaw folder the installed version also uses, says it on its Library card and details, and never starts, so nothing retries it. |
+| Install engine, for an app whose engine runs in a Python environment of its own | its engine section in Settings → Providers, when you press it |
+| A command in the Linux sandbox: the agent's bash tool, a hook or command automation, a scheduled script, an agent CLI's session, the terminal (Linux only) | where it would run: the tool call, the run, the terminal. The command is not run, and it never runs outside the sandbox. |
+| `personalclaw doctor`'s `pip:` row | the row says the desktop app installs no Python packages |
+
+To use any of them, install PersonalClaw with uv, as [Getting started](getting-started.md#1-install)
+describes:
+
+```bash
+uv tool install --python 3.13 personalclaw
+```
+
+The installed version runs all of the above, and it uses the same PersonalClaw folder
+(`~/.personalclaw`), so your conversations, settings and installed apps are there. The desktop app
+installs no Python packages in that folder and leaves the ones the installed version installs for
+its apps alone. Quit the desktop app before you start it, so the two do not run on one folder at
+once.
+
 ## Push-to-talk
 
 Press the shortcut, speak, press it again. The recording is transcribed by whichever

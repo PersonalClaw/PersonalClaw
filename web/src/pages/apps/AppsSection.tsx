@@ -106,6 +106,8 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, sidecar: !!a.sidecar, origin: a.origin,
     updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion, latestSource: a.latestSource,
     updateSource: a.updateSource,
+    // Why the gateway does not run it here: the card says it where its Open or Activate would be.
+    refused: a.refused ?? '',
     // Carried, not defaulted. Coercing an installed app's absent block to `{}`
     // here would be harmless today but would make the Library the one surface that
     // cannot tell "declared nothing" from "declared all-false".
@@ -1241,15 +1243,18 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
   // app is always-on (no install lifecycle): omit uninstall/toggle + force-uninstall,
   // and show "Configure" only when it has settings (hasConfig) — a config-less native
   // provider (filesystem/tools) is managed from the Tools page.
+  // An installed app the gateway does not run here (`refused`) offers nothing that runs it: its
+  // page, its settings and its Activate could only be refused, with the sentence the card shows.
+  const runs = !item.refused
   const menuItems: ContextMenuItem[] = item.installed
     ? [
         { icon: <Blocks size={15} />, label: 'Details', onSelect: onOpen },
-        ...(item.hasUI && item.enabled ? [{ icon: <LayoutGrid size={15} />, label: 'Open page', onSelect: () => onAction(app, 'open') }] : []),
-        ...((item.enabled && (!item.native || item.hasConfig || item.configuredPerInstance)) ? [{ icon: <Settings2 size={15} />, label: item.configuredPerInstance ? 'Manage instances' : 'Configure', onSelect: () => onAction(app, 'configure') }] : []),
+        ...(runs && item.hasUI && item.enabled ? [{ icon: <LayoutGrid size={15} />, label: 'Open page', onSelect: () => onAction(app, 'open') }] : []),
+        ...((runs && item.enabled && (!item.native || item.hasConfig || item.configuredPerInstance)) ? [{ icon: <Settings2 size={15} />, label: item.configuredPerInstance ? 'Manage instances' : 'Configure', onSelect: () => onAction(app, 'configure') }] : []),
         { icon: <RefreshCw size={15} />, label: 'Update…', onSelect: () => onAction(app, 'update') },
         // A native app is locked on — omit uninstall/disable + force-uninstall.
         ...(item.native ? [] : [
-          { icon: <Power size={15} />, label: item.enabled ? 'Deactivate' : 'Activate', onSelect: () => onAction(app, 'toggle') },
+          ...(runs || item.enabled ? [{ icon: <Power size={15} />, label: item.enabled ? 'Deactivate' : 'Activate', onSelect: () => onAction(app, 'toggle') }] : []),
           // Safe removal (files go, the user's data/ stays) before the destructive one.
           { icon: <Archive size={15} />, label: 'Uninstall…', onSelect: () => onAction(app, 'uninstall') },
           { icon: <Trash2 size={15} />, label: 'Force uninstall…', onSelect: () => onAction(app, 'force-uninstall'), danger: true },
@@ -1410,7 +1415,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
           </span>
         )}
 
-        {!item.installed && item.refused && <ListingRefusal refused={item.refused} compact />}
+        {item.refused && <ListingRefusal refused={item.refused} compact />}
 
         {/* A registry listing's own provenance. Two lines, and the ORDER is the control:
             the non-endorsement is the first thing read, the facts second. Reversing them would
@@ -1444,7 +1449,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
             <MoreRow total={(item.tags ?? []).length} shown={3} noun="tags" />
           </div>
           {item.installed ? (
-            item.hasUI && item.enabled ? (
+            !runs ? null : item.hasUI && item.enabled ? (
               <span onClick={stop}><Button variant="secondary" size="sm" onClick={() => onAction(app, 'open')}><LayoutGrid size={14} /> Open</Button></span>
             ) : item.enabled ? (
               // `text-positive` was inert too — `--color-positive` is undefined; `ok` is the token,
@@ -1467,10 +1472,10 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
   )
 }
 
-/** Why a registry listing cannot be installed, where its Install would be: the sentence from
- *  `apps/catalog.py`, verbatim, so the card, the detail panel and the install dialog's error all
- *  say the same thing. `compact` is the card's clamped form; the full sentence is in `title` and
- *  in the detail panel. */
+/** Why an app cannot be installed or run here, where its Install or Activate would be: the
+ *  gateway's sentence, verbatim (a registry listing it will not fetch; an app the desktop app
+ *  cannot run), so the card, the detail panel and the install or enable error all say the same
+ *  thing. `compact` is the card's clamped form; the full sentence is in `title` and in the panel. */
 function ListingRefusal({ refused, compact = false }: { refused: string; compact?: boolean }) {
   return (
     <div role="note" data-testid="store-listing-refused" className="flex items-start gap-1.5 text-warn"
@@ -1672,6 +1677,15 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
           </div>
         )}
 
+        {/* Why the gateway does not run it here (a newer core it needs; a Python child the desktop
+            app cannot start), the sentence its Activate is refused with. Nothing below offers to
+            open, configure or activate it: each could only be refused. */}
+        {app.refused && (
+          <div className="rounded-md border border-outline-variant bg-surface-high p-m">
+            <ListingRefusal refused={app.refused} />
+          </div>
+        )}
+
         {/* What an update, a reinstall or turning the app off could not take out of the gateway,
             stated until a restart does — the toast that first said it is gone by now. A turned-off
             app is not "running", so its sentence does not open by saying it is. */}
@@ -1703,7 +1717,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
         {app.hasBackend && <BackendStatus app={app} />}
         {(app.workers ?? []).map((w) => <WorkerStatus key={w.name} worker={w} />)}
 
-        {app.hasUI && app.enabled && (
+        {!app.refused && app.hasUI && app.enabled && (
           <label className="flex items-center justify-between gap-3 rounded-md border border-outline-variant bg-surface-high p-m">
             <span className="min-w-0">
               <span className="flex items-center gap-2 text-on-surface" data-type="body-s"><LayoutGrid size={14} /> Show in navigation</span>
@@ -1749,13 +1763,15 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
               store download — a deactivated app's files never left disk, so
               offering "Install" here promised a fetch that would not happen. */}
           <div className="flex flex-wrap gap-2">
-            {app.hasUI && app.enabled && (
+            {!app.refused && app.hasUI && app.enabled && (
               <Button variant="primary" size="sm" onClick={onOpen}><LayoutGrid size={15} /> Open</Button>
             )}
-            <Button variant={app.enabled ? 'secondary' : 'primary'} size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={toggle}>
-              <Power size={15} /> {app.enabled ? 'Deactivate' : 'Activate'}
-            </Button>
-            {app.enabled && (app.configuredPerInstance
+            {(!app.refused || app.enabled) && (
+              <Button variant={app.enabled ? 'secondary' : 'primary'} size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={toggle}>
+                <Power size={15} /> {app.enabled ? 'Deactivate' : 'Activate'}
+              </Button>
+            )}
+            {!app.refused && app.enabled && (app.configuredPerInstance
               ? <Button variant="ghost" size="sm" onClick={onManageInstances}><Settings2 size={15} /> Manage instances</Button>
               : <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>)}
             <Button variant="ghost" size="sm" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>

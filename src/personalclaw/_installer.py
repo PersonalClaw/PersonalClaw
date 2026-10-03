@@ -203,7 +203,13 @@ def missing_pip(python: str = "") -> tuple[str, str]:
 
 def _pip() -> list[str]:
     """``python -m pip`` on the running interpreter. Raises :class:`NoInstallerError`, naming
-    the fix, when this environment has no ``pip`` module."""
+    the fix, when this environment has no ``pip`` module, and in the desktop app, whose bundle
+    is no interpreter to run pip with (``python_children``): there it says so, and that the
+    version installed with uv installs them."""
+    from personalclaw import python_children
+
+    if not python_children.available():
+        raise NoInstallerError(python_children.refusal("install Python packages"))
     if not _have_pip():
         problem, fix = missing_pip()
         raise NoInstallerError(

@@ -37,8 +37,9 @@ export interface GenUiRegistrarSdk {
 }
 
 /** Whether this app should contribute components right now. */
-export function contributesComponents(app: Pick<AppSummary, 'enabled' | 'uiComponents' | 'uiCapabilities'>): boolean {
-  if (!app.enabled) return false
+export function contributesComponents(app: Pick<AppSummary, 'enabled' | 'refused' | 'uiComponents' | 'uiCapabilities'>): boolean {
+  // An app the gateway does not run here (`refused`) contributes nothing, as an app turned off does.
+  if (!app.enabled || app.refused) return false
   if (!(app.uiComponents || '').trim()) return false
   return (app.uiCapabilities || []).includes(CAP)
 }

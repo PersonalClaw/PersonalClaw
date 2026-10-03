@@ -317,7 +317,8 @@ function AppInner() {
   const [navAppSet, setNavAppSet] = useState<string[]>(() => getNavApps())
   useEffect(() => onNavAppsChange(() => setNavAppSet(getNavApps())), [])
   const appNavItems: NavItem[] = (installedApps ?? [])
-    .filter((a) => a.enabled && a.hasUI && (a.uiPages?.length ?? 0) > 0 && navAppSet.includes(a.name))
+    // An app the gateway does not run here (`refused`) is off as far as the shell is concerned.
+    .filter((a) => a.enabled && !a.refused && a.hasUI && (a.uiPages?.length ?? 0) > 0 && navAppSet.includes(a.name))
     .map((a) => ({
       id: `app/${a.name}`,
       label: a.uiPages[0].label || a.displayName,

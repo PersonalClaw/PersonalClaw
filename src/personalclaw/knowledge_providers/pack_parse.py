@@ -470,9 +470,19 @@ def run_parse_script(
     contract). The body reaches it on stdin. Nothing else is handed over: no network, no
     credential, no gateway secret, no inherited environment beyond
     :func:`~personalclaw.sandbox.build_child_env`'s allowlist.
+
+    The desktop app has no interpreter to run the script with, so there the parse is refused
+    (:attr:`ParseFailure.UNRUNNABLE`) before anything is written or started, with the sentence
+    saying so (``python_children``).
     """
+    from personalclaw import python_children
     from personalclaw.sandbox import PROFILE_TOOL, build_child_env, spawn_shim_argv, wrap_argv
 
+    if not python_children.available():
+        raise ParseFailure(
+            ParseFailure.UNRUNNABLE,
+            python_children.refusal("run this source's Python parse script"),
+        )
     script = Path(script)
     _require_script(script)
     if len(body) > MAX_BODY_BYTES:

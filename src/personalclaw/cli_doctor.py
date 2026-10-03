@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from personalclaw import __version__ as _pc_version
-from personalclaw import approval_grants
+from personalclaw import approval_grants, python_children
 from personalclaw.agent import AGENT_FILENAME, agents_dir
 from personalclaw.atomic_write import atomic_write
 from personalclaw.auth.modes import classify_auth_mode_request
@@ -738,6 +738,27 @@ def _pip_row(python: str | Path, issues: list[str]) -> None:
     issues.append("pip")
 
 
+#: What the gateway imports to serve at all, which the dependency row checks.
+_GATEWAY_MODULES = ("websockets", "aiohttp")
+
+
+def _bundle_rows(issues: list[str]) -> None:
+    """The dependency rows of the desktop app, whose bundle is the interpreter doctor runs on and
+    starts no other Python (``python_children``): what the bundle carries, checked in this
+    process (asking it to run ``-c`` reached its CLI's parser, and the row read missing modules),
+    and that it has no pip, which is not a fault there but the desktop app's limit."""
+    missing = [name for name in _GATEWAY_MODULES if importlib.util.find_spec(name) is None]
+    if missing:
+        print(f"  deps:        ❌ missing from the desktop app: {', '.join(missing)}")
+        issues.append("python deps")
+    else:
+        print(f"  deps:        ✅ {', '.join(_GATEWAY_MODULES)} available")
+    print(
+        "  pip:         ⏹  not in the desktop app, which installs no Python packages (the version "
+        f"you install with `{python_children.INSTALL_COMMAND}` does)"
+    )
+
+
 def _doctor(*, start_agent_clis: bool = False) -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity.
 
@@ -1009,7 +1030,9 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     print("\nRuntime")
     _interpreter_row("python", sys.executable, sys.version.split()[0], issues)
     print(f"  backend:     ✅ {_pc_version}")
-    if venv_py is not None:
+    if not python_children.available():
+        _bundle_rows(issues)
+    elif venv_py is not None:
         try:
             ver = _probe_python_version(venv_py)
         except Exception as exc:

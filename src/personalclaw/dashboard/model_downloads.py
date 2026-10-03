@@ -429,13 +429,20 @@ class ModelDownloadRegistry:
         """Begin (or re-use) the resumable sidecar install for *provider*.
 
         Idempotent twice over: an in-flight job is returned as-is, and re-running a
-        finished install re-runs steps that existence-check themselves into ``skipped``.
+        finished install re-runs steps that existence-check themselves into ``skipped``. The
+        desktop app has no interpreter to make an engine's environment with, so there it is
+        refused before a job exists, with the sentence saying so (``python_children``).
         """
         if not provider:
             return None, "Missing 'provider'"
         install = self.install(provider)
         if install is None:
             return None, f"{provider!r} declares no sidecar provider to install"
+        from personalclaw import python_children
+        from personalclaw.local_models.sidecar import ENGINE_REFUSAL
+
+        if not python_children.available():
+            return None, python_children.refusal(ENGINE_REFUSAL)
 
         existing_id = self._by_model.get((provider, _INSTALL_MODEL))
         if (

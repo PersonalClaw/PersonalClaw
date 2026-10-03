@@ -216,6 +216,7 @@ class BashActionProvider(ActionProvider):
 
         from personalclaw.sandbox import (
             PROFILE_TOOL,
+            SandboxEnforcementUnavailable,
             build_child_env,
             create_subprocess_limited,
             wrap_argv,
@@ -238,7 +239,12 @@ class BashActionProvider(ActionProvider):
             },
         )
         argv = ["/bin/sh", "-c", command]
-        wrapped_argv, cleanup_path = wrap_argv(argv)
+        try:
+            wrapped_argv, cleanup_path = wrap_argv(argv)
+        except SandboxEnforcementUnavailable as exc:
+            # Refused, and never run outside the sandbox. Not `blocked`: that is a hook's own
+            # answer (exit 2), and this command never ran to give one.
+            return ActionResult(success=False, error=str(exc), duration_ms=0)
 
         proc = None
         try:

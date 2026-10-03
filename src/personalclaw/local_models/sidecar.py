@@ -144,6 +144,22 @@ def venv_python(venv: Path) -> Path:
     return venv / "bin" / "python"
 
 
+#: What the desktop app says it cannot do when an engine would start or install
+#: (``python_children.refusal``): its bundle has no interpreter for one, and does not carry the
+#: child harness, which an engine runs by path.
+ENGINE_REFUSAL = "install or start this app's engine in a Python environment of its own"
+
+
+def _refuse_in_the_desktop_app(generation: int) -> None:
+    """Refuse an engine child before it starts when this install has no interpreter for it."""
+    from personalclaw import python_children
+
+    if not python_children.available():
+        raise SidecarCrashed(
+            "spawn_failed", generation=generation, detail=python_children.refusal(ENGINE_REFUSAL)
+        )
+
+
 def _child_python(venv: Path) -> Path:
     """The interpreter a child runs under: *venv*'s when it has one, else the gateway's own.
 
@@ -320,6 +336,9 @@ class SidecarRunner:
     def _ensure_started_locked(self) -> int:
         if self._child is not None and self._child.is_alive():
             return self._generation
+        # Refused before anything is counted: no restart would change it, so it is never a
+        # crash, never spends the restart budget, and the watchdog has nothing to revive.
+        _refuse_in_the_desktop_app(self._generation)
         if self._consecutive_failures > self.restart_max:
             raise SidecarCrashed(
                 "restart_budget_exhausted",
@@ -651,6 +670,7 @@ async def run_once(
     from personalclaw.cancellation import kill_timed_out
     from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
 
+    _refuse_in_the_desktop_app(1)
     python = _child_python(sidecar_venv_dir(app))
     argv = [str(python), str(_CHILD_HARNESS), "--worker", str(Path(worker))]
     launch = spawn_shim_argv(argv, PROFILE_TOOL)
@@ -998,9 +1018,12 @@ class SidecarInstall:
             return False
         handler = getattr(self, f"_step_{step.name}")
         step.status, step.started_at = "running", time.time()
+        from personalclaw import python_children
+
         try:
             if self._cancelled:
                 raise InstallCancelled("the install was cancelled")
+            python_children.require(ENGINE_REFUSAL)
             step.status, step.detail = handler()
         except Exception as exc:  # noqa: BLE001 — a step failure is reported, not raised
             from personalclaw._installer import NoInstallerError
@@ -1008,9 +1031,12 @@ class SidecarInstall:
             step.status = "cancelled" if isinstance(exc, InstallCancelled) else "error"
             # A missing pip's fix is the remediation, so the error is only what broke: the
             # card shows the two together. That sentence is whole however long the interpreter's
-            # path is; only an exception's own text, which can be any length, is cut.
+            # path is, and so is the desktop app's refusal, which says what to do itself; only
+            # an exception's own text, which can be any length, is cut.
             if isinstance(exc, NoInstallerError) and exc.problem:
                 broke = exc.problem
+            elif isinstance(exc, python_children.NeedsInterpreter):
+                broke = str(exc)
             else:
                 broke = str(exc)[:200]
             step.detail = broke
@@ -1231,6 +1257,10 @@ def _classify_install_failure(exc: Exception, step: str, log: str = "") -> tuple
     """
     if isinstance(exc, InstallCancelled):
         return "cancelled", "Install engine starts it again, from the step it stopped at."
+    from personalclaw import python_children
+
+    if isinstance(exc, python_children.NeedsInterpreter):
+        return "needs_python", ""  # the refusal already says what to do instead
     from personalclaw._installer import NoInstallerError
 
     if isinstance(exc, NoInstallerError) and exc.fix:

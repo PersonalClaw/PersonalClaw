@@ -244,7 +244,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
     notification per newly-available version (deduped by ``name + latest_version`` in
     ``surface_app_updates`` so re-viewing never re-nags). ``updateSource`` is where an Update
     of the app starts when none was found: the source it was installed from."""
-    from personalclaw.apps.app_manager import installed_disclosure
+    from personalclaw.apps.app_manager import enable_refusal, installed_disclosure
     from personalclaw.apps.catalog import (
         resolve_hero_url,
         source_kind_for_origin,
@@ -371,6 +371,10 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 # different facts. Read straight off the manifest (not defaulted per
                 # axis) so an undeclared axis stays undeclared on the wire.
                 "quality": _quality_wire(manifest.get("quality")),
+                # Why this core does not run it here, the sentence its enable is refused with
+                # (a core older than it needs; the desktop app, which runs no Python child of
+                # an app). "" while it can run.
+                "refused": enable_refusal(name),
                 "installedAt": app.get("installedAt", ""),
                 "updatedAt": app.get("updatedAt", ""),
                 # A newer version is available from this app's source. The card
@@ -849,7 +853,10 @@ async def api_app_enable(request: web.Request) -> web.Response:
     )
     _sel_log("apps.enable", "ok" if ok else "error", name, request)
     if not ok:
-        return web.json_response({"error": f"enable failed for {name!r}"}, status=400)
+        # The sentence the refusal was made with, when this core will not run the app here (the
+        # Apps page shows the same one); else the enable failed for a reason of its own.
+        refused = await asyncio.to_thread(app_manager.enable_refusal, name)
+        return web.json_response({"error": refused or f"enable failed for {name!r}"}, status=400)
     _reconcile_app_crons(request)  # register the app's manifest crons now, not at next restart
     return web.json_response(
         {"ok": True, "name": name, "enabled": True, "providerErrors": await _provider_errors(name)}

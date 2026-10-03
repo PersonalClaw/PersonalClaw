@@ -15,6 +15,9 @@
  * That line is the gateway's text, so it gets the treatment the shell gives any text it did not
  * write: escape sequences and control characters out, whitespace collapsed, a length clamp.
  *
+ * A gateway that does not start when the app opens is the same news with the same two choices
+ * (`firstStartDialog`): said as soon as the start fails, and Start Again starts a new one.
+ *
  * A separate pure module so the sentence and the tail are executed by
  * `desktop/test/gatewayLost.test.js` rather than read out of `main.js` as text.
  */
@@ -83,25 +86,19 @@ function isUnasked({ held, quitting }) {
 }
 
 /**
- * The dialog for a gateway that stopped when nobody asked it to, or that could not be started again.
+ * The two choices, said the same way whether the gateway stopped or never started: Start Again,
+ * which starts a new gateway, or Quit.
  *
- * @param {object} exit
- * @param {number|null} [exit.code] - the exit status, or null when a signal ended it.
- * @param {string|null} [exit.signal] - the signal that ended it, if one did.
- * @param {string} [exit.lastLine] - the last line it wrote to stderr (`makeLastLine`).
- * @param {string} [exit.startError] - why a start failed before there was a process to exit.
- * @returns {object} `dialog.showMessageBox` options; `response` is START_AGAIN or QUIT.
+ * @param {string} message - the dialog's headline.
+ * @param {string} what - how it ended, without a full stop.
+ * @param {string} lastLine - the last line it wrote to stderr, or "".
  */
-function gatewayLostDialog({ code = null, signal = null, lastLine = "", startError = "" } = {}) {
-  let what;
-  if (startError) what = `The gateway could not be started again (${cleanLine(startError)})`;
-  else if (code !== null && code !== undefined) what = `The gateway exited with code ${code}`;
-  else what = `The gateway was stopped by ${signal ? `a signal (${signal})` : "the system"}`;
+function startAgainDialog(message, what, lastLine) {
   const said = lastLine ? ` Its last message was: ${lastLine}` : "";
   return {
     type: "warning",
     title: "PersonalClaw",
-    message: "PersonalClaw's gateway stopped.",
+    message,
     detail:
       `${what}, so the app has nothing to show.${said}\n\n` +
       "Start it again, or quit PersonalClaw and open it again later.",
@@ -114,4 +111,52 @@ function gatewayLostDialog({ code = null, signal = null, lastLine = "", startErr
   };
 }
 
-module.exports = { LAST_LINE_MAX, QUIT, START_AGAIN, gatewayLostDialog, isUnasked, makeLastLine };
+/** How a gateway ended: its exit status, the signal that ended it, or why it could not start. */
+function howItEnded({ code = null, signal = null, startError = "" }, startFailed) {
+  if (startError) return `${startFailed} (${cleanLine(startError)})`;
+  if (code !== null && code !== undefined) return `The gateway exited with code ${code}`;
+  return `The gateway was stopped by ${signal ? `a signal (${signal})` : "the system"}`;
+}
+
+/**
+ * The dialog for a gateway that stopped when nobody asked it to, or that could not be started again.
+ *
+ * @param {object} exit
+ * @param {number|null} [exit.code] - the exit status, or null when a signal ended it.
+ * @param {string|null} [exit.signal] - the signal that ended it, if one did.
+ * @param {string} [exit.lastLine] - the last line it wrote to stderr (`makeLastLine`).
+ * @param {string} [exit.startError] - why a start failed before there was a process to exit.
+ * @returns {object} `dialog.showMessageBox` options; `response` is START_AGAIN or QUIT.
+ */
+function gatewayLostDialog(exit = {}) {
+  const what = howItEnded(exit, "The gateway could not be started again");
+  return startAgainDialog("PersonalClaw's gateway stopped.", what, exit.lastLine || "");
+}
+
+/**
+ * The dialog for a gateway the app could not start when it opened, or that started and never
+ * answered. It used to say "Try reopening the app" and offer Retry, which only waited for the
+ * same gateway again: nothing had started it, so it waited out the whole two minutes and failed
+ * the same way. Now it says how the start ended, at once, and Start Again starts a new gateway,
+ * as the gateway-lost dialog's does.
+ *
+ * @param {object} exit - as `gatewayLostDialog`'s, or `{ unanswered: true }` for a gateway that
+ *   started and never answered.
+ * @returns {object} `dialog.showMessageBox` options; `response` is START_AGAIN or QUIT.
+ */
+function firstStartDialog(exit = {}) {
+  const what = exit.unanswered
+    ? "The gateway started and never answered"
+    : howItEnded(exit, "The gateway could not be started");
+  return startAgainDialog("PersonalClaw's gateway did not start.", what, exit.lastLine || "");
+}
+
+module.exports = {
+  LAST_LINE_MAX,
+  QUIT,
+  START_AGAIN,
+  firstStartDialog,
+  gatewayLostDialog,
+  isUnasked,
+  makeLastLine,
+};

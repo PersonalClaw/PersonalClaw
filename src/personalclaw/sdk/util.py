@@ -5,7 +5,9 @@
 - ``shared_app_data_dir(name)`` — a READ-ONLY handle to another app's data dir, when
   this app holds a consented APE-10 ``storageRead`` grant on it (else ``None``).
 - ``sandbox_wrap_argv(argv, mode)`` — wrap a command in the host sandbox (an app that
-  shells out runs under the same confinement core does).
+  shells out runs under the same confinement core does). It raises, with the sentence to show,
+  where that sandbox cannot be applied (the desktop app on a Linux host); the command then must
+  not run.
 - ``atomic_write(path, data)`` — crash-safe file write (an app persisting config/state
   uses the same durable write core does).
 - ``single_flight(key)`` — the host's cross-process/cross-thread "only one of us does this"

@@ -302,10 +302,12 @@ async def apply_saved_settings(name: str) -> None:
     credential another owner holds, say), and a fix that waits for a restart reads as a fix that
     did not work. Nothing else is switched on here. A provider switched off is its app disabled,
     and a disabled app is not retried: its change is saved, and loads when the app is switched on.
-    Neither is an app this core cannot host, which startup lists off with that reason and leaves
-    enabled (``app_runtime._refuse``): the core refused it, not its settings, and enabling it is
-    ``app_manager.enable``'s decision, which asks the same question first.
+    Neither is an app this core cannot host (one that needs a newer core, or, in the desktop app,
+    one that runs a Python child the app cannot start), which startup lists off with that reason
+    and leaves enabled (``app_runtime._refuse``): the core refused it, not its settings, and
+    enabling it is ``app_manager.enable``'s decision, which asks the same questions first.
     """
+    from personalclaw import python_children
     from personalclaw.apps.permissions import app_lifecycle_denial
     from personalclaw.channel_transports import settled
 
@@ -318,6 +320,7 @@ async def apply_saved_settings(name: str) -> None:
         and ext.error
         and not app_lifecycle_denial(name)
         and ext.manifest.core_compatibility().admits
+        and not python_children.app_refusal(ext.manifest)
     ):
         registry.enable(name)
     # A rebuilt tool provider offers what its new settings make it offer (a different endpoint
