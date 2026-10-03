@@ -1,7 +1,7 @@
 """Where the agent's file tools reach: one scope, read again at every call.
 
 The native file tools (``read_file``, ``list_dir``, ``glob``, ``grep``, ``repo_map``,
-``write_file``, ``edit_file``) and ``code_map`` work in three kinds of place:
+``write_file``, ``edit_file``) and ``code_map`` work in five kinds of place:
 
 * **the workspace**: the folder the session works in, and the extra folders the runtime gives a
   loop's worker (its engine files). Read and change.
@@ -16,6 +16,13 @@ The native file tools (``read_file``, ``list_dir``, ``glob``, ``grep``, ``repo_m
   Sources). Read only, and only what that source itself takes in (``dir_source.resolve_in`` and
   ``dir_source.takes``, the rule its own scan uses: inside the folder once links are resolved, its
   file patterns, nothing hidden), because that is what the owner chose to share.
+* **the skills library** in the home, where every skill the owner installs or imports lands. Read
+  only, and only each installed skill's own folder: a folder below the library's top that holds a
+  ``SKILL.md`` (as the loader finds a skill), once links are resolved, and nothing hidden, so the
+  library's own records and an install's lock file stay out. A skill's ``SKILL.md`` is not among
+  its files here: ``skill_invoke`` loads its instructions, the one place a body is read
+  (``SkillsLoader.load_skill``: accepted refinements applied, the use counted). So a skill that
+  names a file of its own ("use template.md") is followed as written, with no approval.
 
 Everywhere else is refused. The answer depends only on the call's own arguments, the session's
 folder and the owner's settings, so it can be given before anyone is asked to approve the call:
@@ -39,7 +46,9 @@ the store. So the file tools refuse them and their listings leave them out
 Inside every place the checks the Files view makes still hold (``file_roots.Admission``):
 symlinks and ``..`` are resolved first, so a link or a climb out of a place reaches nothing it
 does not already reach; no credential location or secret file; and nothing in PersonalClaw's own
-home except through a place inside it (``file_roots.within``). A path that starts with ``~/``
+home except through a place inside it (``file_roots.within``): a place that contains the home, a
+worker's ``~``, says nothing about a path in it, so what the skills library shares is all a session
+working there reads of the library. A path that starts with ``~/``
 names the owner's home, as the owner writes it; ``~name`` stays a plain name. A path the tools show
 in the home is written from ``~`` (:mod:`personalclaw.home_paths`), and either form opens it.
 """
@@ -62,6 +71,7 @@ WORKSPACE = "workspace"
 ALLOWED = "allowed"
 READS = "reads"
 SOURCE = "source"
+SKILLS = "skills"
 
 #: The native file tools that take a path: the argument naming it, whether the call changes the
 #: file, and the path a call naming none is checked as (``None``: it is not checked here, since
@@ -109,12 +119,14 @@ class Place:
 
     @property
     def changes(self) -> bool:
-        """Whether the file tools may change files here (a knowledge source and a folder the work
-        only reads are read only)."""
+        """Whether the file tools may change files here (a knowledge source, a folder the work
+        only reads and the skills library are read only)."""
         return self.kind in (WORKSPACE, ALLOWED)
 
     def takes(self, real: str) -> bool:
         """Whether a read may open *real*, a real path inside this place."""
+        if self.kind == SKILLS:
+            return bool(_skill_of(self.root, real)) and not _is_instructions(real)
         if self.kind != SOURCE:
             return True
         from personalclaw.knowledge_providers.dir_source import resolve_in, takes
@@ -131,6 +143,31 @@ class Place:
 
 def _inside(real: str, root: str) -> bool:
     return real == root or real.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _skill_of(library: str, real: str) -> str:
+    """The installed skill whose own folder holds *real*, a real path inside the skills *library*,
+    by its name (``imported/claude_code/incident-writeup``): the nearest folder above it, itself
+    for a folder, that holds a ``SKILL.md`` and is not the library's top, as the loader finds a
+    skill (``skills.loader.iter_skill_files``). ``""`` for none, and for a path with a hidden part
+    inside the library: the library's own records (use counts, refinements, proposals, drafts) and
+    an install's lock file are PersonalClaw's, not the skill's."""
+    rel = os.path.relpath(real, library)
+    if any(part.startswith(".") for part in rel.split(os.sep)):  # the library itself is "."
+        return ""
+    folder = real if os.path.isdir(real) else os.path.dirname(real)
+    while folder != library and _inside(folder, library):
+        if os.path.isfile(os.path.join(folder, "SKILL.md")):
+            return os.path.relpath(folder, library).replace(os.sep, "/")
+        folder = os.path.dirname(folder)
+    return ""
+
+
+def _is_instructions(real: str) -> bool:
+    """Whether *real* is a skill's ``SKILL.md``, which ``skill_invoke`` loads."""
+    from personalclaw.skills.loader import is_instructions_file
+
+    return is_instructions_file(os.path.basename(real))
 
 
 def _plain(text: str, limit: int = 80) -> str:
@@ -196,6 +233,19 @@ def _source_places() -> list[Place]:
     return places
 
 
+def _library_places(home: str) -> list[Place]:
+    """The skills library in *home*, as a place when it exists; what it shares is each installed
+    skill's own folder (:meth:`Place.takes`). A library that is a link to the filesystem root or a
+    system folder is no place."""
+    from personalclaw.file_roots import is_system_root
+    from personalclaw.skills.loader import SKILLS_DIR_NAME
+
+    library = os.path.realpath(os.path.join(home, SKILLS_DIR_NAME))
+    if not os.path.isdir(library) or is_system_root(library):
+        return []
+    return [Place(library, from_home(library), SKILLS)]
+
+
 class FileScope:
     """Where one call's file tools reach, from the session's folders (the first is where a
     relative path starts) and the owner's settings as they stand now."""
@@ -209,17 +259,18 @@ class FileScope:
         from personalclaw.config.loader import resolve_config_dir
         from personalclaw.file_roots import is_system_root
 
+        self._home = os.path.realpath(str(resolve_config_dir()))
         session = [os.path.realpath(str(r)) for r in session_roots if str(r)]
         self.base = session[0] if session else ""
         places = [Place(root, from_home(root), WORKSPACE) for root in dict.fromkeys(session)]
         # The folders this session's work reads: never a system folder, as for an allowed one.
         read_only = [os.path.realpath(str(r)) for r in reads if str(r)]
         read_places = [Place(r, from_home(r), READS) for r in read_only if not is_system_root(r)]
-        for extra in _allowed_places() + read_places + _source_places():
+        extras = _allowed_places() + read_places + _source_places() + _library_places(self._home)
+        for extra in extras:
             if not any(p.root == extra.root and p.changes >= extra.changes for p in places):
                 places.append(extra)
         self.places: tuple[Place, ...] = tuple(places)
-        self._home = os.path.realpath(str(resolve_config_dir()))
         self._stores = own_stores(self._home)
         self._admissions: dict[bool, Any] = {}
 
@@ -238,12 +289,20 @@ class FileScope:
     def _containing(self, real: str, change: bool) -> list[Place]:
         return [p for p in self.places if (p.changes or not change) and _inside(real, p.root)]
 
+    def _reaching(self, real: str, places: list[Place]) -> list[Place]:
+        """Those of *places* that reach *real*: for a path inside the home, only the places inside
+        it too (``file_roots.within``). A place that contains the home answers nothing for a path
+        in it, neither whether it may be read nor what of it is shared."""
+        from personalclaw.file_roots import within
+
+        return [p for p in places if within(real, [p.root], home=self._home)]
+
     def resolve(self, raw: str, *, change: bool = False) -> str:
         """The real path *raw* names, when the file tools may read it (with *change*, change it).
 
         Raises :class:`OutOfScope` with the reason otherwise. A relative path starts at the
         session's folder."""
-        from personalclaw.file_roots import control_character_in, within
+        from personalclaw.file_roots import control_character_in
 
         bad = control_character_in(raw)
         if bad:
@@ -258,7 +317,8 @@ class FileScope:
         places = self._containing(real, change)
         if not places:
             raise self._outside(raw, real, change)
-        if not within(real, [p.root for p in places], home=self._home):
+        places = self._reaching(real, places)
+        if not places:
             raise OutOfScope(
                 f"path {raw!r} is inside PersonalClaw's own home, which this tool does not reach"
             )
@@ -270,20 +330,15 @@ class FileScope:
         if store is not None:
             raise OutOfScope(*_store_refusal(f"path {raw!r}", store))
         if not any(p.takes(real) for p in places):
-            source = places[0]
-            raise OutOfScope(
-                f"path {raw!r} is in the knowledge source {_plain(source.name)!r} "
-                f"({_plain(source.shown)}), which shares only its {source.patterns()} files "
-                "outside hidden folders",
-                "Open a file the source takes in, or find it with knowledge_search.",
-            )
+            raise _not_shared(raw, real, places[0])
         return real
 
     def _outside(self, raw: str, real: str, change: bool) -> OutOfScope:
         if not change:
             return OutOfScope(
                 f"path {raw!r} is outside every folder the file tools reach: the workspace, the "
-                "allowed working directories and the folders added as knowledge sources",
+                "allowed working directories, the folders added as knowledge sources and each "
+                "installed skill's own folder",
                 _REACH_HINT,
             )
         held = self._containing(real, False)
@@ -301,6 +356,14 @@ class FileScope:
                 f"({_plain(source.shown)}), which the file tools read and never change",
                 f"To change files there, the user adds the folder in {ALLOWED_SETTING}.",
             )
+        library = next((p for p in held if p.kind == SKILLS), None)
+        if library is not None:
+            return OutOfScope(
+                f"path {raw!r} is in the skills library ({_plain(library.shown)}), which the file "
+                "tools read and never change",
+                "To change a skill, tell the user what to change; skill_promote proposes a new "
+                "one for them to accept.",
+            )
         return OutOfScope(
             f"path {raw!r} is outside every folder the file tools may change: the workspace and "
             "the allowed working directories",
@@ -315,7 +378,7 @@ class FileScope:
             return None
         if self.own_store(real) is not None:
             return None
-        places = self._containing(real, False)
+        places = self._reaching(real, self._containing(real, False))
         return real if any(p.takes(real) for p in places) else None
 
     def root_of(self, real: str) -> str:
@@ -369,6 +432,34 @@ def _store_refusal(subject: str, entry: Any) -> tuple[str, str]:
         f"{subject} is part of PersonalClaw's own {entry.domain} store ({entry.help}), which "
         "only its own tools read and change",
         hint,
+    )
+
+
+def _not_shared(raw: str, real: str, place: Place) -> OutOfScope:
+    """Why a read of *real*, inside *place*, is refused by what the place shares
+    (:meth:`Place.takes`): a skill's instructions, the skills library beside a skill's own
+    folder, or a file a knowledge source does not take in."""
+    if place.kind == SKILLS:
+        skill = _skill_of(place.root, real)
+        if skill and _is_instructions(real):
+            name = _plain(skill, 200)
+            return OutOfScope(
+                f"path {raw!r} holds the instructions of the skill {name!r}, which skill_invoke "
+                "loads",
+                f"Load them with skill_invoke(name={name!r}); read_file opens the files the skill "
+                "keeps beside them.",
+            )
+        return OutOfScope(
+            f"path {raw!r} is in the skills library ({_plain(place.shown)}), where the file "
+            "tools reach only the files each installed skill ships in its own folder",
+            "Find a skill with skill_search; skill_invoke loads it and names the folder its files "
+            "are in.",
+        )
+    return OutOfScope(
+        f"path {raw!r} is in the knowledge source {_plain(place.name)!r} "
+        f"({_plain(place.shown)}), which shares only its {place.patterns()} files "
+        "outside hidden folders",
+        "Open a file the source takes in, or find it with knowledge_search.",
     )
 
 
@@ -473,8 +564,10 @@ def places_note(scope: FileScope, *, knowledge: bool = False, calendars: bool = 
     there are none. *knowledge*: the session has the knowledge tools, which then come first, since
     the library indexes every knowledge source's notes. *calendars*: it has ``calendar_events``,
     so the calendar files in these places are named, by name and kind, with the tool that reads
-    them: a question about plans otherwise searched the notes and missed the calendar."""
-    beyond = [p for p in scope.places if p.kind != WORKSPACE]
+    them: a question about plans otherwise searched the notes and missed the calendar. The skills
+    library is left out: it is in every home, so naming it would cost every turn, and a skill's
+    folder is named where the skill is loaded (``skill_invoke``)."""
+    beyond = [p for p in scope.places if p.kind not in (WORKSPACE, SKILLS)]
     if not beyond:
         return ""
     sources = [p for p in beyond if not p.changes]

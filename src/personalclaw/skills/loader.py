@@ -202,6 +202,18 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
     return results
 
 
+def is_instructions_file(name: str) -> bool:
+    """Whether a file named *name* holds a skill's instructions: ``SKILL.md``, in any case, since a
+    case-insensitive volume opens ``skill.md`` as that file.
+
+    Its body reaches a prompt only through :meth:`SkillsLoader.load_skill`, which applies the
+    skill's accepted refinements and the bench's suppression, and through ``skill_invoke``, which
+    counts the use; so the agent's file tools, which read the files a skill ships beside it
+    (``file_scope``), leave this one to ``skill_invoke``.
+    """
+    return name.casefold() == "skill.md"
+
+
 def _ensure_builtin_skills(base: Path) -> None:
     """Sync built-in skills: copy new/updated, remove stale.
 
@@ -296,6 +308,11 @@ def agent_skills_dir(agent: str) -> Path:
 # engine: nothing here scores, ranks, budgets or degrades anything. The catalog is
 # a flat list of what was DECLARED; who gets to see it and how much of a skill
 # reaches a prompt stays the decision.
+#
+# The tier is how ANY agent, an agent CLI over MCP included, is handed a declared file.
+# The native agent's own file tools also read an installed skill's folder, read only
+# (``file_scope``'s skills library), so a skill from another harness that names its files
+# in prose ("use template.md") works unmodified; the allowlist below is this tool's rule.
 #
 # Security posture (the whole point of the tier):
 #   • the declared list is an ALLOWLIST, not a filter — an undeclared path is

@@ -642,7 +642,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Read a UTF-8 text file, or the text of a PDF, Word or PowerPoint document, with no approval: in the workspace, the user's allowed working directories, or a folder the user added as a knowledge source (read-only). Args: path (str: relative to the workspace, absolute, or from ~), optional max_bytes (int).",  # noqa: E501
+                description="Read a UTF-8 text file, or the text of a PDF, Word or PowerPoint document, with no approval: in the workspace, the user's allowed working directories, a folder the user added as a knowledge source, or an installed skill's own folder, such as a template its instructions name (those two read-only). Args: path (str: relative to the workspace, absolute, or from ~), optional max_bytes (int).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {"path": {"type": "string"}, "max_bytes": {"type": "integer"}},
@@ -683,7 +683,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="List a directory's entries, with no approval: in the workspace, an allowed working directory or a knowledge-source folder. Args: path (str, default '.').",  # noqa: E501
+                description="List a directory's entries, with no approval: in the workspace, an allowed working directory, a knowledge-source folder or an installed skill's folder. Args: path (str, default '.').",  # noqa: E501
                 parameters={**s, "properties": {"path": {"type": "string"}}},
             ),
             ToolDefinition(
@@ -691,7 +691,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Find files matching a glob pattern under a folder, with no approval: the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Case is smart: the pattern matches any case unless it contains a capital letter, and ignore_case=true or false overrides that. Args: pattern (str, e.g. '**/*.md'), optional path (str), optional ignore_case (bool).",  # noqa: E501
+                description="Find files matching a glob pattern under a folder, with no approval: the workspace, or `path` (an allowed working directory, a knowledge-source folder, an installed skill's folder or a folder in one). Case is smart: the pattern matches any case unless it contains a capital letter, and ignore_case=true or false overrides that. Args: pattern (str, e.g. '**/*.md'), optional path (str), optional ignore_case (bool).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {
@@ -707,7 +707,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Search file contents (substring by default, or a Python regex with regex=true), with no approval: under the workspace, or `path` (an allowed working directory, a knowledge-source folder or a folder in one). Skips .git/node_modules/venv/build dirs and binary files. Case is smart: the query and the glob each match any case unless they contain a capital letter (a regex escape such as \\W is not one), and ignore_case=true or false overrides both. Args: query (str), optional path (str), optional glob (str), optional regex (bool), optional ignore_case (bool), optional max_results (int).",  # noqa: E501
+                description="Search file contents (substring by default, or a Python regex with regex=true), with no approval: under the workspace, or `path` (an allowed working directory, a knowledge-source folder, an installed skill's folder or a folder in one). Skips .git/node_modules/venv/build dirs and binary files. Case is smart: the query and the glob each match any case unless they contain a capital letter (a regex escape such as \\W is not one), and ignore_case=true or false overrides both. Args: query (str), optional path (str), optional glob (str), optional regex (bool), optional ignore_case (bool), optional max_results (int).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {
@@ -750,7 +750,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "type-checkers (ruff, eslint, tsc, go vet), builds, package managers, and any "
                     "standard CLI. To read, list or search files, use read_file, list_dir, glob "
                     "and grep instead: they need no approval, and reach the user's allowed "
-                    "working directories and knowledge-source folders too. Runs in a "
+                    "working directories, knowledge sources and skill folders too. Runs in a "
                     "login shell at the workspace root; stdout+stderr are merged and the exit code "
                     "is reported. Sandboxed + credential/exfiltration deny-list enforced. To use a "
                     "credential the user stored in Settings → Secrets, write {{secret:NAME}} where "

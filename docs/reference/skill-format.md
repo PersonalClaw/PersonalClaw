@@ -14,7 +14,10 @@ rather than inferred from it, and is pinned by `tests/test_skill_format_compat.p
 A skill is a directory containing a `SKILL.md`. The directory path (relative to
 the skills root) is the skill's key, so `utils/tiny-url/SKILL.md` is the skill
 `utils/tiny-url`. Everything beside `SKILL.md` — scripts, assets, data — is
-copied with the skill and reachable from it.
+copied with the skill and reachable from it: the built-in agent's file tools read
+an installed skill's own folder with no approval, read only, so instructions that
+name a file ("use `template.md`") work as written, and `skill_invoke` names the
+folder. The `SKILL.md` itself is loaded by `skill_invoke`, never read as a file.
 
 ```markdown
 ---
@@ -117,9 +120,11 @@ inside an item.
 because a resource that violates one fails visibly rather than silently:
 
 - **Declared only.** The list is an allowlist. A file that exists in the skill
-  directory but is not declared is refused; so is any path with a `..` segment, an
-  absolute path, or a backslash. Declarations that break those rules are dropped
-  at parse time, so a bad entry never widens what is loadable.
+  directory but is not declared is refused by `skill_resource`; so is any path with
+  a `..` segment, an absolute path, or a backslash. Declarations that break those
+  rules are dropped at parse time, so a bad entry never widens what is loadable.
+  (This is `skill_resource`'s rule, the one every agent can use. The built-in
+  agent's file tools read the rest of an installed skill's folder too, read only.)
 - **No escaping the skill directory.** A declared path that turns out to be a
   symlink out of the skill directory is refused after resolution.
 - **Capped, visibly.** A resource larger than 32 KB comes back truncated with an

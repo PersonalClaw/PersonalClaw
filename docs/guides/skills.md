@@ -245,11 +245,20 @@ confirmed skills, which load actively every cycle, still do.
 
 ## Files beside `SKILL.md`
 
-Everything in the skill directory is copied with it. Reference documents, data
-files and helper scripts do not belong in the body — declare them as
-`resources:` and the agent pulls one on demand with `skill_resource`, instead of
-either ignoring them or reading the whole directory. The declared list is an
-**allowlist**: an undeclared path is refused even when it plainly exists. See
+Everything in the skill directory is copied with it, and the instructions can name
+those files the way skills from other tools do ("use `template.md` for the
+structure"). The built-in agent's file tools (`read_file`, `list_dir`, `glob`,
+`grep`) read an installed skill's own folder in place, with no approval and read
+only, and `skill_invoke` names the folder when the skill ships files. They never
+change it, and they leave the skill's `SKILL.md` to `skill_invoke`, which applies
+its accepted refinements.
+
+Reference documents, data files and helper scripts do not belong in the body.
+Declare them as `resources:` too, and any agent, an agent CLI included, sees them
+listed when it loads the skill and pulls one on demand with `skill_resource`,
+instead of either ignoring them or reading the whole directory. That list is an
+**allowlist**: `skill_resource` refuses an undeclared path even when it plainly
+exists. See
 [`resources` in the format reference](../reference/skill-format.md#resources--files-the-agent-loads-only-when-it-needs-them).
 
 ## Skills you did not write

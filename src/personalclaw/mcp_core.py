@@ -1082,6 +1082,31 @@ def _render_resource_catalog(skill_name: str, loader: Any) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_skill_folder(skill_name: str, loader: Any) -> str:
+    """Where a skill's own files are, for instructions that name one ("Use template.md"): the
+    skill's folder, written from ``~``, when it holds anything besides those instructions and an
+    install's hidden record. ``""`` otherwise, so a skill that is its ``SKILL.md`` alone reads as
+    before. Said the same to every agent: the native file tools read it with no approval
+    (``file_scope``), and an agent CLI opens it with its own."""
+    from personalclaw.home_paths import from_home
+    from personalclaw.skills.loader import is_instructions_file
+
+    skill_file = loader.skill_file(skill_name)
+    if skill_file is None:
+        return ""
+    folder = skill_file.parent
+    try:
+        ships = any(
+            not entry.name.startswith(".") and not is_instructions_file(entry.name)
+            for entry in folder.iterdir()
+        )
+    except OSError:  # a listing that cannot be made names nothing
+        return ""
+    if not ships:
+        return ""
+    return f"[This skill's folder: {from_home(folder)}. The files it names are there.]\n"
+
+
 def _load_skill_resource(args: dict[str, Any]) -> str:
     """``skill_resource(skill, path)`` — read ONE declared resource of one skill.
 
@@ -1286,11 +1311,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         except Exception:
             logger.debug("skill_invoke usage record skipped", exc_info=True)
         stripped = loader.strip_frontmatter(content)
-        # The body plus an L0 CATALOG of declared resources — paths and
-        # one-line descriptions only, never their contents. The agent pulls one with
+        # The body, the folder its files are in, and an L0 CATALOG of declared resources —
+        # paths and one-line descriptions only, never their contents. The agent pulls one with
         # skill_resource when it decides it needs it.
+        folder = _render_skill_folder(skill_name, loader)
         catalog = _render_resource_catalog(skill_name, loader)
-        return f"[Skill: {skill_name}]\n{stripped}\n{catalog}[End of skill]"
+        return f"[Skill: {skill_name}]\n{stripped}\n{folder}{catalog}[End of skill]"
 
     if name == "skill_resource":
         return _load_skill_resource(args)

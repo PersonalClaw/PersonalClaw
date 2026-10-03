@@ -425,6 +425,17 @@ at every call:
   out a link to a file or folder outside the folder and says how many on the source's row, so a
   link cannot carry content she did not share into the library either.
   `knowledge_search` and `knowledge_get` name a note's file, so the agent can open it.
+- **each installed skill's own folder** in the skills library (`skills/` in the home, where every
+  install, import and bundled skill lands). Read only, and only what a skill ships beside its
+  instructions: a folder below the library's top that holds a `SKILL.md`, as the loader finds a
+  skill, once links are resolved, so a link or a skill folder that leads out of the library reaches
+  nothing; nothing hidden, so the library's own records (use counts, refinements, proposals) and an
+  install's lock file stay out. A skill's `SKILL.md` is not among its files: `skill_invoke` loads
+  the instructions, the one place a body is read (`SkillsLoader.load_skill`, which applies accepted
+  refinements and the bench's suppression), and counts the use; the file tools point there. So a
+  skill that names a file of its own ("use template.md") is followed as written, and `skill_invoke`
+  names the folder a skill's files are in. A skill found in the folder other AI tools share is not
+  in the library and is not reached.
 
 Everywhere else is refused, read or change, with a sentence that says which folders the tools
 reach and where the owner adds one. An entry naming the filesystem root or a system folder is not a
@@ -434,7 +445,8 @@ setting, or a source paused or pointed elsewhere, is out of reach at the next ca
 and the file tools' pre-flight asks it (`ToolProvider.preflight`), so a call it refuses is answered
 with its reason and hint before anyone is asked to approve it. Each turn the native loop tells the
 model which folders it reaches beyond the workspace (the `[file places]` note), and when it has the
-knowledge tools, to search the library first.
+knowledge tools, to search the library first. The skills library is left out of that note, since
+it is in every home: a skill's folder is named where the skill is loaded.
 
 The calendars in those folders are part of the same scope, not a new one. When the session has
 `calendar_events` (the bundled Calendar Tools app), the note also names each calendar file in the
@@ -451,7 +463,9 @@ not expand is said, with the event's first start listed.
 
 Inside every place the check the Files view and `/api/file-read` make still holds
 (`file_roots.Admission`): symlinks and `..` resolved, so a link or a climb out of a place reaches
-nothing; the PersonalClaw home reached only through a place inside it (`file_roots.within`); no
+nothing; the PersonalClaw home reached only through a place inside it (`file_roots.within`), and a
+place that contains the home (a worker in `~`) says nothing about a path in it, so the skills
+library's rule is all a session working there reads of the library; no
 protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own `.env`, `auth/`,
 `governance/`); and no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
 or `*.secret` file, nor any alias of one. A path that starts with `~/` names the owner's home, as
