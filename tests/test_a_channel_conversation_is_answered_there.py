@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from chat_test_helpers import links_kept_in_a_session_map
 
 from personalclaw import channel_delivery, channel_trust
 from personalclaw.agents.native.runtime import NativeAgentRuntime
@@ -119,12 +120,10 @@ async def _gateway(tmp_path: Path, model: _Model) -> GatewayOrchestrator:
     await runtime.start()
     runtime.set_approval_policy("auto")
 
-    links: dict[str, tuple[str, str]] = {}
     sessions = MagicMock(count=0)
     sessions._sessions = {}
     sessions.get_pid = MagicMock(return_value=None)
-    sessions.set_channel_link = MagicMock(side_effect=lambda k, t, c: links.__setitem__(k, (t, c)))
-    sessions.get_channel_link = MagicMock(side_effect=lambda k: links.get(k, (None, None)))
+    links_kept_in_a_session_map(sessions)
     sessions.get_or_create = AsyncMock(return_value=(runtime, True, False))
     sessions.record_failure = AsyncMock()
     log = ConversationLog(base_dir=tmp_path / "sessions")

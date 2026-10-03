@@ -294,9 +294,9 @@ def test_only_the_owner_of_an_open_chat_is_asked(world):  # noqa: F811
     registry = w.state.owner_questions
     assert registry.cannot_ask(KEY) == ""
     assert registry.cannot_ask("subagent:abc") == "this work is not a chat the user has open"
-    session._channel_linked = True
+    w.state.sessions.set_channel_link(KEY, "1712793600.000200", "C0123ABC456")
     assert "chat channel" in registry.cannot_ask(KEY)
-    session._channel_linked = False
+    w.state.sessions.set_channel_link(KEY, "", "")
     session._unattended = True
     assert "runs on its own" in registry.cannot_ask(KEY)
 

@@ -21,6 +21,7 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
+from personalclaw.dashboard import channel_links
 from personalclaw.dashboard.approval_state import DashboardApprovalState
 from personalclaw.dashboard.chat_queue import ChatQueue
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
@@ -241,9 +242,7 @@ class _ChatSession(ChatQueue):
         "_stage_titles",
         "_stage_descriptions",
         "_plan_goal",
-        "_channel_linked",
-        "_channel_id",
-        "_channel_thread_ts",
+        "_channel_link_of",
         "folder_id",
         "pinned",
         "tags",
@@ -426,9 +425,9 @@ class _ChatSession(ChatQueue):
         self._stage_titles: list[str] = []  # stage titles extracted from plan
         self._stage_descriptions: list[list[str]] = []  # bullet points per stage
         self._plan_goal: str = ""  # goal from 📋 Plan for: header
-        self._channel_linked: bool = False  # True when linked to a channel thread
-        self._channel_id: str = ""
-        self._channel_thread_ts: str = ""
+        # Reads the channel thread this chat continues on where links are kept (`channel_link`);
+        # set by the dashboard that holds the chat.
+        self._channel_link_of: Callable[[], tuple[str, str]] | None = None
         self.folder_id: str = ""  # project folder assignment
         self.pinned: bool = False  # pinned to top of sidebar
         self.tags: list[str] = []  # assigned tag ids (see DashboardState._tags)
@@ -790,6 +789,16 @@ class _ChatSession(ChatQueue):
         """
         return self._disk_older_count + len(self.messages)
 
+    @property
+    def channel_link(self) -> tuple[str, str]:
+        """The channel thread this chat continues on, as ``(thread, channel id)``, or
+        ``("", "")`` when it is on none.
+
+        Read where the link is kept each time it is asked (``channel_links.chat_link``), never
+        from a copy: one taken when the chat was made missed every link made after it."""
+        read = self._channel_link_of
+        return read() if read is not None else ("", "")
+
     def to_dict(self) -> dict:
         last_ts = self.messages[-1].get("ts", "") if self.messages else ""
         # Single reverse scan for last_msg, options, and last_activity_ts.
@@ -857,6 +866,7 @@ class _ChatSession(ChatQueue):
                     "request_id": _redact(meta.get("approval_id", meta.get("request_id", ""))),
                 }
                 break
+        channel_thread, channel_id = self.channel_link
         return {
             "key": self.key,
             "title": _redact(self.title) if self.title else self.title,
@@ -886,9 +896,9 @@ class _ChatSession(ChatQueue):
             "trust": self._trust,
             "trust_reads": self._trust_reads,
             "task_mode": self._task_mode,
-            "channel_linked": self._channel_linked,
-            "channel_id": self._channel_id,
-            "channel_thread_ts": self._channel_thread_ts,
+            "channel_linked": bool(channel_thread),
+            "channel_id": channel_id,
+            "channel_thread_ts": channel_thread,
             "folder_id": self.folder_id,
             "pinned": self.pinned,
             "tags": list(self.tags),
@@ -994,7 +1004,6 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._notifications_seen = bounded_log.signature(_notifications_path())
         self._notification_rows: list[dict[str, Any]] = _load_notifications()
         self._sessions: dict[str, _ChatSession] = {}
-        self._channel_to_session: dict[str, str] = {}  # channel session_key → session name
         self._session_counter = 0
         self._folders: list[dict[str, Any]] = []  # project folder definitions
         # Tag vocabulary: list of {id, name, color, order}. User-managed.
@@ -1145,7 +1154,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         Stamped at session creation by the one inbound door
         (`channel_inbound._route_to_session` → `get_or_create_session(app=provider)`), which is
         also the code that already knows the provider — it just had nowhere to put it that the
-        outbound side could read.
+        outbound side could read — or by a link or handoff (`chat_channel._continue_there`). It
+        rides the chat's meta line, and a restart reads it back where it mints the chat.
 
         Takes either key a caller holds: the chat's name, which ``_sessions`` is keyed by, or its
         history key (``dashboard:<name>``), which is what a turn carries. The mirror in
@@ -2100,16 +2110,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         session sweep: a ``dashboard:`` runtime whose key is not among them belongs to no chat."""
         return frozenset(dashboard_history_key(name) for name in list(self._sessions))
 
-    def get_linked_session(self, session_key: str) -> "_ChatSession | None":
-        """Look up a dashboard session linked to a channel thread. Cleans up stale mappings."""
-        session_name = self._channel_to_session.get(session_key)
-        if not session_name:
-            return None
-        session = self._sessions.get(session_name)
-        if not session or not session._channel_linked or session._channel_thread_ts != session_key:
-            self._channel_to_session.pop(session_key, None)
-            return None
-        return session
+    def get_linked_session(self, thread_key: str) -> "_ChatSession | None":
+        """The chat a message on the channel thread *thread_key* continues, or None
+        (:func:`~personalclaw.dashboard.channel_links.linked_chat`)."""
+        return channel_links.linked_chat(self, thread_key)
 
     def resolve_session(self, name: str) -> _ChatSession | None:
         """Like :meth:`get_session`, but also resolves bare ``chat-N`` labels.
@@ -2143,36 +2147,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         return None
 
     def link_channel(self, session_name: str, thread_ts: str, channel_id: str) -> None:
-        """Update a session's channel link state and persist to SessionStore."""
-        session = self._sessions.get(session_name)
-        if not session:
-            return
-        # Remove stale mapping if session was previously linked to a different thread
-        old_ts = session._channel_thread_ts
-        if old_ts and old_ts != thread_ts:
-            self._channel_to_session.pop(old_ts, None)
-        # Clear persisted link of old session if this thread was previously owned by another session
-        old_owner = self._channel_to_session.get(thread_ts)
-        if old_owner and old_owner != session_name:
-            old_session = self._sessions.get(old_owner)
-            if old_session:
-                old_session._channel_linked = False
-                old_session._channel_thread_ts = ""
-                old_session._channel_id = ""
-            if self.sessions:
-                from personalclaw.dashboard.chat import _history_key_for
-
-                self.sessions.set_channel_link(_history_key_for(old_owner), "", "")
-        session._channel_linked = True
-        session._channel_id = channel_id
-        session._channel_thread_ts = thread_ts
-        self._channel_to_session[thread_ts] = session_name
-        # Persist so link survives gateway restarts
-        if self.sessions:
-            from personalclaw.dashboard.chat import _history_key_for
-
-            self.sessions.set_channel_link(_history_key_for(session_name), thread_ts, channel_id)
-        self.push_sessions_update()
+        """Link the chat *session_name* to a channel thread, so a message there continues it
+        (:func:`~personalclaw.dashboard.channel_links.link`)."""
+        channel_links.link(self, session_name, thread_ts, channel_id)
 
     def get_or_create_session(
         self,
@@ -2220,27 +2197,25 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         )
         session._tab_id = uuid.uuid4().hex[:12]
         session._on_message = self._broadcast_chat_message
-        persisted_creator = self._persisted_creating_app(name)
+        session._channel_link_of = functools.partial(channel_links.chat_link, self, name)
+        persisted = self._persisted_meta(name)
+        persisted_creator = _creating_app_of(persisted)
         session.created_by_app = (
             persisted_creator if persisted_creator is not None else created_by_app
         )
-        # An app's conversation carries the app as its origin tag too — what its turns' usage is
-        # attributed to, after a restart as well as before.
-        session._app = app or session.created_by_app
+        # The origin tag: the channel the chat came from or continues on, the worker or app it is
+        # for. Its answers go back out on that channel (`channel_provider_for`) and its turns'
+        # usage is attributed to it, so it is read back from the meta line it is saved on: a
+        # restart brought a channel's chat back with none, and its answers stayed here. An app's
+        # conversation carries the app as its origin tag when it has no other.
+        persisted_origin = persisted.get("app") if persisted else ""
+        session._app = (
+            app
+            or (persisted_origin if isinstance(persisted_origin, str) else "")
+            or session.created_by_app
+        )
         if ephemeral:
             self._ephemeral_keys.add(f"dashboard:{name}")
-        # Check if this session is already linked to a channel thread
-        try:
-            if self.sessions:
-                from personalclaw.dashboard.chat import _history_key_for
-
-                _ts, _ch = self.sessions.get_channel_link(_history_key_for(name))
-                session._channel_linked = _ts is not None
-                if _ts and _ch:
-                    session._channel_id = _ch
-                    session._channel_thread_ts = _ts
-        except Exception:
-            pass
         self._sessions[name] = session
         # The `session.created` platform-event emit site — a new session row just
         # became true here. Fanned out ONLY to apps that declared the subscription (deny by
@@ -2291,7 +2266,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         session = self._sessions.get(name)
         if session is not None:
             return session.created_by_app
-        return self._persisted_creating_app(name) or ""
+        return _creating_app_of(self._persisted_meta(name)) or ""
 
     def notification_reaches(self, app: str, note: dict[str, Any]) -> bool:
         """Whether the app *app* may read the notification *note*: one it raised
@@ -2307,9 +2282,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         about = note.get("session")
         return isinstance(about, str) and bool(about) and self.session_creating_app(about) == app
 
-    def _persisted_creating_app(self, name: str) -> str | None:
-        """The creating app the meta line persisted under *name* records (``""`` for yours), or
-        ``None`` when nothing is persisted under it or its record cannot be read."""
+    def _persisted_meta(self, name: str) -> dict[str, Any] | None:
+        """The meta line persisted under *name* (``{}`` for a record that has none), or ``None``
+        when nothing is persisted under it or its record cannot be read."""
         log = self.conversation_log
         if log is None:
             return None
@@ -2319,11 +2294,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             key = resolve_history_key(log, name)
             if not key:
                 return None
-            creator = (log.get_metadata(key) or {}).get(CREATED_BY_APP_META_KEY, "")
+            meta = log.get_metadata(key) or {}
         except Exception:  # noqa: BLE001 — an unreadable record answers "unknown", never an app
-            self._log.warning("creating-app lookup failed for %s", name, exc_info=True)
+            self._log.warning("the record of chat %s could not be read", name, exc_info=True)
             return None
-        return creator if isinstance(creator, str) else ""
+        return meta if isinstance(meta, dict) else {}
 
     def _broadcast_chat_message(self, session_name: str, msg: dict) -> None:
         """Push a chat message to all SSE clients via the global stream."""
@@ -2580,6 +2555,15 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     def update_progress(self) -> dict[str, str] | None:
         """The update progress last broadcast, ``{step, detail}``, or ``None`` once cleared."""
         return self._update_progress
+
+
+def _creating_app_of(meta: dict[str, Any] | None) -> str | None:
+    """The creating app a chat's persisted meta line records (``""`` for yours), or ``None``
+    for a chat with no record (``DashboardState._persisted_meta``)."""
+    if meta is None:
+        return None
+    creator = meta.get(CREATED_BY_APP_META_KEY, "")
+    return creator if isinstance(creator, str) else ""
 
 
 # ── Notification persistence ──

@@ -346,6 +346,13 @@ What that one call gets you, and what you must not re-implement:
   DM channel). A chat the owner hands to your channel from its menu ("Continue on …") is then
   linked to the DM itself, so the owner's next message there continues it; otherwise it is
   linked to the thread the handoff opened.
+- **Keep no thread-to-chat map of your own.** Core keeps which chat a thread continues in its
+  session store, the one place a link is kept, so a restart keeps it: the next message on the
+  thread continues its chat, brought back from disk when it is not open. A chat your channel
+  makes for a thread itself (an import of a thread's history) is made with
+  `get_or_create_session(app=PROVIDER)`, as the door makes one, and linked with
+  `link_channel`: a chat that names no channel has nowhere to send its answers, and the door
+  does not continue it.
 - **Refuse an owner id you cannot reach.** An owner notification (a heartbeat or cron result,
   a hook result, a file, `send-message`) tries every connected channel in name order until one
   delivers it (`channel_delivery.reach_owner`). Your channel is passed over when it has no

@@ -18,7 +18,11 @@ chat, channel thread, loop worker, webhook, subagent).
   carries `sid`, `thread_ts`, `channel_id` — generic keys, no channel-vendor
   shape assumed. `set_channel_link` / `get_channel_link` are the one API for
   linking a dashboard session to a channel thread; a reverse index maps
-  `thread_ts` → session key.
+  `thread_ts` → session key (`get_session_for_thread`). It is the ONE place a
+  link is kept: nothing holds a copy of it in memory, so a restart loses none.
+  A changed entry is written last and the index is rebuilt in file order, so
+  the session that linked a thread most recently is the one it continues,
+  before a restart and after it.
 - **`session_restrictions.py` — memory modes.** Two restriction registries,
   kept in core because any surface can request them:
   - **temporary** — blank-slate thread: memory READS suppressed
@@ -660,7 +664,25 @@ sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
 A dashboard session can be linked to a channel thread (and vice versa):
 
 - Linking goes through core `session_map.set_channel_link` — the channel app
-  never touches the map file directly.
+  never touches the map file directly. `dashboard/channel_links.py` is how the
+  dashboard reads and writes a chat's link: `DashboardState.link_channel` links
+  a chat (the inbound door, a link or a handoff from the dashboard, a channel
+  app's import), and a thread continues one chat, so the chat that had the
+  thread loses it, found in the store whether or not it is resident.
+- **The link survives a restart.** The inbound door asks the store which chat
+  a thread continues (`DashboardState.get_linked_session`), and a chat that is
+  not resident comes back from disk, so the next message on a channel thread
+  after a restart continues its chat with everything said before. A chat reads
+  its own link from the store too (`_ChatSession.channel_link`, which its frame
+  and its question cards read), never from a copy. A thread whose chat is gone
+  (deleted, archived, a Temporary chat that ended) starts a new chat.
+- **Which channel a chat answers on is its origin tag** (`_app`, the meta
+  line's `app`): the door stamps it on every chat it opens, a link or handoff
+  sets it when the chat has none, and a restart reads it back where it mints
+  the chat (`get_or_create_session`), so a restored chat's answers still go
+  back out on its channel. The door continues only a chat that carries one: a
+  channel thread's own conversation opened from the chat list (a Slack thread
+  the Slack app runs) has none, and its channel app answers it itself.
 - `sync_bridge.py` implements the dashboard↔channel handoff
   (`handoff_to_channel` over `ChannelDelivery`): the conversation continues in
   the channel with context intact.

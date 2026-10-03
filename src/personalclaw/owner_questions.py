@@ -247,7 +247,7 @@ class OwnerQuestions:
         session = self._state.get_session(_dashboard_key(session_key))
         if session is None:
             return "this work is not a chat the user has open"
-        if getattr(session, "_channel_linked", False):
+        if getattr(session, "channel_link", ("", ""))[0]:
             return "this chat is carried on a chat channel, where a question card is not shown"
         if getattr(session, "_unattended", None):
             return "this chat runs on its own, with nobody there to answer"

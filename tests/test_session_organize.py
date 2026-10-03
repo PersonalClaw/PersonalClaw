@@ -37,8 +37,7 @@ class FakeSession:
         self.folder_id = ""
         self.tags: list[str] = []
         self.memory_mode = memory_mode
-        self._channel_linked = bool(channel)
-        self._channel_id = channel
+        self.channel_link = ("1712793600.000200", channel) if channel else ("", "")
 
     @property
     def is_restricted(self) -> bool:

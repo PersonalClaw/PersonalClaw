@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from chat_test_helpers import links_kept_in_a_session_map
 
 from personalclaw import channel_delivery, channel_transports
 from personalclaw.channel_transports.base import ChannelTransportProvider
@@ -107,18 +108,14 @@ def chats(monkeypatch):
 
 
 def _state(tmp_path, monkeypatch, client: Any = None):
-    """The dashboard, over a session manager whose channel links are a dict."""
+    """The dashboard, over a session manager whose channel links are kept in a session map."""
     from personalclaw.dashboard.state import DashboardState
     from personalclaw.history import ConversationLog
     from personalclaw.hooks import ToolHookResult
 
     monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-    links: dict[str, tuple[str, str]] = {}
     sessions = MagicMock(count=0)
-    sessions.get_channel_link = MagicMock(side_effect=lambda key: links.get(key, (None, None)))
-    sessions.set_channel_link = MagicMock(
-        side_effect=lambda key, ts, channel: links.__setitem__(key, (ts, channel))
-    )
+    links_kept_in_a_session_map(sessions)
     sessions.get_pid = MagicMock(return_value=None)
     sessions.record_failure = AsyncMock()
     sessions.check_context_usage = MagicMock()

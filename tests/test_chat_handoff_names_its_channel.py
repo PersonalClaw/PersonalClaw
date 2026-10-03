@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from chat_test_helpers import links_kept_in_a_session_map
 
 from personalclaw import channel_delivery, channel_transports
 from personalclaw.channel_transports.base import ChannelTransportProvider
@@ -171,7 +172,7 @@ def real_state(tmp_path, monkeypatch):
         er, "_entity_settings_path", lambda entity: tmp_path / "entity_settings" / f"{entity}.json"
     )
     sessions = MagicMock(count=0)
-    sessions.get_channel_link = MagicMock(return_value=(None, None))
+    links_kept_in_a_session_map(sessions)
     state = DashboardState(
         sessions=sessions, start_time=0.0, conversation_log=ConversationLog(base_dir=tmp_path)
     )

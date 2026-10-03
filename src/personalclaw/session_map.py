@@ -242,24 +242,33 @@ class SessionMap:
         return len(stale)
 
     def set_channel_link(self, key: str, thread_ts: str, channel_id: str | None) -> None:
-        """Link a session to a channel thread. Creates entry if needed."""
+        """Link a session to a channel thread, or with an empty *thread_ts* unlink it. Creates
+        the entry if needed.
+
+        The thread index says which session a thread continues (:meth:`get_session_for_thread`),
+        and reading the file again rebuilds it in the file's order, the last entry naming a
+        thread winning. So a changed entry is written last: the session that linked a thread
+        most recently is the one the thread continues, before a restart and after it. Its old
+        thread leaves the index only while the index still names it, since another session may
+        have linked that thread since, and an empty thread is never indexed.
+        """
         entry = self._data.get(key)
         if entry:
             if entry.get("thread_ts") == thread_ts and entry.get("channel_id") == channel_id:
-                self._thread_to_session.setdefault(thread_ts, key)
+                if thread_ts:
+                    self._thread_to_session.setdefault(thread_ts, key)
                 return
             old_ts = entry.get("thread_ts")
-            if old_ts and old_ts != thread_ts:
-                self._thread_to_session.pop(old_ts, None)
+            if old_ts and old_ts != thread_ts and self._thread_to_session.get(old_ts) == key:
+                del self._thread_to_session[old_ts]
+            del self._data[key]
             entry["thread_ts"] = thread_ts
             entry["channel_id"] = channel_id
         else:
-            self._data[key] = {
-                "sid": "",
-                "thread_ts": thread_ts,
-                "channel_id": channel_id,
-            }
-        self._thread_to_session[thread_ts] = key
+            entry = {"sid": "", "thread_ts": thread_ts, "channel_id": channel_id}
+        self._data[key] = entry
+        if thread_ts:
+            self._thread_to_session[thread_ts] = key
         self._save()
 
     def get_channel_link(self, key: str) -> tuple[str | None, str | None]:

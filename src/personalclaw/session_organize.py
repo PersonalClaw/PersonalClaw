@@ -350,16 +350,14 @@ def _from_workspace(session: Any, folders: list[dict]) -> OrganizeProposal | Non
 def _from_channel(session: Any, tags: list[dict]) -> OrganizeProposal | None:
     """Signal 3 — channel origin.
 
-    A session linked to a channel (``_channel_linked``, set by ``chat_channel.py:63``) did
+    A session linked to a channel thread (``channel_link``, read where the link is kept) did
     not start in the dashboard; it came in over a channel and is a different KIND of chat
     from a dashboard conversation. Tag-only, and only when a matching tag already exists —
     the channel name is provider vocabulary, and minting a tag from it would put a
     provider's name into the user's own taxonomy uninvited.
     """
-    if not bool(getattr(session, "_channel_linked", False)):
-        return None
-    channel = str(getattr(session, "_channel_id", "") or "")
-    if not channel:
+    thread, channel = getattr(session, "channel_link", ("", ""))
+    if not thread or not channel:
         return None
     hits = [t for t in _match_vocabulary(_keywords(channel), tags) if not t.get("status")]
     if not hits:

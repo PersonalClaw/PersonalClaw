@@ -786,7 +786,13 @@ remain in core — is covered in [provider-boundary.md](provider-boundary.md).
 
 - The persistent map is core: `session_map.py` `set_channel_link` /
   `get_channel_link` (generic `thread_ts`/`channel_id` keys). Channel apps go
-  through these calls; they never touch the map file.
+  through these calls; they never touch the map file. It is the one place a
+  link is kept, and the inbound door reads it (`get_linked_session`), so a
+  channel thread continues its chat after a restart, with the chat brought back
+  from disk when it is not resident; a chat whose transcript is gone starts
+  over. A chat answers on the channel its origin tag names, which rides its
+  meta line across restarts; a chat a channel app imports from a thread is made
+  as that channel's (`get_or_create_session(app=…)`), as the door makes one.
 - Dashboard-side link/handoff routes are `dashboard/chat_channel.py`
   (`POST /api/chat/sessions/{session}/channel-link`,
   `GET /api/channels/reply-targets`) — provider-blind, `ChannelDelivery` only.

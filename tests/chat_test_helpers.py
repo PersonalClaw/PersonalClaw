@@ -7,6 +7,19 @@ from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
+from personalclaw.session_map import SessionMap
+
+
+def links_kept_in_a_session_map(sessions: Any) -> SessionMap:
+    """Keep the channel links of a stand-in session manager where the gateway keeps them: in a
+    real session map (this test's own, as every test's is). The inbound door, a chat's own link
+    and whoever links a thread then read the one store, as they do on a running gateway. Each
+    call stays a mock, so a test can still assert what was linked."""
+    store = SessionMap()
+    sessions.get_channel_link = MagicMock(side_effect=store.get_channel_link)
+    sessions.set_channel_link = MagicMock(side_effect=store.set_channel_link)
+    sessions.get_session_for_thread = MagicMock(side_effect=store.get_session_for_thread)
+    return store
 
 
 def _make_state(tmp_path, **kwargs):
