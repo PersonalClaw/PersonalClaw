@@ -185,7 +185,7 @@ DISPOSITION: tuple[Row, ...] = (
         verdict=Verdict.ABSORBED,
         keeps=(
             "manifest jobs reconcile at startup (pruned/converged)",
-            "gated on can_use_cron",
+            "gated on can_use_cron and the app's agent tier, which each job's agent runs at",
             "force-silent because the pseudo-user cannot receive a DM",
         ),
     ),

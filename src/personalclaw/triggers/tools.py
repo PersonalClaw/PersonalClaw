@@ -1404,7 +1404,17 @@ def update(
     # the expr to one nothing can parse, and the row is right back to armed-and-inert.
     if "workflow" in applied:
         stored = _inline_action_of(row.trigger.workflow).get("config")
+        from personalclaw.apps.app_crons import posture_refusal as app_job_posture
+
+        # An app's scheduled job runs at the app's agent tier, so no edit sets how its agent asks
+        # or what it may change, whoever makes it (`app_crons.posture_refusal`).
+        app_job = app_job_posture(trigger_id, applied["workflow"])
         for refusal in (
+            (
+                AutomationToolResult(False, f"Error: nothing was saved: {app_job}")
+                if app_job
+                else None
+            ),
             unattended_action_refusal(applied["workflow"]),
             unregistered_action_provider_refusal(applied["workflow"]),
             unsendable_message_refusal(applied["workflow"], chat_channels=chat_channels),

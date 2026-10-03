@@ -34,9 +34,10 @@ def describe(m: AppManifest) -> dict[str, Any]:
     """Everything installing ``m`` grants and runs, keyed by the catalog-entry field names.
 
     * ``permissions`` — the grants the gateway enforces (``Permissions.to_dict``).
-    * ``crons`` — each declared job, its cadence in words, what it runs, and ``scheduled``:
-      whether installing actually turns it on (:func:`app_crons.schedules` — a job without
-      the ``cron`` permission is declared but inert, and saying "it runs" would be false).
+    * ``crons`` — each declared job, its cadence in words, what it runs, the agent tier its
+      agent runs at (``tier``), and ``scheduled``: whether installing actually turns it on
+      (:func:`app_crons.schedules` — a job without the ``cron`` permission, or of an app that
+      names no agent tier, is declared but inert, and saying "it runs" would be false).
     * ``pythonDependencies`` — what ``pip install`` puts in ``<home>/app-python``, which the
       gateway loads into its own process (``apps/app_python.py``).
     * ``sidecarDependencies`` — the requirement specifiers, verbatim, that **Install engine**
@@ -153,7 +154,9 @@ def _canonical(d: dict[str, Any]) -> str:
 def _crons(m: AppManifest) -> list[dict[str, Any]]:
     """The declared jobs, as the consent surface reads them. A manifest cron runs an AGENT
     with a MESSAGE (``app_crons`` turns it into an ``invoke-agent`` trigger) — there is no
-    command field — so "what it runs" is the agent and its prompt."""
+    command field — so "what it runs" is the agent and its prompt, at ``tier``: the app's agent
+    tier, which every job's agent runs at (``app_crons.start_job``), ``""`` when the app declares
+    none and its jobs start no agent."""
     out: list[dict[str, Any]] = []
     try:
         # Resolved once, and only when a clock-time cron needs it — most apps declare none.
@@ -169,6 +172,7 @@ def _crons(m: AppManifest) -> list[dict[str, Any]]:
                     "cadence": _humanized_cadence(c.cron_expr, tz_name),
                     "agent": c.agent,
                     "message": c.message,
+                    "tier": m.permissions.agent_tier,
                     "scheduled": schedules(m, c),
                 }
             )

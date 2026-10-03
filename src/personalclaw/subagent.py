@@ -1185,7 +1185,7 @@ class SubagentManager:
           (:meth:`_policy_source`, read at each call, not once for the agent's lifetime).
 
         Only an in-process caller passes it, from consent given for that run (a workflow
-        step's saved posture, a trigger's step, an app's scheduled job): ``POST /api/spawn``
+        step's saved posture, a trigger's step; never an app's work): ``POST /api/spawn``
         refuses a request that names one, and an agent's tool calls cannot set it, so a
         subagent started any other way asks as its owner's own settings say.
 

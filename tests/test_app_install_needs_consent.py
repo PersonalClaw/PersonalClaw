@@ -58,8 +58,8 @@ def _app(
     crons: list | None = None,
     files: dict[str, str] | None = None,
 ) -> str:
-    """A clean-scanning app shaped like the ones that installed unseen: a daily agent job
-    and the ``cron`` permission that switches it on."""
+    """A clean-scanning app shaped like the ones that installed unseen: a daily agent job,
+    the ``cron`` permission that switches it on, and the agent tier the job's agent runs at."""
     d = tmp_path / subdir / "digest"
     d.mkdir(parents=True)
     manifest = {
@@ -67,7 +67,11 @@ def _app(
         "version": version,
         "displayName": "Daily Digest",
         "description": "summarises your day",
-        "permissions": {"cron": True, "network": False} if permissions is None else permissions,
+        "permissions": (
+            {"cron": True, "network": False, "agent": "text"}
+            if permissions is None
+            else permissions
+        ),
         "crons": (
             [{"name": "daily-digest", "cron_expr": "3 18 * * *", "message": "summarise my day"}]
             if crons is None
@@ -208,7 +212,7 @@ async def test_a_job_without_the_cron_permission_is_disclosed_as_one_that_will_n
     """The dialog's "installing turns this job on" and the trigger store read ONE predicate
     (``app_crons.schedules``), so they agree on both sides of the permission."""
     async with _client(tmp_path) as client:
-        src = _app(tmp_path, permissions={"network": False})
+        src = _app(tmp_path, permissions={"network": False, "agent": "text"})
         review = await _review(client, src)
         assert review["disclosure"]["crons"][0]["scheduled"] is False
 
@@ -252,7 +256,7 @@ async def test_an_update_that_changes_what_the_app_gets_waits_for_consent(tmp_pa
         r = await client.post("/api/apps/digest/update", json={"source": v2})
         assert r.status == 409, await r.text()
         body = await r.json()
-        assert "agent" not in body["previous"]["permissions"]
+        assert body["previous"]["permissions"]["agent"] == "text"
         assert body["disclosure"]["permissions"]["agent"] == "read"
         got = await (await client.get("/api/apps/digest")).json()
         assert got["installed"]["version"] == "1.0.0", "an unconsented update changed the app"

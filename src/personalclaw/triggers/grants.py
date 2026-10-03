@@ -300,25 +300,32 @@ def _action_of(trigger: Any) -> tuple[str, dict[str, Any]]:
 
 def what_its_agent_may_do(trigger: Any) -> str:
     """What the agent `trigger`'s action starts may do when it runs, in the Allow's words
-    (``automation_posture.AgentRunPolicy.sentence``), or ``""`` when its action starts no agent."""
+    (``automation_posture.AgentRunPolicy.sentence``), or ``""`` when its action starts no agent.
+    An app's scheduled job's agent runs at the app's agent tier, whatever its step says, and is
+    said so (``app_crons.what_the_job_may_do``)."""
+    from personalclaw.apps.app_crons import what_the_job_may_do
     from personalclaw.automation_posture import AGENT_STARTING_PROVIDERS, agent_run_policy
 
     provider, config = _action_of(trigger)
     if provider not in AGENT_STARTING_PROVIDERS:
         return ""
-    return agent_run_policy(provider, config).sentence()
+    return what_the_job_may_do(str(getattr(trigger, "id", "") or "")) or (
+        agent_run_policy(provider, config).sentence()
+    )
 
 
 def held_back(trigger: Any) -> dict[str, str] | None:
     """Why the agent `trigger`'s action starts may do less than its step asks, as things stand now
     (``automation_posture.AgentRunPolicy.held_back``), and the working folder the owner would trust
     to give it back (``""`` when no folder holds it back): ``{"why", "folder"}``. None when nothing
-    holds it back, or its action starts no agent. The Triggers page shows it with the trigger."""
+    holds it back, or its action starts no agent, or it is an app's scheduled job, whose agent's
+    tier is the app's (``app_crons.start_job``). The Triggers page shows it with the trigger."""
+    from personalclaw.apps.app_crons import app_of
     from personalclaw.automation_posture import AGENT_STARTING_PROVIDERS, agent_run_policy
     from personalclaw.guardrails.project_trust import resolve_dir
 
     provider, config = _action_of(trigger)
-    if provider not in AGENT_STARTING_PROVIDERS:
+    if provider not in AGENT_STARTING_PROVIDERS or app_of(str(getattr(trigger, "id", "") or "")):
         return None
     policy = agent_run_policy(provider, config)
     if not policy.held_back:

@@ -16,7 +16,7 @@ from dataclasses import Field, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from personalclaw.apps.agent_tiers import AGENT_TIERS, declared_agent
+from personalclaw.apps.agent_tiers import AGENT_TEXT, AGENT_TIERS, declared_agent
 from personalclaw.apps.core_features import FEATURE_NAME_RE
 from personalclaw.apps.core_version import SEMVER_RE, CoreCompatibility, check_core_compatibility
 
@@ -2131,6 +2131,22 @@ class AppManifest:
                 '"tools" (the owner\'s tools, where each call that needs approval asks the owner) '
                 f"— got: {self.permissions.agent_declared_raw}"
             )
+        # A scheduled job runs an agent at the app's agent tier (``app_crons.schedules``), so jobs,
+        # or the permission to schedule them, with no tier declare work that could never run.
+        elif (self.crons or self.permissions.cron) and not self.permissions.agent_tier:
+            errors.append(
+                "a scheduled job runs an agent at the app's agent tier, and permissions.agent "
+                'names none: declare "text", "read" or "tools", the least its jobs need, or '
+                "drop the crons and the cron permission"
+            )
+        elif self.permissions.agent_tier == AGENT_TEXT:
+            for cron in self.crons:
+                if cron.agent:
+                    errors.append(
+                        f"cron entry {cron.name!r} names an agent ({cron.agent!r}), and a job at "
+                        'the "text" tier runs on none: its model is handed the job\'s message '
+                        'alone, with no tools. Leave the agent out, or declare "read" or "tools"'
+                    )
 
         # An undeclarable permission is an install error, not something to drop quietly.
         #

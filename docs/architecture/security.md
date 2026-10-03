@@ -659,9 +659,10 @@ the ceiling did not bound.
   chat started (a trigger's Invoke Agent agent whose step does not set its own approval, a
   subagent started outside a chat) asks in the Inbox before each call that needs approval. What
   approves one without asking is the consent given for that run: the step's own `approval_mode`,
-  saved with the owner's yes; a Run prompt action, whose Allow says what its agent may do; an
-  app's scheduled job, which install consent lists; a workflow run's own unattended grant; the
-  Mode its loop was started under. The setting reads as a grant in one place
+  saved with the owner's yes; a Run prompt action, whose Allow says what its agent may do; a
+  workflow run's own unattended grant; the Mode its loop was started under. An app's scheduled
+  job is none of these: its agent runs at the app's agent tier as the app's work, and asks for
+  each call that needs approval (`apps/app_crons.start_job`). The setting reads as a grant in one place
   (`approval_grants.setting_grant`, held there by `tests/test_approval_setting_one_reader_rail.py`),
   and only once the owner chooses "Auto", whose loosening asks consent in words that say what it
   does. A stored "Auto" from before the mode shipped asking cannot be told from a chosen one, so it
@@ -687,7 +688,7 @@ the ceiling did not bound.
   `approval_mode` (`400 approval_mode_not_accepted`), whoever sends it, the internal credential
   included, so a subagent started over HTTP asks as her own settings say. What lets a subagent
   approve its own calls is consent given for that run and passed in-process: a workflow step's
-  saved posture, a trigger's step, an app's scheduled job.
+  saved posture, a trigger's step. No app's agent work is given it.
 - **The `tools` scope and a spawn's capability class hold under a grant.** Both are enforced where
   the host is asked about a call, and a runtime that answers its own asks (the native one, while
   a grant stands) asked about none: a read-only research run's write tools ran. The native

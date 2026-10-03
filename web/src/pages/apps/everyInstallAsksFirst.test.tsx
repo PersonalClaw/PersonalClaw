@@ -41,7 +41,7 @@ const DISCLOSURE: AppDisclosure = {
   permissions: { api: ['/api/projects', '/api/tasks', '/api/knowledge'], agent: 'text', cron: true, storage: true, network: false },
   crons: [{
     name: 'daily-capture', cron_expr: '3 18 * * *', cadence: 'At 06:03 PM', agent: '',
-    message: 'scan today and capture growth artifacts', scheduled: true,
+    message: 'scan today and capture growth artifacts', scheduled: true, tier: 'text',
   }],
   pythonDependencies: [],
   hasUI: true, uiComponents: '', hasBackend: true, onInstall: 'bash setup.sh', onUpdate: '', mcpServers: [],
@@ -159,7 +159,9 @@ describe('what the dialog discloses is what the app gets', () => {
     const dialog = await openReview()
     const jobs = within(dialog).getByTestId('consent-scheduled-jobs')
     expect(text(jobs)).toMatch(/Installing turns on a scheduled job/)
-    expect(text(jobs)).toMatch(/runs an agent on its own, on the schedule below, without asking you first/)
+    // What its agent may do, in its tier's words: the app's tier, which the job runs at.
+    expect(text(jobs)).toMatch(/it runs on the schedule below, at the app’s agent tier: its model is handed only the job’s message, with no tools/)
+    expect(text(jobs)).not.toMatch(/without asking you first/)
     expect(text(jobs)).toMatch(/pause it on the Triggers page/)
     expect(text(jobs)).toMatch(/daily-capture/)
     expect(text(jobs)).toMatch(/At 06:03 PM/)

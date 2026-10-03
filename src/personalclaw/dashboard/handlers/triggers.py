@@ -1486,6 +1486,12 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=409)
     # 🔴 Anything that awaits runs BEFORE the revision check (`trigger_revisions`), never after.
     problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
+    if not problem:
+        # Before any consent question: an app's scheduled job runs at the app's agent tier, so no
+        # posture is asked about for it, and none is saved (`app_crons.posture_refusal`).
+        from personalclaw.apps.app_crons import posture_refusal as app_job_posture
+
+        problem = app_job_posture(raw, body.get("action"))
     if problem:
         return json_error("invalid_request", message=problem, status=400)
     stale = trigger_revisions.refusal(

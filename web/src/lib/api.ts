@@ -1125,8 +1125,12 @@ export interface AppCronSummary {
   cadence?: string
   /** Whether installing actually switches this job ON — the same predicate the trigger store
    *  registers by (`app_crons.schedules`). `false` for a job declared without the `cron`
-   *  permission: it is inert, and "it runs" would be a false sentence. */
+   *  permission, or by an app that names no agent tier: it is inert, and "it runs" would be a
+   *  false sentence. */
   scheduled?: boolean
+  /** The agent tier the job's agent runs at: the app's (`permissions.agent`), read when the job
+   *  fires (`app_crons.start_job`). `''` when the app names none, and its jobs start no agent. */
+  tier?: AgentTier | ''
 }
 /** One MCP server an app adds to the assistant's tools, and what it starts or connects to. */
 export interface AppMcpServer { name: string; launches: string }

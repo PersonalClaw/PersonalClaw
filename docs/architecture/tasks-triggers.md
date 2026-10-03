@@ -1040,9 +1040,12 @@ the same scope a run resolves (`research_reports.sources_shown`).
 ### App-manifest crons
 
 Apps can declare crons in their manifest; `apps/app_crons.py` reconciles them
-on every app lifecycle transition and registers them `silent=True` always
-(headless — the manifest flag is advisory; a failing app cron must not spam
-the owner's DM). See [app-platform.md](app-platform.md).
+on every app lifecycle transition and registers them with delivery `none` always
+(headless — nothing reads the manifest's `silent` flag; a failing app cron must
+not spam the owner's DM). A job is registered only for an app that holds the `cron`
+permission and an agent tier, and each fire runs the job's agent at that tier,
+as the app's work, approving none of its calls (`app_crons.start_job`). See
+[app-platform.md](app-platform.md#crons).
 
 ## Workflows
 

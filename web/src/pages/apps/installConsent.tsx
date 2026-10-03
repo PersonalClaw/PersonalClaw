@@ -522,7 +522,7 @@ function disclosureFacts(d: AppDisclosure): { key: string; label: string }[] {
     ...permissionRows(d.permissions ?? {}).map((r) => ({ key: `perm:${r}`, label: r })),
     ...(d.permissions?.network ? [{ key: 'network', label: 'Network access declared' }] : []),
     ...d.crons.filter((c) => c.scheduled !== false).map((c) => ({
-      key: `cron:${JSON.stringify([c.name, c.every, c.cron_expr, c.agent, c.message])}`,
+      key: `cron:${JSON.stringify([c.name, c.every, c.cron_expr, c.agent, c.message, c.tier ?? ''])}`,
       label: `Scheduled job “${c.name || 'job'}” — ${fmtCadence(c)}`,
     })),
     ...d.pythonDependencies.map((p) => ({ key: `py:${p.spec}`, label: `Python package ${p.spec}` })),
@@ -935,17 +935,30 @@ function cadenceTitle(c: AppCronSummary): string | undefined {
   return `cron: ${c.cron_expr}`
 }
 
+/** What a scheduled job's agent may do at each tier, after "at the app's agent tier:" — the
+ *  tier's own consent sentence (`AGENT_TIER_SENTENCE`) said of a job. The server's job Allow says
+ *  it in the same words (`app_crons.what_the_job_may_do`). */
+const JOB_AT_TIER: Record<AgentTier, string> = {
+  text: 'its model is handed only the job’s message, with no tools, so it can’t read your files or memory, change anything, run commands or send messages',
+  read: 'its agent has read-only tools, so it can read your files and data, and can’t change anything or send messages',
+  tools: 'its agent uses your tools, and the app can’t approve its calls, so each one that needs approval asks you',
+}
+
 /** The recurring jobs an app declares. Each is an AGENT run on a schedule — so the block
  *  shows the cadence, the agent and the prompt, and above all SAYS that installing turns
- *  them on: an app's crons become live, enabled triggers the moment the install commits, run
- *  unattended with no approval prompt, and until this sentence existed nothing on the consent
- *  screen said so. Whether a job is on comes from the server (`scheduled`, the trigger
- *  store's own predicate) — a job declared without the `cron` permission is inert, and it is
- *  disclosed as inert rather than as something that will run. */
+ *  them on, and what each job's agent may do: an app's crons become live, enabled triggers the
+ *  moment the install commits, and each runs at the app's agent tier (`tier`, the server's
+ *  `app_crons.start_job`), asking nothing to start. Whether a job is on comes from the server
+ *  (`scheduled`, the trigger store's own predicate) — a job declared without the `cron`
+ *  permission, or by an app that names no agent tier, is inert, and it is disclosed as inert
+ *  rather than as something that will run. */
 export function CronConsentList({ crons, action = 'install' }: { crons: AppCronSummary[]; action?: DisclosureAction }) {
   const on = crons.filter((c) => c.scheduled !== false)
   const off = crons.length - on.length
   const jobs = (n: number) => (n === 1 ? 'a scheduled job' : `${n} scheduled jobs`)
+  // One tier for every job: the app's.
+  const tier = on.find((c) => c.tier)?.tier
+  const untiered = crons.some((c) => c.scheduled === false && !c.tier)
   return (
     <div data-testid="consent-scheduled-jobs">
       <div data-type="label-m" className="mb-1 flex items-center gap-1.5 text-on-surface">
@@ -959,13 +972,15 @@ export function CronConsentList({ crons, action = 'install' }: { crons: AppCronS
                 : action === 'installed' ? `It runs ${jobs(on.length)}`
                 : `Installing turns on ${jobs(on.length)}`}
             </span>
-            {` — ${on.length === 1 ? 'it runs' : 'each runs'} an agent on its own, on the schedule below, without asking you first. You can pause ${on.length === 1 ? 'it' : 'them'} on the Triggers page.`}
+            {` — ${on.length === 1 ? 'it runs' : 'each runs'} on the schedule below${tier ? `, at the app’s agent tier: ${JOB_AT_TIER[tier]}` : ''}. You can pause ${on.length === 1 ? 'it' : 'them'} on the Triggers page.`}
           </>
         )}
         {off > 0 && (
           `${on.length > 0
             ? ` ${off === 1 ? 'One more is' : `${off} more are`}`
-            : off === 1 ? 'This job is' : 'These jobs are'} declared but will not run: the app does not have the Scheduled jobs permission.`
+            : off === 1 ? 'This job is' : 'These jobs are'} declared but will not run: ${untiered
+            ? 'the app names no agent tier, so it can start no agent.'
+            : 'the app does not have the Scheduled jobs permission.'}`
         )}
       </div>
       <ul className="flex flex-col gap-1.5">

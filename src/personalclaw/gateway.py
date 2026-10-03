@@ -4375,7 +4375,7 @@ class GatewayOrchestrator:
                             is_new,
                             parent_key,
                             window=await resolve_window(serving=client),
-                            # The job's own turn: an app's job not given your memory reads none.
+                            # The job's own turn reads memory only where its work may.
                             blocks_reads=not reach_of(self.dashboard_state, parent_key).reads,
                         )
                     else:

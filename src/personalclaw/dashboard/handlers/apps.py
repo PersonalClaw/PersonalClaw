@@ -1096,42 +1096,25 @@ async def api_app_config_put(request: web.Request) -> web.Response:
 
 
 def _app_agent_tier(name: str) -> str:
-    """The agent tier the app may run work at now (``agent_tiers.AGENT_TIERS``): installed, enabled,
-    and declaring one. ``""`` when it may run none.
+    """The agent tier the app may run work at now (``permissions.agent_tier_now``).
 
-    The lifecycle half is not redundant with ``app_permission_middleware``. That runs
-    only for a request carrying an app identity, and ``_agent_run_identity`` falls back
-    to the path segment for OWNER-initiated calls — which the dashboard makes whenever
-    app-token minting failed, and minting is exactly what refuses a disabled app. So the
-    fallback was the one way to start an agent run for an app the owner had switched off.
+    Its lifecycle half is not redundant with ``app_permission_middleware``. That runs only for a
+    request carrying an app identity, and ``_agent_run_identity`` falls back to the path segment
+    for OWNER-initiated calls — which the dashboard makes whenever app-token minting failed, and
+    minting is exactly what refuses a disabled app. So the fallback was the one way to start an
+    agent run for an app the owner had switched off.
     """
-    from personalclaw.apps.permissions import app_lifecycle_denial, checker_for
+    from personalclaw.apps.permissions import agent_tier_now
 
-    if app_lifecycle_denial(name):
-        return ""
-    checker = checker_for(name)
-    return checker.agent_tier() if checker is not None else ""
+    return agent_tier_now(name)
 
 
 def _no_agent_tier(name: str) -> web.Response:
-    """The 403 for an app that may run no agent work, saying why in words that are true.
+    """The 403 for an app that may run no agent work, saying why in words that are true
+    (``permissions.no_agent_work``)."""
+    from personalclaw.apps.permissions import no_agent_work
 
-    An app installed before ``permissions.agent`` named a tier still declares ``true``, which
-    names none: it does declare the permission, so "does not declare" would be false, and what
-    she can do about it is update the app (which asks her again, in the tier's words)."""
-    from personalclaw.apps.permissions import checker_for
-
-    checker = checker_for(name)
-    raw = checker.permissions.agent_declared_raw if checker is not None else ""
-    if raw:
-        message = (
-            f"app {name!r} declares the 'agent' permission as {raw}, which names no tier, so it "
-            'runs no agent tasks: update it to a version that declares "text", "read" or '
-            '"tools"'
-        )
-    else:
-        message = f"app {name!r} does not declare the 'agent' permission"
-    return web.json_response({"error": message}, status=403)
+    return web.json_response({"error": no_agent_work(name)}, status=403)
 
 
 def _agent_run_identity(request: web.Request) -> tuple[str, str]:
@@ -1164,10 +1147,8 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
 
     The app approves none of its run's calls, whatever the tier: each one that needs approval asks
     the owner. A task that asks for a wider tier than its app's is refused, and nothing runs."""
-    from personalclaw.apps.agent_tiers import AGENT_READ, AGENT_TEXT, AGENT_TIERS, AGENT_TOOLS
+    from personalclaw.apps.agent_tiers import AGENT_TEXT, AGENT_TIERS, capability_class
     from personalclaw.apps.permissions import agent_tier_shortfall
-    from personalclaw.subagent import CAPABILITY_MUTATING, CAPABILITY_RESEARCH
-    from personalclaw.subagent_tier import CAPABILITY_TEXT
 
     _, name = _agent_run_identity(request)
     held = _app_agent_tier(name)
@@ -1228,22 +1209,16 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
         _sel_log("apps.agent_run", "denied", name, request, error=refusal)
         return json_error("agent_tier_exceeded", message=refusal, status=403)
 
-    # What each tier may use, as the subagent's capability class: a text task no tools at all, a
-    # read task read-only ones, a tools task every tool.
-    capability = {
-        AGENT_TEXT: CAPABILITY_TEXT,
-        AGENT_READ: CAPABILITY_RESEARCH,
-        AGENT_TOOLS: CAPABILITY_MUTATING,
-    }
     # App-run agents are headless and silent (no chat surfacing), tagged by the app so the run is
-    # attributable, and held to the tier: what the run may use is the tier's capability class, and
-    # `app` is what lets it start on the app's install consent while approving none of its calls.
+    # attributable, and held to the tier: what the run may use is the tier's capability class (a
+    # text task no tools at all, a read task read-only ones, a tools task every tool), and `app` is
+    # what lets it start on the app's install consent while approving none of its calls.
     info = state.subagents.spawn(
         task,
         parent_session_key=f"app:{name}",
         agent=agent,
         max_turns=max_turns,
-        capability_class=capability[tier],
+        capability_class=capability_class(tier),
         silent=True,
         app=name,
     )

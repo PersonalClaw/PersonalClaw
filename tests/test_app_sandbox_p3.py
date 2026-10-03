@@ -1,7 +1,8 @@
 """Untrusted-app sandbox P3 — the remaining capability enforcements:
 
 * ``can_use_cron``  → app-declared manifest crons are registered only when the app
-  holds the permission; reconcile prunes them when it doesn't (or the app is gone).
+  holds the permission and an agent tier for their agents to run at; reconcile prunes them
+  when it doesn't (or the app is gone).
 * ``can_use_storage`` → the backend launcher hands DATA_DIR only when held.
 * ``can_use_mcp_tool`` → checker gates the tool-invoke path.
 """
@@ -51,6 +52,11 @@ def _install_app(
     )
 
 
+#: What an app that schedules jobs declares: the ``cron`` permission, and the agent tier each job's
+#: agent runs at (``app_crons.schedules``).
+_SCHEDULES = {"cron": True, "agent": "read"}
+
+
 @pytest.fixture
 def app_env(tmp_path, monkeypatch):
     """Point config_dir at a tmp tree so apps + crons live in isolation."""
@@ -87,7 +93,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "with-cron",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             crons=[{"name": "daily", "every": 3600, "agent": "x", "message": "go"}],
         )
         _install_app(
@@ -112,13 +118,15 @@ class TestAppCronReconcile:
 
     def test_the_registered_action_matches_what_the_migration_produces(self, app_env):
         """An app cron written here and one imported from `crons.json` must be the SAME row, or the
-        two paths would produce triggers that fire differently."""
+        two paths would produce triggers that fire differently: the action's provider and the keys
+        `invoke-agent` reads, and no posture of its own, which an import drops too
+        (`triggers.legacy_import`)."""
         from personalclaw.apps.app_crons import reconcile_app_crons
 
         _install_app(
             app_env,
             "shape",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             crons=[{"name": "j", "every": 3600, "agent": "helper", "message": "do it"}],
         )
         store = self._store(app_env)
@@ -129,7 +137,8 @@ class TestAppCronReconcile:
         # `task_template`, NOT `message` — the key `invoke-agent` actually reads.
         assert config.get("task_template") == "do it"
         assert config.get("agent") == "helper"
-        assert config.get("approval_mode") == "auto"  # unattended: cannot wedge on a human
+        # Nothing of how its agent asks: that is the app's agent tier (`app_crons.start_job`).
+        assert "approval_mode" not in config and "capability" not in config
 
     def test_prunes_when_permission_revoked(self, app_env):
         from personalclaw.apps.app_crons import reconcile_app_crons
@@ -137,7 +146,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "app1",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             crons=[{"name": "j", "every": 3600, "agent": "a", "message": "m"}],
         )
         store = self._store(app_env)
@@ -159,7 +168,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "app2",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             crons=[{"name": "j", "every": 3600, "agent": "a", "message": "m"}],
         )
         store = self._store(app_env)
@@ -168,7 +177,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "app2",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             enabled=False,
             crons=[{"name": "j", "every": 3600, "agent": "a", "message": "m"}],
         )
@@ -202,7 +211,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "loud",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             crons=[{"name": "j", "every": 3600, "agent": "a", "message": "m"}],
         )
         store = self._store(app_env)
@@ -226,7 +235,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "app3",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             crons=[{"name": "j", "cron_expr": "0 9 * * *", "agent": "a", "message": "m"}],
         )
         store = self._store(app_env)
@@ -256,7 +265,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "lc-app",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             crons=[{"name": "beat", "every": 1800, "agent": "a", "message": "m"}],
         )
         store = self._store(app_env)
@@ -279,7 +288,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "lc-app",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             enabled=False,
             crons=[{"name": "beat", "every": 1800, "agent": "a", "message": "m"}],
         )
@@ -298,7 +307,7 @@ class TestAppCronReconcile:
         _install_app(
             app_env,
             "nc-app",
-            permissions={"cron": True},
+            permissions=_SCHEDULES,
             crons=[{"name": "j", "every": 3600, "agent": "a", "message": "m"}],
         )
 

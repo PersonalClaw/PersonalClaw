@@ -39,7 +39,8 @@ message it may send its owner. An automation's step is turned into those by
 ``automation_posture.agent_run_policy``, which its Allow is said from too.
 
 **An app's run.** An app's agent work runs at the tier its manifest declares and its owner agreed
-to at install (``apps.agent_tiers``; ``handlers/apps.api_app_agent_run``): ``text`` at
+to at install (``apps.agent_tiers``; ``handlers/apps.api_app_agent_run``, and its scheduled jobs'
+``apps/app_crons.start_job``): ``text`` at
 :data:`CAPABILITY_TEXT`, ``read`` at the research class, ``tools`` at the mutating one, and the run
 names its app (``SubagentInfo.app``), as does an agent the app's conversation or run spawns
 (``memory_reads.reach_of``'s ``app``). That permission starts it (``approval_grants.APP``) and
@@ -277,8 +278,9 @@ class SubagentTier:
 
     An automation's own agent (a trigger's fire, or its Run now) may also tell the owner something
     with `notify`, and nothing more (``owner_notices``): an automation that finds something has to
-    be able to say so, and a research run changes nothing else. ``may_change`` is the files an
-    automation was given to change (``write_scope``).
+    be able to say so, and a research run changes nothing else. An app's agent may not, its
+    scheduled job's included: its tier is the app's, and a read tier sends no message.
+    ``may_change`` is the files an automation was given to change (``write_scope``).
     """
 
     def __init__(
@@ -433,7 +435,10 @@ def tier_for(info: SubagentInfo) -> SubagentTier:
     capability = resolve_capability_class(
         capability_class=info.capability_class, approval_mode=info.approval_mode
     )
-    return _tier(capability, owner_notices=bool(info.trigger_id), may_change=info.may_change)
+    # An automation's own agent may tell its owner what it found; an app's (its scheduled job's
+    # included) is held to the app's tier, and a read tier sends no message.
+    notices = bool(info.trigger_id) and not info.app
+    return _tier(capability, owner_notices=notices, may_change=info.may_change)
 
 
 def tier_from_env(raw: str) -> SubagentTier:

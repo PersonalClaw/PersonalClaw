@@ -13,6 +13,10 @@ blocks on the child:
   opts in (``approval_mode: "auto"``) or the global ``auto_approve_subagent_spawn`` is set, and
   ask otherwise. A spawn with no trigger's Allow behind it takes SubagentManager.spawn's normal
   approval gate (rejected if no interactive approver).
+* **An app's scheduled job** (a fire of an ``app:`` trigger, ``app_crons.app_of``) is none of the
+  above: its agent runs at the agent tier the app holds, as the app's work, and approves none of
+  its calls (``app_crons.start_job``). The step's approval, write access, files to change and
+  working folder are not read for it.
 
 How many hook-spawned agents run at once is the subagent manager's to bound: past its
 concurrency cap a spawn waits in its queue. A spawn it refuses outright (low memory, an
@@ -126,53 +130,50 @@ class InvokeAgentActionProvider(ActionProvider):
             return ActionResult(success=False, error="invoke-agent: subagent manager unavailable")
 
         agent = (action_config.get("agent") or "").strip()
-        # Its working folder, checked now: the spawn refuses a folder outside the allowed ones in
-        # its background task, which would read as launched.
-        cwd = str(action_config.get("cwd") or "").strip()
-        cwd_refused = validate_spawn_cwd(cwd)
-        if cwd_refused:
-            return ActionResult(success=False, error=f"invoke-agent: {cwd_refused}")
         model = (action_config.get("model") or "").strip() or None
         try:
             max_turns = int(action_config.get("max_turns", 0) or 0)
         except (ValueError, TypeError):
             max_turns = 0
-        parent_key = str((ctx.payload or {}).get("session_key", "") or "")
-        from personalclaw.automation_posture import fire_policy
+        from personalclaw.apps.app_crons import app_of, start_job
         from personalclaw.triggers.store import run_title
 
-        # What its agent may do, as its Allow said it (`automation_posture.fire_policy`, the check
-        # run-prompt builds its run from too): the run is built from the same mapping the Allow's
-        # sentence is, and a working folder the owner has not trusted holds it to reading.
-        policy = fire_policy(self.name, action_config)
+        # What the run is called: its trigger's name, else its task's first line.
         title = run_title(ctx.trigger_id, task)
+        app = app_of(ctx.trigger_id)
 
         # Fire-and-forget: spawn() schedules the child and returns at once, so the lifecycle never
         # waits on it. A spawn it refuses there is this fire's failure: a launch says nothing until
         # the agent ends, so a refusal nobody reported would leave the trigger silent.
         try:
-            info = services.subagents.spawn(
-                task=task,
-                parent_session_key=parent_key,
-                agent=agent,
-                cwd=cwd,
-                max_turns=max_turns,
-                model=model,
-                # §4.1 creation-time write grant, read from the policy: an agent that approves its
-                # own calls is read-only unless the step carries ``capability: "mutating"``.
-                approval_mode=policy.approval_mode or None,
-                capability_class=policy.capability_class,
-                silent=False,
-                # The trigger whose fire this is (`ActionContext.trigger_id`): an approval the
-                # agent asks for names it and can be run again from the Inbox, and the agent says
-                # how it went on the trigger's route when it ends.
-                trigger_id=ctx.trigger_id,
-                # What the run is called: its trigger's name, else its task's first line.
-                title=title,
-                may_read=ctx.fire_files,
-                may_change=policy.may_change,
-                held_back=policy.held_back,
-            )
+            if app:
+                # An app's scheduled job: its agent at the tier the app holds now, as the app's
+                # work, approving none of its calls (`app_crons.start_job`).
+                info, refused = start_job(
+                    app,
+                    task=task,
+                    agent=agent,
+                    model=model,
+                    max_turns=max_turns,
+                    trigger_id=ctx.trigger_id,
+                    title=title,
+                    subagents=services.subagents,
+                )
+                if refused:
+                    return ActionResult(success=False, error=f"invoke-agent: {refused}")
+            else:
+                info = self._spawn(
+                    action_config,
+                    ctx,
+                    services.subagents,
+                    task,
+                    agent=agent,
+                    model=model,
+                    max_turns=max_turns,
+                    title=title,
+                )
+                if isinstance(info, ActionResult):
+                    return info
         except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
             logger.warning("invoke-agent: spawn failed", exc_info=True)
             return ActionResult(
@@ -191,6 +192,54 @@ class InvokeAgentActionProvider(ActionProvider):
             stdout=f"spawned agent for: {task[:80]}",
             outcome="launched",
             work_id=agent_work_id(info.id),
+        )
+
+    def _spawn(
+        self,
+        action_config: dict[str, Any],
+        ctx: ActionContext,
+        subagents: Any,
+        task: str,
+        *,
+        agent: str,
+        model: str | None,
+        max_turns: int,
+        title: str,
+    ) -> Any:
+        """Start the agent of a trigger's step (or a hook's) as its Allow says it may run, or the
+        ActionResult refusing its working folder."""
+        # Its working folder, checked now: the spawn refuses a folder outside the allowed ones in
+        # its background task, which would read as launched.
+        cwd = str(action_config.get("cwd") or "").strip()
+        cwd_refused = validate_spawn_cwd(cwd)
+        if cwd_refused:
+            return ActionResult(success=False, error=f"invoke-agent: {cwd_refused}")
+        from personalclaw.automation_posture import fire_policy
+
+        # What its agent may do, as its Allow said it (`automation_posture.fire_policy`, the check
+        # run-prompt builds its run from too): the run is built from the same mapping the Allow's
+        # sentence is, and a working folder the owner has not trusted holds it to reading.
+        policy = fire_policy(self.name, action_config)
+        return subagents.spawn(
+            task=task,
+            parent_session_key=str((ctx.payload or {}).get("session_key", "") or ""),
+            agent=agent,
+            cwd=cwd,
+            max_turns=max_turns,
+            model=model,
+            # §4.1 creation-time write grant, read from the policy: an agent that approves its
+            # own calls is read-only unless the step carries ``capability: "mutating"``.
+            approval_mode=policy.approval_mode or None,
+            capability_class=policy.capability_class,
+            silent=False,
+            # The trigger whose fire this is (`ActionContext.trigger_id`): an approval the
+            # agent asks for names it and can be run again from the Inbox, and the agent says
+            # how it went on the trigger's route when it ends.
+            trigger_id=ctx.trigger_id,
+            title=title,
+            may_read=ctx.fire_files,
+            may_change=policy.may_change,
+            held_back=policy.held_back,
         )
 
 

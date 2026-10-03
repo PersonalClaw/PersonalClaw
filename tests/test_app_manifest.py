@@ -187,7 +187,7 @@ class TestValidation:
                     "pages": [{"route": "/apps/sample", "label": "Dashboard", "icon": "Shield"}]
                 },
                 "backend": {"entryPoint": "backend/app.py"},
-                "permissions": {"mcpTools": ["example_tool"], "storage": True},
+                "permissions": {"mcpTools": ["example_tool"], "storage": True, "agent": "read"},
                 "setup": {"onInstall": "backend/setup.py:on_install"},
                 "tags": ["dashboard"],
             }
@@ -244,8 +244,13 @@ class TestPermissionVocabulary:
     @pytest.mark.parametrize("key", sorted(PERMISSION_KEYS))
     def test_every_key_in_the_vocabulary_is_accepted(self, key):
         """The other direction, and the one that would break real apps if the vocabulary
-        drifted: a declared permission this project DOES support must never be refused."""
-        m = AppManifest.from_dict(_valid_manifest(permissions={key: _valid_value_for(key)}))
+        drifted: a declared permission this project DOES support must never be refused. ``cron``
+        is declared with the agent tier its jobs run at, which a manifest scheduling jobs must
+        name (``app_crons.schedules``)."""
+        companion = {"agent": AGENT_TIERS[0]} if key == "cron" else {}
+        m = AppManifest.from_dict(
+            _valid_manifest(permissions={key: _valid_value_for(key), **companion})
+        )
         assert m.permissions.unknown_keys == ()
         assert m.validate() == []
 
@@ -465,7 +470,7 @@ class TestCliSeams:
         m = AppManifest.from_dict(
             _valid_manifest(
                 crons=[{"name": "j", "every": 60, "agent": "a", "message": "go"}],
-                permissions={"storage": True},
+                permissions={"storage": True, "agent": "read"},
             )
         )
         assert m.validate() == []

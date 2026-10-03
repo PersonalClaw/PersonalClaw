@@ -1735,6 +1735,44 @@ def app_lifecycle_denial(app_name: str) -> str:
     return ""
 
 
+def agent_tier_now(app_name: str) -> str:
+    """The agent tier app *app_name* may run work at now (``agent_tiers.AGENT_TIERS``): installed,
+    enabled and declaring one; ``""`` when it may run none.
+
+    The one answer every start of the app's agent work asks, when it starts: its agent-run route
+    (``handlers/apps.api_app_agent_run``) and its scheduled jobs (``app_crons.start_job``). So an
+    update that changes the tier, and switching the app off, hold the next start to what the app
+    holds then. :func:`no_agent_work` says why when this is ``""``."""
+    if app_lifecycle_denial(app_name):
+        return ""
+    checker = checker_for(app_name)
+    return checker.agent_tier() if checker is not None else ""
+
+
+def no_agent_work(app_name: str) -> str:
+    """Why app *app_name* runs no agent work now (:func:`agent_tier_now` is ``""``), in words that
+    are true: it is not installed or is switched off, its manifest cannot be read, it still declares
+    ``true`` from before ``permissions.agent`` named a tier, or it declares no agent work.
+
+    An install that declares ``true`` does declare the permission, so "does not declare" would be
+    false for it, and what the owner can do is update the app, which asks her again in the tier's
+    words."""
+    gone = app_lifecycle_denial(app_name)
+    if gone:
+        return f"app {app_name!r} {gone.removeprefix('app ')}"
+    checker = checker_for(app_name)
+    if checker is None:
+        return f"app {app_name!r}'s permissions cannot be read"
+    raw = checker.permissions.agent_declared_raw
+    if raw:
+        return (
+            f"app {app_name!r} declares the 'agent' permission as {raw}, which names no tier, so "
+            'it runs no agent tasks: update it to a version that declares "text", "read" or '
+            '"tools"'
+        )
+    return f"app {app_name!r} does not declare the 'agent' permission"
+
+
 def app_request_denial(app_name: str, path: str, *, method: str = "", route: str = "") -> str:
     """Why an app-scoped request must be refused, or ``""`` to allow it.
 

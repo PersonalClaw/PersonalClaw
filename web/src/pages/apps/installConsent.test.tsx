@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, cleanup, within } from '@testing-library/react'
 import type { AppCatalogEntry, AppDisclosure, AppInstallResult, AppScanReport } from '../../lib/api'
 
 // ── The install-consent dialog's states have to read correctly ───────────────────────────────────
@@ -258,12 +258,38 @@ describe('the scheduled-job row reads as a schedule', () => {
     // registers by): declared without the `cron` grant, the job is inert, and "installing turns on
     // a scheduled job" would be a false sentence about it.
     const dialog = await dialogFor(review({}, {
-      permissions: {}, crons: [{ name: 'digest', every: 3600, scheduled: false }],
+      permissions: { agent: 'text' }, crons: [{ name: 'digest', every: 3600, scheduled: false, tier: 'text' }],
     }))
     expect(text(dialog)).not.toMatch(/Installing turns on/)
     // "This job", not "One more": with nothing else scheduled there is no "more".
     expect(text(dialog)).toMatch(/This job is declared but will not run: the app does not have the Scheduled jobs permission/)
     expect(text(dialog)).toMatch(/off · every hour/)
+  })
+
+  it('a job of an app that names no agent tier is disclosed as one that starts no agent', async () => {
+    // An install from before the rule: its job would run an agent no tier holds, so it runs none.
+    const dialog = await dialogFor(review({}, {
+      permissions: { cron: true }, crons: [{ name: 'digest', every: 3600, scheduled: false, tier: '' }],
+    }))
+    expect(text(dialog)).not.toMatch(/Installing turns on/)
+    expect(text(dialog)).toMatch(/This job is declared but will not run: the app names no agent tier, so it can start no agent/)
+  })
+
+  it.each([
+    ['text', /its model is handed only the job’s message, with no tools, so it can’t read your files or memory/],
+    ['read', /its agent has read-only tools, so it can read your files and data, and can’t change anything or send messages/],
+    ['tools', /its agent uses your tools, and the app can’t approve its calls, so each one that needs approval asks you/],
+  ] as const)('a job says what its agent may do at the %s tier', async (tier, says) => {
+    // Each job runs at the app's agent tier (`app_crons.start_job`), and starts without asking:
+    // the sentence says what that agent may then do, never that it runs "without asking".
+    const dialog = await dialogFor(review({}, {
+      permissions: { cron: true, agent: tier },
+      crons: [{ name: 'digest', every: 3600, scheduled: true, tier }],
+    }))
+    const jobs = within(dialog).getByTestId('consent-scheduled-jobs')
+    expect(text(jobs)).toMatch(/Installing turns on a scheduled job — it runs on the schedule below, at the app’s agent tier:/)
+    expect(text(jobs)).toMatch(says)
+    expect(text(jobs)).not.toMatch(/without asking you first/)
   })
 
   it('a mixed list says how many MORE will not run beside the ones that will', async () => {
