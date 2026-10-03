@@ -31,9 +31,9 @@ from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.vector_memory import SemanticRejectCode
 
 from ._shared import (
-    _blocks_reads_session,
     _get_memory,
     _is_restricted_session,
+    _memory_refusal,
     config_write_refusal,
 )
 
@@ -761,14 +761,14 @@ async def api_memory_recall(request: web.Request) -> web.Response:
     stage and the budget, never the question. A recall the route stopped waiting for stops at its
     next stage and records nothing (no fact's recall count is bumped for an answer nobody read).
     """
-    # A temporary (blank-slate) session blocks memory READS — its always-on memory
-    # injection is already suppressed (context.py) and its snippet tells the model
-    # "no memory reads". Enforce that here too: recall is the most sensitive read path
-    # (semantic facts + episodic fragments) and must not bypass the guard its sibling
-    # reads (api_lessons) apply, or the privacy boundary is prompt-only. Incognito
-    # still reads (memory context is already in-context); only temporary blocks_reads.
+    # A Temporary chat's work, and an app's that does not hold the memory permission, read none
+    # of your memory (`memory_reads`): their turns are assembled without it, and recall is the
+    # most sensitive read path (facts, lessons, episodes), so it asks the same check rather than
+    # leaving the boundary to the prompt. The answer says why, so the agent can tell the person
+    # there is no memory to read here rather than that nothing matched. Incognito still reads.
     state: DashboardState = request.app["state"]
-    if _blocks_reads_session(state, request):
+    refusal = _memory_refusal(state, request)
+    if refusal:
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
             caller=sk,
@@ -781,7 +781,7 @@ async def api_memory_recall(request: web.Request) -> web.Response:
         # there is no ranking to describe, and claiming "not ranked" would read as a
         # capability report on a store this request never touched.
         return web.json_response(
-            {"result": "No matching memory found.", "query": "", "deep": False, "ranking": None}
+            {"result": refusal, "withheld": refusal, "query": "", "deep": False, "ranking": None}
         )
     svc = _get_service(request.app["state"])
     query = request.query.get("q", "")[:500]

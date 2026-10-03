@@ -415,7 +415,7 @@ def _home(tmp_path, monkeypatch):
     monkeypatch.setattr("personalclaw.tasks.hierarchy.config_dir", lambda: tmp_path)
     monkeypatch.setattr(
         "personalclaw.dashboard.handlers.context._route_for_project",
-        lambda state, project, query: cr.assemble(
+        lambda state, project, query, withheld="": cr.assemble(
             project_id=getattr(project, "id", ""),
             project_name=getattr(project, "name", ""),
             brief=getattr(project, "brief", ""),

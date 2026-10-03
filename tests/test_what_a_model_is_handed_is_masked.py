@@ -312,7 +312,7 @@ def test_the_recall_route_masks_its_semantic_half():
     request.query = {"q": "github"}
     request.headers = {}
     with (
-        patch.object(memory_handlers, "_blocks_reads_session", lambda *a: False),
+        patch.object(memory_handlers, "_memory_refusal", lambda *a: ""),
         patch.object(memory_handlers, "_get_service", lambda state: svc),
     ):
         response = asyncio.run(memory_handlers.api_memory_recall(request))

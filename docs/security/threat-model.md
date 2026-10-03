@@ -535,7 +535,13 @@ Data leaving the running system:
   turn runs on (the embedding model, a tool's or a subagent's model, the image
   reader, a fallback, an agent CLI's tool process: `memory_writes.model_may_read`),
   except what the person gives the chat in a form its model cannot read (an
-  attached file, a shared screen), which the model set up for it reads.
+  attached file, a shared screen), which the model set up for it reads. Whether
+  work may read memory at all is one answer, `memory_reads.reach_of`: a
+  Temporary chat's work reads none (its subagents, theirs, and the steps of a run
+  it started included), and neither does an app's (a conversation it started, an
+  agent run it asked for, an agent working for either) unless the app holds the
+  `memory` permission — otherwise an app's own conversation would be a second door
+  to the memory its token is refused.
 
 ## OWASP Agentic Security (ASI) Top-10 mapping
 

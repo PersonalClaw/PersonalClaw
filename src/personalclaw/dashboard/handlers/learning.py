@@ -573,14 +573,15 @@ async def api_learning_summary(request: web.Request) -> web.Response:
     builder, when it arrives, calls `compose_learning_summary` rather than
     reimplementing the gather.
 
-    The facts group is memory content, so a temporary session (`blocks_reads`) gets the
-    summary WITHOUT it — matching `/api/lessons`, which returns an empty list for the
-    same caller. The skill and proposal groups are not memory and stay visible.
+    The facts group is memory content, so work that reads no memory (a Temporary chat's, an
+    app's without the memory permission: `memory_reads`) gets the summary WITHOUT it — matching
+    `/api/lessons`, which lists no lesson for the same caller. The skill and proposal groups are
+    not memory and stay visible.
     """
     if not _enabled():
         return _off()
 
-    from personalclaw.dashboard.handlers._shared import _blocks_reads_session, _get_memory
+    from personalclaw.dashboard.handlers._shared import _get_memory, _memory_refusal
     from personalclaw.learning_summary import (
         MAX_WINDOW_DAYS,
         MIN_WINDOW_DAYS,
@@ -594,7 +595,7 @@ async def api_learning_summary(request: web.Request) -> web.Response:
         return web.json_response({"error": "days must be an integer"}, status=400)
 
     vs = None
-    if _blocks_reads_session(state, request):
+    if _memory_refusal(state, request):
         _audit(request, "learning.summary", "denied", resources="facts")
     else:
         try:
@@ -637,14 +638,14 @@ def _report_window(request: web.Request) -> "int | None":
 def _report_vs(request: web.Request, action: str):
     """The vector store the report reads facets and lessons from, or None.
 
-    A temporary session (`blocks_reads`) gets the report WITHOUT them — matching
+    Work that reads no memory (`memory_reads`) gets the report WITHOUT them — matching
     `/api/lessons` and `/api/learning/summary`, which withhold the same content from the
     same caller. The skills and proposals sections are not memory and stay visible.
     """
-    from personalclaw.dashboard.handlers._shared import _blocks_reads_session, _get_memory
+    from personalclaw.dashboard.handlers._shared import _get_memory, _memory_refusal
 
     state = request.app["state"]
-    if _blocks_reads_session(state, request):
+    if _memory_refusal(state, request):
         _audit(request, action, "denied", resources="facets,lessons")
         return None
     try:

@@ -16,13 +16,14 @@ import logging
 
 from aiohttp import web
 
+from personalclaw import memory_reads
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import MaskConflict, redact_values_for_display, stored_name
 
 from ._shared import (
-    _blocks_reads_session,
     _get_memory,
     _is_restricted_session,
+    _memory_refusal,
     _session_has_persisted_history,
 )
 
@@ -207,10 +208,10 @@ async def api_lessons_create(request: web.Request) -> web.Response:
 async def api_lessons_delete(request: web.Request) -> web.Response:
     """DELETE /api/lessons — remove lessons by substring."""
     state: DashboardState = request.app["state"]
-    # Block lesson deletes from temporary sessions only.
-    # Incognito allows memory_forget (active user action).
-    if _blocks_reads_session(state, request):
-        sk = request.headers.get("X-Session-Key", "")
+    # Block lesson deletes from a Temporary chat's work only (the chat, and the subagents and steps
+    # working for it). Incognito allows memory_forget (active user action).
+    sk = request.headers.get("X-Session-Key", "")
+    if memory_reads.reach_of(state, sk).temporary:
         _sel().log_api_access(
             caller=sk,
             operation="lessons.delete",
@@ -259,9 +260,10 @@ def _stored_rules(svc) -> list[str]:
 
 async def api_lessons(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
-    # Block lesson reads only for temporary sessions (blocks_reads=True).
-    # Incognito sessions can read lessons (memory context is already injected).
-    if _blocks_reads_session(state, request):
+    # A Temporary chat's work, and an app's without the memory permission, read no lessons; the
+    # answer says why, so `memory_list` does not tell the agent there are none. Incognito reads.
+    refusal = _memory_refusal(state, request)
+    if refusal:
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
             caller=sk,
@@ -270,7 +272,7 @@ async def api_lessons(request: web.Request) -> web.Response:
             source="dashboard",
             resources=sk,
         )
-        return web.json_response({"lessons": []})
+        return web.json_response({"lessons": [], "withheld": refusal})
     # Read through the memory service onto memory.db ``lesson.*``.
     from personalclaw.memory_service import resolve_lesson_scope, service_for
 

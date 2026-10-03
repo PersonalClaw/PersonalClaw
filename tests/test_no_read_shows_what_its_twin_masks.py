@@ -1035,7 +1035,7 @@ def _lessons_call(handler, method: str, lessons: _Lessons, *, body=None):
     state = MagicMock()
     req = _req(method, "/api/lessons", state, body=body)
     with (
-        patch.object(S, "_blocks_reads_session", return_value=False),
+        patch.object(S, "_memory_refusal", return_value=""),
         patch.object(S, "_get_memory", return_value=MagicMock()),
         patch("personalclaw.memory_service.service_for", return_value=lessons),
     ):

@@ -536,8 +536,19 @@ item vector).
 
 ### Recall & the privacy guard
 
-- Recall handlers live in `dashboard/handlers/memory.py`. A **temporary**
-  session blocks memory READS at the API layer (`_blocks_reads_session`). Both
+- Recall handlers live in `dashboard/handlers/memory.py`. Whether work may read
+  your memory at all is one answer, `memory_reads.reach_of`, asked by every
+  reader: the context a turn and a subagent's first prompt are assembled with
+  (memory, lessons, standing instructions, episodes, active recall, the push
+  reflex), `memory_recall` (`/api/memory/recall`), `memory_list`
+  (`GET /api/lessons`), `get_context`'s memory tier and the Learning page's facts.
+  A **temporary** chat's work reads nothing (the chat, its subagents and their
+  own, the steps of a run it started), and neither does an **app's** work unless
+  the app holds the `memory` permission: a conversation the app started, an agent
+  run it asked for, an agent working for either, and the app's own requests. A
+  refused read answers why, in words the agent passes on, rather than "nothing
+  found". The knowledge library is your content, not memory, and is read as your
+  files are. Both
   temporary and **incognito** sessions keep nothing: the memory, knowledge and
   vocabulary stores refuse every write made in their name, by any path, and
   nothing from them reaches the embedding model, so an incognito chat's memory

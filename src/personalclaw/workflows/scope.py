@@ -7,8 +7,8 @@ destructive-test-isolation incident deleted the user's real bound model.
 
 Three enforcement layers exist by design, and this module is the middle one:
 
-* **advisory** — the prompt tells the agent its scope (`_SYSTEM_PREFIX`, `validate_cwd`).
-  All that exists today, and a prompt is not an enforcement mechanism.
+* **advisory** — the prompt tells the agent its scope (`subagent_prompt.SYSTEM_PREFIX`,
+  `validate_cwd`). All that exists today, and a prompt is not an enforcement mechanism.
 * **authoritative** — snapshot the tree before the node, diff after, flag what escaped.
   That is this module.
 * **OS seatbelt** — a future sandbox provider receives `allowed_write_paths` as policy.

@@ -631,8 +631,11 @@ async def test_an_agent_spawned_by_an_apps_work_is_that_apps_agent_work(parent, 
         def get(self, run_id: str) -> Any:
             return SimpleNamespace(app=APP) if run_id == "its-run" else None
 
-    chats = {"its-chat": SimpleNamespace(created_by_app=APP), "hers": SimpleNamespace()}
-    state = SimpleNamespace(subagents=_Store(), get_session=chats.get)
+    # Whose each conversation is, as the gateway's state answers it (`session_creating_app`).
+    started_by = {"its-chat": APP, "hers": ""}
+    state = SimpleNamespace(
+        subagents=_Store(), session_creating_app=lambda name: started_by.get(name, "")
+    )
     gateway = web.Application()
     gateway["state"] = state
     gateway.router.add_post("/api/spawn", api_spawn)

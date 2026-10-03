@@ -178,24 +178,15 @@ def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
     return False
 
 
-def _blocks_reads_session(state: DashboardState, request: "Any") -> bool:
-    """Check if request comes from a temporary session that blocks memory reads."""
-    return blocks_reads(state, request.headers.get("X-Session-Key", ""))
+def _memory_refusal(state: DashboardState, request: "Any") -> str:
+    """Why the work the request is made for reads none of your memory, or ``""`` when it may: a
+    Temporary chat's work, or an app's that does not hold the memory permission — the app whose
+    token made the request, or the one whose conversation or agent its ``X-Session-Key`` names
+    (:func:`personalclaw.memory_reads.reach_of`)."""
+    from personalclaw import memory_reads
 
-
-def blocks_reads(state: DashboardState, sk: str) -> bool:
-    """Whether the session *sk* is a temporary one, which reads no memory."""
-    if not sk or sk == "dashboard:ui":
-        return False
-    session_name = sk.split(":", 1)[-1] if ":" in sk else sk
-    session = state._sessions.get(session_name)
-    if session and session.blocks_reads:
-        return True
-    from personalclaw import session_restrictions
-
-    if session_restrictions.is_temporary(sk):
-        return True
-    return False
+    caller = request.headers.get("X-Session-Key", "")
+    return memory_reads.reach_of(state, caller, app=str(request.get("app") or "")).refusal
 
 
 def _session_has_persisted_history(session_name: str) -> bool:

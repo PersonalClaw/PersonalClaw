@@ -839,7 +839,7 @@ async def test_a_temporary_session_gets_the_report_without_memory_content(
     allowed = json.loads((await api_learning_identity_report(_req(state))).body)
     assert allowed["facets"]["count"] == 1
 
-    monkeypatch.setattr(shared, "_blocks_reads_session", lambda *_a, **_k: True)
+    monkeypatch.setattr(shared, "_memory_refusal", lambda *_a, **_k: "This is a Temporary chat.")
     blocked = json.loads((await api_learning_identity_report(_req(state))).body)
 
     assert blocked["facets"]["count"] == 0

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import approval_grants, auto_denials, memory_writes, run_bounds
+from personalclaw import approval_grants, auto_denials, memory_reads, memory_writes, run_bounds
 from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.acp.types import (
@@ -3055,7 +3055,8 @@ async def run_chat(
                 )
 
         _window = None  # the window an assembled turn resolves below
-        _context_fed = ""  # what fed it, said live and stamped on its answer at the end
+        # What fed it ({kind, text}), said live and stamped on its answer at the end.
+        _context_fed: dict[str, str] = {}
         if is_slash:
             full_message = message
             sel().log_tool_invocation(
@@ -3246,6 +3247,9 @@ async def run_chat(
             # while the runtime served 32,768. The serving provider's own gauge divides by
             # this same number, because the resolver's first answer is the provider's.
             _window = await resolve_window(model_label, serving=client)
+            # What the turn may read of your memory: none for a Temporary chat's, nor for an app's
+            # conversation the app was not given it for (the check every memory read asks).
+            _reach = memory_reads.reach_of(state, session_key)
             # Assemble via the pluggable context engine (default = the monolithic
             # build_message; a custom engine that raises is quarantined to default
             # so the turn still gets context). Active-recall + structured-
@@ -3270,7 +3274,7 @@ async def run_chat(
                 # re-read from the log, which may already hold the in-flight message.
                 prior_transcript=_prior_transcript,
                 mode=session.mode,
-                blocks_reads=session.blocks_reads,
+                blocks_reads=not _reach.reads,
                 # The push reflex logs a volunteer event per offered record; incognito
                 # allows memory reads but suppresses writes, so the reflex still runs
                 # there and only its logging is silenced.
@@ -3348,14 +3352,9 @@ async def run_chat(
             if session._skills_used:
                 _mark_skills_joined(state, session, _in_flight_text, nested=_prompt_depth > 0)
             if is_new:
-                ctx_len = _assembled.injected_chars
-                _context_fed = (
-                    f"Injected {ctx_len:,} chars of context (memory, lessons, history, episodic)"
-                )
-                state.broadcast_ws(
-                    "activity_event",
-                    {"session": session.key, "kind": "context", "text": _context_fed},
-                )
+                # What fed it, and whether any of it was your memory (`memory_reads.fed`).
+                _context_fed = memory_reads.fed(_assembled.injected_chars, _reach)
+                state.broadcast_ws("activity_event", {"session": session.key, **_context_fed})
         else:
             full_message = message
 

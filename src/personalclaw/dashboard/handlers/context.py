@@ -79,14 +79,16 @@ def _memory_service(state):
         return None
 
 
-def _route_for_project(state, project, query: str) -> cr.RoutedContext:
-    """Assemble the routed context for one project against the live stores."""
+def _route_for_project(state, project, query: str, withheld: str = "") -> cr.RoutedContext:
+    """Assemble the routed context for one project against the live stores. *withheld* is why
+    the work it is for reads no memory (``memory_reads``): its memory tier is then not recalled."""
     return cr.route_context(
         project,
         query=query,
-        memory_svc=_memory_service(state),
+        memory_svc=None if withheld else _memory_service(state),
         knowledge_retriever=_knowledge_retriever(),
         skills=_skills_index(query),
+        memory_withheld=withheld,
     )
 
 
@@ -107,9 +109,23 @@ async def api_context_get(request: web.Request) -> web.Response:
 
     Project resolution precedence: explicit ``project_id`` → the calling session's
     bound project → the Personal default. Rules top, scored memory/knowledge/skills
-    middle (distinct headings), L0 unloaded-catalog bottom. Never writes.
+    middle (distinct headings), L0 unloaded-catalog bottom. Never writes. The memory tier is
+    recalled only for work that may read your memory (``memory_reads``): a Temporary chat's
+    work and an app's without the memory permission get it empty, saying why.
     """
+    from personalclaw.dashboard.handlers._shared import _memory_refusal
+
     state = request.app.get("state")
+    sk = request.headers.get("X-Session-Key", "")
+    withheld = _memory_refusal(state, request)
+    if withheld:
+        _sel().log_api_access(
+            caller=sk,
+            operation="context.memory",
+            outcome="denied",
+            source="dashboard",
+            resources=sk,
+        )
     store = HierarchyStore()
     query = request.query.get("query", "")[:500]
 
@@ -126,7 +142,7 @@ async def api_context_get(request: web.Request) -> web.Response:
 
     # Off the event loop: the routing recalls memory and searches knowledge, each embedding the
     # query, a round trip to the model.
-    routed = await asyncio.to_thread(_route_for_project, state, project, query)
+    routed = await asyncio.to_thread(_route_for_project, state, project, query, withheld)
     return web.json_response(routed.to_dict())
 
 
@@ -180,7 +196,11 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
     body = await json_object_body(request)
     query = string_field(body, "query")[:500]
 
-    routed = await asyncio.to_thread(_route_for_project, state, project, query)
+    from personalclaw.dashboard.handlers._shared import _memory_refusal
+
+    # The files carry the memory tier, so they carry it only for work that may read it.
+    withheld = _memory_refusal(state, request)
+    routed = await asyncio.to_thread(_route_for_project, state, project, query, withheld)
     block = cr.render_block(routed)
 
     written: list[str] = []

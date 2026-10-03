@@ -160,8 +160,9 @@ class DefaultContextEngine:
         if window is not None and getattr(window, "request_only", False) is True:
             active_recall = False
         # Active recall (the assemble hook): on an eligible interactive turn,
-        # surface query-relevant memory just before the reply. Skipped on a
-        # temporary turn (blocks_reads) and when a headless caller opts out
+        # surface query-relevant memory just before the reply. Skipped on a turn
+        # that reads no memory (blocks_reads: a Temporary chat's, an app's without
+        # the memory permission — `memory_reads`) and when a headless caller opts out
         # (active_recall=False). An incognito turn recalls too, by keyword: its
         # message reaches no embedding model (`memory_writes.model_may_read`).
         if is_new_session and not kwargs.get("blocks_reads") and active_recall:
@@ -187,7 +188,7 @@ class DefaultContextEngine:
         # plan's §3 says the reflex "rides the proven context_engine seam"; the seam is
         # `assemble`, which runs per turn — the *condition* is what had to change.
         #
-        # Gated on `blocks_reads` (temporary sessions), same as active recall. Incognito
+        # Gated on `blocks_reads` (work that reads no memory), same as active recall. Incognito
         # is NOT blocked here: it suppresses memory WRITES, and §3 wants the reflex to
         # run there with only its volunteer logging suppressed. Its words reach no model:
         # the reflex resolves the entities a turn names by their names.

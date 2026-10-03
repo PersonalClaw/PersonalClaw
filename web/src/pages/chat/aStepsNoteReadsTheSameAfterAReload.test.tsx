@@ -116,7 +116,7 @@ function persisted(): unknown[] {
     })
     if (c.note) rows.push(lineAbout(c))
   }
-  rows.push({ role: 'assistant', content: ANSWER, ts: '2026-10-02T09:01:00Z', meta: { context_fed: FED, turn_telemetry: { line: STATS } } })
+  rows.push({ role: 'assistant', content: ANSWER, ts: '2026-10-02T09:01:00Z', meta: { context_fed: { kind: 'context', text: FED }, turn_telemetry: { line: STATS } } })
   return rows
 }
 

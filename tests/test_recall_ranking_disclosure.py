@@ -44,6 +44,8 @@ from personalclaw.memory_record import MemoryCapabilities
 _SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 _WEB = pathlib.Path(__file__).resolve().parents[1] / "web" / "src"
 _HANDLER = _SRC / "dashboard" / "handlers" / "memory.py"
+#: Why a blocked read recalled nothing, as the route answers it (`memory_reads.TEMPORARY`).
+_TEMPORARY = "This is a Temporary chat, which starts blank: nothing is read from your memory."
 
 #: The service/store methods that DO the ranking. A handler that calls one of these is
 #: presenting ranked results and therefore owes the disclosure.
@@ -285,7 +287,7 @@ async def test_recall_endpoint_reports_which_arm_ran(tmp_path, embedder, expect_
     app = {"state": MagicMock(_sessions={})}
     with (
         patch("personalclaw.dashboard.handlers.memory._get_service", return_value=svc),
-        patch("personalclaw.dashboard.handlers.memory._blocks_reads_session", return_value=False),
+        patch("personalclaw.dashboard.handlers.memory._memory_refusal", return_value=""),
     ):
         resp = await api_memory_recall(_Req(app, {"q": "the deploy decision"}))
     body = json.loads(resp.body.decode())
@@ -315,9 +317,7 @@ async def test_the_two_states_no_longer_produce_the_same_payload(tmp_path):
         app = {"state": MagicMock(_sessions={})}
         with (
             patch("personalclaw.dashboard.handlers.memory._get_service", return_value=svc),
-            patch(
-                "personalclaw.dashboard.handlers.memory._blocks_reads_session", return_value=False
-            ),
+            patch("personalclaw.dashboard.handlers.memory._memory_refusal", return_value=""),
         ):
             resp = await api_memory_recall(_Req(app, {"q": "the deploy decision"}))
         bodies.append(json.loads(resp.body.decode()))
@@ -340,12 +340,13 @@ async def test_a_blocked_read_reports_no_ranking_rather_than_an_all_false_one(tm
             "personalclaw.dashboard.handlers.memory._get_service",
             side_effect=AssertionError("a blocked read must not reach the service"),
         ),
-        patch("personalclaw.dashboard.handlers.memory._blocks_reads_session", return_value=True),
+        patch("personalclaw.dashboard.handlers.memory._memory_refusal", return_value=_TEMPORARY),
     ):
         resp = await api_memory_recall(_Req(app, {"q": "anything"}))
     body = json.loads(resp.body.decode())
     assert body["ranking"] is None
-    assert body["result"] == "No matching memory found."
+    # The answer says why nothing was recalled, so it is never read as "nothing matched".
+    assert body["result"] == body["withheld"] == _TEMPORARY
 
 
 @pytest.mark.asyncio

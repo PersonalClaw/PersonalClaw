@@ -194,25 +194,6 @@ async def api_sessions_search(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
-def _the_chat_asking(state: DashboardState, caller: str) -> tuple[list[str], str]:
-    """The sessions a call is made for: its own (*caller*, its ``X-Session-Key``) and, for a
-    subagent, each one it works for up to the chat it was started in. With the app whose work that
-    is: the app that started the chat, or whose agent a subagent runs for (``""`` for yours)."""
-    keys: list[str] = []
-    app = ""
-    key = "" if caller == "dashboard:ui" else caller.strip()
-    while key and key not in keys:
-        keys.append(key)
-        if not key.startswith("subagent:"):
-            name = key.split(":", 1)[-1]
-            app = app or state.session_creating_app(name) or state.session_creating_app(key)
-            break
-        info = state.subagents.get(key.removeprefix("subagent:")) if state.subagents else None
-        app = app or str(getattr(info, "app", "") or "")
-        key = str(getattr(info, "parent_session_key", "") or "")
-    return keys, app
-
-
 async def api_sessions_recall(request: web.Request) -> web.Response:
     """GET /api/sessions/recall — what your earlier chats said, searched for your agent.
 
@@ -222,10 +203,12 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
       - ``q``: what to look for (at least 2 characters)
       - ``limit``: the most chats to return (1-10, default 5)
 
-    The chat the call is made for (``X-Session-Key``; for a subagent, the chat it works for) is
-    not searched, and neither is an Incognito or a Temporary chat. From a Temporary chat nothing
-    is: it starts blank. In a conversation an app started, only the conversations that app started
-    are searched, as the app's own content search is (:func:`api_sessions_search`).
+    The chat the call is made for (``X-Session-Key``; for a subagent or a workflow step, each
+    session it works for, up to its chat) is not searched, and neither is an Incognito or a
+    Temporary chat. From a Temporary chat's work nothing is: it starts blank. For an app's work,
+    only the conversations that app started are searched, as the app's own content search is
+    (:func:`api_sessions_search`). Whose work the call is, is :func:`memory_reads.reach_of`'s
+    answer, the one every memory read asks.
 
     Returns ``{result, query, chats, matched, searched, complete, index}``. ``result`` is what the
     tool hands the agent. ``chats`` holds each chat found, best first: its ``key``, ``title``,
@@ -234,8 +217,7 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
     ``at``, ``text``), how many ``more`` of its turns use the words, and the ``snippet`` the search
     found. Titles, turns and snippets are masked.
     """
-    from personalclaw import chat_recall
-    from personalclaw.dashboard.handlers._shared import blocks_reads
+    from personalclaw import chat_recall, memory_reads
 
     state: DashboardState = request.app["state"]
     q = " ".join(sanitize_string(request.query.get("q", "")).split())[:500]
@@ -249,8 +231,9 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
         limit = int(request.query.get("limit", ""))
     except (TypeError, ValueError):
         limit = chat_recall.DEFAULT_CHATS
-    asking, app = _the_chat_asking(state, request.headers.get("X-Session-Key", ""))
-    if any(blocks_reads(state, key) for key in asking):
+    reach = memory_reads.reach_of(state, request.headers.get("X-Session-Key", ""))
+    asking, app = reach.keys, reach.app
+    if reach.blank:
         _sel().log_api_access(
             caller=asking[0],
             operation="sessions.recall",
@@ -258,7 +241,8 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
             source="dashboard",
             resources=asking[-1],
         )
-        return web.json_response({"result": chat_recall.TEMPORARY, "query": q, "chats": []})
+        said = chat_recall.TEMPORARY if reach.temporary else reach.blank
+        return web.json_response({"result": said, "query": q, "chats": []})
     log = state.conversation_log
     if not log:
         return web.json_response(

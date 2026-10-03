@@ -238,6 +238,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     if name == "memory_list":
         d = _get("/api/lessons")
+        # Work that reads no memory (a Temporary chat's, an app's not given it) is told why, and
+        # an unanswered read is a failure: neither is "no lessons".
+        if d.get("withheld"):
+            return str(d["withheld"])
+        if d.get("error"):
+            return tool_failure(f"{d['error']}")
         lessons = d.get("lessons", [])
         if not lessons:
             return "No lessons saved."

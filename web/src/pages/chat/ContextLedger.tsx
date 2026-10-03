@@ -18,9 +18,13 @@ import { learnedSurface } from './chatTypes'
  *  reach (below) is a behavioural contract, and a component defined inside a ~4k-line
  *  page that owns a socket and a composer cannot be mounted to prove one. See
  *  `contextLedgerReach.test.tsx`, which renders exactly this component with the real
- *  handler wired and taps it the way a user does. */
-export function ContextLedger({ fed, learned, learnedOrigin, learnedRef, stats }: {
-  fed?: string; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string
+ *  handler wired and taps it the way a user does.
+ *
+ *  `fedNoMemory` marks a turn that read none of your memory (a Temporary chat's, an app's not
+ *  given it: `memory_reads.fed`). Its row is the gateway's own sentence, which says why, and
+ *  never the memory claim below. */
+export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learnedRef, stats }: {
+  fed?: string; fedNoMemory?: boolean; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string
 }) {
   const [open, setOpen] = useState(false)
   const learnedRowRef = useRef<HTMLDivElement>(null)
@@ -81,7 +85,7 @@ export function ContextLedger({ fed, learned, learnedOrigin, learnedRef, stats }
 
   const summary = open
     ? 'Context & learning'
-    : [fed && 'recalled context', learned && 'learned 1', stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
+    : [fed && (fedNoMemory ? 'context, no memory' : 'recalled context'), learned && 'learned 1', stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
   // Hover says what the tap DOES when there is somewhere to land, so the focus jump reads as
   // the affordance it is rather than as the page moving on its own. `title` is a hover
   // affordance only — the button's accessible name is its visible text, which already carries
@@ -109,7 +113,9 @@ export function ContextLedger({ fed, learned, learnedOrigin, learnedRef, stats }
             <div data-type="caption" className="mt-1.5 ml-1.5 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-3 text-on-surface-low">
               {fed && (
                 <LedgerRow icon={Brain} label="Fed this turn">
-                  Recalled relevant context{fedChars ? ` · ${fedChars} chars` : ''} — saved memories, learned lessons, earlier conversation, and episodic history, assembled and prepended to the prompt.
+                  {fedNoMemory
+                    ? `${fed}.`
+                    : <>Recalled relevant context{fedChars ? ` · ${fedChars} chars` : ''} — saved memories, learned lessons, earlier conversation, and episodic history, assembled and prepended to the prompt.</>}
                 </LedgerRow>
               )}
               {learned && (

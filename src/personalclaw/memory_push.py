@@ -25,11 +25,12 @@ reflex as one undifferentiated thing.
 
 **Restricted sessions.** §3 says "the reflex checks ``session_restrictions.is_restricted``
 exactly as the recall endpoint does". That is wrong twice over and is corrected here: the
-recall endpoint gates READS on ``blocks_reads``/``is_temporary``, and ``is_restricted`` is
-the WRITE gate (it is true for incognito too). Using ``is_restricted`` for reads would
-silently kill the reflex in incognito — contradicting its own next sentence, which says
-incognito reads are allowed and only the volunteer WRITE is suppressed. So: reads gate on
-``blocks_reads``, volunteer logging gates on ``is_restricted``.
+recall endpoint gates READS on ``memory_reads.reach_of`` (a Temporary chat's work, or an app's
+without the memory permission, reads nothing), and ``is_restricted`` is the WRITE gate (it is
+true for incognito too). Using ``is_restricted`` for reads would silently kill the reflex in
+incognito — contradicting its own next sentence, which says incognito reads are allowed and
+only the volunteer WRITE is suppressed. So: reads gate on the turn's ``blocks_reads`` (that
+same answer), volunteer logging gates on ``is_restricted``.
 """
 
 from __future__ import annotations

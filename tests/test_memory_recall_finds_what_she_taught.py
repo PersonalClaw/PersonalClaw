@@ -128,7 +128,7 @@ async def test_the_agents_recall_reads_the_lesson_too(embedded):
     svc = MemoryService.over_vector_store(embedded)
     with (
         patch("personalclaw.dashboard.handlers.memory._get_service", return_value=svc),
-        patch("personalclaw.dashboard.handlers.memory._blocks_reads_session", return_value=False),
+        patch("personalclaw.dashboard.handlers.memory._memory_refusal", return_value=""),
     ):
         resp = await api_memory_recall(_Req())
     result = json.loads(resp.body.decode())["result"]

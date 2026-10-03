@@ -178,6 +178,7 @@ class TestMemoryRecallGuard:
         req.app = {"state": state}
         req.headers = {"X-Session-Key": session_key} if session_key else {}
         req.query = {"q": q}
+        req.get.return_value = None  # no app's token made it
         return req
 
     def _state_with(self, session):
@@ -186,12 +187,16 @@ class TestMemoryRecallGuard:
         state = MagicMock()
         state._restricted_keys = set()
         state._sessions = {session.key: session} if session else {}
+        # Your own chat: no app started it, and no subagent works for it.
+        state.session_creating_app.return_value = ""
+        state.subagents = None
         return state
 
     @pytest.mark.asyncio
     async def test_recall_blocked_for_temporary_session(self):
         """A temporary session (blocks_reads) must get an EMPTY recall, never the
-        user's real semantic/episodic memory — the guard its sibling api_lessons has."""
+        user's real semantic/episodic memory — the guard its sibling api_lessons has — and
+        the answer says why, so the agent does not read it as "nothing matched"."""
         from personalclaw.dashboard.handlers.memory import api_memory_recall
         from personalclaw.dashboard.state import _ChatSession
 
@@ -208,7 +213,7 @@ class TestMemoryRecallGuard:
         import json
 
         body = json.loads(resp.body.decode())
-        assert body["result"] == "No matching memory found."
+        assert body["result"].startswith("This is a Temporary chat, which starts blank")
 
     @pytest.mark.asyncio
     async def test_recall_allowed_for_normal_session(self):

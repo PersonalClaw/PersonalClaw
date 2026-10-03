@@ -32,13 +32,33 @@ chat, channel thread, loop worker, webhook, subagent).
   [knowledge-memory.md](knowledge-memory.md)). Restricted sessions never write
   lessons (`after_turn_review.py` checks `session.is_restricted`).
 
+  Work for a restricted session takes its mode: a subagent's key is marked when
+  it is spawned (`memory_writes.hand_on`), Temporary when the chat it works for is
+  Temporary and Incognito otherwise, and a workflow run marks its origin's mode
+  on its keys and records it on the run. So a Temporary chat's subagents, its
+  subagents' subagents and the steps of a run it started read no memory and
+  write none, as the chat does.
+- **`memory_reads.py` — whose work may read your memory.** `reach_of(state,
+  key)` is the one answer every memory read asks, for the work a session key
+  names: it follows a subagent to the session it works for, an app's agent run to
+  its app and a workflow step to the chat that started its run, and reads each
+  one's mode from the live chat, the registry, its transcript and the run. Two
+  kinds of work read none of your memory: a Temporary chat's, and an app's that
+  does not hold the `memory` permission (a conversation the app started, an agent
+  run it asked for, every agent working for either). The context a turn and a
+  subagent's first prompt are assembled with, active recall and the push reflex,
+  `memory_recall`, `memory_list`, `get_context`'s memory tier and the Learning
+  page's facts all ask it, and a refused read says why (`Reach.refusal`). A turn
+  that read none says so in its details: its context line is
+  `context_without_memory` (`memory_reads.fed`), kept on its answer for a reload.
+
   The agent's own search of your chats (`chat_search`, served by
   `GET /api/sessions/recall` over `chat_recall.py`) runs the same
   `session_search.search`, so it never finds a restricted chat either. It also
   leaves out the chat the call is made for (and that chat's older files, one
-  `tab_id`), and from a Temporary chat it searches nothing, by the read gate
-  memory recall uses. A subagent's call is judged by the chat it works for, up
-  its parents; in a conversation an app started it finds only that app's
+  `tab_id`), and for a Temporary chat's work it searches nothing, by the same
+  `memory_reads.reach_of`: a subagent's or a step's call is judged by the chat it
+  works for, up its parents, and an app's work finds only that app's
   conversations. It hands back a few chats, a few turns of each and a window of
   each turn, masked, and quoted as data (`fence_untrusted`).
 

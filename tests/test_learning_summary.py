@@ -430,7 +430,7 @@ async def test_a_temporary_session_gets_the_block_without_the_facts(home, tmp_pa
     allowed = json.loads((await api_learning_summary(_req(state))).body)
     assert allowed["facts"]["count"] == 1
 
-    monkeypatch.setattr(shared, "_blocks_reads_session", lambda *_a, **_k: True)
+    monkeypatch.setattr(shared, "_memory_refusal", lambda *_a, **_k: "This is a Temporary chat.")
     blocked = json.loads((await api_learning_summary(_req(state))).body)
 
     assert blocked["facts"]["count"] == 0

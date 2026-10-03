@@ -10,7 +10,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import bounded_log, notification_kinds
+from personalclaw import bounded_log, memory_reads, notification_kinds
 from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
 from personalclaw.dashboard.chat_utils import _remove_queued_by_id
 from personalclaw.dashboard.state import (
@@ -39,18 +39,6 @@ def _sel():
 
 
 # ── Subagents ──
-
-
-def _app_behind(state: DashboardState, parent: str) -> str:
-    """The app whose agent work *parent* is: a conversation it started, or a run of its agent
-    (``SubagentInfo.app``); ``""`` for the owner's own. An agent spawned there is that app's agent
-    work too, so none of the owner's standing grants approves its calls (``subagent_tier``)."""
-    if parent.startswith("subagent:"):
-        owner = state.subagents.get(parent.removeprefix("subagent:")) if state.subagents else None
-        app = getattr(owner, "app", "")
-    else:
-        app = getattr(state.get_session(parent.removeprefix("dashboard:")), "created_by_app", "")
-    return app if isinstance(app, str) else ""
 
 
 async def api_spawn(request: web.Request) -> web.Response:
@@ -108,7 +96,10 @@ async def api_spawn(request: web.Request) -> web.Response:
         max_turns=max_turns,
         cwd=cwd,
         silent=silent,
-        app=_app_behind(state, str(parent_session or "")),
+        # The app whose work the parent is (a conversation it started, a run of its agent, up the
+        # chain): an agent spawned there is that app's work too, so none of the owner's standing
+        # grants approves its calls (`subagent_tier`), and it reads your memory as the app may.
+        app=memory_reads.reach_of(state, str(parent_session or "")).app,
     )
     if not info:
         return web.json_response(

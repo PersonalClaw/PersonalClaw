@@ -44,7 +44,7 @@ from personalclaw.llm.events import (
     unasked_outcome,
     unasked_reason,
 )
-from personalclaw.security import redact_credentials, redact_exfiltration_urls, redact_for_model
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import SessionManager
 from personalclaw.session_workspace import result_path as _ws_result_path
@@ -60,6 +60,7 @@ from personalclaw.subagent_persistence import (
     write_result_chunk,
     write_tombstone,
 )
+from personalclaw.subagent_prompt import first_prompt
 from personalclaw.subagent_tier import (
     CAPABILITY_TEXT,
     CallBudget,
@@ -74,6 +75,7 @@ from personalclaw.validation import _AGENT_NAME_RE
 
 if TYPE_CHECKING:
     from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.memory_reads import Reach
 
 logger = logging.getLogger(__name__)
 
@@ -401,15 +403,6 @@ def _run_workdir_for(parent_run: str) -> str:
     return run_workdir(parent_run[len(OWNED_PREFIX) :])
 
 
-_SYSTEM_PREFIX = (
-    "You are a focused sub-agent. Complete the following task concisely. "
-    "Do NOT create other agents. Report your result directly.\n"
-    "IMPORTANT: Do NOT narrate your own process, failures, retries, or "
-    "orchestration decisions. The user does not care how you got the answer. "
-    "Only output meaningful, actionable results. Never output greetings or filler.\n\n"
-)
-
-
 # Capability class for a spawn's tool surface. The values mirror the
 # workflow-leaf vocabulary (``workflows.batch_compile.Capability``) so a research SUBAGENT and a
 # research batch LEAF mean the same thing — write/execute tools are denied — and there is one
@@ -675,6 +668,9 @@ class SubagentManager:
         # new spawn for one of these is refused with that reason rather than started.
         self._fanout_stops: dict[str, str] = {}
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
+        # Whose work an agent's run is, so what its first prompt reads of your memory
+        # (`memory_reads.reach_of` over the gateway's state), set by the state that holds this.
+        self.memory_reach: Callable[[str], Reach] | None = None
         self._agents: dict[str, SubagentInfo] = {}
         self._tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
         # Queued spawns carry their addressable ``SubagentInfo``: a real id so
@@ -1421,7 +1417,8 @@ class SubagentManager:
             held_back=held_back or "",
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
-        memory_writes.hand_on(agent_work_id(agent_id), parent_session_key)  # keeps what it keeps
+        # It keeps what its parent keeps, and reads what its parent reads.
+        memory_writes.hand_on(agent_work_id(agent_id), parent_session_key, reach=self.memory_reach)
 
         # --- Fan-out stop (C1.4 breaker / C1.5 run budget / kill-fan-out): a stopped
         # fan-out refuses further spawns with the recorded TYPED reason. ---
@@ -2186,29 +2183,18 @@ class SubagentManager:
             model_axis="orchestration",
             **extra_kwargs,
         )
-        # Intentionally check info.agent (not resolved `agent`) so only
-        # explicitly requested agents skip _SYSTEM_PREFIX (defense-in-depth).
+        # Only an agent the spawn asked for by name (`info.agent`, not the one resolved for the
+        # run) is told to the assembly and goes without the prefix (defense in depth).
         named_agent = info.agent if info.agent and _AGENT_NAME_RE.fullmatch(info.agent) else ""
-        # Composed from what a parent model, a trigger or a workflow step read, so it is masked.
-        raw_task = redact_for_model(info._raw_task or info.task)
-        if named_agent:
-            message = raw_task
-        else:
-            # The sub-agent system prefix lives in the prompt system (bundled
-            # ``subagent-system-prefix`` snippet); fall back to the inline constant.
-            from personalclaw.prompt_providers.runtime import render_snippet_block
-
-            prefix = render_snippet_block("subagent-system-prefix")
-            prefix = (prefix + "\n\n") if prefix else _SYSTEM_PREFIX
-            message = prefix + raw_task
-        from personalclaw.context_headroom import resolve_window
-
-        full_message = message  # a text run is handed the task alone (`subagent_tier`)
-        if info.capability_class != CAPABILITY_TEXT:
-            # Off the event loop: building the message embeds it with the embedding model.
-            window = await resolve_window(serving=client)
-            build = partial(self._ctx_builder.build_message, agent=named_agent, window=window)
-            full_message, _ = await asyncio.to_thread(build, message, is_new, session_key)
+        full_message = await first_prompt(
+            info,
+            named_agent=named_agent,
+            assemble=partial(self._ctx_builder.build_message, agent=named_agent),
+            client=client,
+            is_new=is_new,
+            session_key=session_key,
+            reach=self.memory_reach,
+        )
 
         result_text = ""
         info.turns = 0

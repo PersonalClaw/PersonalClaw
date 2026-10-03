@@ -119,10 +119,11 @@ export interface ActivitySegment {
   ref?: string
 }
 
-/** The activity kinds a turn's footer ledger says (`ContextLedger`): what fed the turn, what it
- *  learned, and its telemetry. Never a line of the turn's own: they are pulled out of its inline
- *  flow, and kept whatever else the turn shows, live as after a reload (`insertActivity`). */
-export const LEDGER_ACTIVITY_KINDS: readonly string[] = ['context', 'learned', 'stats']
+/** The activity kinds a turn's footer ledger says (`ContextLedger`): what fed the turn (or that
+ *  none of it was your memory, `context_without_memory`: `memory_reads.fed`), what it learned, and
+ *  its telemetry. Never a line of the turn's own: they are pulled out of its inline flow, and kept
+ *  whatever else the turn shows, live as after a reload (`insertActivity`). */
+export const LEDGER_ACTIVITY_KINDS: readonly string[] = ['context', 'context_without_memory', 'learned', 'stats']
 
 /** A line the gateway wrote to say what happened to the conversation (`role: 'notice'`) — a turn
  *  moved to another agent, which is now answering — shown where it happened, live and on reload,
@@ -509,7 +510,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; context_fed?: string; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -697,9 +698,14 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       const statsLine = m.meta?.turn_telemetry?.line
       if (typeof statsLine === 'string' && statsLine) at.segments.push({ kind: 'activity', text: statsLine, activityKind: 'stats' })
       // What fed the turn ("Injected 1,204 chars of context …"), on the same last message: live it
-      // is the `context` activity line the turn's footer shows, which a reload never replays.
+      // is the `context` activity line the turn's footer shows, which a reload never replays — or
+      // the `context_without_memory` one of a turn that read none of your memory, kept as that kind
+      // so its footer never makes the memory claim after a reload.
       const fed = m.meta?.context_fed
-      if (typeof fed === 'string' && fed) at.segments.push({ kind: 'activity', text: fed, activityKind: 'context' })
+      if (fed && typeof fed.text === 'string' && fed.text) {
+        const kind = fed.kind === 'context_without_memory' ? 'context_without_memory' : 'context'
+        at.segments.push({ kind: 'activity', text: fed.text, activityKind: kind })
+      }
       // What the turn learned, from the same last message: live it arrives as the learned chip's
       // `activity_event`, which a reload — or a restart mid-turn — never replays, so a preference
       // could be saved with nothing on the page saying so. One segment per entry, in order.

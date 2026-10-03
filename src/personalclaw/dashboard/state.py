@@ -1,6 +1,7 @@
 """Dashboard shared state — ChatSession and DashboardState."""
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ from personalclaw.dashboard.sse import SseRegistry
 from personalclaw.dashboard.ws_state import DashboardWebSocketState
 from personalclaw.guardrails.loop_breaker import LoopBreaker
 from personalclaw.knowledge.store import KnowledgeStore
+from personalclaw.memory_reads import reach_of
 from personalclaw.own_words import OWN_WORDS
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
@@ -933,6 +935,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self.sessions = sessions
         self.start_time = start_time
         self.subagents = subagents
+        if subagents is not None:  # an agent's first prompt reads memory as this state answers
+            subagents.memory_reach = functools.partial(reach_of, self)
         self._inbox_state: Any = None
         self._inbox_store: Any = None
         self._inbox_svc: Any = None

@@ -61,8 +61,14 @@ describe('a line about a call, after a reload', () => {
 
   it('reads what fed the turn back into its footer', () => {
     const fed = 'Injected 1,204 chars of context (memory, lessons, history, episodic)'
-    const segs = steps([ASKED, { role: 'assistant', content: 'Done.', meta: { context_fed: fed } }])
+    const segs = steps([ASKED, { role: 'assistant', content: 'Done.', meta: { context_fed: { kind: 'context', text: fed } } }])
     expect(segs).toContainEqual({ kind: 'activity', text: fed, activityKind: 'context' })
+  })
+
+  it('reads a turn that read none of your memory back as that, never as memory fed', () => {
+    const fed = 'Injected 312 chars of context, none of it from your memory: this is a Temporary chat'
+    const segs = steps([ASKED, { role: 'assistant', content: 'Done.', meta: { context_fed: { kind: 'context_without_memory', text: fed } } }])
+    expect(segs).toContainEqual({ kind: 'activity', text: fed, activityKind: 'context_without_memory' })
   })
 })
 

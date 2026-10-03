@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     import asyncio
 
     from personalclaw.memory import MemoryStore
+    from personalclaw.memory_reads import Reach
     from personalclaw.vector_memory import VectorMemoryStore
 
 logger = logging.getLogger(__name__)
@@ -354,13 +355,21 @@ def runs_as_its_session(turn: _Turn) -> _Turn:
     return _as_its_session  # type: ignore[return-value]
 
 
-def hand_on(child_key: str, parent_key: str) -> None:
-    """Mark ``child_key`` (a subagent working for ``parent_key``) as keeping nothing when the work
-    starting it, or its parent, keeps nothing, so its agent's calls back over the API are refused
-    writes as its parent's are."""
-    if writes_refused() or (parent_key and blocks_memory_writes(parent_key)):
-        from personalclaw import session_restrictions
+def hand_on(
+    child_key: str, parent_key: str, *, reach: Callable[[str], Reach] | None = None
+) -> None:
+    """Mark ``child_key`` (a subagent working for ``parent_key``) with what the work starting it, or
+    its parent, is. Work for a Temporary chat is Temporary: it reads no memory and writes none
+    (*reach*, ``memory_reads.reach_of`` over the gateway's state, decides whether its parent is
+    one; without it the registry, the transcripts and the runs do). Work for any other session that
+    keeps nothing is Incognito, so its agent's calls back over the API are refused writes as its
+    parent's are."""
+    from personalclaw import memory_reads, session_restrictions
 
+    asked = reach or functools.partial(memory_reads.reach_of, None)
+    if _restricted_label() == "Temporary" or (parent_key and asked(parent_key).temporary):
+        session_restrictions.mark_temporary(child_key)
+    elif writes_refused() or (parent_key and blocks_memory_writes(parent_key)):
         session_restrictions.mark_incognito(child_key)
 
 

@@ -4601,11 +4601,14 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   // Transparency signals (what FED the turn / what was LEARNED / telemetry) are
   // pulled OUT of the inline flow and consolidated into one collapsible ledger at
   // the turn footer — holistic, non-intrusive, on demand (not three scattered lines).
-  const ledger: { fed?: string; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string } = {}
+  const ledger: { fed?: string; fedNoMemory?: boolean; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string } = {}
   for (const s of segments) {
     if (s.kind !== 'activity') continue
     const ak = (s as ActivitySegment).activityKind
-    if (ak === 'context') ledger.fed = (s as ActivitySegment).text
+    if (ak === 'context' || ak === 'context_without_memory') {
+      ledger.fed = (s as ActivitySegment).text
+      ledger.fedNoMemory = ak === 'context_without_memory'
+    }
     // The learned row carries its emitter's `origin` (and a preference's key) too — the
     // ledger is where the chip lives, so the discriminator has to travel with the text or the
     // tap has nothing to route on. Read off the SAME segment, so the two can never describe
@@ -4739,7 +4742,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
           actually paying for" a thing you have to go looking for. */}
       {skillsUsed && skillsUsed.length > 0 && <SkillsUsedChip skills={skillsUsed} />}
 
-      {hasLedger && <ContextLedger fed={ledger.fed} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} />}
+      {hasLedger && <ContextLedger fed={ledger.fed} fedNoMemory={ledger.fedNoMemory} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} />}
 
       {/* Agent-driven one-click escalation (TM8): the model proposed a switch out
           of a restricted mode; the user approves with a single click, which flips

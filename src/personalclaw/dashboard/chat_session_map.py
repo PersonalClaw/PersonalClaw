@@ -114,10 +114,11 @@ MODEL_SUBSTITUTION_KEY = "model_substitution"
 #: Absent = the turn learned nothing.
 LEARNED_KEY = "learned"
 
-#: The ``meta`` key holding what fed the turn — the sentence saying how much context it was handed
-#: ("Injected 1,204 chars of context …") — on the same last assistant message. The live line is an
-#: ``activity_event`` the turn's footer shows; this is the copy a reload reads. Absent = the turn
-#: said nothing about its context, as a follow-up turn on the same runtime does not.
+#: The ``meta`` key holding what fed the turn — its line's ``kind`` and the sentence saying how much
+#: context it was handed ("Injected 1,204 chars of context …", or that none of it was your memory)
+#: — on the same last assistant message. The live line is an ``activity_event`` the turn's footer
+#: shows; this is the copy a reload reads. Absent = the turn said nothing about its context, as a
+#: follow-up turn on the same runtime does not.
 CONTEXT_FED_KEY = "context_fed"
 
 #: A summary is a RAIL LABEL, deliberately shorter than :data:`PREVIEW_CAP`: it occupies
@@ -529,11 +530,12 @@ def stamp_model_substitution(session: Any, sentence: str) -> bool:
     return _stamp_on_last_assistant(session, MODEL_SUBSTITUTION_KEY, sentence)
 
 
-def stamp_context_fed(session: Any, sentence: str) -> bool:
+def stamp_context_fed(session: Any, fed: dict[str, str]) -> bool:
     """Record what fed the turn on its last assistant message (:data:`CONTEXT_FED_KEY`), so the
-    turn's footer says after a reload what it said live. Same message, same before-the-save
-    constraint as the telemetry."""
-    return _stamp_on_last_assistant(session, CONTEXT_FED_KEY, sentence)
+    turn's footer says after a reload what it said live: its line's ``kind`` (``context``, or
+    ``context_without_memory`` for a turn that read none of your memory) and ``text``
+    (``memory_reads.fed``). Same message, same before-the-save constraint as the telemetry."""
+    return _stamp_on_last_assistant(session, CONTEXT_FED_KEY, dict(fed))
 
 
 def stamp_learned(session: Any, learned: list[dict[str, Any]]) -> bool:

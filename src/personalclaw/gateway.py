@@ -89,6 +89,7 @@ from personalclaw.llm_helpers import (
     stream_and_collect,
 )
 from personalclaw.memory import MemoryStore
+from personalclaw.memory_reads import reach_of
 from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.security import (
     mask_child_output,
@@ -4202,6 +4203,8 @@ class GatewayOrchestrator:
                                 is_new,
                                 parent_key,
                                 window=await resolve_window(serving=client),
+                                # The thread's own turn: a Temporary thread's reads no memory.
+                                blocks_reads=not reach_of(self.dashboard_state, parent_key).reads,
                             )
                         else:
                             msg = announce

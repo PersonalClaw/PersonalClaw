@@ -1149,6 +1149,11 @@ image reader or a fallback (`model_may_read`, asked at every seam that reaches a
 model, carried into every worker thread and into the tool process an agent CLI
 runs). What the person gives such a chat in a form its model cannot read (an
 attached file, a shared screen) is read by the model set up for it, and the
-chat's notice says so. Details in
+chat's notice says so. Who may read memory at all is one answer
+(`memory_reads.reach_of`) every reader asks: a Temporary chat's work reads none
+(its subagents, their subagents and the steps of a run it started included), and
+neither does an app's — a conversation it started, an agent run it asked for, an
+agent working for either — unless the app holds the `memory` permission its
+install consent showed you. Details in
 [chat-sessions.md](chat-sessions.md#session-model) and
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard).

@@ -110,7 +110,7 @@ def _serving(svc: MemoryService):
     """The recall route served over ``svc``, as the gateway serves it for an owner's chat."""
     return (
         patch("personalclaw.dashboard.handlers.memory._get_service", return_value=svc),
-        patch("personalclaw.dashboard.handlers.memory._blocks_reads_session", return_value=False),
+        patch("personalclaw.dashboard.handlers.memory._memory_refusal", return_value=""),
     )
 
 

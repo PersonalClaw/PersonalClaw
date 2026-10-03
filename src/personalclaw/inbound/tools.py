@@ -108,18 +108,19 @@ def _reject_unknown(arguments: dict, allowed: "tuple[str, ...]") -> None:
 async def _memory_recall(arguments: dict, state: Any) -> str:
     """Recall memories.
 
-    **T2.1's gate location, verified — and it does NOT apply here.** The
-    temporary/incognito restriction is not inside `recall_with_provenance`; it lives at
-    the dashboard endpoint as `_blocks_reads_session`, which reads an `X-Session-Key`
-    header and asks whether *that session* may read memory. It is strictly per-session:
-    a temporary session is denied its own context so the thread starts blank. It is not
-    an instance-wide memory lock.
+    **The read gate, verified — and it does NOT apply here.** Whether work may read
+    memory is not inside `recall_with_provenance`; it is `memory_reads.reach_of`, which
+    the dashboard's readers ask for the session an `X-Session-Key` names: a Temporary
+    chat's work reads nothing, and neither does an app's that does not hold the `memory`
+    permission. It is strictly per-work: a temporary session is denied its own context so
+    the thread starts blank. It is not an instance-wide memory lock.
 
-    An inbound MCP call is a separate caller with no session, so there is no session
-    whose restriction could apply. Blocking inbound recall whenever some unrelated
-    temporary chat happens to be open would be a misreading of the mechanism — it would
-    make an IDE's memory lookups fail for reasons the user cannot see and did not ask
-    for. What DOES gate this surface is its own switch: the whole endpoint is
+    An inbound MCP call is a separate caller with neither: no session (it works for no
+    chat) and no app (its client is one the owner minted, and no app can mint one). So
+    there is no work whose boundary could apply. Blocking inbound recall whenever some
+    unrelated temporary chat happens to be open would be a misreading of the mechanism —
+    it would make an IDE's memory lookups fail for reasons the user cannot see and did not
+    ask for. What DOES gate this surface is its own switch: the whole endpoint is
     unmounted unless the owner enabled it and minted a token.
 
     Recorded rather than silently skipped, because "the restriction gate is honored"

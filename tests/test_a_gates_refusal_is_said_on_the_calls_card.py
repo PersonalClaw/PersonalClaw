@@ -240,7 +240,7 @@ async def test_what_fed_the_turn_is_kept_on_its_answer_for_a_reload(tmp_path):
     assert said.startswith("Injected ") and said.endswith(
         " chars of context (memory, lessons, history, episodic)"
     )
-    assert _answer(session)["meta"]["context_fed"] == said
+    assert _answer(session)["meta"]["context_fed"] == {"kind": "context", "text": said}
 
 
 @pytest.mark.asyncio
