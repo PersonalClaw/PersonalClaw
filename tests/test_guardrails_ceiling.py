@@ -15,6 +15,7 @@ Four groups, one per acceptance criteria:
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 
 import pytest
 
@@ -580,38 +581,52 @@ def test_guard_enforces_the_exclusive_allow_list():
     assert allowed.allow
 
 
+@contextmanager
+def _a_runs_tool_call(session_key: str):
+    """A call made inside a run, bound as the seams that dispatch a tool call bind it."""
+    from personalclaw import mcp_core
+
+    token = mcp_core.set_current_session_key(session_key)
+    try:
+        yield
+    finally:
+        mcp_core.reset_current_session_key(token)
+
+
 @pytest.mark.asyncio
-async def test_web_fetch_refuses_when_the_ceiling_turns_egress_off(home):
-    """The agent's primary fetch surface reads the tier — ``egress_tier`` had NO reader at
+async def test_web_fetch_refuses_when_the_ceiling_turns_egress_off(home, monkeypatch):
+    """The agent's primary fetch surface is held to the tier — ``egress_tier`` had NO reader at
     all before this, so "headless by construction" held only in tests."""
+    from personalclaw.net import guard
     from personalclaw.web.fetch import web_fetch
 
+    looked_up: list[str] = []
+    monkeypatch.setattr(guard, "_resolve", lambda host: looked_up.append(host) or ["8.8.8.8"])
     _write_ceiling(home, {"egress": {"value": "off"}})
-    outcome = await web_fetch(
-        "https://example.com/x", session_key="cron:x", require_provenance=False
-    )
+    with _a_runs_tool_call("cron:x"):
+        outcome = await web_fetch(
+            "https://example.com/x", session_key="cron:x", require_provenance=False
+        )
     assert not outcome.ok and "egress is off" in outcome.error
+    assert looked_up == [], "a run with no network looked the host up"
 
 
 @pytest.mark.asyncio
 async def test_web_fetch_narrows_to_the_ceilings_allow_list(home, monkeypatch):
+    from personalclaw.net import guard
     from personalclaw.web import fetch as fetch_mod
 
+    looked_up: list[str] = []
+    monkeypatch.setattr(guard, "_resolve", lambda host: looked_up.append(host) or ["8.8.8.8"])
     _write_ceiling(home, {"egress": {"value": "listed"}})
-    seen: dict[str, object] = {}
-
-    async def _fake_fetch(url, *, policy=None, **kw):
-        seen["policy"] = policy
-        raise RuntimeError("stop here — the policy is the assertion")
-
-    # `net_fetch` is bound at import in web/fetch.py, so that name is the seam.
-    monkeypatch.setattr(fetch_mod, "net_fetch", _fake_fetch)
-    await fetch_mod.web_fetch(
-        "https://example.com/x", session_key="cron:x", require_provenance=False
-    )
-    policy = seen.get("policy")
-    assert policy is not None and policy.allow_only is True
-    assert policy.allow_hosts == (), "an empty operator allow-list means nothing is reachable"
+    with _a_runs_tool_call("cron:x"):
+        outcome = await fetch_mod.web_fetch(
+            "https://example.com/x", session_key="cron:x", require_provenance=False
+        )
+    # An empty operator allow-list means nothing is reachable: the host is refused as off the
+    # run's list before it is looked up.
+    assert not outcome.ok and "(0 host(s) allowed)" in outcome.error, outcome.error
+    assert looked_up == []
 
 
 def test_web_poll_resolves_its_egress_through_the_profile(home):

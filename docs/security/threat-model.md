@@ -274,7 +274,11 @@ Content and requests arriving from outside the owner's trust boundary:
   every request is refused, and denials log to the Security Event Log.
 - **Egress chokepoint** (`net/client.py` + `net/guard.py` + `net/policy.py`): the
   single outbound-HTTP seam with named policies, layered by
-  `net/policy.py::egress_policy_for`. Downloads go through it too, each request and each
+  `net/policy.py::egress_policy_for` and narrowed, for every request it judges, by the egress
+  tier of the run the call is made for (`egress_policy_for_run`: a run whose tier is off
+  reaches nothing, whichever app or tool makes the request; what it does not reach is
+  [limitations §18](limitations.md#18-a-runs-egress-tier-holds-where-its-requests-ask-the-guard)).
+  Downloads go through it too, each request and each
   redirect hop asked before it is sent and audited: the code map fetches a grammar bundle
   through `net.fetch` and hands the language pack a manifest naming only files on this machine
   (`codegraph/grammars.py`); in every PersonalClaw process the Hugging Face library is given

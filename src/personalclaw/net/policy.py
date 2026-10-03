@@ -8,6 +8,7 @@ enforces the byte/timeout/redirect caps.
 """
 
 import logging
+import sys
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -397,9 +398,12 @@ def egress_policy_for_profile(base: EgressPolicy, tier: str) -> "EgressPolicy | 
     Composition, per field:
 
     * ``off`` → ``None``.
-    * a tier with an exclusive host set (``listed``/``registry``) → the base becomes
-      exclusive too, with the tier's hosts unioned onto the base's own (a surface that
-      already allow-listed a host keeps it; the tier adds its preset).
+    * a tier with an exclusive host set (``listed``/``registry``) → an ADDITIVE base becomes
+      exclusive, with the tier's hosts unioned onto the base's own (a surface that already
+      allow-listed a host keeps it; the tier adds its preset). An EXCLUSIVE base already
+      reaches only the hosts it names, and keeps exactly those: the tier's preset is not
+      added, since a union there would WIDEN it (a ``registry`` tier would hand a surface
+      pinned to one endpoint 22 package registries).
     * ``all`` → the base is already at least this narrow, so it is returned unchanged.
     * caps (``max_bytes``/``timeout_s``) take the tighter of the two, so a tier can never
       raise a surface's ceiling — REGISTRY's 100 MB does not widen a 5 MB fetch.
@@ -409,12 +413,64 @@ def egress_policy_for_profile(base: EgressPolicy, tier: str) -> "EgressPolicy | 
         return None
     if not tier_policy.allow_only:
         return base
+    hosts = (
+        base.allow_hosts
+        if base.allow_only
+        else tuple(dict.fromkeys([*base.allow_hosts, *tier_policy.allow_hosts]))
+    )
     return base.with_overrides(
         allow_only=True,
-        allow_hosts=tuple(dict.fromkeys([*base.allow_hosts, *tier_policy.allow_hosts])),
+        allow_hosts=hosts,
         max_bytes=min(base.max_bytes, tier_policy.max_bytes),
         timeout_s=min(base.timeout_s, tier_policy.timeout_s),
     )
+
+
+def egress_policy_for_run(
+    base: EgressPolicy, session_key: str | None = None
+) -> "EgressPolicy | None":
+    """*base* narrowed by the egress tier of the run a call is made for: the one reader of it.
+
+    A run's tier is its safety profile's (``SafetyProfile.egress_tier``, resolved through
+    ``guardrails.policy.profile_for_session``, so the governance ceiling bounds it), and it holds
+    for every network call made inside the run. The guard asks this about every request it judges
+    (``net.guard.evaluate``: behind ``net.fetch``, ``open_url``, the browser's navigations and
+    every app that fetches through the SDK), and so does each surface that refuses before it asks
+    the guard (a watched source's poll, the hosts the agent's shell reaches unasked, a program an
+    app's code starts). Tightest wins (:func:`egress_policy_for_profile`).
+
+    *session_key* names the run, ``""`` included (an unnamed run resolves as attended, still
+    bounded by the ceiling). Left out, the run is the one the call is being made for: the session
+    a tool call runs as, which each seam that dispatches one binds around it
+    (``mcp_core.set_current_session_key``: the built-in agent's tool calls, the tool server an
+    agent CLI runs, ``POST /api/tools/invoke``). A call no run is bound for is not a run's (the
+    owner's own action in the app, a background job), and *base* is returned as it is, the
+    owner's Network egress settings already on it.
+
+    ``None`` means the run may not reach the network at all, and the caller refuses: never fall
+    through to *base*. A *base* that reaches only this machine (``loopback_only``: the gateway's
+    calls to itself and to an app's own backend) carries nothing off it, so no tier narrows it.
+    A run whose profile cannot be resolved (a corrupt ceiling) raises, which refuses the call.
+    """
+    if base.loopback_only:
+        return base
+    key = _run_of_this_call() if session_key is None else session_key
+    if session_key is None and not key:
+        return base
+    from personalclaw.guardrails.policy import profile_for_session
+
+    return egress_policy_for_profile(base, profile_for_session(key).egress_tier)
+
+
+def _run_of_this_call() -> str:
+    """The session the call being made runs as (``""`` when none is bound).
+
+    The binding is ``mcp_core``'s, set around each tool call a run dispatches. Read through
+    ``sys.modules`` rather than imported: a process that never loaded that module has bound
+    nothing, and the guard also runs where the tool layer is never loaded (the command line),
+    which should not import it to learn that."""
+    mcp_core = sys.modules.get("personalclaw.mcp_core")
+    return mcp_core.get_current_session_key() if mcp_core is not None else ""
 
 
 def get_policy(name: str) -> EgressPolicy:

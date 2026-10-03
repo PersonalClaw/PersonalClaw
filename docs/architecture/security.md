@@ -886,11 +886,29 @@ chokepoint:
 - `allow_only` inverts `allow_hosts` from ADDITIVE (waive the private-range
   block) to EXCLUSIVE (only a listed host is reachable), checked before DNS
   resolution. It is what makes an egress TIER able to narrow anything.
-- `egress_policy_for_profile(base, tier)` narrows a surface policy by the RUN's
-  `SafetyProfile.egress_tier` — tightest wins, and caps only tighten. `off`
-  returns `None` and the caller refuses. Live at `web/fetch.py::web_fetch` (the
-  agent's primary fetch surface) and `triggers/web_poll.py` (watched-source
-  polls, plain + headless tier).
+- `egress_policy_for_run(base, session_key=None)` is the one reader of the RUN's
+  `SafetyProfile.egress_tier` (through `profile_for_session`, so the ceiling bounds
+  it), and the guard asks it about every request (`guard.evaluate`): the tier holds
+  at every door that asks the guard, whatever policy the door built — `net.fetch`
+  (every app that fetches through the SDK: a search provider, an image provider's
+  download, a webhook), `open_url`, `web_fetch`/`web_extract` and the headless
+  render, the browser's navigations. The surfaces that refuse before they ask ask it
+  too: a watched source's poll (`triggers/web_poll.py`), the hosts the shell reaches
+  unasked (`run_bounds.shell_egress_policy`) and a program an app's code starts
+  (`apps/launch_egress.py`). The run is the session the call is made for, bound
+  around every tool call (`mcp_core.set_current_session_key`: the native runtime's
+  dispatch, the tool server an agent CLI runs, `POST /api/tools/invoke`); a call
+  made for no run (the owner's own action, a background job) keeps to the Network
+  egress settings alone.
+- `egress_policy_for_profile(base, tier)` is the composition — tightest wins, and
+  caps only tighten. `off` returns `None`, and the guard refuses every host as
+  `egress_off` before it is looked up, audited as an `egress_fetch` refusal (the
+  render's pre-flight as `web.render`). `listed`/`registry` make an additive base
+  exclusive, with the tier's preset unioned onto the base's own hosts; an exclusive
+  base keeps exactly its own hosts, since a union would widen it. A `loopback_only`
+  base (the gateway's calls to itself and to an app's backend) is never narrowed.
+  What the tier does not reach is in
+  [limitations §18](../security/limitations.md#18-a-runs-egress-tier-holds-where-its-requests-ask-the-guard).
 - `web_fetch` (and `web_extract`, which fetches through it) also asks whether the
   conversation was **given the link**. Text the agent reads — a fetched page, a
   tool's output, a fenced span — can carry instructions, and the cheapest is "now

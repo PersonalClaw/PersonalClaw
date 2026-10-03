@@ -141,7 +141,8 @@ MEMBER_AXES: tuple[str, ...] = ("tool_grants", "tool_allowlist", "budget")
 #:
 #: 🔴 The last three are a MEASURED DEVIATION, which names all six.
 #: Their enforcement points RE-RESOLVE the profile from a session key instead of accepting
-#: one — ``web/fetch.py:135`` reads ``profile_for_session(session_key).egress_tier`` and
+#: one — ``net.policy.egress_policy_for_run`` reads ``profile_for_session(session_key)
+#: .egress_tier`` for every request the guard judges, and
 #: ``guardrails/denylist.py:151-155`` re-resolves for ``denylist_extra`` and
 #: ``path_allowlist``, neither taking an injected profile. A member narrowing those would
 #: therefore be handed back the ROOM's base at the moment of enforcement, so the declaration

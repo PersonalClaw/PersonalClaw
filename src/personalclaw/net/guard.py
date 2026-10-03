@@ -1,10 +1,11 @@
 """Egress decision plane — the ONE authoritative host classifier + URL evaluator.
 
-Pure and synchronous (DNS resolution aside) so it is trivially unit-testable with a
-fake resolver. ``classify_host`` is the single source of truth for "is this IP safe to
-reach" — both outbound (``net.client``) and inbound (``dashboard.origin``) consult it,
-so there is one answer to "what is a private IP", not the divergent definitions that
-existed across the webhook guard and origin checks.
+Synchronous and pure aside from DNS resolution and the egress tier of the run a call is
+made for (which ``evaluate`` reads, so the tier holds at every door that asks), so it is
+trivially unit-testable with a fake resolver. ``classify_host`` is the single source of
+truth for "is this IP safe to reach" — both outbound (``net.client``) and inbound
+(``dashboard.origin``) consult it, so there is one answer to "what is a private IP", not
+the divergent definitions that existed across the webhook guard and origin checks.
 
 ``evaluate(url, policy)`` resolves the host, classifies *every* A/AAAA record, and
 returns the validated IPs so the client connects to *those exact IPs* — closing the
@@ -17,7 +18,7 @@ import socket
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from personalclaw.net.policy import METADATA_SERVICE_HOSTS, EgressPolicy
+from personalclaw.net.policy import METADATA_SERVICE_HOSTS, EgressPolicy, egress_policy_for_run
 
 logger = logging.getLogger(__name__)
 
@@ -101,10 +102,54 @@ class GuardDecision:
     # "this computer" where ``reason`` says "loopback"). ``category`` is an :class:`IpVerdict`
     # category (``loopback``, ``private``, ``link_local``, …), or ``metadata`` for a cloud
     # metadata endpoint, ``deny_list`` for an operator deny, ``not_listed`` for a host off an
-    # exclusive allow-list, ``unresolvable`` for a name with no answer, and ``malformed`` for a
-    # URL the guard could not read. ``address`` is the offending address when there is one.
+    # exclusive allow-list, ``egress_off`` for a request made inside a run whose egress tier
+    # allows no network at all, ``unresolvable`` for a name with no answer, and ``malformed``
+    # for a URL the guard could not read. ``address`` is the offending address when there is one.
     category: str = ""
     address: str = ""
+
+
+#: Why a request made inside a run whose egress tier is ``off`` is refused: the words the agent's
+#: page fetch has always used for it, now the guard's for every request such a run makes.
+EGRESS_OFF_REASON = "egress is off for this run (safety profile egress tier 'off')"
+
+
+def egress_off_decision(url: str, host: str = "") -> GuardDecision:
+    """The guard's refusal of *url* for a run that may not reach the network at all.
+
+    Refused before the host is looked up, since a DNS query is egress too. The hints say where
+    the tier comes from: the operator ceiling, when it is the ceiling that turns egress off for
+    every run on this machine, and otherwise the run's own safety profile."""
+    return GuardDecision(
+        allow=False,
+        url=url,
+        host=host,
+        reason=EGRESS_OFF_REASON,
+        risk_level="destructive",
+        recovery_hints=[
+            "This run's safety settings give it no network access, so nothing was sent.",
+            _where_egress_is_off(),
+        ],
+        category="egress_off",
+    )
+
+
+def _where_egress_is_off() -> str:
+    """Which bound turns a run's egress off, in a hint: the operator ceiling's file when its
+    ``egress`` scope says ``off``, else the run's own safety profile."""
+    try:
+        from personalclaw.guardrails.ceiling import active_ceiling, ceiling_path
+
+        ceiling = active_ceiling()
+        if getattr(ceiling.control("egress"), "value", "") == "off":
+            where = ceiling.source or str(ceiling_path())
+            return (
+                f'The operator ceiling ({where}) sets "egress": "off" for every run on this '
+                "machine; a change to that file applies when PersonalClaw restarts."
+            )
+    except Exception:  # noqa: BLE001 - a hint must not fail the refusal it explains
+        logger.debug("could not read the ceiling for an egress refusal's hint", exc_info=True)
+    return "This run's own safety profile allows it no network access."
 
 
 def egress_refusal(url: str, decision: GuardDecision) -> str:
@@ -133,6 +178,10 @@ def refusal_for(url: str, decision: GuardDecision, *, then: str) -> str:
         )
     if decision.category == "deny_list":
         return f"{url} was not reached: {host} is on Denied hosts in {EGRESS_SETTINGS}."
+    if decision.category == "egress_off":
+        # The run's tier, not a host: nothing on the Network egress page lifts it, so the
+        # sentence names none (the decision's hints say which bound set it).
+        return f"{url} was not reached: {decision.reason}."
     if decision.category == "not_listed":
         return (
             f"PersonalClaw's network settings refused {url}: this run reaches only the hosts "
@@ -284,12 +333,18 @@ def _literal(host: str) -> str:
 
 
 def evaluate(url: str, policy: EgressPolicy, *, resolver=None) -> GuardDecision:
-    """Evaluate a URL against a policy. Pure aside from the DNS resolve (injectable).
+    """Evaluate a URL against a policy, narrowed by the run the call is made for.
 
     Returns a :class:`GuardDecision`. On allow, ``pinned_ips`` carries the validated
     IPs the client must dial. ``resolver`` is injectable for testing (fake DNS); left out, the
     module's :func:`_resolve` is looked up at CALL time, so a test that replaces it reaches every
     caller, including one that runs on a thread of its own (the git tunnel).
+
+    *policy* is narrowed first by the egress tier of the run the call is being made for
+    (:func:`~personalclaw.net.policy.egress_policy_for_run`), so that tier holds for every
+    request a run makes through any door that asks the guard, whatever policy that door
+    built: a tier of ``off`` refuses every host (``egress_off``) before it is looked up. Pure
+    aside from that reading and the DNS resolve.
     """
     resolve = resolver or _resolve
     try:
@@ -324,6 +379,13 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=None) -> GuardDecision:
             recovery_hints=["Include a host in the URL."],
             category="malformed",
         )
+
+    # The run this call is made for may narrow where it goes, whatever this door built: its
+    # tier is read here, once, for every request any door asks about.
+    narrowed = egress_policy_for_run(policy)
+    if narrowed is None:
+        return egress_off_decision(url, host)
+    policy = narrowed
 
     # Operator deny always wins, before any resolution.
     if host_matches(host, policy.deny_hosts):

@@ -53,21 +53,21 @@ FILE_WRITES = {tool: arg for tool, (arg, changes, _) in PATH_TOOLS.items() if ch
 def shell_egress_policy(session_key: str = "") -> Any:
     """The hosts a shell command may reach unasked, as an exclusive :class:`EgressPolicy`: the
     operator's Allowed hosts (and their Denied hosts), narrowed by the session's safety-profile
-    egress tier. ``None`` when that tier allows no egress at all.
+    egress tier (the one reader of it, ``net.policy.egress_policy_for_run``). ``None`` when
+    that tier allows no egress at all. A ``registry`` tier adds no host to the list: the run may
+    reach a registry, and a command that does is still put to a person (refused, in an
+    unattended run) as any command reaching a host off the list is.
 
     A profile that cannot be read leaves the operator's list as it is: the list is already the
     narrowest reach there is short of none, and an unreadable profile narrows nothing it names."""
-    from personalclaw.net.policy import LISTED, egress_policy_for, egress_policy_for_profile
+    from personalclaw.net.policy import LISTED, egress_policy_for, egress_policy_for_run
 
     base = egress_policy_for(LISTED)
     try:
-        from personalclaw.guardrails.policy import profile_for_session
-
-        tier = profile_for_session(session_key).egress_tier
+        return egress_policy_for_run(base, session_key)
     except Exception:  # noqa: BLE001 - the operator's own list still holds
         logger.warning("run bounds: the session's egress tier is unreadable", exc_info=True)
         return base
-    return egress_policy_for_profile(base, tier)
 
 
 def unlisted(hosts: Iterable[str], policy: Any, *, declared: Sequence[str] = ()) -> tuple[str, ...]:

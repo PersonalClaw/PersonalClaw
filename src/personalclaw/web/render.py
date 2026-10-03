@@ -20,6 +20,7 @@ unavailable result so ``web_fetch`` degrades to the plain HTTP fetch rather than
 import logging
 from dataclasses import dataclass
 
+from personalclaw.net.client import audit
 from personalclaw.net.guard import evaluate
 from personalclaw.net.policy import STRICT, EgressPolicy
 
@@ -79,10 +80,12 @@ async def render_url(
         )
 
     # Egress pre-flight — a headless browser bypasses net.fetch's IP pinning, so the
-    # guard MUST run here before any navigation. Denied → never reaches the browser.
+    # guard MUST run here before any navigation. Denied → never reaches the browser, and the
+    # refusal is in the security log as a refused fetch's is.
     guard_kw = {"resolver": resolver} if resolver is not None else {}
     decision = evaluate(url, policy, **guard_kw)
     if not decision.allow:
+        audit(url, policy, outcome="denied", reason=decision.reason, door="web.render")
         return RenderResult(
             ok=False,
             url=url,

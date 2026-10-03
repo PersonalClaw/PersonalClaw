@@ -948,6 +948,41 @@ your chats and your library, whether it sits in a text file, in a document's tex
 page you watch, or in a note an app or the agent writes; it is not a reading of every document.
 Treat a file, a feed or a page from someone else as you would their message.
 
+## 18. A run's egress tier holds where its requests ask the guard
+
+A run's safety profile says how far its requests may reach, its egress tier: nowhere (`off`), only
+the hosts on Allowed hosts (`listed`), those and the common package registries (`registry`), or any
+public host (`all`). The operator ceiling (`governance/ceiling.json`) can narrow it for every run
+on the machine, and is what sets it today. The tier is read for every request the egress guard is
+asked about (`net.policy.egress_policy_for_run`, from `net.guard.evaluate`): a page the agent
+fetches or renders, a search, an image or a video a provider's answer points at, a webhook an app
+sends, the browser's navigations and every other request an app makes through the SDK. The
+agent's shell and the programs an app's code starts are held to it as well (§16). In a run whose
+tier is `off` each of those requests is refused before its host is looked up, the agent is told
+"egress is off for this run", and the refusal is in the audit log. A request made for no run (your
+own action in the app, such as a provider's Test, or a background job) keeps to your Network
+egress settings alone.
+
+What the tier does not reach:
+
+- **An automation's action.** A trigger's or a workflow's action step (a webhook, an A2A call, a
+  fetch step) runs outside any run the guard can name, so the tier of the automation that fired
+  does not reach it. Your Network egress settings still do.
+- **A request a tool hands to a worker thread that does not carry the run** (one started with the
+  event loop's `run_in_executor`; `asyncio.to_thread` carries it). Such a request is held to your
+  settings alone.
+- **An app's own HTTP client and a remote MCP server's connection.** A request an app makes without
+  the SDK (§2) asks no guard, and neither does the connection to a remote MCP server, so neither is
+  held to the tier or to your Network egress settings.
+- **What a page in the browser loads on its own.** Its images, scripts and frames are not asked of
+  the guard; only the navigation is (`net.policy.BROWSE`).
+- **An agent CLI's own tools.** A CLI's built-in web search or fetch runs inside the CLI and never
+  asks PersonalClaw (§11); the tools PersonalClaw serves it are held to the tier.
+
+**What this means for you:** a tier set in the ceiling holds for everything the agent and your apps
+reach through PersonalClaw's own requests. It is not a network fence around the machine: an app you
+do not trust with the network should not be installed where its code runs as you (§7).
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -967,6 +1002,8 @@ programs a run may start, enforced by its sandbox rather than read from the comm
 #15; a network and a write fence around an unattended run's shell and an app's programs,
 enforced by the OS rather than read from a command line, for #16; reading the whole of a long
 text a reader makes of a document, an archive's files one by one as an import writes them out,
-and an artifact's text when the agent or an app saves it, for #17). This page will shrink as those land.
+and an artifact's text when the agent or an app saves it, for #17; an automation's action fire
+naming its own run to the guard, and a network fence for an app's own requests and a remote MCP
+server's connection, for #18). This page will shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

@@ -14,9 +14,10 @@ not an app's (``app_code.owner``) is core's, and is not read here.
   reaches a host it does not name.
 * A named host is allowed when the app's manifest declares it for that program
   (``launches[].hosts``, which install consent shows; a declared npm package's registry for an
-  npm program) or when it is on the owner's Allowed hosts, and never when it is on Denied hosts.
+  npm program) or when it is on the owner's Allowed hosts, and never when it is on Denied hosts,
+  nor inside a run whose egress tier is off (``net.policy.egress_policy_for_run``).
   Any other is refused before the program starts: the launch raises :class:`LaunchRefused`, whose
-  sentence names the host and how to allow it.
+  sentence names the host and, when a setting allows it, how.
 
 A host the command line does not name (a git remote by name, a registry from the program's own
 configuration) is audited and not refused: nothing in the command says where it goes, and the
@@ -117,16 +118,17 @@ def check(app: str, form: str, words: Sequence[str]) -> str:
     from personalclaw import run_bounds
     from personalclaw.apps.declared import declared_hosts
     from personalclaw.command_effects import argv_effects, command_effects
-    from personalclaw.net.guard import ALLOWED_HOSTS, allow_host_step
-    from personalclaw.net.policy import LISTED, egress_policy_for
+    from personalclaw.net.guard import ALLOWED_HOSTS, EGRESS_OFF_REASON, allow_host_step
+    from personalclaw.net.policy import LISTED, egress_policy_for, egress_policy_for_run
 
     effects = argv_effects(words) if form == "argv" else command_effects(words[0])
     if not effects.network:
         return ""
     program = os.path.basename(words[0]) if form == "argv" else "sh"
-    refused = run_bounds.unlisted(
-        effects.hosts, egress_policy_for(LISTED), declared=declared_hosts(app, program)
-    )
+    # Narrowed by the run the launch is made for, as every request through the guard is: a
+    # program an app starts inside a run whose egress is off reaches nothing, declared or not.
+    policy = egress_policy_for_run(egress_policy_for(LISTED))
+    refused = run_bounds.unlisted(effects.hosts, policy, declared=declared_hosts(app, program))
     caller = f"app:{app}"
     run_bounds.audit(
         caller,
@@ -138,13 +140,19 @@ def check(app: str, form: str, words: Sequence[str]) -> str:
     if not refused:
         return ""
     which = "it" if len(refused) == 1 else "them"
-    sentence = (
-        f"PersonalClaw's network settings stopped the {app} app from starting {program}: it "
-        f"reaches {', '.join(refused)}, which its install review did not name and which is not "
-        f"on {ALLOWED_HOSTS}. To allow {which}, {allow_host_step(refused[0])}"
-        + (" (and the others)" if len(refused) > 1 else "")
-        + "."
-    )
+    if policy is None:
+        sentence = (
+            f"PersonalClaw stopped the {app} app from starting {program}: it reaches "
+            f"{', '.join(refused)}, and {EGRESS_OFF_REASON}."
+        )
+    else:
+        sentence = (
+            f"PersonalClaw's network settings stopped the {app} app from starting {program}: it "
+            f"reaches {', '.join(refused)}, which its install review did not name and which is "
+            f"not on {ALLOWED_HOSTS}. To allow {which}, {allow_host_step(refused[0])}"
+            + (" (and the others)" if len(refused) > 1 else "")
+            + "."
+        )
     run_bounds.audit(caller, refused, outcome="denied", what=program, reason=sentence)
     return sentence
 

@@ -59,13 +59,17 @@ class FetchResponse:
         return self.body.decode(charset, errors="replace")
 
 
-def _audit(url: str, policy: EgressPolicy, *, outcome: str, reason: str = "") -> None:
-    """Emit a SEL audit event for an egress allow/deny (best-effort)."""
+def audit(
+    url: str, policy: EgressPolicy, *, outcome: str, reason: str = "", door: str = "net.fetch"
+) -> None:
+    """Emit a SEL audit event for an egress allow/deny (best-effort), named for the *door* that
+    asked the guard: ``net.fetch`` for this module's own requests, ``web.render`` for the
+    headless render's pre-flight."""
     try:
         from personalclaw.sel import sel
 
         sel().log_api_access(
-            caller=f"net.fetch:{policy.name}",
+            caller=f"{door}:{policy.name}",
             operation="egress_fetch",
             outcome=outcome,
             source="net",
@@ -149,9 +153,9 @@ async def fetch(
     guard_kw = {"resolver": resolver} if resolver is not None else {}
     decision = evaluate(url, policy, **guard_kw)
     if not decision.allow:
-        _audit(url, policy, outcome="denied", reason=decision.reason)
+        audit(url, policy, outcome="denied", reason=decision.reason)
         raise EgressBlocked(decision)
-    _audit(url, policy, outcome="allowed")
+    audit(url, policy, outcome="allowed")
 
     timeout = aiohttp.ClientTimeout(total=policy.timeout_s)
     cur_url = url
@@ -181,7 +185,7 @@ async def fetch(
                     nxt = _absolutize(cur_url, nxt)
                     hop_decision = evaluate(nxt, policy, **guard_kw)
                     if not hop_decision.allow:
-                        _audit(
+                        audit(
                             nxt, policy, outcome="denied", reason=f"redirect: {hop_decision.reason}"
                         )
                         raise EgressBlocked(hop_decision)
@@ -208,7 +212,7 @@ async def fetch(
         risk_level="caution",
         recovery_hints=["The URL redirects too many times; fetch the final URL directly."],
     )
-    _audit(cur_url, policy, outcome="denied", reason=blocked.reason)
+    audit(cur_url, policy, outcome="denied", reason=blocked.reason)
     raise EgressBlocked(blocked)
 
 
@@ -247,9 +251,9 @@ def check(url: str, *, then: str = DOWNLOAD_AGAIN) -> None:
     policy = egress_policy_for(CONNECTOR)
     decision = evaluate(url, policy)
     if decision.allow:
-        _audit(url, policy, outcome="allowed")
+        audit(url, policy, outcome="allowed")
         return
-    _audit(url, policy, outcome="denied", reason=decision.reason)
+    audit(url, policy, outcome="denied", reason=decision.reason)
     refused = EgressBlocked(decision)
     refused.args = (refusal_for(url, decision, then=then),)
     raise refused

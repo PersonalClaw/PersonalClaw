@@ -452,16 +452,17 @@ def _poll_egress_policy(trigger_id: str) -> Any:
 
     Three layers, tightest wins: the SOURCE surface profile (a poll is a knowledge scrape on
     a timer) → the operator's `security.egress` allow/deny/private config → the run's
-    `SafetyProfile.egress_tier`, resolved for a poll's sessionless unattended identity and
-    therefore bounded by the governance ceiling. A poll ran on a bare `STRICT` before, which
-    is why an operator's `deny_hosts` did not reach the headless tier and the egress tier
-    reached nothing at all.
+    `SafetyProfile.egress_tier`, read by the one reader of it (`egress_policy_for_run`) for a
+    poll's sessionless unattended identity and therefore bounded by the governance ceiling. A
+    poll ran on a bare `STRICT` before, which is why an operator's `deny_hosts` did not reach
+    the headless tier and the egress tier reached nothing at all.
     """
-    from personalclaw.guardrails.policy import profile_for_session, unattended_dispatch_key
-    from personalclaw.net.policy import SOURCE, egress_policy_for, egress_policy_for_profile
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+    from personalclaw.net.policy import SOURCE, egress_policy_for, egress_policy_for_run
 
-    tier = profile_for_session(unattended_dispatch_key(f"trigger:{trigger_id}")).egress_tier
-    return egress_policy_for_profile(egress_policy_for(SOURCE), tier)
+    return egress_policy_for_run(
+        egress_policy_for(SOURCE), unattended_dispatch_key(f"trigger:{trigger_id}")
+    )
 
 
 def _render_headless(url: str, renderer: Any, policy: Any) -> Any:

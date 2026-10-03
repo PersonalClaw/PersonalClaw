@@ -181,7 +181,7 @@ async def web_fetch(
     ``require_provenance`` gates on ``session_key`` having been given the link (the module
     docstring says by whom). A call with no session has no conversation to check against,
     and ``require_provenance=False`` is for a caller whose URL no model chose. The egress
-    guard always applies.
+    guard always applies, and holds the fetch to the egress tier of the run it is made for.
 
     ``render`` runs the page through a headless browser (Playwright) so client-rendered
     (JS) content is captured. The egress guard is enforced before the browser navigates;
@@ -196,34 +196,11 @@ async def web_fetch(
     # allow_private) onto the caller's profile — the Security panel's contract
     # ("Denied hosts: never reachable"; "Allowed hosts: reachable even if private")
     # must hold on the agent's primary fetch surface, not just webhooks/connectors.
-    # Idempotent, so a caller that already layered is unaffected.
+    # Idempotent, so a caller that already layered is unaffected. The run's egress tier is
+    # not read here: the guard narrows every request by the run the call is made for
+    # (`net.policy.egress_policy_for_run`), so this fetch, its render and each redirect hop
+    # are held to it as every other door's requests are, and refused and audited alike.
     policy = egress_policy_for(policy)
-    # 🔴 THE RUN'S EGRESS TIER, applied to the agent's primary fetch surface.
-    # `SafetyProfile.egress_tier` shipped with no reader at all, so "an unattended run may
-    # only reach an allow-list" was true in tests and nowhere else. Narrowing happens AFTER
-    # the operator layering above, so a "listed" tier is exclusively the operator's
-    # `security.egress.allow_hosts` (they are already unioned into `policy` by then). A
-    # session-less caller resolves INTERACTIVE, whose tier is "all" and narrows nothing —
-    # but an operator CEILING of "listed"/"off" still bites, because a machine-wide bound
-    # must not be dodged by calling without a session identity.
-    from personalclaw.guardrails.policy import profile_for_session
-    from personalclaw.net.policy import egress_policy_for_profile
-
-    _tier = profile_for_session(session_key).egress_tier
-    _narrowed = egress_policy_for_profile(policy, _tier)
-    if _narrowed is None:
-        return FetchOutcome(
-            ok=False,
-            url=url,
-            risk_level="destructive",
-            error=f"egress is off for this run (safety profile egress tier {_tier!r})",
-            recovery_hints=[
-                "This run's safety posture denies all network egress.",
-                "Widen the egress tier in the governance ceiling, or run the fetch from an "
-                "interactive session.",
-            ],
-        )
-    policy = _narrowed
     scheme = (urlparse(url).scheme or "").lower()
     if scheme not in ("http", "https"):
         return FetchOutcome(
@@ -234,8 +211,7 @@ async def web_fetch(
         )
 
     # ① provenance gate: the conversation must have been given this link, by the user or by a
-    #    web tool. Checked after the egress narrowing above and before ②, which still decides
-    #    where the fetch may go.
+    #    web tool. Checked before ②, which still decides where the fetch may go.
     if require_provenance and session_key and not url_provenance(session_key, url):
         return FetchOutcome(
             ok=False,

@@ -2102,6 +2102,10 @@ def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
     when its agent CLI is started for it, and a warm-pool process started before its chat is tied
     to the chat that claims it (``session_pid.tie_to_session``), so only a tie that cannot be read
     leaves a call unnamed, and guessing the chat is the one thing worse than not answering.
+
+    The call runs with that session bound (:func:`set_current_session_key`), as a call the
+    built-in agent makes does, so what the call reaches on the network is held to the session's
+    egress tier here too (``net.policy.egress_policy_for_run``).
     """
     from personalclaw import memory_writes
 
@@ -2116,10 +2120,14 @@ def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
             mode = _SESSION_MODES[key] = answered
         else:
             mode = memory_writes.UNREADABLE
-    if mode == memory_writes.PERSISTENT:
-        return _aggregated_call_tool(name, raw_args)
-    with memory_writes.derived_from(key, memory_mode=mode):
-        return _aggregated_call_tool(name, raw_args)
+    token = set_current_session_key(key)
+    try:
+        if mode == memory_writes.PERSISTENT:
+            return _aggregated_call_tool(name, raw_args)
+        with memory_writes.derived_from(key, memory_mode=mode):
+            return _aggregated_call_tool(name, raw_args)
+    finally:
+        reset_current_session_key(token)
 
 
 def run_mcp_core_server() -> None:

@@ -73,14 +73,13 @@ WHAT THIS DELIBERATELY DOES NOT DO, so nobody mistakes the list above for the wh
 * **No POST/PUT/DELETE.** Outbound writes belong to ``webhook``, which is POST-only and lives in
   ``apps/webhook-action``. A verb that changes state on somebody else's machine is a different
   governed action with a different consent story, not a parameter on this one.
-* **No run-tier narrowing.** ``SafetyProfile.egress_tier`` is not consulted, matching the nearest
-  egress precedent (``browse/cdp.py``'s ``_layered_policy`` is ``egress_policy_for(BROWSE)`` and no
-  more). It is NOT simply forgotten: ``egress_policy_for_profile`` UNIONs a tier's preset hosts onto
-  the base, which narrows an additive base like ``SOURCE`` (``triggers/web_poll.py`` uses it
-  correctly for exactly that reason) but can only WIDEN an already-exclusive one — a ``registry``
-  tier would add 22 package-registry hosts to this provider's reach. Honouring only the ``off`` tier
-  would be coherent, but it needs a session key this provider is not handed, so it is left to the
-  change that adds one rather than half-built here.
+* **No run tier of its own.** The guard holds every request to the egress tier of the run it is
+  made for (``net.policy.egress_policy_for_run``), and this provider's fetch goes through the
+  guard, so a tier reaches it wherever a run is bound. An automation's action fire binds none: the
+  session binding that names a run (``mcp_core.set_current_session_key``) is also what a spawned
+  agent takes as its parent, so a fire cannot borrow it, and the tier of the automation that fired
+  does not reach this fetch. Its reach is the operator's Allowed hosts either way, which a tier
+  only keeps: on an exclusive base, ``listed`` and ``registry`` add no host.
 * **No content-type allow-list.** A template may legitimately fetch HTML, JSON, XML, CSV or plain
   text; enumerating that reliably is a mime-type war, and the bound plus the fence already contain
   the damage a surprising body can do. ``content_type`` is reported so a template can decide.

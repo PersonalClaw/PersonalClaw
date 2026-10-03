@@ -133,15 +133,16 @@ INCIDENT = SafetyProfile(
 # 🔴 ``egress_tier="all"``, corrected from ``"registry"`` when PHF-8 gave the tier a real
 # enforcement point. REGISTRY was authored (net/policy.py) for "sandboxed code runs that
 # need the common dev registries WITHOUT opening the whole internet" — a PACKAGE-manager
-# posture. The plane that actually exists to enforce a tier on is the agent's page fetch
-# (`web.fetch.web_fetch`) and the watched-source poll; core has no code-run egress plane
-# (the sandbox providers do not own a network namespace). Enforcing "registry" there would
-# deny every unattended fetch that is not pypi/npm/crates — i.e. every watched-source
-# poll, every subagent research fetch, every inbox-triggered link read — with no UI to
-# undo it. "all" is not "unguarded": it is STRICT (public hosts only, no loopback/RFC-1918/
-# link-local, pinned IPs, byte + timeout caps, operator deny_hosts honoured). An operator
-# who does want registry-only or allow-list-only unattended egress writes it in the
-# governance ceiling (`{"scopes": {"egress": {"value": "listed"}}}`), which is enforced.
+# posture. The plane a tier is enforced on is every request a run makes through the egress
+# guard (`net.policy.egress_policy_for_run`: page fetches, searches, an app's requests, the
+# watched-source poll); core has no code-run egress plane (the sandbox providers do not own
+# a network namespace). Enforcing "registry" there would deny every unattended fetch that is
+# not pypi/npm/crates — i.e. every watched-source poll, every subagent research fetch, every
+# inbox-triggered link read — with no UI to undo it. "all" is not "unguarded": it is STRICT
+# (public hosts only, no loopback/RFC-1918/link-local, pinned IPs, byte + timeout caps,
+# operator deny_hosts honoured). An operator who does want registry-only or allow-list-only
+# unattended egress writes it in the governance ceiling
+# (`{"scopes": {"egress": {"value": "listed"}}}`), which is enforced.
 HEADLESS = SafetyProfile(
     name="headless",
     approval="hook_based",
