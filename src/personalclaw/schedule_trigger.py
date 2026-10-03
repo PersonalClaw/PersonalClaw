@@ -24,15 +24,26 @@ def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
     POSTs to ``/api/triggers/schedule:{id}/run`` (non-blocking on the server — it spawns the run
     and returns immediately). A gateway that is down / unreachable yields a friendly error
     rather than raising.
+
+    The call names the work it does, as every call made with the internal credential must (the
+    gateway refuses one that names none): the job's own, ``cron:<id>``, as a fire of the job is
+    named, unless it is made in a session's work (the command run in an agent's shell names that
+    agent's chat).
     """
     job_id = (job_id or "").strip()
     if not job_id:
         return False, "no job id given"
     # Deferred import: keeps this module importable in contexts where the MCP
     # core isn't wired, and avoids a circular import at module load.
-    from personalclaw.mcp_core import _post
+    from personalclaw import mcp_core
 
-    resp = _post(f"/api/triggers/schedule:{quote(job_id, safe='')}/run", {})
+    named = mcp_core._resolve_session_key()
+    token = None if named else mcp_core.set_current_session_key(f"cron:{job_id}")
+    try:
+        resp = mcp_core._post(f"/api/triggers/schedule:{quote(job_id, safe='')}/run", {})
+    finally:
+        if token is not None:
+            mcp_core.reset_current_session_key(token)
     if not isinstance(resp, dict):
         return False, "unexpected response from gateway"
     if resp.get("error"):

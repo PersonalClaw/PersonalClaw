@@ -643,27 +643,43 @@ class TestAuditAndManifest:
 
 
 class TestRestrictedSessions:
-    async def test_a_session_whose_mode_cannot_be_read_cannot_start_a_run(
-        self, monkeypatch
-    ) -> None:
+    async def test_a_session_whose_mode_cannot_be_read_cannot_start_a_run(self) -> None:
         """A workflow run spends money and touches the world. A Temporary or Incognito chat's run
         keeps the chat's mode (`test_an_agent_clis_workflow_tools_reach_the_gateway`); a session
-        the guard holds restricted without saying which mode it keeps starts none."""
-        monkeypatch.setattr(
-            "personalclaw.workflows.handlers._is_restricted_session", lambda s, r: True
-        )
-        resp = await H.api_run_start(
-            _req("POST", "/api/workflows/runs", state=_State(_Sup()), body={"name": "x"})
-        )
+        whose records say its mode cannot be read starts none."""
+        from personalclaw import session_restrictions
+
+        key = "dashboard:chat-mode-unreadable"
+        session_restrictions.mark_unreadable(key)
+        try:
+            resp = await H.api_run_start(
+                _req(
+                    "POST",
+                    "/api/workflows/runs",
+                    state=_State(_Sup()),
+                    body={"name": "x"},
+                    headers={"X-Session-Key": key},
+                )
+            )
+        finally:
+            session_restrictions.clear(key)
         assert resp.status == 403
         assert _body(resp)["error"]["code"] == "restricted_session"
+        assert "cannot be read" in _body(resp)["error"]["message"]
 
-    async def test_reads_are_not_gated(self, monkeypatch) -> None:
+    async def test_reads_are_not_gated(self) -> None:
         """A read has no side effect; gating it would make an incognito session useless."""
-        monkeypatch.setattr(
-            "personalclaw.workflows.handlers._is_restricted_session", lambda s, r: True
-        )
-        assert (await H.api_defs_list(_req("GET", "/api/workflows"))).status == 200
+        from personalclaw import session_restrictions
+
+        key = "dashboard:chat-incognito-reads"
+        session_restrictions.mark_incognito(key)
+        try:
+            resp = await H.api_defs_list(
+                _req("GET", "/api/workflows", headers={"X-Session-Key": key})
+            )
+        finally:
+            session_restrictions.clear(key)
+        assert resp.status == 200
 
     async def test_every_mutating_route_is_guarded(self) -> None:
         """Asserted structurally: a new mutating route added without a guard is exactly the

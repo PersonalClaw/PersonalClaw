@@ -83,6 +83,9 @@ from personalclaw.session_pid import _untrack_session_pid as _untrack_session_pi
 from personalclaw.session_pid import (  # noqa: F401
     cleanup_orphaned_sessions as cleanup_orphaned_sessions,
 )
+from personalclaw.session_pid import (
+    tie_to_session,
+)
 from personalclaw.stats import Stats
 
 logger = logging.getLogger(__name__)
@@ -1136,6 +1139,9 @@ class SessionManager:
 
                 if isinstance(provider, AgentProvider):
                     provider.set_session_key(key, channel_id)
+                    # Its agent CLI's tool server was started before any chat, so it learns the
+                    # one it now serves from this tie, whichever surface claimed it.
+                    tie_to_session(provider.pid, key)
                     # Switch model post-claim if caller requested non-default
                     if model:
                         _pool_model = (

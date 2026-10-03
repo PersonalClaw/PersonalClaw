@@ -2079,6 +2079,12 @@ def _aggregated_call_tool(name: str, raw_args: dict[str, Any]) -> str:
 #: holds for the life of the process; an answer that could not be had is not kept.
 _SESSION_MODES: dict[str, str] = {}
 
+#: What a call this process cannot name the chat of is answered (:func:`_call_as_its_session`).
+UNNAMED_CALL = (
+    "This call was not made: PersonalClaw's tool server could not tell which chat it is for, and "
+    "it makes no call for a chat it cannot name, since the call would run as no one's work."
+)
+
 
 def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
     """Run one call of this server's tools as the chat it serves: the ``mcp-core`` dispatch.
@@ -2089,14 +2095,19 @@ def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
     gateway what that session is (``GET /api/chat/sessions/model-reach``, the answer the gateway's
     own stores give it) and runs as deriving from it when it keeps nothing: no model but its own
     reads the call's work, and the stores refuse its writes, as in the gateway. A session the
-    gateway cannot answer for is taken to keep nothing. A call made for no session runs as it
-    always has.
+    gateway cannot answer for is taken to keep nothing.
+
+    A call this process cannot name the chat of is made nowhere (:data:`UNNAMED_CALL`), as the
+    gateway refuses it too (``internal_call_names_no_work``). The chat is named to this process
+    when its agent CLI is started for it, and a warm-pool process started before its chat is tied
+    to the chat that claims it (``session_pid.tie_to_session``), so only a tie that cannot be read
+    leaves a call unnamed, and guessing the chat is the one thing worse than not answering.
     """
     from personalclaw import memory_writes
 
     key = _resolve_session_key()
     if not key:
-        return _aggregated_call_tool(name, raw_args)
+        return tool_failure(UNNAMED_CALL, code="internal_call_names_no_work")
     mode = _SESSION_MODES.get(key)
     if mode is None:
         reply = _get("/api/chat/sessions/model-reach")

@@ -633,7 +633,8 @@ def test_an_agent_clis_tools_for_a_normal_chat_run_as_before(monkeypatch):
 
 def test_a_tool_process_that_cannot_learn_its_chats_mode_hands_nothing_on(monkeypatch):
     """No answer is not "persistent": the call runs as for a chat that keeps nothing, and the next
-    call asks again. A call made for no session is not asked about at all."""
+    call asks again. A call made for no session is not asked about at all: it is not made, since
+    it would run as no one's work."""
     from personalclaw import mcp_core
 
     asked = _tool_process(
@@ -651,9 +652,10 @@ def test_a_tool_process_that_cannot_learn_its_chats_mode_hands_nothing_on(monkey
     mcp_core._call_as_its_session("visualize", {})
     mcp_core._call_as_its_session("visualize", {})
     monkeypatch.setattr(mcp_core, "_resolve_session_key", lambda: "")
-    mcp_core._call_as_its_session("visualize", {})
+    unnamed = mcp_core._call_as_its_session("visualize", {})
 
-    assert seen == [(False, True), (True, False), (True, False)]
+    assert seen == [(False, True), (True, False)]
+    assert mcp_core.UNNAMED_CALL in str(unnamed)
     assert len(asked) == 2
 
 

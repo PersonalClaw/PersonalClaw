@@ -1281,6 +1281,25 @@ def _reset_channel_delivery_registry() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _reset_action_services() -> object:
+    """Forget the gateway services a test's gateway wired (``action_services._services``).
+
+    A gateway publishes its dashboard state and workflow supervisor there when it starts
+    (``start_dashboard``), and the native agent's workflow tools read the chat they work for from
+    that state, as they read the supervisor they start runs on. A test that starts a gateway left
+    them behind, so the next test in the worker found a dead gateway's state, where its own chat is
+    not held, and its agent's call was refused as one for a chat whose mode cannot be read.
+    Cleared rather than restored, as the channel registry is: outside a live gateway nothing is
+    wired, and a test that needs services wires its own.
+    """
+    from personalclaw.action_providers import services
+
+    services._services = None
+    yield
+    services._services = None
+
+
+@pytest.fixture(autouse=True)
 def _reset_app_restart_reasons() -> object:
     """Forget every app's restart reason a test left behind.
 

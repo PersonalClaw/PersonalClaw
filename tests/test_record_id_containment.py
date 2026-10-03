@@ -393,7 +393,6 @@ ALLOWED_RAW_INTERPOLATION: dict[str, str] = {
     "apps/app_manager.py": "`_rollback_dir` applies the kebab `_validate_app_name`",
     "concurrency.py": "the id is a `safe` + content digest computed locally",
     "dashboard/chat_handlers.py": "filename is `uuid4().hex` + a sanitized basename",
-    "dashboard/chat_runner.py": "`session_pid_<pid>.txt` — only under `isinstance(pid, int)`",
     "dashboard/handlers/agents.py": "`safe_slug`, sanitized above the expression",
     "dashboard/handlers/files.py": "filename is `uuid4().hex` + a sanitized basename",
     "dashboard/handlers/uploads.py": "filename is `uuid4().hex` + a sanitized basename",
@@ -406,6 +405,7 @@ ALLOWED_RAW_INTERPOLATION: dict[str, str] = {
     "knowledge/slicing.py": "both halves checked: `_HEX64_RE` + closed `_CACHED_SUFFIXES`",
     "prompt_providers/native_provider.py": "names pass `_safe_name` in the same expression",
     "providers/use_cases.py": "both paths check the closed `VALID_USE_CASES` set",
+    "session_pid.py": "`session_pid_<pid>.txt` — `tie_to_session` writes only a positive `int` pid",
     "workflows/leases.py": "the id is a locally computed `safe` token",
     "workflows/pool.py": "the id is a locally computed `safe` token",
 }

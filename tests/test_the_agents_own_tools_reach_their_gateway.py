@@ -22,7 +22,7 @@ import contextlib
 import json
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -35,6 +35,10 @@ from personalclaw.tool_providers.registry import create_memory_provider, create_
 
 #: The browser's sign-in sentence (`token_auth.not_signed_in_notice`). No answer to a tool says it.
 SIGN_IN = "signed in to PersonalClaw"
+
+#: The chat whose agent makes the calls, live in the gateway: every call made with the internal
+#: credential names the work it is for, and a native agent's runtime names its chat around each.
+CHAT = "dashboard:chat-own-tools"
 
 #: Every auth shortcut a test process might inherit. Each one would admit the tool's call before
 #: the internal credential is looked at, which is how this stayed unseen in development.
@@ -89,7 +93,8 @@ async def _gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIter
     monkeypatch.setattr(server_mod, "_DIST_DIR", dist)
     monkeypatch.setattr(handlers_core_mod, "_DIST_DIR", dist)
 
-    runner, _state = await server_mod.start_dashboard(sessions=MagicMock(count=0), port=0)
+    runner, state = await server_mod.start_dashboard(sessions=MagicMock(count=0), port=0)
+    state.get_or_create_session(CHAT.removeprefix("dashboard:"), memory_mode="persistent")
     port = runner.addresses[0][1]
     # What the gateway exports to every child it starts (`gateway_base.publish`).
     monkeypatch.setenv("PERSONALCLAW_PORT", str(port))
@@ -115,9 +120,21 @@ async def _remember_a_fact(gw: _Gateway) -> None:
         assert resp.status == 200, await resp.text()
 
 
+@contextlib.contextmanager
+def _for_the_chat() -> Iterator[None]:
+    """The chat's session bound for the calls made inside, as the native runtime binds it around
+    each call it makes (``mcp_core.set_current_session_key``)."""
+    token = mcp_core.set_current_session_key(CHAT)
+    try:
+        yield
+    finally:
+        mcp_core.reset_current_session_key(token)
+
+
 async def _call(tool: str, arguments: dict) -> tuple[bool, str]:
-    """One call through the provider the native agent's memory tools come from."""
-    result = await create_memory_provider().invoke(tool, arguments)
+    """One call through the provider the native agent's memory tools come from, for its chat."""
+    with _for_the_chat():
+        result = await create_memory_provider().invoke(tool, arguments)
     return result.success, (result.output if result.success else result.error) or ""
 
 
@@ -163,7 +180,8 @@ async def test_the_credential_still_cannot_teach_an_approve_rule(tmp_path, monke
     nothing is written."""
     async with _gateway(tmp_path, monkeypatch):
         rule = {"pattern": "archive:sender:news.example.com", "verdict": "approve"}
-        answer = await asyncio.to_thread(mcp_core._post, "/api/memory/approval-rules", rule)
+        with _for_the_chat():
+            answer = await asyncio.to_thread(mcp_core._post, "/api/memory/approval-rules", rule)
         assert answer["error_detail"]["code"] == "approval_owner_only", answer
 
         ok, text = await _call("triage_rules_list", {})
@@ -174,7 +192,8 @@ async def test_the_credential_still_cannot_teach_an_approve_rule(tmp_path, monke
 async def test_get_context_loads_the_projects_context(tmp_path, monkeypatch):
     """🔴 Red on integration. The tool an agent is told to call at the start of every task."""
     async with _gateway(tmp_path, monkeypatch):
-        result = await create_native_provider().invoke("get_context", {"query": "coffee"})
+        with _for_the_chat():
+            result = await create_native_provider().invoke("get_context", {"query": "coffee"})
 
         text = result.output if result.success else result.error
         assert SIGN_IN not in (text or "")
@@ -184,8 +203,9 @@ async def test_get_context_loads_the_projects_context(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_the_mcp_server_an_agent_cli_runs_finds_the_same_credential(tmp_path, monkeypatch):
     """🔴 Red on integration. The ACP path: the gateway starts ``personalclaw mcp-core`` with
-    ``PERSONALCLAW_HOME`` and ``PERSONALCLAW_PORT`` declared (``acp.mcp_servers``), and that
-    process reads the credential from the home, not from ``HOME``."""
+    ``PERSONALCLAW_HOME``, ``PERSONALCLAW_PORT`` and the chat it serves declared
+    (``acp.mcp_servers``), and that process reads the credential from the home, not from ``HOME``.
+    """
     async with _gateway(tmp_path, monkeypatch) as gw:
         await _remember_a_fact(gw)
         env = {
@@ -193,6 +213,7 @@ async def test_the_mcp_server_an_agent_cli_runs_finds_the_same_credential(tmp_pa
             "HOME": str(gw.user_home),
             "PERSONALCLAW_HOME": str(gw.home),
             "PERSONALCLAW_PORT": str(gw.port),
+            "PERSONALCLAW_SESSION_KEY": CHAT,
         }
         requests = [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},

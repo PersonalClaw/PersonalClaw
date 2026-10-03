@@ -47,10 +47,12 @@ chat, channel thread, loop worker, webhook, subagent).
   says what a chat is when that turn starts a run or a subagent. So a Temporary
   chat's subagents, its subagents' subagents and the steps of a run it started
   read no memory and write none, as the chat does, from its first turn on. It
-  takes the chat's model the same way (below). Over the workflow routes (an
-  agent CLI's tool server, a batch `subagent_run` starts) such a chat's call
-  starts a run or a batch and changes only a run it started; anything else it
-  asks of them is refused, saying why (`workflows/handlers._guard`).
+  takes the chat's model the same way (below). Whichever door its call reaches
+  the workflow engine through (the workflow routes, which an agent CLI's tool
+  server and a batch `subagent_run` call, or a native agent's workflow tools in
+  the gateway), such a chat's call starts a run or a batch and changes only a run
+  it started; anything else it asks is refused, saying why, by the one rule both
+  ask (`workflows/restricted_calls.py`).
 - **`memory_reads.py` — whose work may read your memory.** `reach_of(state,
   key)` is the one answer every memory read asks, for the work a session key
   names: it follows a subagent to the session it works for, an app's agent run to

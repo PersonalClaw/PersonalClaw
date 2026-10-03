@@ -561,8 +561,9 @@ def _list_tools() -> list[dict[str, Any]]:
 # ── dispatch ─────────────────────────────────────────────────────────────────
 
 
-def _supervisor() -> Any:
-    """The workflow supervisor, or None when the gateway has not wired one.
+def _gateway_service(name: str) -> Any:
+    """One of the services the gateway wires (its workflow supervisor ``workflows``, its dashboard
+    state ``state``), or None when it has not wired them.
 
     Fetched per call rather than cached: a cached None taken at import time would make
     every tool permanently inert in a process that wires services later.
@@ -573,7 +574,50 @@ def _supervisor() -> Any:
         services = get_action_services()
     except Exception:
         return None
-    return getattr(services, "workflows", None) if services else None
+    return getattr(services, name, None) if services else None
+
+
+def _supervisor() -> Any:
+    """The workflow supervisor, or None when the gateway has not wired one."""
+    return _gateway_service("workflows")
+
+
+#: Each tool that changes something, as the operation the gateway's route for the same call names
+#: (`handlers._guard`): a Temporary or Incognito chat's call is held to one rule
+#: (`restricted_calls`), asked of the tool's call here as the route asks it of the call an agent
+#: CLI makes through the gateway. Every tool that is not read-only is here.
+_CHANGES = {
+    "workflow_author": "workflow_agent_save",
+    "workflow_delete_def": "workflow_def_delete",
+    "workflow_repair": "workflow_audit_heal",
+    "workflow_start": "workflow_run_start",
+    "workflow_start_draft": "workflow_run_start",
+    "workflow_edit": "workflow_run_edit",
+    "workflow_skip": "workflow_run_edit",
+    "workflow_rewind": "workflow_run_rewind",
+    "workflow_run_from": "workflow_run_from",
+    "workflow_fork": "workflow_run_fork",
+    "workflow_pause": "workflow_run_pause",
+    "workflow_resume": "workflow_run_resume",
+    "workflow_cancel": "workflow_run_cancel",
+}
+
+
+def _chat_mode_refusal(name: str, run_id: str) -> ToolFailure | None:
+    """The refusal of the tool call *name* (for the run *run_id*) that the session it runs as may
+    not make (`restricted_calls`), or None. A start names no run, as the route's does not."""
+    operation = _CHANGES.get(name)
+    if operation is None:
+        return None
+    from personalclaw.workflows import restricted_calls
+
+    why = restricted_calls.refusal(
+        _current_session_id(),
+        operation,
+        run_id="" if name == "workflow_start" else run_id,
+        state=_gateway_service("state"),
+    )
+    return tool_failure(restricted_calls.sentence(why), code=restricted_calls.CODE) if why else None
 
 
 def _run(coro: Any) -> Any:
@@ -773,10 +817,15 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     from personalclaw.mcp_core import serves_an_agent_cli
 
     if serves_an_agent_cli():
-        # No engine and no definitions in this process: every call is the gateway's.
+        # No engine and no definitions in this process: every call is the gateway's, whose routes
+        # hold it to the rule a Temporary or Incognito chat's call is held to.
         from personalclaw.mcp_workflows_gateway import call_through_the_gateway
 
         return call_through_the_gateway(name, args)
+
+    denied = _chat_mode_refusal(name, run_id)
+    if denied is not None:
+        return denied
 
     if name == "workflow_manifest":
         return _fmt(
@@ -1253,7 +1302,15 @@ def freeze_authored_candidate(args: dict[str, Any]) -> None:
     Parameterized before freezing, so the candidate the matcher later offers is a reusable shape
     rather than one run's literal entities — a candidate carrying a concrete hostname would match a
     similar goal and then plan against the wrong target.
+
+    Work for a chat that keeps nothing (an Incognito or Temporary chat's, or work whose chat's mode
+    cannot be read) freezes none: a candidate is kept on disk and learned from, which such a chat
+    promises not to be (`memory_writes`).
     """
+    from personalclaw import memory_writes
+
+    if memory_writes.writes_refused():
+        return
     try:
         from personalclaw.workflows import template_store
 

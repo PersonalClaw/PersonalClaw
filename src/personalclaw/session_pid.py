@@ -722,6 +722,27 @@ def _untrack_pid(pid: int) -> None:
         path.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
 
 
+def tie_to_session(pid: object, session_key: str) -> None:
+    """Record that the agent process *pid* serves the session *session_key*
+    (``session_pid_<pid>.txt``), where the tool server its agent CLI runs (``mcp-core``) finds the
+    chat it serves by walking up from its own process (``mcp_core._resolve_session_key``).
+
+    That server is told its chat in its environment when the agent CLI is started for one. A
+    warm-pool process is started before any chat, so it is tied to the session that claims it
+    (``SessionManager.get_or_create``), and each dashboard turn ties its process again
+    (``chat_runner``). A server with no tie names no chat, and makes none of the calls it is asked
+    for. Written whole (``atomic_write``), so the server never reads half a key; a tie that cannot
+    be written is logged and leaves the server's calls refused rather than guessed."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or not session_key:
+        return
+    from personalclaw.atomic_write import atomic_write
+
+    try:
+        atomic_write(config_dir() / f"session_pid_{pid}.txt", session_key)
+    except OSError:
+        logger.warning("could not tie agent process %d to its session", pid, exc_info=True)
+
+
 def _untrack_session_pid(pid: int) -> None:
     """Remove this gateway's ``<gw_pid>:<pid>`` entry from the session PID
     tracking file.  Called on clean provider shutdown so the periodic

@@ -129,8 +129,9 @@ permission model holds in every auth mode.
 ### The internal credential
 
 PersonalClaw's own processes call their gateway over loopback: an agent's tools (in the gateway
-itself, and in the `mcp-core` server an agent CLI runs), a scheduled script's `ctx.notify` and
-`ctx.call_tool`, and `personalclaw auth rotate-key`. They carry the gateway's internal credential,
+itself, and in the `mcp-core` server an agent CLI runs), a tool the gateway runs for a request
+(`POST /api/tools/invoke`), a scheduled script's `ctx.notify` and `ctx.call_tool`,
+`personalclaw cron trigger` and `personalclaw auth rotate-key`. They carry the gateway's internal credential,
 `X-Internal-Secret`, which the gateway writes to `<home>/.local_secret` (0600) each time it starts.
 Every caller reads it from the same home, resolved at the call (the gateway declares
 `PERSONALCLAW_HOME` to each `mcp-core` server it starts), and none makes a home to look in one.
@@ -146,6 +147,17 @@ Every caller reads it from the same home, resolved at the call (the gateway decl
   credential rides beside it, with an audit row. It used to be ignored there, so the call was judged
   as a browser that had not signed in and answered with the sign-in sentence, on every install. The
   development server's local-network bypass admitted it, so this refusal runs ahead of that bypass.
+- **A call names the work it is for, or it is not made.** The credential says only that a call
+  comes from one of PersonalClaw's processes; what it may reach is decided by the work it names in
+  `X-Session-Key`, read as any session is: an agent's tools name their chat (a warm-pool agent CLI
+  is tied to the chat that claims it, `session_pid.tie_to_session`), a tool the gateway runs for a
+  request names that request's work (an app's, a scheduled job's, yours), a scheduled script its
+  job (`cron:<id>`), `personalclaw cron trigger` the job it fires and `personalclaw auth
+  rotate-key` its own command. A call that names none was read as yours: it read and changed your
+  memory, and a run it started belonged to nobody and kept everything. It is refused before any
+  handler runs (`dashboard/memory_write_gate.py`, `403 internal_call_names_no_work`), with an audit
+  row, and the tool server an agent CLI runs makes no call it cannot name the chat of, its own part
+  included (`mcp_core._call_as_its_session`).
 - **A credential this gateway did not issue** is refused with `403 internal_secret_invalid`, whose
   sentence says so. **A caller with none to read sends nothing:** a tool's result names the home it
   looked in (`mcp_core._internal_secret`), and a scheduled script's call back returns

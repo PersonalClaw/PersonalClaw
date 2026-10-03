@@ -236,8 +236,12 @@ def _revoke_via_gateway(port: int) -> bool:
     return bool(answer.get("ok"))
 
 
-def _ask_gateway(port: int, path: str, *, secret_header: str, body: dict) -> tuple[bool, dict]:
-    """POST *body* to the running gateway on loopback with the local secret in *secret_header*.
+def _ask_gateway(
+    port: int, path: str, *, secret_header: str, body: dict, work: str = ""
+) -> tuple[bool, dict]:
+    """POST *body* to the running gateway on loopback with the local secret in *secret_header*,
+    naming *work*, the work the call does, in ``X-Session-Key`` when one is given: a call made
+    with the internal credential names it, or the gateway refuses it.
 
     ``(reached, answer)``: whether a gateway answered at all — a refusal included — and what it
     said (``{}`` when nothing readable came back). The two are kept apart because an action a
@@ -256,10 +260,13 @@ def _ask_gateway(port: int, path: str, *, secret_header: str, body: dict) -> tup
     if not secret:
         return False, {}
 
+    headers = {secret_header: secret, "Content-Type": "application/json"}
+    if work:
+        headers["X-Session-Key"] = work
     req = urllib.request.Request(
         f"http://localhost:{port}{path}",
         method="POST",
-        headers={secret_header: secret, "Content-Type": "application/json"},
+        headers=headers,
         data=_json.dumps(body).encode(),
     )
     try:
@@ -274,6 +281,11 @@ def _ask_gateway(port: int, path: str, *, secret_header: str, body: dict) -> tup
     except ValueError:
         return True, {}
     return True, answer if isinstance(answer, dict) else {}
+
+
+#: The work ``personalclaw auth rotate-key`` names on its call to the gateway: your own command,
+#: made at this computer, which is no chat's, job's or app's.
+ROTATE_KEY_WORK = "cli:auth-rotate-key"
 
 
 def _rotate_key_cmd(args) -> int:
@@ -293,7 +305,11 @@ def _rotate_key_cmd(args) -> int:
 
     port = int(getattr(args, "port", 0) or _DEFAULT_PORT)
     reached, answer = _ask_gateway(
-        port, "/api/auth/rotate-key", secret_header="X-Internal-Secret", body={"confirm": True}
+        port,
+        "/api/auth/rotate-key",
+        secret_header="X-Internal-Secret",
+        body={"confirm": True},
+        work=ROTATE_KEY_WORK,
     )
     if reached and not answer.get("ok"):
         error = answer.get("error")

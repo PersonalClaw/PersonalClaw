@@ -18,7 +18,13 @@ as its source. A request an app's own token makes with no session of its own is 
 The same walk names the chat at the top the request's work is done for, which what it writes is
 filed under (``memory_writes.filed_under``): a subagent's lesson is its chat's.
 
-``dashboard:ui`` is the dashboard's own pages acting for the owner, not a session.
+``dashboard:ui`` is the dashboard's own pages acting for the owner, not a session, and a request of
+yours that names no session is yours. A request made with the gateway's internal credential is
+not yours: PersonalClaw's own processes present it (an agent's tools, a tool the gateway runs for a
+scheduled script or an app, the CLI), each naming the work it does, and a handler reads the
+session it names, so one naming none would run as yours, reading and changing your memory and
+starting work that belongs to nobody. Such a request is refused before any handler runs
+(``403 internal_call_names_no_work``), with a security-log row.
 """
 
 from __future__ import annotations
@@ -29,7 +35,8 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import memory_reads, memory_writes
+from personalclaw import approval_answer, memory_reads, memory_writes
+from personalclaw.http_errors import json_error
 from personalclaw.sel import sel
 
 #: The key the dashboard's own pages send: the owner, not a session.
@@ -44,6 +51,14 @@ def _mode_of(request: web.Request, session_key: str) -> str | None:
     return memory_writes.session_mode(session_key, state=request.app.get("state"))
 
 
+def _names_no_work(request: web.Request) -> bool:
+    """Whether *request* was made with the internal credential and names no work it is for: the
+    principal it proved is an agent (``approval_answer.of_request``: an app's token makes it the
+    app's, whatever else it carries) whose ``X-Session-Key`` is empty."""
+    by = approval_answer.of_request(request)
+    return by.kind == approval_answer.AGENT and not by.name
+
+
 def memory_write_middleware() -> Any:
     """Build the middleware (a factory, so the installed instance can be found by a test)."""
 
@@ -52,6 +67,16 @@ def memory_write_middleware() -> Any:
         request: web.Request,
         handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
     ) -> web.StreamResponse:
+        if _names_no_work(request):
+            sel().log_api_access(
+                caller="internal",
+                operation=f"{request.method} {request.path}",
+                outcome="denied",
+                source="dashboard",
+                resources="names_no_work",
+                error="a call made with the internal credential named no session",
+            )
+            return json_error("internal_call_names_no_work", status=403)
         session_key = request.headers.get("X-Session-Key", "").strip()
         if session_key == _DASHBOARD_UI:
             session_key = ""

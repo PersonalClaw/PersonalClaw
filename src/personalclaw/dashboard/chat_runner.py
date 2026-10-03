@@ -30,7 +30,6 @@ from personalclaw.agents.instructions import agent_instructions
 from personalclaw.answer_rules import over_limit_notice
 from personalclaw.approval_brief import call_blast_radius
 from personalclaw.audit_subject import log_title
-from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
@@ -154,6 +153,7 @@ from personalclaw.security import (
     redact_exfiltration_urls,
 )
 from personalclaw.sel import sel
+from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.usage_ledger import Attribution, recorder, spent_rows
@@ -161,15 +161,6 @@ from personalclaw.validation import ValidationError, validate_ask_user_question
 
 if TYPE_CHECKING:
     from personalclaw.providers.image_input import ImageInput
-
-
-def config_dir() -> Path:
-    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
-
-    DEFINED here rather than imported: this module can be imported lazily, and an
-    import-time binding captures whatever the name pointed at on first use (#2443).
-    """
-    return config_loader.config_dir()
 
 
 logger = logging.getLogger(__name__)
@@ -2979,12 +2970,10 @@ async def run_chat(
         # so a Trust/YOLO auto-approve can't bypass a read-only posture.
         state.sessions.set_task_mode(session_key, getattr(session, "_task_mode", "agent"))
 
-        # Write current session key so MCP tools can pass it to spawn API.
+        # Tie the agent process to this session, so its tool server names the chat it serves.
         # Keyed by ACP agent PID to avoid races between concurrent sessions.
         try:
-            pid = state.sessions.get_pid(session_key)
-            if isinstance(pid, int):
-                (config_dir() / f"session_pid_{pid}.txt").write_text(session_key, encoding="utf-8")
+            tie_to_session(state.sessions.get_pid(session_key), session_key)
         except Exception:
             pass
 

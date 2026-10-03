@@ -34,7 +34,6 @@ from aiohttp.multipart import BodyPartReader
 
 from personalclaw import approval_answer
 from personalclaw.config.edit_spec import LOOSEN_TITLE
-from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import consent_required
 from personalclaw.request_validation import bool_field, json_object_body, require_string
@@ -48,7 +47,14 @@ from personalclaw.stale_write import (
 )
 from personalclaw.uploads.content_scan import ContentRefused, scan_upload
 from personalclaw.uploads.policy import category_for
-from personalclaw.workflows import incident_hold, journal, run_cockpit, service, store
+from personalclaw.workflows import (
+    incident_hold,
+    journal,
+    restricted_calls,
+    run_cockpit,
+    service,
+    store,
+)
 from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase
 from personalclaw.workflows.review_service import apply_triage, review_findings
 
@@ -209,84 +215,25 @@ async def _parent_def_refusal(name: str) -> web.Response | None:
     return None if found.get("ok") else _reply(found)
 
 
-#: What a Temporary or Incognito chat's call may start (`_guard`): a run, a batch. Each keeps the
-#: chat's mode and stays on its model (`service.start_run`, through `ownership.inherit_mode`).
-_STARTS_WORK = frozenset({"workflow_run_start", "workflow_batch_start"})
-
-#: What such a chat's call may do to a run it started, which keeps nothing as the chat does
-#: (`_guard`): what its agent's workflow tools do to a run.
-_CONTROLS_ITS_RUN = frozenset(
-    {
-        "workflow_run_start",  # its draft
-        "workflow_run_edit",
-        "workflow_run_rewind",
-        "workflow_run_from",
-        "workflow_run_fork",
-        "workflow_run_pause",
-        "workflow_run_resume",
-        "workflow_run_cancel",
-    }
-)
-
-
 def _guard(request: web.Request, operation: str, *, run_id: str = "") -> web.Response | None:
-    """Refuse a mutation a restricted session may not make, and audit the refusal.
+    """Refuse a mutation a restricted session may not make (``run_id``: the run the call is for).
 
     A workflow run spends money and touches the world, so every mutating call is audited —
-    an unaudited start is a worse gap than an unaudited read. A Temporary or Incognito chat's call
-    may start a run or a batch, which keeps the chat's mode and stays on its model, as one its
-    agent's tool starts in the gateway does; and it may control a run it started that keeps nothing
-    as it does (``run_id``, the run the call is for). Anything else it would change keeps what it
-    keeps (a definition in your library, a run that you or another chat started), so it is
-    refused, and so is every call of a session whose mode cannot be read. The refusal says why, in
-    the mode the guard judged it by: the strictest up the chain it works for
-    (``memory_reads.reach_of``), so a subagent's call is its chat's.
+    an unaudited start is a worse gap than an unaudited read. What a Temporary or Incognito chat's
+    call may change is one rule (`restricted_calls`), which the workflow tools a native agent calls
+    in the gateway ask too, and which audits its refusal.
     """
     state = request.app.get("state")
-    if state is None or not _is_restricted_session(state, request):
+    if state is None:
         return None
-    from personalclaw import memory_reads, memory_writes
-
-    session_key = request.headers.get("X-Session-Key", "")
-    mode = memory_reads.reach_of(state, session_key).restricted_mode
-    why = {
-        "temporary": "it keeps nothing, as a Temporary chat does",
-        "incognito": "it keeps nothing, as an Incognito chat does",
-    }.get(str(mode), "the memory setting of the chat it is for cannot be read")
-    if mode in memory_writes.RESTRICTED_MODES:
-        if run_id and operation in _CONTROLS_ITS_RUN:
-            if _its_own_run(session_key, run_id):
-                return None
-            why += ", so it changes only a run it started, which keeps nothing as it does"
-        elif not run_id and operation in _STARTS_WORK:
-            return None
-    _audit(request, operation, "denied", run_id)
-    return web.json_response(
-        {"error": {"code": "restricted_session", "message": f"this session cannot mutate: {why}"}},
-        status=403,
+    why = restricted_calls.refusal(
+        request.headers.get("X-Session-Key", ""), operation, run_id=run_id, state=state
     )
-
-
-def _its_own_run(session_key: str, run_id: str) -> bool:
-    """Whether the run ``run_id`` is the work of the restricted session ``session_key``: started by
-    it (a fork keeps the origin of the run it forks, and a subworkflow's tree is rooted in the run
-    that started it) and keeping nothing, as the session keeps nothing (`ownership.run_mode`).
-
-    True for a run there is none of: the route answers that there is no such run, and changes
-    nothing."""
-    from personalclaw.workflows import ownership
-
-    run = store.get(run_id)
-    if run is None:
-        return True
-    if ownership.run_mode(run) is ownership.MemoryMode.NORMAL:
-        return False
-    root = store.get(run.root_run_id) if run.root_run_id not in ("", run.id) else None
-    chat = session_key.strip().removeprefix("dashboard:")
-    return any(
-        (r.origin.session_key or "").strip().removeprefix("dashboard:") == chat
-        for r in (run, root)
-        if r is not None
+    if not why:
+        return None
+    return web.json_response(
+        {"error": {"code": restricted_calls.CODE, "message": restricted_calls.sentence(why)}},
+        status=403,
     )
 
 
@@ -1457,9 +1404,6 @@ async def api_run_node_inspect(request: web.Request) -> web.Response:
 
 
 async def api_run_edit(request: web.Request) -> web.Response:
-    denied = _guard(request, "workflow_run_edit", run_id=request.match_info.get("run_id", ""))
-    if denied is not None:
-        return denied
     run_id = request.match_info.get("run_id", "")
     body = await json_object_body(request)
     ops = body.get("ops")
@@ -1469,9 +1413,13 @@ async def api_run_edit(request: web.Request) -> web.Response:
             status=400,
         )
     if bool_field(body, "preview_only", default=False):
-        # A preview is a READ — no guard needed for its own sake, but it is cheap to keep
-        # the same path so a client can preview then apply with one shape.
+        # A preview is a READ, answered on the same path so a client can preview then apply with
+        # one shape. It changes nothing, so it is not guarded: a Temporary chat previews an edit of
+        # any run it can read, as its agent's `workflow_edit_preview` does in the gateway.
         return _reply(service.preview_edit(run_id, ops))
+    denied = _guard(request, "workflow_run_edit", run_id=run_id)
+    if denied is not None:
+        return denied
     expect = body.get("expect_version")
     # Her edit, or an agent's: the tool server an agent CLI runs makes its `workflow_edit` here,
     # with the internal credential. An agent's edit is the chat's, as the tool's is in the

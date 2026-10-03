@@ -381,9 +381,8 @@
         ]
       },
       "src/personalclaw/workflows/handlers.py": {
-        "edges": 2,
+        "edges": 1,
         "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers._shared",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.sse"
         ]
       }
@@ -429,10 +428,10 @@
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 5,
-        "core-must-not-import-the-http-surface": 50,
+        "core-must-not-import-the-http-surface": 49,
         "ledger-is-a-leaf": 0
       },
-      "edges": 55,
+      "edges": 54,
       "files": 26
     }
   },

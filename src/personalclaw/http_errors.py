@@ -201,6 +201,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The internal credential on this request is not the one this gateway issued when it "
         "started."
     ),
+    "internal_call_names_no_work": (
+        "This call carries the gateway's internal credential and names no work it is for: no "
+        "chat, scheduled job or app in X-Session-Key. Nothing it asked for was done."
+    ),
     # ── a lifetime asked of the token endpoint (dashboard/handlers/core.py) — the limit is
     # 90 days, and the message is the sentence that says so ──
     "token_ttl_invalid": "The requested lifetime is not a duration like 30m, 20h or 7d.",

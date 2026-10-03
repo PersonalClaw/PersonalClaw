@@ -3,6 +3,8 @@ from all registered tool providers (the Tool entity)."""
 
 import asyncio
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
@@ -29,6 +31,26 @@ def _sel():
     import personalclaw.dashboard.handlers as _pkg
 
     return _pkg.sel()
+
+
+@contextmanager
+def _as_its_work(request: web.Request) -> Iterator[None]:
+    """Run the tool ``api_tool_invoke`` runs as the request's work: the app's, for an app's token
+    (whatever else it carries), else the session the request names (a scheduled script's
+    ``cron:<job>``, your own pages' ``dashboard:ui``), else yours. The tool's own calls back to the
+    gateway then name that work (``mcp_core._internal_headers``), as a native agent's name its chat,
+    so an app's tool keeps to what the app was given; made with the internal credential and naming
+    nothing, they would be refused (``internal_call_names_no_work``)."""
+    from personalclaw import mcp_core, memory_writes
+
+    app = str(request.get("app") or "")
+    named = str(request.headers.get("X-Session-Key", "") or "").strip()
+    work = f"{memory_writes.APP_SOURCE_PREFIX}{app}" if app else named or "dashboard:ui"
+    token = mcp_core.set_current_session_key(work)
+    try:
+        yield
+    finally:
+        mcp_core.reset_current_session_key(token)
 
 
 def _audit_toggle(request: web.Request, op: str, ok: bool, resources: str, error: str = "") -> None:
@@ -445,6 +467,9 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     deny-list, the tool's own refusal) without running anything: each refusal answers as it would,
     with ``"dry_run": true`` added, and a call that would go on answers ``{"ok": true, "dry_run":
     true}``. Tools → Try it asks it before it shows its confirmation.
+
+    The tool runs as the request's work (``_as_its_work``), so what it asks of the gateway in turn
+    is the app's, the scheduled job's or yours, as the request is.
     """
     from personalclaw.agents.native.builtin_tools import PLATFORM_TOOL_NAMES
     from personalclaw.tool_providers.registry import resolve, tool_surface
@@ -608,7 +633,9 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     # file tools reach) is audited `refused` with the control and its rule (`llm.events`).
     from personalclaw.llm.events import refusal_audit
 
-    if (refused := await _preflight_refusal(provider, tool_name, arguments)) is not None:
+    with _as_its_work(request):
+        refused = await _preflight_refusal(provider, tool_name, arguments)
+    if refused is not None:
         why = _shown(refused.error) or f"{tool_name} refused this call before it ran"
         control = refusal_audit(refused.metadata or {})
         try:
@@ -699,7 +726,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             error_extra={"risk": _risk, "confirm_field": "confirm_risk"},
         )
     try:
-        result = await provider.invoke(tool_name, arguments)
+        with _as_its_work(request):
+            result = await provider.invoke(tool_name, arguments)
     except Exception as exc:
         _sel().log_tool_invocation(
             session_key=caller,
