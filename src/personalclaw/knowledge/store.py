@@ -15,6 +15,7 @@ from personalclaw.instants import backfill_zone_less, utc_now_iso
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.sqlite_compat import FTS5_REMEDY, connect_shared, probe, sqlite3
 
+from .arrivals import fold_system_sources, repoint_moved_documents, system_source_id
 from .embedding_fingerprint import (
     FINGERPRINT_COLUMNS,
     ITEM_FRESH_PREDICATE,
@@ -470,17 +471,21 @@ class KnowledgeStore:
         self.graph = SimpleDiGraph()
         self._init_schema()
         self._migrate()
-        # Knowledge is shown to every session, so from here on each statement passes the one
-        # memory-write check: work that derives from an Incognito or Temporary session changes
-        # nothing in it. After the schema, which no session's work writes.
-        self.db.statement_check = memory_writes.check_statement
-        self._load_graph()
         # The chunk ANN index lives in THIS database file, so a chunk write and its
         # vector write travel together instead of needing a sidecar's consistency story.
         # Construction loads nothing — the sqlite-vec extension is loaded lazily on first
         # index use, so opening a store on a SQLite build that cannot load extensions costs
         # nothing and degrades to the exact scan.
         self.vec_index = ChunkVectorIndex(self.db)
+        # What another home's library brought, put right where the library is opened: the
+        # documents it kept, and the rows its system made. Like the schema, no session's work.
+        repoint_moved_documents(self.db, pathlib.Path(self.db_path).parent / "files")
+        fold_system_sources(self)
+        # Knowledge is shown to every session, so from here on each statement passes the one
+        # memory-write check: work that derives from an Incognito or Temporary session changes
+        # nothing in it. After the schema, which no session's work writes.
+        self.db.statement_check = memory_writes.check_statement
+        self._load_graph()
         self.settle_embedding_verdicts()
 
     def _init_schema(self):
@@ -1423,13 +1428,14 @@ class KnowledgeStore:
         enabled: bool = True,
         created_by: str = "user",
     ) -> str:
-        """Persist a WatchedSource row and return its ``src-<8hex>`` id (§1.2).
+        """Persist a WatchedSource row and return its ``src-<8hex>`` id (§1.2), or, for a source
+        the system makes, its provider's id (:func:`system_source_id`).
 
         ``item_type`` is the kind of item each of the source's sightings becomes, for a source
         whose sightings carry their text (a feed's entries, a page's); ``""`` states none, and
         the engine makes such a sighting a bookmark. A watched folder states none: its
         sightings are files, each kept as the kind it is."""
-        sid = f"src-{uuid4().hex[:8]}"
+        sid = system_source_id(provider) if created_by == "system" else f"src-{uuid4().hex[:8]}"
         now = utc_now_iso()
         self.db.execute(
             "INSERT INTO sources (id, name, provider, kind, spec, enrichment, "

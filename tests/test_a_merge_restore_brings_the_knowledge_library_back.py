@@ -208,5 +208,120 @@ def test_an_archive_import_says_when_it_left_the_memories_unchanged(tmp_path, mo
     sqlite3.connect(str(target / "memory.db")).close()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(target))
 
-    items = apply_import_zip(damaged, "merge")["items"]
-    assert "memory (left unchanged)" in items and "memory (merged)" not in items
+    summary = apply_import_zip(damaged, "merge")
+    items = summary["items"]
+    assert "memory (left unchanged: the archive's copy could not be merged)" in items
+    assert "memory (merged)" not in items
+    assert summary["left_unchanged"] == ["memory.db"]
+
+
+def _filed(path: Path, title: str, *tags: str, parent: tuple[str, str] | None = None) -> None:
+    """A library holding one note filed under *tags*, and (*child*, *parent*) nested."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    store = KnowledgeStore(str(path))
+    try:
+        assert store.create_typed_item(
+            item_type="note", title=title, content=f"{title} notes", tags=list(tags)
+        )
+        if parent is not None:
+            ids = {t["name"]: t["id"] for t in store.list_tags()}
+            assert store.set_tag_parent(ids[parent[0]], ids[parent[1]])
+    finally:
+        store.close()
+
+
+def _filing(path: Path) -> tuple[dict, dict, dict]:
+    """Each note's tags by name, each tag's parent by name, and the notes a search finds by tag."""
+    store = KnowledgeStore(str(path))
+    try:
+        ids = [r[0] for r in store.db.execute("SELECT id FROM items")]
+        notes = {store.get_item(i)["title"]: sorted(store.get_item(i)["tags"]) for i in ids}
+        tree = {t["name"]: t["parent_name"] for t in store.list_tags()}
+        found = {
+            tag: sorted(r["title"] for r in store.search_items_fts(tag))
+            for tag in ("garden", "kitchen", "seasonal")
+        }
+        return notes, tree, found
+    finally:
+        store.close()
+
+
+#: What a merge of the two libraries below holds: each note under the tags it was filed under,
+#: the tag both have once, and each nested tag under the parent it had.
+MERGED = (
+    {
+        "Garden plan": ["garden", "outdoors", "seasonal"],
+        "Kitchen quotes": ["indoors", "kitchen", "seasonal"],
+    },
+    {
+        "garden": "outdoors",
+        "indoors": None,
+        "kitchen": "indoors",
+        "outdoors": None,
+        "seasonal": None,
+    },
+    {
+        "garden": ["Garden plan"],
+        "kitchen": ["Kitchen quotes"],
+        "seasonal": ["Garden plan", "Kitchen quotes"],
+    },
+)
+
+
+def _two_libraries(snap: Path, live: Path) -> None:
+    """Two libraries whose tags are numbered alike: each library's first tag is 1."""
+    _filed(snap, "Garden plan", "outdoors", "garden", "seasonal", parent=("garden", "outdoors"))
+    _filed(live, "Kitchen quotes", "indoors", "kitchen", "seasonal", parent=("kitchen", "indoors"))
+
+
+def test_a_merge_files_each_note_under_its_own_tags(tmp_path):
+    """A library numbers its tags itself, so another library's tag 1 is not this one's. Merged by
+    number, the snapshot's note came in filed under this library's tags and its own were dropped."""
+    snap, live = tmp_path / "snap.db", tmp_path / "live.db"
+    _two_libraries(snap, live)
+
+    for _ in range(2):  # a restore drill is run twice; the second changes nothing
+        left: list[str] = []
+        snapshot._merge_sqlite_attach(snap, live, LIBRARY, left_unchanged=left)
+        assert left == []
+        assert _filing(live) == MERGED
+
+
+def test_a_folder_sync_files_each_note_under_its_own_tags(tmp_path):
+    home = tmp_path / "home"
+    entry = _library_entry()
+    shard = tmp_path / "shard"
+    _two_libraries(shard / "db" / f"{entry.id}.db", home / LIBRARY)
+
+    assert make_db_merger(home)(entry, shard) == CONSUMED
+    assert _filing(home / LIBRARY) == MERGED
+
+
+def test_a_merge_restore_opens_the_snapshots_documents_here(tmp_path, monkeypatch):
+    """A snapshot of another home names that home's files folder for each document; merged in,
+    each points at its copy in this home's folder at once, while the gateway that ran the merge
+    keeps the library open."""
+    before = tmp_path / "before"
+    _home_with_library(before, "Garden plan", (1.0, 0.0, 0.0, 0.0), monkeypatch)
+    files = before / "workspace" / "knowledge" / "files"
+    files.mkdir(parents=True)
+    store = KnowledgeStore(str(before / LIBRARY))
+    try:
+        item = store.create_typed_item(item_type="document", title="planting-calendar.txt")
+        (files / f"{item}.txt").write_bytes(b"sow beans in May")
+        store.update_item(item, file_path=str(files / f"{item}.txt"), mime_type="text/plain")
+        store.db.commit()
+    finally:
+        store.close()
+    tarball = _snapshot_of(before, tmp_path / "snapshots", monkeypatch)
+    now = tmp_path / "now"
+    _home_with_library(now, "Kitchen quotes", (0.0, 1.0, 0.0, 0.0), monkeypatch)
+
+    assert snapshot.restore_merge(tarball, None)["left_unchanged"] == []
+
+    conn = sqlite3.connect(str(now / LIBRARY))
+    try:
+        kept = conn.execute("SELECT file_path FROM items WHERE id = ?", (item,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert kept == str(now / "workspace" / "knowledge" / "files" / f"{item}.txt")

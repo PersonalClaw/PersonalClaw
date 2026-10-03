@@ -189,6 +189,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An archive imported in merge mode brings its knowledge library, vocabulary and project memories into yours row by row, each item under its own tags and its documents opening here, and the summary says what became of each store (merged, copied, or left unchanged and why) instead of reading "workspace (merged)"; a merge restore or a folder sync no longer files the other library's items under this one's tags or leaves Knowledge with a second Artifacts source.**
 - **After the gateway restarts, a message on a Telegram, Slack, Discord or email thread continues the chat that thread is linked to, with everything said before, and its answer goes back to the thread, where it used to start a new chat with none of the conversation; a Slack thread imported with Link to dashboard is answered in Slack too.**
 - **A Knowledge item whose text the content safety scan withheld shows each step after the one that read the text as not run, saying why, where those steps read as done though nothing they made was kept.**
 - **A drafted reply that names a note with no text says why: a note Knowledge refused, or whose text the scan withheld, says so in the item's own words, and one read with nothing found says no text was read from it, where each was said to hold no text yet.**

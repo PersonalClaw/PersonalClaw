@@ -15,6 +15,23 @@ responses carry only a `has_embedding` flag. Deleting an item cleans vectors,
 mentions, and FTS rows — not just the item row. FTS values are kept in sync on
 update (delete-with-old-values, insert-with-new).
 
+Another home's library comes into this one row by row, whichever way it arrives: a
+merge restore, an archive import in merge mode (Settings → Import / Export) and a
+folder sync all run `snapshot._merge_sqlite_attach`, so the other copy's items, watched
+sources, collections and tags come in and this home's stay. A library numbers its
+tags itself, so another library's tag 1 is not this one's: tags come in by name, and
+each item stays filed under the tags it had (`durability.numbered_rows`). An item
+keeps its document and thumbnail as paths into the library's `files` folder under the
+home that wrote it; once an import or a merge restore has brought the files in, and
+whenever the library opens in another home, each such path is pointed at this
+library's copy of the file (`knowledge.arrivals.repoint_moved_documents`), and only ever
+at a regular file inside its own folder that no other item keeps. The source
+row the system makes for the artifact mirror has its provider's id in every home
+(`knowledge.arrivals.system_source_id`), so a merged library holds one; a library holding another
+for it, from an earlier merge, folds it in when it opens; of two mirrors of one artifact
+the one the provider's row holds stays, and the artifact's next save brings it up to date
+(`knowledge.arrivals.fold_system_sources`).
+
 ### Project scoping
 
 Knowledge stays ONE global library — a project is a **tag plus item metadata**,
@@ -381,8 +398,8 @@ plus the typed reasons the library could not answer.
 
 The vector arm's candidates come from a sqlite-vec index of the chunk vectors
 (`knowledge/vector_index.py`), in the same database file. Rows that arrive around
-the store's write-through, a merge restore or a folder sync taking another copy's
-chunks, rebuild it from the chunk rows (`ChunkVectorIndex.rebuild_all`, from
+the store's write-through, a merge restore, an archive import or a folder sync taking
+another copy's chunks, rebuild it from the chunk rows (`ChunkVectorIndex.rebuild_all`, from
 `snapshot._merge_sqlite_attach`), and the full-text index is rebuilt by its own
 command; a process that cannot load sqlite-vec leaves the index to the store's
 reconciliation on its next search.
@@ -690,8 +707,8 @@ item vector).
 - A partition's `memory_index.db` holds that folder's memories (its vector store and
   its full-text index share the file), so the state manifest declares it a partition
   of `memory.db` (`StateEntry.partitions`): a snapshot and an export copy it through
-  the sqlite backup API, a merge restore merges its memories as it merges
-  `memory.db`'s, and Doctor's durability audit counts it declared.
+  the sqlite backup API, a merge restore and an archive import in merge mode merge its
+  memories as they merge `memory.db`'s, and Doctor's durability audit counts it declared.
 - Because that file holds memories, nothing deletes it when the keyword index cannot be
   used (`memory.py`, "The keyword index"). The index is derived from the memory files, so
   an index that fails is dropped and rebuilt in place from them, and nothing else in the
@@ -705,8 +722,10 @@ item vector).
 - A partition's `learning.db` holds the evidence its lessons stand on
   (`VectorMemoryStore._lesson_evidence_store`; a lesson with none falls below the
   confidence gate), so it is declared a partition of `learning.db` and travels and
-  merges the same way. It stays the partition's: a global lesson has the same key in
-  every partition, and one shared file would let a reversal in one void it in all.
+  merges the same way (an archive import keeps this home's log, as it keeps
+  `learning.db`, and copies one only into a project that has none). It stays the
+  partition's: a global lesson has the same key in every partition, and one shared file
+  would let a reversal in one void it in all.
 - A folder of PersonalClaw's own that sessions run in, a task's git worktree
   (`loop/worktree.py::SESSION_FOLDERS`) or a loop's folder, where a planner with no
   workspace works (`loop/files.py::SESSION_FOLDERS`), **takes its partition with it**:

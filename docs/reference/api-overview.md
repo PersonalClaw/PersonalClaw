@@ -183,7 +183,14 @@ has cost someone a debugging session.
   with the reason in `providerErrors`, the provider's row in `GET /api/providers` is off
   with the same sentence in `error`, and the security log has an `outcome=refused` row.
 - **`POST /api/durability/import` validates when you omit `mode`.** Omitting it changes
-  nothing at all, and `?mode=merge` fills in what the home lacks.
+  nothing at all, and `?mode=merge` fills in what the home lacks. A merge's `summary.items`
+  says what became of each store the archive held: merged (a database row by row, as a merge
+  restore merges it, so the archive's knowledge library comes into one this home has),
+  copied into a home without it, or left unchanged and why (this home keeps its own settings,
+  learning log, feedback and any other single-file store it already has).
+  `summary.left_unchanged` names each part the merge could not bring in (a store, or
+  `store (table)`), as a restore's `left_unchanged` does, and Settings → Import / Export says
+  so in the error tone.
   `POST /api/durability/archive/{id}/restore` is the same shape: no `mode` returns the plan,
   and `mode=merge` (with `confirm: true`) merges. Both refuse a replace the same way,
   `409 gateway_running`: a replace rewrites state the running gateway holds open, so the

@@ -603,10 +603,12 @@ def _copytree_safe(src: Path, dst: Path, **kwargs) -> None:
     shutil.copytree(str(src), str(dst), ignore=_ignore_symlinks, **kwargs)
 
 
-def _copy_tree_no_overwrite(src: Path, dst: Path, *, entry_path: str = "") -> None:
-    """Copy what ``dst`` lacks. Given the inventory ``entry_path`` it copies, leaves out what a
-    restore never plants (:func:`_left_out_of_restore`)."""
+def _copy_tree_no_overwrite(src: Path, dst: Path, *, entry_path: str = "") -> int:
+    """Copy what ``dst`` lacks, and return how many files that was. Given the inventory
+    ``entry_path`` it copies, leaves out what a restore never plants
+    (:func:`_left_out_of_restore`)."""
     leaves = bool(entry_path) and bool(_derived_within(entry_path))
+    copied = 0
     for item in src.rglob("*"):
         if item.is_symlink():
             continue
@@ -619,6 +621,8 @@ def _copy_tree_no_overwrite(src: Path, dst: Path, *, entry_path: str = "") -> No
         elif item.is_file() and not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(item), str(target))
+            copied += 1
+    return copied
 
 
 # ── Snapshot ──────────────────────────────────────────────────────────────────
@@ -1045,9 +1049,16 @@ def _validate_identifier(name: str) -> str:
     return name
 
 
-def _merge_memory(src_db: Path, dst_db: Path, *, left_unchanged: list[str] | None = None) -> None:
-    """Merge a snapshot's memories into this home's `memory.db`. A source it cannot read is
-    skipped, and ``memory.db`` goes on *left_unchanged* (as :func:`_merge_sqlite_attach` does)."""
+def _merge_memory(
+    src_db: Path,
+    dst_db: Path,
+    *,
+    left_unchanged: list[str] | None = None,
+    label: str = "memory.db",
+) -> None:
+    """Merge a snapshot's memories into this home's `memory.db`, or into a project's memory
+    database (*label*, its home-relative path). A source it cannot read is skipped, and *label*
+    goes on *left_unchanged* (as :func:`_merge_sqlite_attach` does)."""
     # Integrity check on source DB before ATTACH
     try:
         from contextlib import closing
@@ -1059,12 +1070,12 @@ def _merge_memory(src_db: Path, dst_db: Path, *, left_unchanged: list[str] | Non
         if result != "ok":
             print(f"  ⚠️  Source DB integrity check failed: {result} — skipping merge")
             if left_unchanged is not None:
-                left_unchanged.append("memory.db")
+                left_unchanged.append(label)
             return
     except Exception as e:
         print(f"  ⚠️  Source DB unreadable: {e} — skipping merge")
         if left_unchanged is not None:
-            left_unchanged.append("memory.db")
+            left_unchanged.append(label)
         return
 
     conn = sqlite3.connect(str(dst_db))
@@ -1398,6 +1409,15 @@ def _merge_sqlite_attach(
     which loads sqlite-vec the way the store does. Where sqlite-vec cannot load, the rows still
     merge and the store's own reconciliation rebuilds the index on its next search.
 
+    🔴 **A table a store numbers itself merges by the key a person knows its rows by.** The knowledge
+    library numbers its tags (`INTEGER PRIMARY KEY`, the name unique) and files each item under a
+    tag by that number. Another home numbers its own tags from 1 too, so merged by number every
+    item of the archive came in filed under this home's tag of the same number: a garden note
+    tagged "kitchen". Such a table takes the rows whose key this store lacks under numbers of its
+    own, and every reference to it, its own included, follows its row
+    (``durability.numbered_rows``). A row of the same name is the same tag, so a repeated merge is
+    still a no-op.
+
     `memory.db` keeps its own executor and is NOT routed here: it filters `WHERE is_deleted=0`, so a
     generic all-tables merge would resurrect memories the user deleted. That filter is the reason
     the
@@ -1441,18 +1461,46 @@ def _merge_sqlite_attach(
         local = {
             r[0] for r in conn.execute("SELECT name FROM main.sqlite_master WHERE type='table'")
         }
-        for (table,) in conn.execute(
-            "SELECT name FROM src.sqlite_master WHERE type='table'"
-        ).fetchall():
-            if table.startswith("sqlite_") or table in skip or table.startswith(skip):
+        # Only the tables the live schema has: creating one here would import a shape this build's
+        # code cannot read, and the owning module creates its own tables on open. So every name
+        # below is this build's, never one the archive chose.
+        tables = [
+            table
+            for (table,) in conn.execute(
+                "SELECT name FROM src.sqlite_master WHERE type='table'"
+            ).fetchall()
+            if not (table.startswith("sqlite_") or table in skip or table.startswith(skip))
+            and table in local
+        ]
+        from personalclaw.durability import numbered_rows
+
+        numbered = numbered_rows.numbered_tables(conn, tables)
+        refused: set[str] = set()
+        try:
+            imported += numbered_rows.merge_numbered(conn, numbered)
+        except sqlite3.Error as exc:
+            # Without each row's number here, no reference to these tables can follow its row, so
+            # neither they nor a table that points into them is merged.
+            print(f"  ⚠️  {label}.{', '.join(numbered)}: {exc} — skipped")
+            refused = set(numbered)
+        for table in tables:
+            if table in numbered:
+                if table in refused:
+                    unchanged.append(f"{label} ({table})")
                 continue
-            if table not in local:
-                # A table the live schema does not have. Creating it here would import a shape this
-                # build's code cannot read; the owning module creates its own tables on open.
+            refs = numbered_rows.references(conn, table, numbered)
+            if any(target in refused for _column, target in refs):
+                print(f"  ⚠️  {label}.{table}: the rows it refers to were not merged — skipped")
+                unchanged.append(f"{label} ({table})")
                 continue
             before = conn.total_changes
             try:
-                conn.execute(f'INSERT OR IGNORE INTO main."{table}" SELECT * FROM src."{table}"')
+                if refs:
+                    conn.execute(numbered_rows.translated_insert(conn, table, refs))
+                else:
+                    conn.execute(
+                        f'INSERT OR IGNORE INTO main."{table}" SELECT * FROM src."{table}"'
+                    )
             except sqlite3.Error as exc:
                 # A column-set mismatch between snapshot and live schema. Skip the table, keep the
                 # rest — the same call `_merge_memory` makes about its opportunistic `contributor`
@@ -2063,6 +2111,31 @@ def print_merge_plan(rows: list[dict]) -> None:
     print("  " + ", ".join(f"{n} {a}" for a, n in sorted(counts.items())))
 
 
+def _repoint_library_documents(pc: Path) -> None:
+    """Point each document a merge brought into the home's knowledge library at its copy in the
+    library's files folder now, so it opens at once rather than after the library next opens
+    (``knowledge.arrivals.repoint_moved_documents``, which the library's open runs too)."""
+    from contextlib import closing
+
+    from personalclaw.knowledge.arrivals import repoint_moved_documents
+    from personalclaw.knowledge.store import knowledge_db_path
+
+    library = knowledge_db_path(pc, create=False)
+    if not library.is_file():
+        return
+    try:
+        with closing(sqlite3.connect(str(library), isolation_level=None, timeout=10)) as conn:
+            repoint_moved_documents(conn, library.parent / "files")
+    except (sqlite3.Error, OSError):
+        # Not the merge's to fail on: the library points them here when it next opens.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "merge: the documents it brought in are pointed here when the library next opens",
+            exc_info=True,
+        )
+
+
 def _left_unchanged_line(left: list[str]) -> str:
     """The last line of a merge that could not bring everything in: how many parts, and which."""
     parts = "1 part was" if len(left) == 1 else f"{len(left)} parts were"
@@ -2172,7 +2245,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
             # `memory.db`'s are above; the copy below brings a partition this home lacks.
             for part in _partition_paths(snap, of="memory_db"):
                 if (pc / part).is_file():
-                    _merge_memory(snap / part, pc / part)
+                    _merge_memory(snap / part, pc / part, left_unchanged=left, label=part)
             _copy_tree_no_overwrite(sd, dd)
         print("  ✅ workspace")
 
@@ -2261,6 +2334,10 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
         if restored:
             print(f"  Stores: recovered {len(restored)} ({', '.join(sorted(restored)[:6])}…)")
         print("  ✅ stores")
+
+    if _want(components, "workspace") or _want(components, "everything"):
+        # The library's rows and its files are both in now: its documents open here at once.
+        _repoint_library_documents(pc)
 
     if _want(components, "memory") or _want(components, "everything"):
         # Memories and knowledge came in with the vectors their home wrote, and another model's
@@ -2447,15 +2524,25 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
     # A replace says where it set the previous state aside as it does it (`_do_replace`).
     summary = apply_import_zip(archive, mode)
     held = len(summary.get("automations_held") or [])
+    # What a merge could not bring in, as a snapshot's merge names it: its last line says which,
+    # and the command fails, so an import that left the knowledge library as it was never ends
+    # as one that brought it in.
+    left = list(summary.get("left_unchanged") or [])
     _audit(
         "state_restored",
         f"mode={mode} components=all from={archive.name}"
+        + (f" left_unchanged={len(left)}" if mode == "merge" else "")
         + (f" automations_held={held} held_from={summary.get('held_from')}" if held else ""),
     )
-    print(f"✅ Imported ({mode}): {', '.join(summary.get('items', [])) or 'nothing to add'}")
+    print(
+        f"{'⚠️ ' if left else '✅'} Imported ({mode}): "
+        f"{', '.join(summary.get('items', [])) or 'nothing to add'}"
+    )
+    if left:
+        print(_left_unchanged_line(left))
     _offer_to_resume(pc, summary)
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
-    return 0
+    return 1 if left else 0
 
 
 def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None) -> int:

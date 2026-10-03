@@ -722,9 +722,17 @@ _BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
         "a pack lockfile's recorded install path, re-read by update and removed by uninstall",
     ),
     "/rel": (
-        frozenset({"personalclaw/memory_vault.py", "personalclaw/snapshot.py"}),
-        "the memory vault's CONFIGURED path (its default is declared), and the snapshot's sweep "
-        "over `_everything_paths`, which are inventory entries",
+        frozenset(
+            {
+                "personalclaw/memory_vault.py",
+                "personalclaw/portability.py",
+                "personalclaw/snapshot.py",
+            }
+        ),
+        "the memory vault's CONFIGURED path (its default is declared), the snapshot's sweep "
+        "over `_everything_paths`, which are inventory entries, and an import's walk over the "
+        "databases an archive holds (`_attach_merge_paths`, `_partition_paths`): declared sqlite "
+        "entries and their declared partitions",
     ),
     "/entry": (
         frozenset({"personalclaw/portability.py"}),

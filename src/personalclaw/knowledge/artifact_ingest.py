@@ -184,11 +184,15 @@ def mirror_sha(title: str, text: str) -> str:
 
 
 def find_source(store: Any) -> dict | None:
-    """The aggregate artifact source row, or None when it has never been created."""
-    for row in store.list_sources():
-        if row.get("provider") == ARTIFACT_SOURCE_PROVIDER:
-            return row
-    return None
+    """The aggregate artifact source row, or None when it has never been created.
+
+    Read by its id, which is the same in every home (``arrivals.system_source_id``): a library
+    merged with another's holds one row for the mirror, and the store folds any other into it
+    when it opens, so this is never a choice between two rows.
+    """
+    from personalclaw.knowledge.arrivals import system_source_id
+
+    return store.get_source(system_source_id(ARTIFACT_SOURCE_PROVIDER))
 
 
 def ensure_source(store: Any) -> tuple[str, bool]:

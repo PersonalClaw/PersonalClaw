@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Download, Upload, AlertTriangle, Loader2, FileArchive, ShieldCheck } from 'lucide-react'
-import { api, type PortabilityManifest } from '../../lib/api'
+import { api, type DurabilityImportResult, type PortabilityManifest } from '../../lib/api'
 import { humanBytes } from '../../lib/chunkedUpload'
 import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
@@ -118,6 +118,19 @@ export function archiveWhen(created: string): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+/** What an import says once it is done: the server's line for each store, after a lead that counts
+ *  the parts the merge could not bring in, so an import that left the knowledge library as it was
+ *  never reads as complete. The line for that store says why. */
+export function importedCopy(r: DurabilityImportResult): string {
+  const what = r.summary?.items?.join(', ') || 'nothing to merge'
+  // The server's own sentence: a merge into a running gateway is picked up whole once it restarts.
+  const restart = r.restart ? ` ${r.restart}` : ''
+  const left = r.summary?.left_unchanged ?? []
+  if (left.length === 0) return `Import complete: ${what}.${restart}`
+  const parts = left.length === 1 ? '1 part' : `${left.length} parts`
+  return `Import finished, but left ${parts} unchanged: ${what}.${restart}`
+}
+
 export function PortabilityPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
@@ -171,13 +184,12 @@ export function PortabilityPanel() {
     try {
       const r = await api.durabilityImport(file, 'merge')
       if (r.ok) {
-        const what = r.summary?.items?.join(', ') || 'nothing to merge'
-        // The server's own sentence: a merge into a running gateway is picked up whole once it restarts.
-        const restart = r.restart ? ` ${r.restart}` : ''
+        const said = importedCopy(r)
         // Both channels, deliberately: the toast ANNOUNCES it (an on-demand `role="status"` span is not
         // reliably observed), and the line beside the button is what is still readable a minute later.
-        setImportResult(`Import complete: ${what}.${restart}`)
-        notify(`Import complete: ${what}.${restart}`, 'success')
+        // A part left unchanged takes the error tone, as a merge restore's does on the Backups page.
+        setImportResult(said)
+        notify(said, (r.summary?.left_unchanged ?? []).length > 0 ? 'error' : 'success')
       } else notify(`Import failed: ${r.error?.message || 'the server gave no reason'}`, 'error')
     } catch (e) {
       notify(`Import failed: ${e instanceof Error ? e.message : String(e)}`, 'error')

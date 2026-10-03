@@ -4748,8 +4748,10 @@ export interface DurabilityImportResult {
   ok: boolean
   applied?: boolean
   error?: { code: string; message: string }
-  /** What the merge brought in (`items`) and what the archive held that an import never writes. */
-  summary?: { mode: string; items: string[]; refused?: string[] }
+  /** What became of each store the archive held (`items`: merged, copied, or left unchanged and
+   *  why), what it held that an import never writes (`refused`), and after a merge each part it
+   *  could not bring in (`left_unchanged`: a store, or `store (table)`), as a merge restore's. */
+  summary?: { mode: string; items: string[]; refused?: string[]; left_unchanged?: string[] }
   manifest?: PortabilityManifest
   /** After a merge: the sentence saying the gateway picks up everything it brought in once it
    *  restarts. */
