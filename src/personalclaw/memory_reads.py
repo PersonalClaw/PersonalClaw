@@ -21,10 +21,12 @@ An Incognito chat reads memory as any chat does, and writes nothing back
 
 :func:`reach_of` is the answer for the work a session key names. It follows a subagent to the
 session it works for, an app's agent run to its app, and a workflow step to the chat that started
-its run, up to the chat at the top, and reads every record of each one's mode: the live chat, the
-in-process registry a channel, a run or a subagent's start marks (:mod:`session_restrictions`), the
-mode its transcript records, and a run's recorded mode. A mode that is there and cannot be read
-reads nothing, as it writes nothing. Every reader asks it: the context a chat's turn and a
+its run, up to the chat at the top, and reads each one's mode as the one reader of a session's mode
+reads it (``memory_writes.session_mode``): the live chat first, then the in-process registry a
+channel, a run or a subagent's start marks (:mod:`session_restrictions`), then the mode its
+transcript records, and for a step its run's. A mode nothing can say reads nothing, as it writes
+nothing: a record that cannot be read, and a chat the gateway does not hold that nothing records,
+as for a Temporary chat that has ended. Every reader asks it: the context a chat's turn and a
 subagent's first prompt are assembled with (memory, lessons, standing instructions, episodes,
 active recall and the push reflex), the memory tools' routes (``memory_recall``, ``memory_list``),
 ``get_context``'s memory tier and the Learning page's facts. ``chat_search`` asks it too: a
@@ -51,7 +53,7 @@ TEMPORARY = (
     "This is a Temporary chat, which starts blank: nothing is read from your memory for it or for "
     "any work it starts — no saved facts, lessons or earlier conversations."
 )
-#: Why work whose chat's mode is recorded and cannot be read reads no memory.
+#: Why work whose chat's mode nothing can say reads no memory.
 UNREADABLE = (
     "The memory setting of the chat this work is for cannot be read, so nothing is read from your "
     "memory or your other chats for it."
@@ -66,13 +68,15 @@ class Reach:
     the top; ``app`` is the app whose work it is (``""`` for yours); ``blank`` is why the sessions'
     own records say the work starts blank (:data:`TEMPORARY`, :data:`UNREADABLE`, or ``""``);
     ``refusal`` is why it reads none of your memory (``blank``, or the app's reason), ``""`` when it
-    may.
+    may; ``mode`` is the mode of the session the call is made for, as its own records read
+    (``memory_writes.session_mode``), ``None`` for work that is no chat's.
     """
 
     keys: tuple[str, ...] = ()
     app: str = ""
     blank: str = ""
     refusal: str = ""
+    mode: str | None = None
 
     @property
     def reads(self) -> bool:
@@ -92,13 +96,21 @@ def reach_of(state: Any, caller: str, *, app: str = "") -> Reach:
     ``dashboard:ui`` and no key are your own pages and tools acting for you, which read your
     memory."""
     keys: list[str] = []
-    blank = ""
+    modes: list[str | None] = []
     key = "" if caller == _DASHBOARD_UI else (caller or "").strip()
     while key and key not in keys:
         keys.append(key)
-        why, owner, key = _step(state, key)
-        blank, app = blank or why, app or owner
-    return Reach(tuple(keys), app, blank=blank, refusal=blank or app_refusal(app))
+        mode, owner, key = _step(state, key)
+        modes.append(mode)
+        app = app or owner
+    blank = next((why for why in map(_blank, modes) if why), "")
+    return Reach(
+        tuple(keys),
+        app,
+        blank=blank,
+        refusal=blank or app_refusal(app),
+        mode=modes[0] if modes else None,
+    )
 
 
 def fed(chars: int, reach: Reach) -> dict[str, str]:
@@ -146,50 +158,35 @@ def app_refusal(app: str) -> str:
     )
 
 
-def _step(state: Any, key: str) -> tuple[str, str, str]:
-    """For the session *key*: why it reads no memory by its own records (:data:`TEMPORARY`,
-    :data:`UNREADABLE` or ``""``), the app its work is for (``""`` for yours), and the key it works
-    for next (``""`` at the top)."""
+def _step(state: Any, key: str) -> tuple[str | None, str, str]:
+    """For the session *key*: its mode as its own records read (``memory_writes.session_mode``),
+    the app its work is for (``""`` for yours), and the key it works for next (``""`` at the
+    top)."""
+    from personalclaw.memory_writes import NOT_A_STEP, run_of_step, session_mode
+
+    mode = session_mode(key, state=state)
     if key.startswith(_SUBAGENT):
         subagents = getattr(state, "subagents", None)
         info = subagents.get(key[len(_SUBAGENT) :]) if subagents else None
         app = str(getattr(info, "app", "") or "")
-        return _recorded(state, key), app, str(getattr(info, "parent_session_key", "") or "")
+        return mode, app, str(getattr(info, "parent_session_key", "") or "")
     if key.startswith(_APP):
-        return _recorded(state, key), key[len(_APP) :], ""
-    from personalclaw.memory_writes import NOT_A_STEP, RUN_UNREADABLE, run_of_step
-
+        return mode, key[len(_APP) :], ""
     run = run_of_step(key)
-    if run is RUN_UNREADABLE:
-        return UNREADABLE, "", ""
     if run is not NOT_A_STEP:
-        from personalclaw.workflows import ownership
-
-        temporary = run is not None and ownership.run_mode(run) is ownership.MemoryMode.TEMPORARY
-        origin = str(getattr(getattr(run, "origin", None), "session_key", "") or "")
-        return TEMPORARY if temporary else _recorded(state, key), "", origin
+        return mode, "", str(getattr(getattr(run, "origin", None), "session_key", "") or "")
     app = ""
     if state is not None:
         name = key.split(":", 1)[-1]
         app = state.session_creating_app(name) or state.session_creating_app(key)
-    return _recorded(state, key), app, ""
+    return mode, app, ""
 
 
-def _recorded(state: Any, key: str) -> str:
-    """Why the session *key* reads no memory by the marks and records it has: the registry, its
-    live chat, the mode its transcript records."""
-    from personalclaw import session_restrictions
-    from personalclaw.history import read_memory_mode, session_path
-    from personalclaw.memory_writes import UNREADABLE as RECORD_UNREADABLE
+def _blank(mode: str | None) -> str:
+    """Why work under *mode* reads no memory by its own records: :data:`TEMPORARY` for a
+    Temporary chat's, :data:`UNREADABLE` for work whose chat's mode nothing can say, else ``""``."""
+    from personalclaw.memory_writes import UNREADABLE as NOTHING_CAN_SAY
 
-    if session_restrictions.is_temporary(key):
+    if mode == "temporary":
         return TEMPORARY
-    sessions = getattr(state, "_sessions", None)
-    if isinstance(sessions, dict) and (key.startswith("dashboard:") or ":" not in key):
-        live = sessions.get(key.split(":", 1)[-1])
-        if getattr(live, "memory_mode", "") == "temporary":
-            return TEMPORARY
-    recorded = read_memory_mode(session_path(key))
-    if recorded == "temporary":
-        return TEMPORARY
-    return UNREADABLE if recorded == RECORD_UNREADABLE else ""
+    return UNREADABLE if mode == NOTHING_CAN_SAY else ""

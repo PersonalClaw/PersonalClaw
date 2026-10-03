@@ -17,12 +17,13 @@ where
 framing
   a stage worker as a conversational assistant.
 
-The asymmetry: an unrecognized `memory_mode` value parses as INCOGNITO, not NORMAL. The value exists
-because someone asked for privacy, and a typo or a newer mode name this build does not know must not
-read as "record everything". A lost note is recoverable; a memory the user believed was never
-written
-is not.
+The asymmetry: an unrecognized `memory_mode` value parses as UNREADABLE, which suppresses reads as
+well as writes, not NORMAL. The value exists because someone asked for privacy, and a typo or a
+newer mode name this build does not know must not read as "record everything". A lost note is
+recoverable; a memory the user believed was never written is not.
 """
+
+import json
 
 import pytest
 
@@ -188,12 +189,13 @@ def test_a_known_mode_parses(raw, expected):
     assert parse_mode(raw) is expected
 
 
-def test_an_UNKNOWN_mode_parses_as_incognito():
+def test_an_UNKNOWN_mode_parses_as_a_mode_nothing_can_say():
     """The whole safety argument: the value exists because someone asked for privacy, and a typo
-    or a
-    newer mode name this build does not know must not be read as "record everything"."""
-    assert parse_mode("ephemeral_v2") is MemoryMode.INCOGNITO
-    assert parse_mode("private") is MemoryMode.INCOGNITO
+    or a newer mode name this build does not know must not be read as "record everything", nor as
+    a mode it may not be: it parses as the one that suppresses reads as well as writes."""
+    assert parse_mode("ephemeral_v2") is MemoryMode.UNREADABLE
+    assert parse_mode("private") is MemoryMode.UNREADABLE
+    assert parse_mode("unreadable") is MemoryMode.UNREADABLE
 
 
 # ── the read/write split ──
@@ -213,6 +215,12 @@ def test_incognito_suppresses_writes_but_NOT_reads():
     assert MemoryMode.INCOGNITO not in READ_SUPPRESSED
 
 
+def test_a_mode_nothing_can_say_suppresses_BOTH_reads_and_writes():
+    """A run whose chat's mode could not be read runs by a Temporary chat's rules."""
+    assert MemoryMode.UNREADABLE in WRITE_SUPPRESSED
+    assert MemoryMode.UNREADABLE in READ_SUPPRESSED
+
+
 def test_the_ownership_record_exposes_both_postures():
     owned = own_session("r-1", "n", inherited_mode=MemoryMode.INCOGNITO)
     assert owned.suppresses_writes is True
@@ -225,17 +233,40 @@ def test_a_normal_session_suppresses_nothing():
     assert owned.suppresses_reads is False
 
 
-# ── inheritance reads BOTH sources ──
+# ── inheritance reads EVERY record of the chat's mode ──
 
 
-def test_the_DURABLE_metadata_line_is_honored():
-    """The registry only knows sessions this process has seen; the JSONL line is what history
-    consolidation re-derives from after a restart. Checking only the registry would mean a gateway
-    restart silently un-marks every incognito run in flight."""
-    assert (
-        inherit_mode("dashboard:x", origin_metadata={"memory_mode": "incognito"})
-        is MemoryMode.INCOGNITO
-    )
+@pytest.fixture
+def chats_home(tmp_path, monkeypatch):
+    """A home of the test's own, whose transcripts the one reader of a session's mode reads."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    return tmp_path
+
+
+def _transcript(key: str, mode: str) -> None:
+    """The transcript of the session ``key``, its metadata line recording ``mode``."""
+    from personalclaw.history import session_path
+
+    path = session_path(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"_type": "metadata", "memory_mode": mode}) + "\n")
+
+
+def test_the_DURABLE_metadata_line_is_honored(chats_home):
+    """The registry only knows sessions this process has seen; the transcript's line is what
+    history consolidation re-derives from after a restart. Checking only the registry would mean a
+    gateway restart silently un-marks every incognito run in flight."""
+    _transcript("dashboard:x", "incognito")
+    assert inherit_mode("dashboard:x") is MemoryMode.INCOGNITO
+
+
+def test_the_LIVE_chat_is_honored_before_its_transcript_exists(chats_home):
+    """A chat's transcript is written when its first turn ends: until then only the live chat
+    the gateway holds says what it is."""
+    from types import SimpleNamespace
+
+    state = SimpleNamespace(_sessions={"x": SimpleNamespace(memory_mode="incognito")})
+    assert inherit_mode("dashboard:x", state=state) is MemoryMode.INCOGNITO
 
 
 def test_the_live_REGISTRY_is_honored_when_there_is_no_durable_line(monkeypatch):
@@ -260,37 +291,35 @@ def test_temporary_in_the_registry_inherits_as_temporary(monkeypatch):
         session_restrictions.clear("dashboard:probe2")
 
 
-def test_the_durable_line_WINS_over_a_clean_registry():
+def test_the_durable_line_WINS_over_a_clean_registry(chats_home):
     """A restarted gateway has an empty registry and a full disk. If the registry won, every
-    restored
-    incognito session would come back unrestricted."""
-    assert (
-        inherit_mode("dashboard:unseen", origin_metadata={"memory_mode": "temporary"})
-        is MemoryMode.TEMPORARY
-    )
+    restored incognito session would come back unrestricted."""
+    _transcript("dashboard:unseen", "temporary")
+    assert inherit_mode("dashboard:unseen") is MemoryMode.TEMPORARY
 
 
-def test_an_unrestricted_origin_inherits_normal():
-    assert inherit_mode("dashboard:fresh", origin_metadata={}) is MemoryMode.NORMAL
+def test_an_unrestricted_origin_inherits_normal(chats_home):
+    _transcript("dashboard:fresh", "persistent")
+    assert inherit_mode("dashboard:fresh") is MemoryMode.NORMAL
+    assert inherit_mode("") is MemoryMode.NORMAL
 
 
-def test_a_BROKEN_registry_does_not_raise(monkeypatch):
-    """A context/lookup failure must not take down a run start."""
+def test_a_BROKEN_registry_does_not_raise_nor_open_the_gate(monkeypatch, chats_home):
+    """A context/lookup failure must not take down a run start, nor read as unrestricted: a mode
+    nothing can say is inherited as the one that suppresses reads and writes."""
 
     def boom(_key):
         raise RuntimeError("registry unavailable")
 
     monkeypatch.setattr("personalclaw.session_restrictions.is_temporary", boom)
-    assert inherit_mode("dashboard:x") is MemoryMode.NORMAL
+    assert inherit_mode("dashboard:x") is MemoryMode.UNREADABLE
 
 
-def test_an_unknown_durable_mode_inherits_as_RESTRICTED():
+def test_an_unknown_durable_mode_inherits_as_RESTRICTED(chats_home):
     """The fail-closed direction applied to inheritance: a mode string this build does not recognize
     still came from someone asking for privacy."""
-    assert (
-        inherit_mode("dashboard:x", origin_metadata={"memory_mode": "future_private_mode"})
-        is MemoryMode.INCOGNITO
-    )
+    _transcript("dashboard:x", "future_private_mode")
+    assert inherit_mode("dashboard:x") is MemoryMode.UNREADABLE
 
 
 # ── the engine skips learning nodes outright ──
@@ -399,6 +428,12 @@ def test_the_marks_are_NAMED_rather_than_performed():
     session lifecycle."""
     calls = restriction_calls(own_session("r", "n", inherited_mode=MemoryMode.INCOGNITO))
     assert all(isinstance(c, str) for c in calls)
+
+
+def test_a_session_whose_mode_nothing_could_say_gets_its_own_mark():
+    """Its own mark gates reads and writes and keeps what it says true: not a Temporary chat's."""
+    owned = own_session("r", "n", inherited_mode=MemoryMode.UNREADABLE)
+    assert restriction_calls(owned) == ["mark_unreadable"]
 
 
 # ── audit fields ──

@@ -50,9 +50,6 @@ logger = logging.getLogger(__name__)
 
 _DB_FILE = "session_search.db"
 
-# Modes whose transcripts must never enter the index.
-_RESTRICTED_MODES = frozenset({"temporary", "incognito"})
-
 # Below this a query matches nearly everything, so it isn't a search.
 MIN_QUERY_CHARS = 2
 
@@ -250,18 +247,23 @@ def reset_for_tests() -> None:
 def is_restricted(session_key: str, *, memory_mode: str = "") -> bool:
     """Whether this session must stay out of the index.
 
-    Checks the persisted `memory_mode` when the caller has it, then the live
-    restriction registry. Both, because the registry only knows about sessions this
-    process has seen, while the metadata survives a restart.
+    Checks the `memory_mode` the caller read from the session's transcript, then the live
+    restriction registry. Both, because the registry only knows about sessions this process has
+    seen, while the transcript survives a restart. A recorded mode keeps the session out unless it
+    is `persistent`, as the one reader of a session's mode reads such a record
+    (`memory_writes.session_mode`): a value this build does not know, and a metadata line that
+    cannot be read, keep it out too. The transcript is not read again here: the census and a
+    search ask this of every chat at once, from the heads the chat list already holds.
     """
-    if memory_mode and memory_mode.strip().lower() in _RESTRICTED_MODES:
+    mode = (memory_mode or "").strip()
+    if mode and mode != "persistent":
         return True
     try:
         from personalclaw import session_restrictions
 
         return bool(session_restrictions.is_restricted(session_key))
-    except Exception:  # noqa: BLE001 — an unavailable registry must not open the gate
-        return False
+    except Exception:  # noqa: BLE001 — an unavailable registry keeps the session out
+        return True
 
 
 # ── writing ────────────────────────────────────────────────────────────────────
@@ -495,7 +497,11 @@ def reindex_session(session_key: str, log=None) -> bool:
         meta = log.get_metadata(key) or {}
     except Exception:  # noqa: BLE001
         meta = {}
-    mode = str(meta.get("memory_mode", "") or "")
+    from personalclaw.history import read_memory_mode
+
+    # The mode as the transcript records it, read from the file: a metadata line that cannot be
+    # read says so, where the head the chat list holds reads as one that records nothing.
+    mode = read_memory_mode(path) or ""
     if is_restricted(key, memory_mode=mode):
         forget_session(key)
         return False

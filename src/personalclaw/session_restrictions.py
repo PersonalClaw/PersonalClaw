@@ -8,6 +8,10 @@ session:
 - **incognito** — ephemeral: memory WRITES suppressed, but reads are allowed (the
   session still sees already-injected memory context). Reads are NOT blocked.
 
+Work handed on from a chat whose mode nothing can say (its records cannot be read, or there
+are none) is marked **unreadable**: it runs by a temporary session's rules, reading nothing and
+writing nothing, and what it is refused says that its chat's setting cannot be read.
+
 These are generic session concepts (a Slack thread, a Web-UI session, or a future
 channel can all be temporary/incognito), so the registry lives in core. The channel
 that opens a restricted session marks its key here; core memory-gating code
@@ -29,6 +33,7 @@ _MAX = 10_000
 
 _temporary: OrderedDict[str, None] = OrderedDict()
 _incognito: OrderedDict[str, None] = OrderedDict()
+_unreadable: OrderedDict[str, None] = OrderedDict()
 _own_models: OrderedDict[str, str] = OrderedDict()
 
 
@@ -49,6 +54,12 @@ def mark_incognito(session_key: str) -> None:
     _put(_incognito, session_key)
 
 
+def mark_unreadable(session_key: str) -> None:
+    """Mark a session as work for a chat whose mode nothing can say (reads and writes
+    suppressed)."""
+    _put(_unreadable, session_key)
+
+
 def is_temporary(session_key: str) -> bool:
     return session_key in _temporary
 
@@ -57,9 +68,13 @@ def is_incognito(session_key: str) -> bool:
     return session_key in _incognito
 
 
+def is_unreadable(session_key: str) -> bool:
+    return session_key in _unreadable
+
+
 def is_restricted(session_key: str) -> bool:
-    """True if the session should skip memory writes (temporary OR incognito)."""
-    return session_key in _temporary or session_key in _incognito
+    """True if the session should skip memory writes (temporary, incognito or unreadable)."""
+    return session_key in _temporary or session_key in _incognito or session_key in _unreadable
 
 
 def mark_own_model(session_key: str, model_ref: str) -> None:
@@ -78,4 +93,5 @@ def clear(session_key: str) -> None:
     """Drop all restriction flags for a session key (e.g. on session close)."""
     _temporary.pop(session_key, None)
     _incognito.pop(session_key, None)
+    _unreadable.pop(session_key, None)
     _own_models.pop(session_key, None)

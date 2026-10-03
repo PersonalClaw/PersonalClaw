@@ -8,10 +8,13 @@ it is indexed or recalled into another session.
 
 That promise is kept at the stores, not by each caller remembering to ask:
 
-* :func:`blocks_memory_writes` is the answer, keyed on the session's mode. It reads every record
-  of that mode (what the caller holds, the in-process registry a channel marks, the mode the
-  transcript records) and fails closed: a session keeps memory only when its mode is known to be
-  ``persistent``. A mode it cannot read, or one it does not know, keeps nothing.
+* :func:`blocks_memory_writes` is the answer, keyed on the session's mode as :func:`session_mode`
+  reads it. That is the one reader of a session's mode, which every other one asks too (what work
+  may read, the mode a workflow run inherits, what a subagent is handed): it reads every record of
+  the mode, the live chat first, then the in-process registry a channel, a run or a subagent's
+  start marks, then the mode the transcript records, and for a workflow step its run's. It fails
+  closed: a session keeps memory only when its mode is known to be ``persistent``. A mode it
+  cannot read, or one it does not know, keeps nothing and reads nothing.
 * :func:`derived_from` names the session the current work derives from. The name travels with
   the work: into every task the work spawns, into ``asyncio.to_thread``, and on the gateway into
   every worker thread it hands work to (:func:`carry_scope_into_worker_threads`).
@@ -85,9 +88,26 @@ PERSISTENT = "persistent"
 #: The modes a session is created in that keep nothing.
 RESTRICTED_MODES = frozenset({"incognito", "temporary"})
 
-#: What a transcript's mode reads as when the transcript exists and its metadata cannot be read.
-#: Not a mode, so it keeps nothing.
+#: What a session's mode reads as when nothing can say what it is (:func:`session_mode`): its
+#: records are there and cannot be read, or name a mode this build does not know, or there are
+#: none for a chat that must have one. Also what a transcript's mode reads as when its metadata
+#: cannot be read. Not a mode: work under it reads none of your memory and keeps nothing, as a
+#: Temporary chat's work does, and what it is refused says that its chat's setting cannot be read.
 UNREADABLE = "unreadable"
+
+#: A dashboard chat's key (``dashboard:<name>``), and the key the dashboard's own pages send: the
+#: owner, not a chat.
+_DASHBOARD = "dashboard:"
+_DASHBOARD_UI = "dashboard:ui"
+
+#: What one record of a session's mode can say beside a mode: that it is there and cannot be read,
+#: and, of a transcript, that it records no mode (one written before modes existed, or by a channel
+#: that has none). Neither is said by :func:`session_mode`, which weighs them below every mode.
+_GARBLED = "garbled"
+_NO_MODE = "no mode"
+
+#: What a record can say, the strictest first: the order :func:`session_mode` weighs them in.
+_BY_STRICTNESS = ("temporary", UNREADABLE, "incognito", PERSISTENT, _GARBLED, _NO_MODE)
 
 #: The refusal, in the words the API has always answered a restricted session's write with.
 REFUSAL = "Memory writes are not allowed in this session mode."
@@ -130,32 +150,163 @@ _SCOPE: contextvars.ContextVar[_Source | None] = contextvars.ContextVar(
 )
 
 
-def blocks_memory_writes(session_key: str, *, memory_mode: str | None = None) -> bool:
-    """Whether the session ``session_key`` must leave nothing in long-term memory.
+def blocks_memory_writes(
+    session_key: str, *, memory_mode: str | None = None, state: Any = None
+) -> bool:
+    """Whether the session ``session_key`` must leave nothing in long-term memory: its mode, as
+    :func:`session_mode` reads it from every record of it (``memory_mode`` is the one the caller
+    holds; ``state``, the gateway's dashboard state, whose live chats it reads), is not known to be
+    ``persistent``. An unknown value, or a record that cannot be read, keeps nothing.
 
-    True when any record of its mode says so: the ``memory_mode`` the caller holds, the
-    in-process registry a channel marks (:mod:`personalclaw.session_restrictions`), the mode its
-    transcript records, or, for a step of a workflow run, the mode its run inherited. A session
-    keeps memory only when its mode is known to be ``persistent``: an unknown value, or a record
-    that cannot be read, keeps nothing.
-
-    A key with no record anywhere (no transcript, no mark) is not a restricted session: there is
-    nothing that says so, and a transcript that records no mode was written before modes existed
-    or by a channel that has none. Work naming no key at all, with no mode, is refused.
+    Work that is no chat's (a key no record names, an automation's or an app's own) is not
+    restricted. Work naming no key at all, with no mode, is refused.
     """
-    if memory_mode is not None and memory_mode != PERSISTENT:
-        return True
+    mode = session_mode(session_key, state=state, held=memory_mode)
+    if mode is None:
+        return not (session_key or "").strip()
+    return mode != PERSISTENT
+
+
+def session_mode(session_key: str, *, state: Any = None, held: str | None = None) -> str | None:
+    """The memory mode the work of the session ``session_key`` runs under: ``"persistent"``,
+    ``"incognito"``, ``"temporary"``, or :data:`UNREADABLE` when nothing can say which. ``None`` for
+    work that is no chat's (an automation's, an app's own, the owner's own pages): no record names
+    a mode for it.
+
+    The one reader of a session's mode: the writes (:func:`blocks_memory_writes`), the reads
+    (``memory_reads.reach_of``), the mode a workflow run inherits (``ownership.inherit_mode``) and
+    what a subagent is handed (:func:`hand_on`) all ask it. It reads every record of the mode, the
+    live chat first:
+
+    1. the live chat: the mode the caller holds of it (``held``), the mode the current work holds
+       when it is that session's own work (the turn's, a request's: :func:`derived_from`,
+       :func:`as_work_of`), and the dashboard chat of that name the gateway holds now (``state``,
+       its dashboard state: :func:`live_mode`);
+    2. the in-process registry a channel, a run or a subagent's start marks
+       (:mod:`personalclaw.session_restrictions`);
+    3. the mode its transcript records;
+    4. for a step of a workflow run, the mode its run inherited when it started.
+
+    A dashboard chat's marks and transcript are read under its bare name too, which is the key
+    a chat a channel's thread started is kept under.
+
+    Every one is read because each can be the only record there is: a chat's transcript is written
+    when its first turn ends, the dashboard marks no registry, and after a restart only the
+    transcripts and the runs' records are left. The strictest mode a record names wins, so no
+    record opens what another closed. A record that is there and cannot be read, or names a mode
+    this build does not know, reads :data:`UNREADABLE` unless another names a mode, and so does a
+    step whose run has no record. Where the gateway's chats can be read (``state``), so does a
+    dashboard chat it does not hold that nothing records: such a chat is live while it works, and
+    its transcript records its mode from the end of its first turn, so one with neither is one
+    whose mode nothing can say (a Temporary chat that has ended, a chat that never existed). A
+    transcript that records no mode was written before modes existed, or by a channel that has
+    none: ``persistent``, unless another record says otherwise.
+    """
     key = (session_key or "").strip()
-    if not key:
-        return memory_mode is None
+    found: set[str] = set()
+    for record in _records_of(key, state, held):
+        if record == "temporary":
+            return record
+        if record is not None:
+            found.add(record)
+    for said in _BY_STRICTNESS:
+        if said in found:
+            return {_GARBLED: UNREADABLE, _NO_MODE: PERSISTENT}.get(said, said)
+    if _live_chats(state) is not None and key.startswith(_DASHBOARD) and key != _DASHBOARD_UI:
+        return UNREADABLE
+    return None
+
+
+def _records_of(key: str, state: Any, held: str | None) -> Iterator[str | None]:
+    """What each record of the session ``key``'s mode says, in the order :func:`session_mode` reads
+    them: a mode, :data:`_GARBLED`, :data:`_NO_MODE`, or ``None`` when the record is not there."""
+    yield None if held is None else _as_mode(held)
+    source = _SCOPE.get()
+    if source is not None and source.mode is not None and key in source.keys:
+        yield _as_mode(source.mode)
+    yield live_mode(state, key)
+    if not key or key == _DASHBOARD_UI:
+        return
+    # A dashboard chat is also kept under its bare name: a chat a channel's thread started keeps
+    # the thread's own key (``dashboard.chat_utils.persisted_history_key``).
+    spellings = (key, key.removeprefix(_DASHBOARD)) if key.startswith(_DASHBOARD) else (key,)
+    for spelling in spellings:
+        yield _marked(spelling)
+        yield _transcribed(spelling)
+    yield _inherited(key)
+
+
+def _as_mode(value: object) -> str:
+    """A recorded value as what it says: one of the modes, or :data:`_GARBLED`."""
+    return value if isinstance(value, str) and value in _BY_STRICTNESS[:4] else _GARBLED
+
+
+def live_mode(state: Any, session_key: str) -> str | None:
+    """The mode of the live dashboard chat ``session_key`` names (``dashboard:<name>``, or its
+    bare name): the chat of that name ``state``, the gateway's dashboard state, holds now. ``None``
+    when it holds none, or there is no state to ask."""
+    sessions = _live_chats(state)
+    key = (session_key or "").strip()
+    if sessions is None or not (key.startswith(_DASHBOARD) or ":" not in key):
+        return None
+    chat = sessions.get(key.removeprefix(_DASHBOARD))
+    if chat is None:
+        return None
+    mode = getattr(chat, "memory_mode", None)
+    return _as_mode(mode) if isinstance(mode, str) else _GARBLED
+
+
+def _live_chats(state: Any) -> dict[str, Any] | None:
+    """The live dashboard chats ``state`` holds, by name; ``None`` when it holds none to read."""
+    sessions = getattr(state, "_sessions", None)
+    return sessions if isinstance(sessions, dict) else None
+
+
+def _marked(key: str) -> str | None:
+    """The mode the in-process registry marks ``key`` with (:mod:`session_restrictions`)."""
     from personalclaw import session_restrictions
 
-    if session_restrictions.is_restricted(key):
-        return True
+    try:
+        if session_restrictions.is_temporary(key):
+            return "temporary"
+        if session_restrictions.is_unreadable(key):
+            return UNREADABLE
+        if session_restrictions.is_incognito(key):
+            return "incognito"
+    except Exception:  # noqa: BLE001 - a registry that cannot be read says nothing
+        return _GARBLED
+    return None
+
+
+def _transcribed(key: str) -> str | None:
+    """The mode ``key``'s transcript records (``history.read_memory_mode``): ``None`` when there is
+    no transcript, :data:`_NO_MODE` when it records none, :data:`_GARBLED` when its metadata
+    cannot be read (which that reader calls :data:`UNREADABLE`)."""
     from personalclaw.history import read_memory_mode, session_path
 
-    recorded = read_memory_mode(session_path(key))
-    return (recorded is not None and recorded != PERSISTENT) or bool(_step_mode(key))
+    try:
+        path = session_path(key)
+        recorded = read_memory_mode(path)
+        if recorded is None:
+            return _NO_MODE if path.exists() else None
+    except Exception:  # noqa: BLE001 - a transcript that cannot be read says nothing either
+        return _GARBLED
+    return _GARBLED if recorded == UNREADABLE else _as_mode(recorded)
+
+
+def _inherited(key: str) -> str | None:
+    """The mode the run whose step ``key`` names inherited when it started (``None`` for a key that
+    names no step). A step whose run has no record, or one that cannot be read, is
+    :data:`_GARBLED`: a step always has a run."""
+    run = run_of_step(key)
+    if run is NOT_A_STEP:
+        return None
+    if run is None or run is RUN_UNREADABLE:
+        return _GARBLED
+    from personalclaw.workflows import ownership
+
+    mode = ownership.run_mode(run)
+    return PERSISTENT if mode is ownership.MemoryMode.NORMAL else mode.value
 
 
 #: What :func:`run_of_step` answers for a key that names no step of a workflow run, and for one
@@ -179,21 +330,6 @@ def run_of_step(session_key: str) -> Any:
         return store.get(owned[0])
     except Exception:  # noqa: BLE001 - a run that cannot be read is not known to keep anything
         return RUN_UNREADABLE
-
-
-def _step_mode(session_key: str) -> str:
-    """The mode the run whose step ``session_key`` names inherited when it keeps nothing
-    (``"incognito"``, ``"temporary"``), :data:`UNREADABLE` when its record cannot be read, else
-    ``""``."""
-    run = run_of_step(session_key)
-    if run is RUN_UNREADABLE:
-        return UNREADABLE
-    if run is NOT_A_STEP or run is None:
-        return ""
-    from personalclaw.workflows import ownership
-
-    mode = ownership.run_mode(run)
-    return "" if mode is ownership.MemoryMode.NORMAL else mode.value
 
 
 def blocks_background_models(
@@ -424,28 +560,16 @@ def reading_their_input() -> Iterator[None]:
 
 
 def _restricted_label() -> str:
-    """What the current work's session is, as its chat is called ("Incognito", "Temporary"), or
-    ``""`` when nothing says which."""
+    """What the current work's session is, as its chat is called ("Incognito", "Temporary"): its
+    mode as :func:`session_mode` reads it under each spelling of its key, the strictest. ``""`` when
+    nothing can say which (:data:`UNREADABLE`)."""
     source = _SCOPE.get()
     if source is None:
         return ""
-    if source.mode in RESTRICTED_MODES:
-        return source.mode.capitalize()
-    from personalclaw import session_restrictions
-    from personalclaw.history import read_memory_mode, session_path
-
-    for key in source.keys:
-        if not key:
-            continue
-        if session_restrictions.is_temporary(key):
-            return "Temporary"
-        if session_restrictions.is_incognito(key):
-            return "Incognito"
-        recorded = read_memory_mode(session_path(key))
-        if recorded in RESTRICTED_MODES:
-            return str(recorded).capitalize()
-        if (step := _step_mode(key)) in RESTRICTED_MODES:
-            return step.capitalize()
+    modes = {session_mode(key, held=source.mode) for key in source.keys}
+    for mode in ("temporary", UNREADABLE, "incognito"):
+        if mode in modes:
+            return "" if mode == UNREADABLE else mode.capitalize()
     return ""
 
 
@@ -462,9 +586,10 @@ def restricted_mode() -> str | None:
 
 def own_model_reason() -> str:
     """Why the current work stays on its chat's model, as a clause: "this chat is Incognito, so
-    nothing from it is sent to any model but the one it runs on"."""
+    nothing from it is sent to any model but the one it runs on", or, when nothing can say what the
+    chat is, that its memory setting cannot be read."""
     label = _restricted_label()
-    who = f"this chat is {label}" if label else "this chat keeps nothing"
+    who = f"this chat is {label}" if label else "this chat's memory setting cannot be read"
     return f"{who}, so nothing from it is sent to any model but the one it runs on"
 
 
@@ -506,24 +631,33 @@ def runs_as_its_session(turn: _Turn) -> _Turn:
 def hand_on(
     child_key: str, parent_key: str, *, reach: Callable[[str], Reach] | None = None
 ) -> None:
-    """Mark ``child_key`` (a subagent working for ``parent_key``) with what the work starting it, or
-    its parent, is. Work for a Temporary chat is Temporary: it reads no memory and writes none
-    (*reach*, ``memory_reads.reach_of`` over the gateway's state, decides whether its parent is
-    one; without it the registry, the transcripts and the runs do). Work for any other session that
-    keeps nothing is Incognito, so its agent's calls back over the API are refused writes as its
-    parent's are. Either way it is handed the one model it may reach (:func:`handed_model`), its
-    chat's own, which its runtime is built on and its own calls back over the API stay on."""
+    """Mark ``child_key`` (a subagent working for ``parent_key``) with the strictest of what the
+    work starting it is (:func:`restricted_mode`) and what its parent is: the parent's mode as its
+    records read (*reach*, ``memory_reads.reach_of`` over the gateway's state, so the live chat
+    first; without it the registry, the transcripts and the runs), and whether anything it works
+    for reads no memory. Work for a Temporary chat is Temporary: it reads no memory and writes
+    none. Work for a chat whose mode nothing can say is marked so, and runs by the same rules,
+    saying why. Work for any other session that keeps nothing is Incognito, so its agent's calls
+    back over the API are refused writes as its parent's are. Either way it is handed the one model
+    it may reach (:func:`handed_model`), its chat's own, which its runtime is built on and its own
+    calls back over the API stay on."""
     from personalclaw import memory_reads, session_restrictions
 
     asked = reach or functools.partial(memory_reads.reach_of, None)
-    parent_temporary = bool(parent_key) and asked(parent_key).temporary
-    parent_keeps_nothing = parent_temporary or bool(parent_key and blocks_memory_writes(parent_key))
-    if _restricted_label() == "Temporary" or parent_temporary:
-        session_restrictions.mark_temporary(child_key)
-    elif writes_refused() or parent_keeps_nothing:
-        session_restrictions.mark_incognito(child_key)
-    else:
+    parent = asked(parent_key) if parent_key else memory_reads.Reach()
+    modes = {restricted_mode(), parent.mode}
+    if parent.blank:
+        modes.add("temporary" if parent.temporary else UNREADABLE)
+    marks = {
+        "temporary": session_restrictions.mark_temporary,
+        UNREADABLE: session_restrictions.mark_unreadable,
+        "incognito": session_restrictions.mark_incognito,
+    }
+    mode = next((m for m in marks if m in modes), None)
+    if mode is None:
         return
+    marks[mode](child_key)
+    parent_keeps_nothing = bool(parent.blank) or parent.mode not in (None, PERSISTENT)
     session_restrictions.mark_own_model(
         child_key, handed_model(parent_key if parent_keeps_nothing else "")
     )

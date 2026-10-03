@@ -155,27 +155,20 @@ async def _list_marketplace_skills() -> list[dict[str, Any]]:
 
 
 def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
-    """Check if request comes from an ephemeral (incognito) or temporary (guest) session.
+    """Check if request comes from work that keeps nothing: an Incognito or Temporary chat's, the
+    work such a chat started, or work for a chat whose mode nothing can say. The one reader of a
+    session's mode answers, over the gateway's live chats (``memory_writes.blocks_memory_writes``):
+    the live chat first, then the registry, the transcript and a step's run.
 
     Reads X-Session-Key header (set by browser and MCP subprocesses).
     Returns True if the session should be blocked from memory operations.
     """
     sk = request.headers.get("X-Session-Key", "")
-    if not sk:
+    if not sk or sk == "dashboard:ui":
         return False
-    if sk == "dashboard:ui":
-        return False
-    if sk in state._restricted_keys:
-        return True
-    session_name = sk.split(":", 1)[-1] if ":" in sk else sk
-    session = state._sessions.get(session_name)
-    if session and session.is_restricted:
-        return True
-    from personalclaw import session_restrictions
+    from personalclaw import memory_writes
 
-    if session_restrictions.is_restricted(sk):
-        return True
-    return False
+    return memory_writes.blocks_memory_writes(sk, state=state)
 
 
 def _memory_refusal(state: DashboardState, request: "Any") -> str:

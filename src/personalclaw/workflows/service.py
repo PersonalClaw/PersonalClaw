@@ -697,25 +697,6 @@ async def delete_def(name: str) -> dict[str, Any]:
 # ── runs ─────────────────────────────────────────────────────────────────────
 
 
-def _origin_metadata(session_key: str) -> dict[str, Any]:
-    """The launching session's durable metadata head, for memory-mode inheritance.
-
-    Read here rather than inside `inherit_mode` because that module is pure-by-design (no I/O, so
-    it stays testable without a home). A missing key or an unreadable log yields `{}`, and
-    `inherit_mode` then falls back to the process-global registry — the same both-sources order
-    `session_search.is_restricted` uses so a restart cannot silently un-mark an in-flight run.
-    """
-    if not session_key:
-        return {}
-    try:
-        from personalclaw.history import ConversationLog
-
-        return ConversationLog().get_metadata(session_key) or {}
-    except Exception:
-        logger.debug("origin metadata read failed for %r", session_key, exc_info=True)
-        return {}
-
-
 async def start_run(
     *,
     name: str,
@@ -861,11 +842,13 @@ async def start_run(
     # replays it and the engine's node-skip + the run-end gate keep enforcing it after the process
     # forgets the in-memory registry. Stamped BEFORE create so the very first tick already sees it.
     # The model its chat runs on rides beside it: the run's work reaches no other, after a restart
-    # too (`run_start.run_context`).
+    # too (`run_start.run_context`). The chat's mode is read from the live chat first, through the
+    # chats of the gateway the supervisor runs in: a run a chat starts on its first turn, or for it
+    # once a batch's ask is answered, has no transcript of the chat to read yet.
     from personalclaw import memory_writes
     from personalclaw.workflows import ownership
 
-    inherited = ownership.inherit_mode(session_key, origin_metadata=_origin_metadata(session_key))
+    inherited = ownership.inherit_mode(session_key, state=getattr(supervisor, "state", None))
     # NORMAL is left UNSTAMPED: `run_mode` reads an absent key as normal, so stamping it would add a
     # redundant string to every unrestricted run's record for no behavioural gain. Only a restricted
     # inheritance is a fact worth recording.

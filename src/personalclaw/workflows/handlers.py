@@ -211,13 +211,26 @@ def _guard(request: web.Request, operation: str) -> web.Response | None:
     """Refuse a mutation from a restricted session, and audit either way.
 
     A workflow run spends money and touches the world, so every mutating call is audited —
-    an unaudited start is a worse gap than an unaudited read.
+    an unaudited start is a worse gap than an unaudited read. The refusal says why, as the one
+    reader of a session's mode reads it (``memory_writes.session_mode``).
     """
     state = request.app.get("state")
     if state is not None and _is_restricted_session(state, request):
         _audit(request, operation, "denied")
+        from personalclaw import memory_writes
+
+        mode = memory_writes.session_mode(request.headers.get("X-Session-Key", ""), state=state)
+        why = {
+            "temporary": "it keeps nothing, as a Temporary chat does",
+            "incognito": "it keeps nothing, as an Incognito chat does",
+        }.get(str(mode), "the memory setting of the chat it is for cannot be read")
         return web.json_response(
-            {"error": {"code": "restricted_session", "message": "this session cannot mutate"}},
+            {
+                "error": {
+                    "code": "restricted_session",
+                    "message": f"this session cannot mutate: {why}",
+                }
+            },
             status=403,
         )
     return None

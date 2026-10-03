@@ -1158,7 +1158,14 @@ image reader or a fallback (`model_may_read`, asked at every seam that reaches a
 model, carried into every worker thread and into the tool process an agent CLI
 runs). The work it starts away from its turn (a subagent, its own subagents, the
 steps of a run it started) is handed that model with its mode and runs on it,
-after a restart too, and a start that cannot is refused before anything is sent. What the person gives such a chat in a form its model cannot read (an
+after a restart too, and a start that cannot is refused before anything is sent.
+Every one of these reads a session's mode through one reader
+(`memory_writes.session_mode`): the live chat first, then the registry, the
+transcript and a workflow step's run. So work a chat starts on its first turn,
+before its transcript is written, keeps the chat's mode, and a mode nothing can
+say (a record that cannot be read, a value this build does not know, a chat the
+gateway no longer holds that nothing records) is taken as a Temporary chat's,
+and what such work is refused says that the chat's setting cannot be read. What the person gives such a chat in a form its model cannot read (an
 attached file, a shared screen) is read by the model set up for it, and the
 chat's notice says so. Who may read memory at all is one answer
 (`memory_reads.reach_of`) every reader asks: a Temporary chat's work reads none

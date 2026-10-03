@@ -145,12 +145,14 @@ class LearningGate:
 
     @classmethod
     def for_session(cls, session: Any, cfg: Any = None) -> LearningGate:
-        """Build a gate for one session, consulting config AND the registry.
+        """Build a gate for one session, consulting config AND the session's mode.
 
-        The registry lookup is the point of this constructor. Suppression for
+        The mode lookup is the point of this constructor. Suppression for
         incognito/temporary sessions used to depend on each call site
         remembering to check ``session_restrictions``; here it happens once, so
-        a new cadence inherits it by construction rather than by review.
+        a new cadence inherits it by construction rather than by review. The
+        mode is the one reader's (``memory_writes.blocks_memory_writes``), so a
+        mode that cannot be read suppresses learning as a restricted one does.
 
         A session object that doesn't carry a key still gets the config and
         ephemeral checks — a partial answer is correct, a crash is not.
@@ -166,17 +168,18 @@ class LearningGate:
 
         restricted = bool(getattr(session, "is_restricted", False))
         key = getattr(session, "key", None)
-        if key:
-            try:
-                from personalclaw import session_restrictions
-
-                restricted = restricted or session_restrictions.is_restricted(str(key))
-            except Exception:  # pragma: no cover - registry is in-process
-                logger.debug("session_restrictions lookup failed", exc_info=True)
-        # Work for an Incognito or Temporary session (the turn, a task it started) is restricted
-        # whatever the session object says: the same answer the stores give its writes.
         from personalclaw import memory_writes
 
+        if key:
+            # Its mode as the one reader of a session's mode reads it, holding the session's own:
+            # the registry, its transcript and a step's run too.
+            mode = getattr(session, "memory_mode", None)
+            held = mode if isinstance(mode, str) else None
+            restricted = restricted or memory_writes.blocks_memory_writes(
+                str(key), memory_mode=held
+            )
+        # Work for an Incognito or Temporary session (the turn, a task it started) is restricted
+        # whatever the session object says: the same answer the stores give its writes.
         restricted = restricted or memory_writes.writes_refused()
 
         return cls(

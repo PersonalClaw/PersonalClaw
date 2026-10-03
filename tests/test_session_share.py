@@ -28,7 +28,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
 
 import personalclaw
-from personalclaw import session_search
+from personalclaw import memory_writes
 from personalclaw.artifacts.native import NativeArtifactProvider
 from personalclaw.dashboard import session_export as se
 from personalclaw.dashboard import session_share as sh
@@ -280,7 +280,7 @@ async def test_share_404s_on_an_unknown_conversation(routed):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", sorted(session_search._RESTRICTED_MODES))
+@pytest.mark.parametrize("mode", sorted(memory_writes.RESTRICTED_MODES))
 async def test_share_refuses_every_restricted_mode(routed, mode):
     """An incognito chat promises to leave nothing durable behind; an artifact is durable
     library state. Parametrized over the WHOLE closed set, read from the source of truth,

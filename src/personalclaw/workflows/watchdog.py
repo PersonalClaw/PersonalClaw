@@ -112,6 +112,12 @@ class WorkflowWatchdog:
         if deliver is not None and infos:
             deliver(infos)
 
+    @property
+    def state(self) -> Any:
+        """The dashboard state of the gateway this supervisor runs in (``None`` without one): its
+        live chats are where a run started for a chat reads that chat's mode first."""
+        return self._state
+
     # ── lifecycle ──
 
     def start(self) -> None:

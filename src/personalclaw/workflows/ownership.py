@@ -16,17 +16,21 @@ Two facts about the existing machinery decide the shape here, both verified in c
 match in
    `context._prompt_use_case_for` is a known near-miss the plan explicitly says not to repeat. So
    ownership sets `_app` and the key is only an identifier.
-2. **`session_restrictions` is process-global and forgets on restart**, while a session's JSONL
-   `memory_mode` line survives. `session_search.is_restricted` already reads BOTH for exactly that
-   reason. Suppression here follows that precedent rather than inventing a third store: the registry
-   is the fast path, the durable line is the truth after a restart.
+2. **A chat's mode has several records, and at any moment some are missing.** The live chat holds
+   it from the start; the process-global `session_restrictions` registry holds a channel's,
+   a run's or a subagent's mark and forgets on restart; the transcript's `memory_mode` line is
+   written when the chat's first turn ends and survives a restart. So the mode a run inherits is
+   read by the one reader of a session's mode (`memory_writes.session_mode`), which reads all of
+   them, the live chat first: a run a chat starts on its first turn has no transcript to read.
 
 The asymmetry that matters: **a lookup failure means RESTRICTED, not unrestricted.** An unavailable
-registry or an unreadable metadata line must not open the gate — the cost of a wrongly-suppressed
+registry, an unreadable metadata line or a chat nothing records must not open the gate: such a run
+inherits `UNREADABLE`, which suppresses what `TEMPORARY` does. The cost of a wrongly-suppressed
 memory write is a lost note, and the cost of a wrongly-permitted one is a memory the user believed
 was never recorded.
 
-Pure functions over keys and metadata. No I/O; the caller marks the registry and writes the JSONL.
+Pure functions over keys and run records, but for `inherit_mode`, which asks that reader; the caller
+marks the registry.
 """
 
 from __future__ import annotations
@@ -64,22 +68,24 @@ class MemoryMode(str, Enum):
 
     `TEMPORARY` blocks reads AND writes (a blank slate); `INCOGNITO` blocks writes only (the session
     still sees context already injected). The distinction is load-bearing: using the write gate for
-    reads would blank a session the user only asked not to record.
+    reads would blank a session the user only asked not to record. `UNREADABLE` is a run whose
+    chat's mode nothing could say when it started: it blocks what `TEMPORARY` does, and says why.
     """
 
     NORMAL = "normal"
     TEMPORARY = "temporary"
     INCOGNITO = "incognito"
+    UNREADABLE = "unreadable"
 
 
-#: Modes that suppress memory WRITES. Both, because incognito exists precisely to keep a session out
-#: of the record while letting it work.
-WRITE_SUPPRESSED = frozenset({MemoryMode.TEMPORARY, MemoryMode.INCOGNITO})
+#: Modes that suppress memory WRITES. Incognito, because it exists precisely to keep a session out
+#: of the record while letting it work; the others because they keep everything out.
+WRITE_SUPPRESSED = frozenset({MemoryMode.TEMPORARY, MemoryMode.INCOGNITO, MemoryMode.UNREADABLE})
 
-#: Modes that suppress memory READS. Only `temporary` — a blank slate. Incognito reads are
-#: allowed,
-#: and treating them as blocked would silently degrade an incognito session's answers.
-READ_SUPPRESSED = frozenset({MemoryMode.TEMPORARY})
+#: Modes that suppress memory READS: `temporary` — a blank slate — and a mode nothing could say.
+#: Incognito reads are allowed, and treating them as blocked would silently degrade an incognito
+#: session's answers.
+READ_SUPPRESSED = frozenset({MemoryMode.TEMPORARY, MemoryMode.UNREADABLE})
 
 #: Where a run's inherited memory mode is persisted. In `WorkflowRun.extra` — a free-form dict
 #: that is
@@ -245,11 +251,11 @@ def own_session(
 def parse_mode(raw: Any) -> MemoryMode:
     """Read a `memory_mode` value tolerantly, defaulting to the RESTRICTED direction on nonsense.
 
-    An unrecognized mode string becomes `INCOGNITO`, not `NORMAL`. That is the whole safety
-    argument:
-    the value exists because someone asked for privacy, and a typo or a newer mode name this build
-    does not know must not be read as "record everything". A lost note is recoverable; a memory the
-    user believed was never written is not.
+    An unrecognized mode string becomes `UNREADABLE`, not `NORMAL`, and so blocks what `TEMPORARY`
+    does. That is the whole safety argument: the value exists because someone asked for privacy,
+    and a typo or a newer mode name this build does not know must not be read as "record
+    everything", nor as a mode it may not be. A lost note is recoverable; a memory the user
+    believed was never written is not.
 
     `"persistent"` is the ONE alias that must map to `NORMAL` rather than the restricted default.
     It is the on-disk `memory_mode` a normal chat session writes (`VALID_MEMORY_MODES` in
@@ -265,39 +271,35 @@ def parse_mode(raw: Any) -> MemoryMode:
     try:
         return MemoryMode(text)
     except ValueError:
-        return MemoryMode.INCOGNITO
+        return MemoryMode.UNREADABLE
 
 
-def inherit_mode(origin_key: str, *, origin_metadata: dict[str, Any] | None = None) -> MemoryMode:
-    """The mode a run inherits from the session that launched it.
+#: The modes a run can inherit, the strictest first.
+_INHERITED_BY_STRICTNESS = (MemoryMode.TEMPORARY, MemoryMode.UNREADABLE, MemoryMode.INCOGNITO)
 
-    Reads BOTH sources, in the order that survives a restart:
 
-    1. The durable JSONL `memory_mode` line, when the caller has the metadata.
-    2. The process-global `session_restrictions` registry.
+def inherit_mode(origin_key: str, *, state: Any = None) -> MemoryMode:
+    """The mode a run inherits: the strictest of the mode of the session it is started for
+    (*origin_key*) and the mode of the work that starts it.
 
-    Both, for the reason `session_search.is_restricted` already does it: the registry only knows
-    sessions this process has seen, while the metadata line is what history consolidation re-derives
-    from after a restart. Checking only the registry would mean a gateway restart silently un-marks
-    every incognito run in flight.
+    The session's mode is what the one reader of a session's mode says
+    (`memory_writes.session_mode`; *state* is the gateway's dashboard state, whose live chats it
+    reads): the live chat first, then the process-global registry, then its transcript. The live
+    chat is what a run a chat starts on its first turn has, before its transcript is written; the
+    transcript is what is left after a restart. The work that starts it counts too
+    (`memory_writes.restricted_mode`): a run a Temporary chat's turn starts is that chat's work,
+    whichever session it names, as a subagent it starts is (`memory_writes.hand_on`).
+
+    No session (`""`, the owner's own pages) and one that is no chat's inherit nothing. A chat whose
+    mode nothing can say (its records cannot be read, or there are none) inherits `UNREADABLE`.
     """
-    durable = parse_mode((origin_metadata or {}).get("memory_mode"))
-    if durable is not MemoryMode.NORMAL:
-        return durable
-    try:
-        from personalclaw import session_restrictions
+    from personalclaw import memory_writes
 
-        if session_restrictions.is_temporary(origin_key):
-            return MemoryMode.TEMPORARY
-        if session_restrictions.is_incognito(origin_key):
-            return MemoryMode.INCOGNITO
-    except Exception:
-        # An unavailable registry must not OPEN the gate. With no durable line and no registry there
-        # is nothing to inherit, so `NORMAL` is correct here — the fail-closed direction applies
-        # to
-        # reading a mode that EXISTS, which the durable check above already covers.
-        return MemoryMode.NORMAL
-    return MemoryMode.NORMAL
+    inherited = {
+        parse_mode(memory_writes.session_mode(origin_key, state=state)),
+        parse_mode(memory_writes.restricted_mode()),
+    }
+    return next((m for m in _INHERITED_BY_STRICTNESS if m in inherited), MemoryMode.NORMAL)
 
 
 #: Node kinds whose work is memory/learning persistence. A run carrying an inherited restriction
@@ -323,6 +325,13 @@ LEARNING_PROVIDERS = frozenset(
 )
 
 
+def _called(mode: MemoryMode) -> str:
+    """How a restricted run is named where it says why it skipped something."""
+    if mode is MemoryMode.UNREADABLE:
+        return "run whose chat's memory setting cannot be read"
+    return f"{mode.value} run"
+
+
 def skips_node(node_config: dict[str, Any], mode: MemoryMode) -> tuple[bool, str]:
     """Whether a restricted run must skip this node entirely, and why.
 
@@ -337,12 +346,12 @@ def skips_node(node_config: dict[str, Any], mode: MemoryMode) -> tuple[bool, str
     cfg = node_config or {}
     provider = str(cfg.get("provider", "") or "").strip().lower()
     if provider in LEARNING_PROVIDERS:
-        return True, f"{mode.value} run: skipping `{provider}` (memory writes are suppressed)"
+        return True, f"{_called(mode)}: skipping `{provider}` (memory writes are suppressed)"
     # A declaration that is not a no skips the node: `"persists_memory": "true"` read as
     # undeclared, and the run wrote memory it was told it must not.
     declared = cfg.get("persists_memory")
     if declared is not None and yes_or_no(declared) is not False:
-        return True, f"{mode.value} run: node declares persists_memory"
+        return True, f"{_called(mode)}: node declares persists_memory"
     return False, ""
 
 
@@ -383,7 +392,11 @@ def announcement(origin_key: str, text: str, mode: MemoryMode) -> Announcement:
             origin_key=origin_key,
             text=text,
             indexable=False,
-            reason=f"origin session is {mode.value}",
+            reason=(
+                "origin session's mode cannot be read"
+                if mode is MemoryMode.UNREADABLE
+                else f"origin session is {mode.value}"
+            ),
         )
     return Announcement(origin_key=origin_key, text=text, indexable=True)
 
@@ -406,12 +419,15 @@ def restriction_calls(ownership: Ownership) -> list[str]:
     Returned as names rather than performed, so the caller owns the process-global mutation and this
     module stays testable without touching a registry every other test shares. The LIST is the
     contract: a `temporary` session needs BOTH marks, because `is_temporary` gates reads while
-    `is_restricted` (true for either) gates writes.
+    `is_restricted` (true for any mark) gates writes. A session whose mode nothing could say gets
+    its own mark, which gates both and keeps the words true.
     """
     if ownership.memory_mode is MemoryMode.TEMPORARY:
         return ["mark_temporary", "mark_incognito"]
     if ownership.memory_mode is MemoryMode.INCOGNITO:
         return ["mark_incognito"]
+    if ownership.memory_mode is MemoryMode.UNREADABLE:
+        return ["mark_unreadable"]
     return []
 
 

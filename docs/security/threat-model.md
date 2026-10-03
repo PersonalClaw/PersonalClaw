@@ -544,8 +544,11 @@ Data leaving the running system:
   turn runs on (the embedding model, a tool's or a subagent's model, the image
   reader, a fallback, an agent CLI's tool process: `memory_writes.model_may_read`;
   the work it starts away from its turn, its subagents and the steps of a run it
-  started, is handed that model with its mode, after a restart too),
-  except what the person gives the chat in a form its model cannot read (an
+  started, is handed that model with its mode, after a restart too, the mode
+  read by one reader with the live chat first, so a chat's first-turn work keeps
+  it before its transcript is written, and a mode nothing can say is taken as a
+  Temporary chat's), except what the person gives the chat in a form its model
+  cannot read (an
   attached file, a shared screen), which the model set up for it reads. Whether
   work may read memory at all is one answer, `memory_reads.reach_of`: a
   Temporary chat's work reads none (its subagents, theirs, and the steps of a run

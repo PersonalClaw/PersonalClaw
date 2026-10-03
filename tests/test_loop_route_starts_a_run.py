@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -95,8 +96,12 @@ class _FakeState:
 
     def __init__(self, *, restricted: set[str] | None = None) -> None:
         self.workflows = _RecordingSupervisor()
-        self._sessions: dict[str, Any] = {}
-        self._restricted_keys: set[str] = restricted or set()
+        # The chats named in ``restricted`` are live Incognito chats, held as the gateway holds
+        # one: by name, with its mode, and its ``dashboard:`` key among the restricted ones.
+        self._sessions: dict[str, Any] = {
+            name: SimpleNamespace(memory_mode="incognito") for name in restricted or ()
+        }
+        self._restricted_keys: set[str] = {f"dashboard:{name}" for name in restricted or ()}
         self._sse = None
 
     def push_refresh(self, *kinds: str) -> None:
@@ -296,9 +301,9 @@ def test_a_restricted_session_cannot_start_a_run_through_the_loop_door() -> None
     answered 201 and wrote a loops row, which is a different (unguarded) operation, so this
     assertion is about the door the port opened and not about the loop family's own posture.
     """
-    state = _FakeState(restricted={"chat:ghost"})
+    state = _FakeState(restricted={"ghost"})
     with _launchable():
-        response = _create(state, {"kind": PORTED, "task": TASK}, session_key="chat:ghost")
+        response = _create(state, {"kind": PORTED, "task": TASK}, session_key="dashboard:ghost")
 
     assert response.status == 403, f"{response.status}: {_payload(response)}"
     assert _payload(response)["error"]["code"] == "restricted_session", _payload(response)

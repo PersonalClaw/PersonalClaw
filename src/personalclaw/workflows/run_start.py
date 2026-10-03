@@ -249,7 +249,9 @@ def enforce_inherited_mode(ctl: RunController) -> None:
     what the run-end LearningGate reads (`run_finish.capture_run_end` keys `for_session` off
     `origin.session_key`), and the owned key is what any run-scoped write would carry. A
     `temporary` run gets both marks per `restriction_calls`, because `is_temporary` gates reads
-    while `is_restricted` gates writes.
+    while `is_restricted` gates writes. A run whose chat's mode nothing could say marks its own key
+    alone: what it knows is that it cannot tell, not what the chat is, and a chat that is read
+    again keeps the mode its own records give it.
 
     **Durability lives in `run.extra`, not a session JSONL.** A run owns no `ConversationLog`
     file — stage subagents persist under their own `subagent:<id>` keys, and the `workflow:`
@@ -275,9 +277,10 @@ def enforce_inherited_mode(ctl: RunController) -> None:
     try:
         from personalclaw import session_restrictions
 
+        knows_its_chat = mode is not ownership.MemoryMode.UNREADABLE
         for call in ownership.restriction_calls(owned):
             mark = getattr(session_restrictions, call)
-            if ctl.run.origin.session_key:
+            if ctl.run.origin.session_key and knows_its_chat:
                 mark(ctl.run.origin.session_key)
             mark(owned.key)
     except Exception:

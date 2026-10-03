@@ -26,15 +26,12 @@ from personalclaw.sel import sel
 _DASHBOARD_UI = "dashboard:ui"
 
 
-def _live_mode(request: web.Request, session_key: str) -> str | None:
-    """The mode of the live dashboard chat ``session_key`` names, or ``None`` when none is live."""
-    state = request.app.get("state")
-    sessions = getattr(state, "_sessions", None)
-    if not isinstance(sessions, dict):
-        return None
-    session = sessions.get(session_key.split(":", 1)[-1])
-    mode = getattr(session, "memory_mode", None)
-    return mode if isinstance(mode, str) else None
+def _mode_of(request: web.Request, session_key: str) -> str | None:
+    """The mode of the session ``session_key`` names, as the one reader of a session's mode reads
+    it over the gateway's live chats (``memory_writes.session_mode``): the live chat first, so a
+    chat whose transcript is not written yet is read as it is, and one the gateway does not hold
+    that nothing records keeps nothing."""
+    return memory_writes.session_mode(session_key, state=request.app.get("state"))
 
 
 def memory_write_middleware() -> Any:
@@ -48,7 +45,7 @@ def memory_write_middleware() -> Any:
         session_key = request.headers.get("X-Session-Key", "").strip()
         if not session_key or session_key == _DASHBOARD_UI:
             return await handler(request)
-        with memory_writes.as_work_of(session_key, memory_mode=_live_mode(request, session_key)):
+        with memory_writes.as_work_of(session_key, memory_mode=_mode_of(request, session_key)):
             try:
                 return await handler(request)
             except memory_writes.MemoryWriteRefused as refused:

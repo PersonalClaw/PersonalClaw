@@ -184,6 +184,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A workflow a Temporary or Incognito chat starts on its first turn keeps the chat's setting, and work for a chat whose setting cannot be read reads and keeps none of your memory and says why: both used to run as normal work.**
 - **In Settings → Memory a focused explorer row and the graph's Records and Entities switch show their whole focus ring: a row the list showed only in part lost the bottom of its ring when Tab reached it, and the switch lost its top and left edge.**
 - **The captions under each device in Settings → Devices, and under each sender and group in Settings → Sender trust, are readable in the dark theme: dimmed, they fell below the contrast text needs.**
 - **Subagents, batches and workflow steps run in Temporary and Incognito chats, on the chat's own model and no other: they were refused every model, the chat's own included, and an Incognito chat's workflow step resumed after a restart started unmarked and on another model.**

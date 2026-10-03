@@ -26,6 +26,9 @@ chat, channel thread, loop worker, webhook, subagent).
     session ends (below).
   - **incognito** — ephemeral: memory WRITES suppressed, reads allowed. Its
     transcript is kept, out of the chat list and search.
+  - **unreadable** — work handed on from a chat whose mode nothing can say:
+    reads and writes suppressed, as for a temporary session, and what it is
+    refused says that the chat's setting cannot be read.
 
   `is_restricted()` (either mode) gates the after-turn learning path, session
   listing/search, and memory recall (see
@@ -34,16 +37,26 @@ chat, channel thread, loop worker, webhook, subagent).
 
   Work for a restricted session takes its mode: a subagent's key is marked when
   it is spawned (`memory_writes.hand_on`), Temporary when the chat it works for is
-  Temporary and Incognito otherwise, and a workflow run marks its origin's mode
-  on its keys and records it on the run, as do a subworkflow it starts and a fork
-  of it (`ownership.inherited_extra`). So a Temporary chat's subagents, its
-  subagents' subagents and the steps of a run it started read no memory and
-  write none, as the chat does. It takes the chat's model the same way (below).
+  Temporary, unreadable when nothing can say what that chat is, and Incognito
+  otherwise, and a workflow run marks its origin's mode on its keys and records
+  it on the run, as do a subworkflow it starts and a fork of it
+  (`ownership.inherited_extra`). The mode handed on is read by the one reader of a
+  session's mode (`memory_writes.session_mode`), the live chat first, together
+  with the mode of the work that starts it (`ownership.inherit_mode`): a chat's
+  transcript is written when its first turn ends, so the live chat is all that
+  says what a chat is when that turn starts a run or a subagent. So a Temporary
+  chat's subagents, its subagents' subagents and the steps of a run it started
+  read no memory and write none, as the chat does, from its first turn on. It
+  takes the chat's model the same way (below).
 - **`memory_reads.py` — whose work may read your memory.** `reach_of(state,
   key)` is the one answer every memory read asks, for the work a session key
   names: it follows a subagent to the session it works for, an app's agent run to
   its app and a workflow step to the chat that started its run, and reads each
-  one's mode from the live chat, the registry, its transcript and the run. Two
+  one's mode as `memory_writes.session_mode` does: the live chat, the registry,
+  its transcript and the run, in that order. A mode nothing can say (a record
+  that cannot be read, a value this build does not know, a chat the gateway
+  does not hold that nothing records, as for a Temporary chat that has ended)
+  reads nothing, as a Temporary chat's work does, and says why. Two
   kinds of work read none of your memory: a Temporary chat's, and an app's that
   does not hold the `memory` permission (a conversation the app started, an agent
   run it asked for, every agent working for either). The context a turn and a
@@ -71,10 +84,16 @@ chat, channel thread, loop worker, webhook, subagent).
   (working, episodic or semantic records, persona notes, commitments, lessons,
   knowledge, vocabulary, the markdown memory files), and nothing from it is
   embedded. Enforced at the stores, not by each caller:
-  - `blocks_memory_writes(key, memory_mode=)` is the one answer. It reads the
-    mode the caller holds, the registry and the mode the transcript records, and
-    fails closed: only a mode known to be `persistent` keeps memory. A
-    transcript whose metadata cannot be read, or an unknown mode, keeps nothing.
+  - `blocks_memory_writes(key, memory_mode=)` is the one answer, keyed on the
+    mode `session_mode` reads: the one reader of a session's mode, which the
+    reads, a run's inheritance, a subagent's hand-off, the routes' restricted
+    session guard and the learning gate ask too. It reads every record of the
+    mode, the live chat first (what the caller or the current work holds, or the
+    chat the gateway holds), then the registry, the transcript and a step's run,
+    and the strictest record wins. It fails closed: only a mode known to be
+    `persistent` keeps memory. A record that cannot be read, an unknown mode, and
+    a dashboard chat the gateway does not hold that nothing records keep
+    nothing.
   - `derived_from(key)` names the session work derives from. It is set by the
     turn (`chat_runner.run_chat`), by every consolidation pass
     (`HistoryConsolidator._consolidate` / `consolidate_session`) and by every

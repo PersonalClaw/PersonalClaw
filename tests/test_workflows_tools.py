@@ -847,10 +847,10 @@ class TestMemoryModeInheritance:
 
     @pytest.fixture(autouse=True)
     def _isolate_history(self, tmp_path, monkeypatch):
-        """`_origin_metadata` reads the launching session's JSONL via `ConversationLog`, which
-        resolves through `config.loader.config_dir` — a DIFFERENT symbol than the store's own
-        `config_dir` the module autouse fixture patches. Set `PERSONALCLAW_HOME` so an origin
-        metadata read cannot touch the real home."""
+        """The one reader of a session's mode reads the launching session's transcript at its
+        `history.session_path`, which resolves through `config.loader.config_dir` — a DIFFERENT
+        symbol than the store's own `config_dir` the module autouse fixture patches. Set
+        `PERSONALCLAW_HOME` so that read cannot touch the real home."""
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "pc-home"))
 
     async def test_an_incognito_origin_stamps_the_run_record(self, provider) -> None:
