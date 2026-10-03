@@ -669,9 +669,10 @@ class SubagentManager:
         # new spawn for one of these is refused with that reason rather than started.
         self._fanout_stops: dict[str, str] = {}
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
-        # Whose work an agent's run is, so what its first prompt reads of your memory
-        # (`memory_reads.reach_of` over the gateway's state), set by the state that holds this.
+        # Whose work an agent's run is and which folder's memory it reads (`memory_reads.reach_of`,
+        # `memory_locality.work_folder`), for its first prompt; set by the state that holds this.
         self.memory_reach: Callable[[str], Reach] | None = None
+        self.memory_folder: Callable[[Reach], str] | None = None
         self._agents: dict[str, SubagentInfo] = {}
         self._tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
         # Queued spawns carry their addressable ``SubagentInfo``: a real id so
@@ -2174,6 +2175,7 @@ class SubagentManager:
             is_new=is_new,
             session_key=session_key,
             reach=self.memory_reach,
+            folder_of=self.memory_folder,
         )
 
         result_text = ""
@@ -2185,11 +2187,8 @@ class SubagentManager:
         await self._fire_event(
             "subagent_spawn", info, {"task": _redact(info.task), "agent": agent or ""}
         )
-        # Stream results to disk for orchestrated chat.
-
         # Record PID for orphan recovery
         try:
-
             pid = self._sessions.get_pid(session_key)
             if pid:
                 info._pid = pid  # make available for _write_tombstone

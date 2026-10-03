@@ -20,6 +20,8 @@ async function mountStudio() {
       ...real,
       api: {
         ...(real.api as object),
+        // Only the memory every chat shares: the picker of folders' memories stays out of sight.
+        memoryPartitions: () => Promise.resolve([]),
         memoryStats: () => Promise.resolve(null),
         memorySemantic: () => { reads += 1; return Promise.resolve(facts) },
         memoryEpisodic: () => Promise.resolve([]),
@@ -67,7 +69,7 @@ describe('editing a fact', () => {
     expect(box.value).toBe('vim')
     fireEvent.change(box, { target: { value: 'helix' } })
     fireEvent.click(screen.getByRole('button', { name: /Save/ }))
-    await waitFor(() => expect(writeSemantic).toHaveBeenCalledWith('user.editor', 'helix'))
+    await waitFor(() => expect(writeSemantic).toHaveBeenCalledWith('user.editor', 'helix', ''))
     // The Studio reads the store again, and the inspector shows what is stored now.
     await waitFor(() => expect(reads).toBeGreaterThan(1))
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Value of user.editor' })).toBeNull())
@@ -84,7 +86,7 @@ describe('editing a fact', () => {
     expect(writeSemantic).not.toHaveBeenCalled()
     fireEvent.change(box, { target: { value: '{"theme": "light", "width": 80}' } })
     fireEvent.click(screen.getByRole('button', { name: /Save/ }))
-    await waitFor(() => expect(writeSemantic).toHaveBeenCalledWith('project.kettle.settings', { theme: 'light', width: 80 }))
+    await waitFor(() => expect(writeSemantic).toHaveBeenCalledWith('project.kettle.settings', { theme: 'light', width: 80 }, ''))
   })
 
   it('says why a refused save was refused, and keeps the text', async () => {
@@ -118,7 +120,7 @@ describe('editing a fact', () => {
     const box = await open('user.editor')
     fireEvent.change(box, { target: { value: 'emacs' } })
     fireEvent.click(screen.getByRole('button', { name: /Save/ }))
-    await waitFor(() => expect(writeSemantic).toHaveBeenCalledWith('user.editor', 'emacs'))
+    await waitFor(() => expect(writeSemantic).toHaveBeenCalledWith('user.editor', 'emacs', ''))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('textbox', { name: 'Value of user.editor' })).toBeNull()
     refuse(new Error('Value contains blocked content patterns'))

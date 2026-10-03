@@ -60,11 +60,12 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, make_private_dirs
 from personalclaw.config.loader import MEMORY_VAULT_MODES
 
 if TYPE_CHECKING:
     from personalclaw.memory_graph import Entity
+    from personalclaw.memory_locality import Partition
     from personalclaw.memory_record import MemoryRecord
     from personalclaw.memory_service import MemoryService
 
@@ -88,6 +89,10 @@ _KIND_DIR: dict[str, str] = {
 _TAGS_DIR = "tags"
 _ENTITIES_DIR = "entities"
 _RAW_DIR = "raw"
+#: Where each folder's memory is projected (``memory_locality.partitions``): one vault per
+#: folder, ``folders/<partition id>/``, with its own index, manifest and pages, so the global
+#: memory's projection, its prune and its lint never touch another memory's pages.
+FOLDERS_DIR = "folders"
 #: Where a swept ``raw/`` file is parked once its knowledge item exists. Inside
 #: ``raw/`` (so it is obvious where the file went) and dot-prefixed (so the next
 #: sweep skips it) — moving rather than deleting, because the sweep's whole job is
@@ -517,11 +522,17 @@ def render_index(
     *,
     entities: "list[Entity] | None" = None,
     mode: str = "mirror",
+    folder: "Partition | None" = None,
+    folders: "list[tuple[Partition, int]] | None" = None,
 ) -> RenderedNote:
     """The root ``MEMORY.md`` — counts by kind, the entity roster, and the
     highest-heat global facts. The vault's front door, and the page that makes every
     entity page reachable (an entity nothing links to would otherwise read as an
-    orphan to the vault lint)."""
+    orphan to the vault lint).
+
+    *folder* is the folder whose memory this vault projects (``folders/<id>/``), named in its
+    title, and said when the folder is gone. *folders* are the folders' own memories, each with
+    how many records it holds, listed in the global memory's index with a link to each one's."""
     from personalclaw.memory_record import MemoryKind, MemoryScope
 
     by_kind: dict[str, int] = {}
@@ -529,27 +540,53 @@ def render_index(
         by_kind[r.kind.value] = by_kind.get(r.kind.value, 0) + 1
 
     two_way = mode == "two_way"
+    whose = "PersonalClaw's memory"
+    title = "# Memory Vault"
+    if folder is not None:
+        named = folder.shown or f"a folder no record names ({folder.id})"
+        whose = f"the memory chats working in {named} keep"
+        title = f"# Memory of {named}"
     lines = [
-        "# Memory Vault",
+        title,
         "",
         (
-            "A **two-way** projection of PersonalClaw's memory. Open this folder in "
+            f"A **two-way** projection of {whose}. Open this folder in "
             "Obsidian for the graph view. Edit a fact page above its "
             "`personalclaw:generated` marker and the next sync reads your change back "
             "into memory — your edit wins. Anything the sync cannot read confidently is "
             "left exactly as you wrote it and reported in Settings → Memory → Health."
             if two_way
-            else "A read-only mirror of PersonalClaw's memory. Open this folder in "
+            else f"A read-only mirror of {whose}. Open this folder in "
             "Obsidian for the graph view. Do not edit — files are regenerated from the "
             "memory store. Switch `memory.vault_mode` to `two_way` to edit them back."
         ),
         "",
-        "## Counts",
-        "",
     ]
+    if folder is not None and folder.gone:
+        lines += [
+            "That folder is no longer there, so no chat reads this memory any more. "
+            "Remove it in Settings → Memory.",
+            "",
+        ]
+    lines += ["## Counts", ""]
     for kind in sorted(by_kind):
         lines.append(f"- **{kind}**: {by_kind[kind]}")
     lines.append("")
+    if folders:
+        lines += [
+            "## Folders",
+            "",
+            "What chats working in a folder of their own keep, each in a vault of its own:",
+            "",
+        ]
+        for part, count in folders:
+            named = part.shown or f"a folder no record names ({part.id})"
+            gone = " (the folder is gone)" if part.gone else ""
+            noun = "record" if count == 1 else "records"
+            lines.append(
+                f"- [{named}]({FOLDERS_DIR}/{part.id}/{_INDEX_NAME}){gone} — {count} {noun}"
+            )
+        lines.append("")
 
     links: set[str] = set()
     lines.append(GENERATED_MARKER)
@@ -688,12 +725,25 @@ class MemoryVault:
     :func:`vault_for`). ``sync()`` is idempotent and cheap when nothing changed.
 
     ``mode`` is ``memory.vault_mode``. Only ``two_way`` reads pages back; every other
-    behavior (projection, raw sweep, seeding, lint) is identical in ``mirror``."""
+    behavior (projection, raw sweep, seeding, lint) is identical in ``mirror``.
 
-    def __init__(self, service: "MemoryService", vault_dir: Path, *, mode: str = "mirror") -> None:
+    The global memory's vault projects each folder's memory too (``memory_locality.
+    partitions``), as a vault of its own under ``folders/<partition id>/``: *folder* is the
+    folder's memory such a vault projects. Only the global memory's vault sweeps ``raw/`` and
+    seeds the starter pages."""
+
+    def __init__(
+        self,
+        service: "MemoryService",
+        vault_dir: Path,
+        *,
+        mode: str = "mirror",
+        folder: "Partition | None" = None,
+    ) -> None:
         self._svc = service
         self._dir = vault_dir
         self._mode = mode if mode in MEMORY_VAULT_MODES else "mirror"
+        self._folder = folder
 
     @property
     def path(self) -> Path:
@@ -717,15 +767,28 @@ class MemoryVault:
             return {}
 
     def status(self) -> dict:
-        """Lightweight status for the UI — no full render."""
+        """Lightweight status for the UI — no full render. The global memory's vault lists each
+        folder's vault too: where it is, whose memory it is, and how many files it holds."""
         manifest = self._load_manifest()
         # note files = manifest minus the index (index is tracked too)
-        return {
+        out: dict = {
             "path": str(self._dir),
             "files": len(manifest),
             "exists": self._dir.exists(),
             "mode": self._mode,
         }
+        if self._folder is None:
+            out["folders"] = [
+                {
+                    "id": part.id,
+                    "folder": part.shown,
+                    "gone": part.gone,
+                    "path": str(self._dir / FOLDERS_DIR / part.id),
+                    "files": len(_manifest_at(self._dir / FOLDERS_DIR / part.id)),
+                }
+                for part in _folder_partitions()
+            ]
+        return out
 
     # ── the graph projection every page shape needs ──────────────────────────
 
@@ -857,9 +920,19 @@ class MemoryVault:
             hub = render_session_hub(conversation_id, members)
             rendered[hub.relpath] = hub
 
+        # Each folder's memory, a vault of its own, projected first so the global memory's index
+        # can list each one with what it holds.
+        synced = self._sync_folders() if self._folder is None else {}
+
         # Root index.
         try:
-            rendered[_INDEX_NAME] = render_index(records, entities=entities, mode=self._mode)
+            rendered[_INDEX_NAME] = render_index(
+                records,
+                entities=entities,
+                mode=self._mode,
+                folder=self._folder,
+                folders=[(part, int(done.get("records", 0))) for part, done in synced.values()],
+            )
         except Exception:
             logger.debug("vault: index render failed", exc_info=True)
 
@@ -915,15 +988,18 @@ class MemoryVault:
         except OSError:
             logger.debug("vault: manifest write failed", exc_info=True)
 
-        # The drop box has to be visible to be usable, so make it exist. Created here
-        # rather than in `seed()` because it is structure, not content — and `sweep_raw`
-        # still short-circuits on an empty one before it opens a knowledge store.
-        try:
-            (self._dir / _RAW_DIR).mkdir(parents=True, exist_ok=True)
-        except OSError:
-            logger.debug("vault: could not create raw/", exc_info=True)
-        swept = self.sweep_raw(knowledge=knowledge, enqueue=enqueue)
-        seeded = self.seed(starter_seeds(self._mode))
+        swept = {"ingested": 0}
+        seeded = {"written": 0}
+        if self._folder is None:
+            # The drop box has to be visible to be usable, so make it exist. Created here
+            # rather than in `seed()` because it is structure, not content — and `sweep_raw`
+            # still short-circuits on an empty one before it opens a knowledge store.
+            try:
+                (self._dir / _RAW_DIR).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                logger.debug("vault: could not create raw/", exc_info=True)
+            swept = self.sweep_raw(knowledge=knowledge, enqueue=enqueue)
+            seeded = self.seed(starter_seeds(self._mode))
 
         summary = {
             "records": len(records),
@@ -937,8 +1013,47 @@ class MemoryVault:
             "raw_ingested": swept["ingested"],
             "seeded": seeded["written"],
         }
+        if self._folder is None:
+            summary["folders"] = {pid: done for pid, (_part, done) in synced.items()}
         logger.info("memory vault synced: %s", summary)
         return summary
+
+    # ── each folder's memory, a vault of its own ────────────────────────────
+
+    def _sync_folders(self) -> dict[str, tuple["Partition", dict]]:
+        """Project each folder's memory that holds records into its own vault, and retire the
+        vault of one that is gone (removed in Settings, or with its folder): the pages its sync
+        wrote go, and a page someone else put there stays. Returns each folder vault's summary,
+        by its partition's id."""
+        from personalclaw import memory_locality
+        from personalclaw.memory_service import MemoryService
+
+        root = self._dir / FOLDERS_DIR
+        out: dict[str, tuple[Partition, dict]] = {}
+        for part in _folder_partitions():
+            try:
+                store = memory_locality.open_partition(part).vector_store
+                if store is None:
+                    continue
+                # Private as every folder of the vault is, the one that holds the folder vaults too.
+                make_private_dirs(root)
+                vault = MemoryVault(
+                    MemoryService.over_vector_store(store),
+                    root / part.id,
+                    mode=self._mode,
+                    folder=part,
+                )
+                out[part.id] = (part, vault.sync())
+            except Exception:  # noqa: BLE001 - one folder's memory must not stall the vault
+                logger.debug("vault: the memory of %s failed to sync", part.id, exc_info=True)
+        if root.is_dir():
+            for child in sorted(root.iterdir()):
+                if child.name not in out and child.is_dir() and not child.is_symlink():
+                    try:
+                        _retire(child)
+                    except OSError:  # one vault that will not go must not stall the rest
+                        logger.debug("vault: the vault at %s did not retire", child, exc_info=True)
+        return out
 
     def _render_entity(
         self,
@@ -1206,9 +1321,15 @@ class MemoryVault:
         if not self._dir.is_dir():
             return flags
         pages: dict[str, tuple[dict, str]] = {}
+        # Each folder's memory is a vault of its own, linted as one (``vault_for``).
+        own = (
+            (_RAW_DIR + "/", ".")
+            if self._folder is not None
+            else (_RAW_DIR + "/", ".", FOLDERS_DIR + "/")
+        )
         for path in sorted(self._dir.rglob("*.md")):
             rel = path.relative_to(self._dir).as_posix()
-            if rel.startswith((_RAW_DIR + "/", ".")):
+            if rel.startswith(own):
                 continue
             try:
                 block, body = split_page(path.read_text(encoding="utf-8"))
@@ -1397,11 +1518,68 @@ def vault_dir_from_config() -> Path | None:
 
 
 def vault_for(service: "MemoryService") -> MemoryVault | None:
-    """Build a mode-aware vault for ``service`` from config, or None when off."""
+    """Build a mode-aware vault for ``service`` from config, or None when off: the global
+    memory's, or, for a folder's memory, that folder's own vault inside it (:data:`FOLDERS_DIR`)."""
     mode = vault_mode_from_config()
     if mode == "off":
         return None
-    return MemoryVault(service, vault_path_from_config(), mode=mode)
+    root = vault_path_from_config()
+    part = _partition_of(service)
+    if part is None:
+        return MemoryVault(service, root, mode=mode)
+    return MemoryVault(service, root / FOLDERS_DIR / part.id, mode=mode, folder=part)
+
+
+def _partition_of(service: "MemoryService") -> "Partition | None":
+    """The folder's memory *service* is over, read from where its database lives, or None for
+    the global memory (and for a store kept anywhere else)."""
+    from personalclaw import memory_locality
+
+    store = getattr(service, "_vs", None)
+    db_path = getattr(store, "db_path", None)
+    if db_path is None:
+        return None
+    folder = Path(db_path).parent
+    if folder.parent != memory_locality.partition_for(None).parent:
+        return None
+    part = memory_locality.partition_named(folder.name)
+    return part if part is not None and not part.is_global else None
+
+
+def _folder_partitions() -> list["Partition"]:
+    """Every folder's memory (``memory_locality.partitions``), the global memory left out."""
+    from personalclaw import memory_locality
+
+    return [part for part in memory_locality.partitions() if not part.is_global]
+
+
+def _manifest_at(vault_dir: Path) -> dict[str, str]:
+    """The manifest of the vault at *vault_dir*: the files its sync wrote."""
+    try:
+        data = json.loads((vault_dir / _MANIFEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _retire(vault_dir: Path) -> None:
+    """Remove the files the vault at *vault_dir* wrote, and every folder that leaves empty: the
+    vault of a folder's memory that is gone. A file someone else put there stays."""
+    inside = vault_dir.resolve()
+    for relpath in _manifest_at(vault_dir):
+        target = vault_dir / relpath
+        if not target.resolve().is_relative_to(inside):
+            continue  # a manifest names only pages inside its own vault
+        if target.is_file() and not target.is_symlink():
+            target.unlink(missing_ok=True)
+    (vault_dir / _MANIFEST_NAME).unlink(missing_ok=True)
+    folders = [d for d in vault_dir.rglob("*") if d.is_dir() and not d.is_symlink()]
+    for folder in [*sorted(folders, reverse=True), vault_dir]:
+        try:
+            if not any(folder.iterdir()):
+                folder.rmdir()
+        except OSError:  # a folder that cannot be emptied or read stays
+            logger.debug("vault: %s stays", folder, exc_info=True)
 
 
 def mirror_after_consolidation(service: "MemoryService") -> None:

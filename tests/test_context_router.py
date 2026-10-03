@@ -376,7 +376,7 @@ def test_route_for_project_threads_query_into_skills_index(monkeypatch):
     import personalclaw.dashboard.handlers.context as ctx
 
     seen: list[str] = []
-    monkeypatch.setattr(ctx, "_memory_service", lambda state: None)
+    monkeypatch.setattr(ctx, "_memory_service", lambda state, project: None)
     monkeypatch.setattr(ctx, "_knowledge_retriever", lambda: None)
     monkeypatch.setattr(ctx, "_skills_index", lambda query: seen.append(query) or [])
 

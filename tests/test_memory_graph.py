@@ -40,6 +40,7 @@ class TestMemoryGraphNodeExtraction:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = self._make_state(tmp_path)
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -53,6 +54,7 @@ class TestMemoryGraphNodeExtraction:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = self._make_state(tmp_path, prefs="- Prefers dark mode\n- Uses vim keybindings")
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -68,6 +70,7 @@ class TestMemoryGraphNodeExtraction:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = self._make_state(tmp_path, prefs="- OK\n- Yes\n- Prefers concise output")
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -84,6 +87,7 @@ class TestMemoryGraphNodeExtraction:
             prefs="# User Preferences\n<!-- comment -->\n- Prefers dark mode",
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -100,6 +104,7 @@ class TestMemoryGraphNodeExtraction:
             projects="## PersonalClaw\n- Repository: ssh://git.example.com/personalclaw\n- Branch: main",  # noqa: E501
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -119,6 +124,7 @@ class TestMemoryGraphNodeExtraction:
             history="# 2026-03-25\n#### 06:47 UTC\n[2026-03-25 01:38] Did some work on the feature",
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -141,6 +147,7 @@ class TestMemoryGraphNodeExtraction:
         ]
         state.context_builder.memory.vector_store = vs
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -161,6 +168,7 @@ class TestMemoryGraphNodeExtraction:
         vs.get_lessons.return_value = []
         state.context_builder.memory.vector_store = vs
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -185,6 +193,7 @@ class TestMemoryGraphNodeExtraction:
         vs.get_lessons.return_value = []
         state.context_builder.memory.vector_store = vs
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -210,6 +219,7 @@ class TestMemoryGraphNodeExtraction:
         vs.get_lessons.return_value = []
         state.context_builder.memory.vector_store = vs
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -234,6 +244,7 @@ class TestMemoryGraphNodeExtraction:
         vs.get_lessons.return_value = []
         state.context_builder.memory.vector_store = vs
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -258,6 +269,7 @@ class TestMemoryEndpointRedaction:
         state = MagicMock()
         state.context_builder.memory.vector_store = vs
         req = MagicMock()
+        req.query = {}  # the memory every chat shares
         req.app = {"state": state}
         resp = await mod.api_memory_semantic(req)
         data = json.loads(resp.body)
@@ -274,6 +286,7 @@ class TestMemoryEndpointRedaction:
         state = MagicMock()
         state.context_builder.memory.vector_store = vs
         req = MagicMock()
+        req.query = {}  # the memory every chat shares
         req.app = {"state": state}
         resp = await mod.api_memory_semantic(req)
         data = json.loads(resp.body)
@@ -290,6 +303,7 @@ class TestMemoryEndpointRedaction:
         state = MagicMock()
         state.context_builder.memory.vector_store = vs
         req = MagicMock()
+        req.query = {}  # the memory every chat shares
         req.app = {"state": state}
         resp = await mod.api_memory_semantic(req)
         data = json.loads(resp.body)
@@ -344,6 +358,7 @@ class TestMemoryEndpointRedaction:
         state = MagicMock()
         state.context_builder.memory.vector_store = vs
         req = MagicMock()
+        req.query = {}  # the memory every chat shares
         req.app = {"state": state}
         resp = await mod.api_memory_semantic(req)
         data = json.loads(resp.body)
@@ -398,6 +413,7 @@ class TestMemoryEndpointRedaction:
         state = MagicMock()
         state.context_builder.memory.vector_store = vs
         req = MagicMock()
+        req.query = {}  # the memory every chat shares
         req.app = {"state": state}
         resp = await mod.api_memory_semantic(req)
         data = json.loads(resp.body)
@@ -419,6 +435,7 @@ class TestMemoryEndpointRedaction:
         state = MagicMock()
         state.context_builder.memory.vector_store = vs
         req = MagicMock()
+        req.query = {}  # the memory every chat shares
         req.app = {"state": state}
         await mod.api_memory_semantic(req)
         # Original dict must be untouched
@@ -455,6 +472,7 @@ class TestMemoryGraphEdgeDetection:
             projects="## PersonalClaw\n- Local path: /home/user/personalclaw",
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -477,6 +495,7 @@ class TestMemoryGraphEdgeDetection:
             projects="## TestProject\n- Some detail",
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -505,6 +524,7 @@ class TestMemoryGraphResponseFormat:
             context_builder=cb,
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -539,6 +559,7 @@ class TestMemoryGraphResponseFormat:
             context_builder=cb,
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -563,6 +584,7 @@ class TestMemoryGraphResponseFormat:
             context_builder=cb,
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp1 = await api_memory_graph(request)
@@ -588,6 +610,7 @@ class TestMemoryGraphResponseFormat:
             context_builder=cb,
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -619,6 +642,7 @@ class TestMemoryGraphErrorHandling:
             context_builder=cb,
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)
@@ -650,6 +674,7 @@ class TestMemoryGraphErrorHandling:
             context_builder=cb,
         )
         request = MagicMock()
+        request.query = {}  # the memory every chat shares
         request.app = {"state": state}
 
         resp = await api_memory_graph(request)

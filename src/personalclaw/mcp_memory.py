@@ -59,13 +59,19 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "memory_list",
             "annotations": {"readOnlyHint": True},
-            "description": "List all saved lessons and corrections",
+            "description": (
+                "List all saved lessons and corrections: those every chat keeps, and those the "
+                "chats working in a folder keep in that folder's memory, each named by its folder"
+            ),
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "memory_forget",
             "annotations": {"readOnlyHint": False, "destructiveHint": True},
-            "description": "Remove lessons whose rule contains the given substring",
+            "description": (
+                "Remove lessons whose rule contains the given substring, from every chat's "
+                "memory and from each folder's"
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -221,7 +227,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         return f"Saved lesson ({scope}): {rule}"
 
     if name == "memory_list":
-        d = _get("/api/lessons")
+        # Every memory she has: every chat's, and each folder's own (`?partition=*`).
+        d = _get("/api/lessons?partition=*")
         # Work that reads no memory (a Temporary chat's, an app's not given it) is told why, and
         # an unanswered read is a failure: neither is "no lessons".
         if d.get("withheld"):
@@ -233,21 +240,25 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return "No lessons saved."
         lines = []
         for le in lessons:
-            # This is the INVENTORY (every scope), so a workspace-scoped lesson is
-            # labeled with the directory it belongs to. Listing it unlabeled beside
-            # global rules would present a project-local rule as a universal one —
-            # the same confusion the scope exists to prevent, one surface over.
+            # This is the INVENTORY (every scope, every memory), so a workspace-scoped lesson is
+            # labeled with the directory it belongs to, and one a folder's memory keeps with that
+            # folder. Listing either unlabeled beside global rules would present a project-local
+            # rule as a universal one — the same confusion the scope exists to prevent.
             ws = le.get("workspace") or ""
             suffix = f" (workspace: {ws})" if le.get("scope") == "workspace" and ws else ""
-            lines.append(f"[{le.get('category', '?')}] {le['rule']}{suffix}")
+            lines.append(f"[{le.get('category', '?')}] {le['rule']}{suffix}{_kept_in(le)}")
         return "\n".join(lines)
 
     if name == "memory_forget":
         query = args["query"]
-        d = _delete("/api/lessons", {"rule": query})
+        d = _delete("/api/lessons?partition=*", {"rule": query})
         if d.get("error"):
             return tool_failure(f"{d['error']}")
-        return f"Removed lessons matching: {query}"
+        removed = d.get("removed") or []
+        if not removed:
+            return f"No lesson matches: {query}"
+        where = ", ".join(_memory_named(r) for r in removed)
+        return f"Removed lessons matching: {query} (from {where})"
 
     if name == "memory_recall":
         query = (args.get("query") or "").strip()
@@ -278,6 +289,20 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         return _triage_rules(args)
 
     return f"Unknown tool: {name}"
+
+
+def _memory_named(row: dict[str, Any]) -> str:
+    """The memory a lessons row names, in words: every chat's, or a folder's."""
+    folder = str(row.get("folder") or "")
+    if not row.get("partition"):
+        return "the memory every chat keeps"
+    named = f"the memory of {folder}" if folder else "a folder's memory no record names"
+    return f"{named}, a folder that is gone" if row.get("folder_gone") else named
+
+
+def _kept_in(row: dict[str, Any]) -> str:
+    """Where a listed lesson is kept, when that is a folder's memory: "" for every chat's."""
+    return f" (kept in {_memory_named(row)})" if row.get("partition") else ""
 
 
 def _chat_search(args: dict[str, Any]) -> str:

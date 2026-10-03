@@ -1518,7 +1518,7 @@ Search what was said in the user's earlier chats with you. Returns each matching
 
 ### `memory_forget`
 
-Remove lessons whose rule contains the given substring
+Remove lessons whose rule contains the given substring, from every chat's memory and from each folder's
 
 **Response type:** `memory.forget.result`
 
@@ -1537,7 +1537,7 @@ Remove lessons whose rule contains the given substring
 
 ### `memory_list`
 
-List all saved lessons and corrections
+List all saved lessons and corrections: those every chat keeps, and those the chats working in a folder keep in that folder's memory, each named by its folder
 
 **Response type:** `memory.list`
 

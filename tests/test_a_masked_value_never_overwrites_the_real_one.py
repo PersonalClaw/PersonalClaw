@@ -535,6 +535,7 @@ def test_writing_back_a_listed_fact_keeps_its_hidden_key(tmp_path, monkeypatch):
 
     listed = MagicMock()
     listed.app = {"state": state}
+    listed.query = {}  # the memory every chat shares, as the page asks for it
     entries = json.loads(_run(M.api_memory_semantic(listed)).body)["entries"]
     shown = json.loads(entries[0]["value_json"])
     assert MASK in shown and SECRET not in shown

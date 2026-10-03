@@ -91,6 +91,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "memory_recall_timeout": (
         "Memory search did not finish within its time limit, so nothing was recalled this time."
     ),
+    # A request about one folder's memory (`?partition=`, `/api/memory/partitions/{id}`) whose id
+    # names none: removed since the page listed it, or never one (`partition_named`).
+    # The page says so rather than showing the shared memory in its place.
+    "memory_partition_not_found": "No folder's memory has that id: it was removed, or never was.",
+    # A folder's memory that is there and whose memory database cannot be opened, so nothing in
+    # it can be listed, changed or removed record by record this time.
+    "memory_partition_unavailable": "That folder's memory database cannot be opened right now.",
     # A DIFFERENT check from `invalid_path`, and the distinction is load-bearing: `_reject_name`
     # judges a single NAME (separators, `..`, over-long) before any root is consulted, so it fires
     # on input the allowlist never sees. Its three call sites — mkdir, upload, and the create-file

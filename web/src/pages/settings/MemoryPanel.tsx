@@ -43,6 +43,7 @@ import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { tabListKeys } from '../../lib/tabListKeys'
 import { useUnsavedGuard } from '../../lib/useUnsavedGuard'
+import { MemoryPartitionContext, MemoryPartitionPicker, partitionKey, useMemoryPartition } from './MemoryPartitionPicker'
 
 // Two-level tab model (MEM-i3): the exploration surfaces — every "look at what's
 // stored" view — nest under Browse; the top level keeps the distinct destinations
@@ -84,14 +85,20 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
   // panel does not keep.
   const setTab = (t: Tab) => setTabRaw(t)
   const onTabKey = tabListKeys((i) => setTab(TOP_TABS[i].id))
+  // Which memory the panel shows: the one every chat shares, or a folder's own (`?partition=`).
+  const [partition, setPartition] = useQueryParam(query, setQuery, 'partition', '', { replace: true })
+  const statsKey = partitionKey('settings:memory-stats', partition)
   const { data: stats, refresh: refreshStats } = useQuery(
-    'settings:memory-stats', () => api.memoryStats().catch(() => null), { persist: true },
+    statsKey, () => api.memoryStats(partition).catch(() => null), { persist: true },
   )
-  const reloadStats = () => { invalidateKeys('settings:memory-stats'); refreshStats() }
+  const reloadStats = () => { invalidateKeys(statsKey); refreshStats() }
 
   return (
+    <MemoryPartitionContext.Provider value={partition}>
     <div className="flex flex-col" style={{ minHeight: 0 }}>
       <PanelHeader title="Memory" hint="Explore and manage what the system remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail." />
+
+      <MemoryPartitionPicker partition={partition} onPick={setPartition} />
 
       {stats && (
         <div className="mb-l grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -133,11 +140,13 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
         })}
       </div>
 
-      {/* Studio owns its own 3-pane height; the tool tabs get a bounded scroll body. */}
+      {/* Studio owns its own 3-pane height; the tool tabs get a bounded scroll body. Keyed by the
+          memory shown: another memory is another set of records, so a selection, a draft or a
+          recall result from the last one does not carry over. */}
       {tab === 'studio' ? (
-        <MemoryStudio onChanged={reloadStats} initialSel={query.sel || undefined} />
+        <MemoryStudio key={partition} onChanged={reloadStats} initialSel={query.sel || undefined} />
       ) : (
-        <ToolTabBody>
+        <ToolTabBody key={partition}>
           {tab === 'recall' && <RecallTab />}
           {tab === 'health' && <HealthTab onChanged={reloadStats} />}
           {tab === 'audit' && <AuditTab />}
@@ -146,6 +155,7 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
         </ToolTabBody>
       )}
     </div>
+    </MemoryPartitionContext.Provider>
   )
 }
 
@@ -316,6 +326,8 @@ export function studioScope(
 }
 
 function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initialSel?: string }) {
+  const partition = useMemoryPartition()
+  const k = (key: string) => partitionKey(key, partition)
   const [kindFilter, setKindFilter] = useState<StudioKind | 'all'>('all')
   const [q, setQ] = useState('')
   // `initialSel` (e.g. `epi:42`, from a `[Memory N]` chat citation's deep-link)
@@ -343,38 +355,39 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // with `[]` — a failed read used to render "No memories yet" to someone whose memories
   // merely failed to load. See `settingsListHonesty.test.ts`.
   const { data: facts, error: factsErr, refresh: refreshFacts } = useQuery(
-    'settings:memory-semantic', () => api.memorySemantic(),
+    k('settings:memory-semantic'), () => api.memorySemantic(partition),
   )
   const { data: episodics, error: epiErr, refresh: refreshEpi } = useQuery(
-    'settings:memory-episodic:all', () => api.memoryEpisodic({ limit: 100 }),
+    k('settings:memory-episodic:all'), () => api.memoryEpisodic({ limit: 100 }, partition),
   )
   const { data: lessons, error: lessonsErr, refresh: refreshLessons } = useQuery(
-    'settings:lessons', () => api.lessons(), { persist: false },
+    k('settings:lessons'), () => api.lessons(partition), { persist: false },
   )
   const { data: graph, refresh: refreshGraph } = useQuery(
-    'settings:memory-graph', () => api.memoryGraph(), { persist: false },
+    k('settings:memory-graph'), () => api.memoryGraph(partition), { persist: false },
   )
-  const { data: entityGraph, refresh: refreshEntityGraph } = useQuery('settings:memory-entity-graph', () => api.memoryEntityGraph(), { persist: false })
+  const { data: entityGraph, refresh: refreshEntityGraph } = useQuery(k('settings:memory-entity-graph'), () => api.memoryEntityGraph(partition), { persist: false })
   const { data: entityData, error: entitiesErr, refresh: refreshEntities } = useQuery(
-    'settings:memory-entities', () => api.memoryEntities(), { persist: false },
+    k('settings:memory-entities'), () => api.memoryEntities(partition), { persist: false },
   )
   const { data: slotData, error: slotsErr, refresh: refreshSlots } = useQuery(
-    'settings:memory-slots', () => api.memorySlots(), { persist: false },
+    k('settings:memory-slots'), () => api.memorySlots(partition), { persist: false },
   )
-  const { data: proposalData, refresh: refreshProposals } = useQuery('settings:memory-proposals', () => api.memoryEntityProposals(), { persist: false })
+  const { data: proposalData, refresh: refreshProposals } = useQuery(k('settings:memory-proposals'), () => api.memoryEntityProposals(partition), { persist: false })
   const reloadAll = () => {
-    for (const k of ['settings:memory-semantic', 'settings:lessons', 'settings:memory-graph',
+    for (const key of ['settings:memory-semantic', 'settings:lessons', 'settings:memory-graph',
       'settings:memory-entity-graph', 'settings:memory-entities', 'settings:memory-slots',
-      'settings:memory-proposals']) invalidateKeys(k)
+      'settings:memory-proposals']) invalidateKeys(k(key))
     invalidateKeys('settings:memory-episodic', true)
+    invalidateKeys('settings:memory-partitions')
     refreshFacts(); refreshEpi(); refreshLessons(); refreshGraph()
     refreshEntityGraph(); refreshEntities(); refreshSlots(); refreshProposals(); onChanged()
   }
   const reloadGraphSide = () => {
-    for (const k of ['settings:memory-entity-graph', 'settings:memory-entities', 'settings:memory-proposals']) invalidateKeys(k)
+    for (const key of ['settings:memory-entity-graph', 'settings:memory-entities', 'settings:memory-proposals']) invalidateKeys(k(key))
     refreshEntityGraph(); refreshEntities(); refreshProposals(); onChanged()
   }
-  const reloadSlots = () => { invalidateKeys('settings:memory-slots'); refreshSlots() }
+  const reloadSlots = () => { invalidateKeys(k('settings:memory-slots')); refreshSlots() }
 
   const entities = entityData?.entities ?? []
   const slots = slotData?.slots ?? []
@@ -501,7 +514,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       if (!(await confirmDelete('memory', selected.fact.key, {
         body: 'The agent stops using it right away. This one is reversible — the Audit tab has an Undo for it.',
       }))) return
-      try { await api.deleteSemantic(selected.fact.key) } catch (e) { return fail('memory', e) }
+      try { await api.deleteSemantic(selected.fact.key, partition) } catch (e) { return fail('memory', e) }
     } else if (selected.kind === 'episodic' && selected.episodic) {
       // 🪤 This hand-rolled a dialog `confirmDelete` already produces, and lost its body doing so.
       // The two sibling deletes in this same function use the helper and therefore say "This cannot
@@ -518,7 +531,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // `canUndo` gates on `ev.memory_type === 'semantic'`, so there is no route back. Three deletes in
       // one function, two of which were saying the wrong thing; do not "finish the job" on this one.
       if (!(await confirmDelete('episodic memory', rowSubject([selected.episodic.text], 40)))) return
-      try { await api.deleteEpisodic(selected.episodic.id) } catch (e) { return fail('episodic memory', e) }
+      try { await api.deleteEpisodic(selected.episodic.id, partition) } catch (e) { return fail('episodic memory', e) }
     } else if (selected.kind === 'lesson' && selected.lesson) {
       // `selected.lesson.rule` IS the lesson — it is what `deleteLesson` takes as its identity — and
       // the dialog asked about "this lesson" while holding it.
@@ -538,7 +551,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           + 'comes back with its confidence reset — forgetting one deliberately voids the observations '
           + 'that earned it.',
       }))) return
-      try { await api.deleteLesson(selected.lesson.rule) } catch (e) { return fail('lesson', e) }
+      try { await api.deleteLesson(selected.lesson.rule, partition) } catch (e) { return fail('lesson', e) }
     } else if (selected.kind === 'entity' && selected.entity) {
       // 🔑 The blast radius is the whole reason this affordance was missing: the code here said an
       // entity's removal "has to reason about the links pointing at it". The store settled that
@@ -552,7 +565,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           ? `${n} ${n === 1 ? 'memory links' : 'memories link'} to it. ${n === 1 ? 'That link is' : 'Those links are'} dropped — the ${n === 1 ? 'memory itself stays' : 'memories themselves stay'}. This cannot be undone.`
           : 'Nothing links to it yet, so no memories are affected. This cannot be undone.',
       }))) return
-      try { await api.memoryEntityDelete(selected.entity.id) } catch (e) { return fail('entity', e) }
+      try { await api.memoryEntityDelete(selected.entity.id, partition) } catch (e) { return fail('entity', e) }
     } else return
     setSelUid(null); reloadAll()
   }
@@ -754,6 +767,8 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
   /** The same, for an unsaved edit to a fact's value — see `FactValueEditor`. */
   factDrafts: Map<string, string>
 }) {
+  const partition = useMemoryPartition()
+  const inThisMemory = partition ? `&partition=${encodeURIComponent(partition)}` : ''
   const Icon = STUDIO_KIND_META[item.kind].icon
   // A slot is not "delete"-able from here: it is a register — its LINES are retired
   // individually and the row itself is structural.
@@ -800,7 +815,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
               <p data-type="caption" className="text-on-surface-low">
                 Forgotten: it no longer reaches the assistant, and the same request never learns it
                 again. It stays here, and among the forgotten ones in{' '}
-                <TextLink href="#/settings/memory?tab=settings">Learned preferences</TextLink>, so the
+                <TextLink href={`#/settings/memory?tab=settings${inThisMemory}`}>Learned preferences</TextLink>, so the
                 retirement stays visible.
               </p>
             ) : (
@@ -808,7 +823,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
                 Learned from how you asked, and shown to the assistant on every turn while it holds.
                 The Learned preferences list shows how strongly it is held now, and pins or
                 forgets it.{' '}
-                <TextLink href={`#/settings/memory?tab=settings&pref=${encodeURIComponent(item.fact.key)}`}>
+                <TextLink href={`#/settings/memory?tab=settings&pref=${encodeURIComponent(item.fact.key)}${inThisMemory}`}>
                   Manage in Learned preferences →
                 </TextLink>
               </p>
@@ -912,9 +927,10 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
  *  rather than an error band: a record with no links is the common case on a young store, and
  *  a scary red box for "nothing links here" would be wrong. */
 function RecordLinks({ item }: { item: StudioItem }) {
+  const partition = useMemoryPartition()
   const ref = item.kind === 'fact' ? `sem:${item.fact?.key ?? ''}` : `epi:${item.episodic?.id ?? ''}`
   const { data, error } = useQuery(
-    `settings:memory-record-links:${ref}`, () => api.memoryRecordLinks(ref), { persist: false },
+    partitionKey(`settings:memory-record-links:${ref}`, partition), () => api.memoryRecordLinks(ref, partition), { persist: false },
   )
   if (error) {
     return (
@@ -979,6 +995,7 @@ export function FactValueEditor({ fact, onSaved, drafts }: {
   onSaved: () => void
   drafts: Map<string, string>
 }) {
+  const partition = useMemoryPartition()
   const stored = useMemo(() => storedValueOf(fact.value_json), [fact.value_json])
   const asText = typeof stored === 'string'
   const initial = asText ? (stored as string) : JSON.stringify(stored, null, 2)
@@ -1011,7 +1028,7 @@ export function FactValueEditor({ fact, onSaved, drafts }: {
     setBusy(true)
     setErr('')
     try {
-      await api.writeSemantic(fact.key, value)
+      await api.writeSemantic(fact.key, value, partition)
       drafts.delete(fact.key)
       setEditing(false)
       setSaved(true); window.setTimeout(() => setSaved(false), 1800)
@@ -1121,6 +1138,7 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
    *  cache it owned itself would die with it. Written through on each edit, dropped on save. */
   drafts: Map<string, DocDraft>
 }) {
+  const partition = useMemoryPartition()
   // The doc as the gateway last reported storing it, with its revision; `null` until a read lands.
   const [stored, setStored] = useState<Revisioned<string> | null>(null)
   const content = stored === null ? null : stored.value
@@ -1143,7 +1161,7 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
     setStored(null)
     setLoadErr('')
     const cached = drafts.get(which)
-    api.memoryDoc(which)
+    api.memoryDoc(which, partition)
       .then((doc) => { if (alive) { setStored(doc); setDraft(cached?.text ?? doc.value); setBase(cached?.base ?? doc) } })
       // `content` deliberately stays null — see the docstring. An empty string here is
       // the data-loss path, not a tidier default, and that holds with a cached draft in
@@ -1151,7 +1169,7 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
       // rather than being typed over a document nobody managed to read.
       .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : 'Could not load this document') })
     return () => { alive = false }
-  }, [which, reloads, drafts])
+  }, [which, reloads, drafts, partition])
   const dirty = content !== null && draft !== content
   useUnsavedGuard(dirty)
   // What the gateway reported storing, as the guard's own reads and writes return it: a landed save
@@ -1159,8 +1177,8 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
   // without one — and it is the one copy the next save can name.
   const latest = useRef<Revisioned<string> | null>(null)
   const guard = useStaleWriteGuard<string>({
-    read: () => api.memoryDoc(which).then((doc) => { latest.current = doc; return doc }),
-    write: (next, revision) => api.saveMemoryDoc(which, next, revision).then((doc) => { latest.current = doc }),
+    read: () => api.memoryDoc(which, partition).then((doc) => { latest.current = doc; return doc }),
+    write: (next, revision) => api.saveMemoryDoc(which, next, revision, partition).then((doc) => { latest.current = doc }),
     onSaved: () => {
       const doc = latest.current
       if (doc !== null) { setStored(doc); setBase(doc); setDraft(doc.value) }
@@ -1229,13 +1247,14 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
 /** Add a learned lesson from the Studio (POST /api/lessons) — the manual entry the
  *  old Lessons tab had; lessons are mostly auto-captured, but a user can add one. */
 function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
+  const partition = useMemoryPartition()
   const [rule, setRule] = useState('')
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
   const submit = async () => {
     if (!rule.trim()) return
     setSaving(true); setErr('')
-    try { await api.addLesson(rule.trim()); onDone(true) }
+    try { await api.addLesson(rule.trim(), 'knowledge', partition); onDone(true) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed'); setSaving(false) }
   }
   return (
@@ -1260,6 +1279,7 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
 // ── Add-fact form (used by the Studio explorer) ──────────────────────────────
 const KEY_PREFIXES = ['pref', 'project', 'user', 'lesson']
 function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
+  const partition = useMemoryPartition()
   const [key, setKey] = useState('')
   const [value, setValue] = useState('')
   const [err, setErr] = useState('')
@@ -1270,7 +1290,7 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
     if (!validKey) { setErr(`Key must start with ${KEY_PREFIXES.map((p) => `${p}.`).join(' / ')} and be lowercase dotted.`); return }
     if (!value.trim()) { setErr('Value is required.'); return }
     setSaving(true); setErr('')
-    try { await api.writeSemantic(key, value); onDone(true) }
+    try { await api.writeSemantic(key, value, partition); onDone(true) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed'); setSaving(false) }
   }
 
@@ -1296,11 +1316,13 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
 
 // ── Audit ────────────────────────────────────────────────────────────────────
 function AuditTab() {
+  const partition = useMemoryPartition()
+  const eventsKey = partitionKey('settings:memory-events', partition)
   const { data: events, error, refresh } = useQuery(
-    'settings:memory-events', () => api.memoryEvents({ limit: 100 }),
+    eventsKey, () => api.memoryEvents({ limit: 100 }, partition),
   )
   const [filter, setFilter] = useState('')
-  const reload = () => { invalidateKeys('settings:memory-events'); refresh() }
+  const reload = () => { invalidateKeys(eventsKey); refresh() }
 
   // Was `.catch(() => [] as MemoryEvent[])`: a failed read of the memory audit log rendered
   // "No matching events." — indistinguishable from a memory that has genuinely recorded nothing.
@@ -1345,11 +1367,12 @@ const EVENT_TONE: Record<string, string> = {
 // Semantic event types whose effect the reversible WAL can undo.
 const UNDOABLE = new Set(['create', 'update', 'delete', 'supersede', 'promotion'])
 function AuditRow({ ev, onUndone }: { ev: MemoryEvent; onUndone: () => void }) {
+  const partition = useMemoryPartition()
   const [busy, setBusy] = useState(false)
   const canUndo = ev.memory_type === 'semantic' && UNDOABLE.has(ev.event_type) && !ev.undone_at
   const undo = async () => {
     setBusy(true)
-    try { await api.undoMemoryEvent(ev.id); onUndone() } finally { setBusy(false) }
+    try { await api.undoMemoryEvent(ev.id, partition); onUndone() } finally { setBusy(false) }
   }
   return (
     <div data-type="caption" className="flex items-center gap-2 rounded-md bg-surface-container px-3 py-1.5">
@@ -1370,6 +1393,7 @@ function AuditRow({ ev, onUndone }: { ev: MemoryEvent; onUndone: () => void }) {
 
 // ── Inspect (context preview) ────────────────────────────────────────────────
 function InspectTab() {
+  const partition = useMemoryPartition()
   const [q, setQ] = useState('')
   const [result, setResult] = useState<{ semantic: string; episodic: string } | null>(null)
   // Same disclosure as the Recall tab: the preview runs the same hybrid scorer, so a
@@ -1379,7 +1403,7 @@ function InspectTab() {
   const run = async () => {
     setBusy(true)
     try {
-      const p = await api.memoryContextPreview(q)
+      const p = await api.memoryContextPreview(q, partition)
       setResult({ semantic: p.semantic_context, episodic: p.episodic_context })
       setRanking(p.ranking)
     }
@@ -1448,6 +1472,7 @@ function RankingNote({ ranking, className = '' }: { ranking: RecallRanking; clas
  *  Inspect (which previews the turn-injection context), this runs the ranked
  *  recall the memory_recall tool uses and records the recall signal. */
 function RecallTab() {
+  const partition = useMemoryPartition()
   const [q, setQ] = useState('')
   const [result, setResult] = useState<string | null>(null)
   // The recall's OWN ranking, not the panel's guess at it. Kept beside `result` and set
@@ -1458,13 +1483,13 @@ function RecallTab() {
   const run = async () => {
     if (!q.trim()) return
     setBusy(true)
-    try { const r = await api.memoryRecall(q.trim()); setResult(r.result); setRanking(r.ranking) }
+    try { const r = await api.memoryRecall(q.trim(), partition); setResult(r.result); setRanking(r.ranking) }
     catch { setResult(''); setRanking(null) }
     setBusy(false)
   }
   return (
     <div>
-      <p data-type="body-s" className="mb-3 text-on-surface-low">Ask your memory a question — a ranked deep recall across every stored fact, lesson, and episode (records the recall signal).</p>
+      <p data-type="body-s" className="mb-3 text-on-surface-low">Ask your memory a question — a ranked deep recall across every stored fact, lesson, and episode (records the recall signal).{partition ? ' A folder\'s memory is searched first, then the shared memory every chat reads, as a chat working in that folder recalls them.' : ''}</p>
       <div className="mb-3 flex items-center gap-2">
         <div className="flex-1">
           <TextInput value={q} onChange={setQ} onKeyDown={(e) => { if (e.key === 'Enter') run() }}
@@ -1486,26 +1511,29 @@ function RecallTab() {
  *  what auto-purged), the observability dashboard (injection-rejection reasons +
  *  injected-context byte budget), and a manual episodic→durable promote trigger. */
 function HealthTab({ onChanged }: { onChanged: () => void }) {
+  const partition = useMemoryPartition()
+  const lintKey = partitionKey('settings:memory-lint', partition)
+  const obsKey = partitionKey('settings:memory-obs', partition)
   // 🔴 NEITHER READ SWALLOWS ITS FAILURE ANY MORE. Both were `.catch(() => null)`, and a `null` lint
   // rendered "No issues flagged — memory is clean": the one reassurance a health check exists to
   // give, given about memory nobody had checked. A `null` observability read hid its section. Each
   // failure is now said in its own section, with a Retry.
-  const { data: lint, error: lintErr, refresh: refreshLint } = useQuery<MemoryLint>('settings:memory-lint', () => api.memoryLint(), { persist: false })
-  const { data: obs, error: obsErr, refresh: refreshObs } = useQuery<MemoryObservability>('settings:memory-obs', () => api.memoryObservability(), { persist: false })
+  const { data: lint, error: lintErr, refresh: refreshLint } = useQuery<MemoryLint>(lintKey, () => api.memoryLint(partition), { persist: false })
+  const { data: obs, error: obsErr, refresh: refreshObs } = useQuery<MemoryObservability>(obsKey, () => api.memoryObservability(partition), { persist: false })
   const [promoting, setPromoting] = useState(false)
   const [dreamResult, setDreamResult] = useState<string | null>(null)
   const promote = async () => {
     setPromoting(true); setDreamResult(null)
     try {
-      const r = await api.memoryPromote()
+      const r = await api.memoryPromote(partition)
       const n = r?.promoted ?? 0
       setDreamResult(n > 0 ? `Consolidated ${n} fact${n > 1 ? 's' : ''}.` : 'Nothing new to consolidate.')
       window.setTimeout(() => setDreamResult(null), 4000)
     } catch { /* surfaced by no change */ }
     setPromoting(false)
-    invalidateKeys('settings:memory-lint'); invalidateKeys('settings:memory-obs'); refreshLint(); refreshObs(); onChanged()
+    invalidateKeys(lintKey); invalidateKeys(obsKey); refreshLint(); refreshObs(); onChanged()
   }
-  const reload = () => { invalidateKeys('settings:memory-lint'); invalidateKeys('settings:memory-obs'); refreshLint(); refreshObs() }
+  const reload = () => { invalidateKeys(lintKey); invalidateKeys(obsKey); refreshLint(); refreshObs() }
   // Both reads failing is one fact about the tab, said once; one failing is said in its own section.
   if (lint === undefined && lintErr && obs === undefined && obsErr) return <LoadError what="memory health" error={lintErr} onRetry={reload} />
   if ((lint === undefined && !lintErr) || (obs === undefined && !obsErr)) return <ListSkeleton rows={5} what="memory health" />
@@ -1638,7 +1666,8 @@ function SearchIndexSection({ onFixed }: { onFixed: () => void }) {
 const VOLUNTEER_MIN_N = 10
 
 function VolunteerPrecisionSection() {
-  const { data } = useQuery('settings:memory-volunteer', () => api.memoryVolunteerStats(), { persist: true })
+  const partition = useMemoryPartition()
+  const { data } = useQuery(partitionKey('settings:memory-volunteer', partition), () => api.memoryVolunteerStats(undefined, partition), { persist: true })
   if (!data) return null
   // Nothing to report and the feature is off: stay silent rather than adding an
   // empty panel about a feature the user hasn't enabled.
@@ -1726,18 +1755,20 @@ const ENTITY_TYPE_OPTIONS: { value: MemoryEntityType; label: string }[] = [
 ]
 
 function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
+  const partition = useMemoryPartition()
+  const entitiesKey = partitionKey('settings:memory-entities', partition)
   const { data, error, refresh } = useQuery<MemoryEntitiesResponse>(
-    'settings:memory-entities', () => api.memoryEntities(), { persist: false },
+    entitiesKey, () => api.memoryEntities(partition), { persist: false },
   )
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
 
-  const reload = () => { invalidateKeys('settings:memory-entities'); refresh(); onChanged() }
+  const reload = () => { invalidateKeys(entitiesKey); refresh(); onChanged() }
 
   const rebuild = async () => {
     setBusy('rebuild'); setMsg('')
     try {
-      const r = await api.memoryGraphRebuild()
+      const r = await api.memoryGraphRebuild(partition)
       const seeded = (r.seeded?.from_facts ?? 0) + (r.seeded?.from_knowledge ?? 0)
       setMsg(`Linked ${r.records_processed} record${r.records_processed === 1 ? '' : 's'} → ${r.after.links} link${r.after.links === 1 ? '' : 's'} across ${r.after.entities} entit${r.after.entities === 1 ? 'y' : 'ies'}${seeded ? ` (${seeded} seeded automatically)` : ''}.`)
       reload()
@@ -1751,7 +1782,7 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
   const exportGraph = async () => {
     setBusy('export'); setMsg('')
     try {
-      const doc = await api.memoryGraphExport()
+      const doc = await api.memoryGraphExport(partition)
       const url = URL.createObjectURL(new Blob([doc], { type: 'text/html' }))
       const a = document.createElement('a')
       a.href = url
@@ -1809,6 +1840,7 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
 }
 
 function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
+  const partition = useMemoryPartition()
   const [links, setLinks] = useState<MemoryLink[] | null>(null)
   // 🔴 A failed read used to set `[]`, and the drawer then said "Nothing links here yet — … this
   // entity may be worth removing": advice to DELETE an entity, given because its links could not be
@@ -1818,11 +1850,11 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
   useEffect(() => {
     let live = true
     setLoadErr(null)
-    api.memoryEntityBacklinks(entity.id)
+    api.memoryEntityBacklinks(entity.id, partition)
       .then((r) => { if (live) setLinks(r.links) })
       .catch((e) => { if (live) setLoadErr(e) })
     return () => { live = false }
-  }, [entity.id, attempt])
+  }, [entity.id, attempt, partition])
   if (links === null && loadErr) {
     return <div className="mt-2"><InlineLoadError what="what links here" error={loadErr} onRetry={() => setAttempt((n) => n + 1)} /></div>
   }
@@ -1869,6 +1901,7 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
  *  and removing a line RETIRES it — the line stays tombstoned so no reflection pass can
  *  re-derive something you deleted, which is why the button says Retire, not Delete. */
 function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => void }) {
+  const partition = useMemoryPartition()
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -1882,7 +1915,7 @@ function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => vo
     if (!text) return
     setBusy(true); setMsg(''); setProposal(null)
     try {
-      const r = await api.memorySlotAppend(slot.name, text)
+      const r = await api.memorySlotAppend(slot.name, text, partition)
       if (r.ok) { setDraft(''); setMsg('Added — it injects from the next session.'); onChanged() }
       else if (r.proposal) setProposal(r.proposal)          // over cap: show the real choice
       else setMsg(r.error || 'Could not add that line.')
@@ -1892,7 +1925,7 @@ function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => vo
   const retire = async (text: string) => {
     if (!(await confirm({ title: 'Retire this line?', body: 'It stops injecting, and nothing will re-add it later.', confirmLabel: 'Retire' }))) return
     setBusy(true); setMsg(''); setProposal(null)
-    try { await api.memorySlotRetireLine(slot.name, text); setMsg('Retired.'); onChanged() }
+    try { await api.memorySlotRetireLine(slot.name, text, partition); setMsg('Retired.'); onChanged() }
     catch (e) { setMsg(e instanceof Error ? e.message : 'Could not retire that line.') }
     setBusy(false)
   }
@@ -1969,6 +2002,7 @@ function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => vo
 
 /** Declare an entity by hand, with aliases — the "no auto-created entities" gate's human half. */
 function AddEntityForm({ onDone }: { onDone: (created: boolean) => void }) {
+  const partition = useMemoryPartition()
   const [name, setName] = useState('')
   const [kind, setKind] = useState<MemoryEntityType>('person')
   const [aliases, setAliases] = useState<string[]>([])
@@ -1979,7 +2013,7 @@ function AddEntityForm({ onDone }: { onDone: (created: boolean) => void }) {
     if (!clean) return
     setBusy(true); setMsg('')
     try {
-      await api.memoryEntityCreate({ name: clean, entity_type: kind, aliases })
+      await api.memoryEntityCreate({ name: clean, entity_type: kind, aliases }, partition)
       onDone(true)
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Could not add that entity.'); setBusy(false) }
   }
@@ -2005,13 +2039,14 @@ function AddEntityForm({ onDone }: { onDone: (created: boolean) => void }) {
  *  decision, and never became entities on their own. Accept needs a TYPE, because an entity
  *  with the wrong type links the wrong way; reject is one click and remembered. */
 function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityProposal[]; onDecided: () => void }) {
+  const partition = useMemoryPartition()
   const [types, setTypes] = useState<Record<string, MemoryEntityType>>({})
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const decide = async (name: string, action: 'accept' | 'reject') => {
     setBusy(name); setMsg('')
     try {
-      await api.memoryEntityProposal({ name, action, entity_type: action === 'accept' ? (types[name] ?? 'person') : undefined })
+      await api.memoryEntityProposal({ name, action, entity_type: action === 'accept' ? (types[name] ?? 'person') : undefined }, partition)
       setMsg(action === 'accept' ? `Added ${name} — memories mentioning it are now linked.` : `Won't ask about ${name} again.`)
       onDecided()
     } catch (e) { setMsg(e instanceof Error ? e.message : 'That decision did not save.') }
@@ -2050,6 +2085,7 @@ function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityPropos
 
 // ── Maintenance (migrate legacy memory / import an export) — used by SettingsTab ──
 function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | undefined; onChanged: () => void }) {
+  const partition = useMemoryPartition()
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const migrate = async () => {
@@ -2066,7 +2102,7 @@ function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | u
       setBusy('import'); setMsg('')
       try {
         const data = JSON.parse(await f.text())
-        const c = await api.memoryImport(data)
+        const c = await api.memoryImport(data, partition)
         setMsg(`Imported ${Object.entries(c).map(([k, v]) => `${v} ${k}`).join(', ') || 'nothing'}.`); onChanged()
       } catch (e) { setMsg(e instanceof Error ? e.message : 'Import failed — is it a valid export JSON?') }
       setBusy('')
@@ -2107,7 +2143,8 @@ const FACET_CLASS_LABEL: Record<string, string> = {
 }
 
 function LearnedPreferencesSection({ focusKey }: { focusKey?: string }) {
-  const { data, loading, error, refresh } = useQuery('settings:memory-facets', () => api.memoryFacets())
+  const partition = useMemoryPartition()
+  const { data, loading, error, refresh } = useQuery(partitionKey('settings:memory-facets', partition), () => api.memoryFacets(partition))
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   // The chat's learned chip links here with the preference's key: its row is brought into view
@@ -2128,7 +2165,7 @@ function LearnedPreferencesSection({ focusKey }: { focusKey?: string }) {
   const pin = async (f: MemoryFacet) => {
     setBusy(f.key); setMsg('')
     try {
-      await api.memoryFacetPin(f.key, !f.pinned)
+      await api.memoryFacetPin(f.key, !f.pinned, partition)
       setMsg(f.pinned ? 'Unpinned — it decays again from now on.' : 'Pinned — held at full strength, exempt from decay.')
       refresh()
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Could not change that pin.') }
@@ -2137,7 +2174,7 @@ function LearnedPreferencesSection({ focusKey }: { focusKey?: string }) {
   const forget = async (f: MemoryFacet) => {
     if (!(await confirmForgetPreference(f.text))) return
     setBusy(f.key); setMsg('')
-    try { await api.memoryFacetForget(f.key); setMsg('Forgotten — it no longer reaches the model.'); refresh() }
+    try { await api.memoryFacetForget(f.key, partition); setMsg('Forgotten — it no longer reaches the model.'); refresh() }
     catch (e) { setMsg(e instanceof Error ? e.message : 'Could not forget that preference.') }
     setBusy((b) => (b === f.key ? '' : b))
   }
@@ -2359,6 +2396,7 @@ function SettingsTab({ stats, onConsolidated, focusPref }: {
  *  maintenance cadence builds from episodic activity. Read view + a Build-now action
  *  (forces a synchronous rebuild for days not yet digested). */
 function DailyDigestSection() {
+  const partition = useMemoryPartition()
   const [digests, setDigests] = useState<DailyDigest[] | null>(null)
   const [digestsErr, setDigestsErr] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
@@ -2369,7 +2407,7 @@ function DailyDigestSection() {
     // maintenance cadence had built was still there; the panel just could not read them, and said
     // the opposite. Record the rejection instead: `null` digests plus a recorded error is a state
     // the section can render honestly, and `[]` is not.
-    api.dailyDigests(rebuild)
+    api.dailyDigests(rebuild, partition)
       .then((d) => { setDigests(d); setDigestsErr(null) })
       .catch((e) => { setDigestsErr(e); setDigests(null) })
       .finally(() => setBusy(false))
@@ -2467,7 +2505,14 @@ function VaultSection({ settings, onMode, onPath, saved }: {
       if (r.absorbed) parts.push(`${r.absorbed} edit${r.absorbed === 1 ? '' : 's'} read back`)
       if (r.conflicts) parts.push(`${r.conflicts} conflict${r.conflicts === 1 ? '' : 's'} — see Health`)
       if (r.raw_ingested) parts.push(`${r.raw_ingested} raw file${r.raw_ingested === 1 ? '' : 's'} → Knowledge`)
-      setMsg(parts.length === 1 ? `${parts[0]} (no changes)` : `${parts[0]} (${parts.slice(1).join(', ')})`)
+      // Each folder's own memory is synced into a vault of its own beside it, and said too.
+      const own = Object.values(r.folders ?? {})
+      const sum = (k: 'records' | 'files') => own.reduce((n, f) => n + f[k], 0)
+      const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+      const inFolders = own.length
+        ? ` ${own.length === 1 ? "One folder's own memory" : `${own.length} folders' own memories`}: ${plural(sum('records'), 'record')} → ${plural(sum('files'), 'file')}.`
+        : ''
+      setMsg((parts.length === 1 ? `${parts[0]} (no changes)` : `${parts[0]} (${parts.slice(1).join(', ')})`) + (inFolders ? `.${inFolders}` : ''))
       loadStatus()
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Sync failed') }
     setSyncing(false)
@@ -2493,6 +2538,24 @@ function VaultSection({ settings, onMode, onPath, saved }: {
         <p data-type="caption" className="mt-1 mb-2 font-mono text-on-surface-low break-all">
           {status.path}{status.exists ? ` · ${status.files} file${status.files === 1 ? '' : 's'}` : ' · not yet generated'}
         </p>
+      )}
+      {/* Each folder's own memory is projected too, as a vault of its own inside this one, listed
+          from its index page and named here by its folder. */}
+      {status?.folders && status.folders.length > 0 && (
+        <div className="mb-s flex flex-col gap-xs">
+          <p data-type="caption" className="text-on-surface-low">
+            Each folder's own memory is a vault of its own inside it, linked from its front page:
+          </p>
+          <ul className="flex flex-col gap-xs">
+            {status.folders.map((f) => (
+              <li key={f.id} data-type="caption" className="break-all text-on-surface-low">
+                <span className="text-on-surface-var">{f.folder || `A folder no record names (${f.id})`}</span>
+                {f.gone ? ' (folder gone)' : ''} · <span className="font-mono">{f.path}</span>
+                {f.files ? ` · ${f.files} file${f.files === 1 ? '' : 's'}` : ' · not yet generated'}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <div className="mt-1 flex items-center gap-3">
         <Button variant="secondary" size="sm" onClick={sync} loading={syncing} loadingLabel="Syncing…">Sync now

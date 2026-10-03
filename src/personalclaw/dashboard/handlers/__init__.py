@@ -249,7 +249,6 @@ from personalclaw.dashboard.handlers.mcp import (  # noqa: E402, F401
     api_mcp_toggle_tool,
 )
 from personalclaw.dashboard.handlers.memory import (  # noqa: E402, F401
-    _get_provider,
     _redact_memory_field,
     _set_migrated,
     api_memory_approval_rule_add,
@@ -281,6 +280,8 @@ from personalclaw.dashboard.handlers.memory import (  # noqa: E402, F401
     api_memory_lint,
     api_memory_migrate,
     api_memory_observability,
+    api_memory_partition_delete,
+    api_memory_partitions,
     api_memory_preferences,
     api_memory_projects,
     api_memory_promote,

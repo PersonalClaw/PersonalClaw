@@ -60,7 +60,7 @@ def _stats_route(state) -> dict:
     """``GET /api/memory/stats`` as the Memory page reads it."""
     from personalclaw.dashboard.handlers.memory import api_memory_stats
 
-    request = types.SimpleNamespace(app={"state": state})
+    request = types.SimpleNamespace(app={"state": state}, query={})  # the memory every chat shares
     return json.loads(asyncio.run(api_memory_stats(request)).text)
 
 

@@ -2803,11 +2803,67 @@ class VectorMemoryStore(MemoryProvider):
                 dest.link_written_record(from_kind="episodic", from_ref=ref, text=text)
         return [ref for ref, _text in episodes], semantic
 
+    def hand_over_everything(self, dest: "VectorMemoryStore") -> int:
+        """Move every live record this store holds into *dest*, for a partition whose memory now
+        belongs to another's (``memory_locality.move_what_context_folders_kept``): each episode
+        whole, and each semantic row (a fact, a lesson, a slot, a session's summary), the newer of
+        the two where *dest* holds the same key, a moved lesson with the evidence it stands on.
+        Returns how many records moved.
+
+        Copied and linked as :meth:`hand_over_chat_records` copies a chat's records, then removed
+        here. On a database error *dest* is rolled back, nothing here is removed, and the error is
+        raised for the caller to leave this store for a later pass."""
+        if dest is self:
+            return 0
+        try:
+            episodes = [
+                (str(r["id"]), str(r["text"] or ""))
+                for r in self._copy_rows(dest, "episodic_memories", "1 = 1", [])
+            ]
+            held = {
+                str(r["key"]): str(r["updated_at"] or "")
+                for r in dest.db.execute("SELECT key, updated_at FROM semantic_memory")
+            }
+            semantic = [
+                str(r["key"]) for r in self._copy_rows(dest, "semantic_memory", "1 = 1", [])
+            ]
+            newer = [
+                str(r["key"])
+                for r in self.db.execute(
+                    "SELECT key, updated_at FROM semantic_memory WHERE is_deleted = 0"
+                )
+                if str(r["key"]) in held and str(r["updated_at"] or "") > held[str(r["key"])]
+            ]
+            for start in range(0, len(newer), 400):
+                batch = newer[start : start + 400]
+                marks = ",".join("?" * len(batch))
+                self._copy_rows(dest, "semantic_memory", f"key IN ({marks})", batch, replace=True)
+            dest.db.commit()
+        except sqlite3.Error:
+            dest.db.rollback()
+            raise
+        lessons = [key for key in semantic if key.startswith("lesson.")]
+        if lessons:
+            dest._lesson_evidence_store().adopt(self._lesson_evidence_store(), lessons)
+        if episodes:
+            dest.rebuild_faiss_index()
+            for ref, text in episodes:
+                dest.link_written_record(from_kind="episodic", from_ref=ref, text=text)
+        self._drop_records([ref for ref, _text in episodes], semantic)
+        return len(episodes) + len(semantic)
+
     def _copy_rows(
-        self, dest: "VectorMemoryStore", table: str, where: str, params: list[str]
+        self,
+        dest: "VectorMemoryStore",
+        table: str,
+        where: str,
+        params: list[str],
+        *,
+        replace: bool = False,
     ) -> list[Any]:
         """Copy this store's live *table* rows matching *where* into *dest*'s, every column both
-        tables have, leaving a row *dest* already holds as it is. Returns the rows copied."""
+        tables have, leaving a row *dest* already holds as it is, or putting this one in its place
+        when *replace*. Returns the rows copied."""
 
         def columns(store: "VectorMemoryStore") -> list[str]:
             return [str(r["name"]) for r in store.db.execute(f"PRAGMA table_info({table})")]
@@ -2818,8 +2874,9 @@ class VectorMemoryStore(MemoryProvider):
         rows = self.db.execute(
             f"SELECT {listed} FROM {table} WHERE is_deleted = 0 AND {where}", params
         ).fetchall()
+        verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
         dest.db.executemany(
-            f"INSERT OR IGNORE INTO {table} ({listed}) VALUES ({', '.join('?' * len(shared))})",
+            f"{verb} INTO {table} ({listed}) VALUES ({', '.join('?' * len(shared))})",
             [tuple(row[name] for name in shared) for row in rows],
         )
         return rows

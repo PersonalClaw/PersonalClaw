@@ -496,6 +496,37 @@ class MemoryStore:
                 self._persist(path, "\n#### ".join([head, *kept]))
         return removed
 
+    def take_in_documents(self, other: "MemoryStore") -> None:
+        """Add to these documents what *other*'s hold that these do not, for a partition whose
+        memory now belongs to this one (``memory_locality.move_what_context_folders_kept``): its
+        preference lines, its projects, and each day's history entries. Text these already hold is
+        not added again, so taking the same documents twice changes nothing."""
+        if other is self:
+            return
+        mine = self.read_preferences()
+        held = set(mine.splitlines())
+        new = [ln for ln in other.read_preferences().splitlines() if ln.startswith("- ")]
+        new = [ln for ln in dict.fromkeys(new) if ln not in held]
+        if new:
+            self.write_preferences(mine.rstrip("\n") + "\n" + "\n".join(new) + "\n")
+        theirs = other.read_projects().strip()
+        if theirs and theirs != _DEFAULT_PROJECTS.strip():
+            body = theirs.removeprefix("# Active Projects").strip()
+            current = self.read_projects()
+            if body and body not in current:
+                self._persist(self._projects_file, current.rstrip("\n") + "\n\n" + body + "\n")
+        if not other._history_dir.is_dir():
+            return
+        for path in sorted(other._history_dir.glob("*.md")):
+            entries = path.read_text(encoding="utf-8").split("\n#### ")[1:]
+            target = self._history_dir / path.name
+            current = target.read_text(encoding="utf-8") if target.exists() else f"# {path.stem}\n"
+            kept = set(current.split("\n#### ")[1:])
+            add = [entry for entry in entries if entry not in kept]
+            if add:
+                make_private_dirs(self._history_dir)
+                self._persist(target, current + "".join("\n#### " + entry for entry in add))
+
     def _history_files_over_retention(self, keep_days: int) -> list[Path]:
         """Daily history files older than *keep_days*. Shared by the prune and its
         dry-run count so the measured deficit is exactly what the prune would delete."""

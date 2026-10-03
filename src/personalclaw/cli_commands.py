@@ -26,7 +26,7 @@ from personalclaw.security import (
     scan_memory,
 )
 from personalclaw.sel import redact_event, sel
-from personalclaw.vector_memory import NO_INDEX_NOTE, VectorMemoryStore
+from personalclaw.vector_memory import NO_INDEX_NOTE
 
 
 def _refuse(sentence: str) -> NoReturn:
@@ -1586,144 +1586,187 @@ def _print_retrieval_report(result) -> None:
 
 
 def _learn(args: argparse.Namespace) -> None:
-    """Save, list, or remove learned corrections in memory.db ``lesson.*``."""
+    """Save, list, or remove learned corrections in memory.db ``lesson.*``. A lesson is saved in
+    the memory every chat shares; the list and the removal reach each folder's memory too, and
+    name the folder whose memory a lesson is in (``memory_locality.record_stores``)."""
 
+    from personalclaw import memory_locality
     from personalclaw.memory_service import MemoryService
 
-    # memory.db is the sole lesson store; a store with no embedder still persists
-    # lessons (vector optional). ``write_lesson`` returning False means the lesson
-    # was a dedup/supersession no-op, not that the store was unavailable.
-    vs = VectorMemoryStore()
-    vs.init()
-    svc = MemoryService.over_vector_store(vs)
-    try:
-        action = getattr(args, "learn_action", None)
-
-        if action == "add":
+    action = getattr(args, "learn_action", None)
+    if action == "add":
+        # memory.db is the sole lesson store; a store with no embedder still persists
+        # lessons (vector optional). ``write_lesson`` returning False means the lesson
+        # was a dedup/supersession no-op, not that the store was unavailable.
+        with memory_locality.record_stores([memory_locality.global_partition()]) as opened:
+            svc = MemoryService.over_vector_store(opened[0][1])
             rule = args.rule
             category = args.category
             negative = getattr(args, "negative", None)
             svc.write_lesson(rule, category, negative)
-            neg = f" ({negative})" if negative else ""
-            print(f"Saved: {rule}{neg} [{category}]")
-
-        elif action == "list":
-            vs_lessons = svc.get_lessons()
-            if not vs_lessons:
+        neg = f" ({negative})" if negative else ""
+        print(f"Saved: {rule}{neg} [{category}]")
+        return
+    with memory_locality.record_stores(memory_locality.partitions()) as opened:
+        services = [(part, MemoryService.over_vector_store(store)) for part, store in opened]
+        if action == "list":
+            rows = [(part, e) for part, svc in services for e in svc.get_lessons()]
+            if not rows:
                 print("No lessons.")
                 return
-            for e in vs_lessons:
+            for part, e in rows:
                 val = json.loads(e["value_json"])
-                print(f"  [knowledge] {val}")
-
+                kept = "" if part.is_global else f" (kept in {_memory_named(part)})"
+                print(f"  [knowledge] {val}{kept}")
         elif action == "remove":
-            if not svc.delete_lesson(args.query):
+            removed = [part for part, svc in services if svc.delete_lesson(args.query)]
+            if not removed:
                 _refuse(f"No lessons match: {args.query}")
-            print(f"Removed lessons matching: {args.query}")
-    finally:
-        vs.close()
+            print(
+                f"Removed lessons matching: {args.query} "
+                f"(from {', '.join(_memory_named(part) for part in removed)})"
+            )
+
+
+def _memory_named(part: Any) -> str:
+    """The memory *part* (a ``memory_locality.Partition``) in words, as ``memory_list`` names it:
+    every chat's, or a folder's."""
+    if part.is_global:
+        return "the memory every chat keeps"
+    named = f"the memory of {part.shown}" if part.folder else "a folder's memory no record names"
+    return f"{named}, a folder that is gone" if part.gone else named
+
+
+def _memory_partitions() -> None:
+    """``personalclaw memory partitions``: every memory, the one every chat shares first, each
+    folder's named by its folder, with what it holds and the id the other commands take."""
+    from personalclaw import memory_locality
+
+    parts = memory_locality.partitions()
+    with memory_locality.record_stores(parts) as opened:
+        held = {part.id: store.memory_stats() for part, store in opened}
+    for part in parts:
+        stats = held.get(part.id, {})
+        facts, episodes = stats.get("semantic_active", 0), stats.get("episodic_active", 0)
+        s, e = ("" if facts == 1 else "s"), ("" if episodes == 1 else "s")
+        print(f"  {part.id or '(shared)'}")
+        print(f"      {_memory_named(part)}: {facts} fact{s} and lesson{s}, {episodes} episode{e}")
 
 
 def _memory_cmd(args: argparse.Namespace) -> None:
-    """Manage the memory system (record store) via the service."""
+    """Manage the memory system (record store) via the service: the memory every chat shares, or
+    the folder's memory ``--partition`` names."""
+    from personalclaw import memory_locality
     from personalclaw.memory_service import MemoryService
 
-    store = VectorMemoryStore()
-    store.init()
-    svc = MemoryService.over_vector_store(store)
-    try:
-        action = getattr(args, "mem_action", None)
+    action = getattr(args, "mem_action", None)
+    if action == "partitions":
+        _memory_partitions()
+        return
+    asked = str(getattr(args, "partition", "") or "")
+    part = memory_locality.partition_named(asked)
+    if part is None:
+        _refuse(
+            f"No folder's memory has the id {asked}: personalclaw memory partitions lists them."
+        )
+    with memory_locality.record_stores([part], writes=action in ("import", "migrate")) as opened:
+        if not opened:  # a folder's memory that keeps no records yet
+            named = _memory_named(part)
+            print(f"{named[:1].upper()}{named[1:]} holds no records.")
+            return
+        _memory_action(action, args, opened[0][1], MemoryService.over_vector_store(opened[0][1]))
 
-        if action == "list":
-            entries = svc.get_all_semantic()
-            if not entries:
-                print("No semantic memory entries.")
-                return
-            for e in entries:
-                try:
-                    val = json.loads(e["value_json"])
-                except Exception:
-                    val = e["value_json"]
-                print(f"  {e['key']}: {val}  (confidence={e['confidence']}, source={e['source']})")
 
-        elif action == "search":
-            results = svc.search_episodic(query_text=args.query, limit=10)
-            if not results:
-                print("No episodic memories found.")
-                return
-            for r in results:
-                tags = (
-                    json.loads(r.get("tags", "[]"))
-                    if isinstance(r.get("tags"), str)
-                    else r.get("tags", [])
-                )
-                print(f"  [{r.get('importance', 0):.1f}] {r['text'][:120]}")
-                if tags:
-                    print(f"        tags: {', '.join(tags)}")
+def _memory_action(action: str | None, args: argparse.Namespace, store: Any, svc: Any) -> None:
+    """One ``personalclaw memory`` action over the record store *store* and its service *svc*."""
+    if action == "list":
+        entries = svc.get_all_semantic()
+        if not entries:
+            print("No semantic memory entries.")
+            return
+        for e in entries:
+            try:
+                val = json.loads(e["value_json"])
+            except Exception:
+                val = e["value_json"]
+            print(f"  {e['key']}: {val}  (confidence={e['confidence']}, source={e['source']})")
 
-        elif action == "stats":
-            stats = store.memory_stats()
-            print(
-                f"  Semantic: {stats['semantic_active']} active, {stats['semantic_deleted']} deleted"  # noqa: E501
+    elif action == "search":
+        results = svc.search_episodic(query_text=args.query, limit=10)
+        if not results:
+            print("No episodic memories found.")
+            return
+        for r in results:
+            tags = (
+                json.loads(r.get("tags", "[]"))
+                if isinstance(r.get("tags"), str)
+                else r.get("tags", [])
             )
+            print(f"  [{r.get('importance', 0):.1f}] {r['text'][:120]}")
+            if tags:
+                print(f"        tags: {', '.join(tags)}")
+
+    elif action == "stats":
+        stats = store.memory_stats()
+        print(
+            f"  Semantic: {stats['semantic_active']} active, {stats['semantic_deleted']} deleted"  # noqa: E501
+        )
+        print(
+            f"  Episodic: {stats['episodic_active']} active, {stats['episodic_deleted']} deleted"  # noqa: E501
+        )
+        if "faiss_index_size" in stats:
             print(
-                f"  Episodic: {stats['episodic_active']} active, {stats['episodic_deleted']} deleted"  # noqa: E501
+                f"  FAISS index: {stats['faiss_index_size']} of the "
+                f"{stats['episodes_embedded']} embedded episodes"
             )
-            if "faiss_index_size" in stats:
-                print(
-                    f"  FAISS index: {stats['faiss_index_size']} of the "
-                    f"{stats['episodes_embedded']} embedded episodes"
-                )
-            else:
-                print(f"  FAISS index: none ({NO_INDEX_NOTE})")
-            print(f"  Audit events: {stats['events_count']}")
+        else:
+            print(f"  FAISS index: none ({NO_INDEX_NOTE})")
+        print(f"  Audit events: {stats['events_count']}")
 
-        elif action == "audit":
-            findings = scan_memory()
-            if findings:
-                print(f"⚠️  {len(findings)} suspicious entries:\n")
-                for f in findings:
-                    print(f"  [{f['type']}] {f['key']}: {f['warning']}")
-                    print(f"    {f['value'][:120]}\n")
-            else:
-                print("✅ No suspicious content in memory.")
+    elif action == "audit":
+        findings = scan_memory()
+        if findings:
+            print(f"⚠️  {len(findings)} suspicious entries:\n")
+            for f in findings:
+                print(f"  [{f['type']}] {f['key']}: {f['warning']}")
+                print(f"    {f['value'][:120]}\n")
+        else:
+            print("✅ No suspicious content in memory.")
 
-        elif action == "export":
-            data = {
-                "semantic": store.get_all_semantic(),
-                "episodic": store.get_episodic_list(limit=10000),
-                "events": store.get_events(limit=1000),
-            }
-            output = json.dumps(data, indent=2, default=str)
-            out_file = getattr(args, "output", None)
-            if out_file:
-                # Every memory: private from its first byte, wherever the user writes it.
-                write_private_file(out_file, output)
-                print(f"Exported to {out_file}")
-            else:
-                print(output)
+    elif action == "export":
+        data = {
+            "semantic": store.get_all_semantic(),
+            "episodic": store.get_episodic_list(limit=10000),
+            "events": store.get_events(limit=1000),
+        }
+        output = json.dumps(data, indent=2, default=str)
+        out_file = getattr(args, "output", None)
+        if out_file:
+            # Every memory: private from its first byte, wherever the user writes it.
+            write_private_file(out_file, output)
+            print(f"Exported to {out_file}")
+        else:
+            print(output)
 
-        elif action == "migrate":
-            counts = store.migrate_from_markdown()
-            print("Migration complete:")
-            print(f"  Semantic: {counts['semantic']}")
-            print(f"  Episodic: {counts['episodic']}")
-            print(f"  Skipped:  {counts['skipped']}")
+    elif action == "migrate":
+        counts = store.migrate_from_markdown()
+        print("Migration complete:")
+        print(f"  Semantic: {counts['semantic']}")
+        print(f"  Episodic: {counts['episodic']}")
+        print(f"  Skipped:  {counts['skipped']}")
 
-        elif action == "import":
-            import_file = getattr(args, "file", None)
-            if not import_file:
-                _usage_error("Usage: personalclaw memory import <file>")
-            path = Path(import_file)
-            if not path.is_file():
-                _refuse(f"File not found: {import_file}")
-            data = json.loads(safe_read_file(str(path)))
-            if not isinstance(data, dict):
-                _refuse(f"Error: {import_file} must contain a JSON object")
-            counts = store.import_memory(data)
-            print("Import complete:")
-            print(f"  Semantic: {counts['semantic']}")
-            print(f"  Episodic: {counts['episodic']}")
-            print(f"  Skipped:  {counts['skipped']}")
-    finally:
-        store.close()
+    elif action == "import":
+        import_file = getattr(args, "file", None)
+        if not import_file:
+            _usage_error("Usage: personalclaw memory import <file>")
+        path = Path(import_file)
+        if not path.is_file():
+            _refuse(f"File not found: {import_file}")
+        data = json.loads(safe_read_file(str(path)))
+        if not isinstance(data, dict):
+            _refuse(f"Error: {import_file} must contain a JSON object")
+        counts = store.import_memory(data)
+        print("Import complete:")
+        print(f"  Semantic: {counts['semantic']}")
+        print(f"  Episodic: {counts['episodic']}")
+        print(f"  Skipped:  {counts['skipped']}")

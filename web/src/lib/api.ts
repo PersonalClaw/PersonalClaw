@@ -121,6 +121,11 @@ const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
   refuseIfSignedOut() ?? fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const del = (p: string) => refuseIfSignedOut() ?? fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
 
+/** A memory route asked about one folder's memory (`?partition=<id>`, an id
+ *  `memoryPartitions` lists), or about the memory every chat shares when `partition` is "". */
+const inMemory = (path: string, partition = '') =>
+  partition ? `${path}${path.includes('?') ? '&' : '?'}partition=${encodeURIComponent(partition)}` : path
+
 /** App install/update: POST that returns the parsed body on ANY HTTP status.
  *  The scanner verdict + needs_consent are carried in the 400/409 body, so a
  *  thrown error would discard exactly what the install modal needs to show. Only
@@ -4994,8 +4999,12 @@ export interface VolunteerStats {
   enabled: boolean
   min_confidence: number
 }
-export interface MemoryVaultStatus { enabled: boolean; mode: MemoryVaultMode; path: string; files: number; exists: boolean }
-export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string; mode: MemoryVaultMode; absorbed: number; rejected: number; conflicts: number; raw_ingested: number; seeded: number }
+/** A folder's memory as the vault projects it: a vault of its own inside the vault (`path`). */
+export interface MemoryVaultFolder { id: string; folder: string; gone: boolean; path: string; files: number }
+export interface MemoryVaultStatus { enabled: boolean; mode: MemoryVaultMode; path: string; files: number; exists: boolean; folders?: MemoryVaultFolder[] }
+export interface MemoryVaultSyncResult { records: number; files: number; written: number; pruned: number; path: string; mode: MemoryVaultMode; absorbed: number; rejected: number; conflicts: number; raw_ingested: number; seeded: number
+  /** Each folder's own memory's vault, by its memory's id (`MemoryPartition.id`): its own sync's numbers. */
+  folders?: Record<string, MemoryVaultSyncResult> }
 export interface DailyDigest { day: string; text: string; created_at: string }
 export interface MemoryStats {
   semantic_active: number; semantic_deleted: number; episodic_active: number; episodic_deleted: number
@@ -5092,6 +5101,19 @@ export interface Lesson {
   rule: string; category: string; ts?: string
   standing?: LessonStanding; confidence?: number; confidence_reason?: string
   observations?: number; contradictions?: number; reversals?: number
+  /** The memory the lesson is in: `partition` "" for every chat's, else a folder's, `folder`
+   *  written from `~`, and `folder_gone` when that folder is not there any more. */
+  partition?: string; folder?: string; folder_gone?: boolean
+}
+/** One memory she has, as `GET /api/memory/partitions` lists it: the memory every chat outside a
+ *  folder of its own shares (`global`), or a folder's own, named by the folder (`folder`, written
+ *  from `~`; "" when no record names it). `gone` says the folder is not there any more, so nothing
+ *  reads this memory now. `projects` are the projects whose memory it is; `semantic` and
+ *  `episodic` count what it holds. */
+export interface MemoryPartition {
+  id: string; global: boolean; folder: string; path: string; gone: boolean
+  projects: { id: string; name: string }[]
+  semantic: number; episodic: number
 }
 // The auto-linked memory graph: fact nodes (grouped by key namespace) + relations.
 // `ref` is a stable un-hashed handle onto the source memory (`sem:<key>`, `lesson:<rule>`,
@@ -7982,38 +8004,42 @@ export const api = {
     ),
 
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
-  memoryGraph: () => get<MemoryGraphData>('/api/memory/graph'),
-  memoryLint: () => get<MemoryLint>('/api/memory/lint'),
-  memoryObservability: () => get<MemoryObservability>('/api/memory/observability'),
+  // Every memory she has, and removing a folder's (the global one cannot be). Each memory call
+  // below takes the memory it is about as its last argument (`inMemory`): "" for every chat's.
+  memoryPartitions: () => get<{ partitions: MemoryPartition[] }>('/api/memory/partitions').then((d) => d.partitions),
+  removeMemoryPartition: (id: string) => del(`/api/memory/partitions/${encodeURIComponent(id)}`),
+  memoryGraph: (partition = '') => get<MemoryGraphData>(inMemory('/api/memory/graph', partition)),
+  memoryLint: (partition = '') => get<MemoryLint>(inMemory('/api/memory/lint', partition)),
+  memoryObservability: (partition = '') => get<MemoryObservability>(inMemory('/api/memory/observability', partition)),
   // `ranking` is null ONLY when no recall ran (a temporary session blocks memory reads);
   // otherwise it always describes the recall that produced `result`. `deep` is the request's
   // own depth flag echoed back — it says nothing about how the results were scored.
-  memoryRecall: (q: string) => get<{ result: string; query: string; deep: boolean; ranking: RecallRanking | null }>(`/api/memory/recall?q=${encodeURIComponent(q)}`),
-  memoryPromote: () => post<{ ok: boolean; promoted: number }>('/api/memory/promote'),
+  memoryRecall: (q: string, partition = '') => get<{ result: string; query: string; deep: boolean; ranking: RecallRanking | null }>(inMemory(`/api/memory/recall?q=${encodeURIComponent(q)}`, partition)),
+  memoryPromote: (partition = '') => post<{ ok: boolean; promoted: number }>(inMemory('/api/memory/promote', partition)),
   // Entity graph — the typed links under recall.
-  memoryEntities: () => get<MemoryEntitiesResponse>('/api/memory/entities'),
-  memoryEntityCreate: (body: { name: string; entity_type: MemoryEntityType; aliases?: string[] }) =>
-    post<{ ok: boolean; id: string }>('/api/memory/entities', body),
+  memoryEntities: (partition = '') => get<MemoryEntitiesResponse>(inMemory('/api/memory/entities', partition)),
+  memoryEntityCreate: (body: { name: string; entity_type: MemoryEntityType; aliases?: string[] }, partition = '') =>
+    post<{ ok: boolean; id: string }>(inMemory('/api/memory/entities', partition), body),
   // The entity set used to be create-only. The store has tombstoned entities since the graph
   // landed, but no route, wrapper or control reached it — so a mistyped entity was permanent,
   // on a panel that actively proposes NEW ones to accept (#524).
-  memoryEntityDelete: (id: string) => del(`/api/memory/entities/${encodeURIComponent(id)}`),
-  memoryEntityBacklinks: (id: string) =>
-    get<{ links: MemoryLink[] }>(`/api/memory/entities/${encodeURIComponent(id)}/backlinks`),
-  memoryEntityProposal: (body: { name: string; action: 'accept' | 'reject'; entity_type?: MemoryEntityType }) =>
-    post<{ ok: boolean; id?: string }>('/api/memory/entities/proposals', body),
-  memoryEntityProposals: () =>
-    get<{ proposals: MemoryEntityProposal[]; enabled: boolean }>('/api/memory/entities/proposals'),
+  memoryEntityDelete: (id: string, partition = '') => del(inMemory(`/api/memory/entities/${encodeURIComponent(id)}`, partition)),
+  memoryEntityBacklinks: (id: string, partition = '') =>
+    get<{ links: MemoryLink[] }>(inMemory(`/api/memory/entities/${encodeURIComponent(id)}/backlinks`, partition)),
+  memoryEntityProposal: (body: { name: string; action: 'accept' | 'reject'; entity_type?: MemoryEntityType }, partition = '') =>
+    post<{ ok: boolean; id?: string }>(inMemory('/api/memory/entities/proposals', partition), body),
+  memoryEntityProposals: (partition = '') =>
+    get<{ proposals: MemoryEntityProposal[]; enabled: boolean }>(inMemory('/api/memory/entities/proposals', partition)),
   // The entity topology behind the graph canvas, and its one-file export. The export
   // comes back as TEXT and is blobbed by the caller (the AuditPanel pattern) rather than
   // linked: X-Session-Key rides the fetch, and a bare <a href> would not carry it.
-  memoryEntityGraph: () => get<MemoryEntityGraph>('/api/memory/graph/entities'),
+  memoryEntityGraph: (partition = '') => get<MemoryEntityGraph>(inMemory('/api/memory/graph/entities', partition)),
   /** One record's outbound entity links — the inspect tab's "why is this in my context?". */
-  memoryRecordLinks: (ref: string) =>
+  memoryRecordLinks: (ref: string, partition = '') =>
     get<{ links: MemoryRecordLink[]; ref: string; enabled: boolean }>(
-      `/api/memory/record-links?ref=${encodeURIComponent(ref)}`),
-  memoryGraphExport: () =>
-    fetch('/api/memory/graph/export', { headers: { ...SK } }).then(async (r) => {
+      inMemory(`/api/memory/record-links?ref=${encodeURIComponent(ref)}`, partition)),
+  memoryGraphExport: (partition = '') =>
+    fetch(inMemory('/api/memory/graph/export', partition), { headers: { ...SK } }).then(async (r) => {
       if (!r.ok) throw await apiError(r)
       return r.text()
     }),
@@ -8021,9 +8047,9 @@ export const api = {
   // the trim proposal in that body IS the answer ("nothing was written, here is what you'd
   // have to drop"), and a rejection would discard exactly what the editor must show. Same
   // shape as `_installReq` above, for the same reason.
-  memorySlots: () => get<MemorySlotsResponse>('/api/memory/slots'),
-  memorySlotAppend: async (name: string, text: string): Promise<MemorySlotAppendResult> => {
-    const r = await fetch(`/api/memory/slots/${encodeURIComponent(name)}/lines`, {
+  memorySlots: (partition = '') => get<MemorySlotsResponse>(inMemory('/api/memory/slots', partition)),
+  memorySlotAppend: async (name: string, text: string, partition = ''): Promise<MemorySlotAppendResult> => {
+    const r = await fetch(inMemory(`/api/memory/slots/${encodeURIComponent(name)}/lines`, partition), {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ text }),
     })
     const data = await r.json().catch(() => null)
@@ -8032,34 +8058,34 @@ export const api = {
   },
   // POST-with-body, not DELETE-with-body: a DELETE body is dropped by some proxies, and a
   // tombstone is not a delete anyway (the line stays, marked, so it is never re-derived).
-  memorySlotRetireLine: (name: string, text: string) =>
-    post<{ ok: boolean }>(`/api/memory/slots/${encodeURIComponent(name)}/lines/retire`, { text }),
+  memorySlotRetireLine: (name: string, text: string, partition = '') =>
+    post<{ ok: boolean }>(inMemory(`/api/memory/slots/${encodeURIComponent(name)}/lines/retire`, partition), { text }),
   // C15 — the facet overrides. `memoryFacets` is the ONLY read that carries a facet's key:
   // the identity report's facet section drops it (that document is propose-don't-write) and
   // also hides forgotten facets, so nothing there can be pinned or reviewed.
-  memoryFacets: () => get<{ facets: MemoryFacet[] }>('/api/memory/facets').then((d) => d.facets),
-  memoryFacetPin: (key: string, pinned: boolean) =>
-    post<{ ok: boolean; pinned: boolean }>(`/api/memory/facets/${encodeURIComponent(key)}/pin`, { pinned }),
+  memoryFacets: (partition = '') => get<{ facets: MemoryFacet[] }>(inMemory('/api/memory/facets', partition)).then((d) => d.facets),
+  memoryFacetPin: (key: string, pinned: boolean, partition = '') =>
+    post<{ ok: boolean; pinned: boolean }>(inMemory(`/api/memory/facets/${encodeURIComponent(key)}/pin`, partition), { pinned }),
   // No body: forgetting is final, so there is nothing to choose. See `MemoryFacet.forgotten`.
-  memoryFacetForget: (key: string) =>
-    post<{ ok: boolean }>(`/api/memory/facets/${encodeURIComponent(key)}/forget`),
-  memoryGraphRebuild: () => post<MemoryGraphRebuild>('/api/memory/graph/rebuild'),
+  memoryFacetForget: (key: string, partition = '') =>
+    post<{ ok: boolean }>(inMemory(`/api/memory/facets/${encodeURIComponent(key)}/forget`, partition)),
+  memoryGraphRebuild: (partition = '') => post<MemoryGraphRebuild>(inMemory('/api/memory/graph/rebuild', partition)),
   // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}. The gateway
   // writes these too (the consolidator, the agent's memory tool), so the read carries the revision
   // and the PUT — a whole-file replace — names it (`lib/staleWrite.ts`). The save answers with what
   // is STORED and its revision: the projects write adds its header to a body without one.
-  memoryDoc: (which: 'preferences' | 'projects' | 'history') =>
-    get<{ content: string; revision: string }>(`/api/memory/${which}`).then(
+  memoryDoc: (which: 'preferences' | 'projects' | 'history', partition = '') =>
+    get<{ content: string; revision: string }>(inMemory(`/api/memory/${which}`, partition)).then(
       (d): Revisioned<string> => ({ value: d.content, revision: d.revision })),
-  saveMemoryDoc: (which: 'preferences' | 'projects' | 'history', content: string, base: string) =>
-    put<{ ok: boolean; content: string; revision: string }>(`/api/memory/${which}`, { content }, basedOn(base)).then(
+  saveMemoryDoc: (which: 'preferences' | 'projects' | 'history', content: string, base: string, partition = '') =>
+    put<{ ok: boolean; content: string; revision: string }>(inMemory(`/api/memory/${which}`, partition), { content }, basedOn(base)).then(
       (d): Revisioned<string> => ({ value: d.content, revision: d.revision })),
   // Legacy-markdown → vector-store migration + JSON import (maintenance flows).
   memoryMigrate: () => post<Record<string, number>>('/api/memory/migrate'),
-  memoryImport: (data: unknown) => post<Record<string, number>>('/api/memory/import', data),
-  lessons: () => get<{ lessons: Lesson[] }>('/api/lessons').then((d) => d.lessons),
-  addLesson: (rule: string, category = 'knowledge') => post<{ ok: boolean }>('/api/lessons', { rule, category }),
-  deleteLesson: (rule: string) => fetch('/api/lessons', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ rule }) }).then(j<{ ok: boolean }>),
+  memoryImport: (data: unknown, partition = '') => post<Record<string, number>>(inMemory('/api/memory/import', partition), data),
+  lessons: (partition = '') => get<{ lessons: Lesson[] }>(inMemory('/api/lessons', partition)).then((d) => d.lessons),
+  addLesson: (rule: string, category = 'knowledge', partition = '') => post<{ ok: boolean }>(inMemory('/api/lessons', partition), { rule, category }),
+  deleteLesson: (rule: string, partition = '') => fetch(inMemory('/api/lessons', partition), { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ rule }) }).then(j<{ ok: boolean }>),
 
   // ── Full-text conversation search (over persisted JSONL content) ──
   // `snippet` carries the matching passage with `<<`/`>>` around the matched terms, whether the
@@ -9978,31 +10004,31 @@ export const api = {
   memorySettings: () => get<MemorySettings>('/api/memory/settings'),
   saveMemorySettings: (s: Partial<MemorySettings>) => put<MemorySettings>('/api/memory/settings', s),
   /** The push reflex's report card. */
-  memoryVolunteerStats: (windowDays?: number) =>
-    get<VolunteerStats>(`/api/memory/volunteer-stats${windowDays ? `?window_days=${windowDays}` : ''}`),
-  memoryStats: () => get<MemoryStats>('/api/memory/stats'),
+  memoryVolunteerStats: (windowDays?: number, partition = '') =>
+    get<VolunteerStats>(inMemory(`/api/memory/volunteer-stats${windowDays ? `?window_days=${windowDays}` : ''}`, partition)),
+  memoryStats: (partition = '') => get<MemoryStats>(inMemory('/api/memory/stats', partition)),
   // memory vault (Obsidian markdown mirror) — status + on-demand sync.
   memoryVaultStatus: () => get<MemoryVaultStatus>('/api/memory/vault'),
   syncMemoryVault: () => post<MemoryVaultSyncResult>('/api/memory/vault/sync', {}),
   // daily-digest nodes (mem-tree) — per-day rollups; rebuild=1 forces a build.
-  dailyDigests: (rebuild = false) =>
-    get<{ digests: DailyDigest[] }>(`/api/memory/daily-digests${rebuild ? '?rebuild=1' : ''}`).then((d) => d.digests),
+  dailyDigests: (rebuild = false, partition = '') =>
+    get<{ digests: DailyDigest[] }>(inMemory(`/api/memory/daily-digests${rebuild ? '?rebuild=1' : ''}`, partition)).then((d) => d.digests),
   // memory explorer — semantic browse/CRUD, episodic search/list/delete, audit, inspector, consolidate.
-  memorySemantic: () => get<{ entries: SemanticEntry[] }>('/api/memory/semantic').then((d) => d.entries),
-  writeSemantic: (key: string, value: unknown) => put<{ ok?: boolean }>('/api/memory/semantic', { key, value }),
-  deleteSemantic: (key: string) => del(`/api/memory/semantic/${encodeURIComponent(key)}`),
-  memoryEpisodic: (opts: { offset?: number; limit?: number; tags?: string } = {}) =>
-    get<{ entries: EpisodicEntry[] }>(`/api/memory/episodic?limit=${opts.limit ?? 50}&offset=${opts.offset ?? 0}${opts.tags ? `&tags=${encodeURIComponent(opts.tags)}` : ''}`).then((d) => d.entries),
+  memorySemantic: (partition = '') => get<{ entries: SemanticEntry[] }>(inMemory('/api/memory/semantic', partition)).then((d) => d.entries),
+  writeSemantic: (key: string, value: unknown, partition = '') => put<{ ok?: boolean }>(inMemory('/api/memory/semantic', partition), { key, value }),
+  deleteSemantic: (key: string, partition = '') => del(inMemory(`/api/memory/semantic/${encodeURIComponent(key)}`, partition)),
+  memoryEpisodic: (opts: { offset?: number; limit?: number; tags?: string } = {}, partition = '') =>
+    get<{ entries: EpisodicEntry[] }>(inMemory(`/api/memory/episodic?limit=${opts.limit ?? 50}&offset=${opts.offset ?? 0}${opts.tags ? `&tags=${encodeURIComponent(opts.tags)}` : ''}`, partition)).then((d) => d.entries),
   // The search answers `{results, ranking}` (the list answers `{entries}`); reading `entries` here
   // made every search look empty.
   searchEpisodic: (q: string, tags?: string) =>
     get<{ results: EpisodicEntry[] }>(`/api/memory/episodic/search?q=${encodeURIComponent(q)}${tags ? `&tags=${encodeURIComponent(tags)}` : ''}`).then((d) => d.results),
-  deleteEpisodic: (id: string) => del(`/api/memory/episodic/${encodeURIComponent(id)}`),
-  memoryEvents: (opts: { offset?: number; limit?: number } = {}) =>
-    get<{ events: MemoryEvent[] }>(`/api/memory/events?limit=${opts.limit ?? 50}&offset=${opts.offset ?? 0}`).then((d) => d.events),
-  undoMemoryEvent: (eventId: number) =>
-    post<{ ok: boolean; message: string }>(`/api/memory/events/${eventId}/undo`, {}),
-  memoryContextPreview: (q: string) => get<MemoryContextPreview>(`/api/memory/context-preview?q=${encodeURIComponent(q)}`),
+  deleteEpisodic: (id: string, partition = '') => del(inMemory(`/api/memory/episodic/${encodeURIComponent(id)}`, partition)),
+  memoryEvents: (opts: { offset?: number; limit?: number } = {}, partition = '') =>
+    get<{ events: MemoryEvent[] }>(inMemory(`/api/memory/events?limit=${opts.limit ?? 50}&offset=${opts.offset ?? 0}`, partition)).then((d) => d.events),
+  undoMemoryEvent: (eventId: number, partition = '') =>
+    post<{ ok: boolean; message: string }>(inMemory(`/api/memory/events/${eventId}/undo`, partition), {}),
+  memoryContextPreview: (q: string, partition = '') => get<MemoryContextPreview>(inMemory(`/api/memory/context-preview?q=${encodeURIComponent(q)}`, partition)),
   // consolidate fires a rollup for a session key (the handler expects `key`).
   consolidateMemory: (key: string) => post<{ ok?: boolean; key?: string; error?: string }>('/api/memory/consolidate', { key }),
   securityStats: () => get<SecurityStats>('/api/security/stats'),

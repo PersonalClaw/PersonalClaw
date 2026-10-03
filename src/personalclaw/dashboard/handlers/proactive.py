@@ -441,7 +441,7 @@ def _persist_rule(request: web.Request, pattern: str, approve: bool) -> tuple[st
     Returns ``(key, error)``. The write goes through ``MemoryService.set_semantic``, so the
     injection scanner still sees the pattern text even though the user ratified it (§1.4).
     """
-    from personalclaw.dashboard.handlers.memory import _get_service
+    from personalclaw.dashboard.handlers.memory import _global_service
     from personalclaw.proactive.approval import ApprovalRule, Verdict, rule_to_value
 
     rule = ApprovalRule(
@@ -449,7 +449,7 @@ def _persist_rule(request: web.Request, pattern: str, approve: bool) -> tuple[st
         verdict=Verdict.APPROVE if approve else Verdict.DENY,
         created_from_digest="digest-card",
     )
-    svc = _get_service(request.app["state"])
+    svc = _global_service(request.app["state"])
     err = svc.set_semantic(rule.key, rule_to_value(rule), 1.0, "user_explicit")
     if err is not None:
         _code, message = err

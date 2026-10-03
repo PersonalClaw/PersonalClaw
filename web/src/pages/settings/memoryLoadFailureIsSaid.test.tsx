@@ -42,6 +42,8 @@ async function mount(query: Record<string, string>, over: Record<string, unknown
       ...real,
       api: {
         ...(real.api as object),
+        // Only the memory every chat shares: the picker of folders' memories stays out of sight.
+        memoryPartitions: () => Promise.resolve([]),
         memoryStats: () => Promise.resolve(null),
         memorySettings: () => Promise.resolve(SETTINGS),
         memoryVaultStatus: () => Promise.resolve(null),

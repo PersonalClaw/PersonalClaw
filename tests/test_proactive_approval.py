@@ -471,7 +471,8 @@ def rules_api(tmp_path, monkeypatch):
     from personalclaw.dashboard.handlers import memory as mem_handlers
 
     svc, store = _svc(tmp_path)
-    monkeypatch.setattr(mem_handlers, "_get_service", lambda state: svc)
+    # The triage rules are the global memory's, which the rule routes read alone.
+    monkeypatch.setattr(mem_handlers, "_global_service", lambda state: svc)
     monkeypatch.setattr(mem_handlers, "_is_restricted_session", lambda state, req: False)
     monkeypatch.setattr(
         mem_handlers,

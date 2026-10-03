@@ -1050,7 +1050,10 @@ def test_the_lessons_list_masks_a_rule_and_deleting_it_by_what_it_showed_deletes
     assert SECRET not in json.dumps(shown) and MASK in rule
     # MemoryPanel deletes a lesson by the rule the list showed it as.
     resp = _lessons_call(S.api_lessons_delete, "DELETE", lessons, body={"rule": rule})
-    assert _body(resp) == {"ok": True}, resp.text
+    assert _body(resp) == {
+        "ok": True,
+        "removed": [{"partition": "", "folder": "", "folder_gone": False}],
+    }, resp.text
     assert lessons.rules == ["Prefer small commits"]
 
 

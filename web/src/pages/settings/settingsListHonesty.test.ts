@@ -53,10 +53,10 @@ const read = (f: string) => readFileSync(join(HERE, f), 'utf8')
 
 /** file → the fetcher call that must NOT swallow, and the announced failure it must render. */
 const SITES = [
-  { file: 'MemoryPanel.tsx', fetch: 'api.memoryEvents({ limit: 100 })', announce: /<LoadError what="memory audit log"/ },
+  { file: 'MemoryPanel.tsx', fetch: 'api.memoryEvents({ limit: 100 }, partition)', announce: /<LoadError what="memory audit log"/ },
   // The Studio explorer is ONE list over six kinds, so a swallowed reader is a list
   // quietly missing a kind — indistinguishable from an empty store.
-  { file: 'MemoryPanel.tsx', fetch: 'api.memorySemantic()', announce: /<LoadError what="memories"/ },
+  { file: 'MemoryPanel.tsx', fetch: 'api.memorySemantic(partition)', announce: /<LoadError what="memories"/ },
   { file: 'ModelBackends.tsx', fetch: 'api.modelProviders()', announce: /<InlineError icon className="mb-3">/ },
   { file: 'ProjectionRulesPanel.tsx', fetch: 'api.projectionRules()', announce: /<InlineError icon>/ },
 ]

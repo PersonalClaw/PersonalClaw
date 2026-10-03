@@ -53,6 +53,8 @@ async function mountSettings(rows: Partial<MemoryFacet>[] = [{}]) {
       ...real,
       api: {
         ...(real.api as object),
+        // Only the memory every chat shares: the picker of folders' memories stays out of sight.
+        memoryPartitions: () => Promise.resolve([]),
         memoryStats: () => Promise.resolve(null),
         memorySettings: () => Promise.resolve({ history_idle_hours: 2, history_max_days: 90 }),
         memoryVaultStatus: () => Promise.resolve(null),
@@ -101,14 +103,14 @@ describe('learned preferences in Settings → Memory', () => {
   it('pins the facet the user picked, by key', async () => {
     await mountSettings()
     fireEvent.click(await screen.findByRole('button', { name: /^pin$/i }))
-    await waitFor(() => expect(pinFacet).toHaveBeenCalledWith('pref.facet.style.0123456789', true))
+    await waitFor(() => expect(pinFacet).toHaveBeenCalledWith('pref.facet.style.0123456789', true, ''))
   })
 
   it('offers Unpin for an already-pinned facet and releases it', async () => {
     // One route, not a pin/unpin pair — so the control has to carry the direction.
     await mountSettings([{ pinned: true, state: 'Active', stability: 1 }])
     fireEvent.click(await screen.findByRole('button', { name: /^unpin$/i }))
-    await waitFor(() => expect(pinFacet).toHaveBeenCalledWith('pref.facet.style.0123456789', false))
+    await waitFor(() => expect(pinFacet).toHaveBeenCalledWith('pref.facet.style.0123456789', false, ''))
   })
 
   it('confirms before forgetting, and states that it cannot be undone', async () => {
@@ -129,7 +131,7 @@ describe('learned preferences in Settings → Memory', () => {
     expect(text).toMatch(/not by pinning it/i)
     expect(text).toMatch(/observing the same preference again/i)
     expect(text, 'the row survives, marked forgotten — say so').toMatch(/never re-learned/i)
-    await waitFor(() => expect(forgetFacet).toHaveBeenCalledWith('pref.facet.style.0123456789'))
+    await waitFor(() => expect(forgetFacet).toHaveBeenCalledWith('pref.facet.style.0123456789', ''))
   })
 
   it('forgets nothing when the dialog is dismissed', async () => {

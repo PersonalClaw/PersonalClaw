@@ -59,6 +59,22 @@ def forget_memory_store(ws_path: Path) -> bool:
     return True
 
 
+def memory_at(ws_path: Path, *, writes: bool = False) -> MemoryStore:
+    """The memory store of the partition directory *ws_path*, one per partition this process
+    opens: for a folder's sessions (:meth:`ContextBuilder.get_memory_for`), and for the places
+    that manage a folder's memory by its directory (``memory_locality.open_partition``). A caller
+    that *writes* to it is handed it with its record store (:func:`_attach_vector_store`)."""
+    key = str(ws_path)
+    if key not in _memory_stores:
+        store = MemoryStore(workspace=ws_path)
+        store.init()
+        _memory_stores[key] = store
+    store = _memory_stores[key]
+    if store.vector_store is None:
+        _attach_vector_store(store, ws_path, writes=writes)
+    return store
+
+
 def _attach_vector_store(store: MemoryStore, ws_path, *, writes: bool = False) -> None:
     """Give a cwd-scoped MemoryStore its own semantic/episodic vector index, once an embedding
     model is bound in Settings → Models or the directory already holds memories one wrote; until
@@ -1150,7 +1166,9 @@ class ContextBuilder:
         the filesystem-fallback ``MemoryStore`` is used, partitioned by the
         session's working directory (``memory_locality.partition_for``: the global
         partition for no folder and for the gateway's own workspace) and cached per
-        partition. A caller that *writes* to it is handed it with its record store
+        partition (:func:`memory_at`), which records the folder it is the memory of
+        (``memory_locality.record_folder``) so the places that list partitions can name it.
+        A caller that *writes* to it is handed it with its record store
         (``_attach_vector_store``).
 
         ``memory_store`` is TWO namespaces that share the string: a registered
@@ -1173,17 +1191,12 @@ class ContextBuilder:
                     "memory_store %r not registered; using filesystem fallback", memory_store
                 )
 
-        from personalclaw.memory_locality import partition_for
+        from personalclaw import memory_locality
 
-        ws_path = partition_for(cwd)
-        key = str(ws_path)
-        if key not in _memory_stores:
-            store = MemoryStore(workspace=ws_path)
-            store.init()
-            _memory_stores[key] = store
-        store = _memory_stores[key]
-        if store.vector_store is None:
-            _attach_vector_store(store, ws_path, writes=writes)
+        ws_path = memory_locality.partition_for(cwd)
+        store = memory_at(ws_path, writes=writes)
+        if cwd and ws_path != memory_locality.partition_for(None):
+            memory_locality.record_folder(ws_path, cwd)
         return store
 
     def __init__(
@@ -1373,6 +1386,10 @@ class ContextBuilder:
         # `[Lesson N]` and this list gains one `{"kind": "lesson", …}` entry per lesson that
         # reached the prompt, so the reply can cite it and the chat can open it.
         citations_out: list[dict] | None = None,
+        # The folder whose memory this session reads when it is not the folder it works in
+        # (*cwd*): work done for a chat, which reads the memory that chat keeps
+        # (`memory_locality.work_folder`). None reads *cwd*'s, as a chat's own turn does.
+        memory_folder: str | None = None,
     ) -> str:
         """Build context for a new session (memory + skills + history).
 
@@ -1559,8 +1576,13 @@ class ContextBuilder:
         # are valuable regardless of which agent is running.
         # Temporary sessions skip all memory reads.
         # Memory: an agent's named memory_store provider if set, else the
-        # filesystem-fallback store scoped by the working directory.
-        memory = self.get_memory_for(cwd, memory_store)
+        # filesystem-fallback store scoped by the working directory, or by the folder whose
+        # memory the work reads (*memory_folder*).
+        if memory_folder is not None:
+            cwd_for_memory: str | None = memory_folder or None
+        else:
+            cwd_for_memory = cwd
+        memory = self.get_memory_for(cwd_for_memory, memory_store)
         # The four blocks that share ONE budget (§2.4 / §7 crit 5). Collected rather
         # than appended, then rendered together by `learning.ambient` below — four
         # independent appends is what let them accrete prompt weight past the budget
@@ -1691,11 +1713,11 @@ class ContextBuilder:
                 own = service_for(memory)
                 if isinstance(memory, MemoryStore) and memory is not self.memory:
                     return own.lessons_context(
-                        cwd,
+                        cwd_for_memory,
                         citations_out=lesson_cites,
                         beside=service_for(cast("MemoryProvider", self.memory)),
                     )
-                return own.lessons_context(cwd, citations_out=lesson_cites)
+                return own.lessons_context(cwd_for_memory, citations_out=lesson_cites)
 
             lessons_ctx = _guarded_recall("lessons", _lessons) or ""
 
@@ -1827,6 +1849,16 @@ class ContextBuilder:
         # `budget_tokens`; a `request_only` window is assembled the request alone. `None` = the
         # caller resolved no window (a standalone caller), which budgets as an unknown window.
         window: Window | None = None,
+        # The folder whose memory work done for a chat reads, when it is not the folder the work
+        # itself works in: a subagent's and a workflow step's (`memory_locality.work_folder`).
+        # Its partition is read first, then the global memory, labeled and fenced as coming
+        # from outside it, as a folder chat's own turn reads them. "" reads the global memory;
+        # None reads *cwd*'s, as a chat's own turn does.
+        memory_folder: str | None = None,
+        # What the memory is searched by when it is not the request (*text*): a subagent's task,
+        # without the instructions its request is put under (`subagent_prompt`). None searches
+        # by the request, as a chat's own turn does.
+        recall_query: str | None = None,
     ) -> tuple[str, HookResult]:
         """Build the full message with context and hook processing.
 
@@ -1936,6 +1968,7 @@ class ContextBuilder:
                 window=_window,
                 prior_transcript=prior_transcript,
                 citations_out=citations_out,
+                memory_folder=memory_folder,
             )
             if session_ctx:
                 parts.add(
@@ -2035,13 +2068,26 @@ class ContextBuilder:
         elif is_new_session:
             from personalclaw.memory_service import service_for
 
-            memory = self.get_memory_for(cwd, memory_store)
+            if memory_folder is not None:
+                memory = self.get_memory_for(memory_folder or None, memory_store)
+            else:
+                memory = self.get_memory_for(cwd, memory_store)
             # The manifest may already hold the session context's lesson entries, so the
             # episodes' share is what this call adds.
             cited_before = len(citations_out) if citations_out is not None else 0
+            query = text if recall_query is None else recall_query
             episodic_ctx = service_for(memory).episodic_context(
-                query_text=text, cap=3000, citations_out=citations_out
+                query_text=query, cap=3000, citations_out=citations_out
             )
+            if memory_folder and not memory_store:
+                # Work done in a folder reads the global memory after its folder's own, labeled
+                # and fenced as coming from outside it (`memory_locality.compose_recall`), as a
+                # folder chat's turn reads it through active recall.
+                from personalclaw import memory_locality
+
+                episodic_ctx = memory_locality.compose_recall(
+                    self, query, cwd=memory_folder, local=episodic_ctx, cap=3000
+                )
             if episodic_ctx:
                 parts.add(episodic_ctx + "\n", name="episodic memory")
                 logger.info("🔍 Injected episodic memory (%d chars)", len(episodic_ctx))

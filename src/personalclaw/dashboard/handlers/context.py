@@ -19,6 +19,7 @@ itself lives in :mod:`personalclaw.legibility.context_router` (pure, testable).
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 
@@ -67,13 +68,39 @@ def _knowledge_retriever():
         return None
 
 
-def _memory_service(state):
-    """The MemoryService for recall, or None. Reuses the memory handler's resolver
-    so the context read can never drift from the agent's own memory view."""
-    try:
-        from personalclaw.dashboard.handlers.memory import _get_service
+class _ProjectFirst:
+    """A project's memory, then the global memory: what its routed context recalls, as the work
+    done for the project reads them (``memory_locality.compose_recall``). The global memory's
+    episodes come after the project's, each said to come from outside it; ordering only, so one
+    the project's memory crowds out is still recalled."""
 
-        return _get_service(state)
+    def __init__(self, own: Any, shared: Any) -> None:
+        self._own, self._shared = own, shared
+
+    def recall_with_provenance(self, *, query_text: str, limit: int = 8) -> list[dict]:
+        from personalclaw.memory_locality import CROSS_PARTITION_SOURCE
+
+        own = self._own.recall_with_provenance(query_text=query_text, limit=limit) or []
+        shared = self._shared.recall_with_provenance(query_text=query_text, limit=limit) or []
+        outside = [
+            {**m, "source": ", ".join(filter(None, (m.get("source"), CROSS_PARTITION_SOURCE)))}
+            for m in shared
+        ]
+        return list(own) + outside
+
+
+def _memory_service(state, project) -> Any:
+    """The memory project *project*'s routed context recalls from, or None: the project's own,
+    the folder it binds (``memory_locality.project_folder``), first, then the global memory; the
+    global memory alone for a project that binds none. Reuses the memory handler's resolver so
+    the context read can never drift from the agent's own memory view."""
+    try:
+        from personalclaw import memory_locality
+        from personalclaw.dashboard.handlers.memory import _folder_memory, _global_service
+
+        shared = _global_service(state)
+        own = _folder_memory(memory_locality.project_folder(str(getattr(project, "id", ""))))
+        return shared if own is None else _ProjectFirst(own, shared)
     except Exception:
         logger.debug("context: memory service unavailable", exc_info=True)
         return None
@@ -85,7 +112,7 @@ def _route_for_project(state, project, query: str, withheld: str = "") -> cr.Rou
     return cr.route_context(
         project,
         query=query,
-        memory_svc=None if withheld else _memory_service(state),
+        memory_svc=None if withheld else _memory_service(state, project),
         knowledge_retriever=_knowledge_retriever(),
         skills=_skills_index(query),
         memory_withheld=withheld,

@@ -47,6 +47,8 @@ async function mountStudio(over: { entity?: Partial<MemoryEntity>; deleteFails?:
       ...real,
       api: {
         ...(real.api as object),
+        // Only the memory every chat shares: the picker of folders' memories stays out of sight.
+        memoryPartitions: () => Promise.resolve([]),
         memoryStats: () => Promise.resolve(null),
         memorySemantic: () => Promise.resolve([]),
         memoryEpisodic: () => Promise.resolve([]),
@@ -98,7 +100,7 @@ describe('the entity inspector', () => {
   it('deletes the entity the user selected', async () => {
     await mountStudio()
     fireEvent.click((await screen.findAllByRole('button', { name: /^delete$/i }))[0])
-    await waitFor(() => expect(deleteEntity).toHaveBeenCalledWith('ent_a1b2c3d4'))
+    await waitFor(() => expect(deleteEntity).toHaveBeenCalledWith('ent_a1b2c3d4', ''))
   })
 
   it('names the entity and states what happens to the linked memories', async () => {

@@ -996,7 +996,9 @@
      {"annotation": "list[Component] | None", "default": "None", "kind": "keyword_only", "name": "components_out"},
      {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "notices_out"},
      {"annotation": "list[SkillDecision] | None", "default": "None", "kind": "keyword_only", "name": "skill_decisions_out"},
-     {"annotation": "Window | None", "default": "None", "kind": "keyword_only", "name": "window"}
+     {"annotation": "Window | None", "default": "None", "kind": "keyword_only", "name": "window"},
+     {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "memory_folder"},
+     {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "recall_query"}
     ],
     "returns": "tuple[str, HookResult]"
    },
@@ -1014,7 +1016,8 @@
      {"annotation": "list[str] | None", "default": "None", "kind": "positional_or_keyword", "name": "dropped_out"},
      {"annotation": "int | None", "default": "None", "kind": "positional_or_keyword", "name": "window"},
      {"annotation": "list[dict] | None", "default": "None", "kind": "positional_or_keyword", "name": "prior_transcript"},
-     {"annotation": "list[dict] | None", "default": "None", "kind": "keyword_only", "name": "citations_out"}
+     {"annotation": "list[dict] | None", "default": "None", "kind": "keyword_only", "name": "citations_out"},
+     {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "memory_folder"}
     ],
     "returns": "str"
    },

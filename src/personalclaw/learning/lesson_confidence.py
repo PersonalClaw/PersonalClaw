@@ -441,6 +441,36 @@ class LessonEvidenceStore:
             )
             cur.execute("DELETE FROM lesson_evidence WHERE lesson_key = ?;", (old_key,))
 
+    def adopt(self, other: "LessonEvidenceStore", lesson_keys: list[str]) -> None:
+        """Take *other*'s evidence for the lessons *lesson_keys*, which moved here from the memory
+        *other* keeps the evidence of (``VectorMemoryStore.hand_over_everything``). A lesson this
+        store already holds evidence for keeps its own, so taking the same lessons twice changes
+        nothing."""
+        found = other.evidence_map(lesson_keys)
+        if not found or other is self:
+            return
+        self._ensure()
+        with self._lock, self._staging._cursor() as cur:
+            cur.executemany(
+                "INSERT OR IGNORE INTO lesson_evidence (lesson_key, observations, contradictions, "
+                "reversals, voided, human_authored, first_observed_at, last_observed_at, "
+                "last_reversed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
+                [
+                    (
+                        key,
+                        ev.observations,
+                        ev.contradictions,
+                        ev.reversals,
+                        ev.voided,
+                        1 if ev.human_authored else 0,
+                        ev.first_observed_at,
+                        ev.last_observed_at,
+                        ev.last_reversed_at,
+                    )
+                    for key, ev in found.items()
+                ],
+            )
+
     # ── Reading ──
 
     def evidence_for(self, lesson_key: str) -> LessonEvidence:

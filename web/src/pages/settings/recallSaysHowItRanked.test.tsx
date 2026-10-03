@@ -53,6 +53,7 @@ vi.mock('../../lib/api', () => ({
     memorySettings: () => Promise.resolve({}),
     memoryStats: () => Promise.resolve({}),
     personalclawConfig: () => Promise.resolve({}),
+    memoryPartitions: () => Promise.resolve([]),
   },
 }))
 

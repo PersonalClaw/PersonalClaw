@@ -42,7 +42,7 @@ WRITERS: dict[tuple[str, str], str] = {
     ("durability/shards.py", "_stage_db_copy"): "a whole database, staged for a sync",
     ("durability/shards.py", "_write_manifest"): "a shard export's manifest",
     ("cli_project.py", "_export"): "a project archive",
-    ("cli_commands.py", "_memory_cmd"): "every memory, exported to a file",
+    ("cli_commands.py", "_memory_action"): "a memory, exported to a file",
     ("workflows/project_archive.py", "_open_archive"): "a decrypted project archive, staged",
 }
 

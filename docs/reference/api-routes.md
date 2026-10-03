@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **914 registrations** over **740 distinct paths** — 907 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **916 registrations** over **742 distinct paths** — 909 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -26,8 +26,8 @@ The 128 families the surface divides into, largest first.
 |---|---|---|
 | `/api/chat` | 80 | 68 |
 | `/api/knowledge` | 71 | 58 |
+| `/api/memory` | 51 | 43 |
 | `/api/workflows` | 50 | 45 |
-| `/api/memory` | 49 | 41 |
 | `/api/models` | 38 | 30 |
 | `/api/loops` | 28 | 22 |
 | `/api/artifacts` | 25 | 16 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 907 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 909 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -685,6 +685,8 @@ The 907 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/memory/lint` | run the memory-health sweep, return its report. |
 | `POST` | `/api/memory/migrate` | migrate legacy markdown memory to vector store. |
 | `GET` | `/api/memory/observability` | memory health metrics and context preview. |
+| `GET` | `/api/memory/partitions` | every memory you have, each folder's named by its folder. |
+| `DELETE` | `/api/memory/partitions/{id}` | remove a folder's memory, with all it holds. |
 | `GET` | `/api/memory/preferences` | _(no summary)_ |
 | `PUT` | `/api/memory/preferences` | _(no summary)_ |
 | `GET` | `/api/memory/projects` | _(no summary)_ |

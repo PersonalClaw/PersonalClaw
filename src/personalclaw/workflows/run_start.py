@@ -165,7 +165,7 @@ async def provision_workspace(ctl: RunController) -> bool:
         # container could not be made. Without this the isolation would be a directory nothing
         # ran in — the mechanism would look provisioned and be decorative. An in-place run's path
         # is the tree its project is bound to, which is what in place means: without this its
-        # steps worked in the project's context folder (`bind_project_memory_cwd`) instead.
+        # steps worked in the project's context folder (`bind_project_context_cwd`) instead.
         ctl.services.cwd = result.path
     return True
 
@@ -185,32 +185,29 @@ def _project_workspace(ctl: RunController) -> str:
     return provisioning.project_tree(ctl.run.project_id) or ctl.services.cwd
 
 
-def bind_project_memory_cwd(ctl: RunController) -> None:
-    """Default a project-owned run's cwd to the project's `context_dir` (§1.6).
+def bind_project_context_cwd(ctl: RunController) -> None:
+    """Default a project-owned run's cwd to the project's context folder: the folder its steps
+    work in (§1.2 calls it "the default cwd fallback for stage nodes", and the hierarchy store
+    "the working area when no external workspace is bound"), which the spawn allowlist admits for
+    them (`provisioning.run_workdir`).
 
-    Memory is partitioned by cwd (`memory_dir_for_cwd`), so a project-owned run whose cwd
-    is empty writes everything it learns into the shared `_ext/_default` partition — one
-    pile every project's runs stir together. Binding the project's context dir (which §1.2
-    already calls "the default cwd fallback for stage nodes", and which the hierarchy store
-    documents as "the working area when no external workspace is bound") makes that memory
-    project-local for free: no second partitioning mechanism, just the seam that exists.
+    The folder a step works in is not the memory it reads: a project's run reads its project's
+    memory, whatever folder its steps work in (`memory_locality.project_folder`).
 
     Runs LAST in `_prepare`, and only when nothing more specific has claimed the cwd:
     an isolated workspace (`result.path`, set just above) and a caller-supplied
-    `services.cwd` are deliberate bindings, and a memory-locality default that overrode
-    them would move a code-kind run out of the worktree it was provisioned into.
+    `services.cwd` are deliberate bindings, and a default that overrode them would move a
+    code-kind run out of the worktree it was provisioned into.
     """
     if ctl.services.cwd:
         return
-    from personalclaw.memory_locality import project_memory_cwd
+    from personalclaw.workflows.provisioning import project_context
 
-    cwd = project_memory_cwd(ctl.run.project_id)
+    cwd = project_context(ctl.run.project_id)
     if not cwd:
         return
     ctl.services.cwd = cwd
-    logger.info(
-        "run %s: cwd bound to project context dir for memory locality (%s)", ctl.run.id, cwd
-    )
+    logger.info("run %s: cwd bound to the project's context folder (%s)", ctl.run.id, cwd)
 
 
 async def carry_over_document(ctl: RunController) -> None:

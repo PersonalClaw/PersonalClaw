@@ -449,6 +449,9 @@ def register_dashboard_routes(app: web.Application) -> None:
     app.router.add_get("/api/memory/episodic", handlers.api_memory_episodic_list)
     app.router.add_delete("/api/memory/episodic/{id}", handlers.api_memory_episodic_delete)
     app.router.add_get("/api/memory/stats", handlers.api_memory_stats)
+    # Every memory she has, the global one and each folder's (each route above takes ?partition=).
+    app.router.add_get("/api/memory/partitions", handlers.api_memory_partitions)
+    app.router.add_delete("/api/memory/partitions/{id}", handlers.api_memory_partition_delete)
     app.router.add_get("/api/memory/vault", handlers.api_memory_vault_status)
     app.router.add_post("/api/memory/vault/sync", handlers.api_memory_vault_sync)
     app.router.add_get("/api/memory/daily-digests", handlers.api_memory_daily_digests)

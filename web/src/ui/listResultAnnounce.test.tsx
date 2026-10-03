@@ -566,7 +566,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     // And the third field is why the census needs no exemption for this panel: it is named as a
     // QUERY, not a filter, so the population never included it. Its text is submitted to produce a
     // preview — nothing is narrowed, so a result count would describe nothing.
-    expect(src, 'the third field feeds a retrieval preview').toContain('api.memoryContextPreview(q)')
+    expect(src, 'the third field feeds a retrieval preview').toContain('api.memoryContextPreview(q, partition)')
     expect(src, 'and is named as a query, which is what keeps it out of the census')
       .toContain('ariaLabel="Query to preview injected memory context"')
   })

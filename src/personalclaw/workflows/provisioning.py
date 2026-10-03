@@ -940,7 +940,7 @@ def run_workdir(run_id: str) -> str:
     * a project's run that works in place: the folder its project is bound to, read from the
       project's record (:func:`project_tree`) and never from the path the run's record carries;
     * any other project's run: that project's context folder, which is where the engine puts
-      such a run's steps (``run_start.bind_project_memory_cwd``).
+      such a run's steps (``run_start.bind_project_context_cwd``).
 
     A record that names anything else (another run's folder, the run's own directory with its
     journal, a project's tree for a run that does not work in place) admits nothing, and neither
@@ -966,9 +966,22 @@ def run_workdir(run_id: str) -> str:
         tree = project_tree(project_id)
         if tree:
             return tree
-    from personalclaw.memory_locality import project_memory_cwd
+    return project_context(project_id)
 
-    return project_memory_cwd(project_id)
+
+def project_context(project_id: str) -> str:
+    """The context folder of project *project_id* (``projects.context_dir``, made when it is
+    missing), or ``""`` when there is no project or it cannot be read: where a project's run
+    works when nothing more specific binds its folder (``run_start.bind_project_context_cwd``)."""
+    if not project_id:
+        return ""
+    try:
+        from personalclaw import projects
+
+        return projects.context_dir(project_id) or ""
+    except Exception:  # noqa: BLE001 - an unreadable project binds no folder
+        logger.debug("project %r: context folder unreadable", project_id, exc_info=True)
+        return ""
 
 
 def _own_isolated_dir(run: Any, recorded: str, state: dict[str, Any]) -> str:

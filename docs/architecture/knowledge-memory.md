@@ -495,6 +495,9 @@ item vector).
   frontmatter rewrite invisible; a page the parser cannot read is left alone and
   flagged rather than merged. Files dropped in `<vault>/raw/` are routed to the
   KNOWLEDGE ingest queue, never into memory — the boundary holds inside the vault.
+  Each folder's memory that holds records is a vault of its own under
+  `folders/<id>/`, in the same mode, so a hand edit there is read back into that
+  folder's memory (see "Partitions & project locality").
 - **`learn.py`** — lesson capture; `memory_lint.py` — hygiene checks;
   `engagement_signals.py`, `preference_facets.py` — derived preference data.
 
@@ -550,6 +553,15 @@ item vector).
   consolidation and its seal, and `memory_recall`. A project chat records there the
   folder its project binds, when it binds one, a loop's worker the folder its loop
   binds, and a Code loop's task worker its task's worktree.
+- **Work done for a chat reads that chat's memory** (`memory_locality.work_folder`, up
+  the chain `memory_reads.reach_of` walks): a subagent's first prompt and its
+  `memory_recall` read the partition of the session it works for, a workflow step's
+  the partition of the chat that started its run, and a project's run its project's,
+  whoever started it. Each reads that folder's partition first, then the global memory,
+  labeled and fenced (`ContextBuilder.build_message(memory_folder=…)`), and searches by
+  its task, never by the instructions the task is put under (`recall_query`). Only
+  work that may read memory reads any: a Temporary chat's and an app's not given your
+  memory read none.
 - **Consolidation keeps a folder chat's memory in that folder's partition**
   (`HistoryConsolidator._kept_in`): the daily history entry and the session summary,
   the facts, the episodes, the persona notes, the seal, and the per-store
@@ -564,12 +576,13 @@ item vector).
 - A folder chat follows its partition's lessons and, beside them, the global lesson
   list's for every chat and for its folder (`VectorMemoryStore.get_lessons_context`,
   `beside=`): a rule taught in Settings or with `memory_remember` reaches it.
-  `memory_recall` from a chat (its `X-Session-Key`) reads that chat's partition first,
-  then the global memory, labeled and fenced as cross-partition recall; a subagent's
-  reads the global memory, as its first prompt does.
+  `memory_recall` reads the memory of the work asking (its `X-Session-Key`) first, then
+  the global memory, labeled and fenced as cross-partition recall, as that work's
+  prompts do.
 - **What an earlier version filed in the global memory for a folder chat moves** to
   its folder's partition at each start (`memory_locality.move_what_folder_chats_left`,
-  idempotent), before anything recalls. An episode is filed under the conversation it
+  idempotent), before anything recalls (`memory_locality.settle_at_start` runs it,
+  then the naming pass and the project pass below). An episode is filed under the conversation it
   came from (consolidation and the seal set it to the chat's key) and a session
   summary under its session, so each moves whole (id, text, vector, dates) to the
   folder the chat's transcript names. A fact names only the last chat that stated it
@@ -613,9 +626,58 @@ item vector).
   databases open through `sqlite_compat.connect`/`connect_shared`, which make the file
   private before SQLite first opens it (`atomic_write.make_private_database`), and the
   start-up pass makes a partition an earlier version left readable private too.
-- **Project locality rides that seam** (`memory_locality.py`): a project-owned
-  run binds the project's `context_dir` as its cwd, so what it learns lands in
-  that project's partition instead of the shared pile.
+- **Every folder's memory is listed, named by its folder.** A partition records the
+  folder it is the memory of in its `folder.json` the first time a store is opened on
+  it (`memory_locality.record_folder`), and the record is believed only when that
+  folder's partition name is the partition's own (`recorded_folder`), since a slug
+  cannot be read back into a path. A start-up pass names the partitions an earlier
+  version left unnamed from the chats' folders and the projects'
+  (`memory_locality.name_partitions`). `memory_locality.partitions()` lists the global
+  memory first, then each folder's; `GET /api/memory/partitions` adds what each holds,
+  whether its folder is still there, and the projects it is the memory of.
+- **Settings → Memory shows and manages whichever memory you pick** ("Memory of",
+  shown once there is more than the global memory): every route the page reads and
+  changes memory through takes `?partition=<id>` (`handlers/memory.py::asked_partition`),
+  so the facts, lessons, episodes, documents, graph, recall test, audit, health and
+  export it shows are that memory's. An id that names no memory is
+  `404 memory_partition_not_found`, never read as the global memory, and an id is a
+  partition directory's name exactly (letters, digits, `.`, `_`, `-`; never `.`,
+  `..`, the global partition's or a link). What is the global memory's alone stays
+  so: the vault's status and sync, migrating legacy markdown, consolidation, the
+  triage approval rules and the memory settings.
+- **A folder's memory can be removed** (`DELETE /api/memory/partitions/{id}`, the
+  picker's "Remove this memory", confirmed): the stores held open on it are closed and
+  its directory removed (`memory_locality.remove_partition`), with a security-log row.
+  One whose folder is gone is listed as such, so it can be found and removed; the
+  global memory has no id to be removed by.
+- `memory_list` and `memory_forget` read and change the lessons of every memory
+  (`/api/lessons?partition=*`), each listed lesson naming the folder whose memory keeps
+  it, and `memory_forget` saying whose it removed them from. A lesson is added to one
+  memory: `POST /api/lessons?partition=*` is refused. On the command line,
+  `personalclaw learn list` and `remove` reach every memory the same way,
+  `personalclaw memory partitions` lists them with their ids, and `--partition <id>`
+  points `memory list`, `search`, `stats`, `export` and `import` at a folder's
+  (`memory_locality.record_stores`).
+- The vault mirrors each folder's memory as a vault of its own under
+  `folders/<id>/`, linked from the root `MEMORY.md` under "Folders"
+  (`memory_vault.MemoryVault`, `folder=`). A folder vault whose memory was removed is
+  retired, only the files its manifest lists, and the root vault's lint never reads a
+  folder vault's pages as its own orphans.
+- **One project keeps one memory: the partition of the folder it binds**
+  (`memory_locality.project_folder`), or the global memory when it binds none. Its
+  chats work in that folder and keep their memory there, so its runs read that memory
+  too, whatever folder their steps work in (its context folder, a scratch folder or a
+  worktree, none of which keeps memory), and so does its routed context (`get_context`
+  and the context files: the project's memory first, then the global memory's episodes,
+  each said to come from outside it). The project's context folder would split the
+  bound folder's memory between the project's chats and that folder's other chats, and
+  take an unbound project's chats away from what they have kept. What an earlier
+  version's runs kept in the context folder's partition moves to the project's memory
+  at the start (`memory_locality.move_what_context_folders_kept`, idempotent): facts
+  and episodes record by record (of two facts under one key, the newer stays), lessons
+  with the evidence they stand on, and preference lines, the projects text and each
+  day's history entries the target does not hold yet; the emptied partition is then
+  removed. A memory that cannot take them leaves them for the next start.
 - Recall for a project-local session is **partition-first**: its own partition,
   then the global partition, whose hits are source-labeled and fenced
   (`security.py::fence_untrusted`). This affects **ordering only, never

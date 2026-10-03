@@ -421,10 +421,10 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
 
     async def _recall(query: str) -> str:
         try:
-            from personalclaw.dashboard.handlers.memory import _get_provider
+            from personalclaw.dashboard.handlers.memory import _global_provider
             from personalclaw.memory_service import MemoryService
 
-            svc = MemoryService.over_vector_store(_get_provider(state))
+            svc = MemoryService.over_vector_store(_global_provider(state))
             facts = await asyncio.to_thread(svc.semantic_context, query, cap=1500) or ""
         except Exception:
             logger.debug("grill-tree recall failed", exc_info=True)
@@ -762,13 +762,13 @@ def _persist_grill_decisions(body: dict, state: Any) -> int:
         if not decisions:
             return 0
 
-        from personalclaw.dashboard.handlers.memory import _get_provider
+        from personalclaw.dashboard.handlers.memory import _global_provider
         from personalclaw.memory_service import MemoryService
 
-        # `_get_provider` reaches `state` for the wired store (and lazily builds a standalone one),
-        # so the real DashboardState must be threaded through — passing None here would raise inside
-        # the guard and the whole seam would silently swallow itself into the `except` below.
-        svc = MemoryService.over_vector_store(_get_provider(state))
+        # `_global_provider` reaches `state` for the wired store (and lazily builds a standalone
+        # one), so the real DashboardState must be threaded through — passing None here would raise
+        # inside the guard and the whole seam would silently swallow itself into the `except` below.
+        svc = MemoryService.over_vector_store(_global_provider(state))
         if not svc.has_vector:
             return 0
         written = 0

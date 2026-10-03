@@ -29,6 +29,7 @@ from personalclaw.dashboard.ws_state import DashboardWebSocketState
 from personalclaw.guardrails.loop_breaker import LoopBreaker
 from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.knowledge.store import KnowledgeStore
+from personalclaw.memory_locality import work_folder
 from personalclaw.memory_reads import reach_of
 from personalclaw.own_words import OWN_WORDS
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -933,6 +934,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self.subagents = subagents
         if subagents is not None:  # an agent's first prompt reads memory as this state answers
             subagents.memory_reach = functools.partial(reach_of, self)
+            subagents.memory_folder = functools.partial(work_folder, self)
         self._inbox_state: Any = None
         self._inbox_store: Any = None
         self._inbox_svc: Any = None

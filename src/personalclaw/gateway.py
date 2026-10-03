@@ -1081,11 +1081,11 @@ class GatewayOrchestrator:
         self.conv_log = ConversationLog()
         self.conv_log.init()
         self.ctx_builder.conversation_log = self.conv_log
-        # What an earlier version filed in the global memory for a chat working in a folder goes
-        # to that folder's memory, where the chat reads it, before anything recalls.
-        from personalclaw.memory_locality import move_what_folder_chats_left
+        # What an earlier version left in the memory partitions is settled before anything
+        # recalls (`memory_locality.settle_at_start`).
+        from personalclaw.memory_locality import settle_at_start
 
-        move_what_folder_chats_left(self.vector_memory, self.conv_log)
+        settle_at_start(self.vector_memory, self.conv_log)
 
         # Session manager
         self.sessions = SessionManager(

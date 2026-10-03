@@ -10,7 +10,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import memory_locality, memory_service
+from personalclaw import memory_locality, memory_reads, memory_service
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import ConfigWriteError
@@ -100,7 +100,7 @@ async def _memory_doc(
     between the comparison and the write. The success response carries what is stored now, and
     its revision, because the write can reshape it (``write_projects`` adds the header).
     """
-    mem = _get_memory(request.app["state"])
+    mem = _memory_of(request)
     if request.method == "PUT":
         try:
             body = await request.json()
@@ -327,10 +327,46 @@ def _redact_memory_field(val: object) -> object:
     return val
 
 
-def _get_provider(state: DashboardState):
-    """Get the record/vector memory PROVIDER for embedding-admin operations
-    (reindex / stats / FAISS) — the one surface that legitimately reaches provider
-    internals. Content operations go through _get_service."""
+def asked_partition(request: web.Request) -> memory_locality.Partition:
+    """The memory a request is about: the folder's memory its ``?partition=`` names, else the
+    global memory (``memory_locality.partition_named``). Every route the Memory page reads and
+    changes memory through asks this, so the page shows and manages whichever memory she picks.
+    An id that names no folder's memory is refused (404 ``memory_partition_not_found``) rather
+    than read as the global memory: a page left open on a memory since removed would otherwise
+    show, and change, the wrong one."""
+    part = memory_locality.partition_named(request.query.get("partition", ""))
+    if part is None:
+        refusal = json_error("memory_partition_not_found", status=404)
+        raise web.HTTPNotFound(body=refusal.body, content_type="application/json")
+    return part
+
+
+def _memory_of(request: web.Request) -> Any:
+    """The memory store (markdown documents and its record store) the request is about
+    (:func:`asked_partition`): the gateway's own for the global memory, else the folder's,
+    opened with its record store."""
+    part = asked_partition(request)
+    if part.is_global:
+        return _get_memory(request.app["state"])
+    return memory_locality.open_partition(part, writes=True)
+
+
+def _get_provider(request: web.Request):
+    """The record/vector memory PROVIDER of the memory the request is about (:func:`_memory_of`),
+    for embedding-admin operations (reindex / stats / FAISS): the one surface that legitimately
+    reaches provider internals. Content operations go through _get_service. A folder's memory
+    whose database cannot be opened is refused (503 ``memory_partition_unavailable``)."""
+    if asked_partition(request).is_global:
+        return _global_provider(request.app["state"])
+    store = _memory_of(request).vector_store
+    if store is None:
+        refusal = json_error("memory_partition_unavailable", status=503)
+        raise web.HTTPServiceUnavailable(body=refusal.body, content_type="application/json")
+    return store
+
+
+def _global_provider(state: DashboardState):
+    """The global memory's record store, made beside a gateway that wired none."""
     mem = _get_memory(state)
     if mem.vector_store:
         return mem.vector_store
@@ -345,28 +381,142 @@ def _get_provider(state: DashboardState):
     return state._standalone_vector  # type: ignore[attr-defined]
 
 
-def _get_service(state: DashboardState):
-    """The MemoryService (L3) for memory-content operations — semantic CRUD,
-    events/WAL, search, context. The dashboard memory API talks to this, not the
-    provider, so it can never drift from the agent's own memory view."""
+def _global_service(state: DashboardState):
+    """The MemoryService over the global memory, for what is the global memory's alone (the
+    triage rules, the Learning page, a project's routed context, the loops' digest)."""
     from personalclaw.memory_service import MemoryService
 
-    return MemoryService.over_vector_store(_get_provider(state))
+    return MemoryService.over_vector_store(_global_provider(state))
 
 
-def _asking_chat_folder(state: DashboardState, request: web.Request) -> str:
-    """The folder the chat a call is made for works in (its ``X-Session-Key``), read where every
-    reader of a chat's memory reads it (``memory_locality.chat_folder``): its live session, else
-    its saved transcript. "" for the Memory page and for work that is not a chat (a subagent, an
-    app's run, a workflow step), whose prompt is assembled from the global memory."""
+def _get_service(request: web.Request):
+    """The MemoryService (L3) for memory-content operations over the memory the request is about
+    (:func:`asked_partition`) — semantic CRUD, events/WAL, search, context. The dashboard memory
+    API talks to this, not the provider, so it can never drift from the agent's own memory
+    view."""
+    from personalclaw.memory_service import MemoryService
+
+    return MemoryService.over_vector_store(_get_provider(request))
+
+
+def _held(store: Any) -> dict[str, int]:
+    """How many facts and episodes the record store *store* holds (none without one)."""
+    if store is None:
+        return {"semantic": 0, "episodic": 0}
+    stats = store.memory_stats()
+    return {
+        "semantic": int(stats.get("semantic_active") or 0),
+        "episodic": int(stats.get("episodic_active") or 0),
+    }
+
+
+def _projects_by_partition() -> dict[str, list[dict]]:
+    """Each folder's memory id, with the projects whose memory it is (the folder they bind,
+    ``memory_locality.project_folder``): their names beside the folder say whose it is."""
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    found: dict[str, list[dict]] = {}
+    try:
+        projects = HierarchyStore().list_projects()
+    except Exception:  # noqa: BLE001 - unreadable projects name no memory
+        logger.debug("memory: the projects could not be read", exc_info=True)
+        return found
+    for project in projects:
+        folder = memory_locality.project_folder(project.id)
+        if memory_locality.is_local_partition(folder):
+            pid = memory_locality.partition_for(folder).name
+            found.setdefault(pid, []).append({"id": project.id, "name": project.name})
+    return found
+
+
+async def api_memory_partitions(request: web.Request) -> web.Response:
+    """GET /api/memory/partitions — every memory you have, each folder's named by its folder.
+
+    The global memory every chat outside a folder of its own reads comes first, then each folder's
+    own, with the projects it is the memory of, whether the folder is still there, and how much it
+    holds. Settings → Memory shows and manages whichever you pick (each memory route's
+    ``?partition=``)."""
+    state: DashboardState = request.app["state"]
+
+    def _list() -> list[dict]:
+        projects = _projects_by_partition()
+        rows = []
+        for part in memory_locality.partitions():
+            try:
+                store = (
+                    _global_provider(state)
+                    if part.is_global
+                    else memory_locality.open_partition(part).vector_store
+                )
+                held = _held(store)
+            except Exception:  # noqa: BLE001 - a memory that cannot be counted is still listed
+                logger.debug("memory: could not count the memory of %s", part.id, exc_info=True)
+                held = {"semantic": 0, "episodic": 0}
+            rows.append(
+                {
+                    "id": part.id,
+                    "global": part.is_global,
+                    "folder": part.shown,
+                    "path": part.folder,
+                    "gone": part.gone,
+                    "projects": projects.get(part.id, []),
+                    **held,
+                }
+            )
+        return rows
+
+    return web.json_response({"partitions": await asyncio.to_thread(_list)})
+
+
+async def api_memory_partition_delete(request: web.Request) -> web.Response:
+    """DELETE /api/memory/partitions/{id} — remove a folder's memory, with all it holds.
+
+    Every fact, lesson, episode and document its chats kept there goes. An id names a folder's
+    memory only (the global memory has none, ``memory_locality.partition_named``), so one that
+    names none is 404, and work for a Temporary or Incognito chat, or for an app not given your
+    memory, cannot remove memory (403)."""
+    state: DashboardState = request.app["state"]
+    sk = request.headers.get("X-Session-Key", "")
+    pid = request.match_info["id"]
+    if _is_restricted_session(state, request):
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory.partition_remove",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
+    refused = _change_refused_for_the_app(state, request, "memory.partition_remove")
+    if refused is not None:
+        return refused
+    part = memory_locality.partition_named(pid)
+    if part is None or part.is_global:
+        return json_error("memory_partition_not_found", status=404)
+    removed = await asyncio.to_thread(memory_locality.remove_partition, part)
+    _sel().log_api_access(
+        caller=sk or "dashboard:ui",
+        operation="memory.partition_remove",
+        outcome="success" if removed else "failure",
+        source="dashboard",
+        resources=f"{pid} ({part.shown or 'no folder recorded'})",
+    )
+    if not removed:
+        return json_error("memory_partition_unavailable", status=503)
+    return web.json_response({"ok": True, "id": pid, "folder": part.shown})
+
+
+def _asking_work_folder(state: DashboardState, request: web.Request) -> str:
+    """The folder whose memory the work a call is made for reads first (its ``X-Session-Key``),
+    as that work's prompts read it (``memory_locality.work_folder``): a folder chat's own, the
+    chat's a subagent or a workflow step works for, a project run's project's. "" for the Memory
+    page and for work in no folder of its own, which read the global memory alone."""
     caller = request.headers.get("X-Session-Key", "")
     if not caller:
         return ""
-    session = state._sessions.get(caller.split(":", 1)[-1])
-    if session is not None:
-        return memory_locality.chat_folder(session)
-    log = state.conversation_log
-    return memory_locality.chat_folder(log.get_metadata(caller)) if log is not None else ""
+    return memory_locality.work_folder(state, memory_reads.reach_of(state, caller))
 
 
 def _folder_memory(folder: str) -> Any:
@@ -389,7 +539,7 @@ async def api_memory_semantic(request: web.Request) -> web.Response:
     resolving it server-side keeps the two surfaces from disagreeing — an unattributed
     record is the owner's, and with no username configured everything is.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     owner = _owner_handle()
     entries = []
     for e in svc.get_all_semantic():
@@ -414,7 +564,7 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     try:
         body = await request.json()
     except Exception:
@@ -492,7 +642,7 @@ async def api_memory_semantic_delete(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     # Named by the key the list showed, which is masked like the rest of the fact.
     try:
         key = _stored_key(svc, request.match_info["key"])
@@ -540,7 +690,8 @@ async def api_memory_approval_rules(request: web.Request) -> web.Response:
             resources="memory_withheld",
         )
         return web.json_response({"rules": [], "unreadable": [], "withheld": withheld})
-    svc = _get_service(state)
+    # The rules the triage matcher consults: the global memory's (`proactive.approval`).
+    svc = _global_service(state)
     rules: list[dict] = []
     unreadable: list[str] = []
     for entry in svc.get_all_semantic():
@@ -625,7 +776,7 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
         )
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=422)
-    svc = _get_service(request.app["state"])
+    svc = _global_service(request.app["state"])
     # Off the event loop, as every memory write that can reach a model is (`set_semantic`).
     err = await asyncio.to_thread(
         svc.set_semantic, rule.key, rule_to_value(rule), 1.0, "user_explicit"
@@ -680,7 +831,7 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
         # Scoped on purpose: this route revokes approval rules, so it must not
         # become a second, unaudited way to tombstone arbitrary memory keys.
         return web.json_response({"error": "not an approval rule key"}, status=400)
-    svc = _get_service(request.app["state"])
+    svc = _global_service(request.app["state"])
     if not svc.delete_semantic(key, source="user_explicit"):
         return web.json_response({"error": "not found"}, status=404)
     _sel().log_api_access(
@@ -700,7 +851,7 @@ async def api_memory_events(request: web.Request) -> web.Response:
     masks the same fact (`_redact_memory_field`). An undo names the event by id, so nothing here
     is sent back.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     try:
         limit = min(int(request.query.get("limit", "50")), 200)
         offset = int(request.query.get("offset", "0"))
@@ -716,7 +867,7 @@ async def api_memory_lint(request: web.Request) -> web.Response:
     Auto-fixes the safe issues (purge long-superseded rows) and flags the rest
     (stale / sparse / near-dup / contradictions) as recommendations.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     report = await asyncio.get_event_loop().run_in_executor(None, svc.lint)
     return web.json_response(report)
 
@@ -727,7 +878,7 @@ async def api_memory_event_undo(request: web.Request) -> web.Response:
     The dashboard's "undo" affordance over the reversible WAL — safety net for
     autonomous consolidation/promotion. Audited.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     try:
         event_id = int(request.match_info["event_id"])
     except (ValueError, KeyError):
@@ -766,7 +917,7 @@ async def _set_migrated(value: bool) -> None:
 
 async def api_memory_episodic_search(request: web.Request) -> web.Response:
     """GET /api/memory/episodic/search?q=...&tags=t1,t2 — search episodic memories."""
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     query = request.query.get("q", "")[:500]
     try:
         limit = min(int(request.query.get("limit", "20")), 50)
@@ -829,13 +980,20 @@ async def api_memory_recall(request: web.Request) -> web.Response:
         return web.json_response(
             {"result": refusal, "withheld": refusal, "query": "", "deep": False, "ranking": None}
         )
-    svc = _get_service(state)
-    # The asking chat's own memory when it works in a folder of its own: read first, as its turns
-    # read it, then the global memory, labeled as coming from outside that folder
-    # (`memory_locality.compose_recall`). None for the global memory's own chats and the Memory
-    # page, which read the global memory alone.
-    folder = _asking_chat_folder(state, request)
-    own = _folder_memory(folder)
+    # The memory the asker reads first when it is a folder's, then the global memory, labeled as
+    # coming from outside that folder (`memory_locality.compose_recall`): the folder's memory the
+    # Memory page names (`?partition=`), else the one the work asking reads, as its prompts read
+    # it (`_asking_work_folder`). None for the global memory's own work and the Memory page's own
+    # recall of it, which read the global memory alone.
+    part = asked_partition(request)
+    if part.is_global:
+        svc = _get_service(request)
+        folder = _asking_work_folder(state, request)
+        own = _folder_memory(folder)
+    else:
+        svc = _global_service(state)
+        folder = part.folder
+        own = _get_service(request)
     query = request.query.get("q", "")[:500]
     if not query:
         return web.json_response({"error": "q (query) is required"}, status=400)
@@ -886,7 +1044,7 @@ async def api_memory_recall(request: web.Request) -> web.Response:
             # Lessons — the rules the user taught that answer the query. Each rides its own block
             # into every prompt, so the fact ranking above leaves `lesson.*` out, and without this
             # no recall found one: "dishwasher" never reached the lesson that names it
-            # (`rank_lessons`). The ones taught for the asking chat's folder are its to see too.
+            # (`rank_lessons`). The ones taught for the asking work's folder are its to see too.
             if not _next("ranking lessons"):
                 return None
             lessons = memory.recall_lessons(
@@ -1010,7 +1168,7 @@ async def api_memory_recall(request: web.Request) -> web.Response:
 
 async def api_memory_episodic_list(request: web.Request) -> web.Response:
     """GET /api/memory/episodic?tags=t1,t2 — paginated list of episodic memories."""
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     try:
         limit = min(int(request.query.get("limit", "50")), 100)
         offset = int(request.query.get("offset", "0"))
@@ -1026,7 +1184,7 @@ async def api_memory_episodic_list(request: web.Request) -> web.Response:
 
 async def api_memory_episodic_delete(request: web.Request) -> web.Response:
     """DELETE /api/memory/episodic/{id} — tombstone an episodic memory."""
-    store = _get_provider(request.app["state"])
+    store = _get_provider(request)
     mem_id = request.match_info["id"]
     ok = store.delete_episodic(mem_id)
     if not ok:
@@ -1036,7 +1194,7 @@ async def api_memory_episodic_delete(request: web.Request) -> web.Response:
 
 async def api_memory_stats(request: web.Request) -> web.Response:
     """GET /api/memory/stats — memory system statistics."""
-    store = _get_provider(request.app["state"])
+    store = _get_provider(request)
     stats = store.memory_stats()
     # Add embedding status
     from personalclaw.config.loader import AppConfig  # noqa: F811
@@ -1053,34 +1211,34 @@ async def api_memory_stats(request: web.Request) -> web.Response:
     spec = _active_embedding_spec()
     stats["embedding_provider"] = spec[0] if spec else "none"
     stats["migrated"] = cfg.memory.migrated
-    # Check if legacy markdown memory has real content (for showing Migrate button)
+    # Legacy markdown is the global memory's to migrate (the Migrate button); a folder's has none.
+    stats["has_legacy_memory"] = asked_partition(request).is_global and _has_legacy_memory()
+    return web.json_response(stats)
+
+
+def _has_legacy_memory() -> bool:
+    """Whether the legacy markdown memory, or the lessons file before the record store, holds real
+    content: what the Migrate button is shown for."""
     from personalclaw.memory import memory_dir  # noqa: F811
 
     md = memory_dir()
-    has_legacy = False
     for f in [md / "preferences.md", md / "projects.md"]:
-        if f.is_file():
-            has_legacy = any(
-                line.strip().startswith("- ")
-                for line in f.read_text(encoding="utf-8", errors="replace").splitlines()
-            )
-            if has_legacy:
-                break
-    if not has_legacy and (md / "history").is_dir():
-        has_legacy = any((md / "history").glob("*.md"))
-    # Also check lessons.jsonl
+        if f.is_file() and any(
+            line.strip().startswith("- ")
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines()
+        ):
+            return True
+    if (md / "history").is_dir() and any((md / "history").glob("*.md")):
+        return True
     lessons_path = config_loader.config_dir() / "lessons.jsonl"
-    if not has_legacy and lessons_path.is_file() and lessons_path.stat().st_size > 5:
-        has_legacy = True
-    stats["has_legacy_memory"] = has_legacy
-    return web.json_response(stats)
+    return lessons_path.is_file() and lessons_path.stat().st_size > 5
 
 
 async def api_memory_daily_digests(request: web.Request) -> web.Response:
     """GET /api/memory/daily-digests — the per-day rollup nodes (mem-tree),
     newest first. A read view over the digest episodics the maintenance cadence
     builds; ``?rebuild=1`` forces a synchronous build first (for the UI button)."""
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     if request.query.get("rebuild", "").lower() in ("1", "true", "yes"):
         try:
             await asyncio.to_thread(svc.build_daily_digest, max_days=30)
@@ -1103,7 +1261,7 @@ async def api_memory_vault_status(request: web.Request) -> web.Response:
     )
 
     mode = vault_mode_from_config()
-    vault = MemoryVault(_get_service(request.app["state"]), vault_path_from_config(), mode=mode)
+    vault = MemoryVault(_global_service(request.app["state"]), vault_path_from_config(), mode=mode)
     out: dict[str, Any] = {
         # `enabled` stays in the payload as the "is a vault being kept in sync"
         # question, now derived from the mode rather than a second stored flag.
@@ -1148,7 +1306,7 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     mode = vault_mode_from_config()
     vdir = vault_path_from_config()
-    vault = MemoryVault(_get_service(state), vdir, mode="mirror" if mode == "off" else mode)
+    vault = MemoryVault(_global_service(state), vdir, mode="mirror" if mode == "off" else mode)
     knowledge = enqueue = None
     try:
         knowledge = state.knowledge_store
@@ -1178,7 +1336,7 @@ async def api_memory_migrate(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
-    store = _get_provider(request.app["state"])
+    store = _global_provider(request.app["state"])
 
     global _migrate_lock
     if _migrate_lock is None:
@@ -1216,7 +1374,7 @@ async def api_memory_import(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
-    store = _get_provider(request.app["state"])
+    store = _get_provider(request)
     try:
         data = await request.json()
     except Exception:
@@ -1230,7 +1388,7 @@ async def api_memory_import(request: web.Request) -> web.Response:
 
 async def api_memory_context_preview(request: web.Request) -> web.Response:
     """GET /api/memory/context-preview?q=... — preview what gets injected into prompts."""
-    store = _get_provider(request.app["state"])
+    store = _get_provider(request)
     query = request.query.get("q", "")[:500]
 
     # Pass the query into the SAME hybrid (vector + keyword) scorer the real
@@ -1303,7 +1461,7 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
 
 async def api_memory_observability(request: web.Request) -> web.Response:
     """GET /api/memory/observability — memory health metrics and context preview."""
-    store = _get_provider(request.app["state"])
+    store = _get_provider(request)
     query = request.query.get("q", "")[:500]
 
     def _observe() -> tuple[Any, Any, Any]:
@@ -1332,7 +1490,7 @@ async def api_memory_promote(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
-    store = _get_provider(request.app["state"])
+    store = _get_provider(request)
     body = await json_object_body(request)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
@@ -1494,8 +1652,7 @@ def _build_memory_graph(mem: Any) -> tuple[list[dict], list[dict]]:
 
 async def api_memory_graph(request: web.Request) -> web.Response:
     """GET /api/memory/graph — return all memory as nodes + edges for graph visualization."""
-    state: DashboardState = request.app["state"]
-    mem = _get_memory(state)
+    mem = _memory_of(request)
 
     try:
         loop = asyncio.get_running_loop()
@@ -1527,7 +1684,7 @@ async def api_memory_graph(request: web.Request) -> web.Response:
 
 async def api_memory_entities(request: web.Request) -> web.Response:
     """GET /api/memory/entities — the entity set with inbound-link counts."""
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     loop = asyncio.get_event_loop()
     entities, summary = await asyncio.gather(
         loop.run_in_executor(None, svc.graph_entities),
@@ -1549,7 +1706,7 @@ async def api_memory_entities(request: web.Request) -> web.Response:
 
 async def api_memory_entity_create(request: web.Request) -> web.Response:
     """POST /api/memory/entities — declare an entity, then re-link the store."""
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     if not svc.has_graph:
         return web.json_response({"error": "the memory entity graph is disabled"}, status=409)
     try:
@@ -1609,7 +1766,7 @@ async def api_memory_entity_delete(request: web.Request) -> web.Response:
     `200 {ok: false}` for a no-op is how a double-submit or a stale surface reports success for
     a request that changed nothing.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     if not svc.has_graph:
         return web.json_response({"error": "the memory entity graph is disabled"}, status=409)
     entity_id = request.match_info.get("entity_id", "")
@@ -1622,7 +1779,7 @@ async def api_memory_entity_delete(request: web.Request) -> web.Response:
 
 async def api_memory_entity_backlinks(request: web.Request) -> web.Response:
     """GET /api/memory/entities/{entity_id}/backlinks — what mentions this entity."""
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     entity_id = request.match_info.get("entity_id", "")
     loop = asyncio.get_event_loop()
     entities = await loop.run_in_executor(None, svc.graph_entities)
@@ -1641,7 +1798,7 @@ async def api_memory_entity_proposals(request: web.Request) -> web.Response:
     Propose-don't-write applied to the graph itself: recurring unknown names are
     surfaced here rather than silently becoming entities.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     if not svc.has_graph:
         return web.json_response({"error": "the memory entity graph is disabled"}, status=409)
     try:
@@ -1677,7 +1834,7 @@ async def api_memory_entity_proposals_list(request: web.Request) -> web.Response
     existed with no way to reach it. Returns ``[]`` (not an error) with the graph off: an
     empty queue and a disabled graph are different states, which is what ``enabled`` says.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     loop = asyncio.get_event_loop()
     proposals = await loop.run_in_executor(None, svc.graph_proposals)
     for proposal in proposals:
@@ -1692,7 +1849,7 @@ async def api_memory_record_links(request: web.Request) -> web.Response:
     whose key can itself contain slashes and colons; encoding that into a path segment reads
     as a route with two ids.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     ref = request.query.get("ref", "")
     if not ref:
         return web.json_response({"error": "ref is required"}, status=400)
@@ -1720,7 +1877,7 @@ async def api_memory_entity_graph(request: web.Request) -> web.Response:
     entity-level graph the Louvain pass partitions, each node carrying its community so the
     canvas colours by the same clustering the topology block describes.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     loop = asyncio.get_event_loop()
     graph = await loop.run_in_executor(None, svc.entity_graph)
     for node in graph.get("nodes", []):
@@ -1739,7 +1896,7 @@ async def api_memory_graph_export(request: web.Request) -> web.Response:
 
     from personalclaw.memory_graph_export import render_graph_html
 
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     loop = asyncio.get_event_loop()
     graph = await loop.run_in_executor(None, svc.entity_graph)
     for node in graph.get("nodes", []):
@@ -1776,7 +1933,7 @@ async def api_memory_graph_export(request: web.Request) -> web.Response:
 
 async def api_memory_slots(request: web.Request) -> web.Response:
     """GET /api/memory/slots — every slot with its lines, budget and live size."""
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     loop = asyncio.get_event_loop()
     slots = await loop.run_in_executor(None, svc.slots)
     for slot in slots:
@@ -1796,7 +1953,7 @@ async def api_memory_slot_append(request: web.Request) -> web.Response:
     truncation: MGAV-8's contract is that the human chooses which of their own lines to lose,
     so the response has to hand the UI the candidate list to offer.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     name = request.match_info.get("name", "")
     try:
         body = await request.json()
@@ -1830,7 +1987,7 @@ async def api_memory_slot_line_retire(request: web.Request) -> web.Response:
     (MGAV-8's resurrection guard reads ``tombstoned_by == "human"``). Calling it DELETE would
     promise a removal the storage model deliberately does not perform.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     name = request.match_info.get("name", "")
     try:
         body = await request.json()
@@ -1863,7 +2020,7 @@ async def api_memory_facets(request: web.Request) -> web.Response:
     facets, so nothing there can be addressed. Facet text is user prose, so it goes through
     the same redaction every other memory field on this surface does.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     loop = asyncio.get_event_loop()
     facets = await loop.run_in_executor(None, svc.facets)
     for facet in facets:
@@ -1877,7 +2034,7 @@ async def api_memory_facet_pin(request: web.Request) -> web.Response:
     ``{"pinned": false}`` unpins, which is why this is one route and not a pin/unpin pair:
     pinning says "keep trusting this" and has no reason to be a one-way door.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     key = request.match_info.get("key", "")
     try:
         body = await request.json()
@@ -1906,7 +2063,7 @@ async def api_memory_facet_forget(request: web.Request) -> web.Response:
     cannot resurrect it. That finality is the point, and it is what obliges the caller to
     confirm first.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     key = request.match_info.get("key", "")
     if not key:
         return web.json_response({"error": "facet key is required"}, status=400)
@@ -1927,7 +2084,7 @@ async def api_memory_graph_rebuild(request: web.Request) -> web.Response:
     this twice changes nothing. Returns before/after counts so the effect is
     visible rather than asserted.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     if not svc.has_graph:
         return web.json_response({"error": "the memory entity graph is disabled"}, status=409)
     loop = asyncio.get_event_loop()
@@ -1947,7 +2104,7 @@ async def api_memory_volunteer_stats(request: web.Request) -> web.Response:
     signal that the reflex is offering noise — which is the point of measuring it
     rather than asserting the feature helps.
     """
-    svc = _get_service(request.app["state"])
+    svc = _get_service(request)
     window = request.query.get("window_days", "")
     try:
         window_days: int | None = int(window) if window else None

@@ -8,16 +8,23 @@ JSONL fallback (the legacy JSONL lesson store was retired).
 attaches one; the API-only path attaches one in ``_get_memory``), so
 ``service_for(...).has_vector`` is always true here and lessons persist even with
 no embedder configured.
+
+A folder's chats keep lessons in that folder's memory too (``memory_locality``). Each route takes
+``?partition=``: an id names the folder's memory it is about (Settings → Memory's pick), none the
+global memory, and :data:`EVERY_MEMORY` every memory she has, each lesson named by the memory it is
+in: the inventory ``memory_list`` reads and ``memory_forget`` removes from.
 """
 
 import asyncio
 import json
 import logging
+from typing import Any
 
 from aiohttp import web
 
-from personalclaw import memory_reads, memory_writes
+from personalclaw import memory_locality, memory_reads, memory_writes
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.security import MaskConflict, redact_values_for_display, stored_name
 
 from ._shared import _change_refused_for_the_app, _get_memory, _memory_refusal
@@ -30,6 +37,45 @@ def _sel():
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811
 
     return _pkg.sel()
+
+
+#: The ``?partition=`` that names every memory she has: the global memory, then each folder's.
+EVERY_MEMORY = "*"
+
+
+def _memories(
+    request: web.Request, *, writes: bool = False
+) -> list[tuple[memory_locality.Partition, Any]] | None:
+    """The memories a lessons request is about, each with its store: the one ``?partition=``
+    names (none: the global memory), or every one for :data:`EVERY_MEMORY`. None when an id names
+    no memory. A folder's memory is opened with its record store only when *writes*, so listing
+    every memory makes nothing in one that keeps no lessons."""
+    state: DashboardState = request.app["state"]
+    asked = request.query.get("partition", "")
+    if asked == EVERY_MEMORY:
+        parts = memory_locality.partitions()
+    else:
+        part = memory_locality.partition_named(asked)
+        if part is None:
+            return None
+        parts = [part]
+    return [
+        (
+            part,
+            (
+                _get_memory(state)
+                if part.is_global
+                else memory_locality.open_partition(part, writes=writes)
+            ),
+        )
+        for part in parts
+    ]
+
+
+def _named(part: memory_locality.Partition) -> dict[str, Any]:
+    """Which memory a lesson is in, as a row names it: its id, the folder it is the memory of
+    (written from ``~``, "" for the global memory), and whether that folder is gone."""
+    return {"partition": part.id, "folder": part.shown, "folder_gone": part.gone}
 
 
 async def api_lessons_create(request: web.Request) -> web.Response:
@@ -126,7 +172,16 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
 
     negative = body.get("negative") or None
-    svc = service_for(_get_memory(state))
+    memories = _memories(request, writes=True)
+    if memories is None:
+        return json_error("memory_partition_not_found", status=404)
+    if len(memories) != 1:
+        return json_error(
+            "bad_request",
+            message="A lesson is added to one memory: name it, or none for every chat's.",
+            status=400,
+        )
+    svc = service_for(memories[0][1])
     # Off the event loop: the lesson is embedded, and may be judged against the lessons it could
     # contradict, each a round trip to a model.
     await asyncio.to_thread(
@@ -166,20 +221,28 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
     rule_sub = body.get("rule", "").strip()
     if not rule_sub:
         return web.json_response({"error": "rule substring required"}, status=400)
-    # Delete through the memory service onto memory.db ``lesson.*``.
+    # Delete through the memory service onto memory.db ``lesson.*``, in the memory asked, or in
+    # every memory she has (`memory_forget`), saying which ones it removed lessons from.
     from personalclaw.memory_service import service_for
 
-    svc = service_for(_get_memory(state))
+    memories = _memories(request)
+    if memories is None:
+        return json_error("memory_partition_not_found", status=404)
     # The list shows a rule masked (`api_lessons`), and the page deletes by the rule it showed. A
     # masked rule names the stored one it masks; a rule with no marker matches as it always has.
-    try:
-        rule = stored_name(rule_sub, _stored_rules(svc))
-    except MaskConflict as exc:
-        return web.json_response({"error": str(exc)}, status=409)
-    ok = svc.delete_lesson(rule) if rule is not None else False
-    if ok:
+    # Every memory's is named before any is removed, so a rule one memory cannot name for certain
+    # removes nothing anywhere.
+    named: list[tuple[Any, Any, str | None]] = []
+    for part, memory in memories:
+        svc = service_for(memory)
+        try:
+            named.append((part, svc, stored_name(rule_sub, _stored_rules(svc))))
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+    removed = [_named(part) for part, svc, rule in named if rule and svc.delete_lesson(rule)]
+    if removed:
         state.push_refresh("lessons")
-    return web.json_response({"ok": ok})
+    return web.json_response({"ok": bool(removed), "removed": removed})
 
 
 def _stored_rules(svc) -> list[str]:
@@ -208,24 +271,34 @@ async def api_lessons(request: web.Request) -> web.Response:
             resources=sk,
         )
         return web.json_response({"lessons": [], "withheld": refusal})
-    # Read through the memory service onto memory.db ``lesson.*``.
+    # Read through the memory service onto memory.db ``lesson.*``, in each memory asked.
     from personalclaw.memory_service import resolve_lesson_scope, service_for
 
-    svc = service_for(_get_memory(state))
+    memories = _memories(request)
+    if memories is None:
+        return json_error("memory_partition_not_found", status=404)
     # `?workspace=` makes this the VISIBILITY view (global + that workspace); absent, it
     # is the full inventory across every scope. The list path takes the workspace
     # explicitly because the dashboard has no ambient working directory to infer one
     # from — the caller is the only thing that knows. Each row carries its own scope so
     # a workspace lesson never reads as a global one in a management surface.
     ws_param = request.query.get("workspace", "").strip()
+    ws_ref: str | None = None
     if ws_param:
         try:
             _scope, ws_ref = resolve_lesson_scope("workspace", ws_param)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        rows = svc.lessons_visible_in(ws_ref)
-    else:
-        rows = svc.get_lessons()
+    data: list[dict[str, Any]] = []
+    for part, memory in memories:
+        svc = service_for(memory)
+        rows = svc.lessons_visible_in(ws_ref) if ws_param else svc.get_lessons()
+        data += [{**row, **_named(part)} for row in _lesson_rows(svc, rows)]
+    return web.json_response({"lessons": data})
+
+
+def _lesson_rows(svc: Any, rows: list[dict]) -> list[dict[str, Any]]:
+    """Each lesson of *rows* as the lists show it, with how far it stands."""
     data = []
     # Every lesson, not a page of them: this is the list the Memory studio shows, opens a cited
     # lesson in and deletes from, so a lesson left out is one the owner cannot see or remove. (It
@@ -261,4 +334,4 @@ async def api_lessons(request: web.Request) -> web.Response:
                 "reversals": int(getattr(evidence, "reversals", 0)),
             }
         )
-    return web.json_response({"lessons": data})
+    return data

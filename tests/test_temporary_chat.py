@@ -257,7 +257,10 @@ class TestMcpSessionKeyPlumbing:
     @patch("personalclaw.mcp_memory._delete")
     def test_learn_remove_no_session_key_in_body(self, mock_delete):
         """session_key should NOT be in the JSON body — header handles it."""
-        mock_delete.return_value = {"removed": 1}
+        mock_delete.return_value = {
+            "ok": True,
+            "removed": [{"partition": "", "folder": "", "folder_gone": False}],
+        }
         from personalclaw.mcp_memory import _call_tool_inner
 
         _call_tool_inner("memory_forget", {"query": "test"})

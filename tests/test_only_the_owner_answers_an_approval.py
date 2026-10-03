@@ -378,8 +378,9 @@ async def test_an_agent_teaches_no_approve_rule(tmp_path, monkeypatch, refused_r
 
     store = VectorMemoryStore(db_path=tmp_path / "m.db")
     store.init()
+    # The triage rules are the global memory's, which the rule routes read alone.
     monkeypatch.setattr(
-        mem_handlers, "_get_service", lambda state: MemoryService.over_vector_store(store)
+        mem_handlers, "_global_service", lambda state: MemoryService.over_vector_store(store)
     )
     monkeypatch.setattr(mem_handlers, "_is_restricted_session", lambda state, req: False)
     try:

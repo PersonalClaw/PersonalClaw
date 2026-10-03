@@ -214,8 +214,11 @@ def _stub_the_writes(monkeypatch):
     (never a real home) and what it audits is kept."""
     provider = MagicMock()
     service = MagicMock()
-    monkeypatch.setattr("personalclaw.dashboard.handlers.memory._get_provider", provider)
-    monkeypatch.setattr("personalclaw.dashboard.handlers.memory._get_service", service)
+    # The picked memory's and the global memory's (vault sync and migrate read only that one).
+    for name in ("_get_provider", "_global_provider"):
+        monkeypatch.setattr(f"personalclaw.dashboard.handlers.memory.{name}", provider)
+    for name in ("_get_service", "_global_service"):
+        monkeypatch.setattr(f"personalclaw.dashboard.handlers.memory.{name}", service)
     audit = MagicMock()
     monkeypatch.setattr("personalclaw.dashboard.handlers.memory._sel", lambda: audit)
     return provider, service, audit
@@ -420,8 +423,9 @@ async def test_a_session_whose_record_reads_as_keeping_memory_is_let_through(mon
 @pytest.mark.asyncio
 async def test_migrate_normal_session_is_not_blocked(monkeypatch):
     store = _WriteStore()
+    # Legacy markdown memory is the global memory's alone, so the migration reads only that one.
     monkeypatch.setattr(
-        "personalclaw.dashboard.handlers.memory._get_provider", lambda _state: store
+        "personalclaw.dashboard.handlers.memory._global_provider", lambda _state: store
     )
     app = web.Application()
     app["state"] = MagicMock()  # empty headers → not a restricted session

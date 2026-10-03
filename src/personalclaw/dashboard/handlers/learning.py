@@ -100,9 +100,9 @@ def _installer_for(request: web.Request):
     from personalclaw.learning import installers
 
     try:
-        from personalclaw.dashboard.handlers.memory import _get_service
+        from personalclaw.dashboard.handlers.memory import _global_service
 
-        svc = _get_service(request.app["state"])
+        svc = _global_service(request.app["state"])
     except Exception:
         logger.debug("accept installer: no memory service", exc_info=True)
         svc = None

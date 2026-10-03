@@ -769,7 +769,7 @@ class TestGrillTree:
         # The recall seam reaches memory via MemoryService.semantic_context — stub the
         # provider accessor so the closure returns a deterministic block (not None).
         monkeypatch.setattr(
-            "personalclaw.dashboard.handlers.memory._get_provider", lambda _s: object()
+            "personalclaw.dashboard.handlers.memory._global_provider", lambda _s: object()
         )
         monkeypatch.setattr(
             "personalclaw.memory_service.MemoryService.over_vector_store",
@@ -1809,7 +1809,7 @@ class TestGrillSaveSeam:
                 return True
 
         monkeypatch.setattr(
-            "personalclaw.dashboard.handlers.memory._get_provider", lambda state: object()
+            "personalclaw.dashboard.handlers.memory._global_provider", lambda state: object()
         )
         monkeypatch.setattr(
             "personalclaw.memory_service.MemoryService.over_vector_store",
@@ -1859,7 +1859,7 @@ class TestGrillSaveSeam:
                 return True
 
         monkeypatch.setattr(
-            "personalclaw.dashboard.handlers.memory._get_provider", lambda state: object()
+            "personalclaw.dashboard.handlers.memory._global_provider", lambda state: object()
         )
         monkeypatch.setattr(
             "personalclaw.memory_service.MemoryService.over_vector_store",
@@ -1892,7 +1892,7 @@ class TestGrillSaveSeam:
                 return True
 
         monkeypatch.setattr(
-            "personalclaw.dashboard.handlers.memory._get_provider", lambda state: object()
+            "personalclaw.dashboard.handlers.memory._global_provider", lambda state: object()
         )
         monkeypatch.setattr(
             "personalclaw.memory_service.MemoryService.over_vector_store",
@@ -1946,7 +1946,7 @@ class TestGrillRecallReadsWhatSaveWrites:
 
         monkeypatch.setattr("personalclaw.grill.grill", _fake_grill)
         monkeypatch.setattr(
-            "personalclaw.dashboard.handlers.memory._get_provider", lambda _s: object()
+            "personalclaw.dashboard.handlers.memory._global_provider", lambda _s: object()
         )
         monkeypatch.setattr(
             "personalclaw.memory_service.MemoryService.over_vector_store",
@@ -1986,7 +1986,7 @@ class TestGrillRecallReadsWhatSaveWrites:
 
         monkeypatch.setattr("personalclaw.grill.grill", _fake_grill)
         monkeypatch.setattr(
-            "personalclaw.dashboard.handlers.memory._get_provider", lambda _s: object()
+            "personalclaw.dashboard.handlers.memory._global_provider", lambda _s: object()
         )
         monkeypatch.setattr(
             "personalclaw.memory_service.MemoryService.over_vector_store",

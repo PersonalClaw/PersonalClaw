@@ -1377,22 +1377,38 @@ Examples:
         help="Lesson category (default: knowledge)",
     )
     memory_remember.add_argument("--negative", help="What NOT to do (optional)")
-    learn_sub.add_parser("list", help="List all lessons")
-    learn_rm = learn_sub.add_parser("remove", help="Remove lessons matching a substring")
+    learn_sub.add_parser("list", help="List all lessons, every folder's memory's included")
+    learn_rm = learn_sub.add_parser(
+        "remove", help="Remove lessons matching a substring, from every memory"
+    )
     learn_rm.add_argument("query", help="Substring to match against lesson rules")
 
     # Memory
     mem_parser = sub.add_parser("memory", help="Manage vector memory system")
     mem_sub = mem_parser.add_subparsers(dest="mem_action")
-    mem_sub.add_parser("list", help="Show semantic memory entries")
-    mem_search = mem_sub.add_parser("search", help="Search episodic memories")
+    # Which memory: the one every chat shares, or a folder's own, by the id `partitions` lists.
+    in_memory = argparse.ArgumentParser(add_help=False)
+    in_memory.add_argument(
+        "--partition",
+        default="",
+        metavar="ID",
+        help="A folder's memory, by the id `personalclaw memory partitions` lists "
+        "(default: the memory every chat shares)",
+    )
+    mem_sub.add_parser(
+        "partitions", help="List every memory: the one every chat shares, then each folder's"
+    )
+    mem_sub.add_parser("list", help="Show semantic memory entries", parents=[in_memory])
+    mem_search = mem_sub.add_parser("search", help="Search episodic memories", parents=[in_memory])
     mem_search.add_argument("query", help="Search query text")
-    mem_sub.add_parser("stats", help="Show memory statistics")
+    mem_sub.add_parser("stats", help="Show memory statistics", parents=[in_memory])
     mem_sub.add_parser("audit", help="Scan memory for suspicious content")
-    mem_export = mem_sub.add_parser("export", help="Export all memory to JSON")
+    mem_export = mem_sub.add_parser("export", help="Export all memory to JSON", parents=[in_memory])
     mem_export.add_argument("--output", "-o", help="Output file (default: stdout)")
     mem_sub.add_parser("migrate", help="Migrate legacy markdown memory to vector store")
-    mem_import = mem_sub.add_parser("import", help="Import memory from JSON file")
+    mem_import = mem_sub.add_parser(
+        "import", help="Import memory from JSON file", parents=[in_memory]
+    )
     mem_import.add_argument("file", help="Path to JSON file (export format)")
 
     # agent

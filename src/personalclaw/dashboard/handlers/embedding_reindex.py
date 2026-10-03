@@ -113,12 +113,12 @@ async def api_reindex_start(request: web.Request) -> web.Response:
             status=409,
         )
 
-    from personalclaw.dashboard.handlers.memory import _get_provider
+    from personalclaw.dashboard.handlers.memory import _global_provider
 
     job, error = _registry(request).start(
         model=model,
         knowledge_store=getattr(state, "knowledge_store", None),
-        memory_store=_get_provider(state),
+        memory_store=_global_provider(state),
         embedder=embedder,
     )
     if error is not None:
@@ -256,7 +256,7 @@ class _Pending:
 def _pending_reembed(app) -> _Pending:
     """Count what the bound model has not embedded (blocking: resolving it probes it once)."""
     from personalclaw.context import every_memory_vector_store
-    from personalclaw.dashboard.handlers.memory import _get_provider
+    from personalclaw.dashboard.handlers.memory import _global_provider
 
     state = app["state"]
     ks = getattr(state, "knowledge_store", None)
@@ -268,7 +268,7 @@ def _pending_reembed(app) -> _Pending:
     active_dim = _dim() if callable(_dim) else None
     knowledge = ks.count_items_to_reembed(active_dim) if ks is not None else 0
     passages = ks.count_stale_chunk_vectors() if ks is not None else 0
-    with every_memory_vector_store(_get_provider(state)) as stores:
+    with every_memory_vector_store(_global_provider(state)) as stores:
         memory = sum(_not_embedded(store) for store in stores)
     return _Pending(
         model=model,
@@ -285,7 +285,7 @@ def _start_pending(app, pending: _Pending, *, said: bool = False) -> Any:
 
     *said*: the model is already waiting to be ready and the log has said so, so each look again
     after that is not another warning."""
-    from personalclaw.dashboard.handlers.memory import _get_provider
+    from personalclaw.dashboard.handlers.memory import _global_provider
 
     knowledge = pending.knowledge > 0 or pending.passages > 0
     if not knowledge and pending.memory <= 0:
@@ -306,7 +306,7 @@ def _start_pending(app, pending: _Pending, *, said: bool = False) -> Any:
     job, error = state.embedding_reindex().start(
         model=pending.model,
         knowledge_store=ks if knowledge else None,
-        memory_store=_get_provider(state),
+        memory_store=_global_provider(state),
         embedder=pending.embedder,
     )
     if error:

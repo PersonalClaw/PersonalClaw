@@ -532,6 +532,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/lint` — run the memory-health sweep, return its report.
 - `POST /api/memory/migrate` — migrate legacy markdown memory to vector store.
 - `GET /api/memory/observability` — memory health metrics and context preview.
+- `GET /api/memory/partitions` — every memory you have, each folder's named by its folder.
+- `DELETE /api/memory/partitions/{id}` — remove a folder's memory, with all it holds.
 - `GET /api/memory/preferences` — _(no summary)_
 - `PUT /api/memory/preferences` — _(no summary)_
 - `GET /api/memory/projects` — _(no summary)_
