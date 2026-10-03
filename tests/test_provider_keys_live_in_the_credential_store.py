@@ -282,7 +282,7 @@ def test_a_key_typed_before_this_change_moves_to_the_store_and_still_authenticat
     assert _config_text() == before, "the move is not idempotent"
 
 
-def test_a_provider_cannot_be_saved_naming_an_apps_key(name):
+def test_a_provider_cannot_be_saved_naming_an_apps_key(name, monkeypatch):
     """``config.json`` is core's, and core holds every key no app holds — not an app's. A
     reference to an app's token typed into Settings → Providers was accepted on create and on
     update, and core then resolved it. It is refused with what to do, nothing is written, and a
@@ -309,6 +309,9 @@ def test_a_provider_cannot_be_saved_naming_an_apps_key(name):
     assert token not in created.body.decode()
     assert not config_loader.config_path().exists() or name not in _config_text()
 
+    # A named (vault) credential is mirrored into the process environment by design; this makes
+    # the teardown take it back out, so no later test inherits it.
+    monkeypatch.setenv("FIXTURE_VAULT_PROVIDER_KEY", "")
     save_credential("FIXTURE_VAULT_PROVIDER_KEY", KEY)
     _create(name, {"api_key": make_ref("FIXTURE_VAULT_PROVIDER_KEY"), "endpoint": FIXTURE_BASE})
     before = _config_text()
