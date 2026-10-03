@@ -1540,7 +1540,7 @@ def _allow_heartbeat_tasks_the_owner_wrote(
     if request_app():
         return
     try:
-        if os.path.realpath(path) != os.path.realpath(heartbeat.heartbeat_path()):
+        if not heartbeat.is_queue_file(path):
             return
         sealed = heartbeat.seal_owner_edit(before.decode("utf-8", errors="replace"), after)
     except Exception:  # noqa: BLE001 - the save stands; the task waits for an Allow
@@ -1619,39 +1619,46 @@ async def api_file_write(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "not found"}, status=404)
     try:
+        from personalclaw import heartbeat
+
         # 🔴 A PAGE'S COPY IS SAVED ONLY OVER THE FILE IT WAS BUILT FROM. Read, compared and
         # replaced with no await in between, so nothing in this process lands between the check
         # and the write. A file that no longer reads back whole — it grew past the read cap, or is
         # binary now — was no page's copy: `whole_text` is None and no base matches it.
-        head = read_head(path)
-        stale = stale_write_refusal(request, whole_text(head), what=f"the file {path!r}")
-        if stale is not None:
-            _sel().log_tool_invocation(
-                session_key="dashboard",
-                tool_name="file_write",
-                outcome=refusal_outcome(stale),
-                resources=path,
+        # HEARTBEAT.md is written from a worker thread too (the agent's file tools), so its read
+        # and write are held under the queue's lock, as every writer of it holds them.
+        with heartbeat.queue_lock(path):
+            head = read_head(path)
+            stale = stale_write_refusal(request, whole_text(head), what=f"the file {path!r}")
+            if stale is not None:
+                _sel().log_tool_invocation(
+                    session_key="dashboard",
+                    tool_name="file_write",
+                    outcome=refusal_outcome(stale),
+                    resources=path,
+                )
+                return stale
+            # That copy is the file as `file_as_read` shows it, with a marker for every value it
+            # masks. Each marker is put back from the file itself, so saving an edit never writes
+            # one over the key it hides.
+            content = keep_masked_spans(
+                str(body["content"]), head.decode("utf-8", errors="replace")
             )
-            return stale
-        # That copy is the file as `file_as_read` shows it, with a marker for every value it masks.
-        # Each marker is put back from the file itself, so saving an edit never writes one over
-        # the key it hides.
-        content = keep_masked_spans(str(body["content"]), head.decode("utf-8", errors="replace"))
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path))
-        try:
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path))
             try:
-                shutil.copymode(path, tmp_path)
-            except OSError:
-                pass
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_path, path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+                try:
+                    shutil.copymode(path, tmp_path)
+                except OSError:
+                    pass
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                os.replace(tmp_path, path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_write", outcome="success", resources=path
         )

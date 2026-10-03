@@ -1026,6 +1026,24 @@ to a task is a new task, and a finished task takes its yes with it. Not
 "read-only until allowed": a waiting task does not run at all, so what it would
 do is never the question — only the owner's yes is.
 
+**A pass takes out only what it finished.** Its turns can take minutes, and the
+owner may save the file in the Files editor, or the agent write to it, while
+they run. So a pass never writes back the list it read before them: once they
+are done it reads the file again and takes each finished task's line out of
+that text, and every other line stays byte for byte as it is then — a task
+added meanwhile, an edit, a heading, a note, its line endings
+(`heartbeat._take_out`). A finished task whose line was edited while it ran is
+not taken out, since the pass cannot tell an edit to its task from a new task:
+the line stays as it is now, and the gateway log says so. A pass that finished
+nothing does not write the file. The pass, the Files editor's save, the agent's
+`write_file` and `edit_file` and the boot that creates the file each read and
+write it under one lock (`heartbeat.queue_lock`, a lock file in the home's
+`locks/`, not in the workspace), so none lands between another's read and its
+write. A file-backed artifact's write-through checks and writes the file in one
+step on the event loop, where the pass's edit runs too, so those two cannot
+interleave either. A command the agent's shell runs takes no lock; it can meet a
+pass only in the instant the pass rewrites the file.
+
 ### A research report's schedule is one schedule
 
 A scheduled research report (`#/knowledge/reports`) owns its schedule — its

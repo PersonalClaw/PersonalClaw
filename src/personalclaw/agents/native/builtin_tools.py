@@ -43,6 +43,7 @@ from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal
 from personalclaw.file_scope import refusal as scope_refusal
 from personalclaw.file_scope import store_named_in
 from personalclaw.file_view import BINARY_SNIFF_BYTES, is_binary
+from personalclaw.heartbeat import queue_locked
 from personalclaw.knowledge_providers.dir_source import note_path
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.security import (
@@ -1191,7 +1192,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             path.write_text(written, encoding="utf-8")
             return None
 
-        err = await asyncio.get_event_loop().run_in_executor(None, _write)
+        # HEARTBEAT.md is rewritten by the heartbeat pass too: both hold its lock (`queue_lock`).
+        err = await asyncio.get_event_loop().run_in_executor(None, queue_locked(path, _write))
         if err and err.startswith("mask: "):
             return ToolResult(success=False, error=err.removeprefix("mask: "))
         if err == "is a directory":
@@ -1268,7 +1270,8 @@ class NativeBuiltinToolProvider(ToolProvider):
                 + _marker_note(new, edited, text)
             )
 
-        ok, msg = await asyncio.get_event_loop().run_in_executor(None, _edit)
+        # HEARTBEAT.md is rewritten by the heartbeat pass too: both hold its lock (`queue_lock`).
+        ok, msg = await asyncio.get_event_loop().run_in_executor(None, queue_locked(path, _edit))
         if ok:
             return ToolResult(success=True, output=msg)
         if msg.startswith("mask: "):

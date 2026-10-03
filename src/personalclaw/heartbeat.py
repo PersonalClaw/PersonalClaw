@@ -28,6 +28,14 @@ reads a tool it has no declaration for by its name. 75 of the agent's
 115 tools pass it, ``computer_click``, ``workflow_start`` and ``memory_remember`` among them. A
 task held to it could still change things, so "read-only" would be a promise nothing enforces.
 
+**A pass takes out the tasks it finished, and nothing else.** Its turns take minutes, and the owner
+(in the Files editor) or the agent may write the file meanwhile. So the pass does not write back
+the list it read before them: it reads the file again when they are done and takes each finished
+task's line out of that text, leaving every other byte as it is (:func:`run_tasks`). The pass, the
+Files editor's save, the agent's ``write_file`` and ``edit_file`` and the boot that creates the
+file each read and write it under one lock (:func:`queue_lock`), so none lands between another's
+read and its write.
+
 **Store maintenance is not here at all.** Memory FTS
 reconciliation, the history and SEL prunes and skill-library aging belong to the
 health-scored remediation engine, which is driven by ONE adaptive-clock trigger
@@ -39,15 +47,19 @@ switching between two of them.
 """
 
 import asyncio
+import fcntl
 import logging
+import os
 import re
-from collections.abc import Awaitable
+from collections import Counter
+from collections.abc import Awaitable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Coroutine
+from typing import TYPE_CHECKING, Callable, Coroutine, TypeVar
 
 from personalclaw import owed_chores, shutdown_event
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.memory import workspace_dir
 from personalclaw.owner_grants import GrantBook, seal
 
@@ -89,6 +101,66 @@ _HEADER = (
 
 def heartbeat_path() -> Path:
     return workspace_dir() / HEARTBEAT_FILE
+
+
+#: The queue's lock (`concurrency.lock_path`): in the home's ``locks/``, not beside the file, since
+#: the workspace is the agent's, and a lock file there would be listed, copied and deleted with it.
+_LOCK_KEY = "heartbeat-queue"
+
+
+@contextmanager
+def _locked() -> Iterator[None]:
+    """Hold the queue's lock, waiting for it. ``flock`` on a file opened for this hold, so it
+    excludes another thread as it does another process, and the OS frees it if the holder dies.
+    Not re-entrant: nothing done while it is held may take it again."""
+    from personalclaw.concurrency import lock_path
+
+    with lock_path(_LOCK_KEY).open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def is_queue_file(path: Path | str) -> bool:
+    """Whether *path* is HEARTBEAT.md, named directly or through a link."""
+    return os.path.realpath(path) == os.path.realpath(heartbeat_path())
+
+
+@contextmanager
+def queue_lock(path: Path | str) -> Iterator[None]:
+    """Hold the queue's lock while *path* is read and written, when *path* is HEARTBEAT.md.
+
+    The gateway's writers of the file hold it around their read and their write: a pass taking out
+    the tasks it finished (:func:`run_tasks`), the Files editor's save, the agent's ``write_file``
+    and ``edit_file``, and the boot that creates the file. So none lands between another's read and
+    its write and undoes it. A file-backed artifact's write-through checks and writes the file in
+    one step on the event loop, where a pass edits it too, so the two cannot interleave either. A
+    command the agent's shell runs, or another program, takes no lock: it can meet a pass only in
+    the instant the pass rewrites the file, never across the minutes its turns take. Any other
+    path is not the queue, and nothing is held for it.
+    """
+    if not is_queue_file(path):
+        yield
+        return
+    with _locked():
+        yield
+
+
+_T = TypeVar("_T")
+
+
+def queue_locked(path: Path | str, write: Callable[[], _T]) -> Callable[[], _T]:
+    """*write*, run under :func:`queue_lock` for *path*: the form for a writer that reads and
+    writes the file on a worker thread (the agent's ``write_file`` and ``edit_file``), so the lock
+    is held on that thread, around both."""
+
+    def locked() -> _T:
+        with queue_lock(path):
+            return write()
+
+    return locked
 
 
 #: One HEARTBEAT.md task as the gateway's unattended background turn: `(task, deliver) -> response`.
@@ -166,10 +238,12 @@ CONSENT_TITLE = "Allow this heartbeat task to run?"
 
 
 def ensure_heartbeat_file() -> Path:
-    """Create HEARTBEAT.md with its header when it is missing, so the agent finds the queue."""
+    """Create HEARTBEAT.md with its header when it is missing, so the agent finds the queue. Under
+    the queue's lock, so a file another writer makes at that moment is not written over."""
     path = heartbeat_path()
-    if not path.exists():
-        atomic_write(path, _HEADER)
+    with _locked():
+        if not path.exists():
+            atomic_write(path, _HEADER)
     return path
 
 
@@ -194,8 +268,10 @@ async def run_tasks(run_task: TaskRunner) -> TaskPass:
     A task the owner has not allowed (:func:`allowed`) is not run: it stays in the file as it is,
     waiting for their yes. A task that ran is kept when it raised (it retries on the next pass) or
     when its response carries ``HEARTBEAT_KEEP`` (the agent's "not done yet"); every other one is
-    removed, and the yes it had with it — the same words written again later are a new task. The
-    file is rewritten only when a task ran, so a queue with nothing to run costs one read.
+    taken out, and the yes it had with it — the same words written again later are a new task. The
+    file is written only when a task finished, and then only to take that task's line out of the
+    file as it is once the turns are done (:func:`_take_out`): a task, an edit or a note written
+    while they ran stays as it was written. A queue with nothing to run costs one read.
     """
     path = heartbeat_path()
     result = TaskPass()
@@ -207,9 +283,9 @@ async def run_tasks(run_task: TaskRunner) -> TaskPass:
     if not ready:
         return result
     logger.info("Heartbeat: %d task(s) to run, %d waiting", len(ready), result.waiting)
-    finished: set[str] = set()
+    finished: Counter[tuple[str, str]] = Counter()
     outcomes = await asyncio.gather(*[run_task(t, d) for t, d in ready], return_exceptions=True)
-    for (task_text, _deliver), outcome in zip(ready, outcomes):
+    for (task_text, deliver), outcome in zip(ready, outcomes):
         if isinstance(outcome, BaseException):
             logger.warning("Heartbeat task failed: %s", task_text[:80], exc_info=outcome)
             result.failed.append(task_text[:80])
@@ -218,18 +294,62 @@ async def run_tasks(run_task: TaskRunner) -> TaskPass:
             logger.info("Heartbeat task incomplete, keeping: %s", task_text[:80])
             result.kept += 1
         else:
-            finished.add(task_text)
+            finished[(task_text, deliver)] += 1
     result.ran = len(ready)
-    for text in finished:
+    # The yes goes before the line does: a pass stopped in between leaves a task that waits for
+    # the owner again, never a yes still on words that are gone from the file.
+    for text in {text for text, _deliver in finished}:
         BOOK.revoke(seal(text))
-    lines = _HEADER
-    for text, deliver in tasks:
-        if text in finished:
-            continue
-        suffix = f"  <!-- deliver:{deliver} -->" if deliver else ""
-        lines += f"- {text}{suffix}\n"
-    atomic_write(path, lines)
+    if finished:
+        _take_out(path, finished)
     return result
+
+
+def _take_out(path: Path, finished: Counter[tuple[str, str]]) -> None:
+    """Take each finished task's line out of HEARTBEAT.md as it is now, and change nothing else.
+
+    The file is read again here, not taken from the read the pass started with: its turns took
+    minutes, and the owner or the agent may have written it since. Each finished task's line is
+    found in that text by the task it holds (the same reading :func:`_extract_tasks` makes), and
+    every other line keeps its bytes: endings, spacing, markers, headings and notes. Read, edited
+    and written in one step under the queue's lock (:func:`queue_lock`), with nothing awaited, so
+    no writer in the gateway lands in between.
+
+    A finished task no line holds any more was edited or removed while it ran. Nothing is taken
+    out for it: an edited line stays as it is now, since the pass cannot tell an edit to its task
+    from a new task, and the log says so.
+    """
+    left = Counter(finished)
+    with _locked():
+        try:
+            # Bytes, not text mode: a text-mode read turns a CRLF ending into LF.
+            current = path.read_bytes().decode("utf-8")
+        except FileNotFoundError:
+            logger.info("Heartbeat: HEARTBEAT.md was removed while the pass ran")
+            return
+        except (OSError, UnicodeDecodeError):
+            logger.warning(
+                "Heartbeat: HEARTBEAT.md could not be read again, so the tasks this pass "
+                "finished stay in it and wait to be allowed again",
+                exc_info=True,
+            )
+            return
+        kept: list[str] = []
+        for line, task in _task_lines(current):
+            if task is not None and left[task] > 0:
+                left[task] -= 1
+                continue
+            kept.append(line)
+        edited = "".join(kept)
+        if edited != current:
+            atomic_write_bytes(path, edited.encode("utf-8"))
+    for (text, _deliver), missing in left.items():
+        if missing:
+            logger.warning(
+                "Heartbeat: a finished task's line was edited or removed while it ran, so it is "
+                "left as it is now: %s",
+                text[:80],
+            )
 
 
 class HeartbeatService:
@@ -397,37 +517,50 @@ def _extract_tasks(content: str) -> list[tuple[str, str]]:
     ``deliver_target`` comes from an inline ``<!-- deliver:xxx -->`` comment.
     Empty string when absent.
     """
-    tasks: list[tuple[str, str]] = []
+    return [task for _line, task in _task_lines(content) if task is not None]
+
+
+def _task_lines(content: str) -> Iterator[tuple[str, tuple[str, str] | None]]:
+    """Each line of *content*, its ending kept, with the ``(text, deliver)`` task it holds, or None
+    for a line that holds none (blank, a comment, a heading).
+
+    The one reading of the format: :func:`_extract_tasks` lists what it finds, and a pass takes a
+    finished task's line out by it (:func:`_take_out`), so a line is a task to both or to neither.
+    The lines join back to *content* exactly.
+    """
     in_comment = False
-    for line in content.splitlines():
+    for line in content.splitlines(keepends=True):
+        task: tuple[str, str] | None = None
         stripped = line.strip()
         if not stripped:
-            continue
+            pass
         # Track multi-line HTML comments (standalone comment lines)
-        if "<!--" in stripped and "-->" not in stripped:
+        elif "<!--" in stripped and "-->" not in stripped:
             in_comment = True
-            continue
-        if in_comment:
-            if "-->" in stripped:
-                in_comment = False
-            continue
+        elif in_comment:
+            in_comment = "-->" not in stripped
         # Standalone comment line (<!-- ... --> on one line, no task text)
-        if stripped.startswith("<!--") and stripped.endswith("-->"):
-            continue
-        if stripped.startswith("#"):
-            continue
-        # Extract inline deliver target before stripping comments
-        deliver = ""
-        m = _DELIVER_RE.search(stripped)
-        if m:
-            deliver = m.group(1)
-            stripped = stripped[: m.start()].rstrip()
-        # Strip leading list markers
-        for prefix in ("- [x] ", "- [ ] ", "- ", "* "):
-            if stripped.startswith(prefix):
-                stripped = stripped[len(prefix) :]
-                break
-        stripped = stripped.strip()
-        if stripped and stripped != "-":
-            tasks.append((stripped, deliver))
-    return tasks
+        elif stripped.startswith("<!--") and stripped.endswith("-->"):
+            pass
+        elif stripped.startswith("#"):
+            pass
+        else:
+            task = _task_in(stripped)
+        yield line, task
+
+
+def _task_in(stripped: str) -> tuple[str, str] | None:
+    """The ``(text, deliver)`` a task line holds, or None when no text is left of it."""
+    # Extract inline deliver target before stripping comments
+    deliver = ""
+    m = _DELIVER_RE.search(stripped)
+    if m:
+        deliver = m.group(1)
+        stripped = stripped[: m.start()].rstrip()
+    # Strip leading list markers
+    for prefix in ("- [x] ", "- [ ] ", "- ", "* "):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix) :]
+            break
+    stripped = stripped.strip()
+    return (stripped, deliver) if stripped and stripped != "-" else None
