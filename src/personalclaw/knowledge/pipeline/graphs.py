@@ -230,3 +230,15 @@ def graph_for(item_type: str, *, enrichment: str = ENRICHMENT_FULL) -> PipelineG
     g.build()
     g.validate()
     return g
+
+
+def file_graph_for(item_type: str) -> PipelineGraph:
+    """The graph that reads a FILE of *item_type*, for a caller that has only the file.
+
+    A text type's own graph hands on the item's stored content and reads no file. A code file
+    is one (a ``gist``): the library reads its text into the item when it is uploaded, and the
+    gist's graph hands that on. Given only the file there is no content to hand on, so a file of
+    a text type is read by the document graph, whose reader reads it as text by the rule every
+    reader of a file as text shares (``readers.file_text``): a binary file named as code is not
+    read, and the text it does read is the reader's, which the content scan reads."""
+    return graph_for("document" if item_type in _TEXT_TYPES else item_type)

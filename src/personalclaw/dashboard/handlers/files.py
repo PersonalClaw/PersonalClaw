@@ -43,6 +43,7 @@ from personalclaw.security import (
     keep_masked_spans,
     redact_credentials,
     redact_exfiltration_urls,
+    redact_for_display,
 )
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 from personalclaw.uploads.content_scan import ContentRefused, scan_upload
@@ -1004,11 +1005,15 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
     ever read when this, or its turn, asks), and every page hears an ``attachments`` refresh
     hint when it finishes.
 
+    ``text`` is masked for display (``security.redact_for_display``), the mask a turn puts on what
+    it hands the model (``attachment_extract.file_block``): the preview shows what the agent was
+    given, and a key a config file holds leaves the gateway masked, as the Files view shows it.
+
     ``read`` says whether the text was read from the file's content, or is only its
     structural descriptor (size and format) — the attachment chip's sentence depends on it.
-    ``unread`` says why nothing was read when that is known: ``"no_image_model"`` when the
-    file needed an image model and none is set up (``knowledge.extract.UNREAD_NO_IMAGE_MODEL``),
-    else ``""``."""
+    ``unread`` says why nothing was read when that is known (``knowledge.extract.UNREAD_*``):
+    ``"no_image_model"`` when the file needed an image model and none is set up, ``"refused"``
+    or ``"unchecked"`` when the content scan withheld its text, else ``""``."""
     import mimetypes as _mt
 
     caller = request.get("user", "dashboard")
@@ -1048,7 +1053,7 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
         {
             "name": display_name(path),
             "pending": False,
-            "text": got.text,
+            "text": redact_for_display(got.text),
             "read": got.read,
             "unread": got.unread,
         }

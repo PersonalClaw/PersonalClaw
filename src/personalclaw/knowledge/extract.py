@@ -11,7 +11,10 @@ the consolidated text.
 
 For a plain-text file this is just "read the file"; for audio/video it's ASR
 (+ ffmpeg + frame OCR/vision for video); for an image it's OCR/vision — exactly
-as knowledge ingestion does, because it IS the same node graph.
+as knowledge ingestion does, because it IS the same node graph. A code or config file is
+read as the text it is, by the document reader (``pipeline.file_graph_for``): the library
+calls one a gist, whose own graph hands on text the library read into the item, and here
+there is only the file.
 
 The text the document reader makes of the file is scanned before it is returned
 (``uploads.content_scan.scan_text``): the upload scan reads the file's bytes, and a document's
@@ -79,18 +82,18 @@ async def extract_file(
     from personalclaw.knowledge.pipeline import (
         NodeContext,
         ensure_nodes_registered,
-        graph_for,
+        file_graph_for,
     )
     from personalclaw.knowledge.pipeline.executor import PipelineExecutor
 
     ensure_nodes_registered()
 
-    # Route by the same classifier knowledge uses (ext + mime hint). Unknown →
-    # 'document' so the reader stack still tries (degrades to raw bytes/utf-8).
+    # Route by the same classifier knowledge uses (ext + mime hint). Unknown → 'document', so
+    # the document reader reads it when it is text and says so when it is not.
     item_type = media.classify(os.path.basename(file_path), mime) or "document"
 
     try:
-        graph = graph_for(item_type)
+        graph = file_graph_for(item_type)
     except Exception:
         logger.warning("extract: graph build failed for type=%s", item_type, exc_info=True)
         return Extracted("", False)

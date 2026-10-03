@@ -120,7 +120,11 @@ bytes from a request, and fails on one that neither scans them nor says why not.
   `PipelineGraph` subclass. Users tune per-node execution parameters
   (enable/backend/use-case/timeout) via config but **cannot rewire a graph**.
   - Text types (`note`, `gist`, `journal`, `fleeting`) → `PassthroughGraph`
-    (the content *is* the extracted text).
+    (the content *is* the extracted text). A code or config file is a `gist`, whose
+    text the library reads into the item when it is uploaded. A chat or an Inbox
+    attachment is only the file, with no content to pass through, so `extract_file`
+    reads a file of a text type with `DocumentGraph` (`graphs.file_graph_for`): its
+    reader reads the file as text by the shared rule, and the scan reads that text.
   - `bookmark` → `BookmarkGraph` (scrape the URL; user-pasted content passes
     through without a fetch).
   - Document types (`pdf`, `document`, `sheet`, `slides`) → `DocumentGraph`

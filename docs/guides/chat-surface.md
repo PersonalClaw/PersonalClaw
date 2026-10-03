@@ -264,6 +264,17 @@ There are two ways it can happen, and PersonalClaw picks for you:
   crop box on that frozen frame. `Esc` cancels and attaches nothing. If the macOS path fails
   (no display server, permission refused), this is the fallback.
 
+### How an attached file reaches the model
+
+A document, a text file, or a code or config file (a script, `.json`, `.yaml`, `.toml`, …)
+reaches the model as its text, marked as the file's content and never as instructions to it.
+A binary file named as text or code is not read, and the model is told only its name and
+size. The text is scanned first: text that fails the content safety scan is not given to the
+model, and the model and the file's preview say so. Keys the file holds are masked, as the
+Files view masks them. The model gets at most 200,000 characters of one file, and of a text
+larger than 512 KB only its first 256 KB. Click the file's chip on your sent message to see
+the text the model was given.
+
 ### How an attached image reaches the model
 
 When the model answering the chat takes images, it is shown the image itself. Whether it does

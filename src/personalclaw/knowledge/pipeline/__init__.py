@@ -11,7 +11,7 @@ over the whole bundle. See ``runner.ingest_item`` for the orchestration entry po
 from __future__ import annotations
 
 from personalclaw.knowledge.pipeline.graph import NodeSpec, PipelineGraph, PipelineGraphError
-from personalclaw.knowledge.pipeline.graphs import graph_for
+from personalclaw.knowledge.pipeline.graphs import file_graph_for, graph_for
 from personalclaw.knowledge.pipeline.types import Edge, NodeContext, NodeOutput, ProcessingNode
 
 _REGISTERED = False
@@ -37,6 +37,7 @@ __all__ = [
     "NodeSpec",
     "PipelineGraph",
     "PipelineGraphError",
+    "file_graph_for",
     "graph_for",
     "Edge",
     "NodeContext",
