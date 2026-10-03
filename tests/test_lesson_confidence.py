@@ -399,6 +399,8 @@ async def test_the_lessons_endpoint_reports_the_standing_and_its_evidence(vs, tm
     builder.memory = mem
     state = DashboardState(sessions=MagicMock(count=0), start_time=0.0, context_builder=builder)
     request = MagicMock()
+    # A request's own mapping holds what middleware set on it; the owner's page sets no app.
+    request.get = lambda key, default=None: default
     request.app = {"state": state}
     request.headers = {"X-Session-Key": "dashboard:ui"}
     request.query = {}
