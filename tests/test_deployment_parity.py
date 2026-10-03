@@ -3,7 +3,8 @@
 path (docker/finch).
 
 Both runtimes are skipped cleanly when the relevant runtime is absent:
-- Service path: skipped when `personalclaw` is not on PATH
+- Service path: skipped when `personalclaw` is not on PATH. A gateway that exits
+  before it answers FAILS, with what it printed: there is then nothing to skip for.
 - Compose path: skipped when neither `docker` nor `finch` is on PATH, when the run
   does not set `PERSONALCLAW_TEST_CONTAINER_RUNTIME=1` (it builds two images and
   starts the stack on this machine's own runtime: `tests/container_runtime.py`), or
@@ -14,18 +15,29 @@ finch); there is no command-line selector.
 """
 
 import ast
+import contextlib
 import json
 import os
+import re
+import shlex
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 
 import container_runtime
 import pytest
+import yaml
+
+from personalclaw.security import mask_child_output
+from tools.docker_single_container_smoke import redact_secrets
+
+_REPO = Path(__file__).resolve().parents[1]
 
 # Endpoints that must respond identically on both runtimes
 _REQUIRED_ENDPOINTS = [
@@ -38,9 +50,24 @@ _REQUIRED_ENDPOINTS = [
     "/api/agents",
 ]
 
-_PORT = 17777  # test port (avoid colliding with production 10000)
-_BASE_URL = f"http://127.0.0.1:{_PORT}"
 _STARTUP_TIMEOUT = 30  # seconds
+
+#: How the service path starts the gateway, after `personalclaw` and before its `--port`.
+#: `test_every_gateway_command_the_deployments_run_is_one_the_cli_accepts` holds it to the CLI's
+#: own parser: it once passed a flag the CLI does not have, so the gateway exited at once and
+#: the service path measured nothing.
+_SERVICE_ARGS = ("gateway", "--no-open")
+
+#: The flags every test runs under (`conftest`), given to the gateway child too: a module
+#: fixture is set up before the function-scoped fixtures that set them, and a child process
+#: has its own environment anyway.
+_SUITE_FLAGS = {
+    "PERSONALCLAW_DISABLE_LIVE_WRITES": "1",
+    "PERSONALCLAW_ACP_NO_PROVISION": "1",
+    "PERSONALCLAW_SKIP_APP_BACKENDS": "1",
+    "PERSONALCLAW_SKIP_APP_WORKERS": "1",
+}
+_SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 
 # ── The Compose fixture's share of one item's pytest-timeout ──────────────────
 # pytest-timeout charges `--timeout` PER TEST ITEM, and a module-scoped fixture's
@@ -77,10 +104,17 @@ def _compose_build_timeout(config: pytest.Config) -> int:
     return int(global_timeout) - _STARTUP_TIMEOUT - _COMPOSE_DOWN_TIMEOUT - _TIMEOUT_MARGIN
 
 
-def _wait_for_gateway(base_url: str, timeout: float = _STARTUP_TIMEOUT) -> bool:
-    """Poll /api/system until it responds or timeout expires."""
+def _wait_for_gateway(
+    base_url: str,
+    timeout: float = _STARTUP_TIMEOUT,
+    proc: "subprocess.Popen[bytes] | None" = None,
+) -> bool:
+    """Poll /api/system until it responds or timeout expires — or, given the gateway's own
+    *proc*, until that process exits, since nothing will answer then."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if proc is not None and proc.poll() is not None:
+            return False
         try:
             req = urllib.request.Request(f"{base_url}/api/system")
             with urllib.request.urlopen(req, timeout=2):
@@ -111,33 +145,95 @@ def _fetch(url: str) -> dict:
 # ── Service path fixture ──────────────────────────────────────────────────────
 
 
-@pytest.fixture(scope="module")
-def service_gateway():
-    """Start the gateway via `personalclaw gateway` subprocess."""
-    personalclaw = shutil.which("personalclaw")
-    if not personalclaw:
-        pytest.skip("personalclaw not on PATH — service path not available")
+def _free_port() -> int:
+    """A loopback port nothing listens on. Binding it is what makes it this test's own to the
+    suite's port guard (`tests/port_guard.py`), so polling the gateway it is handed to is a
+    connection to a server this test started, not one the guard refuses."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
 
+
+def _service_env(scratch: Path, personalclaw: str) -> dict[str, str]:
+    """The gateway child's whole environment, built rather than inherited.
+
+    No guard this suite installs sees what a child does: they wrap this process's own sockets
+    and files, and the programs it starts, not what those programs do. So the child gets nothing
+    of the machine it runs on to act on: a home of its own (the agent histories and agent CLIs a
+    gateway can find live under the real one), a PATH of the folder holding `personalclaw` and
+    the system's own, and a PersonalClaw home whose automatic update check is off, since in a
+    source checkout that check fetches the checkout's remote."""
+    home = scratch / "home"
+    personalclaw_home = scratch / "personalclaw-home"
+    home.mkdir()
+    personalclaw_home.mkdir()
+    (personalclaw_home / "config.json").write_text(
+        json.dumps({"updates": {"check_enabled": False}}), encoding="utf-8"
+    )
+    env = {
+        "HOME": str(home),
+        "PATH": os.pathsep.join([str(Path(personalclaw).parent), *_SYSTEM_PATH]),
+        "PERSONALCLAW_HOME": str(personalclaw_home),
+        **_SUITE_FLAGS,
+    }
+    for name in ("TMPDIR", "LANG", "LC_ALL"):
+        if os.environ.get(name):
+            env[name] = os.environ[name]
+    return env
+
+
+def _exit_output(log: Path) -> str:
+    """What the gateway printed before it exited, fit for a public CI log: the dashboard URL's
+    session token redacted, and every other secret masked as the product masks a child's."""
+    text = log.read_text(encoding="utf-8", errors="replace")
+    return mask_child_output(redact_secrets(text), limit=4000, tail=True, one_line=False)
+
+
+@contextlib.contextmanager
+def _service_gateway_at(personalclaw: str) -> Iterator[str]:
+    """*personalclaw* serving a scratch home on a port of this test's own: its URL once it
+    answers. A gateway that exits first fails here at once, with what it printed; one still
+    starting after the startup budget is skipped, as a host too slow to measure on."""
     with tempfile.TemporaryDirectory() as tmp:
-        env = {**os.environ, "PERSONALCLAW_HOME": tmp, "PERSONALCLAW_PORT": str(_PORT)}
-        proc = subprocess.Popen(
-            [personalclaw, "gateway", "--no-browser"],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        scratch = Path(tmp)
+        port = _free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        output = scratch / "gateway.log"
+        with output.open("wb") as log:
+            proc = subprocess.Popen(
+                [personalclaw, *_SERVICE_ARGS, "--port", str(port)],
+                env=_service_env(scratch, personalclaw),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
         try:
-            if not _wait_for_gateway(_BASE_URL):
-                proc.terminate()
-                proc.wait(timeout=5)
+            if not _wait_for_gateway(base_url, proc=proc):
+                if proc.poll() is not None:
+                    pytest.fail(
+                        f"`personalclaw {' '.join(_SERVICE_ARGS)}` exited ({proc.returncode}) "
+                        f"before it answered, so the service path measured nothing. It printed:"
+                        f"\n{_exit_output(output)}",
+                        pytrace=False,
+                    )
                 pytest.skip(f"Gateway did not start within {_STARTUP_TIMEOUT}s")
-            yield _BASE_URL
+            yield base_url
         finally:
             proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait()
+
+
+@pytest.fixture(scope="module")
+def service_gateway():
+    """Start the gateway via `personalclaw gateway` subprocess."""
+    personalclaw = shutil.which("personalclaw")
+    if not personalclaw:
+        pytest.skip("personalclaw not on PATH — service path not available")
+    with _service_gateway_at(personalclaw) as base_url:
+        yield base_url
 
 
 # ── Compose path fixture ──────────────────────────────────────────────────────
@@ -311,3 +407,77 @@ def test_every_cleanup_action_lives_in_a_finally() -> None:
         f"{len(everywhere) - len(in_finally)} of {len(everywhere)} cleanup actions sit "
         "outside a `finally`, so a path that exits early skips them"
     )
+
+
+# ── Every command a deployment runs is one the CLI has ────────────────────────
+# A flag the CLI does not have makes `personalclaw` print its usage and exit 2 before it
+# starts anything, which reads as a gateway that never came up. The service path above
+# passed one (`--no-browser`) and so never measured anything, and the dev Compose overlay
+# ran the same command, so its gateway exited on every `up`. Neither needs a runtime to see.
+
+
+def _deployment_commands() -> list[tuple[str, list[str]]]:
+    """Each `personalclaw` command a shipped Compose file or image runs, with where it is."""
+    found = []
+    for compose in sorted((_REPO / "deploy" / "compose").glob("compose*.yaml")):
+        services = (yaml.safe_load(compose.read_text(encoding="utf-8")) or {}).get("services")
+        for name, service in (services or {}).items():
+            for key in ("entrypoint", "command"):
+                argv = (service or {}).get(key)
+                argv = shlex.split(argv) if isinstance(argv, str) else argv
+                if argv and argv[0] == "personalclaw":
+                    found.append((f"{compose.name}: {name}.{key}", [str(a) for a in argv]))
+    for dockerfile in sorted((_REPO / "deploy" / "docker").glob("Dockerfile*")):
+        for line in dockerfile.read_text(encoding="utf-8").splitlines():
+            exec_form = re.match(r"\s*(CMD|ENTRYPOINT)\s+(\[.*\])\s*$", line)
+            if exec_form and (argv := json.loads(exec_form.group(2))) and argv[0] == "personalclaw":
+                found.append((f"{dockerfile.name}: {exec_form.group(1)}", argv))
+    return found
+
+
+def test_every_gateway_command_the_deployments_run_is_one_the_cli_accepts() -> None:
+    from personalclaw import cli
+
+    commands = [
+        ("the service path above", ["personalclaw", *_SERVICE_ARGS, "--port", "10000"]),
+        *_deployment_commands(),
+    ]
+    # The floor: the image's own command is found, so a reader that finds nothing cannot pass.
+    assert any(where == "Dockerfile.backend: CMD" for where, _ in commands), commands
+    refused = []
+    for where, argv in commands:
+        try:
+            cli.build_parser().parse_args(argv[1:])
+        except SystemExit:
+            refused.append(f"{where}: {shlex.join(argv)}")
+    assert not refused, "commands the CLI refuses, so they start nothing:\n" + "\n".join(refused)
+
+
+def test_a_gateway_that_exits_fails_the_service_path_at_once_with_what_it_printed(
+    tmp_path: Path,
+) -> None:
+    """The service fixture's own contract, with a stand-in for `personalclaw` that exits 2 the
+    way a refused flag does. It used to poll a fixed port for the whole startup budget, which
+    the suite's port guard refused because the test never held that port, then skip: the
+    refusals failed whichever test ran next on the worker, and the exit itself was never seen.
+    Now the poll is to a port the test holds, and the exit fails the fixture at once with what
+    the gateway printed, its session token redacted."""
+    stand_in = tmp_path / "personalclaw"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        "echo 'Dashboard: http://127.0.0.1:1?token=synthetic.placeholder.not-a-real-token'\n"
+        "echo 'personalclaw: error: unrecognized arguments: --not-a-flag' >&2\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    stand_in.chmod(0o755)
+    started = time.monotonic()
+    with pytest.raises(pytest.fail.Exception) as failed:
+        with _service_gateway_at(str(stand_in)):
+            pass
+    assert time.monotonic() - started < _STARTUP_TIMEOUT / 3, "it waited out the startup budget"
+    message = str(failed.value)
+    assert "exited (2) before it answered" in message, message
+    assert "unrecognized arguments: --not-a-flag" in message, message
+    assert "synthetic.placeholder.not-a-real-token" not in message, message
+    assert "token=<redacted>" in message, message

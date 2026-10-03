@@ -61,9 +61,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY web/package.json web/
 
-# Both COPYs below exist because `npm ci` and `npm run build` reach OUTSIDE `web/`,
-# and without them this stage cannot be built at all — see #3362, which found the
-# same two holes in Dockerfile.web by building it rather than pulling it.
+# The COPYs of files outside `web/` below exist because `npm ci` and `npm run build`
+# reach OUTSIDE `web/`, and without them this stage cannot be built at all — see #3362,
+# which found the first two holes in Dockerfile.web by building it rather than pulling it.
 #
 # `package.json` declares `postinstall: sh scripts/install_git_hooks.sh`, so `npm ci`
 # invokes it and dies with `exit code 2` on the missing file. The script already exits
@@ -74,10 +74,12 @@ COPY scripts/install_git_hooks.sh scripts/
 
 RUN npm ci --workspace=web --prefer-offline
 
-# `web/src/lib/scanFindings.ts:1` imports '../../../src/personalclaw/scan_rule_gloss.json',
-# which resolves to /app/src/personalclaw/… from WORKDIR /app — so without it `tsc --noEmit`
-# fails TS2307 and `npm run build` never reaches vite.
+# The SPA imports two data files the backend reads too, each by a relative path that resolves
+# to /app/src/personalclaw/… from WORKDIR /app: without them `tsc --noEmit` fails TS2307 and
+# `npm run build` never reaches vite. The list is complete, and tests/test_web_image_stage_parity.py
+# keeps it so — see the same COPYs in Dockerfile.web.
 COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
+COPY src/personalclaw/voice/phrases.json src/personalclaw/voice/
 
 COPY web/ web/
 

@@ -232,7 +232,11 @@ def test_dockerfile_copies_the_spa_in_before_the_install_that_grafts_it() -> Non
 
 
 def test_spa_stage_matches_the_web_images_recipe() -> None:
-    """One SPA build recipe, two images — a drift here means two different dashboards."""
+    """One SPA build recipe, two images — a drift here means two different dashboards.
+
+    The files from outside ``web/`` that the build imports are not listed here:
+    ``test_web_image_stage_parity.py`` holds each stage to exactly the set the build reads.
+    """
     web_dockerfile = (_REPO / "deploy" / "docker" / "Dockerfile.web").read_text(encoding="utf-8")
     backend = _DOCKERFILE.read_text(encoding="utf-8")
     for line in (
@@ -240,37 +244,30 @@ def test_spa_stage_matches_the_web_images_recipe() -> None:
         "COPY web/package.json web/",
         "COPY scripts/install_git_hooks.sh scripts/",
         "RUN npm ci --workspace=web --prefer-offline",
-        "COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/",
         "RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web",
     ):
         assert line in web_dockerfile, f"{line!r} moved in Dockerfile.web — retarget this test"
         assert line in backend, f"Dockerfile.backend's web stage is missing {line!r}"
 
 
-def test_spa_stage_reaches_outside_web_before_the_commands_that_need_it() -> None:
-    """Membership alone passed while the stage was unbuildable — these two COPYs are ORDERED.
+def test_spa_stage_installs_with_the_hook_script_in_place() -> None:
+    """Membership alone passed while the stage was unbuildable — this COPY is ORDERED.
 
-    Both hunks answer a hard `npm` failure rather than a nicety (#3362 measured them against
+    It answers a hard `npm` failure rather than a nicety (#3362 measured it against
     Dockerfile.web): the root ``postinstall`` runs during ``npm ci`` and exits 2 without
-    ``scripts/``, and ``tsc`` fails TS2307 without the gloss JSON, so a COPY placed after the
-    command it feeds is exactly as broken as a missing one.
+    ``scripts/``, so a COPY placed after the command it feeds is exactly as broken as a missing
+    one. The files the build imports from outside ``web/`` are ordered before the build by
+    ``test_web_image_stage_parity.py``.
     """
     backend = _DOCKERFILE.read_text(encoding="utf-8")
-    for copy_line, needs_it in (
-        ("COPY scripts/install_git_hooks.sh scripts/", "RUN npm ci --workspace=web"),
-        (
-            "COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/",
-            "RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web",
-        ),
-    ):
-        copy_at = backend.find(copy_line)
-        command_at = backend.find(needs_it)
-        assert copy_at != -1, f"web stage is missing {copy_line!r}"
-        assert command_at != -1, f"{needs_it!r} moved — retarget this test"
-        assert copy_at < command_at, (
-            f"{copy_line!r} comes after {needs_it!r}, so npm never sees it and the SPA "
-            "stage fails before vite — the image would carry no dashboard"
-        )
+    copy_at = backend.find("COPY scripts/install_git_hooks.sh scripts/")
+    install_at = backend.find("RUN npm ci --workspace=web")
+    assert copy_at != -1, "web stage is missing the COPY of scripts/install_git_hooks.sh"
+    assert install_at != -1, "`RUN npm ci --workspace=web` moved — retarget this test"
+    assert copy_at < install_at, (
+        "the hook script is copied after `npm ci`, so its postinstall finds no script and the SPA "
+        "stage fails before vite — the image would carry no dashboard"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ services:
       - ../../src/personalclaw:/opt/venv/lib/python3.13/site-packages/personalclaw:ro
     environment:
       PERSONALCLAW_LOG_LEVEL: DEBUG
-    command: ["personalclaw", "gateway", "--no-browser"]
+    command: ["personalclaw", "gateway", "--no-open"]
 
   personalclaw-web:
     # In dev, the web dev server runs on the host (npm run dev).
