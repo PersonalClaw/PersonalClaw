@@ -120,9 +120,9 @@ class ActionResult:
     # created, so it can be taken back — the ``auto_with_undo`` rung's whole point.
     # Provider-supplied because only the provider knows what "undo" means for its own
     # effect (``create-task`` returns the task row it filed). A provider that cannot
-    # reverse itself leaves it EMPTY, and the seam then records the execution without
-    # offering an undo: `guardrails.rungs.record_execution` skips the notification
-    # entirely rather than promise a reversal that cannot happen.
+    # reverse itself leaves it EMPTY and claims no `reversal_kinds`, and the ladder then never
+    # runs it "with undo" (`guardrails.rungs.route_action_type`): a run that kept no undo is
+    # recorded at the rung it had, with no notification promising a reversal that cannot happen.
     reversal: str = ""
     # Why a FAILED action failed, decided by the provider that saw the cause, in the workflow
     # failure vocabulary: "user" (a config or input the user must change), "permission" (a

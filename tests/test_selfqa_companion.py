@@ -1543,4 +1543,6 @@ class TestProvidersAreDispatchable:
 
         ensure_core_action_types()
         assert action_type_for_provider("selfqa-triage").key == "action.selfqa_triage"
-        assert action_type_for_provider("selfqa-file-finding").key == "action.create_task"
+        # Its own type, not `action.create_task`'s: it files a task but cannot take it back, and
+        # a type's rung is one rung, so the two cannot share one.
+        assert action_type_for_provider("selfqa-file-finding").key == "action.selfqa_finding"

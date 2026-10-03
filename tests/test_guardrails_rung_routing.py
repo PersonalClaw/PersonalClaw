@@ -74,11 +74,23 @@ def _clean_provider_registry():
 
 
 class _AppAction(ActionProvider):
-    """An app's action provider. Records every execution so a HELD fire is provable."""
+    """An app's action provider. Records every execution so a HELD fire is provable.
 
-    def __init__(self, name: str = "acme-do-thing", reversal: str = "") -> None:
+    A provider that hands back a reversal handle claims that handle's kind, as a real one must
+    for the undo executor to find it (``ladder._reverser_for``); one that hands back none claims
+    nothing. ``kinds`` overrides that, for a provider that can undo but returned no handle.
+    """
+
+    def __init__(
+        self,
+        name: str = "acme-do-thing",
+        reversal: str = "",
+        kinds: tuple[str, ...] | None = None,
+    ) -> None:
         self._name = name
         self._reversal = reversal
+        default = (reversal.partition(":")[0],) if reversal else ()
+        self._kinds = default if kinds is None else kinds
         self.calls: list[ActionContext] = []
 
     @property
@@ -88,6 +100,10 @@ class _AppAction(ActionProvider):
     @property
     def display_name(self) -> str:
         return "Acme Do Thing"
+
+    @property
+    def reversal_kinds(self) -> tuple[str, ...]:
+        return self._kinds
 
     async def execute(
         self, action_config: dict[str, Any], ctx: ActionContext, timeout: int = 30
@@ -103,6 +119,7 @@ def _install_app_action(
     network: bool = False,
     provider_name: str = "acme-do-thing",
     reversal: str = "",
+    kinds: tuple[str, ...] | None = None,
 ) -> _AppAction:
     """Register an app's action provider THROUGH the production handler.
 
@@ -120,7 +137,7 @@ def _install_app_action(
         autonomy=AutonomyConfig(floor=floor, ceiling=ceiling),
     )
     ext = RegisteredProvider(name="acme", manifest=manifest, provider_config=provider_config)
-    instance = _AppAction(provider_name, reversal=reversal)
+    instance = _AppAction(provider_name, reversal=reversal, kinds=kinds)
     ActionTypeHandler().register(ext, instance)
     return instance
 
@@ -179,9 +196,13 @@ def test_the_SAME_fire_executes_once_the_rung_is_granted(_isolated_home):
 
     Nothing about the trigger, the provider or the seam changes between the two fires —
     only the persisted grant. That is what makes this a routing test rather than a
-    configuration test.
+    configuration test. The action can be taken back: "runs with undo" is a rung only such an
+    action runs at, and a grant of it to one that cannot asks first instead
+    (`test_guardrails_rung_truth`).
     """
-    action = _install_app_action(floor="one_tap", ceiling="auto_with_undo")
+    action = _install_app_action(
+        floor="one_tap", ceiling="auto_with_undo", reversal="task:native:t-1"
+    )
     assert _fire_event_trigger().ran is False
     assert action.calls == []
 
@@ -408,10 +429,13 @@ def test_auto_with_undo_persists_the_providers_reversal_handle(_isolated_home):
 
 
 def test_no_handle_means_no_undo_PROMISE(_isolated_home):
-    """A provider that cannot reverse itself gets an audit row and NO notification.
+    """A run with nothing to undo is never said to run with undo, and offers no undo.
 
     Offering an undo that cannot happen is a promise the product cannot keep — and it would
-    also mean every unattended fire in the tree grew a notification overnight.
+    also mean every unattended fire in the tree grew a notification overnight. Two ways to arrive
+    with nothing to undo, and neither claims the rung: a provider that can take nothing back
+    never runs "with undo" (a declaration of that rung asks first instead of running silently),
+    and a run of one that can, which came back without a handle, is audited at the rung it had.
     """
     notified: list[tuple] = []
 
@@ -427,10 +451,27 @@ def test_no_handle_means_no_undo_PROMISE(_isolated_home):
     original = svc.get_action_services
     svc.get_action_services = lambda: _Services()  # type: ignore[assignment]
     try:
-        _install_app_action(floor="auto_with_undo", ceiling="auto_with_undo", reversal="")
-        assert _fire_event_trigger().ran is True
+        # 1. Declared "runs with undo", and nothing it does can be taken back: held, not run.
+        action = _install_app_action(floor="auto_with_undo", ceiling="auto_with_undo")
+        outcome = _fire_event_trigger()
+        assert outcome.ran is False and action.calls == [], "it would have run silently"
+        assert "cannot be taken back" in outcome.reason
         assert notified == [], "an action with nothing to undo must not offer an undo"
 
+        # 2. One that CAN take its effect back, whose run came back with no handle this time.
+        au.unregister_action_type(APP_KEY)
+        _install_app_action(floor="auto_with_undo", ceiling="auto_with_undo", kinds=("task",))
+        assert _fire_event_trigger().ran is True
+        assert notified == [], "a run that kept no undo must not offer one"
+        from personalclaw.sel import sel
+
+        rows = [
+            e for e in sel().recent(200) if e.get("operation") == "guardrails.autonomy_executed"
+        ]
+        assert rows and rows[-1]["resources"].startswith("rung=autonomous "), rows
+        assert "auto_with_undo" not in rows[-1]["resources"], "it claims an undo it never kept"
+
+        # 3. And with a handle, the user is told it ran and can be undone.
         au.unregister_action_type(APP_KEY)
         _install_app_action(
             floor="auto_with_undo", ceiling="auto_with_undo", reversal="task:native:t-9"

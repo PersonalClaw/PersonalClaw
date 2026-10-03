@@ -452,7 +452,9 @@ def _clamp(rung: str, floor: str, ceiling: str) -> str:
 #: The highest ceiling an UNTRUSTED declaration (an app manifest) may ask for when the
 #: action leaves the machine. ``autonomous`` means "executes silently, no undo handle,
 #: no notification" — for an effect the user cannot take back from this machine that has
-#: to be an in-tree decision, not a line in a manifest the installer skimmed.
+#: to be an in-tree decision, not a line in a manifest the installer skimmed. An action whose
+#: provider cannot take its effect back never runs at this rung either: routing makes it ask
+#: first (``rungs.route_action_type``), so naming the undo rung never lets it run silently.
 MAX_UNTRUSTED_CEILING = RUNG_AUTO_WITH_UNDO
 
 
@@ -692,6 +694,11 @@ def promotion_eligibility(key: str) -> Eligibility:
     its ceiling; the next rung would be ``autonomous`` for a type that leaves the
     machine; or the evidence bar is not met. Any failure to READ the evidence is also
     ineligible — an unreadable record proves nothing.
+
+    ``auto_with_undo`` is never offered to an action that cannot be undone
+    (:func:`~personalclaw.guardrails.rungs.can_be_undone`): it would ask first there instead
+    (``rungs.route_action_type``), so a promotion to it would change nothing it said it would.
+    Its next rung is the one above, within the ceiling and the rules above.
     """
     spec = _REGISTRY.get(key)
     if spec is None:
@@ -731,16 +738,31 @@ def promotion_eligibility(key: str) -> Eligibility:
     base = granted_rung(key)
     next_index = rung_rank(base) + 1
     ceiling_index = max(rung_rank(spec.ceiling), 0)
+    from personalclaw.guardrails.rungs import can_be_undone, rung_label
+
+    # The undo rung is skipped only where it is in reach: above the ceiling it is not offered
+    # to anything, and the plain ceiling sentence below is the true one.
+    skips_undo = (
+        next_index == rung_rank(RUNG_AUTO_WITH_UNDO)
+        and next_index <= ceiling_index
+        and not can_be_undone(key)
+    )
+    if skips_undo:
+        next_index += 1
     if next_index > ceiling_index or next_index >= len(RUNGS):
         # 🪤 Read "Already at its ceiling (autonomous)." on twelve rows of the Guardrails panel.
         # `autonomous` is the code's name for the rung; `RUNG_LABELS`' own docstring says so. The
         # label is a predicate, so it gets a subject rather than a parenthesis.
-        from personalclaw.guardrails.rungs import rung_label
-
         return Eligibility(
             key=key,
             current_rung=current,
-            reason=f"Already at its ceiling: it {rung_label(spec.ceiling)}.",
+            reason=(
+                "What it does cannot be taken back, so it cannot climb to "
+                f"\u201c{rung_label(RUNG_AUTO_WITH_UNDO)}\u201d, the highest rung it was "
+                "declared for."
+                if skips_undo
+                else f"Already at its ceiling: it {rung_label(spec.ceiling)}."
+            ),
         )
     next_rung = RUNGS[next_index]
     if next_rung == RUNG_AUTONOMOUS and spec.leaves_machine:

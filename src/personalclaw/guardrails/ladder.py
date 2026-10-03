@@ -56,6 +56,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
@@ -70,6 +71,9 @@ from personalclaw.guardrails.autonomy import (
     rung_rank,
     rung_state,
 )
+
+if TYPE_CHECKING:
+    from personalclaw.guardrails.rungs import RungRoute
 
 logger = logging.getLogger(__name__)
 
@@ -453,8 +457,10 @@ async def reverse_action(record_id: str) -> ReversalOutcome:
 _LADDER_DISPATCH = "autonomy-ladder"
 
 
-def _authority_sentence(spec, resolved: str, granted: str, state, held: bool, runs_at: str) -> str:
-    """WHERE this type's current rung came from, in one sentence.
+def _authority_sentence(
+    spec, resolved: str, granted: str, state, held: bool, route: RungRoute
+) -> str:
+    """WHERE this type's current rung came from, in one sentence — two when a run moves it.
 
     The chip's whole job (done_when 3) is to answer "why is this allowed to run by itself?"
     at a glance, and the honest answer is never the rung name alone — it is the rung PLUS
@@ -463,16 +469,20 @@ def _authority_sentence(spec, resolved: str, granted: str, state, held: bool, ru
     promoted it and it is running at the rung it was declared with. Composed here so the
     chip, its tooltip and the ladder panel cannot describe the same authority differently.
 
-    ``runs_at`` is the rung an automated run takes (:func:`_type_row`). When the posture of a
-    run nobody watches moved it off ``resolved`` — an action that can be undone keeps its undo
-    there, and an operator ceiling of "ask" holds everything — the sentence says so, because
-    the chip shows that rung.
+    ``route`` is the one an automated run takes (:func:`_type_row`), and the chip shows its
+    rung, so when it sits below ``resolved`` the sentence says why, in the route's own terms:
+    the posture of a run nobody watches (an action that can be undone keeps its undo there, and
+    an operator ceiling of "ask" holds everything), or an undo the rung promises and the action
+    cannot keep — then it asks first, and the sentence says what it does cannot be taken back.
     """
-    sentence = _provenance(spec, resolved, granted, state, held)
-    if runs_at != resolved:
-        from personalclaw.guardrails.rungs import rung_label as _label
+    from personalclaw.guardrails.rungs import NARROWED_BY_NO_UNDO, NARROWED_BY_POSTURE
+    from personalclaw.guardrails.rungs import rung_label as _label
 
-        sentence += f" When it runs with nobody watching, it {_label(runs_at)}."
+    sentence = _provenance(spec, resolved, granted, state, held)
+    if route.narrowed_by == NARROWED_BY_NO_UNDO:
+        sentence += f" What it does cannot be taken back, so it {_label(route.rung)}."
+    elif route.narrowed_by == NARROWED_BY_POSTURE:
+        sentence += f" When it runs with nobody watching, it {_label(route.rung)}."
     return sentence
 
 
@@ -518,21 +528,19 @@ def _type_row(spec) -> dict:
     state = rung_state(spec.key)
     el = promotion_eligibility(spec.key)
     held = rung_rank(granted) > rung_rank(resolved)
-    runs_at = route_action_type(
-        spec.key, session_key=unattended_dispatch_key(_LADDER_DISPATCH)
-    ).rung
+    route = route_action_type(spec.key, session_key=unattended_dispatch_key(_LADDER_DISPATCH))
     return {
         "key": spec.key,
         "floor": spec.floor,
         "ceiling": spec.ceiling,
         "leaves_machine": spec.leaves_machine,
         "providers": list(spec.providers),
-        "resolved_rung": runs_at,
+        "resolved_rung": route.rung,
         "granted_rung": granted,
         # The one derived flag the panel cannot compute from the two rungs without
         # re-deriving the incident clamp: "granted higher, held here for now".
         "held_by_incident": held,
-        "authority": _authority_sentence(spec, resolved, granted, state, held, runs_at),
+        "authority": _authority_sentence(spec, resolved, granted, state, held, route),
         "granted_at": state.granted_at if state else "",
         "evidence_window": state.evidence_window if state else "",
         "demotions": [

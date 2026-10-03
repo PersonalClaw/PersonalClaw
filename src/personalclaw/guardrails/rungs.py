@@ -16,17 +16,24 @@ one the dispatch seams call — and it answers one question:
 ``one_tap``             Do not execute. File an agent-request inbox item so the
                         user can decide. (The one-tap CARD is the frontend; the
                         durable row it renders is raised here.)
-``auto_with_undo``      Execute and write the audit row, then persist the provider's
-                        reversal handle (the undo record + the notification's
-                        ``meta``) and passively notify — but only when there IS a
-                        handle. A notification offering an undo that cannot happen is
-                        worse than silence.
+``auto_with_undo``      Execute, persist the provider's reversal handle (the undo
+                        record + the notification's ``meta``), write the audit row
+                        and passively notify. Only an action that can be undone
+                        (:func:`can_be_undone`) ever runs here; a run that came back
+                        with no handle the store kept is recorded at the rung it
+                        really had, and no notification offers an undo that cannot
+                        happen.
 ``autonomous``          Execute. The audit row the seam writes is the record.
 ======================  ==========================================================
 
 Both executing rungs write ONE audit row per run that did something
 (:func:`record_execution`), at the rung the run actually took. A run that did nothing
 writes none: an "executed" row for it would claim an action that never happened.
+
+**One rung, from one place.** :func:`route_action_type` decides the rung of a run: the seams
+route every fire through it, :func:`record_execution` records the rung it returned (or the one
+the run fell to when it kept no undo), and the ladder panel asks it what an automated run of
+each type takes. The rung Settings shows and the rung the security log records cannot differ.
 
 **How a declaration reaches a seam with no per-action branching.** A seam holds a
 provider NAME (``hook.provider`` / ``trigger.action_provider``) and nothing else. The
@@ -51,6 +58,8 @@ so an unattended run of an action that can be undone keeps its undo, whatever th
 declaration says. Neither level can widen the other. The with-undo bound binds only an
 action that CAN be undone (:func:`can_be_undone`): for one with no handle to keep, that rung
 would be ``autonomous`` under another name, and its audit row a promise no undo honours.
+And an action that cannot be undone never RUNS at that rung: where its own rung (a
+declaration, a grant, the untrusted-ceiling clamp) puts it there, it asks first instead.
 """
 
 from __future__ import annotations
@@ -128,14 +137,29 @@ RUNG_HINTS: dict[str, str] = {
 }
 
 
+#: Why a route's rung sits below the rung the ladder gives the type (:attr:`RungRoute.narrowed_by`).
+#: The run's posture narrowed it: nobody watches an unattended run (or an operator ceiling).
+NARROWED_BY_POSTURE = "posture"
+#: The type's own rung promises an undo, and what its action does cannot be taken back.
+NARROWED_BY_NO_UNDO = "no_undo"
+
+
 @dataclass(frozen=True)
 class RungRoute:
-    """One routing decision: the rung that applies and what the seam should do with it."""
+    """One routing decision: the rung that applies and what the seam should do with it.
+
+    ``narrowed_by`` says why ``rung`` is below the rung the ladder gives the type
+    (``resolve_rung``): ``""`` when it is not, else :data:`NARROWED_BY_POSTURE` or
+    :data:`NARROWED_BY_NO_UNDO`. ``reason`` is the sentence a held action's row shows;
+    ``narrowed_by`` lets any other surface (the ladder panel's sentence) say the same thing in
+    its own words without re-deriving it.
+    """
 
     route: str = ROUTE_EXECUTE
     key: str = ""
     rung: str = ""
     reason: str = ""
+    narrowed_by: str = ""
 
     @property
     def governed(self) -> bool:
@@ -242,16 +266,28 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         providers=("selfqa-evidence",),
     ),
     # Local writes: the effect stays on this machine, where the user can see and undo it.
+    #
+    # `create-task` can take back the task it filed (`reversal_kinds`), so an unattended run of
+    # this class keeps its undo (`route_action_type`). Every provider a class governs has to
+    # agree on that, because the rung is the CLASS's: a provider that kept an undo beside one
+    # that could not would make "runs with undo" true of one fire and false of the next
+    # (`can_be_undone`; `test_every_core_class_agrees_on_whether_it_can_be_undone` pins it).
     ActionTypeSpec(
         key="action.create_task",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
-        # `selfqa-file-finding` shares this class rather than minting
-        # its own key, on the same reasoning as `knowledge-report` below: what it ultimately
-        # does is file a task through the same native provider listed beside it, plus one local
-        # inbox row. Both effects stay on this machine and both are visible where the user
-        # already looks, so a second key would be a second name for one governed behavior.
-        providers=("create-task", "selfqa-file-finding"),
+        providers=("create-task",),
+    ),
+    # The Self-QA loop's filing step: one inbox row plus one task for a failing scenario. Its own
+    # key rather than `action.create_task`'s, though it files a task through the same native
+    # provider: it hands back no reversal handle, so it cannot be taken back, and the class beside
+    # it can. Two providers that differ in whether their effect can be undone are two governed
+    # behaviours on this ladder, which is where the shared-key convention draws its line.
+    ActionTypeSpec(
+        key="action.selfqa_finding",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("selfqa-file-finding",),
     ),
     ActionTypeSpec(
         key="action.knowledge_write",
@@ -559,12 +595,13 @@ def ensure_core_action_types() -> None:
 def can_be_undone(key: str) -> bool:
     """Whether an action of type ``key`` can be taken back after it ran.
 
-    True when a provider its declaration governs names the reversal handles it can reverse
-    (:attr:`~personalclaw.action_providers.base.ActionProvider.reversal_kinds`). That is the
-    provider's own word, the one the undo executor resolves a handle with
+    True when EVERY provider its declaration governs is registered and names the reversal
+    handles it can reverse (``ActionProvider.reversal_kinds``). That is the provider's own word,
+    the one the undo executor resolves a handle with
     (:func:`~personalclaw.guardrails.ladder.reverse_action`), so the rung and the undo cannot
-    disagree about it. A type with no providers (a tool surface, an AI affordance) has nothing
-    that could undo it.
+    disagree about it. Every provider, not any: the rung is the type's, and one provider that
+    cannot be taken back makes "runs with undo" untrue for every fire of it. A type with no
+    providers (a tool surface, an AI affordance) has nothing that could undo it.
     """
     spec = action_type(key)
     if spec is None or not spec.providers:
@@ -579,9 +616,9 @@ def can_be_undone(key: str) -> bool:
     _ensure_default_providers_registered()
     for name in spec.providers:
         provider = get_action_provider(name)
-        if provider is not None and tuple(getattr(provider, "reversal_kinds", ()) or ()):
-            return True
-    return False
+        if provider is None or not tuple(getattr(provider, "reversal_kinds", ()) or ()):
+            return False
+    return True
 
 
 def route_action_type(key: str, *, session_key: str = "") -> RungRoute:
@@ -597,6 +634,12 @@ def route_action_type(key: str, *, session_key: str = "") -> RungRoute:
     said "runs with undo", and the ladder panel, which lists every undo, would honestly show
     none. So such an action keeps its own rung, and the audit row its run writes is the record
     (:func:`record_execution`). The ``one_tap`` bound of an operator ceiling binds every action.
+
+    And such an action never RUNS at ``auto_with_undo``. Where its own rung puts it there — a
+    declaration, a grant, or the untrusted-ceiling clamp that lands a manifest's ``autonomous``
+    claim on that rung (``autonomy.clamp_untrusted_ceiling``) — running it would keep no undo,
+    which is ``autonomous``: above the rung it was given, and silent. So it asks first, and the
+    reason the held row shows says that what it does cannot be taken back.
     """
     from personalclaw.guardrails.policy import (
         is_unattended_session,
@@ -607,9 +650,14 @@ def route_action_type(key: str, *, session_key: str = "") -> RungRoute:
     rung = resolve_rung(key)
     profile = profile_for_session(session_key)
     ceiling = rung_ceiling_for_profile(profile, unattended=is_unattended_session(session_key))
-    if ceiling == RUNG_AUTO_WITH_UNDO and not can_be_undone(key):
+    # Asked only when the undo rung is in play: the composed rung is one of these two.
+    undoable = RUNG_AUTO_WITH_UNDO not in (rung, ceiling) or can_be_undone(key)
+    if ceiling == RUNG_AUTO_WITH_UNDO and not undoable:
         ceiling = RUNG_AUTONOMOUS
     effective = RUNGS[min(max(rung_rank(rung), 0), max(rung_rank(ceiling), 0))]
+    narrowed_by = NARROWED_BY_POSTURE if effective != rung else ""
+    if effective == RUNG_AUTO_WITH_UNDO and not undoable:
+        effective, narrowed_by = RUNG_ONE_TAP, NARROWED_BY_NO_UNDO
     # 🪤 THIS SENTENCE IS USER COPY, AND IT IS ALWAYS EMBEDDED. `announce_withheld` puts it in the
     # body of the inbox row a held action raises, the seams put it in a hook/trigger error, and
     # `triggers/executor` puts it in a run summary — six call sites, and every one of them has
@@ -624,16 +672,22 @@ def route_action_type(key: str, *, session_key: str = "") -> RungRoute:
     # row's `refs["action_type"]`, in the dedup key, and on `RungRoute.key` for any caller that
     # wants it. "This action" is the subject `_authority_sentence` already uses for the same job.
     reason = f"this action {rung_label(rung)}"
-    if effective != rung:
+    if narrowed_by == NARROWED_BY_POSTURE:
         reason = (
             f"this action {rung_label(rung)}, narrowed so it {rung_label(effective)} "
             f"by the {profile.name} profile"
+        )
+    elif narrowed_by == NARROWED_BY_NO_UNDO:
+        reason = (
+            f"this action {rung_label(rung)}, narrowed so it {rung_label(effective)} "
+            "because what it does cannot be taken back"
         )
     return RungRoute(
         route=_ROUTE_BY_RUNG.get(effective, ROUTE_DRAFT),
         key=key,
         rung=effective,
         reason=reason,
+        narrowed_by=narrowed_by,
     )
 
 
@@ -758,21 +812,39 @@ def record_execution(route: RungRoute, result: Any, *, label: str, refs: dict | 
 
     **The undo.** At ``auto_with_undo`` the handle the action came back with is the PROVIDER's:
     only it knows what "undo" means for its own effect (``ActionResult.reversal``, e.g. the task
-    row a ``create-task`` filed). It is persisted in the three places the undo click needs — the
-    audit row, the reversal record store (``guardrails.ladder``, which is what
-    :func:`~personalclaw.guardrails.ladder.reverse_action` resolves an id against) and the
-    notification's ``meta`` (which carries the record id, so the affordance is rendered from
-    persisted state rather than from a handle sitting in a page). Returns the handle kept.
+    row a ``create-task`` filed). It is persisted where the undo click needs it — the reversal
+    record store (``guardrails.ladder``, which is what
+    :func:`~personalclaw.guardrails.ladder.reverse_action` resolves an id against), the audit row
+    (which names the record, ``undo=<id>``) and the notification's ``meta`` (which carries the
+    record id, so the affordance is rendered from persisted state rather than from a handle
+    sitting in a page). The record is written FIRST because the row's rung depends on it: a run
+    that kept no record — it came back with no handle, or one the store refused — did exactly
+    what an ``autonomous`` run does, so its row says ``autonomous``. A row reading "runs with
+    undo" with no undo behind it is the claim the panel's undo list would contradict.
 
-    **No handle, no notification.** A run that came back with no handle is still recorded, and
+    **No handle, no undo offer.** A run that came back with no handle is still recorded, and
     nothing offers to undo it: an "undo available" notice for an action that cannot be undone is
     a promise the product cannot keep. At ``autonomous`` no handle is kept at all — the rung that
-    keeps none is the one the run took.
+    keeps none is the one the run took. Returns the handle an undo was kept for, or ``""``.
     """
     if not route.governed or not route.executes or _did_nothing(route, result):
         return ""
     handle = str(getattr(result, "reversal", "") or "") if route.records_reversal else ""
-    meta = {"action_type": route.key, "rung": route.rung, **dict(refs or {})}
+    record_id = ""
+    if handle:
+        try:
+            from personalclaw.guardrails.ladder import record_reversal_handle
+
+            record_id = record_reversal_handle(
+                action_type=route.key, rung=route.rung, handle=handle, label=label
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("could not record a reversal handle for %s", route.key, exc_info=True)
+    ran_at = route.rung
+    if route.records_reversal and not record_id:
+        ran_at = RUNG_AUTONOMOUS
+        logger.warning("%s kept no undo for this run, so it ran on its own", route.key)
+    undo = f"undo={record_id} reversal={handle}" if record_id else "reversal=none"
     named = " ".join(f"{name}={value}" for name, value in (refs or {}).items() if value)
     try:
         from personalclaw.sel import sel
@@ -782,25 +854,16 @@ def record_execution(route: RungRoute, result: Any, *, label: str, refs: dict | 
             operation="guardrails.autonomy_executed",
             outcome="ok",
             source="guardrails",
-            resources=f"rung={route.rung} reversal={handle or 'none'} {named}".strip()[:200],
+            resources=f"rung={ran_at} {undo} {named}".strip()[:200],
         )
     except Exception:  # noqa: BLE001
         logger.debug("execution SEL audit failed", exc_info=True)
     if not handle:
         return ""
-    # The durable record the undo click acts on. A refused handle yields no record id, and
-    # then the notification says the action ran WITHOUT offering an undo — the same "never
-    # promise a reversal that cannot happen" rule as the no-handle case, applied one level
-    # down to a handle the store could not accept.
-    record_id = ""
-    try:
-        from personalclaw.guardrails.ladder import record_reversal_handle
-
-        record_id = record_reversal_handle(
-            action_type=route.key, rung=route.rung, handle=handle, label=label
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning("could not record a reversal handle for %s", route.key, exc_info=True)
+    # A refused handle yields no record id, and then the notification says the action ran
+    # WITHOUT offering an undo — the same "never promise a reversal that cannot happen" rule as
+    # the no-handle case, applied one level down to a handle the store could not accept. Its
+    # words never borrow another rung's label: "ran on its own" is what `autonomous` is called.
     try:
         from personalclaw import notification_kinds
         from personalclaw.action_providers.services import get_action_services
@@ -812,12 +875,18 @@ def record_execution(route: RungRoute, result: Any, *, label: str, refs: dict | 
                 notification_kinds.INFO,
                 "An automatic action ran",
                 (
-                    f"{label} ran on its own. You can still undo it."
+                    f"{label} ran without asking. You can still undo it."
                     if record_id
-                    else f"{label} ran on its own."
+                    else f"{label} ran without asking, and kept nothing you can undo."
                 ),
-                meta={**meta, "reversal": handle, "reversal_id": record_id},
+                meta={
+                    "action_type": route.key,
+                    "rung": ran_at,
+                    **dict(refs or {}),
+                    "reversal": handle,
+                    "reversal_id": record_id,
+                },
             )
     except Exception:  # noqa: BLE001
         logger.debug("reversal notify failed", exc_info=True)
-    return handle
+    return handle if record_id else ""

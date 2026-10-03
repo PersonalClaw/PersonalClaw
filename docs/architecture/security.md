@@ -1050,15 +1050,25 @@ ran.
 **An automation's action is one row when it did something, at the rung it ran at.** A trigger's
 or hook's governed action that succeeded writes `guardrails.autonomy_executed`
 (`guardrails.rungs.record_execution`): `caller` is `autonomy:<action type>`, and `resources` the
-rung, the undo handle kept (`reversal=none` when none was) and the trigger or hook and provider
-that ran it. A run that had nothing to do (an `ActionResult` outcome of `skip`: the heartbeat
-queue was empty, the workflow was already running) writes no row; its run history records the
-no-op. An action that runs code is the exception (`ActionTypeSpec.runs_code`): a script that
-answers `skip` still ran, and its own answer never keeps it out of the log. The rung is the one
-Settings → Guardrails → Earned autonomy shows, because the panel asks the route the seams use
-(`ladder._type_row`). A run nobody watches is narrowed to "runs with undo" only when its action
-can be undone (`rungs.can_be_undone`), so the log names that rung only for an action able to keep
-an undo, and `reversal=` the handle it kept.
+rung, the undo it kept (`undo=<record id> reversal=<handle>`, or `reversal=none`) and the trigger
+or hook and provider that ran it. A run that had nothing to do (an `ActionResult` outcome of
+`skip`: the heartbeat queue was empty, the workflow was already running) writes no row; its run
+history records the no-op. An action that runs code is the exception (`ActionTypeSpec.runs_code`):
+a script that answers `skip` still ran, and its own answer never keeps it out of the log. The rung
+is the one Settings → Guardrails → Earned autonomy shows, because the panel asks the route the
+seams use (`ladder._type_row`).
+
+**"Runs with undo" is claimed only with an undo behind it.** An action type can be undone when
+every provider it governs names the reversal handles it can take back (`rungs.can_be_undone`); a
+type's providers must agree, because the rung is the type's. A run nobody watches is narrowed to
+"runs with undo" only for such an action. An action that cannot be undone never runs at that
+rung: where its own rung would put it there (a declaration, a grant, or the clamp that lands an
+app's `autonomous` claim on that rung), it asks first, and the panel and the Inbox row say that
+what it does cannot be taken back (`rungs.route_action_type`). A run is logged at the rung it
+had: one that came back with no handle the reversal store kept is logged `rung=autonomous`, never
+at the undo rung, so every row at that rung names an undo the panel's undo list offers. A
+promotion never offers "runs with undo" to an action that cannot be undone
+(`autonomy.promotion_eligibility`).
 
 **Size and retention.** The live file rotates by size: the write that takes it past 16 MiB
 archives it to `sel_archive/security_events.<UTC time>.jsonl` under a cross-process lock and starts
