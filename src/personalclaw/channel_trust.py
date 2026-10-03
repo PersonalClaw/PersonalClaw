@@ -74,7 +74,9 @@ DEFAULT_GROUP_POLICY = "tracked_only"
 
 #: How often the canned pairing-needed reply / owner notification may re-fire for the
 #: SAME unknown sender. One SEL entry + one notification + one canned reply per sender per
-#: window — never a flood from a chatty stranger, and never a reply per message.
+#: window — never a flood from a chatty stranger, and never a reply per message. What they send
+#: inside the window is counted for the owner instead (:data:`SEEN_SENDERS_MAX`), so the window
+#: paces the telling and never hides them. A revoke starts it over (:func:`deny_sender`).
 UNKNOWN_SENDER_RENOTIFY_SECS = 24 * 3600
 
 #: The canned reply a DM-policy=pairing transport sends back to an unknown sender.
@@ -245,16 +247,37 @@ def allow_sender(provider: str, sender_id: str, name: str = "", *, via: str = "o
             _write_store(store)
         return
     senders[sender_id] = {"name": name, "added_at": _iso(_now()), "via": via}
+    # Paired now, so off the list of people who messaged the agent and aren't.
+    seen = rec.get("seen_senders")
+    if isinstance(seen, dict):
+        seen.pop(sender_id, None)
     store[provider] = rec
     _write_store(store)
     _emit_sel("sender_paired", via, provider, sender_id)
 
 
 def deny_sender(provider: str, sender_id: str) -> None:
-    """Revoke ``sender_id`` on ``provider`` (owner Deny). Idempotent; emits ``sender_denied``."""
+    """Revoke ``sender_id`` on ``provider`` (owner Deny). Idempotent; emits ``sender_denied``.
+
+    A sender who was trusted is a stranger again, as Settings › Sender trust › Revoke says: their
+    renotify window (:data:`UNKNOWN_SENDER_RENOTIFY_SECS`) starts over, so their next message is a
+    first contact, with the pairing note to them and the notice to the owner. The window stamped
+    when they first wrote would otherwise outlive the trust it came before, and a sender revoked
+    within a day of first writing got no reply while the owner heard nothing. Their stamp is
+    emptied rather than dropped: the owner WAS asked about them (:func:`owner_was_asked_about`),
+    so the notice about that first contact can still be answered. Their count of refused messages
+    starts over too. One who was never let in (the owner's Deny on the notice about them) keeps
+    their window: the owner has just answered, and the window is what keeps them from being asked
+    about the same person again."""
     store = _read_store()
     rec = _provider_record(store, provider)
-    rec.get("allowed_senders", {}).pop(sender_id, None)
+    if rec.get("allowed_senders", {}).pop(sender_id, None) is not None:
+        rate = rec.get("rate")
+        if isinstance(rate, dict) and sender_id in rate:
+            rate[sender_id] = ""
+        seen = rec.get("seen_senders")
+        if isinstance(seen, dict):
+            seen.pop(sender_id, None)
     store[provider] = rec
     _write_store(store)
     _emit_sel("sender_denied", "owner", provider, sender_id)
@@ -428,17 +451,38 @@ def _sender_entry(sender_id: str, meta: Any) -> dict[str, str]:
     }
 
 
+def _messages_counted(meta: Any) -> int:
+    """How many refused messages a ``seen_senders`` entry counts; one it holds badly counts none."""
+    try:
+        return max(0, int((meta if isinstance(meta, dict) else {}).get("count", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _seen_sender_entry(sender_id: str, meta: Any) -> dict[str, Any]:
+    """Someone who messaged the agent and isn't paired, as the Sender trust page lists them."""
+    rec = meta if isinstance(meta, dict) else {}
+    return {
+        "sender_id": sender_id,
+        "name": str(rec.get("name", "") or "").strip(),
+        "since": str(rec.get("since", "") or ""),
+        "last_seen": str(rec.get("last_seen", "") or ""),
+        "count": _messages_counted(rec),
+    }
+
+
 def provider_trust(provider: str) -> dict[str, Any]:
     """One provider's trust posture, shaped for a read surface.
 
     **Never carries a secret.** The pairing record holds only a SHA-256 hash of the active
     code, and not even that is projected — the caller learns whether a code is outstanding
     and when it expires, which is all a UI needs to say "a code is live". The per-sender
-    renotify stamps (``rate``) are also withheld: they are a log of who tried to reach the
-    owner, which is a different surface from "who is allowed" and would leak contact
-    attempts into a page about the allowlist. Untracked GROUPS that messaged the agent are
-    projected (``seen_channels``): a group's id is the one thing the owner needs to track it,
-    and nothing else shows it.
+    renotify stamps (``rate``) are withheld: they only pace the owner's notice and the
+    sender's reply. Untracked GROUPS that messaged the agent are projected (``seen_channels``):
+    a group's id is the one thing the owner needs to track it, and nothing else shows it. So are
+    the PEOPLE who messaged it and aren't paired (``seen_senders``), apart from who is allowed:
+    inside the renotify window nobody is told of their messages, so this list (who, how many,
+    since when and the last when) is the only trace of them. Never what anyone wrote.
     """
     rec = _provider_record(_read_store(), provider)
     pairing = rec.get("pairing") or {}
@@ -447,15 +491,26 @@ def provider_trust(provider: str) -> dict[str, Any]:
     # code is live that nobody can redeem. Read only; the gate clears the record when it is tried.
     pairing_live = bool(pairing.get("code_hash")) and not _code_expired(pairing)
     senders = rec.get("allowed_senders")
+    allowed = senders if isinstance(senders, dict) else {}
     channels = rec.get("tracked_channels") or {}
     raw_seen = rec.get("seen_channels")
     seen: dict[str, Any] = raw_seen if isinstance(raw_seen, dict) else {}
+    raw_people = rec.get("seen_senders")
+    people: dict[str, Any] = raw_people if isinstance(raw_people, dict) else {}
     return {
         "provider": provider,
         "policies": dict(rec["policies"]),
-        "allowed_senders": [
-            _sender_entry(sid, meta)
-            for sid, meta in sorted(senders.items() if isinstance(senders, dict) else [])
+        "allowed_senders": [_sender_entry(sid, meta) for sid, meta in sorted(allowed.items())],
+        # People who messaged the agent and aren't paired, newest first: what the window keeps
+        # from being told is counted here.
+        "seen_senders": [
+            _seen_sender_entry(sid, meta)
+            for sid, meta in sorted(
+                people.items(),
+                key=lambda kv: str((kv[1] if isinstance(kv[1], dict) else {}).get("last_seen", "")),
+                reverse=True,
+            )
+            if sid not in allowed
         ],
         "tracked_channels": [
             {
@@ -901,10 +956,11 @@ def report_inbound_verdict(
       trace. It is still INFO and not DEBUG: a denied sender is a decision, not a detail.
     * denied, and NOBODY was told → WARNING. This is the reported defect's exact shape. An
       untracked group channel deliberately returns no ``canned_reply`` (no owner spam) and
-      raises no notification, so absent this line the message leaves no trace anywhere. The
-      derivation also catches a case the report missed: an ``owner_only`` DM inside the 24h
-      renotify window, where silence toward the sender is by policy and the notification is
-      deduped, leaving the drop invisible on every axis at once.
+      raises no notification. The derivation also catches a case the report missed: a DM
+      inside the 24h renotify window, where the one reply and the one notification were spent
+      on the sender's first message. Settings › Sender trust keeps a quiet trace of both (the
+      group in ``seen_channels``, the sender counted in ``seen_senders``), but nothing reached
+      anyone, which is what this level reads.
 
     **Flood control reuses the store's existing rule instead of inventing one.** A bot
     holding MESSAGE_CONTENT sees every message in every visible channel, so one WARNING per
@@ -998,6 +1054,33 @@ def channel_display_name(provider: str) -> str:
     return name or provider
 
 
+#: How many people who messaged the agent and aren't paired a provider lists, newest kept. Every
+#: message of theirs the gate refuses is counted (one store write each, unlike a group's
+#: sightings, :data:`SEEN_CHANNEL_REWRITE_SECS`): a stranger's direct messages are one person's,
+#: paced by the channel, and inside the renotify window the count is the only trace of them.
+SEEN_SENDERS_MAX = 20
+
+
+def _count_unpaired_sender(rec: dict[str, Any], sender_id: str, name: str, now: datetime) -> None:
+    """Count one refused message from ``sender_id`` on the provider record's ``seen_senders``:
+    the name they wrote under, since when they are counted, how many, and the last one's time.
+    Never what they wrote. Bounded to the :data:`SEEN_SENDERS_MAX` most recent."""
+    raw = rec.get("seen_senders")
+    seen: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    before = seen.get(sender_id)
+    before = before if isinstance(before, dict) else {}
+    seen[sender_id] = {
+        "name": name or str(before.get("name", "") or ""),
+        "since": str(before.get("since", "") or "") or _iso(now),
+        "last_seen": _iso(now),
+        "count": _messages_counted(before) + 1,
+    }
+    if len(seen) > SEEN_SENDERS_MAX:
+        newest = sorted(seen.items(), key=lambda kv: str(kv[1].get("last_seen", "")), reverse=True)
+        seen = dict(newest[:SEEN_SENDERS_MAX])
+    rec["seen_senders"] = seen
+
+
 def note_unknown_sender(
     state: Any, provider: str, sender_id: str, sender_name: str = "", *, held: bool = False
 ) -> bool:
@@ -1012,26 +1095,37 @@ def note_unknown_sender(
     canned reply is :func:`guard_inbound`'s call (policy ``pairing`` only), riding the same
     window.
 
+    Every message is COUNTED, in the window or not (``seen_senders``, which Settings › Sender
+    trust lists): the window paces who is told, and what the sender writes after the one reply
+    and the one notice would otherwise be refused with nobody told at all.
+
     ``held`` says the sender's message was just added to the Inbox, by a channel that speaks as
     the owner (:func:`guard_inbound`'s ``hold_for_owner``): nothing was sent to them, and the
     note says their message is there. The gate passes it only for a message that WAS held, so
-    the note never names one the Inbox does not have.
+    the note never names one the Inbox does not have. A held message is not counted: the Inbox,
+    where the owner answers it, already holds it.
 
-    Deduped on the persisted ``rate`` map (an ISO timestamp per sender), so the dedup
-    survives a restart — an unknown sender who messaged before you slept does not re-alert
-    when the gateway comes back up."""
+    Deduped on the persisted ``rate`` map (an ISO timestamp per sender, emptied when a revoke
+    starts their window over), so the dedup survives a restart — an unknown sender who messaged
+    before you slept does not re-alert when the gateway comes back up."""
     store = _read_store()
     rec = _provider_record(store, provider)
     rate = rec.setdefault("rate", {})
 
     now = _now()
+    if not held:
+        _count_unpaired_sender(rec, sender_id, sender_name, now)
     last = rate.get(sender_id, "")
-    if last:
-        try:
-            if (now - datetime.fromisoformat(last)).total_seconds() < UNKNOWN_SENDER_RENOTIFY_SECS:
-                return False
-        except ValueError:
-            pass  # unparseable stamp → treat as first contact
+    try:
+        told = datetime.fromisoformat(last) if last else None
+        within = told is not None and (now - told).total_seconds() < UNKNOWN_SENDER_RENOTIFY_SECS
+    except (TypeError, ValueError):
+        within = False  # unparseable stamp → treat as first contact
+    if within:
+        if not held:
+            store[provider] = rec
+            _write_store(store)  # the count is the one trace of this message
+        return False
 
     rate[sender_id] = _iso(now)
     store[provider] = rec
@@ -1078,7 +1172,9 @@ def owner_was_asked_about(provider: str, sender_id: str) -> bool:
     """Whether the owner was told ``sender_id`` messaged ``provider`` and isn't paired: the
     first contact :func:`note_unknown_sender` recorded. An answer to an unknown-sender
     notification may let in only the sender this gate asked about, so a note naming anyone else
-    answers nothing (``POST /api/notifications/trust``)."""
+    answers nothing (``POST /api/notifications/trust``). A revoke empties the sender's stamp and
+    keeps it (:func:`deny_sender`): their window starts over, and the notice about their first
+    contact still answers."""
     rate = _provider_record(_read_store(), provider).get("rate")
     return bool(sender_id) and isinstance(rate, dict) and sender_id in rate
 
@@ -1150,7 +1246,8 @@ def guard_inbound(
       (:func:`note_unknown_sender`) and the message is denied. ``pairing`` returns the
       canned pairing-needed reply with the notification, so once per sender per
       :data:`UNKNOWN_SENDER_RENOTIFY_SECS`; ``owner_only`` stays silent (open question
-      resolved: no in-channel reply). A channel that speaks as the owner
+      resolved: no in-channel reply). Under either, every refused message is counted for the
+      owner on Settings › Sender trust. A channel that speaks as the owner
       (``ChannelCapabilities.speaks_as_owner``) is called with ``hold_for_owner``: how to hold a
       stranger's message for the owner, returning whether it was added (the door holds it in the
       Inbox, ``channel_inbound.deliver_inbound``). It gets no canned reply under any policy:

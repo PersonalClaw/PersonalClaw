@@ -31,6 +31,7 @@ function provider(over: Partial<ChannelTrustProvider> = {}): ChannelTrustProvide
     registered: true,
     policies: { dm: 'pairing', group: 'tracked_only' },
     allowed_senders: [sender()],
+    seen_senders: [],
     tracked_channels: [],
     seen_channels: [],
     pairing_active: false,

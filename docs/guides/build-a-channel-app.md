@@ -259,7 +259,10 @@ What that one call gets you, and what you must not re-implement:
   canned reply is rate-limited to once per sender per 24h. The owner answers it from the
   dashboard's notification (`POST /api/notifications/trust`), which lets in only the sender
   the gate told them about, and asks their consent to an Allow; your channel adds nothing
-  for that.
+  for that. What the stranger writes after the one reply is still counted on Settings →
+  Sender trust (who wrote, how many times, the last when, never the text), so the limit
+  never hides someone who keeps writing. Revoking a sender starts their 24h over: their
+  next message gets the reply, and the owner the notice, as a stranger's does.
 - **A channel that speaks as its owner.** When what your channel sends goes out as the owner
   themselves (their own mailbox) rather than as a bot they run, declare
   `ChannelCapabilities(speaks_as_owner=True)` and hand every inbound message to the door

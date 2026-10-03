@@ -180,6 +180,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A sender you revoke in Settings → Sender trust is a stranger again at once: their next message gets the pairing note and you are told, where it got no reply and you heard nothing within a day of their first message. Sender trust also lists the people who messaged your agent and aren't paired, with how many messages and the last one's time, so someone who keeps writing after the one reply and the one notice is never lost.**
 - **A new snapshot no longer replaces the only verified one: the newest snapshot a restore drill passed on stays until a newer one passes a drill, a snapshot run names each snapshot it removed and why (Settings → Backups, its audit row and `personalclaw snapshot`), and the drill line says when the file it checked is gone.**
 - **"Loosen a security setting?" names what it changes, from and to ($33.50 → $10,033.50, the sync transport by name), and a raise of ten times or more asks for a second look; Cancel or a refused save leaves the stored value in the field, and the daily dollar cap takes cents.**
 - **A skill you installed or imported can use the files it ships, such as the template its instructions name: the agent's file tools read a skill's own folder with no approval and never change it, and `skill_invoke` names that folder.**

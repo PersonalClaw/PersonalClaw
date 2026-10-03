@@ -21,7 +21,7 @@ function bot(over: Partial<ChannelTrustProvider> = {}): ChannelTrustProvider {
   return {
     provider: 'chat', display_name: 'Chat', registered: true,
     policies: { dm: 'pairing', group: 'tracked_only' },
-    allowed_senders: [], tracked_channels: [], seen_channels: [],
+    allowed_senders: [], seen_senders: [], tracked_channels: [], seen_channels: [],
     pairing_active: false, pairing_expires_at: '',
     groups: true, speaks_as_owner: false, pairing_hint: '', ...over,
   }

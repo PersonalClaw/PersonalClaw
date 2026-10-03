@@ -21,7 +21,7 @@ function trust(name: string): ChannelTrust {
       provider: 'telegram', display_name: 'Telegram', registered: true,
       policies: { dm: 'pairing', group: 'tracked_only' },
       allowed_senders: [{ sender_id: ID, name, added_at: '2026-09-30T05:35:23+00:00', via: 'owner_pairing' }],
-      tracked_channels: [], seen_channels: [], pairing_active: false, pairing_expires_at: '',
+      seen_senders: [], tracked_channels: [], seen_channels: [], pairing_active: false, pairing_expires_at: '',
       groups: true, speaks_as_owner: false, pairing_hint: '',
     }],
     dm_policies: ['pairing', 'owner_only', 'open'], group_policies: ['tracked_only', 'off'],

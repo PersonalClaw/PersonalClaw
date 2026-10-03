@@ -120,14 +120,17 @@ def test_the_read_projection_never_carries_the_pairing_secret():
     assert hashlib.sha256(code.encode()).hexdigest() not in blob
 
 
-def test_the_read_projection_withholds_the_unknown_sender_contact_log():
-    """`rate` is who TRIED to reach the owner — a different surface from who is allowed."""
-    ct.note_unknown_sender(None, "telegram", "stranger")
+def test_the_read_projection_lists_who_wrote_apart_from_who_is_allowed_and_no_stamps():
+    """Who wrote and isn't paired is listed on its own (`seen_senders`), never among the allowed.
+    The renotify stamps (`rate`) only pace the notice and the reply, and stay off the wire."""
+    ct.note_unknown_sender(None, "telegram", "stranger", "Sky")
     body = _get()
-    blob = json.dumps(body)
-    assert "rate" not in blob
-    assert "stranger" not in blob
-    assert body["providers"][0]["allowed_senders"] == []
+    tg = body["providers"][0]
+    assert '"rate"' not in json.dumps(body)
+    assert tg["allowed_senders"] == []
+    assert [(s["sender_id"], s["name"], s["count"]) for s in tg["seen_senders"]] == [
+        ("stranger", "Sky", 1)
+    ]
 
 
 # ── revoke ───────────────────────────────────────────────────────────────────

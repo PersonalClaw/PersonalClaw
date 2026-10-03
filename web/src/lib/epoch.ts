@@ -81,9 +81,10 @@ export function clockTime(ts?: number | string | null): string {
   return new Date(secs * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
-/** When something short-lived stops working — a pairing code's ten minutes — as the reader's clock
- *  time, with the day in front when that is not today: `14:52`, or `Sep 30, 14:52`, per the reader's
- *  locale. A date alone ("until Sep 29, 2026") said nothing about a code that lasts minutes.
+/** A moment that matters to the minute — when a pairing code's ten minutes end, when someone last
+ *  wrote — as the reader's clock time, with the day in front when that is not today: `14:52`, or
+ *  `Sep 30, 14:52`, per the reader's locale. A date alone ("until Sep 29, 2026") said nothing about
+ *  a code that lasts minutes.
  *
  *  Unreadable ⇒ `''`, as its siblings. `now` is epoch MILLISECONDS, for a test's fixed clock. */
 export function expiryStamp(ts?: number | string | null, now: number = Date.now()): string {

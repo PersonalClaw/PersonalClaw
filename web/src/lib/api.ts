@@ -760,6 +760,9 @@ export interface ChannelTrustChannel { channel_id: string; name: string; added_a
 /** An untracked group that messaged the agent (newest first). Its messages were refused; the
  *  page offers Track for it. */
 export interface ChannelTrustSeenChannel { channel_id: string; name: string; last_seen: string }
+/** Someone who messaged the agent and isn't paired (newest first): every message of theirs the
+ *  gate refused, counted since `since`, the last at `last_seen`. Never what they wrote. */
+export interface ChannelTrustSeenSender { sender_id: string; name: string; since: string; last_seen: string; count: number }
 /** A provider's whole trust posture. NEVER carries the pairing code or its hash — only whether
  *  one is outstanding (`pairing_active`) and when it dies. `display_name` is the channel's own
  *  name for itself; `registered` is whether that channel is set up now. */
@@ -769,6 +772,7 @@ export interface ChannelTrustProvider {
   registered: boolean
   policies: { dm: string; group: string }
   allowed_senders: ChannelTrustSender[]
+  seen_senders: ChannelTrustSeenSender[]
   tracked_channels: ChannelTrustChannel[]
   seen_channels: ChannelTrustSeenChannel[]
   pairing_active: boolean

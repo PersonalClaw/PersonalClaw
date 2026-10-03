@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Copy, KeyRound, Loader2, MessageCircle, ShieldCheck, UserCheck, Users } from 'lucide-react'
+import { Copy, KeyRound, Loader2, MessageCircle, ShieldCheck, UserCheck, UserX, Users } from 'lucide-react'
 import { api } from '../../lib/api'
-import { untilSentence } from '../../lib/epoch'
-import type { ChannelSenderPairing, ChannelTrustProvider, ChannelTrustSender } from '../../lib/api'
+import { expiryStamp, untilSentence } from '../../lib/epoch'
+import type { ChannelSenderPairing, ChannelTrustProvider, ChannelTrustSeenSender, ChannelTrustSender } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { copyText } from '../../app/clipboard'
 import { ConsentDeclined } from '../../lib/securityConsent'
@@ -108,6 +108,14 @@ function addedLabel(iso: string): string {
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return 'date unknown'
   return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+/** What someone unpaired sent, counted: how many messages, since when, and the last one's time.
+ *  Their words reached nobody, and the page never shows them either. */
+function wroteLabel(s: ChannelTrustSeenSender): string {
+  const last = expiryStamp(s.last_seen) || 'time unknown'
+  if (s.count <= 1) return `1 message, ${last} · not read`
+  return `${s.count} messages since ${addedLabel(s.since)}, the last ${last} · not read`
 }
 
 export function SenderTrustPanel({ navigate }: { navigate?: (path: string) => void } = {}) {
@@ -403,9 +411,45 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
           </>
         )}
 
+        <UnpairedSenders p={p} label={label} />
+
         {groups && <GroupsBlock p={p} label={label} onChanged={onChanged} onSaid={onSaid} />}
       </div>
     </Section>
+  )
+}
+
+/** The people who messaged the agent and aren't paired, newest first. In the day after someone
+ *  first writes they are answered at most once and you are told once (the pairing note, the
+ *  notice), so what they write after that is counted here, and nobody who keeps writing goes unseen.
+ *  There is nothing to grant from this list: someone is let in by a pairing code or by Allow on the
+ *  notice about them. */
+function UnpairedSenders({ p, label }: { p: ChannelTrustProvider; label: string }) {
+  const people = p.seen_senders ?? []
+  if (people.length === 0) return null
+  return (
+    <div role="group" aria-label={`People who messaged your agent on ${label} and aren't paired`} className="space-y-xs">
+      <div data-type="label-m" className="text-on-surface-var">People who messaged your agent and aren't paired</div>
+      <RowGroup>
+        {people.map((s, i) => {
+          const { name: who, detail } = channelPerson(label, s.sender_id, s.name)
+          return (
+            <ListRow key={s.sender_id} index={i} label={who}>
+              <div className="flex min-w-0 items-start gap-m py-s">
+                <UserX size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
+                <div className="min-w-0">
+                  <div data-type="body-s" className="truncate text-on-surface">{who}</div>
+                  {detail ? (
+                    <div data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{detail}</div>
+                  ) : null}
+                  <div data-type="caption" className="mt-0.5 text-on-surface-low/80">{wroteLabel(s)}</div>
+                </div>
+              </div>
+            </ListRow>
+          )
+        })}
+      </RowGroup>
+    </div>
   )
 }
 

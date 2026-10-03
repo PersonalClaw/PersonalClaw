@@ -4,8 +4,9 @@
 crosses. This is where the owner sees and changes it, for every chat channel alike:
 
 * ``GET /api/channels/trust`` — every chat channel that is set up, plus any the store still
-  knows, each with its display name, its policies, its paired senders, its tracked groups and
-  the untracked groups that messaged the agent, and what the channel declares it can do
+  knows, each with its display name, its policies, its paired senders, the people who messaged
+  the agent and aren't paired (how many times, the last when), its tracked groups and the
+  untracked groups that messaged the agent, and what the channel declares it can do
   (``groups``, ``speaks_as_owner``, ``pairing_hint``), which the page words its section by. No
   secret is projected (see :func:`~personalclaw.channel_trust.provider_trust`).
 * ``PUT /api/channels/trust/{provider}/policies`` — ``{dm?, group?}``. Opening DMs to anyone
