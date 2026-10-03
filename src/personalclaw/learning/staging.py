@@ -46,7 +46,7 @@ from typing import Any, Iterator
 from personalclaw import bounded_log
 from personalclaw.config import loader as config_loader
 from personalclaw.learning.hygiene import fingerprint
-from personalclaw.sqlite_compat import sqlite3
+from personalclaw.sqlite_compat import connect, sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -123,8 +123,7 @@ class StagingStore:
     def _cursor(self) -> Iterator[sqlite3.Cursor]:
         with self._lock:
             if self._conn is None:
-                self._base.mkdir(parents=True, exist_ok=True)
-                self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
+                self._conn = connect(str(self._path), check_same_thread=False)
                 self._conn.row_factory = sqlite3.Row
                 self._conn.execute("PRAGMA journal_mode=WAL;")
                 self._bootstrap(self._conn)

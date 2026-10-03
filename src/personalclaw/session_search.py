@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
+from personalclaw.sqlite_compat import FTS5_REMEDY, connect, probe, sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +139,7 @@ def _open() -> "sqlite3.Connection | None":
             pass
         _db = None
     try:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(path, timeout=15, isolation_level=None, check_same_thread=False)
+        conn = connect(path, timeout=15, isolation_level=None, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA journal_mode=WAL")

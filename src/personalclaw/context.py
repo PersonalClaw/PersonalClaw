@@ -42,6 +42,28 @@ logger = logging.getLogger(__name__)
 _memory_stores: dict[str, MemoryStore] = {}
 
 
+def forget_memory_store(ws_path: Path) -> bool:
+    """Close and drop the store this process keeps for the partition *ws_path*, its vector
+    store's database with it, so nothing writes into the partition once it is removed.
+
+    False, keeping it, when the partition is answered by the gateway's own store
+    (:class:`ContextBuilder` registers it for the shared partition and the gateway's workspace):
+    that store is the home's memory, never one partition's to remove."""
+    key = str(ws_path)
+    store = _memory_stores.get(key)
+    if store is None:
+        return True
+    if store is _memory_stores.get(str(memory_dir_for_cwd(None))):
+        return False
+    _memory_stores.pop(key, None)
+    if store.vector_store is not None:
+        try:
+            store.vector_store.close()
+        except Exception:  # noqa: BLE001 — a store that will not close must not keep its folder
+            logger.debug("memory store for %s did not close", ws_path, exc_info=True)
+    return True
+
+
 def _attach_vector_store(store: MemoryStore, ws_path) -> None:
     """Give a cwd-scoped MemoryStore its own semantic/episodic vector index, once an embedding
     model is bound in Settings → Models or the directory already holds memories one wrote; until

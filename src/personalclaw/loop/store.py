@@ -42,7 +42,7 @@ from personalclaw.loop.loop import (
     held_reason,
 )
 from personalclaw.security import redact_for_display, redact_values_for_display
-from personalclaw.sqlite_compat import sqlite3
+from personalclaw.sqlite_compat import connect, sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +111,7 @@ def _db_path() -> Path:
 
 
 def _connect() -> sqlite3.Connection:
-    _db_path().parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_db_path()), timeout=5.0)
+    conn = connect(str(_db_path()), timeout=5.0)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -469,7 +468,7 @@ def hold_restored(home: Path) -> list[str]:
     db = Path(home) / "loop" / "loops.db"
     if not db.is_file():
         return []
-    conn = sqlite3.connect(str(db), timeout=5.0)
+    conn = connect(str(db), timeout=5.0)
     try:
         marks = ", ".join("?" * len(_PICKED_UP_AT_START))
         try:
@@ -806,7 +805,11 @@ def delete(loop_id: str) -> bool:
     if d is not None:
         import shutil
 
+        from personalclaw.memory_locality import drop_partition
+
         shutil.rmtree(d, ignore_errors=True)
+        # The memory a planner kept while it worked in the folder goes with it.
+        drop_partition(str(d))
     if deleted:
         _announce()
     return deleted

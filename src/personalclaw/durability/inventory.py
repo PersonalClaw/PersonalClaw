@@ -1009,6 +1009,13 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_MEMORY,
         merge=MERGE_SQLITE_ATTACH_IGNORE,
         help="the learning staging log and usage counters",
+        # 🔴 A memory partition keeps the evidence its lessons stand on beside its own memory
+        # database (`VectorMemoryStore._lesson_evidence_store`): a lesson with none reads "no
+        # recorded observation yet" and leaves the prompt, so the partition's lessons are only
+        # whole with this file. It is the partition's, not the home's: a global lesson has the same
+        # key in every partition, and one file would let a reversal in one void the rule in the
+        # others. Undeclared, no snapshot carried it, and Doctor read "undeclared databases".
+        partitions=("workspace/_ext/*/learning.db",),
     ),
     StateEntry(
         id="inbox",

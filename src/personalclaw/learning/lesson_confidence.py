@@ -543,6 +543,16 @@ def get_store(base_dir: Path | str | None = None) -> LessonEvidenceStore:
         return store
 
 
+def forget_store(base_dir: Path | str) -> None:
+    """Close and drop the evidence store kept for *base_dir*, whose folder is being removed: a
+    store left cached would write the next lesson's evidence into a file already gone."""
+    key = str(Path(base_dir).resolve())
+    with _INSTANCE_LOCK:
+        store = _INSTANCES.pop(key, None)
+    if store is not None:
+        store.close()
+
+
 def reset_store() -> None:
     """Drop every cached instance (tests, and home-directory switches)."""
     with _INSTANCE_LOCK:

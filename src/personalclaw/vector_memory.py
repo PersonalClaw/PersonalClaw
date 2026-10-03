@@ -12,7 +12,6 @@ time-decay retrieval via FAISS (falls back to FTS5 without embeddings).
 import json
 import logging
 import math
-import os
 import re
 import struct
 import threading
@@ -28,7 +27,7 @@ from uuid import uuid4
 from snowballstemmer import stemmer as _snowball_stemmer
 
 from personalclaw import bounded_log, memory_holder, memory_slots, memory_writes
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, make_private_database
 from personalclaw.config import loader as config_loader
 from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
@@ -1196,8 +1195,10 @@ class VectorMemoryStore(MemoryProvider):
         self._alias_index_gen = -1
 
     def init(self) -> None:
-        """Create DB, apply migrations, set permissions."""
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        """Create DB and apply migrations. The database holds the owner's memories, so it is
+        0600 from its first byte wherever it is, and so are the files SQLite keeps beside it
+        (``atomic_write.make_private_database``)."""
+        make_private_database(self._db_path, anywhere=True)
         # Shared by every thread that reaches the store (each page request, the agent's tools, the
         # background workers), so every call into the driver on it is taken one at a time.
         self._db = connect_shared(str(self._db_path), isolation_level=None)
@@ -1231,12 +1232,6 @@ class VectorMemoryStore(MemoryProvider):
         # derives from an Incognito or Temporary session, anything that would change memory is
         # refused. Set after the schema is in place, which no session's work writes.
         self._db.statement_check = memory_writes.check_statement
-
-        # Set file permissions (owner-only)
-        try:
-            os.chmod(self._db_path, 0o600)
-        except OSError:
-            pass
 
         # Load persisted FAISS index (or rebuild from SQLite embeddings)
         try:

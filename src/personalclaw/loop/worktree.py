@@ -48,6 +48,12 @@ _TIMEOUT = 30
 # The branch name mirrors the task id.
 _BRANCH_PREFIX = "pclaw/task-"
 
+#: The worktrees a task (or a workflow run) works in, home-relative, as :func:`worktree_path`
+#: makes them: under its project, or under the root keyed by the workspace when it has none. A
+#: task's worker session works in its worktree, so each has a memory partition of its own, which
+#: goes with it (:func:`remove_worktree`, and ``memory_locality.settle_partitions`` at the start).
+SESSION_FOLDERS = ("projects/*/worktrees/*", "code/worktrees/*/*")
+
 
 def _worktrees_root(workspace: str, project_id: str = "") -> str:
     """The PClaw-owned directory holding this work's task worktrees — under
@@ -999,7 +1005,8 @@ def branch_exists(workspace: str, task_id: str) -> bool:
 
 
 def remove_worktree(workspace: str, task_id: str, project_id: str = "") -> None:
-    """Remove a task's worktree + delete its branch (best-effort cleanup)."""
+    """Remove a task's worktree + delete its branch (best-effort cleanup), and the memory
+    partition its worker kept: nothing runs in the worktree again, so nothing would read it."""
     if not _safe_task_id(task_id):
         return
     path = worktree_path(workspace, task_id, project_id)
@@ -1008,6 +1015,9 @@ def remove_worktree(workspace: str, task_id: str, project_id: str = "") -> None:
     # if the worktree dir lingers (e.g. remove failed), drop it so it doesn't pile up
     if os.path.isdir(path):
         shutil.rmtree(path, ignore_errors=True)
+    from personalclaw.memory_locality import drop_partition
+
+    drop_partition(path)
 
 
 class TaskWork(NamedTuple):

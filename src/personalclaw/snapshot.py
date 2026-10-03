@@ -1971,7 +1971,7 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
     if _want(components, "skills"):
         _add("skills", inv.MERGE_UNION_BY_ID, "tree, no overwrite")
     if _want(components, "everything"):
-        for path in _attach_merge_paths():
+        for path in _attach_merge_paths(snap):
             _add(path, inv.MERGE_SQLITE_ATTACH_IGNORE, "every table, INSERT OR IGNORE")
     # The store rows use the SAME selector `_do_merge`/`_do_replace` use, so `--dry-run
     # --components projects` describes the restore that `--components projects` performs. A plan
@@ -2012,8 +2012,10 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
     return rows
 
 
-def _attach_merge_paths() -> list[str]:
-    """Declared sqlite stores routed to the generic ATTACH merge (S180's call-site list).
+def _attach_merge_paths(snap: Path) -> list[str]:
+    """Declared sqlite stores routed to the generic ATTACH merge (S180's call-site list), and each
+    partition of one that the snapshot *snap* holds (`StateEntry.partitions`): a memory
+    partition's `learning.db` is merged as `learning.db` is.
 
     Extracted so `_do_merge` and `merge_plan` cannot disagree about which databases participate — a
     preview that names a different set from the act is worse than no preview.
@@ -2021,10 +2023,16 @@ def _attach_merge_paths() -> list[str]:
     try:
         from personalclaw.durability import inventory as inv
 
-        return [
-            e.path
+        merged = [
+            e
             for e in inv.sqlite_entries()
             if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE and e.path != "memory.db" and e.merged_in
+        ]
+        ids = {e.id for e in merged}
+        return [e.path for e in merged] + [
+            rel
+            for rel in _partition_paths(snap)
+            if getattr(inv.partition_entry(rel), "id", "") in ids
         ]
     except Exception:  # noqa: BLE001 — a restore must work even if this import breaks
         return []
@@ -2187,7 +2195,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     # the same reason capture reads `backup_entries()`. `memory.db` is excluded: its own executor
     # filters `WHERE is_deleted=0`, and a generic all-tables merge would resurrect deleted memories.
     if _want(components, "everything"):
-        for rel in _attach_merge_paths():
+        for rel in _attach_merge_paths(snap):
             s_db, d_db = snap / rel, pc / rel
             if s_db.is_file() and d_db.is_file():
                 _merge_sqlite_attach(s_db, d_db, rel, left_unchanged=left)

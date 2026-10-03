@@ -439,8 +439,13 @@ Data leaving the running system:
   in a 0700 directory, and a wider mode is refused. `config.json`, an app's `data/config.json`,
   provider instance records, `mcp.json`, the agent config, `.env` and `auth/` are all written
   that way; `.local_secret`, `telemetry_salt` and `.app_secret` have writers of their own that
-  create them 0600. A file written some other way (a log, a lock, a database) keeps the umask
-  mode inside the 0700 home.
+  create them 0600. A database is private from its first byte too: every store opens its
+  database through `sqlite_compat.connect` or `connect_shared`, which make the file 0600 in a
+  0700 folder before SQLite first opens it (`atomic_write.make_private_database`), so the
+  journal, write-ahead log and shared-memory files SQLite makes beside it with the database
+  file's own mode are 0600 as well, and one an earlier version left readable is tightened when
+  it next opens (`tests/test_a_database_is_private_from_its_first_byte.py`). A file written
+  some other way (a log, a lock) keeps the umask mode inside the 0700 home.
 - **Private archives and exports** (`atomic_write.private_file`): a snapshot, the manifest beside
   it, a `backup export` folder and its manifest, a project export, a memory export and a pack are
   0600 from their first byte, in folders made 0700, wherever they are written: the bytes go to a

@@ -18,8 +18,9 @@ chokepoint covers the writers that exist and the ones that do not yet, and no en
 "files that can hold a secret" can drift out of date. The three single-secret files with writers
 of their own — ``.local_secret``, ``telemetry_salt`` and an app's ``.app_secret`` — create
 theirs 0600. A file too large to write whole — an upload's parts, streamed chunk by chunk — gets
-the same mode through :func:`open_streamed`. A file written any other way (a log, a lock, a SQLite
-database, a few ``write_text`` caches) keeps the umask mode; the 0700 home it sits in is what
+the same mode through :func:`open_streamed`. A database is private from its first byte too
+(:func:`make_private_database`, which every store's open goes through). A file written any other way
+(a log, a lock, a few ``write_text`` caches) keeps the umask mode; the 0700 home it sits in is what
 shields it. An explicit mode wider than 0600 for a home path is REFUSED, not honoured — that
 refusal is the rail. Outside the home the umask default still applies to these writers: a file
 written there is the user's to share.
@@ -360,6 +361,58 @@ def make_private_dirs(directory: Path | str) -> None:
         os.chmod(folder, PRIVATE_DIR_MODE)
     if is_in_home(d):
         ensure_private_dir(d)
+
+
+#: What SQLite keeps beside a database while it is open: its rollback journal, its write-ahead log
+#: and that log's shared-memory index. SQLite makes each with the database file's own mode.
+SQLITE_SIDECARS = ("-journal", "-wal", "-shm")
+
+
+def make_private_database(path: Path | str, *, anywhere: bool = False) -> None:
+    """Make the place a store's database opens in: its folder, and under the home the database
+    file itself, private before SQLite first opens it.
+
+    SQLite makes a database file it creates at the umask's mode, 0644, and the journal, write-ahead
+    log and shared-memory files beside it with the mode of the database file: all of them readable
+    by every other account on the machine. A database file made 0600 here first, in a folder made
+    0700 (:func:`make_private_dirs`), keeps every one of them 0600 from its first byte. A database
+    already there that is looser (an earlier version made it, or a restore copied it back) is
+    tightened, each of those files beside it with it. Outside the home only the folder is made and
+    SQLite's own mode stands: a file there is the user's to share. *anywhere* is for a database
+    private wherever it is put (the memory store's, which holds the owner's memories).
+    ``":memory:"``, an empty name and a ``file:`` URI are SQLite's to open as they say.
+    """
+    raw = os.fspath(path)
+    if not raw or raw == ":memory:" or raw.startswith("file:"):
+        return
+    target = Path(raw)
+    if not anywhere and not is_in_home(target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return
+    make_private_dirs(target.parent)
+    try:
+        fd = os.open(
+            raw, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0), PRIVATE_FILE_MODE
+        )
+    except FileExistsError:
+        pass
+    else:
+        try:
+            # The umask can only take bits away from 0600, never add one; this pins it exact.
+            os.fchmod(fd, PRIVATE_FILE_MODE)
+        finally:
+            os.close(fd)
+    for name in (raw, *(raw + suffix for suffix in SQLITE_SIDECARS)):
+        try:
+            st = os.lstat(name)
+            if stat.S_ISREG(st.st_mode) and st.st_mode & 0o077:
+                os.chmod(name, PRIVATE_FILE_MODE)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            # A file this process may not chmod (another account's): refusing the open would
+            # lose the store over a mode, so it is said and left.
+            logger.warning("could not make %s private (0600)", name)
 
 
 @contextmanager

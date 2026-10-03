@@ -51,6 +51,12 @@ _LOOP_ID_RE = re.compile(r"^[a-f0-9]{8}$")
 _TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 STOP_SENTINEL = "STOP"
 
+#: A loop's own folder, home-relative: a planner with no workspace to work in works here
+#: (``planning.runner``), so it has a memory partition of its own, which goes with the folder
+#: (``store.delete``, :func:`reap_orphan_dirs`, and ``memory_locality.settle_partitions`` at the
+#: start).
+SESSION_FOLDERS = ("loop/*",)
+
 
 # ── paths ──
 
@@ -701,11 +707,14 @@ def reap_orphan_dirs() -> int:
     reaped = 0
     import shutil
 
+    from personalclaw.memory_locality import drop_partition
+
     for child in root.iterdir():
         try:
             if not child.is_dir() or not valid_loop_id(child.name) or child.name in ids:
                 continue
             shutil.rmtree(child, ignore_errors=True)
+            drop_partition(str(child))
             reaped += 1
             logger.info("loop: reaped orphan dir %s (no DB row)", child.name)
         except Exception:

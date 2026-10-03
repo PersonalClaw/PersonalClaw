@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from personalclaw import memory_writes
-from personalclaw.atomic_write import atomic_write, ensure_home_for
+from personalclaw.atomic_write import atomic_write, make_private_dirs
 from personalclaw.config import loader as config_loader
 from personalclaw.home_paths import from_home
-from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
+from personalclaw.sqlite_compat import FTS5_REMEDY, connect, probe, sqlite3
 
 
 def config_dir() -> Path:
@@ -101,10 +101,11 @@ class MemoryStore:
         self._vector_store = store
 
     def init(self) -> None:
-        """Create directory structure and default files."""
-        ensure_home_for(self._memory_dir)
-        self._memory_dir.mkdir(parents=True, exist_ok=True)
-        self._history_dir.mkdir(parents=True, exist_ok=True)
+        """Create directory structure and default files. Each folder is 0700, as every folder a
+        home file is written into is (``atomic_write.make_private_dirs``): the store's own folder
+        (a working folder's partition), its memory folder and the daily history."""
+        for folder in (self._workspace, self._memory_dir, self._history_dir):
+            make_private_dirs(folder)
         if not self._preferences_file.exists():
             atomic_write(self._preferences_file, _DEFAULT_PREFERENCES)
         if not self._projects_file.exists():
@@ -179,8 +180,7 @@ class MemoryStore:
 
     def append_history(self, entry: str) -> None:
         """Append a timestamped entry to today's daily history file."""
-        ensure_home_for(self._history_dir)
-        self._history_dir.mkdir(parents=True, exist_ok=True)
+        make_private_dirs(self._history_dir)
         path = self._today_history_file()
         timestamp = datetime.now().astimezone().strftime("%H:%M %Z")
 
@@ -374,7 +374,7 @@ class MemoryStore:
             return self._try_create_db()
 
     def _try_create_db(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._index_db))
+        conn = connect(str(self._index_db))
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
             "path, content, tokenize='porter unicode61')"

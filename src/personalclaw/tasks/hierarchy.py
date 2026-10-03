@@ -443,8 +443,15 @@ class HierarchyStore:
         # / left orphaned-by-list — the task provider owns task deletion).
         for tl in self.list_task_lists(project_id=project_id):
             self._list_path(tl.id).unlink(missing_ok=True)
-        # Remove the whole project dir (project.json + context/ + worktrees/).
+        # Remove the whole project dir (project.json + context/ + worktrees/), each task worktree's
+        # memory partition with its worktree (`loop.worktree.remove_worktree` says why).
+        from personalclaw.memory_locality import drop_partition
+
+        worktrees = self._project_dir(project_id) / "worktrees"
+        held = sorted(p for p in worktrees.iterdir() if p.is_dir()) if worktrees.is_dir() else []
         shutil.rmtree(self._project_dir(project_id), ignore_errors=True)
+        for worktree in held:
+            drop_partition(str(worktree))
         return True
 
     # ── Task lists ──

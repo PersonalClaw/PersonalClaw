@@ -497,6 +497,24 @@ item vector).
   of `memory.db` (`StateEntry.partitions`): a snapshot and an export copy it through
   the sqlite backup API, a merge restore merges its memories as it merges
   `memory.db`'s, and Doctor's durability audit counts it declared.
+- A partition's `learning.db` holds the evidence its lessons stand on
+  (`VectorMemoryStore._lesson_evidence_store`; a lesson with none falls below the
+  confidence gate), so it is declared a partition of `learning.db` and travels and
+  merges the same way. It stays the partition's: a global lesson has the same key in
+  every partition, and one shared file would let a reversal in one void it in all.
+- A folder of PersonalClaw's own that sessions run in, a task's git worktree
+  (`loop/worktree.py::SESSION_FOLDERS`) or a loop's folder, where a planner with no
+  workspace works (`loop/files.py::SESSION_FOLDERS`), **takes its partition with it**:
+  `memory_locality.drop_partition` runs where the folder is removed
+  (`remove_worktree`, a project's or a loop's delete) and closes the stores held open
+  on it first, and `memory_locality.settle_partitions` removes, once at the start, the
+  partition of such a folder that is gone. It reads a folder back out of a partition's
+  name only when that name is exactly the folder's partition name; one shortened to a
+  hash is left.
+- Every file of a partition is 0600 and every folder 0700 from its first byte: its
+  databases open through `sqlite_compat.connect`/`connect_shared`, which make the file
+  private before SQLite first opens it (`atomic_write.make_private_database`), and the
+  start-up pass makes a partition an earlier version left readable private too.
 - **Project locality rides that seam** (`memory_locality.py`): a project-owned
   run binds the project's `context_dir` as its cwd, so what it learns lands in
   that project's partition instead of the shared pile.

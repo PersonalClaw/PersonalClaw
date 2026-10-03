@@ -25,7 +25,7 @@ from typing import Any
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.record_ids import is_path_in_store
-from personalclaw.sqlite_compat import sqlite3
+from personalclaw.sqlite_compat import connect, sqlite3
 from personalclaw.workflows.models import (
     NodeInstance,
     RunStatus,
@@ -77,8 +77,7 @@ def _now() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    _db_path().parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_db_path()), timeout=5.0)
+    conn = connect(str(_db_path()), timeout=5.0)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -804,7 +803,7 @@ def hold_restored(home: Path) -> list[str]:
         return []
     runs = Path(home) / "workflows" / "runs"
     held: list[str] = []
-    conn = sqlite3.connect(str(db), timeout=5.0)
+    conn = connect(str(db), timeout=5.0)
     try:
         try:
             rows = conn.execute(

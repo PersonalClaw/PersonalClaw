@@ -349,6 +349,11 @@ def memory_root(home: Path | None = None) -> Path:
     return (Path(home) if home is not None else resolve_config_dir()) / _MEMORY_ROOT_DIR_NAME
 
 
+#: The longest working-folder slug kept whole. A longer one is cut and given a hash of the path, and
+#: comes out exactly this long, so a slug this long may name a folder no reader can work back to.
+CWD_SLUG_MAX = 120
+
+
 def _slug_cwd(cwd: str) -> str:
     """Turn an absolute working-directory path into a stable, fs-safe slug.
 
@@ -358,11 +363,11 @@ def _slug_cwd(cwd: str) -> str:
     """
     real = os.path.realpath(os.path.expanduser(cwd))
     flat = _re.sub(r"[^A-Za-z0-9._-]+", "_", real).strip("_") or "root"
-    if len(flat) > 120:
+    if len(flat) > CWD_SLUG_MAX:
         import hashlib
 
         digest = hashlib.sha256(real.encode("utf-8")).hexdigest()[:12]
-        flat = flat[:107] + "_" + digest
+        flat = flat[: CWD_SLUG_MAX - 13] + "_" + digest
     return flat
 
 

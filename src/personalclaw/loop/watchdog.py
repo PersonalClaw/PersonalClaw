@@ -1034,6 +1034,20 @@ class LoopWatchdog:
                 logger.info("loop: reaped %d orphan dir(s) with no DB row", reaped)
         except Exception:
             logger.warning("loop: orphan-dir GC failed", exc_info=True)
+        # A task's worktree and a loop's folder take their memory partition with them; one an
+        # earlier version removed without it, or a process that stopped in between, left it here.
+        # Every other partition is made private, as an earlier version did not make it.
+        try:
+            from personalclaw import memory_locality
+            from personalclaw.loop import worktree
+
+            gone = memory_locality.settle_partitions(
+                worktree.SESSION_FOLDERS + loop_files.SESSION_FOLDERS
+            )
+            if gone:
+                logger.info("loop: removed %d memory partition(s) of folders that are gone", gone)
+        except Exception:
+            logger.warning("loop: memory partition GC failed", exc_info=True)
         # An ended loop has no worker, so none of its tasks is in progress. One stopped by a
         # process that went down before releasing them (or before releasing existed) still
         # reads that way until this pass.

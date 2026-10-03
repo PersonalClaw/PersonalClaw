@@ -1865,10 +1865,10 @@ def test_MEMORY_DB_keeps_its_own_executor(tmp_path: Path) -> None:
 
     from personalclaw import snapshot
 
-    # S183 moved the path list into `_attach_merge_paths()` so `_do_merge` and `merge_plan` cannot
-    # disagree. Assert on the SHARED helper's output, which is the behaviour, rather than on a
-    # substring of one caller's source.
-    assert "memory.db" not in snapshot._attach_merge_paths(), "memory.db must not be routed here"
+    # S183 moved the path list into `_attach_merge_paths(snap)` so `_do_merge` and `merge_plan`
+    # cannot disagree. Assert on the SHARED helper's output, which is the behaviour, rather than on
+    # a substring of one caller's source.
+    assert "memory.db" not in snapshot._attach_merge_paths(tmp_path), "memory.db must not be routed"
     assert "_merge_memory(" in inspect.getsource(snapshot._do_merge), "its own executor must run"
 
 
@@ -1884,7 +1884,7 @@ def test_the_attach_merge_is_driven_by_the_INVENTORY(tmp_path: Path) -> None:
     helper_src = inspect.getsource(snapshot._attach_merge_paths)
     assert "sqlite_entries()" in helper_src
     assert "MERGE_SQLITE_ATTACH_IGNORE" in helper_src
-    assert "_attach_merge_paths()" in inspect.getsource(snapshot._do_merge)
+    assert "_attach_merge_paths(snap)" in inspect.getsource(snapshot._do_merge)
 
     declared = {e.path for e in inv.sqlite_entries() if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE}
     assert (
@@ -2361,7 +2361,7 @@ def test_the_PLAN_and_the_ACT_name_the_same_sqlite_stores(tmp_path) -> None:
     """🔴 Why the plan is DERIVED rather than a `dry_run` flag threaded through twelve helpers.
 
     Twelve flags are twelve chances for the preview to drift from the act. `_do_merge` and
-    `merge_plan` now read the SAME `_attach_merge_paths()`, so they cannot disagree about which
+    `merge_plan` now read the SAME `_attach_merge_paths(snap)`, so they cannot disagree about which
     databases participate — a preview that names a different set from the act is worse than none.
     """
     import inspect
@@ -2370,10 +2370,10 @@ def test_the_PLAN_and_the_ACT_name_the_same_sqlite_stores(tmp_path) -> None:
 
     merge_src = inspect.getsource(snapshot._do_merge)
     plan_src = inspect.getsource(snapshot.merge_plan)
-    assert "_attach_merge_paths()" in merge_src
-    assert "_attach_merge_paths()" in plan_src
+    assert "_attach_merge_paths(snap)" in merge_src
+    assert "_attach_merge_paths(snap)" in plan_src
     # and the shared helper excludes memory.db, which has its own executor
-    assert "memory.db" not in snapshot._attach_merge_paths()
+    assert "memory.db" not in snapshot._attach_merge_paths(tmp_path)
 
 
 def test_the_dry_run_WRITES_NOTHING(tmp_path, monkeypatch, capsys) -> None:

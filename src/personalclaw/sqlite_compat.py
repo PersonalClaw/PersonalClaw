@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Callable
 
+from personalclaw.atomic_write import make_private_database
+
 try:  # the newer bundled build (FTS5 + JSON1) when the wheel is installed
     import pysqlite3 as sqlite3  # type: ignore[import-not-found]
 
@@ -45,6 +47,7 @@ __all__ = [
     "driver_name",
     "FTS5_REMEDY",
     "SharedConnection",
+    "connect",
     "connect_shared",
 ]
 
@@ -229,8 +232,19 @@ class SharedConnection(sqlite3.Connection):
             super().load_extension(path, **kwargs)
 
 
+def connect(database: str, **kwargs: Any) -> "sqlite3.Connection":
+    """Open the database a store keeps: the driver's ``connect``, with the database's folder made
+    and, under the PersonalClaw home, the database private before SQLite first opens it
+    (``atomic_write.make_private_database``). Every store opens its database through this or
+    :func:`connect_shared` (``tests/test_a_database_is_private_from_its_first_byte.py``)."""
+    make_private_database(database)
+    return sqlite3.connect(database, **kwargs)
+
+
 def connect_shared(database: str, **kwargs: Any) -> SharedConnection:
     """Open ``database`` as a :class:`SharedConnection`: the way a store opens the connection it
-    keeps and shares between threads (``check_same_thread=False`` is implied)."""
+    keeps and shares between threads (``check_same_thread=False`` is implied), private as
+    :func:`connect` makes it."""
     kwargs["check_same_thread"] = False
+    make_private_database(database)
     return sqlite3.connect(database, factory=SharedConnection, **kwargs)
