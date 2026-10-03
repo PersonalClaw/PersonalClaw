@@ -112,7 +112,6 @@ def test_the_SEL_ITSELF_infers_the_workflow_source():
         ("dashboard:x", "dashboard"),
         ("cron:5", "cron"),
         ("subagent:9", "subagent"),
-        ("cli_chat", "cli"),
         ("some-slack-thread", "channel"),
     ],
 )

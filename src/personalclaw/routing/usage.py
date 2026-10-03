@@ -101,8 +101,10 @@ USAGE_VERSION = 1
 PURPOSES = ("interactive", "background", "loop", "eval", "app")
 
 #: ``usage/turns.jsonl`` ``source`` -> purpose. ``chat``/``room``/``cli``/``channel`` are the
-#: human-watched turns: a room's members answer the human in a transcript they read. Anything NOT
-#: listed here is an app name (``session._app``) and maps to ``app``.
+#: human-watched turns: a room's members answer the human in a transcript they read. ``cli`` is
+#: what the terminal chat recorded when it ran its own agent; its turns are the gateway's chats now
+#: and record ``chat``, and the rows it wrote before are read as they were. Anything NOT listed
+#: here is an app name (``session._app``) and maps to ``app``.
 PURPOSE_BY_SOURCE = {
     "chat": "interactive",
     "room": "interactive",

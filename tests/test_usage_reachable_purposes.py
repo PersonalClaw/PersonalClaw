@@ -140,7 +140,9 @@ def test_the_writer_census_is_not_vacuous() -> None:
     sources = _writer_sources()
     assert len(sources) >= 4, f"census found only {sources} — the seam or regex has drifted"
     # Sources we know are live; if these ever vanish the census is measuring the wrong thing.
-    assert {"background", "subagent", "cli"} <= sources, sources
+    # (``cli`` was the terminal chat's own, when it ran its agent itself; its turns are chats of
+    # the gateway's now and write ``chat``.)
+    assert {"background", "subagent", "chat"} <= sources, sources
 
 
 def test_the_census_is_scoped_to_the_call_and_not_the_file() -> None:

@@ -60,12 +60,9 @@ ASSEMBLED: dict[tuple[str, str], str] = {
 }
 
 #: Sites that compose their own message, by (file, function), with the function that composes it:
-#: a room member's session, and the terminal chat's runtime (built from the factory, below).
+#: a room member's session.
 LAYERED: dict[tuple[str, str], tuple[str, str]] = {
     ("rooms/turn.py", "member_session"): ("rooms/turn.py", "build_member_prompt"),
-}
-FACTORY_LAYERED: dict[tuple[str, str], tuple[str, str]] = {
-    ("cli_chat.py", "_chat"): ("cli_chat.py", "_with_safety_rules"),
 }
 
 #: Sites whose turns can run nothing, by (file, function), with why.
@@ -208,13 +205,16 @@ def test_every_session_core_acquires_is_handed_the_rules_or_calls_nothing():
 
 
 def test_every_runtime_built_from_the_factory_is_accounted_for():
+    """An agent a person or a schedule starts is never built from the provider factory directly.
+    The terminal chat was the last one, and it is a chat of the gateway's now, which ``run_chat``
+    assembles like every chat."""
     sites = _sites("create_provider_factory", skip=frozenset({"config/loader.py"}))
-    assert ("cli_chat.py", "_chat") in sites, "the detector reads the real tree"
-    named = set(NOT_STARTED_HERE) | set(FACTORY_LAYERED)
+    assert ("gateway.py", "GatewayOrchestrator._init_services") in sites, "the detector reads"
+    named = set(NOT_STARTED_HERE)
     assert sites == named, (
         f"unaccounted {sorted(sites - named)}, no longer there {sorted(named - sites)}: a runtime "
-        "built from the provider factory is an agent with tools; hand it the safety rules and name "
-        "it in FACTORY_LAYERED, or say here why no agent starts there"
+        "built from the provider factory is an agent with tools; start it as a session the turn "
+        "engine assembles (the census above reads those), or say here why no agent starts there"
     )
 
 
@@ -242,7 +242,7 @@ def test_each_assembled_site_calls_the_assembler():
 
 
 def test_each_layered_site_layers_the_rules():
-    for (rel, qualname), (composer_rel, composer) in {**LAYERED, **FACTORY_LAYERED}.items():
+    for (rel, qualname), (composer_rel, composer) in LAYERED.items():
         assert _functions(_tree(rel)).get(qualname) is not None, f"{rel}: {qualname} is gone"
         assert _uses(
             composer_rel, composer, {"with_safety_rules"}
@@ -337,7 +337,7 @@ def test_every_site_that_names_its_agent_hands_it_its_own_instructions():
     assert spawn in named, "the detector reads the real tree"
     heartbeat = ("gateway.py", "GatewayOrchestrator._run_heartbeat_task")
     assert heartbeat in sites and heartbeat not in named, "the detector tells a site naming none"
-    composers = {**LAYERED, **FACTORY_LAYERED}
+    composers = LAYERED
     failures: list[str] = []
     for rel, qualname in sorted(named - set(NOT_ITS_OWN_WORK)):
         if (rel, qualname) in ASSEMBLED:

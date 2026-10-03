@@ -6,12 +6,12 @@ non-interactive caller runs ONE agent turn and consumes structured output. It is
 ``POST /api/chat`` + ``/api/ws`` pair the dashboard drives, so there is exactly one
 turn path and one stream contract.
 
-Why not extend ``personalclaw chat -m``: that command talks to a provider factory
-directly (``cli_chat._chat``), which means no gateway, no session store, no safety
-profile, no tool-approval gate and no spend attribution. It is a provider smoke test.
-A scripted/CI caller needs the gated path, and §9.5 says so explicitly ("executes one
-turn against the local gateway"). ``chat -m`` keeps its behaviour; ``run`` is the
-gated sibling, and the two are told apart in ``docs/reference/cli.md``.
+``personalclaw chat`` (``cli_chat``) is the other client of the same chat, and the attended
+one: its turns run in an ordinary chat, so a call that asks for approval asks you, wherever
+your approvals reach you. ``run`` is the headless one, for a script or CI with nobody there
+to ask, which is why it is a command of its own rather than a flag on ``chat``. Both reach
+the gateway through the probe, the token and the turn socket below; the two are told apart
+in ``docs/reference/cli.md``.
 
 Safety posture (fail-CLOSED, and the reason this module exists at all):
 
@@ -52,7 +52,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import aiohttp
 
 #: Session-key prefix for a headless CLI turn. ``guardrails.policy`` classifies the
 #: ``inbound:`` family as unattended, so this prefix is what makes the run HEADLESS.
@@ -459,48 +463,77 @@ class _Collector:
         return "".join(self.text_parts).strip()
 
 
-async def _consume(
-    port: int, token: str, collector: _Collector, prompt: str, timeout: float
-) -> None:
-    """Open the WS, POST the turn, and consume frames until ``chat_done``.
+@contextlib.asynccontextmanager
+async def _turn_socket(
+    port: int, token: str, session_key: str, prompt: str
+) -> AsyncIterator[tuple[aiohttp.ClientSession, aiohttp.ClientWebSocketResponse]]:
+    """Post *prompt* as the next turn of chat *session_key*, and yield the socket it streams on
+    with the HTTP session that posted it (which can still ask the gateway for more, as a stop).
 
     The WS is opened BEFORE the POST: ``POST /api/chat?ws=1`` returns as soon as the
     turn task is created, so a reader attached afterwards races the first chunk. No
     ``Origin`` header is sent — ``dashboard.origin.check_origin`` trusts a loopback peer
-    that sends none, and sending a wrong one is a 403.
+    that sends none, and sending a wrong one is a 403. A gateway that cannot be reached,
+    or refuses the socket, is a :class:`RunError` that says so, as every other request's is.
     """
     import aiohttp
 
     base = f"http://127.0.0.1:{port}"
-    async with aiohttp.ClientSession(headers=owner_headers(token)) as http:
-        async with http.ws_connect(base + "/api/ws") as ws:
-            resp = await http.post(
-                base + "/api/chat?ws=1",
-                json={"message": prompt, "session": collector.session_key},
-            )
-            async with resp:
-                if resp.status != 200:
-                    raise RunError(f"POST /api/chat failed: HTTP {resp.status} {await resp.text()}")
-            deadline = time.monotonic() + timeout
-            while not collector.done:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise RunError(f"turn did not finish within {timeout:.0f}s")
-                try:
-                    msg = await asyncio.wait_for(ws.receive(), timeout=remaining)
-                except TimeoutError as exc:
-                    raise RunError(f"turn did not finish within {timeout:.0f}s") from exc
-                if msg.type is aiohttp.WSMsgType.TEXT:
-                    with contextlib.suppress(ValueError):
-                        envelope = json.loads(msg.data)
-                        if isinstance(envelope, dict):
-                            collector.feed(envelope)
-                elif msg.type in (
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.CLOSE,
-                    aiohttp.WSMsgType.ERROR,
-                ):
-                    raise RunError("gateway closed the websocket before the turn finished")
+    try:
+        async with aiohttp.ClientSession(headers=owner_headers(token)) as http:
+            async with http.ws_connect(base + "/api/ws") as ws:
+                resp = await http.post(
+                    base + "/api/chat?ws=1",
+                    json={"message": prompt, "session": session_key},
+                )
+                async with resp:
+                    if resp.status != 200:
+                        raise RunError(
+                            f"POST /api/chat failed: HTTP {resp.status} {await resp.text()}"
+                        )
+                yield http, ws
+    except aiohttp.ClientError as exc:
+        raise RunError(
+            f"the turn's connection to the gateway on port {port} failed: {exc}"
+        ) from exc
+
+
+async def _read_turn(
+    ws: aiohttp.ClientWebSocketResponse, collector: _Collector, timeout: float | None
+) -> None:
+    """Feed the turn's frames to *collector* until its ``chat_done``. ``timeout`` ``None`` waits
+    for as long as the gateway runs the turn: it is the gateway that says when a turn ends."""
+    import aiohttp
+
+    late = f"turn did not finish within {timeout:.0f}s" if timeout is not None else ""
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while not collector.done:
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise RunError(late)
+        try:
+            msg = await asyncio.wait_for(ws.receive(), timeout=remaining)
+        except TimeoutError as exc:
+            raise RunError(late) from exc
+        if msg.type is aiohttp.WSMsgType.TEXT:
+            with contextlib.suppress(ValueError):
+                envelope = json.loads(msg.data)
+                if isinstance(envelope, dict):
+                    collector.feed(envelope)
+        elif msg.type in (
+            aiohttp.WSMsgType.CLOSED,
+            aiohttp.WSMsgType.CLOSE,
+            aiohttp.WSMsgType.ERROR,
+        ):
+            raise RunError("gateway closed the websocket before the turn finished")
+
+
+async def _consume(
+    port: int, token: str, collector: _Collector, prompt: str, timeout: float
+) -> None:
+    """Post the turn and consume its frames until ``chat_done``, within *timeout* seconds."""
+    async with _turn_socket(port, token, collector.session_key, prompt) as (_http, ws):
+        await _read_turn(ws, collector, timeout)
 
 
 def _token_total(session_key: str) -> int:

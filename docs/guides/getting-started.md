@@ -227,8 +227,9 @@ Open the dashboard's **Chat** page and send a message — or from the terminal:
 personalclaw chat -m "hello"
 ```
 
-If the small default model is all you have, chat from the dashboard. `personalclaw chat`
-doesn't load it, so the terminal prints a setup message instead of a reply.
+`personalclaw chat` talks to the gateway you started above, so a chat in the terminal is
+a chat like the dashboard's, on the same model, and it is listed on the Chat page too.
+With no gateway running it says so, and how to start one.
 
 Tool calls the agent wants to make appear as approval prompts (default
 `agent.approval_mode: interactive`, Ask each time; see the

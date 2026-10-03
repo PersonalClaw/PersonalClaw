@@ -181,7 +181,6 @@ class TestSessionKeyDerivation:
         "session_key,expected",
         [
             ("dashboard:abc", "chat"),
-            ("cli_chat", "chat"),
             ("cron:job1", "background"),
             ("subagent:x", "background"),
             # A webhook-triggered session: the Background prompt names this context, and

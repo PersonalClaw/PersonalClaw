@@ -15,7 +15,9 @@ Every one of them now reads the agent's instructions and voice where the others 
 Each test drives the path's real assembly into a real ``NativeAgentRuntime`` and reads what its
 scripted model was handed. The fixture agent's instructions carry a sentence no prompt of the
 product's carries, and its voice a line of its own, so each is counted where it lands. Which
-paths exist at all is the census's business (``test_agent_safety_rules_census.py``).
+paths exist at all is the census's business (``test_agent_safety_rules_census.py``). The terminal
+chat's turns are chats of the gateway's now, and ``test_cli_chat.py`` reads what its model is handed
+by typing the command against a gateway.
 """
 
 from __future__ import annotations
@@ -31,8 +33,6 @@ from test_every_agent_is_handed_the_safety_rules import (
     _builder,
     _carries_the_rules_once,
     _Chat,
-    _Model,
-    _runtime,
     _Sessions,
     _text,
     _where,
@@ -346,20 +346,3 @@ async def test_a_room_member_opens_with_its_agents_instructions(tmp_path, monkey
     later = _text(sessions.models[AGENT].requests[-1])
     assert "Now the playground." in later
     assert later.count(SENTENCE) == 1, "the session keeps them; a slice does not repeat them"
-
-
-# ── the terminal chat ────────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_the_terminal_chat_runs_on_the_default_agents_instructions(tmp_path):
-    from personalclaw import cli_chat
-
-    _install(default=AGENT)
-    model = _Model()
-    runtime = await _runtime(AGENT, model, tmp_path)
-    factory = MagicMock(return_value=runtime)
-    with patch.object(config_loader.AppConfig, "create_provider_factory", return_value=factory):
-        await cli_chat._chat("where should the bench go", None)
-    assert factory.call_args.kwargs["agent"] == AGENT, "the runtime is the default agent's"
-    _runs_on_the_instructions(model.requests[0])

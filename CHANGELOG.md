@@ -118,6 +118,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **`personalclaw chat` chats through your running gateway: a call that asks for approval waits for your answer in PersonalClaw or on your paired chat channel, each turn has your assistant's name and memory, Ctrl+C stops the turn, and with no gateway running it says how to start one.**
 - **`personalclaw.sdk.channel.MemoryService` embeds a recall's question once for all its arms: `embed_query()` answers a `QueryVector` (exported beside it), each recall arm takes it as `query_vector` (`None` ranks by words alone), and `search_episodic`'s `query_embedding` is now `query_vector`, so a caller still passing the old name fails at once (`slack-channel` imports `MemoryService` and calls none of them).**
 - **An automation whose agent runs on an agent CLI can't be given files to change: PersonalClaw can't limit a CLI's own file edits to them, so saving them is refused, its Allow says it only reads, and a run that reaches a CLI anyway changes none of them and says why.**
 - **`personalclaw.sdk.channel.run_chore` and `chore_usage` (with the `Attribution` it returns) ask a model for a chore in a call of its own, and refuse one for a thread or chat that keeps nothing outside its own turn; `compress_thread_history` and `HistoryConsolidator` take no session manager, and `BACKGROUND_KEY` is off the channel SDK (an SDK change; `slack-channel` moves to them).**

@@ -643,7 +643,6 @@ class TestRuntimeDisplayName:
             ("cron:daily", "PersonalClaw cron job"),
             ("cron_076ab486", "PersonalClaw cron job"),
             ("subagent:abc-123", "PersonalClaw subagent"),
-            ("cli_chat", "CLI terminal"),
             ("1234567890.123456", "messaging channel"),
         ],
     )

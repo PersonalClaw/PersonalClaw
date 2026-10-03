@@ -12,8 +12,8 @@ text — this page mirrors it.
 | `--version` | Print the version and exit. |
 | `-v` / `--verbose` | Increase log verbosity (`-v` INFO, `-vv` DEBUG). Overrides the persisted `agent.log_level`. |
 
-Commands that talk to a running gateway (`status`, `stop`, `restart`, `token`,
-`logout`, `spawn`) accept `--port` (default: resolved from the `PERSONALCLAW_PORT`
+Commands that talk to a running gateway (`chat`, `run`, `status`, `stop`, `restart`,
+`token`, `logout`, `spawn`) accept `--port` (default: resolved from the `PERSONALCLAW_PORT`
 env var or the `dashboard.url` config).
 
 ## Exit codes and output streams
@@ -26,7 +26,7 @@ env var or the `dashboard.url` config).
 
 `--help` prints on stdout and exits `0`. `auth`, `incident` and `push` alone show their status
 and `skills` alone lists the installed skills; every other group needs one of its commands.
-A command whose section below lists its own codes (`run`) follows that list.
+A command whose section below lists its own codes (`chat`, `run`) follows that list.
 
 stdout carries only what a command produces: the link `token` prints, the jobs `cron list`
 prints, a report. A refusal, a failure or a usage message goes to stderr, so
@@ -105,20 +105,42 @@ PERSONALCLAW_HOME=… python -m personalclaw.seed_local_model
 
 ## `personalclaw chat`
 
-Chat with the agent from the terminal.
+Chat with your assistant from the terminal. The chat runs in your running gateway: it is a
+chat like one you start in the dashboard, with your assistant's name, its memory and its
+tools, and it stays in the dashboard's chat list, where you can go on with it.
 
 | Flag | Effect |
 |---|---|
-| *(no flags)* | Interactive chat mode. |
-| `-m, --message TEXT` | Send a single message non-interactively. |
-| `--model NAME` | Model to use for this run (default: the configured chat binding). |
+| *(no flags)* | Chat until you type `exit` (or `quit`) or press Ctrl+D. Your first message opens the chat. |
+| `-m, --message TEXT` | Send one message, print its reply, and exit. An empty or whitespace-only message is refused (exit 2). |
+| `--model NAME` | Model for this chat (default: the chat model bound in Settings → Models). |
+| `--port PORT` | Gateway port (default: resolved like every other client command). |
+
+The reply streams to stdout. A call that asks for approval waits for your answer as it does
+in any chat: it is listed in the dashboard (Home, the Inbox and the chat itself) and on your
+phone, and asked on the chat channel your approvals go to. The terminal says on stderr what
+is waiting and how it ended (Approved, Denied, Expired or Cancelled). Notices and errors go
+to stderr too, so `personalclaw chat -m '…' > reply.txt` keeps the reply alone.
+
+Ctrl+C during a reply stops that turn in the gateway, as Stop does in the dashboard: a call
+still waiting for approval is cancelled and never runs. Ctrl+C at the `you>` prompt leaves
+the chat.
+
+`chat` needs the gateway. With none running on the port it says so, with the command that
+starts one (`personalclaw gateway`, or `personalclaw restart` when a service is installed for
+this home), and exits 1. Like `run`, it must share that gateway's `PERSONALCLAW_HOME`: it
+signs in with the home's local secret.
+
+Exit code is `0` when the message's turn completed (or you left the interactive chat), `1`
+when no gateway is running, the turn did not complete (it failed or was stopped) or the
+connection to the gateway failed, and `2` for an empty `-m`.
 
 ## `personalclaw run`
 
 Run ONE headless turn against the local gateway and exit — the scripting/CI entry
-point. Unlike `chat -m` (which talks to a provider directly, with no gateway, session,
-safety profile or tool gate), `run` drives the same `POST /api/chat` + `/api/ws` pair the
-dashboard uses, so a scripted turn is gated exactly like an interactive one.
+point. Like `chat`, `run` drives the same `POST /api/chat` + `/api/ws` pair the dashboard
+uses, so a scripted turn is gated exactly like an interactive one. Unlike `chat`, its turn is
+unattended (see the safety posture below): nobody is there to answer an approval.
 
 | Flag | Effect |
 |---|---|

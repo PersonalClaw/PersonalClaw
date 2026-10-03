@@ -1099,8 +1099,6 @@ def _infer_source(session_key: str) -> str:
         return "cron"
     if session_key.startswith("subagent:"):
         return "subagent"
-    if session_key == "cli_chat":
-        return "cli"
     return "channel"
 
 

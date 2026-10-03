@@ -1,8 +1,8 @@
 """PersonalClaw CLI — personal AI agent.
 
 Commands:
-    personalclaw chat -m "message"    Send a single message
-    personalclaw chat                 Interactive chat mode
+    personalclaw chat -m "message"    Send one message to the running gateway's chat
+    personalclaw chat                 Chat with your assistant through the running gateway
     personalclaw gateway              Start the PersonalClaw server (dashboard + channels)
     personalclaw gateway --seed NAME  Populate $PERSONALCLAW_HOME from a fixture, then start
     personalclaw status               Show runtime stats
@@ -133,16 +133,15 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
 # the installed provider apps first: the same provider init the gateway runs at boot (see
 # ``providers.loader.bootstrap_cli_providers``). Every model provider is an app (the bundled
 # default model and ``ollama-models`` included), so a command left out of this set cannot
-# reach one — ``chat`` was, and exited 1 telling the user to restart a gateway it never used.
+# reach one.
 #
 # * the eval family builds real chat/embedding providers;
-# * ``chat`` builds the chat model through the provider factory;
 # * ``consolidate`` runs model extraction and embeds what it stores;
 # * ``learn`` / ``memory`` size their vector store by probing the bound embedding model;
 # * ``doctor``'s Provider Health lists the registry, which is empty until this runs.
 #
 # Excluded: ``eval-harvest`` (reads terminal runs, resolves no live provider) and the gateway
-# clients ``run`` / ``spawn``, whose turns resolve inside the gateway.
+# clients ``chat`` / ``run`` / ``spawn``, whose turns resolve inside the gateway.
 _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
     {
         "eval",
@@ -151,7 +150,6 @@ _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
         "ablation",
         "eval-gate",
         "retrieval-eval",
-        "chat",
         "consolidate",
         "learn",
         "memory",
@@ -276,27 +274,40 @@ def build_parser() -> argparse.ArgumentParser:
     # Helper for commands with examples
     _fmt = argparse.RawDescriptionHelpFormatter
 
-    # chat
+    # chat — the attended terminal client of the running gateway's chat (`cli_chat`).
     chat_parser = sub.add_parser(
         "chat",
-        help="Chat with the agent",
+        help="Chat with your assistant through the running gateway",
         epilog="""
 Examples:
-  personalclaw chat                      # Interactive mode
-  personalclaw chat -m 'check my PRs'    # Single message
-  personalclaw chat --model claude-opus  # Use specific model
+  personalclaw chat                      # Chat until you type exit (or press Ctrl+D)
+  personalclaw chat -m 'check my PRs'    # One message: its reply prints, then it exits
+  personalclaw chat --model MODEL        # This chat on another model you set up
+
+The chat runs in your running gateway, as a chat you can open in the dashboard. A call
+that asks for approval waits for your answer in PersonalClaw (the dashboard or your
+phone) or on your paired chat channel. Ctrl+C during a reply stops that turn.
 """,
         formatter_class=_fmt,
     )
-    chat_parser.add_argument("-m", "--message", help="Single message (non-interactive)")
-    chat_parser.add_argument("--model", help="Model to use (default: from config)")
+    chat_parser.add_argument("-m", "--message", help="One message: print its reply and exit")
+    chat_parser.add_argument(
+        "--model", help="Model for this chat (default: the chat model bound in Settings → Models)"
+    )
+    chat_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Gateway port to use (default: resolved like every other client command)",
+    )
 
     # run — headless one-shot scripted turn.
     # NOTE: `run` is a NEW TOP-LEVEL command. The pre-existing `run` in this parser is
     # `spawn run` (a nested subagent verb, line ~466) — a different namespace, so there
-    # is no collision. `chat -m` is deliberately NOT extended: it talks to a provider
-    # factory with no gateway, session, safety profile or approval gate, so folding a
-    # gated headless mode into it would have meant two behaviours behind one flag.
+    # is no collision. `run` and `chat` are two clients of the gateway's chat: `chat` is
+    # attended (a call that asks waits for your answer), `run` is headless (read-only
+    # unless --allow, since nobody is there to ask), so they stay two commands rather
+    # than two behaviours behind one flag.
     run_parser = sub.add_parser(
         "run",
         help="Run one headless turn against the local gateway (scripting/CI)",
@@ -1701,22 +1712,7 @@ def main() -> None:
         bootstrap_cli_providers()
 
     if args.command == "chat":
-        # A fresh install has no chat model bound yet, and the getting-started
-        # guide's "first chat" step lands exactly there. The resolver already
-        # composes a WHAT/WHY/FIX message; print that and exit 1 instead of
-        # dumping an asyncio traceback that buries the fix under 30 stack frames.
-        # Two classes carry the signal (the bridge's and the LLM registry's) —
-        # catch both, as `session.py` does for the same reason.
-        from personalclaw.llm.registry import ProviderResolutionError as _LLMResolveErr
-        from personalclaw.providers.provider_bridge import (
-            ProviderResolutionError as _BridgeResolveErr,
-        )
-
-        try:
-            asyncio.run(_chat(args.message, args.model))
-        except (_BridgeResolveErr, _LLMResolveErr) as exc:
-            print(str(exc), file=sys.stderr)
-            raise SystemExit(1) from None
+        _chat(args)
     elif args.command == "run":
         from personalclaw.cli_run import _run
 

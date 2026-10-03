@@ -285,8 +285,9 @@ chat, channel thread, loop worker, webhook, subagent).
    does not hold). Every path that runs a named agent hands its model those words: a
    chat routed to it, a spawn, workflow step, automation or app run that names it
    (`build_message` is told the agent), a webhook on it, a loop it works, a room it
-   sits in (its first message), and the heartbeat and `personalclaw chat`, which run
-   the default agent. A spawn that names no agent is a helper of whatever started it,
+   sits in (its first message), and the heartbeat, which runs the default agent (as
+   `personalclaw chat` does: its turns are chats of the gateway's). A spawn that names no
+   agent is a helper of whatever started it,
    on that one's runtime, framed as a sub-agent on the Background prompt and handed no
    agent's own instructions: handed its parent's, a goal loop worker's helper would run
    the loop's own cycle protocol, and handed the default agent's, a helper working for
@@ -298,7 +299,7 @@ chat, channel thread, loop worker, webhook, subagent).
    So are the platform's safety rules, last and once: the `safety-rules` snippet the
    Chat and Background prompts include, worded in that one place, which an agent's own
    prompt adds to and cannot remove (`prompt_providers.runtime.with_safety_rules`). A
-   room member's first message and `personalclaw chat`'s carry them the same way, and
+   room member's first message carries them the same way, and
    `tests/test_agent_safety_rules_census.py` fails for a new path that starts an agent
    without them. The resolved prompt opens the session's first message, verbatim, ahead of
    memory, history and the request, and a compaction keeps that message. A word

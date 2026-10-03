@@ -117,7 +117,7 @@ def test_no_argparse_sentinel_renders_anywhere_in_the_help_tree(tree):
         f"clean result proves nothing"
     )
     top = _rendered(tree[0][1])
-    assert "Chat with the agent" in top, "the top-level help rendered no command descriptions"
+    assert "Chat with your assistant" in top, "the top-level help rendered no command descriptions"
 
 
 def test_the_sentinel_detector_is_not_vacuous():

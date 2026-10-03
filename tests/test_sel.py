@@ -417,7 +417,6 @@ class TestInferSource:
             ("dashboard:slot5", "dashboard"),
             ("cron:job123", "cron"),
             ("subagent:abc", "subagent"),
-            ("cli_chat", "cli"),
             ("C0EXAMPLE04:thread123", "channel"),
             ("random_key", "channel"),
         ],

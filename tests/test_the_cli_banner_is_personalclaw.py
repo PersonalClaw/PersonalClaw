@@ -11,7 +11,6 @@ in the package is a drawing.
 from __future__ import annotations
 
 import ast
-import asyncio
 import sys
 from pathlib import Path
 
@@ -56,8 +55,9 @@ def test_the_chat_prompt_prints_it(monkeypatch, capsys):
         raise EOFError
 
     monkeypatch.setattr("builtins.input", no_more_input)
-    # Nothing reaches the provider or the config: the prompt ends at its first read.
-    asyncio.run(cli_chat._interactive(provider=None, cfg=None))  # type: ignore[arg-type]
+    # Nothing reaches a gateway: the chat is opened by the first message, and the prompt ends at
+    # its first read.
+    assert cli_chat._interactive(cli_chat._SignIn(0), "") == 0
     assert capsys.readouterr().out.startswith(PERSONALCLAW_ART)
 
 
