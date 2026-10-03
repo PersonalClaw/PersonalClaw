@@ -64,7 +64,10 @@ describe('incognito copy matches the backend contract', () => {
     expect(read('providers', 'provider_bridge.py')).toMatch(/memory_writes\.require_model\(f"\{provider_name\}:\{model\}"\)/)
     // A tool's one-shot call runs on the model the chat's turn named.
     expect(read('llm_helpers.py')).toMatch(/own = memory_writes\.own_model\(\)/)
-    expect(read('dashboard', 'chat_runner.py')).toMatch(/memory_writes\.answered_by\(str\(getattr\(client, "served_model_ref", ""\) or ""\)\)/)
+    // The turn names the model it runs on (an agent CLI's chat, its CLI), and the work it starts
+    // away from the turn stays on it.
+    expect(read('dashboard', 'chat_runner.py')).toMatch(/memory_writes\.answered_by\(turn_model_ref\(client\)\)/)
+    expect(read('providers', 'provider_bridge.py')).toMatch(/served = getattr\(runtime, "served_model_ref", None\)/)
     // Every consolidation pass runs as deriving from its session and is skipped for one.
     expect(read('history.py')).toMatch(/with memory_writes\.derived_from\(key, memory_mode=self\._log\.recorded_memory_mode\(key\)\):\s*\n\s*if memory_writes\.writes_refused\(\):/)
     // The tools an agent CLI runs, in a process of their own, run as the chat they serve.

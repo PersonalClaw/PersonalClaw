@@ -2026,6 +2026,23 @@ def serving_entry(use_case: str) -> Any:
     return candidates[0] if candidates else None
 
 
+def turn_model_ref(runtime: object) -> str:
+    """What a chat's turn on *runtime* runs on, as its work names it (``memory_writes.answered_by``
+    takes it): the ``"<entry>:<model>"`` PersonalClaw's own loop sends each turn to
+    (``served_model_ref``), or an agent CLI's runtime (``acp:<cli>``), for a CLI owns its wire: of
+    its turn PersonalClaw sees which CLI runs it, not the model the CLI sends it to. ``""`` for a
+    runtime that says neither."""
+    from personalclaw import memory_writes
+
+    served = getattr(runtime, "served_model_ref", None)
+    if isinstance(served, str):
+        return served.strip()
+    runtime_id = getattr(runtime, "provider_id", "")
+    return (
+        runtime_id if isinstance(runtime_id, str) and memory_writes.is_agent_cli(runtime_id) else ""
+    )
+
+
 def expected_served_ref(model: str) -> str:
     """The ``"<entry>:<model>"`` a native chat turn would be served by, WITHOUT building it.
 

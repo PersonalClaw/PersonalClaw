@@ -146,12 +146,6 @@ def app_refusal(app: str) -> str:
     )
 
 
-#: What :func:`_run_of` answers for a key that names no workflow step, and for one whose run's
-#: record cannot be read.
-_NOT_A_STEP = object()
-_RUN_UNREADABLE = object()
-
-
 def _step(state: Any, key: str) -> tuple[str, str, str]:
     """For the session *key*: why it reads no memory by its own records (:data:`TEMPORARY`,
     :data:`UNREADABLE` or ``""``), the app its work is for (``""`` for yours), and the key it works
@@ -163,10 +157,12 @@ def _step(state: Any, key: str) -> tuple[str, str, str]:
         return _recorded(state, key), app, str(getattr(info, "parent_session_key", "") or "")
     if key.startswith(_APP):
         return _recorded(state, key), key[len(_APP) :], ""
-    run = _run_of(key)
-    if run is _RUN_UNREADABLE:
+    from personalclaw.memory_writes import NOT_A_STEP, RUN_UNREADABLE, run_of_step
+
+    run = run_of_step(key)
+    if run is RUN_UNREADABLE:
         return UNREADABLE, "", ""
-    if run is not _NOT_A_STEP:
+    if run is not NOT_A_STEP:
         from personalclaw.workflows import ownership
 
         temporary = run is not None and ownership.run_mode(run) is ownership.MemoryMode.TEMPORARY
@@ -197,20 +193,3 @@ def _recorded(state: Any, key: str) -> str:
     if recorded == "temporary":
         return TEMPORARY
     return UNREADABLE if recorded == RECORD_UNREADABLE else ""
-
-
-def _run_of(key: str) -> Any:
-    """The workflow run whose step *key* names (``None`` when there is no such run),
-    :data:`_RUN_UNREADABLE` when its record cannot be read, :data:`_NOT_A_STEP` for a key that
-    names no step."""
-    from personalclaw.workflows import ownership
-
-    owned = ownership.parse_owned(key)
-    if owned is None:
-        return _NOT_A_STEP
-    try:
-        from personalclaw.workflows import store
-
-        return store.get(owned[0])
-    except Exception:  # noqa: BLE001 - a run that cannot be read is not known to read memory
-        return _RUN_UNREADABLE

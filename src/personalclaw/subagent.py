@@ -61,6 +61,7 @@ from personalclaw.subagent_persistence import (
     write_tombstone,
 )
 from personalclaw.subagent_prompt import first_prompt
+from personalclaw.subagent_session import session_kwargs
 from personalclaw.subagent_tier import (
     CAPABILITY_TEXT,
     CallBudget,
@@ -1472,6 +1473,8 @@ class SubagentManager:
         agent_id = info.id
         info.queued = False
         self._inc_running(info)
+        # It runs as its own work (its mark and the model it was handed), not the dispatcher's.
+        own = memory_writes.work_context(agent_work_id(agent_id))
 
         # A standing grant approves the spawn without asking: read NOW (rule 1 of
         # `approval_grants`), and only if the operator ceiling lets it stand (rule 2) — an
@@ -1483,7 +1486,7 @@ class SubagentManager:
             caller=info.parent_session_key or f"subagent:{agent_id}",
             subject=f"subagent_run,subagent_id={agent_id}",
         ):
-            self._tasks[agent_id] = asyncio.create_task(self._run(info))
+            self._tasks[agent_id] = asyncio.create_task(self._run(info), context=own)
             self._log_spawned(info)
             sel().log_tool_invocation(
                 session_key=info.parent_session_key,
@@ -1497,7 +1500,9 @@ class SubagentManager:
                 },
             )
         elif self._on_spawn_approval:
-            self._tasks[agent_id] = asyncio.create_task(self._spawn_with_approval(info))
+            self._tasks[agent_id] = asyncio.create_task(
+                self._spawn_with_approval(info), context=own
+            )
         elif self._ctx_builder and self._ctx_builder.hooks:
             info.done = True
             info.error = "spawn rejected: no approval mechanism configured"
@@ -2124,14 +2129,6 @@ class SubagentManager:
                 source="subagent",
                 resources=f"subagent_id={info.id},inherited_agent={agent}",
             )
-        extra_kwargs: dict[str, Any] = {}
-        if info.cwd:
-            extra_kwargs["cwd"] = info.cwd
-        # Sandbox provider: thread the chosen isolation backend to the ACP worker
-        # launch. Only forward a non-default so the chat/native paths (which ignore it) are
-        # untouched; ``none`` is the transport default.
-        if info.sandbox and info.sandbox != "none":
-            extra_kwargs["sandbox"] = info.sandbox
         # Unattended = no human can answer an interactive tool/approval prompt, so
         # strip those tools + fail their gate fast (T5). This is true for HEADLESS
         # spawns only — cron / scheduled run-prompt/run-workflow / invoke-agent —
@@ -2149,30 +2146,13 @@ class SubagentManager:
         # headless either: each call it makes reaches the relay and asks you, as an agent no grant
         # covers does, instead of being declined with nobody asked.
         has_interactive_parent = run_bounds.attended(self._sessions, info.parent_session_key)
-        if grant and (info.approval_mode == "auto" or not has_interactive_parent):
-            extra_kwargs["unattended"] = True
-        # Dry-run replay (T9): observe-mode — write-capable tools don't execute, so
-        # the run previews what WOULD happen with no side effects.
-        if info.dry_run:
-            extra_kwargs["dry_run"] = True
-        from personalclaw.workflows.provisioning import step_documents, step_reads
-
-        if roots := [*info.may_read, *info.may_change, *step_documents(info.parent_run)]:
-            extra_kwargs["extra_tool_roots"] = roots  # its trigger's reach, its run's documents
-        if reads := step_reads(info.parent_run):  # its run's project tree, its batch's folder
-            extra_kwargs["read_tool_roots"] = reads
-        if session_env := tier_for(info).session_env(info.extra_env):
-            # The leaf's posture + lineage, and the run's tier. Passed through the session's
-            # `extra_env` seam, which already forces a cold (non-pooled) session — a warm pooled
-            # worker would carry the PREVIOUS leaf's env, and inheriting a sibling's capability
-            # flag is precisely the cross-contamination this must not have.
-            extra_kwargs["extra_env"] = session_env
+        alone = bool(grant) and (info.approval_mode == "auto" or not has_interactive_parent)
+        # Its model (its chat's own in an Incognito or Temporary chat's work), folder and reach.
+        model, extra_kwargs = session_kwargs(info, unattended=alone)
         client, is_new, _resumed = await self._sessions.get_or_create(
             session_key,
             agent=agent or None,
-            # The spawn's own model when it names one; with none, the orchestration chain
-            # serves it, and an unbound axis falls back to chat.
-            model=info.model or None,
+            model=model,
             approval_policy=parent_policy,
             approval_source=self._policy_source(info),
             # EVERY spawn rides the orchestration axis, one that names a model too: the model

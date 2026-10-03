@@ -1077,6 +1077,8 @@ async def dispatch_subworkflow(
             root_run_id=(parent.root_run_id if parent else "") or run_id or "",
             project_id=parent.project_id if parent else "",
             origin=RunOrigin(kind=OriginKind.SUBAGENT_TOOL, trigger_id=node.id),
+            # Its parent's work: what a Temporary or Incognito origin's run keeps, it keeps.
+            extra=ownership.inherited_extra(parent) if parent else {},
         )
     )
     store.write_spec(child.id, spec)

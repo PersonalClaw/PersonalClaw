@@ -35,9 +35,10 @@ chat, channel thread, loop worker, webhook, subagent).
   Work for a restricted session takes its mode: a subagent's key is marked when
   it is spawned (`memory_writes.hand_on`), Temporary when the chat it works for is
   Temporary and Incognito otherwise, and a workflow run marks its origin's mode
-  on its keys and records it on the run. So a Temporary chat's subagents, its
+  on its keys and records it on the run, as do a subworkflow it starts and a fork
+  of it (`ownership.inherited_extra`). So a Temporary chat's subagents, its
   subagents' subagents and the steps of a run it started read no memory and
-  write none, as the chat does.
+  write none, as the chat does. It takes the chat's model the same way (below).
 - **`memory_reads.py` — whose work may read your memory.** `reach_of(state,
   key)` is the one answer every memory read asks, for the work a session key
   names: it follows a subagent to the session it works for, an app's agent run to
@@ -126,6 +127,24 @@ chat, channel thread, loop worker, webhook, subagent).
     every pool carries the scope, every seam asks, the agent CLI's tool server
     serves each call as its chat, the exception is taken only where it names, and
     nothing builds a model provider or calls an embedding model around them.
+  - The work such a chat starts away from its own turn stays on that model too,
+    handed on with the mode. The turn records its model for its session
+    (`answered_by`, read by `model_of`; an agent CLI's chat names its runtime,
+    `acp:<cli>`, `provider_bridge.turn_model_ref`). A request its agent's tool
+    makes runs as the chat on it (`as_work_of`, in `memory_write_gate`), so a
+    subagent `subagent_run` starts is handed it when it is spawned (`hand_on`)
+    and its runtime is built on it rather than on the Orchestration chain
+    (`spawn_model`, `subagent_session.session_kwargs`), on the chat's own agent
+    CLI when the chat runs on one. Each subagent runs as its own work
+    (`work_context`): a queued one that starts when another agent ends stays on
+    its own chat's model, not the other's. A workflow run records the model
+    beside the mode it inherits (`ownership.run_model`) and its tick loop runs as
+    that work from the record (`run_start.run_context`), so a batch's or a
+    workflow's steps keep the mode and the model after a restart, when no request
+    or mark is left to say them. A start that cannot run on the chat's model is
+    refused before anything is built, in words: one naming another model "…:
+    <model> was not asked.", one whose chat's model is not known "…, and this work
+    was not told which model that is."
   - A consolidation pass over a restricted session is skipped before its
     transcript is read or a model is called: the idle sweep's expiry, a
     channel's end of session, `personalclaw consolidate`, the consolidate

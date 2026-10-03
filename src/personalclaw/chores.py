@@ -81,8 +81,14 @@ async def run_chore(
 def _reaches_no_model(chat_key: str, memory_mode: str | None) -> bool:
     """Whether a chore for the chat *chat_key* (``""`` for none), made in the current work, may be
     sent to no model at all (:func:`run_chore`). Not in that chat's own turn once the turn has
-    named its model (``memory_writes.own_model``): a chore naming another chat there is refused."""
-    if memory_writes.own_model() and chat_key in ("", memory_writes.source_session()):
+    named its model (``memory_writes.own_model``), unless that is an agent CLI, which runs no
+    chore: a chore naming another chat there is refused."""
+    own = memory_writes.own_model()
+    if (
+        own
+        and not memory_writes.is_agent_cli(own)
+        and chat_key in ("", memory_writes.source_session())
+    ):
         return False
     if not chat_key and memory_mode is None:
         return memory_writes.writes_refused()

@@ -1,13 +1,14 @@
-"""What a run binds before its first node.
+"""What a run binds before its first node, and the context its work runs in.
 
 Called from `RunController._prepare`: the declared `workspace:`, the
 project's context dir as the memory cwd, a restricted origin's memory posture, and the document a
 run that continues another starts from. Each is idempotent, because `_prepare` runs again on every
-resume.
+resume. Its tick loop runs in `run_context`, wherever it is started from.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,7 @@ from personalclaw.workflows.models import RunStatus
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
+    from personalclaw.workflows.models import WorkflowRun
 
 logger = logging.getLogger(__name__)
 
@@ -241,3 +243,21 @@ def enforce_inherited_mode(ctl: RunController) -> None:
             mark(owned.key)
     except Exception:
         logger.debug("run %s: registry mark failed", ctl.run.id, exc_info=True)
+
+
+def run_context(run: WorkflowRun) -> contextvars.Context:
+    """The context *run*'s tick loop runs in, whichever request, answer or restart starts it.
+
+    A run that inherited a temporary/incognito origin runs as its own work under that mode and on
+    the one model its origin runs on, as its record holds them (`ownership.run_mode`,
+    `ownership.run_model`): its nodes reach no other model, its stages are marked and handed that
+    model when they are spawned, and the stores refuse its writes. A loop started inside the chat's
+    own request had that from the request; one resumed after a restart had nothing, so its stages
+    started unmarked and on any model. Any other run runs in the context that starts it.
+    """
+    mode = ownership.run_mode(run)
+    if mode is ownership.MemoryMode.NORMAL:
+        return contextvars.copy_context()
+    from personalclaw import memory_writes
+
+    return memory_writes.work_context(ownership.owned_key(run.id, "run"), memory_mode=mode.value)

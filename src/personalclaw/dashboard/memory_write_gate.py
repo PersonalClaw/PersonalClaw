@@ -5,7 +5,9 @@ session in ``X-Session-Key``, as the chat page does. This middleware makes that 
 request's memory-write scope (:mod:`personalclaw.memory_writes`), so the stores refuse a write the
 request makes for an Incognito or Temporary session, whichever handler makes it, and answers the
 refusal as the API always has: 403 ``Memory writes are not allowed in this session mode.``, with a
-security-log row.
+security-log row. Such a session's request also runs on the one model its work stays on
+(``memory_writes.as_work_of``): the model its turn named, so a subagent its agent starts here runs
+on it, and nothing the request does reaches another.
 
 ``dashboard:ui`` is the dashboard's own pages acting for the owner, not a session.
 """
@@ -46,7 +48,7 @@ def memory_write_middleware() -> Any:
         session_key = request.headers.get("X-Session-Key", "").strip()
         if not session_key or session_key == _DASHBOARD_UI:
             return await handler(request)
-        with memory_writes.derived_from(session_key, memory_mode=_live_mode(request, session_key)):
+        with memory_writes.as_work_of(session_key, memory_mode=_live_mode(request, session_key)):
             try:
                 return await handler(request)
             except memory_writes.MemoryWriteRefused as refused:

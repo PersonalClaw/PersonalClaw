@@ -542,7 +542,9 @@ Data leaving the running system:
   background model (titles, tags, follow-ups, a condensed history, suggestions)
   is given anything of one; and nothing of one reaches any model but the one its
   turn runs on (the embedding model, a tool's or a subagent's model, the image
-  reader, a fallback, an agent CLI's tool process: `memory_writes.model_may_read`),
+  reader, a fallback, an agent CLI's tool process: `memory_writes.model_may_read`;
+  the work it starts away from its turn, its subagents and the steps of a run it
+  started, is handed that model with its mode, after a restart too),
   except what the person gives the chat in a form its model cannot read (an
   attached file, a shared screen), which the model set up for it reads. Whether
   work may read memory at all is one answer, `memory_reads.reach_of`: a

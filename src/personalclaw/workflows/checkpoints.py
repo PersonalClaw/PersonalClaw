@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.workflows import deliverable, store
+from personalclaw.workflows import deliverable, ownership, store
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     InstanceState,
@@ -259,6 +259,9 @@ def fork_run(
             project_id=parent.project_id,
             mode=parent.mode,
             budget=parent.budget,
+            # It continues its parent's work: a Temporary or Incognito origin's run keeps its mode
+            # and the model its work stays on.
+            extra=ownership.inherited_extra(parent),
         )
     )
     store.write_spec(child.id, spec)

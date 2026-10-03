@@ -38,6 +38,14 @@ threads it hands work to only through :class:`ScopeCarryingExecutor`, so every w
 and into the tool process an agent CLI runs only because that process asks the gateway what the
 chat it serves is (``mcp_core._call_as_its_session``, answered by :func:`restricted_mode`).
 
+The work such a turn starts away from its own context stays on that model too, handed on with the
+mode. The turn's model is recorded for its session (:func:`answered_by`, read by :func:`model_of`):
+a request its agent's tool makes runs as the chat on it (:func:`as_work_of`), a subagent is handed
+it with its mark when it is spawned (:func:`hand_on`) and runs on it (:func:`spawn_model`) as its
+own work wherever its start comes from (:func:`work_context`), and a workflow run records it with
+the mode it inherits, so its steps run on it after a restart too. A start that cannot run on it says
+so before anything is sent.
+
 What the person gives such a chat themselves in a form its model cannot read is the exception, and
 the only one: a file they attach, read for its text, and a screen they share, described. The model
 they set up for that form reads it, as in any chat (:func:`reading_their_input`); the chat's notice
@@ -99,8 +107,8 @@ class OtherModelRefused(RuntimeError):
     read that session's work (:func:`model_may_read`). Raised before anything is sent; its text is
     the sentence that says so."""
 
-    def __init__(self, model_ref: str) -> None:
-        super().__init__(other_model_refusal(model_ref))
+    def __init__(self, model_ref: str, *, unknown: bool = False) -> None:
+        super().__init__(other_model_refusal(model_ref, unknown=unknown))
         self.model_ref = model_ref
 
 
@@ -126,9 +134,10 @@ def blocks_memory_writes(session_key: str, *, memory_mode: str | None = None) ->
     """Whether the session ``session_key`` must leave nothing in long-term memory.
 
     True when any record of its mode says so: the ``memory_mode`` the caller holds, the
-    in-process registry a channel marks (:mod:`personalclaw.session_restrictions`), or the mode
-    its transcript records. A session keeps memory only when its mode is known to be
-    ``persistent``: an unknown value, or a transcript whose metadata cannot be read, keeps nothing.
+    in-process registry a channel marks (:mod:`personalclaw.session_restrictions`), the mode its
+    transcript records, or, for a step of a workflow run, the mode its run inherited. A session
+    keeps memory only when its mode is known to be ``persistent``: an unknown value, or a record
+    that cannot be read, keeps nothing.
 
     A key with no record anywhere (no transcript, no mark) is not a restricted session: there is
     nothing that says so, and a transcript that records no mode was written before modes existed
@@ -146,7 +155,45 @@ def blocks_memory_writes(session_key: str, *, memory_mode: str | None = None) ->
     from personalclaw.history import read_memory_mode, session_path
 
     recorded = read_memory_mode(session_path(key))
-    return recorded is not None and recorded != PERSISTENT
+    return (recorded is not None and recorded != PERSISTENT) or bool(_step_mode(key))
+
+
+#: What :func:`run_of_step` answers for a key that names no step of a workflow run, and for one
+#: whose run's record cannot be read.
+NOT_A_STEP = object()
+RUN_UNREADABLE = object()
+
+
+def run_of_step(session_key: str) -> Any:
+    """The workflow run whose step ``session_key`` names (``workflows.ownership.owned_key``):
+    the run, ``None`` when there is no such run, :data:`RUN_UNREADABLE` when its record cannot be
+    read, :data:`NOT_A_STEP` for a key that names no step."""
+    from personalclaw.workflows import ownership
+
+    owned = ownership.parse_owned(session_key)
+    if owned is None:
+        return NOT_A_STEP
+    try:
+        from personalclaw.workflows import store
+
+        return store.get(owned[0])
+    except Exception:  # noqa: BLE001 - a run that cannot be read is not known to keep anything
+        return RUN_UNREADABLE
+
+
+def _step_mode(session_key: str) -> str:
+    """The mode the run whose step ``session_key`` names inherited when it keeps nothing
+    (``"incognito"``, ``"temporary"``), :data:`UNREADABLE` when its record cannot be read, else
+    ``""``."""
+    run = run_of_step(session_key)
+    if run is RUN_UNREADABLE:
+        return UNREADABLE
+    if run is NOT_A_STEP or run is None:
+        return ""
+    from personalclaw.workflows import ownership
+
+    mode = ownership.run_mode(run)
+    return "" if mode is ownership.MemoryMode.NORMAL else mode.value
 
 
 def blocks_background_models(
@@ -214,16 +261,111 @@ def refuse_write(what: str) -> None:
 
 
 def answered_by(model_ref: str) -> None:
-    """Name ``model_ref`` (``"<entry>:<model>"``) as the model the current work's turn runs on.
+    """Name ``model_ref`` (``"<entry>:<model>"``, or an agent CLI's ``acp:<cli>``) as the model the
+    current work's turn runs on.
 
     The turn engine says it once the turn's runtime is built and before anything is sent
     (``chat_runner.run_chat``). It holds for the rest of the scope it is said in. Work started
-    before it was said does not see it, so that work may hand nothing on. Outside any scope it does
-    nothing.
+    before it was said does not see it, so that work may hand nothing on. In the work of a session
+    that keeps nothing it is also recorded for the session (:func:`model_of`), so the work the turn
+    starts away from its own context stays on it as well. Outside any scope it does nothing.
     """
     source = _SCOPE.get()
-    if source is not None:
-        _SCOPE.set(replace(source, model=(model_ref or "").strip()))
+    if source is None:
+        return
+    ref = (model_ref or "").strip()
+    _SCOPE.set(replace(source, model=ref))
+    if _source_blocks(source):
+        from personalclaw import session_restrictions
+
+        for key in source.keys:
+            if key:
+                session_restrictions.mark_own_model(key, ref)
+
+
+def model_of(session_key: str) -> str:
+    """The one model the work of ``session_key`` may reach when the session keeps nothing: the
+    model its turn named (:func:`answered_by`), the one it was handed when it was started
+    (:func:`hand_on`), or, for a step of a workflow run, the one its run recorded when it started.
+    ``""`` when nothing records one, so its work reaches none."""
+    from personalclaw import session_restrictions
+
+    key = (session_key or "").strip()
+    recorded = session_restrictions.own_model(key) if key else ""
+    if recorded:
+        return recorded
+    run = run_of_step(key)
+    if run is NOT_A_STEP or run is None or run is RUN_UNREADABLE:
+        return ""
+    from personalclaw.workflows import ownership
+
+    return ownership.run_model(run)
+
+
+def _work_of(session_key: str, memory_mode: str | None) -> _Source:
+    key = (session_key or "").strip()
+    return _Source((key,), memory_mode, model_of(key))
+
+
+@contextmanager
+def as_work_of(session_key: str, *, memory_mode: str | None = None) -> Iterator[None]:
+    """Run the enclosed work as the work of ``session_key`` away from that session's own turn: a
+    request its agent's tool makes (``dashboard/memory_write_gate``), a workflow run's work
+    (``workflows/run_start.run_context``). As :func:`derived_from` does, and when the session keeps
+    nothing, on the one model its work stays on (:func:`model_of`)."""
+    token = _SCOPE.set(_work_of(session_key, memory_mode))
+    try:
+        yield
+    finally:
+        _SCOPE.reset(token)
+
+
+def work_context(session_key: str, *, memory_mode: str | None = None) -> contextvars.Context:
+    """A copy of the current context in which a task runs as the work of ``session_key``
+    (:func:`as_work_of`), whatever work starts it: a subagent's run, started by its spawn's
+    request, by another agent's freed slot or after its owner's answer, and a workflow run, started
+    by a chat's request or resumed after a restart."""
+    context = contextvars.copy_context()
+    context.run(_SCOPE.set, _work_of(session_key, memory_mode))
+    return context
+
+
+def handed_model(parent_key: str = "") -> str:
+    """The one model work started now for ``parent_key`` may reach when it keeps nothing: the one
+    the current work stays on when it keeps nothing (:func:`own_model`), and the one
+    ``parent_key``'s work stays on (:func:`model_of`) when a session that keeps nothing is named.
+    Work for two such sessions reaches a model only when both stay on it: ``""`` when they differ,
+    or when neither names one."""
+    models = {model_of(parent_key)} if parent_key else set()
+    own = own_model()
+    if own is not None:
+        models.add(own)
+    return models.pop() if len(models) == 1 else ""
+
+
+def is_agent_cli(model_ref: str) -> bool:
+    """Whether ``model_ref`` names an agent CLI's runtime (``acp:<cli>``), which an agent CLI's chat
+    runs on, rather than a model: only an agent started on that CLI runs on it, never a call."""
+    return (model_ref or "").startswith("acp:")
+
+
+def spawn_model(named: str = "") -> tuple[str, str]:
+    """What an agent started inside the current work runs on, as ``(model, runtime)``.
+
+    ``named`` (the model its start names, if any) and no runtime of its own, for work that may use
+    every model. Inside an Incognito or Temporary chat's work, the one model that work stays on
+    (:func:`own_model`): an agent CLI's runtime as its runtime, any other as its model. A start
+    naming another model is refused with :class:`OtherModelRefused` before anything is built, and
+    so is one in work that was not told which model it stays on, saying so.
+    """
+    own = own_model()
+    if own is None:
+        return named, ""
+    if not own:
+        raise OtherModelRefused(named, unknown=True)
+    if named and named != own:
+        raise OtherModelRefused(named)
+    return ("", own) if is_agent_cli(own) else (own, "")
 
 
 def model_may_read(model_ref: str) -> bool:
@@ -302,6 +444,8 @@ def _restricted_label() -> str:
         recorded = read_memory_mode(session_path(key))
         if recorded in RESTRICTED_MODES:
             return str(recorded).capitalize()
+        if (step := _step_mode(key)) in RESTRICTED_MODES:
+            return step.capitalize()
     return ""
 
 
@@ -324,11 +468,15 @@ def own_model_reason() -> str:
     return f"{who}, so nothing from it is sent to any model but the one it runs on"
 
 
-def other_model_refusal(model_ref: str) -> str:
+def other_model_refusal(model_ref: str, *, unknown: bool = False) -> str:
     """What a refused model call says: "This chat is Incognito, so nothing from it is sent to any
-    model but the one it runs on: <model> was not asked." """
+    model but the one it runs on: <model> was not asked." Work that was not told which model that
+    is (*unknown*) says so instead of naming one."""
     reason = own_model_reason()
-    named = f": {model_ref} was not asked" if model_ref else ""
+    if unknown:
+        named = ", and this work was not told which model that is"
+    else:
+        named = f": {model_ref} was not asked" if model_ref else ""
     return f"{reason[:1].upper()}{reason[1:]}{named}."
 
 
@@ -363,14 +511,22 @@ def hand_on(
     (*reach*, ``memory_reads.reach_of`` over the gateway's state, decides whether its parent is
     one; without it the registry, the transcripts and the runs do). Work for any other session that
     keeps nothing is Incognito, so its agent's calls back over the API are refused writes as its
-    parent's are."""
+    parent's are. Either way it is handed the one model it may reach (:func:`handed_model`), its
+    chat's own, which its runtime is built on and its own calls back over the API stay on."""
     from personalclaw import memory_reads, session_restrictions
 
     asked = reach or functools.partial(memory_reads.reach_of, None)
-    if _restricted_label() == "Temporary" or (parent_key and asked(parent_key).temporary):
+    parent_temporary = bool(parent_key) and asked(parent_key).temporary
+    parent_keeps_nothing = parent_temporary or bool(parent_key and blocks_memory_writes(parent_key))
+    if _restricted_label() == "Temporary" or parent_temporary:
         session_restrictions.mark_temporary(child_key)
-    elif writes_refused() or (parent_key and blocks_memory_writes(parent_key)):
+    elif writes_refused() or parent_keeps_nothing:
         session_restrictions.mark_incognito(child_key)
+    else:
+        return
+    session_restrictions.mark_own_model(
+        child_key, handed_model(parent_key if parent_keeps_nothing else "")
+    )
 
 
 def source_session() -> str:

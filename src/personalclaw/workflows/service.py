@@ -860,6 +860,9 @@ async def start_run(
     # stayed clean. The mode rides in `extra` (already persisted and round-tripped), so a restart
     # replays it and the engine's node-skip + the run-end gate keep enforcing it after the process
     # forgets the in-memory registry. Stamped BEFORE create so the very first tick already sees it.
+    # The model its chat runs on rides beside it: the run's work reaches no other, after a restart
+    # too (`run_start.run_context`).
+    from personalclaw import memory_writes
     from personalclaw.workflows import ownership
 
     inherited = ownership.inherit_mode(session_key, origin_metadata=_origin_metadata(session_key))
@@ -868,7 +871,8 @@ async def start_run(
     # inheritance is a fact worth recording.
     run_extra: dict[str, Any] = dict(extra or {})
     if inherited is not ownership.MemoryMode.NORMAL:
-        run_extra = ownership.stamp_run_mode(run_extra, inherited)
+        model = memory_writes.handed_model(session_key)
+        run_extra = ownership.stamp_run_mode(run_extra, inherited, model=model)
     if document:
         from personalclaw.workflows.deliverable import RUN_DOCUMENT_KEY
 

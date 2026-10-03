@@ -1156,7 +1156,9 @@ cannot read), no background model is given anything of one
 its turn runs on: not the embedding model, a tool's model, a subagent's, the
 image reader or a fallback (`model_may_read`, asked at every seam that reaches a
 model, carried into every worker thread and into the tool process an agent CLI
-runs). What the person gives such a chat in a form its model cannot read (an
+runs). The work it starts away from its turn (a subagent, its own subagents, the
+steps of a run it started) is handed that model with its mode and runs on it,
+after a restart too, and a start that cannot is refused before anything is sent. What the person gives such a chat in a form its model cannot read (an
 attached file, a shared screen) is read by the model set up for it, and the
 chat's notice says so. Who may read memory at all is one answer
 (`memory_reads.reach_of`) every reader asks: a Temporary chat's work reads none

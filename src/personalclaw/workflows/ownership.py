@@ -88,6 +88,11 @@ READ_SUPPRESSED = frozenset({MemoryMode.TEMPORARY})
 #: be a migration under the pre-1.0 banner for no gain, and `extra` is exactly what it is for.
 RUN_MODE_KEY = "memory_mode"
 
+#: Where a restricted run records the one model its work may reach: the model the chat that
+#: launched it runs on (``memory_writes.handed_model``). Beside the mode in `extra`, so a restart
+#: that replays the mode replays the model with it, and the run's steps stay on it.
+RUN_MODEL_KEY = "own_model"
+
 
 def run_mode(run: Any) -> MemoryMode:
     """The inherited mode on a run record, read from `extra`.
@@ -103,8 +108,15 @@ def run_mode(run: Any) -> MemoryMode:
     return parse_mode(extra.get(RUN_MODE_KEY, ""))
 
 
-def stamp_run_mode(extra: dict[str, Any], mode: MemoryMode) -> dict[str, Any]:
-    """Record the inherited mode on a run's `extra`, returning a NEW dict.
+def run_model(run: Any) -> str:
+    """The model a restricted run's work stays on, as its `extra` records it (``""`` for none)."""
+    extra = getattr(run, "extra", None) or {}
+    return str(extra.get(RUN_MODEL_KEY, "") or "")
+
+
+def stamp_run_mode(extra: dict[str, Any], mode: MemoryMode, *, model: str = "") -> dict[str, Any]:
+    """Record the inherited mode, and the model its work stays on, on a run's `extra`, returning a
+    NEW dict.
 
     A new dict rather than a mutation: run records are compared and journaled, and mutating the one
     the caller holds would make a rejected create leave a stamped object behind.
@@ -115,7 +127,17 @@ def stamp_run_mode(extra: dict[str, Any], mode: MemoryMode) -> dict[str, Any]:
     head: it round-trips on disk and is what a restart replays. Composing over `durable_metadata`
     keeps the two the same value rather than two string literals that could drift.
     """
-    return {**(extra or {}), **durable_metadata(mode)}
+    return {**(extra or {}), **durable_metadata(mode), **({RUN_MODEL_KEY: model} if model else {})}
+
+
+def inherited_extra(parent: Any) -> dict[str, Any]:
+    """The `extra` a run started from *parent*'s work (a subworkflow it runs, a fork of it) starts
+    with: *parent*'s restricted mode and the model its work stays on, so the new run keeps both on
+    its own record, after a restart as before it. `{}` for a parent that inherited no mode."""
+    mode = run_mode(parent)
+    if mode is MemoryMode.NORMAL:
+        return {}
+    return stamp_run_mode({}, mode, model=run_model(parent))
 
 
 def owned_key(run_id: str, node_id: str) -> str:

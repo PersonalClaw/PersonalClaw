@@ -2829,8 +2829,10 @@ async def run_chat(
         if refused_on_a_substitute(state, session, client):
             return
         # The model this turn runs on is the one its work may hand anything to: in an Incognito or
-        # Temporary chat its tools, recall and fallbacks stay on it.
-        memory_writes.answered_by(str(getattr(client, "served_model_ref", "") or ""))
+        # Temporary chat its tools, recall, fallbacks and the subagents it starts stay on it.
+        from personalclaw.providers.provider_bridge import turn_model_ref
+
+        memory_writes.answered_by(turn_model_ref(client))
         # The chosen model could not run and another answers: said now, before the reply streams
         # (an activity line is not drawn once tool cards arrive), and stamped on the reply below
         # so a reload still says it.

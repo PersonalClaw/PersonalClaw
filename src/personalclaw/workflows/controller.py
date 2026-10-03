@@ -426,7 +426,7 @@ class RunController:
         if self._task and not self._task.done():
             return
         self._terminal.clear()
-        self._task = asyncio.create_task(self._tick_loop())
+        self._task = asyncio.create_task(self._tick_loop(), context=run_start.run_context(self.run))
 
     async def run_to_completion(self, *, timeout: float = 0.0) -> RunStatus:
         """Blocking mode: drive to terminal, drain the projection writes, return the status.
@@ -1002,7 +1002,7 @@ class RunController:
             logger.debug("workflow %s: no running loop to resume on", self.run.id)
             return
         self._terminal.clear()
-        self._task = asyncio.create_task(self._tick_loop())
+        self._task = asyncio.create_task(self._tick_loop(), context=run_start.run_context(self.run))
 
     # ── mid-flight mutation (WF2-R2 / R20) ──
 

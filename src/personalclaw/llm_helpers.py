@@ -1155,9 +1155,12 @@ async def _one_shot_completion(
     # Work that derives from an Incognito or Temporary chat hands nothing to a model but the one
     # the chat's turn runs on (`memory_writes.model_may_read`): a call that names no model runs
     # on that one, stamped as serving in the bound model's place; one before the turn named its
-    # model, or pinned to another, is refused by the guard every model built here passes.
+    # model, pinned to another, or in the work of a chat on an agent CLI (which no call runs on),
+    # is refused by the guard every model built here passes.
     own = memory_writes.own_model()
-    stays_on_own = own is not None and not model and bool(own)
+    stays_on_own = (
+        own is not None and not model and bool(own) and not memory_writes.is_agent_cli(own)
+    )
     if stays_on_own:
         model = str(own)
 
