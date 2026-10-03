@@ -196,7 +196,9 @@ class TestAgentBindingKeepsTheBoundWorkspace:
 
     async def _bind(self, session, cfg):
         state = self._state_for(session)
-        with patch("personalclaw.dashboard.chat_handlers.AppConfig") as app_cfg:
+        # Where the bind reads the profile: every door that hands a chat to a saved agent says
+        # what changes through `running_turn.to_agent`.
+        with patch("personalclaw.dashboard.running_turn.AppConfig") as app_cfg:
             app_cfg.load.return_value = cfg
             async with TestClient(TestServer(self._app(state))) as client:
                 resp = await client.post(

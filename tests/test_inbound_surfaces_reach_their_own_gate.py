@@ -75,8 +75,14 @@ async def _refuse_to_run_a_turn(*_a, **_k):  # noqa: ANN002, ANN003
     raise AssertionError("a request in this file must never start an agent turn")
 
 
+async def _refuse_to_move_an_agent(*_a, **_k):  # noqa: ANN002, ANN003
+    raise AssertionError("a request in this file must never change a session's agent")
+
+
 def _register(app: web.Application) -> None:
-    openai.register_routes(app, turn_runner=_refuse_to_run_a_turn)
+    openai.register_routes(
+        app, turn_runner=_refuse_to_run_a_turn, agent_mover=_refuse_to_move_an_agent
+    )
     a2a.register_routes(app)
     capture.register_routes(app)
 

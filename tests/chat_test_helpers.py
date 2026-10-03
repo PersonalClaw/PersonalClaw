@@ -13,6 +13,9 @@ def _make_state(tmp_path, **kwargs):
     """Create a DashboardState with mocked services and real ConversationLog."""
     sessions = MagicMock(count=0)
     sessions.remove = AsyncMock()
+    # A coroutine on the real session manager: every door that hands a chat to another agent
+    # retires the chat's runtime with it (`running_turn.rebind`).
+    sessions.reset = AsyncMock()
     sessions.get_pid = MagicMock(return_value=None)
     return DashboardState(
         sessions=sessions,

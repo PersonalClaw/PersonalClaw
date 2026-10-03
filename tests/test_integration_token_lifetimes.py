@@ -78,7 +78,7 @@ def _cfg(monkeypatch, surface: str = "mcp") -> None:
     monkeypatch.setattr(AppConfig, "load", staticmethod(lambda *a, **k: cfg))
 
 
-async def _never(*_a, **_k):  # the OpenAI dialect's turn runner; no refusal reaches it
+async def _never(*_a, **_k):  # the OpenAI dialect's turn runner and agent mover
     raise AssertionError("a refused request ran a turn")
 
 
@@ -100,7 +100,7 @@ async def _surface_client(surface: str) -> TestClient:
     elif surface == "a2a":
         a2a.register_routes(app)
     elif surface == "openai":
-        openai_dialect.register_routes(app, turn_runner=_never)
+        openai_dialect.register_routes(app, turn_runner=_never, agent_mover=_never)
     else:
         app.router.add_get("/actions", bridge.handle_actions)
     client = TestClient(TestServer(app))

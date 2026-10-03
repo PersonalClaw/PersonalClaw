@@ -258,14 +258,16 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         else:
             logger.debug("agent match for session=%s agent=%s", session.key, agent)
     elif agent:
-        # Session has no agent — set it if not running
+        # Session has no agent — set it if not running, the way every door changes what answers a
+        # chat (`running_turn.rebind`): a chat the default agent has answered holds that agent's
+        # runtime, and the turn below must be built for the agent named, not run on it.
         if session.running:
             _emit_agent_assignment(session.key, agent, outcome="denied_running")
             return web.json_response(
                 {"error": "cannot set agent on running session"},
                 status=409,
             )
-        session.agent = agent
+        await running_turn.move_to_agent(state, session, agent)
         _emit_agent_assignment(session.key, agent)
     else:
         # No agent on session, no agent in request — nothing to enforce.
@@ -2010,46 +2012,16 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
     if agent_name and not _AGENT_NAME_RE.match(agent_name):
         return web.json_response({"error": "invalid agent name"}, status=400)
 
-    # Resolve the new agent's default working directory from its bindings.
-    workspace_dir = session.workspace_dir
-    try:
-        cfg = AppConfig.load()
-        # Look up by config key or by provider_agent name
-        matched = agent_name if agent_name in cfg.agents else None
-        if agent_name and not matched:
-            for k, v in cfg.agents.items():
-                if v.provider_agent == agent_name:
-                    matched = k
-                    break
-        if matched:
-            # Honor default_dir's contract: a profile that declared NO directory
-            # INHERITS, so it must not displace a workspace the user bound to this
-            # session via POST …/workspace-dir.
-            workspace_dir = resolve_session_workspace(cfg, matched, session.workspace_dir)
-    except Exception:
-        logger.warning("Failed to resolve agent bindings for %r", agent_name, exc_info=True)
-
+    change = running_turn.to_agent(session, agent_name)
     logger.info("Session %s agent switched to %r", name, agent_name or "personalclaw")
-    # Selecting a saved/native agent clears any ephemeral discovered-ACP override
-    # so the new selection isn't shadowed by a stale runtime binding. The pending
-    # "could not restore your ACP runtime" notice goes with it: the user just chose
-    # this axis by hand, and an explicit choice is not a silent fallback to report.
-    moved = await running_turn.rebind(
-        state,
-        session,
-        running_turn.Rebinding(
-            fields={
-                "agent": agent_name,
-                "acp_provider": "",
-                "acp_provider_agent": "",
-                "_acp_meta_binding": "",
-                "workspace_dir": workspace_dir,
-            },
-            persisted={"agent": agent_name, "acp_provider": "", "acp_provider_agent": ""},
-        ),
-    )
+    moved = await running_turn.rebind(state, session, change)
     return web.json_response(
-        {"ok": True, "agent": agent_name, "workspace_dir": workspace_dir, "moved": moved}
+        {
+            "ok": True,
+            "agent": agent_name,
+            "workspace_dir": change.fields["workspace_dir"],
+            "moved": moved,
+        }
     )
 
 

@@ -130,16 +130,17 @@ def register_dashboard_routes(app: web.Application) -> None:
     # cookie-auth world. Like /capture and /mcp it mounts unconditionally and
     # refuses per request, so the Settings toggle needs no restart; a disabled surface
     # answers 404 either way. Early, so no `{...}` pattern below can capture `v1`.
-    # The turn runner is handed IN rather than imported by the dialect: `inbound/` is
-    # domain code, and an `inbound/` -> `dashboard/` import is the
+    # The turn runner and the change of a session's agent are handed IN rather than imported by
+    # the dialect: `inbound/` is domain code, and an `inbound/` -> `dashboard/` import is the
     # `core-must-not-import-the-http-surface` inversion (see that dialect's
     # `register_routes`). The dashboard's route table is part of its composition root and
     # legitimately faces downward, so the dependency belongs here.
     try:
         from personalclaw.dashboard.chat_handlers import _run_chat_scoped
+        from personalclaw.dashboard.running_turn import move_to_agent
         from personalclaw.inbound.openai_dialect import register_routes as _register_openai
 
-        _register_openai(app, turn_runner=_run_chat_scoped)
+        _register_openai(app, turn_runner=_run_chat_scoped, agent_mover=move_to_agent)
     except Exception:  # noqa: BLE001 — an inbound fault must never block startup
         logging.getLogger(__name__).warning("inbound: /v1 mount failed", exc_info=True)
     # A2A gateway. Three literal paths under /a2a — the agent card

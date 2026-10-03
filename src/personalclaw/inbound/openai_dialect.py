@@ -13,7 +13,10 @@ an external client asking for ``model="researcher"`` and quietly getting the def
 agent has been answered by something it did not ask for, and it has no way to tell.
 So this module checks membership in ``config.agents`` ITSELF and 404s, and only then
 calls the resolver. Deleting that pre-check does not fail any obvious test — it turns
-a 404 into a plausible wrong answer.
+a 404 into a plausible wrong answer. The same holds for a session that already runs
+another agent: the request's agent answers its turn on a runtime built for it (the
+injected ``agent_mover``), and a request that would change it under a turn still
+running is refused with a 409.
 
 **Tool calls execute server-side and are NEVER surfaced as `tool_calls` deltas.**
 The caller is not the tool executor; the headless profile is. A dialect that
@@ -115,6 +118,9 @@ _SILENT_ROLES = frozenset({"user", "done"})
 #: ``app`` key holding the injected turn runner. See ``register_routes`` for why this is
 #: injected by the composition root instead of imported.
 TURN_RUNNER_KEY = "inbound_openai_turn_runner"
+
+#: ``app`` key holding the injected change of a session's agent, injected for the same reason.
+AGENT_MOVER_KEY = "inbound_openai_agent_mover"
 
 
 # ── Wire shapes ───────────────────────────────────────────────────────────────
@@ -455,6 +461,29 @@ def _reset_session(session: Any, key: str, state: Any = None) -> None:
         smap.delete(key)
 
 
+def _answered_by(session: Any, agent: str) -> bool:
+    """Whether *agent* answers *session* as it stands: it is the session's agent, and no agent
+    CLI picked for the session in the dashboard answers in its place."""
+    return getattr(session, "agent", "") == agent and not getattr(session, "acp_provider", "")
+
+
+def _agent_change_mid_turn(client_id: str, model: str) -> web.Response:
+    """The refusal for a request that names another agent while the session's turn runs."""
+    audit(
+        OPENAI_SURFACE,
+        route=ROUTE_CHAT,
+        status=409,
+        client_id=client_id,
+        refused=f"agent change mid-turn: model={model!r}",
+    )
+    return openai_error(
+        "This session is still answering another request, and its agent changes only between "
+        "requests. Ask again when that answer has finished, or use another session.",
+        code="agent_change_mid_turn",
+        status=409,
+    )
+
+
 # ── The transcript → wire translation ─────────────────────────────────────────
 
 
@@ -596,10 +625,30 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
         return openai_error("Gateway state unavailable.", code="service_unavailable", status=503)
 
     session = state.get_or_create_session(key, agent=agent)
-    # An existing session may have been opened for another agent; the request's agent
-    # (already validated and binding-checked) wins for this turn.
-    if getattr(session, "agent", "") != agent:
-        session.agent = agent
+    if not _answered_by(session, agent):
+        # The request names an agent other than the one answering this existing session. The
+        # change is made the way every door makes it (the injected mover): the session's runtime
+        # is retired, so this turn runs on one built for the agent named — its model and the
+        # instructions a runtime is given when it is built — instead of on the one already
+        # running. Never under a turn that is still running: that turn is another request's,
+        # and its caller is waiting for the agent it named.
+        if session.running:
+            return _agent_change_mid_turn(client_id, model)
+        mover = request.app.get(AGENT_MOVER_KEY)
+        if mover is None:
+            logger.error("openai dialect: no agent mover injected; refusing the turn")
+            return openai_error(
+                "This surface is not wired to change a session's agent.",
+                code="service_unavailable",
+                type_="server_error",
+                status=503,
+            )
+        await mover(state, session, agent)
+        # Read again after the wait: a request that came in meanwhile may have started a turn
+        # here, or moved the session on to its own agent. Nothing awaits from here to this
+        # turn's start, so what is checked now is what the turn starts with.
+        if session.running or not _answered_by(session, agent):
+            return _agent_change_mid_turn(client_id, model)
     if not persistent:
         _reset_session(session, key, state)
 
@@ -1236,8 +1285,8 @@ async def _read_json(request: web.Request) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def register_routes(app: web.Application, *, turn_runner: Any) -> None:
-    """Mount `/v1/*`. ``turn_runner`` is INJECTED, never imported.
+def register_routes(app: web.Application, *, turn_runner: Any, agent_mover: Any) -> None:
+    """Mount `/v1/*`. ``turn_runner`` and ``agent_mover`` are INJECTED, never imported.
 
     Registered UNCONDITIONALLY and refusing per request, like the capture proxy and
     ``mcp_http.mount``: a mount-time gate freezes the decision at startup, so
@@ -1259,8 +1308,17 @@ def register_routes(app: web.Application, *, turn_runner: Any) -> None:
     legitimately faces downward) hands the callable in, and the dependency points the
     right way. Required keyword rather than an optional one with a fallback import: an
     optional injection point is one that silently stops being used.
+
+    **Why ``agent_mover`` is one too.** A request may name another agent than the one its
+    session runs, and the session must then be handed to that agent the way every door hands a
+    chat to another agent (``dashboard.running_turn.move_to_agent``): its runtime is retired, so
+    the turn is built for the agent named instead of running on the last one's model and
+    instructions. Setting the session's agent here would be a second, partial copy of that
+    change, and it was: the record said one agent while another one's runtime answered. Called
+    as ``await agent_mover(state, session, agent)``, and only between turns.
     """
     app[TURN_RUNNER_KEY] = turn_runner
+    app[AGENT_MOVER_KEY] = agent_mover
     app.router.add_post(ROUTE_CHAT, handle_chat_completions)
     app.router.add_get(ROUTE_MODELS, handle_models)
     app.router.add_post(ROUTE_SPEECH, handle_speech)

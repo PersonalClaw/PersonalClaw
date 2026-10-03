@@ -146,6 +146,14 @@ class _FakeSession:
         self._pending.clear()
         return out
 
+    @property
+    def running(self) -> bool:
+        return self.task is not None and not self.task.done()
+
+
+async def _no_other_agent(*_a, **_k):  # noqa: ANN002, ANN003
+    raise AssertionError("no request here names another agent for an existing session")
+
 
 class _FakeState:
     def __init__(self) -> None:
@@ -178,7 +186,7 @@ async def _client(monkeypatch, *, script=None) -> tuple[TestClient, _FakeState]:
     app["state"] = state
     # Injected, exactly as `dashboard/routes.py` does it — so these tests exercise the
     # real wiring contract rather than a patched-out import.
-    dialect.register_routes(app, turn_runner=_fake_run)
+    dialect.register_routes(app, turn_runner=_fake_run, agent_mover=_no_other_agent)
     client = TestClient(TestServer(app))
     await client.start_server()
     return client, state
@@ -688,14 +696,89 @@ def test_the_composition_root_actually_injects_the_runner():
     A required keyword argument proves the dialect ASKS for a runner; it does not prove
     anything hands one over. Without this, `register_routes` could be called nowhere and
     every `/v1` chat turn would 503 in production while the whole suite above stayed
-    green on its own injected fake.
+    green on its own injected fake. The same holds for the change of a session's agent,
+    which must be the one every dashboard door makes.
     """
     from personalclaw.dashboard import routes as routes_module
 
     source = Path(routes_module.__file__).read_text(encoding="utf-8")
     assert (
-        "_register_openai(app, turn_runner=_run_chat_scoped)" in source
-    ), "dashboard/routes.py must inject the turn runner into the /v1 dialect"
+        "_register_openai(app, turn_runner=_run_chat_scoped, agent_mover=move_to_agent)" in source
+    ), "dashboard/routes.py must inject the turn runner and the agent move into the /v1 dialect"
+    assert "from personalclaw.dashboard.running_turn import move_to_agent" in source
+
+
+@pytest.mark.asyncio
+async def test_a_missing_agent_mover_is_an_honest_503(monkeypatch):
+    """A request that needs its session moved to another agent, on a surface wired without the
+    move, is refused rather than served by the agent the session already runs."""
+    _enable(monkeypatch)
+    token = _token()
+    state = _FakeState()
+    key = dialect.session_key_for(dialect.OPENAI_SURFACE, dialect.DEFAULT_SESSION_TAG)
+    state.get_or_create_session(key, agent="writer")
+    ran: list[str] = []
+
+    async def _run(state, session, message):  # noqa: ANN001
+        ran.append(message)
+
+    app = web.Application()
+    app["state"] = state
+    dialect.register_routes(app, turn_runner=_run, agent_mover=None)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        resp = await client.post(dialect.ROUTE_CHAT, data=_body("researcher"), headers=_auth(token))
+        payload = await resp.json()
+    finally:
+        await client.close()
+    assert resp.status == 503
+    assert payload["error"]["code"] == "service_unavailable"
+    assert ran == [] and state._sessions[key].agent == "writer"
+
+
+@pytest.mark.asyncio
+async def test_an_agent_cli_picked_for_the_session_does_not_answer_for_the_agent_named(
+    monkeypatch,
+):
+    """A session the owner bound to a discovered agent CLI in the dashboard is answered by that
+    CLI, not by its saved agent. A request naming the saved agent is moved to it, so the agent
+    it names is what answers; the request for an unbound session moves nothing."""
+    _enable(monkeypatch)
+    token = _token()
+    state = _FakeState()
+    key = dialect.session_key_for(dialect.OPENAI_SURFACE, dialect.DEFAULT_SESSION_TAG)
+    session = state.get_or_create_session(key, agent="researcher")
+    session.acp_provider = "acp:example-cli"
+    moved: list[str] = []
+
+    async def _move(state, session, agent):  # noqa: ANN001
+        moved.append(agent)
+        session.agent, session.acp_provider = agent, ""
+        return False
+
+    async def _run(state, session, message):  # noqa: ANN001
+        session.append("chunk", "ok", "chunk")
+        session.append("done", "", "done")
+
+    app = web.Application()
+    app["state"] = state
+    dialect.register_routes(app, turn_runner=_run, agent_mover=_move)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        first = await client.post(
+            dialect.ROUTE_CHAT, data=_body("researcher"), headers=_auth(token)
+        )
+        assert first.status == 200, await first.text()
+        again = await client.post(
+            dialect.ROUTE_CHAT, data=_body("researcher"), headers=_auth(token)
+        )
+        assert again.status == 200, await again.text()
+    finally:
+        await client.close()
+    assert moved == ["researcher"], "the saved agent named was not what answered"
+    assert session.acp_provider == ""
 
 
 @pytest.mark.asyncio
@@ -706,7 +789,7 @@ async def test_a_missing_runner_is_an_honest_503(monkeypatch):
     state = _FakeState()
     app = web.Application()
     app["state"] = state
-    dialect.register_routes(app, turn_runner=None)
+    dialect.register_routes(app, turn_runner=None, agent_mover=_no_other_agent)
     client = TestClient(TestServer(app))
     await client.start_server()
     try:

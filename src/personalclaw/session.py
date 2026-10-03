@@ -1006,9 +1006,10 @@ class SessionManager:
                         # files survive on disk, enabling lossless resume
                         # via session/load on the next get_or_create().
                     if _alive:
-                        # agent is not updated: subagent session keys are unique
-                        # per spawn so a key collision with a different agent
-                        # cannot happen in practice.
+                        # The runtime is reused for whatever agent the caller names: a door
+                        # that hands a conversation to another agent retires its runtime
+                        # first (`running_turn.rebind`), so a live one here was built for the
+                        # agent the conversation runs. Subagent keys are unique per spawn.
                         sess.last_used = time.monotonic()
                         was_new = sess.is_new
                         sess.is_new = False

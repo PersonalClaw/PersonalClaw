@@ -97,6 +97,10 @@ def _configure(monkeypatch, *, persistent: bool):
     return cfg
 
 
+async def _no_other_agent(*_a, **_k):  # noqa: ANN002, ANN003
+    raise AssertionError("one agent is configured here, so no request names another")
+
+
 async def _serve(monkeypatch, *, turns=None, persistent=True):
     """A real TCP server with `/v1` mounted, plus the transcript the turn will emit."""
     seen_prompts: list[str] = []
@@ -114,7 +118,7 @@ async def _serve(monkeypatch, *, turns=None, persistent=True):
     state = _State()
     app = web.Application()
     app["state"] = state
-    dialect.register_routes(app, turn_runner=_fake_run)
+    dialect.register_routes(app, turn_runner=_fake_run, agent_mover=_no_other_agent)
     server = TestServer(app)
     await server.start_server()
     return server, state, seen_prompts

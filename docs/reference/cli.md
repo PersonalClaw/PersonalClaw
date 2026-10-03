@@ -477,6 +477,17 @@ listens on a loopback port of its own. Each route checks its surface's own token
 the dashboard's sign-in check steps aside for exactly those routes, and any other path
 under those prefixes still needs a dashboard sign-in.
 
+On the `openai` surface, `model` names one of your **agents** (`personalclaw/<agent>` or the
+bare name), and `GET /v1/models` lists the ones a client may ask for. A client's requests share
+a session: one per `user` field (or `X-PersonalClaw-Session` header) when the client is
+registered to keep its conversation, otherwise one for the client. A request that names another
+agent than its session runs hands the session to that agent first, the way the dashboard's agent
+picker hands a chat over, so its turn runs on a runtime built for that agent, with its model and
+its instructions, and what the conversation records names it. A request that names another agent
+while its session is still answering an earlier request is refused with `409` and the code
+`agent_change_mid_turn`, and the answer in progress is left as it is; ask again once it has
+finished, or use another session.
+
 | Command | What it does |
 |---|---|
 | `personalclaw inbound token create <surface> [--rotate] [--ttl 90d]` | Mint that surface's bearer token, stored in the **credential store** (keychain, else `.env` at `0600`) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. **Printed once** — copy it into your client immediately. It works for `--ttl` (`30m`, `20h`, `7d`; default and limit 90 days — longer is refused, never shortened), and the output says until when. `--rotate` replaces a working token, which immediately invalidates the old one; a token that expired or was revoked is replaced without it. |

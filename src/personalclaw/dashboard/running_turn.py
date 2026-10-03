@@ -11,15 +11,21 @@ said: its approval card stayed answerable, a steer went to the queue, and her me
 answered.
 
 So every door that makes such a change (the routing chip, the composer's pickers, any API
-caller) comes through :func:`rebind`, under one rule. The change is hers, and it is about the
-message the chat is answering. The running turn ends as stopped: a pending approval is answered
-cancelled, as a Stop answers it, and its runtime is asked to stop. Her message is then answered
-again on the new runtime, as the same turn, and the chat says so where the conversation is. A
-turn that had given its answer when the change landed keeps it, and the change applies from her
-next message.
+caller, a send that names an agent for a chat that has none, and an OpenAI-compatible request
+that names another agent for its session) comes through :func:`rebind`, under one rule. A door
+that names a saved agent says what changes with :func:`to_agent`. The change is hers, and it is
+about the message the chat is answering. The running turn ends as stopped: a pending approval is
+answered cancelled, as a Stop answers it, and its runtime is asked to stop. Her message is then
+answered again on the new runtime, as the same turn, and the chat says so where the conversation
+is. A turn that had given its answer when the change landed keeps it, and the change applies
+from her next message.
 
 The change itself is made when the old turn has ended, never under it, so what the old turn
 records about itself (its audit rows, its hooks, its usage) names the runtime it ran on.
+
+A door whose running turn is not the asker's to move does not ask for one. The send door refuses
+to name an agent while the chat answers, and so does the OpenAI-compatible endpoint, whose
+running turn is another request's: its caller is waiting for the agent it named.
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.config.loader import AppConfig, resolve_session_workspace
 from personalclaw.dashboard import turn_endings
 from personalclaw.dashboard.chat_utils import (
     _history_key_for,
@@ -61,6 +68,47 @@ class Rebinding:
         """This change followed by *later*, as one: a page that changes the agent and the
         effort in one pick sends two requests, and both are hers."""
         return Rebinding({**self.fields, **later.fields}, {**self.persisted, **later.persisted})
+
+
+def to_agent(session: _ChatSession, agent_name: str) -> Rebinding:
+    """The change that hands *session* to the saved agent *agent_name*, whichever door asks.
+
+    *agent_name* is the agent's name in the config, or an agent CLI's ``provider_agent``. An agent
+    CLI discovered and picked for the session goes with the change, and so does the note that one
+    could not be restored: the saved agent answers now, and a choice made by name is no fallback to
+    report. The working directory becomes the agent's own when it declares one, and an agent that
+    declares none leaves the session's where it is (``resolve_session_workspace``), so a folder
+    the session was bound to is not moved out from under it.
+    """
+    workspace_dir = session.workspace_dir
+    try:
+        cfg = AppConfig.load()
+        matched = agent_name if agent_name in cfg.agents else None
+        if agent_name and not matched:
+            for key, profile in cfg.agents.items():
+                if profile.provider_agent == agent_name:
+                    matched = key
+                    break
+        if matched:
+            workspace_dir = resolve_session_workspace(cfg, matched, session.workspace_dir)
+    except Exception:
+        logger.warning("Failed to resolve agent bindings for %r", agent_name, exc_info=True)
+    return Rebinding(
+        fields={
+            "agent": agent_name,
+            "acp_provider": "",
+            "acp_provider_agent": "",
+            "_acp_meta_binding": "",
+            "workspace_dir": workspace_dir,
+        },
+        persisted={"agent": agent_name, "acp_provider": "", "acp_provider_agent": ""},
+    )
+
+
+async def move_to_agent(state: DashboardState, session: _ChatSession, agent_name: str) -> bool:
+    """Hand *session* to the saved agent *agent_name* (:func:`to_agent`, made by :func:`rebind`).
+    Returns True when it moved a running turn."""
+    return await rebind(state, session, to_agent(session, agent_name))
 
 
 class TurnMoved(asyncio.CancelledError):

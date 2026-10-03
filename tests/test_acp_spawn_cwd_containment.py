@@ -167,30 +167,33 @@ def test_the_agent_bind_path_resolves_the_workspace_through_the_contract():
     profile just to read one assignment back; the string this checks IS the seam.
     """
     src = Path(personalclaw.__file__).resolve().parent
-    handlers = src / "dashboard" / "chat_handlers.py"
-    assert handlers.is_file(), "chat_handlers.py moved — this rail no longer covers the bind path"
-    text = handlers.read_text(encoding="utf8")
+    # The create door binds in chat_handlers; every door that hands a chat to another agent goes
+    # through running_turn.to_agent.
+    for module in ("chat_handlers.py", "running_turn.py"):
+        path = src / "dashboard" / module
+        assert path.is_file(), f"{module} moved — this rail no longer covers the bind path"
+        text = path.read_text(encoding="utf8")
 
-    # Vacuity floor: the module must still contain the seam this rail is about.
-    assert "resolve_session_workspace" in text, (
-        "chat_handlers no longer references resolve_session_workspace at all — either the bind "
-        "path moved (re-point this rail) or G39's fix was removed"
-    )
+        # Vacuity floor: the module must still contain the seam this rail is about.
+        assert "resolve_session_workspace" in text, (
+            f"{module} no longer references resolve_session_workspace at all — either the bind "
+            "path moved (re-point this rail) or the fix that keeps a bound workspace was removed"
+        )
 
-    # Every assignment to a session's workspace_dir on the bind path must go through the contract.
-    offenders = [
-        (i + 1, line.strip())
-        for i, line in enumerate(text.splitlines())
-        if "workspace_dir" in line
-        and "=" in line
-        and "resolve_session_workspace" not in line
-        and "resolve_agent_bindings" in line
-    ]
-    assert not offenders, (
-        f"chat_handlers assigns a session workspace from resolve_agent_bindings at {offenders} — "
-        "that collapses default_dir's INHERIT case to a concrete path and relocates a session the "
-        "user bound elsewhere (`G39`). Use resolve_session_workspace(cfg, agent, current)."
-    )
+        # Every assignment to a session's workspace_dir on the bind path goes through the contract.
+        offenders = [
+            (i + 1, line.strip())
+            for i, line in enumerate(text.splitlines())
+            if "workspace_dir" in line
+            and "=" in line
+            and "resolve_session_workspace" not in line
+            and "resolve_agent_bindings" in line
+        ]
+        assert not offenders, (
+            f"{module} assigns a session workspace from resolve_agent_bindings at {offenders} — "
+            "that collapses default_dir's INHERIT case to a concrete path and relocates a session "
+            "the user bound elsewhere. Use resolve_session_workspace(cfg, agent, current)."
+        )
 
 
 def test_no_acp_spawn_site_anchors_its_cwd_to_the_real_home():
