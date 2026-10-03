@@ -1634,12 +1634,6 @@ def _scan_local_sources() -> list[CatalogEntry]:
 # ---------------------------------------------------------------------------
 
 
-def _bundled_dir() -> Path:
-    from personalclaw.providers.loader import BUNDLED_DIR
-
-    return BUNDLED_DIR
-
-
 def _installed_names() -> set[str]:
     from personalclaw.apps.manager import list_apps
 
@@ -1658,22 +1652,12 @@ def available_bundled() -> list[CatalogEntry]:
 
     Enumeration only: :func:`resolve_catalog_entries` drops the ones already in the
     Library, so the "available but absent" filter lives in one place with every other
-    source's."""
-    bundled = _bundled_dir()
-    if not bundled.is_dir():
-        return []
+    source's. The packaged set is the seed's own (``app_manager.packaged_native_apps``), and
+    an install from one of these folders records the app as the native app it is."""
+    from personalclaw.apps.app_manager import packaged_native_apps
+
     out: list[CatalogEntry] = []
-    for entry in sorted(bundled.iterdir()):
-        manifest_file = entry / "app.json" if entry.is_dir() else None
-        if not manifest_file or not manifest_file.is_file():
-            continue
-        try:
-            m = AppManifest.from_json_file(manifest_file)
-        except Exception:
-            logger.warning("catalog: bad native manifest %s", entry.name, exc_info=True)
-            continue
-        if not m.native:
-            continue  # only native apps live in this dir; skip a stray non-native
+    for entry, m in packaged_native_apps():
         out.append(
             CatalogEntry(
                 name=m.name,
@@ -1831,7 +1815,10 @@ def updates_available() -> list[dict[str, Any]]:
 
     Pure + cheap (on-disk and in-memory reads, no network, no side effects) — safe to call on
     the ``/api/apps`` read path. An app with no newer version, or whose source is not known
-    to offer one, is simply absent."""
+    to offer one, is simply absent, and so is a native app: it is updated with PersonalClaw,
+    and an update from a source is refused, so a folder holding an app of its name offers it
+    nothing."""
+    from personalclaw.apps.app_manager import is_native
     from personalclaw.apps.manager import list_apps
     from personalclaw.apps.source import git_pointer
 
@@ -1841,7 +1828,7 @@ def updates_available() -> list[dict[str, Any]]:
     for app in list_apps():
         name = app.get("name", "")
         installed_version = str(app.get("version", ""))
-        if not name:
+        if not name or is_native(name):
             continue
         candidates: list[tuple[str, str]] = []
         if name in latest:

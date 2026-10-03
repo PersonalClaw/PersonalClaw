@@ -287,7 +287,8 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
             <MenuRow icon={<LayoutGrid size={15} />} label="Open page" onClick={() => { onAction(app, 'open'); close() }} />
           )}
           {item.native ? (
-            // Native app — always-on, locked: no uninstall/disable. "Configure"
+            // Native app — always-on, locked: no uninstall/disable, and no Update: it is
+            // updated with PersonalClaw, and the gateway refuses one from a source. "Configure"
             // only when it has a settings surface (hasConfig); a config-less provider
             // (filesystem/tools) is managed from the Tools page instead.
             <>
@@ -296,7 +297,6 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
                 : item.hasConfig
                   ? <MenuRow icon={<Settings2 size={15} />} label="Configure" onClick={() => { onAction(app, 'configure'); close() }} />
                   : <div className="px-m py-2 text-on-surface-low text-[0.75rem]">Always on — manage its tools from the Tools page.</div>}
-              <MenuRow icon={<RefreshCw size={15} />} label="Update…" onClick={() => { onAction(app, 'update'); close() }} />
               <div className="px-m py-1.5 text-on-surface-low text-[0.75rem]">Native app — always on, can't be deactivated.</div>
             </>
           ) : (
@@ -1251,9 +1251,10 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
         { icon: <Blocks size={15} />, label: 'Details', onSelect: onOpen },
         ...(runs && item.hasUI && item.enabled ? [{ icon: <LayoutGrid size={15} />, label: 'Open page', onSelect: () => onAction(app, 'open') }] : []),
         ...((runs && item.enabled && (!item.native || item.hasConfig || item.configuredPerInstance)) ? [{ icon: <Settings2 size={15} />, label: item.configuredPerInstance ? 'Manage instances' : 'Configure', onSelect: () => onAction(app, 'configure') }] : []),
-        { icon: <RefreshCw size={15} />, label: 'Update…', onSelect: () => onAction(app, 'update') },
-        // A native app is locked on — omit uninstall/disable + force-uninstall.
+        // A native app is locked on and updated with PersonalClaw — omit update,
+        // uninstall/disable + force-uninstall.
         ...(item.native ? [] : [
+          { icon: <RefreshCw size={15} />, label: 'Update…', onSelect: () => onAction(app, 'update') },
           ...(runs || item.enabled ? [{ icon: <Power size={15} />, label: item.enabled ? 'Deactivate' : 'Activate', onSelect: () => onAction(app, 'toggle') }] : []),
           // Safe removal (files go, the user's data/ stays) before the destructive one.
           { icon: <Archive size={15} />, label: 'Uninstall…', onSelect: () => onAction(app, 'uninstall') },
@@ -1732,19 +1733,19 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
 
         {/* A NATIVE app (the always-on filesystem/shell bundle, the native entity
             providers, the MCP/OpenAI adapters, seeded natives) ships with the baseline —
-            no install/uninstall lifecycle. Always-on notice; "Configure" only when it
-            has settings (hasConfig) — a config-less native provider is managed from the
-            Tools page. */}
+            no install/uninstall lifecycle and no Update (it is updated with PersonalClaw).
+            Always-on notice; "Configure" only when it has settings (hasConfig) — a
+            config-less native provider is managed from the Tools page. */}
         {app.native ? (
           <>
             <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
               <div className="flex items-center gap-2 text-on-surface"><Power size={14} /> Native app — always on</div>
               <div className="mt-1 text-on-surface-low" data-type="label-s">
                 {app.configuredPerInstance
-                  ? "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. Its settings live on each of its instances, which you add, edit, test and remove in Settings → Providers."
+                  ? "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. Its settings live on each of its instances, which you add, edit, test and remove in Settings → Providers."
                   : app.hasConfig
-                    ? "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. You can change its settings below."
-                    : "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. Manage its individual tools from the Tools page."}
+                    ? "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. You can change its settings below."
+                    : "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. Manage its individual tools from the Tools page."}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1754,7 +1755,6 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
               {app.configuredPerInstance
                 ? <Button variant="ghost" size="sm" onClick={onManageInstances}><Settings2 size={15} /> Manage instances</Button>
                 : app.hasConfig && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}
-              <Button variant="ghost" size="sm" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
             </div>
           </>
         ) : (<>

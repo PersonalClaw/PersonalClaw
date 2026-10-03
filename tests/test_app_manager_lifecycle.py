@@ -56,29 +56,40 @@ def _make_app_source(
 
 class TestNativeLock:
     """A native (Tier-1) app is locked on: disable / uninstall / force-uninstall
-    all refuse, leaving it installed + enabled. Only its config is editable."""
+    all refuse, leaving it installed + enabled. Only its config is editable.
 
-    def _install_native(self, tmp_path):
+    Native is where the app came from: the packaged native source seeds it. A source's own
+    ``"native": true`` makes nothing native, and its install is refused."""
+
+    def _install_native(self, tmp_path, monkeypatch):
+        from personalclaw.providers import loader
+
         src = _make_app_source(tmp_path, name="native-demo", manifest_extra={"native": True})
-        res = app_manager.install(src, confirm=True)
-        assert res.ok
+        monkeypatch.setattr(loader, "BUNDLED_DIR", src.parent)  # the packaged native source
+        assert app_manager.seed_builtin_apps() == ["native-demo"]
         return "native-demo"
 
-    def test_native_disable_refused(self, tmp_path):
-        name = self._install_native(tmp_path)
+    def test_native_disable_refused(self, tmp_path, monkeypatch):
+        name = self._install_native(tmp_path, monkeypatch)
         assert app_manager.disable(name) is False
         meta = manager._read_installed(name)
         assert meta is not None and meta.enabled is True
 
-    def test_native_uninstall_refused(self, tmp_path):
-        name = self._install_native(tmp_path)
+    def test_native_uninstall_refused(self, tmp_path, monkeypatch):
+        name = self._install_native(tmp_path, monkeypatch)
         assert app_manager.uninstall(name) is False
         assert manager._read_installed(name) is not None
 
-    def test_native_force_uninstall_refused(self, tmp_path):
-        name = self._install_native(tmp_path)
+    def test_native_force_uninstall_refused(self, tmp_path, monkeypatch):
+        name = self._install_native(tmp_path, monkeypatch)
         assert app_manager.force_uninstall(name) is False
         assert (manager.app_dir(name) / "app.json").is_file()  # files intact
+
+    def test_a_source_claiming_native_installs_nothing(self, tmp_path):
+        src = _make_app_source(tmp_path, name="native-demo", manifest_extra={"native": True})
+        res = app_manager.install(src, confirm=True)
+        assert not res.ok and '"native"' in res.error, res.error
+        assert manager._read_installed("native-demo") is None
 
     def test_non_native_still_uninstallable(self, tmp_path):
         # Control: a normal (Tier-2) app disables/uninstalls as before.

@@ -244,7 +244,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
     notification per newly-available version (deduped by ``name + latest_version`` in
     ``surface_app_updates`` so re-viewing never re-nags). ``updateSource`` is where an Update
     of the app starts when none was found: the source it was installed from."""
-    from personalclaw.apps.app_manager import enable_refusal, installed_disclosure
+    from personalclaw.apps.app_manager import enable_refusal, installed_disclosure, is_native
     from personalclaw.apps.catalog import (
         resolve_hero_url,
         source_kind_for_origin,
@@ -301,6 +301,8 @@ async def api_apps_list(request: web.Request) -> web.Response:
             for p in (manifest.get("ui", {}) or {}).get("pages", [])
             if p.get("route")
         ]
+        # Where it came from, never its manifest's own word: any app can declare `native`.
+        native = is_native(name)
         out.append(
             {
                 "name": name,
@@ -314,12 +316,10 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 # is how the detail panel came to render `origin || 'local'` — claiming
                 # "local" for an app whose origin the record did not carry). "" when the
                 # origin has no reading, and the surface then shows nothing.
-                "sourceKind": source_kind_for_origin(
-                    str(app.get("origin", "")), native=bool(manifest.get("native", False))
-                ),
-                # A native app is locked on — the FE hides uninstall/disable and
-                # shows a "native, always-on" notice, offering Configure/Update only.
-                "native": bool(manifest.get("native", False)),
+                "sourceKind": source_kind_for_origin(str(app.get("origin", "")), native=native),
+                # A native app is locked on — the FE hides uninstall/disable/update and
+                # shows a "native, always-on" notice, offering Configure only.
+                "native": native,
                 # Concrete provenance (path / git URL / "builtin" / "registry:name") so
                 # the Store/Library can group installed apps under their source divider.
                 "source": app.get("source", ""),

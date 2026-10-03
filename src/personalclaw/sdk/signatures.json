@@ -5880,7 +5880,6 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "network"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "network_declared"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "memory"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "memory_declared_raw"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "cron"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "appMessaging"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "storageShared"},

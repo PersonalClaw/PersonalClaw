@@ -267,30 +267,31 @@ class TestPermissionVocabulary:
         assert "agent" in declared and "agent_tier" not in PERMISSION_KEYS
         assert PERMISSION_KEYS == declared - {
             "network_declared",
-            "memory_declared_raw",
             "agent_declared_raw",
+            "not_booleans",
             "unknown_keys",
         }
         assert "network_declared" not in PERMISSION_KEYS
-        assert "memory_declared_raw" not in PERMISSION_KEYS
         assert "agent_declared_raw" not in PERMISSION_KEYS
+        assert "not_booleans" not in PERMISSION_KEYS
         assert "unknown_keys" not in PERMISSION_KEYS
         assert len(PERMISSION_KEYS) >= 15, "the vocabulary shrank — did a permission move?"
 
     def test_a_bookkeeping_field_is_not_a_declarable_permission(self):
         """A field that records a FACT about the raw dict must never be a wire key.
 
-        ``memory_declared_raw`` (#3501) exists so a non-boolean ``memory`` can be quoted back
-        to the author. It grants nothing. Left in the vocabulary it became declarable: an app
-        writing ``"memory_declared_raw": true`` was accepted and would have been rendered on
-        the install-consent surface as a permission — which is precisely the declared-versus-held
+        ``not_booleans`` exists so a boolean grant declared as something else (a leftover
+        ``"memory": "app-scoped"`` among them, #3501) can be quoted back to the author. It
+        grants nothing. In the vocabulary it would be declarable, the way the field it replaced
+        once was: an app writing ``"not_booleans": true`` would be accepted and rendered on the
+        install-consent surface as a permission — which is precisely the declared-versus-held
         gap the unknown-key refusal exists to close. Pinned by name because the exclusion set is
         hand-written and the next bookkeeping field will be added the same way.
         """
-        m = AppManifest.from_dict(_valid_manifest(permissions={"memory_declared_raw": True}))
-        assert m.permissions.unknown_keys == ("memory_declared_raw",)
+        m = AppManifest.from_dict(_valid_manifest(permissions={"not_booleans": True}))
+        assert m.permissions.unknown_keys == ("not_booleans",)
         (error,) = m.validate()
-        assert "'memory_declared_raw'" in error
+        assert "'not_booleans'" in error
         # The real key must still work — a refusal that also broke `memory` would be no better.
         ok = AppManifest.from_dict(_valid_manifest(permissions={"memory": True}))
         assert ok.permissions.unknown_keys == ()

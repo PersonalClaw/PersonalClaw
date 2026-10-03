@@ -776,7 +776,7 @@ def test_the_off_switch_withholds_the_floor_from_implicit_use_live(
 ) -> None:
     """``offer_as_fallback: false`` is the ONE off switch, and it is the app's own setting.
 
-    A native app is locked ON (``app_manager._is_native`` refuses disable/uninstall), so the
+    A native app is locked ON (``app_manager.is_native`` refuses disable/uninstall), so the
     removability requirement cannot be met by disabling the app. It is met here instead —
     which is also why there is no ``config.json`` field for it: a second toggle beside this one
     is two places that can disagree about whether the floor is offered.

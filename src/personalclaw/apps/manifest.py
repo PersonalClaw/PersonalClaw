@@ -19,6 +19,7 @@ from typing import Any
 from personalclaw.apps.agent_tiers import AGENT_TEXT, AGENT_TIERS, declared_agent
 from personalclaw.apps.core_features import FEATURE_NAME_RE
 from personalclaw.apps.core_version import SEMVER_RE, CoreCompatibility, check_core_compatibility
+from personalclaw.safety_flags import strict_bool, yes_or_no
 
 # ---------------------------------------------------------------------------
 # Nested manifest types
@@ -38,6 +39,25 @@ ROUTE_OP_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 ICON_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
 
+# An ``app.json`` boolean is the JSON ``true`` or ``false`` (``bool("false")`` is True). Parsing
+# reads each with ``safety_flags.strict_bool``, the word it spells or else the field's safe value,
+# so one bad value never takes a Store listing out, and keeps every other value in the type's
+# ``not_booleans`` (never declared, constructed or on the wire), which ``validate`` refuses.
+
+
+def _not_booleans(data: dict[str, Any], *keys: str) -> dict[str, Any]:
+    """Each of *keys* that *data* declares as something other than ``true`` or ``false``."""
+    return {key: data[key] for key in keys if key in data and not isinstance(data[key], bool)}
+
+
+def _refusals(prefix: str, record: dict[str, Any]) -> list[str]:
+    """The install refusal of each boolean in *record*: its name, and its value as JSON."""
+    return [
+        f"{prefix}{key} must be true or false, got {json.dumps(value, default=str)[:60]}"
+        for key, value in record.items()
+    ]
+
+
 @dataclass
 class CronEntry:
     """A scheduled agent job declared by an app."""
@@ -52,6 +72,7 @@ class CronEntry:
     env: dict[str, str] = field(default_factory=dict)  # environment variables for the job
     persistent_session: bool = True  # whether to carry context between runs
     silent: bool = False  # suppress dashboard notifications
+    not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"name": self.name}
@@ -75,7 +96,7 @@ class CronEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CronEntry":
-        return cls(
+        entry = cls(
             name=str(data.get("name", "")),
             every=int(data.get("every", 0)),
             cron_expr=str(data.get("cron_expr", "")),
@@ -83,9 +104,13 @@ class CronEntry:
             message=str(data.get("message", "")),
             agent_sequence=[str(a) for a in data.get("agent_sequence", [])],
             env={str(k): str(v) for k, v in data.get("env", {}).items()},
-            persistent_session=bool(data.get("persistent_session", True)),
-            silent=bool(data.get("silent", False)),
+            persistent_session=strict_bool(
+                data.get("persistent_session"), field="cron entry persistent_session", default=True
+            ),
+            silent=strict_bool(data.get("silent"), field="cron entry silent"),
         )
+        entry.not_booleans = _not_booleans(data, "persistent_session", "silent")
+        return entry
 
 
 @dataclass
@@ -240,6 +265,7 @@ class RouteEntry:
     # and the only thing that makes the route's tool a read — its HTTP method does not, and a
     # route that says nothing is a change, so it asks.
     readOnly: bool = False  # noqa: N815
+    not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"op": self.op, "method": self.method, "path": self.path}
@@ -257,17 +283,22 @@ class RouteEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RouteEntry":
-        return cls(
+        route = cls(
             op=str(data.get("op", "")),
             method=str(data.get("method", "GET")).upper() or "GET",
             path=str(data.get("path", "")),
             summary=str(data.get("summary", "")),
             params=dict(data.get("params", {})) if isinstance(data.get("params"), dict) else {},
             body=dict(data.get("body", {})) if isinstance(data.get("body"), dict) else {},
-            agentCallable=bool(data.get("agentCallable", True)),  # noqa: N815
-            # Only a literal true declares a read.
-            readOnly=data.get("readOnly") is True,  # noqa: N815
+            # Handed to the agent unless switched off; a value that spells neither keeps it back.
+            agentCallable=strict_bool(
+                data.get("agentCallable"), field="agentCallable", absent=True
+            ),
+            # A read only when it says so; anything else is a change, and its call asks.
+            readOnly=strict_bool(data.get("readOnly"), field="readOnly"),
         )
+        route.not_booleans = _not_booleans(data, "agentCallable", "readOnly")
+        return route
 
 
 @dataclass
@@ -375,15 +406,10 @@ class Permissions:
     # (``memory_record.MemoryScope`` is ``session|workspace|agent|global``), so a schema
     # offering the choice was offering a choice that did nothing — and doing it on a
     # *permission*, which install consent shows the user as something they are approving.
-    # A leftover string value is a validation error (``AppManifest.validate``), never
-    # reinterpreted: coercing ``"app-scoped"`` to True would widen a grant without a fresh
-    # consent prompt, and ignoring ``"shared"`` would revoke one silently.
+    # A leftover string value is a validation error (``AppManifest.validate`` names it from
+    # ``not_booleans``) and grants nothing meanwhile, never reinterpreted: coercing
+    # ``"app-scoped"`` to True would widen a grant without a fresh consent prompt.
     memory: bool = False
-    # The raw non-boolean ``memory`` value a manifest declared, if any. Not a permission
-    # and not a wire key — it exists so ``validate()`` can NAME the offending value after
-    # ``from_dict`` has already coerced the field (same "carry a side fact for the consent
-    # surface" shape as ``network_declared`` above).
-    memory_declared_raw: str = ""
     cron: bool = False
     # The tier its agent work runs at (``apps.agent_tiers``), or "" for none: what its background
     # agent tasks and the turns of its own conversations may use. A manifest declares it as
@@ -489,10 +515,11 @@ class Permissions:
     # malformed app still renders a Store card explaining itself, and still cannot be installed.
     unknown_keys: tuple[str, ...] = ()
     # The raw ``agent`` value a manifest declared when it names no tier (``true`` above all), the
-    # bookkeeping shape of ``memory_declared_raw``: ``validate()`` refuses it by name, and
+    # bookkeeping shape of ``unknown_keys``: ``validate()`` refuses it by name, and
     # ``agent_tier`` stays "", so an install declaring it runs no agent work until an update names
     # a tier. Never read as one, which would keep a grant nobody agreed to in its words.
     agent_declared_raw: str = ""
+    not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     def __post_init__(self) -> None:
         # Every reader takes the tier as one of AGENT_TIERS or "" (the permission checker, the
@@ -551,34 +578,36 @@ class Permissions:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Permissions":
         agent_tier, agent_declared_raw = declared_agent(data.get("agent"))
-        return cls(
+        # Every boolean grant reads as the word it spells, and anything else grants nothing.
+        perms = cls(
             api=[str(p) for p in data.get("api", []) if p],
             events=[str(e) for e in data.get("events", []) if e],
             mcpTools=[str(t) for t in data.get("mcpTools", []) if t],  # noqa: N815
-            storage=bool(data.get("storage", False)),
-            network=bool(data.get("network", False)),
+            storage=strict_bool(data.get("storage"), field="permissions.storage"),
+            network=strict_bool(data.get("network"), field="permissions.network"),
             network_declared="network" in data,
-            memory=data.get("memory") is True,
-            memory_declared_raw=(
-                "" if isinstance(data.get("memory", False), bool) else str(data.get("memory"))
-            ),
-            cron=bool(data.get("cron", False)),
+            memory=strict_bool(data.get("memory"), field="permissions.memory"),
+            cron=strict_bool(data.get("cron"), field="permissions.cron"),
             agent_tier=agent_tier,
             agent_declared_raw=agent_declared_raw,
             appMessaging=[str(t) for t in data.get("appMessaging", []) if t],  # noqa: N815
-            storageShared=bool(data.get("storageShared", False)),  # noqa: N815
+            storageShared=strict_bool(data.get("storageShared"), field="storageShared"),
             storageRead=[str(t) for t in data.get("storageRead", []) if t],  # noqa: N815
             desktop=[str(c) for c in data.get("desktop", []) if c],
             proposals=[
                 ProposalKind.from_dict(p) for p in data.get("proposals", []) if isinstance(p, dict)
             ],
-            backgroundTasks=bool(data.get("backgroundTasks", False)),  # noqa: N815
+            backgroundTasks=strict_bool(data.get("backgroundTasks"), field="backgroundTasks"),
             eventSubscriptions=[  # noqa: N815
                 str(e) for e in data.get("eventSubscriptions", []) if e
             ],
             config=[str(f) for f in data.get("config", []) if f],
             unknown_keys=tuple(sorted(k for k in data if k not in PERMISSION_KEYS)),
         )
+        perms.not_booleans = _not_booleans(
+            data, "storage", "network", "memory", "cron", "storageShared", "backgroundTasks"
+        )
+        return perms
 
     def proposal_kind(self, kind_suffix: str) -> "ProposalKind | None":
         """The declared kind for *kind_suffix*, or None — the 403 check reads THIS."""
@@ -601,17 +630,16 @@ def permission_key(f: Field[Any]) -> str:
 #: and a vocabulary that has silently fallen behind the fields refuses a permission that works,
 #: which is worse than not checking at all. The four excluded
 #: names are internal bookkeeping, not wire keys: ``network_declared`` records whether the
-#: author mentioned ``network``, ``memory_declared_raw`` and ``agent_declared_raw`` record a raw
-#: ``memory`` or ``agent`` value so one that is not a grant can be named back to the author
-#: (#3501), and ``unknown_keys`` is the refusal record itself. Leaving a bookkeeping field IN the
-#: vocabulary makes it declarable: an app could write ``"memory_declared_raw": true``, be
-#: accepted, and have it rendered on the install-consent surface while granting nothing — the
-#: exact defect the unknown-key refusal below exists to prevent.
+#: author mentioned ``network``, ``agent_declared_raw`` records a raw ``agent`` value that names
+#: no tier and ``not_booleans`` the boolean grants declared as something else, so either can be
+#: named back to the author (#3501), and ``unknown_keys`` is the refusal record itself. Leaving a
+#: bookkeeping field IN the vocabulary makes it declarable: an app could write
+#: ``"not_booleans": true``, be accepted, and have it rendered on the install-consent surface
+#: while granting nothing — the exact defect the unknown-key refusal below exists to prevent.
 PERMISSION_KEYS: frozenset[str] = frozenset(
     permission_key(f)
     for f in fields(Permissions)
-    if f.name
-    not in {"network_declared", "memory_declared_raw", "agent_declared_raw", "unknown_keys"}
+    if f.name not in {"network_declared", "agent_declared_raw", "not_booleans", "unknown_keys"}
 )
 
 
@@ -998,13 +1026,19 @@ class SettingCondition:
 
     setting: str = ""
     value: bool = False
+    not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {"setting": self.setting, "value": self.value}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SettingCondition":
-        return cls(setting=str(data.get("setting", "")), value=data.get("value") is True)
+        cond = cls(
+            setting=str(data.get("setting", "")),
+            value=strict_bool(data.get("value"), field="launches inheritsWhile.value"),
+        )
+        cond.not_booleans = _not_booleans(data, "value")
+        return cond
 
 
 @dataclass
@@ -1074,6 +1108,7 @@ class LaunchedProgram:
                     f"launches entry {label!r}: inheritsWhile.setting {cond.setting[:40]!r} must "
                     "name a boolean setting of the app's provider settingsSchema"
                 )
+            errors += _refusals(f"launches entry {label!r}: inheritsWhile.", cond.not_booleans)
         return errors
 
     def _package_errors(self, label: str) -> list[str]:
@@ -1629,9 +1664,10 @@ class ProviderConfig:
     # ``_TypeHandler`` set are untouched, so registration, the app-name registry key and
     # the duck-typed local-model contract all still hold.
     execution: str = EXECUTION_IN_PROCESS
+    not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     def validate(self) -> list[str]:
-        errors: list[str] = []
+        errors: list[str] = _refusals("provider.", self.not_booleans)
         if self.execution not in EXECUTION_MODES:
             errors.append(
                 f"provider.execution must be one of {sorted(EXECUTION_MODES)}, "
@@ -1681,10 +1717,10 @@ class ProviderConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ProviderConfig":
         autonomy_raw = data.get("autonomy", {})
-        return cls(
+        provider = cls(
             type=str(data.get("type", "")),
             implementation=str(data.get("implementation", "")),
-            multiInstance=bool(data.get("multiInstance", False)),  # noqa: N815
+            multiInstance=strict_bool(data.get("multiInstance"), field="multiInstance"),
             settingsSchema=dict(data.get("settingsSchema", {})),  # noqa: N815
             capabilities=[str(c) for c in data.get("capabilities", [])],
             entity=str(data.get("entity", "")),
@@ -1696,6 +1732,8 @@ class ProviderConfig:
             ),
             execution=str(data.get("execution", EXECUTION_IN_PROCESS) or EXECUTION_IN_PROCESS),
         )
+        provider.not_booleans = _not_booleans(data, "multiInstance")
+        return provider
 
 
 # ---------------------------------------------------------------------------
@@ -1763,6 +1801,7 @@ class QualityDeclaration:
     tested: bool | None = None
     designSystem: str | None = None  # noqa: N815 — "v2" | "legacy" | "n/a"
     a11y: bool | None = None
+    not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     def claims(self) -> tuple[str, ...]:
         """The axes this app actively CLAIMS to meet (the verifiable subset)."""
@@ -1793,17 +1832,16 @@ class QualityDeclaration:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "QualityDeclaration":
-        def tri(key: str) -> bool | None:
-            if key not in data or data[key] is None:
-                return None
-            return bool(data[key])
-
         raw_ds = data.get("designSystem")
-        return cls(
-            tested=tri("tested"),
+        # An axis is claimed or declared a miss only in words that say so: anything else, like
+        # an absent axis, claims nothing (``None``) rather than a badge.
+        declared = cls(
+            tested=yes_or_no(data.get("tested")),
             designSystem=(None if raw_ds is None else str(raw_ds)),  # noqa: N815
-            a11y=tri("a11y"),
+            a11y=yes_or_no(data.get("a11y")),
         )
+        declared.not_booleans = _not_booleans(data, "tested", "a11y")
+        return declared
 
 
 # ---------------------------------------------------------------------------
@@ -1966,6 +2004,8 @@ class AppManifest:
     # ``native:false`` → shown in the Store, never auto-installed, fully user-managed.
     # (This single flag replaced the old ``installByDefault`` + always-on-invisible-
     # bundled-provider split.) The three app categories: native / first-party / third-party.
+    # The flag is the packaged bundle's word to the seed, believed nowhere else: an installed app
+    # is native by where it came from (``app_manager.is_native``), never by declaring it.
     native: bool = False
 
     # --- Declared quality bar -----------
@@ -2016,6 +2056,8 @@ class AppManifest:
     # two releases reads the same version, so ``minPersonalClawVersion`` cannot tell them apart.
     # Kept as written, so ``validate`` reports an entry that is not a name.
     requiresCoreFeatures: list[str] = field(default_factory=list)  # noqa: N815
+
+    not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     # -----------------------------------------------------------------
     # Validation
@@ -2099,6 +2141,9 @@ class AppManifest:
             if page.iconUrl and ".." in page.iconUrl:
                 errors.append(f"ui page iconUrl contains path traversal: {page.iconUrl!r}")
 
+        # Every boolean is the JSON true or false: each other value is refused here, by name.
+        errors += _refusals("", self.not_booleans)
+
         # Cron validation
         for cron in self.crons:
             if not cron.name:
@@ -2107,20 +2152,24 @@ class AppManifest:
                 errors.append(
                     f"cron entry {cron.name!r} must specify either 'every' or 'cron_expr'"
                 )
+            errors += _refusals(f"cron entry {cron.name!r}: ", cron.not_booleans)
 
         # #3501. ``permissions.memory`` is a boolean; the ``"app-scoped"``/``"shared"`` tier
         # vocabulary is gone. Refused by NAME rather than reinterpreted, because both
         # reinterpretations are themselves silent failures: truthy-coercing ``"app-scoped"``
         # would widen a grant that previously did nothing into the full grant with no fresh
         # consent prompt, and ignoring ``"shared"`` would revoke a working grant without
-        # telling anyone. An install error is the only outcome the author can act on.
-        if self.permissions.memory_declared_raw:
+        # telling anyone. An install error is the only outcome the author can act on. Every
+        # other boolean grant declared as something else is refused in the same pass.
+        others = dict(self.permissions.not_booleans)
+        if "memory" in others:
             errors.append(
                 f"permissions.memory must be a boolean — the "
                 f'"app-scoped"/"shared" tier vocabulary was removed because "app-scoped" '
                 f"granted nothing; declare true for memory access or omit the key, got: "
-                f"{self.permissions.memory_declared_raw!r}"
+                f"{str(others.pop('memory'))!r}"
             )
+        errors += _refusals("permissions.", others)
 
         # ``permissions.agent`` names a tier, and ``true`` (every tool, nothing asked) is refused
         # by name rather than read as one: the author picks what its agent tasks need.
@@ -2208,6 +2257,7 @@ class AppManifest:
                 errors.append(f"backend route {r.op!r} path must start with '/': {r.path!r}")
             if ".." in r.path:
                 errors.append(f"backend route path contains path traversal: {r.path!r}")
+            errors += _refusals(f"backend route {r.op!r}: ", r.not_booleans)
 
         # Provider validation — the single ``provider`` and each of ``providers``.
         for prov in self.all_providers():
@@ -2229,6 +2279,8 @@ class AppManifest:
                     f"quality.designSystem must be one of "
                     f"{sorted(DESIGN_SYSTEM_LEVELS)}, got: {self.quality.designSystem!r}"
                 )
+        if self.quality is not None:
+            errors += _refusals("quality.", self.quality.not_booleans)
 
         # Declared UI capabilities. An unknown entry is an INSTALL error for
         # the same reason an unknown designSystem level is: the UI SDK gate can only
@@ -2559,7 +2611,7 @@ class AppManifest:
             QualityDeclaration.from_dict(quality_raw) if isinstance(quality_raw, dict) else None
         )
 
-        return cls(
+        manifest = cls(
             name=str(data.get("name", "")),
             version=str(data.get("version", "")),
             displayName=str(data.get("displayName", "")),  # noqa: N815
@@ -2615,7 +2667,7 @@ class AppManifest:
                 for s in data.get("sources", [])
                 if isinstance(s, dict) and s.get("name")
             ],
-            native=bool(data.get("native", False)),
+            native=strict_bool(data.get("native"), field="native"),
             quality=quality_cfg,
             # Kept VERBATIM (no filtering to the known set) so an unrecognised
             # entry reaches ``validate()`` and is reported. Silently dropping it here
@@ -2626,6 +2678,8 @@ class AppManifest:
             tags=[str(t) for t in data.get("tags", []) if t],
             extra=extra,
         )
+        manifest.not_booleans = _not_booleans(data, "native")
+        return manifest
 
     @classmethod
     def from_json_file(cls, path: Path) -> "AppManifest":

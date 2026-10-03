@@ -41,6 +41,8 @@ def register_routes(app: web.Application) -> None:
 
 
 async def handle_list_extensions(request: web.Request) -> web.Response:
+    from personalclaw.apps.app_manager import is_native
+
     registry = get_provider_registry()
     type_filter = request.query.get("type")
     # An app lists its own providers and no other: the rest are other apps' and the platform's, and
@@ -73,8 +75,9 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
                 # A "managed" provider is a user-lifecycle app (first/third-party: install/
                 # uninstall is its on/off); a native app is locked-on (no
                 # toggle — mandatory). Lets Settings>Providers show the right control:
-                # install/uninstall state vs an always-on native badge.
-                "managed": not bool(ext.manifest.native),
+                # install/uninstall state vs an always-on native badge. Native is where the
+                # app came from, not its manifest's own word (`app_manager.is_native`).
+                "managed": not is_native(ext.name),
                 "provider": {
                     "type": ext.provider_config.type,
                     "entity": ext.provider_config.entity,

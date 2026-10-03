@@ -116,17 +116,21 @@ def test_a_dead_builtin_holding_user_DATA_is_unlocked_rather_than_deleted():
     assert meta is not None and meta.origin == "local" and meta.enabled is False
 
 
-def test_a_dead_builtin_stops_being_locked_native():
-    # `_is_native()` reads `origin`, and while it says "builtin" the user can neither disable nor
-    # uninstall — the exact trap that made the card undeletable.
+def test_a_dead_builtin_is_never_locked_native():
+    # The trap that made the card undeletable: a record saying "builtin" for an app the package
+    # no longer ships locked it against disable and uninstall. `is_native()` asks the package
+    # too, so the lock cannot form even before the sweep runs, and after it the record agrees.
     _install(
         RETIRED,
         implementation="personalclaw.tool_providers.registry:create_schedule_provider",
         data='{"mine": true}',
     )
-    assert AM._is_native(RETIRED) is True
+    assert AM._read_installed(RETIRED).origin == "builtin", "the fixture is the trapped state"
+    assert AM.is_native(RETIRED) is False
     AM.retire_orphaned_builtins({RETIRED}, set())
-    assert AM._is_native(RETIRED) is False
+    assert AM.is_native(RETIRED) is False
+    assert AM._read_installed(RETIRED).origin == "local"
+    assert AM.force_uninstall(RETIRED) is True, "the owner can remove what the sweep kept"
 
 
 # ── the de-cored app: source unbundled, implementation still its own ────────────────────────

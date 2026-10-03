@@ -495,16 +495,20 @@ def test_a_name_that_cannot_hold_a_parked_copy_is_refused_not_guessed(tmp_path):
     assert d.is_dir()
 
 
-def test_native_app_refuses_the_middle_rung_too(tmp_path):
+def test_native_app_refuses_the_middle_rung_too(tmp_path, monkeypatch):
     """A native app is locked on: every removal rung refuses, this one included.
 
-    A new rung that skipped the lock would be a way to delete a Tier-1 app.
+    A new rung that skipped the lock would be a way to delete a Tier-1 app. A native app is
+    one the packaged native source seeded, so the fixture is seeded from a packaged tree.
     """
+    from personalclaw.providers import loader
+
     src = _bundle(tmp_path, name="native-fixture")
     mani = json.loads((src / "app.json").read_text(encoding="utf-8"))
     mani["native"] = True
     (src / "app.json").write_text(json.dumps(mani), encoding="utf-8")
-    assert app_manager.install(src, confirm=True).ok
+    monkeypatch.setattr(loader, "BUNDLED_DIR", src.parent)
+    assert app_manager.seed_builtin_apps() == ["native-fixture"]
 
     assert app_manager.uninstall_keep_data("native-fixture") is False
     assert (manager.app_dir("native-fixture") / "app.json").is_file(), "files were removed"

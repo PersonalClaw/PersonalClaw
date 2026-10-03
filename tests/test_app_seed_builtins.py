@@ -226,8 +226,8 @@ def test_de_bundled_app_is_demoted_from_builtin_to_local(tmp_path):
     """An app this home seeded as native, whose packaged source is gone, must be UNLOCKED.
 
     The state the fixture reproduces: the seed marker still names it and its
-    installed.json still says origin=builtin (so `_is_native()` locks it against
-    disable AND uninstall), but nothing in `apps/native/` ships it any more. The
+    installed.json still says origin=builtin, but nothing in `apps/native/` ships it any
+    more (so `is_native()` no longer locks it, and the record must stop saying builtin). The
     reconciliation in seed_builtin_apps() must downgrade origin to local and drop the
     name from the marker, so the user can manage it like any other installed app.
 
@@ -279,7 +279,7 @@ def test_de_bundled_app_is_demoted_from_builtin_to_local(tmp_path):
     assert "retired-models" not in marker["seeded"]
 
     # Confirm it is no longer native-locked
-    assert not app_manager._is_native("retired-models")
+    assert not app_manager.is_native("retired-models")
 
 
 def test_an_app_installed_from_a_store_is_adopted_on_the_boot_that_bundles_it(tmp_path):
@@ -318,7 +318,7 @@ def test_an_app_installed_from_a_store_is_adopted_on_the_boot_that_bundles_it(tm
             tier="community",
         ),
     )
-    assert not app_manager._is_native("brave-search"), "the store copy is not locked yet"
+    assert not app_manager.is_native("brave-search"), "the store copy is not locked yet"
 
     assert app_manager.seed_builtin_apps() == ["brave-search"]
 
@@ -331,7 +331,7 @@ def test_an_app_installed_from_a_store_is_adopted_on_the_boot_that_bundles_it(tm
     assert json.loads((installed / "data" / "config.json").read_text(encoding="utf-8")) == {
         "kept": True
     }
-    assert app_manager._is_native("brave-search")
+    assert app_manager.is_native("brave-search")
 
 
 def test_a_seed_a_crash_interrupted_is_completed_not_abandoned(tmp_path):

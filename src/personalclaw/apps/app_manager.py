@@ -62,7 +62,7 @@ from personalclaw.apps.manager import (
     app_dir,
     apps_dir,
 )
-from personalclaw.apps.manifest import AppManifest
+from personalclaw.apps.manifest import KEBAB_RE, AppManifest
 from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.security import mask_child_output
 from personalclaw.sel import sel
@@ -784,6 +784,121 @@ def installed_disclosure(name: str) -> dict[str, Any] | None:
     return app_disclosure.describe(manifest) if manifest is not None else None
 
 
+# ---------------------------------------------------------------------------
+# Native apps: decided by where an app came from
+#
+# A native app ships inside PersonalClaw (``apps/native/``), is seeded into the home at first
+# start, and is locked on: Deactivate, the three uninstall rungs and an update all refuse it.
+# Any app can write ``"native": true`` in its own ``app.json``, so the flag decides nothing
+# about an installed app. An app is native when the packaged native source put it there — its
+# install record says ``origin`` ``builtin``, which only that source records — and the package
+# still ships it. The lock, the Apps list, the Providers card, the update path and the update
+# check all read :func:`is_native`, so they cannot disagree about an app.
+# ---------------------------------------------------------------------------
+
+
+def _packaged_manifest(folder: Path) -> AppManifest | None:
+    """The manifest of the native app packaged in *folder*, or ``None`` when it holds none.
+
+    A packaged folder holds a native app when its ``app.json`` declares ``native`` and names
+    the app the folder is named for: the one rule the seed, :func:`is_native` and the Store's
+    offer of a missing native app (``catalog.available_bundled``) share.
+    """
+    manifest_file = folder / APP_MANIFEST_FILENAME
+    if not manifest_file.is_file():
+        return None
+    try:
+        manifest = AppManifest.from_json_file(manifest_file)
+    except Exception:
+        logger.warning("could not read the packaged native manifest %s", folder.name, exc_info=True)
+        return None
+    if not manifest.native:
+        return None  # a stray non-native manifest in the package's native tree
+    if manifest.name != folder.name:
+        logger.warning(
+            "packaged native app %r is in the folder %r; a native app's folder is its name, "
+            "so it is not seeded",
+            manifest.name,
+            folder.name,
+        )
+        return None
+    return manifest
+
+
+def packaged_native_apps() -> list[tuple[Path, AppManifest]]:
+    """Every native app the package ships: its folder and its manifest, by folder name."""
+    from personalclaw.providers.loader import BUNDLED_DIR
+
+    if not BUNDLED_DIR.is_dir():
+        return []
+    found: list[tuple[Path, AppManifest]] = []
+    for folder in sorted(BUNDLED_DIR.iterdir()):
+        manifest = _packaged_manifest(folder) if folder.is_dir() else None
+        if manifest is not None:
+            found.append((folder, manifest))
+    return found
+
+
+def _packaged_native(name: str) -> Path | None:
+    """The folder the package ships the native app *name* in, or ``None`` when it ships none."""
+    from personalclaw.providers.loader import BUNDLED_DIR
+
+    if not KEBAB_RE.match(name):
+        return None
+    folder = BUNDLED_DIR / name
+    return folder if _packaged_manifest(folder) is not None else None
+
+
+def is_native(name: str) -> bool:
+    """Whether the installed app *name* is a native app: one PersonalClaw ships, locked on.
+
+    True when its install record says the packaged native source put it there and the package
+    still ships it. Never because its manifest says so: a Store app installed with
+    ``"native": true`` in its ``app.json`` reads False here, and the owner can switch it off and
+    remove it like any other app.
+    """
+    meta = _read_installed(name)
+    return meta is not None and meta.origin == "builtin" and _packaged_native(name) is not None
+
+
+def _native_claim(name: str) -> str:
+    """Why a bundle from a source may not say it is native: the sentence the Store shows."""
+    return (
+        f'{name!r} declares "native": true, which only an app that ships inside PersonalClaw may '
+        "declare, because a native app cannot be switched off or removed. Remove "
+        '"native" from its app.json'
+    )
+
+
+def _provenance(src: Path, manifest: AppManifest, origin: str, *, action: str) -> str:
+    """The origin the bundle at *src* is reviewed and recorded under, or the refusal of one that
+    would make an app native from anywhere but the package. Raises before anything is written.
+
+    * An update never reaches a native app: it is updated with PersonalClaw, its packaged files
+      re-synced at every start (:func:`_resync_native_bundle`).
+    * An install from the very folder the package ships a native app in puts that native app
+      back after its install went missing (the Store offers it, ``catalog.available_bundled``),
+      and it is recorded as the seed records it: ``builtin``.
+    * Any other bundle that declares ``native`` is refused, naming the field, and ``builtin`` is
+      never recorded for one, whatever the caller passed: that origin is the package's alone.
+    """
+    if action == "update" and is_native(manifest.name):
+        refusal = (
+            f"update refused: {manifest.name!r} ships with PersonalClaw and is updated with it, "
+            "never from a source"
+        )
+        logger.warning("app %s: %s", manifest.name, refusal)
+        raise AppLifecycleError(refusal)
+    packaged = _packaged_native(manifest.name) if action == "install" else None
+    if packaged is not None and src.resolve() == packaged.resolve():
+        return "builtin"
+    if manifest.native:
+        refusal = f"{action} refused: {_native_claim(manifest.name)}"
+        logger.warning("app %s: %s", manifest.name, refusal)
+        raise AppLifecycleError(refusal)
+    return "local" if origin == "builtin" else origin
+
+
 def preview(source: str | Path, *, origin: str = "local", name: str | None = None) -> InstallResult:
     """What installing ``source`` — or, given ``name``, updating that installed app to it —
     puts in front of the owner, WITHOUT committing, auditing or running anything it ships.
@@ -821,6 +936,10 @@ def preview(source: str | Path, *, origin: str = "local", name: str | None = Non
         return InstallResult(
             ok=False, name=target, error=f"app {target!r} already installed (use update)"
         )
+    try:
+        origin = _provenance(src, peek, origin, action=action)
+    except AppLifecycleError as exc:
+        return InstallResult(ok=False, name=target, error=str(exc))
     # A slot of its own, so a preview never collides with a concurrent install's staging.
     slot = Path(tempfile.mkdtemp(prefix=f"{target}.preview-", dir=_quarantine_dir()))
     staged = slot / target
@@ -884,7 +1003,6 @@ def install(
 
     # 1. The link policy over the whole source before anything reads it, then stage in
     # quarantine — dangerous content never touches the live tree.
-    staged_root = _quarantine_dir()
     try:
         bundle = _survey(src, action="install")
     except AppLifecycleError as exc:
@@ -896,7 +1014,14 @@ def install(
         _audit("install", "error", str(source), caller=caller, error=str(exc))
         return InstallResult(ok=False, error=str(exc))
     name = manifest_peek.name
-    staged = staged_root / name
+    # Where the bundle came from decides whether it may be a native app, before anything of it
+    # is written: only the package's own folder for that app may.
+    try:
+        origin = _provenance(src, manifest_peek, origin, action="install")
+    except AppLifecycleError as exc:
+        _audit("install", "refused", name, caller=caller, error=str(exc))
+        return InstallResult(ok=False, name=name, error=str(exc))
+    staged = _quarantine_dir() / name
 
     granted = confirm or bool(consent)
     try:
@@ -1399,6 +1524,17 @@ def update(
         return InstallResult(
             ok=False, name=name, error=f"app {name!r} is not installed (use install)"
         )
+    if peek.name != name:
+        return InstallResult(
+            ok=False, name=name, error=f"manifest name {peek.name!r} ≠ target {name!r}"
+        )
+    # A native app is updated with PersonalClaw, and no update may make an app one: both are
+    # refused before anything is staged.
+    try:
+        origin = _provenance(src, peek, origin, action="update")
+    except AppLifecycleError as exc:
+        _audit("update", "refused", name, caller=caller, error=str(exc))
+        return InstallResult(ok=False, name=name, error=str(exc))
 
     staged_root = _quarantine_dir()
     staged = staged_root / f"{name}{_ROLLBACK_SUFFIX}.new"
@@ -1675,17 +1811,7 @@ def seed_builtin_apps() -> list[str]:
     seeded = _read_seed_marker()
     newly: list[str] = []
     changed = False
-    for entry in sorted(BUNDLED_DIR.iterdir()):
-        manifest_file = entry / APP_MANIFEST_FILENAME if entry.is_dir() else None
-        if not manifest_file or not manifest_file.is_file():
-            continue
-        try:
-            manifest = AppManifest.from_json_file(manifest_file)
-        except Exception:
-            logger.warning("seed: failed to parse native manifest %s", entry.name, exc_info=True)
-            continue
-        if not manifest.native:
-            continue
+    for entry, manifest in packaged_native_apps():
         name = manifest.name
         # Seed-once for INSTALL, but re-sync the PACKAGED FILES on every boot. A native app
         # is locked (can't be disabled/uninstalled/edited by the user) and everything the
@@ -1781,22 +1907,7 @@ def _adopt_as_builtin(name: str, manifest: AppManifest) -> None:
 
 def _bundled_native_names() -> set[str]:
     """Every name the wheel currently ships as a NATIVE app."""
-    from personalclaw.providers.loader import BUNDLED_DIR
-
-    names: set[str] = set()
-    if not BUNDLED_DIR.is_dir():
-        return names
-    for entry in sorted(BUNDLED_DIR.iterdir()):
-        manifest_file = entry / APP_MANIFEST_FILENAME if entry.is_dir() else None
-        if not manifest_file or not manifest_file.is_file():
-            continue
-        try:
-            manifest = AppManifest.from_json_file(manifest_file)
-        except Exception:
-            continue
-        if manifest.native:
-            names.add(manifest.name)
-    return names
+    return {manifest.name for _, manifest in packaged_native_apps()}
 
 
 def _core_factory_is_gone(name: str) -> bool:
@@ -1835,36 +1946,18 @@ def _holds_user_data(name: str) -> bool:
         return True
 
 
-def _clear_native_flag(name: str) -> None:
-    """Drop `native: true` from an installed app's manifest, in place.
-
-    The other half of unlocking a retired built-in: `_is_native()` reads the manifest flag first,
-    so a retired app that still declares itself native stays locked however its origin reads.
-    Best-effort — an unwritable or unparseable manifest leaves the origin change standing rather
-    than aborting the sweep.
-    """
-    path = app_dir(name) / APP_MANIFEST_FILENAME
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or not data.get("native"):
-            return
-        data["native"] = False
-        atomic_write(path, json.dumps(data, indent=2) + "\n")
-    except Exception:
-        logger.debug("could not clear the native flag on %s", name, exc_info=True)
-
-
 def retire_orphaned_builtins(seeded: set[str], present: set[str]) -> list[str]:
     """Reconcile seed-marker names whose packaged native source is gone. Returns what changed.
 
     🔴 THREE STATES USED TO DISAGREE (issues 334, 368). The ScheduleService retirement deleted
     `create_schedule_provider` and stopped bundling `personalclaw-schedule-tools`, but nothing
     removed it from an existing install. Measured on a home upgraded across six `main` SHAs: the
-    app stayed installed and enabled, `_is_native()` locked it against disable AND uninstall
+    app stayed installed and enabled, the native lock held it against disable AND uninstall
     (`origin="builtin"`), `GET /api/apps` rendered it beside 28 working built-ins with an
     "Installed" badge and no error, `DELETE` answered `404 not installed` while the list said it
     was, and every gateway boot logged an `AttributeError` from `load_factory`. The only escape
-    was hand-editing the home.
+    was hand-editing the home. (:func:`is_native` now also asks that the package still ships the
+    name, so that lock cannot form; this sweep makes the record say so too.)
 
     The precedent was already here as a hardcoded one-shot for `ollama-models`, which this
     replaces: that app is one instance of the general rule, so a second retirement would have
@@ -1892,16 +1985,16 @@ def retire_orphaned_builtins(seeded: set[str], present: set[str]) -> list[str]:
         meta = _read_installed(name)
         dead = _core_factory_is_gone(name)
         if meta is not None:
-            # Unlocking is the half BOTH outcomes need, and it takes BOTH writes: `_is_native()`
-            # answers True on the manifest's `native` flag OR the `builtin` origin, so clearing one
-            # leaves the app locked. Measured while writing this — `origin="local"` alone kept
-            # `_is_native()` True, because the INSTALLED app.json still claimed native.
+            # The record stops saying the package put it there, in both the words that say so:
+            # the origin (the Store's provenance) and the tier the seed recorded, which the Tools
+            # page's badge and a contested tool name read (`trust_tier_of`). Left at `builtin`,
+            # a retired app's tools kept outranking an installed app's as core's own.
             meta.origin = "local"
+            meta.tier = _tier_for_origin(meta.origin).value
             if dead:
                 meta.enabled = False
             meta.updatedAt = _now_iso()
             _write_installed(name, meta)
-            _clear_native_flag(name)
         if dead and not _holds_user_data(name):
             shutil.rmtree(app_dir(name), ignore_errors=True)
             _audit("retire", "ok", name)
@@ -2100,22 +2193,11 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
     return True
 
 
-def _is_native(name: str) -> bool:
-    """A native app is locked on — disable/uninstall/force-uninstall refuse.
-    Identified by its manifest ``native`` flag (belt-and-suspenders: also the
-    ``builtin`` origin, since only native apps seed with that origin)."""
-    manifest = _manifest_of(name)
-    if manifest is not None and manifest.native:
-        return True
-    meta = _read_installed(name)
-    return meta is not None and getattr(meta, "origin", "") == "builtin"
-
-
 def disable(name: str, *, caller: str = "app_manager") -> bool:
     meta = _read_installed(name)
     if meta is None:
         return False
-    if _is_native(name):
+    if is_native(name):
         logger.info("app %s is native (locked) — disable refused", name)
         _audit("disable", "refused_native", name, caller=caller)
         return False
@@ -2213,7 +2295,7 @@ def uninstall(name: str, *, caller: str = "app_manager") -> bool:
     meta = _read_installed(name)
     if meta is None:
         return False
-    if _is_native(name):
+    if is_native(name):
         logger.info("app %s is native (locked) — uninstall refused", name)
         _audit("uninstall", "refused_native", name, caller=caller)
         return False
@@ -2282,7 +2364,7 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     meta = _read_installed(name)
     if meta is None:
         return False
-    if _is_native(name):
+    if is_native(name):
         logger.info("app %s is native (locked) — uninstall refused", name)
         _audit("uninstall_keep_data", "refused_native", name, caller=caller)
         return False
@@ -2472,7 +2554,7 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     meta = _read_installed(name)
     if meta is None:
         return False
-    if _is_native(name):
+    if is_native(name):
         logger.info("app %s is native (locked) — force-uninstall refused", name)
         _audit("force_uninstall", "refused_native", name, caller=caller)
         return False

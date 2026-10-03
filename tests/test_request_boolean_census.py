@@ -23,7 +23,7 @@ This census keeps both so:
   door that starts reading one fails :func:`test_every_body_boolean_is_pinned` until it is pinned,
   and a read of one by truthiness fails the ban below it.
 * :data:`LOADER_BUDGET` is the exact set of record loaders that still read a boolean with
-  ``bool()``: records the product writes itself, and app manifests. A new one fails.
+  ``bool()``: records the product writes itself. A new one fails, and so does an app manifest's.
 * Every boolean in the ``config.json`` schema is driven through the loader with text in it.
 * An MCP server's ``disabled`` switch has one reader, ``mcp_status.switched_off``.
 
@@ -508,25 +508,12 @@ _LOADERS = {"from_dict", "_from_dict", "from_json", "from_row", "from_record", "
 _STORED_READERS = {"strict_bool", "yes_or_no", "_guard_flag", "_expose_flag", "switched_off"}
 
 #: Record loaders that still read a boolean by truthiness, and why each may: what they read is
-#: written by the product itself, from real booleans, or is an app's own manifest, which is checked
-#: at install and shown on the consent screen. None of them is a switch the owner sets. A loader
-#: added to this set is a decision to defend in review; one that leaves it must leave it here too.
+#: written by the product itself, from real booleans. None of them is a switch the owner sets, or
+#: an app's manifest (``apps/manifest.py`` reads every boolean through ``strict_bool`` and refuses
+#: the install of one that is not true or false). A loader added to this set is a decision to
+#: defend in review; one that leaves it must leave it here too.
 LOADER_BUDGET = frozenset(
     {
-        # An app's app.json, read for install-time validation and the consent screen.
-        ("apps/manifest.py", "AppManifest", "native"),
-        ("apps/manifest.py", "CronEntry", "persistent_session"),
-        ("apps/manifest.py", "CronEntry", "silent"),
-        ("apps/manifest.py", "Permissions", "backgroundTasks"),
-        ("apps/manifest.py", "Permissions", "cron"),
-        ("apps/manifest.py", "Permissions", "memory"),
-        ("apps/manifest.py", "Permissions", "network"),
-        ("apps/manifest.py", "Permissions", "storage"),
-        ("apps/manifest.py", "Permissions", "storageShared"),
-        ("apps/manifest.py", "ProviderConfig", "multiInstance"),
-        ("apps/manifest.py", "RouteEntry", "agentCallable"),
-        ("apps/manifest.py", "RouteEntry", "readOnly"),
-        ("apps/manifest.py", "SettingCondition", "value"),
         # Records the product writes from its own state.
         ("artifacts/models.py", "Artifact", "live_dirty"),
         ("artifacts/models.py", "Artifact", "readonly"),

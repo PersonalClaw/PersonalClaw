@@ -11,7 +11,7 @@ system, crons, and the MCP bridge. Paths are relative to
 
 | Tier | Location | Notes |
 |---|---|---|
-| Native (32) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, `ollama-models`, `bundled-chat`, the action bundles); may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy) |
+| Native (32) | `apps/native/` in-package | seeded on first run, locked on (e.g. `native-agents`, `personalclaw-memory`, `ollama-models`, `bundled-chat`, the action bundles), updated with PersonalClaw; may own its provider code — see [the native capability contract](#the-native-capability-contract-appsnative_contractpy). Native is where the app came from, never its manifest's word: see [Native is where an app came from](#install-lifecycle-appsapp_managerpy) |
 | First-party (68) | workspace `apps/` | Slack channel, hosted model providers, speech, Minutes/Growth dashboards |
 | Third-party | user sources → `~/.personalclaw/apps/` | fixtures at `third-party-apps/` (`hello-search`, `demo-dashboard`) |
 
@@ -77,6 +77,27 @@ backend**.
   have that digest; anything else — `confirm: true` included — answers 409 with
   the review. The install invariant is scanned-bytes == reviewed-bytes ==
   installed-bytes (no swap-after-scan window, and none after consent either).
+- **Native is where an app came from** (`app_manager.is_native`). Any app can write
+  `"native": true` in its `app.json`, so the flag decides nothing about an installed app: an
+  app is native when its install record says the packaged native source put it there
+  (`origin` `builtin`, which nothing else records) and the package still ships it. The lock
+  (Deactivate and the three removal rungs), the Apps list's `native`, the Providers card's
+  `managed`, an update and the update check all read that one answer. An install, an update or
+  a review of a bundle from anywhere else that declares `native` is refused before anything is
+  written, and the refusal names the field; an app installed with the flag before is an
+  ordinary app, which the owner can switch off and remove. The one folder that may declare it
+  is the package's own for that app: the Store offers it when a native app's install has gone
+  missing (`catalog.available_bundled`), and installed from there it is recorded as the seed
+  records it. A native app is never updated from a source: its packaged files are re-synced
+  at every start, and an update of one is refused.
+- **A manifest boolean is `true` or `false`** — every boolean in an `app.json` (`native`, the
+  boolean permissions, a cron entry's `silent` and `persistent_session`, a route's
+  `agentCallable` and `readOnly`, a provider's `multiInstance`, a launch condition's `value`
+  and the quality axes) is the JSON `true` or `false`. Parsing reads text as the word it spells
+  and anything else as the field's safe value (`safety_flags.strict_bool`; `yes_or_no` for a
+  quality axis, where spelling neither claims nothing), so a Store listing never breaks on one,
+  and `AppManifest.validate` refuses the review, install and update of any other value — text,
+  a number, `null`, a list — naming the field.
 - **An app this core cannot host is refused at every door**
   (`apps/core_version.check_core_compatibility`): the review, install, update, enable and
   gateway start, and the Store card carries the same verdict (`coreCompatibility`). It
@@ -101,7 +122,7 @@ backend**.
   folder is the old version's files and goes with them. Removal takes `venv/` with the
   app's files; the keep-data rung keeps `data/` alone.
 - **Finding an update** (`apps/catalog.updates_available`) — `/api/apps` marks an app
-  whose source offers a newer version: a configured local source, by the app's name,
+  (never a native one, which is updated with PersonalClaw) whose source offers a newer version: a configured local source, by the app's name,
   and for an app installed from the Store, the pointer `installed.json` recorded
   (`url#app`, a registry listing's repo, or a single-app repository), read from the
   Store's own discovery caches. The Store's catalog read refreshes those under its
