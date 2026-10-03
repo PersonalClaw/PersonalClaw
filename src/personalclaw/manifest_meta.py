@@ -1195,7 +1195,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "response_type": "automation.list.result",
         "error_codes": [],
         "examples": [
-            {"summary": "List all automations with health", "args": {}},
+            {"summary": "How every automation stands and how its last run went", "args": {}},
             {
                 "summary": "List only active file automations",
                 "args": {"kind": "file", "state": "active"},

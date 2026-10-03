@@ -254,6 +254,22 @@ once on the trigger's failure route (`web_poll.report_checks`,
 `delivery.report_run`), the Inbox by default; a muted route stays muted. A
 check is not a run: only a fire runs the action and writes run history.
 
+**The chat reads an automation as the Triggers page shows it**
+(`triggers/standing.py`). `automation_list` says, for each automation, whether
+it runs now (the sentence `automation_create` and `automation_update` answer
+with, decided in the page's order), when it last ran and how that went (its
+newest run record in the history's words, with the record's reason, or the
+trigger's own outcome stamps when the record is gone), and when a schedule runs
+next, in the owner's time zone. It marks the ones that need the owner: a
+problem to fix, an import or an Allow waiting on them, a stop after failures, a
+quarantine, a watch that cannot fire, or one that is on while its recent runs
+went wrong. A park and a switch the owner turned off are not marked. The list
+opens with a line counting them, and each native turn that may call the tool
+carries the same count as one line (`[automations]`), read from the local store
+and naming the tool, so a question about the automations reads them rather than
+what the agent remembers of earlier chats. A request that names automations
+also carries the tool's schema (`tool_retrieval`'s hints).
+
 **A Send message action is checked where it is saved.** The Triggers page's
 create and edit (`_action_problem`) and the chat's and CLI's `automation_create`
 and `automation_update` (`tools.unsendable_message_refusal`) ask

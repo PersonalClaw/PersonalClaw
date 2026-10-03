@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.security import redact_for_display, redact_values_for_display
+from personalclaw.triggers.standing import last_check, standing
 
 logger = logging.getLogger(__name__)
 
@@ -824,57 +825,6 @@ def _as_stored(store: Any, trigger: Any) -> tuple[Any, list[Any]]:
     return (trigger, []) if row is None else (row.trigger, list(row.errors))
 
 
-def _last_check(trigger: Any, *, base_dir: Any) -> dict[str, Any] | None:
-    """A web watch's last check of its page (`web_poll.last_check`), masked for a chat's context
-    as the Triggers page masks it; None for any other kind, or a watch not checked yet."""
-    if trigger.kind != "web_watch":
-        return None
-    from personalclaw.triggers.web_poll import last_check
-
-    check = last_check(trigger, base_dir=base_dir)
-    if check is not None:
-        check["said"] = redact_for_display(check["said"])
-    return check
-
-
-def _standing(trigger: Any, errors: list[Any], *, base_dir: Any = None) -> str:
-    """Whether *trigger* runs now, as stored (:func:`_as_stored`): in the order the Triggers page's
-    status line decides it, so the chat and the page say the same thing. *base_dir* is the store's
-    home, where a web watch keeps its last check."""
-    from personalclaw.triggers import grants
-    from personalclaw.triggers.legacy_import import needs_review
-    from personalclaw.triggers.models import TriggerState
-
-    if errors:
-        return f"it has a problem and does not run until it is fixed: {errors[0].message}"
-    if needs_review(trigger):
-        return (
-            "it was brought over from an older version and does not run until you switch it on "
-            "on the Triggers page"
-        )
-    if trigger.enabled and grants.labels(trigger):
-        return (
-            "it is on the Triggers page, and it does not run until you allow it there: open "
-            "it and choose Allow, and PersonalClaw asks you first"
-        )
-    state = str(trigger.state or "")
-    if state == TriggerState.AUTOPAUSED.value:
-        return "it was stopped after repeated failures, and runs again once you switch it back on"
-    if state == TriggerState.QUARANTINED.value:
-        return (
-            "it is quarantined: something it was given matched an injection pattern, and it does "
-            "not run until it is re-authored"
-        )
-    if state == TriggerState.PARKED.value:
-        return "it is parked: something it needs is busy, and it resumes on its own"
-    if not trigger.enabled:
-        return "it is switched off until you enable it, and visible on the Triggers page"
-    check = _last_check(trigger, base_dir=base_dir)
-    if check is not None and not check["can_fire"]:
-        return f"it is on, but it cannot fire as things stand: {check['said']}"
-    return "it is active now and visible on the Triggers page"
-
-
 def create(
     store: Any,
     *,
@@ -1227,7 +1177,7 @@ def create(
         # "active now" is a claim about state, so it tracks state — the switch, and whether the
         # action is allowed to run — as stored. This string is UI: it is what the user reads in
         # chat after the agent creates an automation for them.
-        _state = _standing(*_as_stored(store, saved), base_dir=getattr(store, "base_dir", None))
+        _state = standing(*_as_stored(store, saved), base_dir=getattr(store, "base_dir", None)).said
         lines.append(
             f"  I created this for you — {_state} "
             f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
@@ -1259,15 +1209,33 @@ def _default_cadence_to_cron(cadence: str) -> Any:
 
 
 def list_automations(store: Any, *, kind: str = "", state: str = "") -> AutomationToolResult:
-    """`automation_list` — §4: "includes health rollups".
+    """`automation_list`: each automation, how it stands, when it last ran and how that went, and
+    when it runs next (`triggers.standing`), the ones that need the owner marked, under a line that
+    counts them.
+
+    The agent answers "did my brief run?" and "is the digest working?" from this. It gave each
+    automation's kind and health and no run: asked in a weekly review, the agent said "unknown" for
+    two automations that had run that day, and said a third, which ran on its own, still waited
+    for approval.
 
     Broken rows are INCLUDED. `store.load()` keeps a row it could not parse (S87's lenient-parse
     contract), and hiding it here would make a broken automation invisible in the one place an
-    agent looks to debug why nothing fired.
+    agent looks to debug why nothing fired. Times are in the owner's zone, the one the turn's date
+    line is written in (`schedule.get_local_tz`).
     """
-    rows = store.load()
+    import time as _time
+
+    from personalclaw.schedule import get_local_tz
+    from personalclaw.triggers.schedule_view import describe_cadence
+    from personalclaw.triggers.standing import last_run, next_run, rollup, when_said
+
+    base_dir = getattr(store, "base_dir", None)
+    zone_name, zone = get_local_tz()
+    now = _time.time()
     out: list[dict[str, Any]] = []
-    for row in rows:
+    stood: list[tuple[Any, Any]] = []
+    lines: list[str] = []
+    for row in store.load():
         trigger = row.trigger
         if kind and trigger.kind != kind:
             continue
@@ -1275,34 +1243,62 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
             continue
         if state == "paused" and trigger.enabled:
             continue
+        how = standing(trigger, row.errors, base_dir=base_dir)
+        ran = last_run(trigger, base_dir=base_dir, zone=zone)
+        stood.append((trigger, how))
         # The name and last error are masked the way the Automations page masks them: this list is
         # a read of the same triggers, and it lands in a chat's context.
+        name = redact_for_display(trigger.name or "")
+        last_error = redact_for_display(trigger.last_error_summary or "")
         out.append(
             {
                 "id": trigger.id,
-                "name": redact_for_display(trigger.name or ""),
+                "name": name,
                 "kind": trigger.kind,
                 "enabled": trigger.enabled,
+                "state": trigger.state,
+                "standing": how.said,
+                "needs_attention": how.needs_owner,
                 "created_by": trigger.created_by,
                 "health": trigger.health_status,
                 "runs": trigger.run_count,
+                "last_run": ran,
                 "next_fire_at": trigger.next_fire_at,
-                "last_error": redact_for_display(trigger.last_error_summary or ""),
+                "last_error": last_error,
                 "broken": [i.message for i in row.errors],
-                "last_check": _last_check(trigger, base_dir=getattr(store, "base_dir", None)),
+                "last_check": last_check(trigger, base_dir=base_dir),
             }
         )
+        cadence = trigger.kind == "clock" and row.ok
+        said_cadence = f": {redact_for_display(describe_cadence(trigger))}" if cadence else ""
+        mark = " ⚠ needs attention" if how.needs_owner else ""
+        lines.append(f"{trigger.id} — {name} ({trigger.kind}{said_cadence}){mark}")
+        lines.append(f"  {how.said}")
+        if how.runs and how.needs_owner:
+            # On, and its recent runs went wrong: the health it reads, and why when the last run
+            # below does not already say it.
+            why = last_error if last_error and last_error not in (ran or {}).get("said", "") else ""
+            lines.append(
+                f"  ⚠ its health reads {trigger.health_status}" + (f" — {why}" if why else "")
+            )
+        lines.append(f"  last run {ran['said']}" if ran else "  it has not run yet")
+        upcoming = next_run(trigger, now=now) if how.runs else 0.0
+        if upcoming > 0:
+            lines.append(f"  next run {when_said(upcoming, zone)}")
     if not out:
         return AutomationToolResult(True, "No automations match.", {"automations": []})
-    lines = []
-    for a in out:
-        flag = "" if a["enabled"] else " [paused]"
-        broken = f" ⚠ {a['broken'][0]}" if a["broken"] else ""
-        health = f" health={a['health']}" if a["health"] else ""
-        check = a["last_check"]
-        stuck = f" ⚠ cannot fire: {check['said']}" if check and not check["can_fire"] else ""
-        lines.append(f"{a['id']} — {a['name']} ({a['kind']}){flag}{health}{broken}{stuck}")
-    return AutomationToolResult(True, "\n".join(lines), {"automations": out})
+    counted = rollup(stood)
+    lines.insert(0, f"{counted.said()}. Times are in {zone_name}.")
+    return AutomationToolResult(
+        True,
+        "\n".join(lines),
+        {
+            "automations": out,
+            "total": counted.total,
+            "on": counted.on,
+            "needs_attention": counted.needs_owner,
+        },
+    )
 
 
 def update(
@@ -1496,8 +1492,8 @@ def update(
     if note:
         lines.append(f"  {note}")
     else:
-        standing = _standing(current, errors, base_dir=getattr(store, "base_dir", None))
-        lines.append(f"  {standing[:1].upper()}{standing[1:]}.")
+        said = standing(current, errors, base_dir=getattr(store, "base_dir", None)).said
+        lines.append(f"  {said[:1].upper()}{said[1:]}.")
     unwritten = report_schedules.adopt(saved)
     if unwritten:
         lines.append(f"  {unwritten}")

@@ -193,8 +193,13 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "automation_list",
             "annotations": {"readOnlyHint": True},
-            "description": "List automations with health rollups. Optional `kind` and `state` "
-            "('active'/'paused') filters. Broken rows are shown, not hidden.",
+            # The first sentence is what a turn that defers this schema lists it by (the catalog
+            # keeps 100 characters), so it says what the tool reads.
+            "description": "The owner's automations: whether each runs now, when it last ran and "
+            "how that went, its next run. Read it before telling the owner whether an automation "
+            "exists, ran or works: what you remember of one may be out of date. The ones that "
+            "need the owner are marked. Optional `kind` and `state` ('active'/'paused') filters. "
+            "Broken rows are shown, not hidden.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

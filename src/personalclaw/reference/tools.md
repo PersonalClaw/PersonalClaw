@@ -457,7 +457,7 @@ Recent run/fire rows for an automation, with typed outcomes — to self-debug wh
 
 ### `automation_list`
 
-List automations with health rollups. Optional `kind` and `state` ('active'/'paused') filters. Broken rows are shown, not hidden.
+The owner's automations: whether each runs now, when it last ran and how that went, its next run. Read it before telling the owner whether an automation exists, ran or works: what you remember of one may be out of date. The ones that need the owner are marked. Optional `kind` and `state` ('active'/'paused') filters. Broken rows are shown, not hidden.
 
 **Response type:** `automation.list.result`
 
@@ -465,7 +465,7 @@ List automations with health rollups. Optional `kind` and `state` ('active'/'pau
 - `kind` (string, optional)
 - `state` (string, optional)
 
-**Example — List all automations with health:**
+**Example — How every automation stands and how its last run went:**
 
 ```json
 {}

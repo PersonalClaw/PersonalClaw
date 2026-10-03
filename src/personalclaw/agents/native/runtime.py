@@ -103,6 +103,7 @@ from personalclaw.tool_providers.portable_schema import (
     ToolSchemaRejected,
     tools_named_in_rejection,
 )
+from personalclaw.triggers.standing import automations_note
 from personalclaw.workflows.compaction import is_context_overflow
 
 if TYPE_CHECKING:
@@ -1481,6 +1482,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             )
         if places := file_places_note(self._tool_index):  # where the file tools reach, read now
             notes.append(places)
+        if told := await automations_note(self._tool_index, self._offered):
+            notes.append(told)  # how the user's automations stand, read now
         if stub_lines:
             notes.append(
                 "[inactive tool groups] These capabilities exist but their schemas are not "

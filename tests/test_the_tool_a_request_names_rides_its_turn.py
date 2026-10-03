@@ -14,7 +14,8 @@ What holds now:
 * a hint names tools by the words of their names, never by part of a word, and there is no path
   hint: the file tools a path calls for are the core ones, which ride every turn;
 * a cadence ("every Monday … message me") and an event ("when a new PDF lands in …", "an
-  automation") name ``automation_create``;
+  automation") name ``automation_create``, and a request that names her automations names
+  ``automation_list`` too;
 * the answer to the agent's question keeps, for that one turn, the tools the request it answers
   plainly needed;
 * a call that names an argument the tool does not take is told the ones it does.
@@ -116,6 +117,19 @@ def _select(retriever: ToolRetriever, request: str) -> set[str]:
 )
 def test_a_request_for_an_automation_carries_automation_create(request_text):
     assert "automation_create" in _select(ToolRetriever(_catalog()), request_text)
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        "How are my automations doing this week?",
+        "Did my automations run today, and which one failed?",
+    ],
+)
+def test_a_question_about_her_automations_carries_the_tool_that_reads_them(request_text):
+    """The tool that says how each automation stands rides a request that names her automations,
+    beside the one that makes them."""
+    assert "automation_list" in _select(ToolRetriever(_catalog()), request_text)
 
 
 def test_a_weekday_reminder_carries_the_tools_that_remind():

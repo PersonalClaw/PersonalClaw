@@ -4,7 +4,8 @@ Stop riding the **entire** tool-schema set on every model turn. Surface only a
 per-turn relevant projection: a small always-include CORE ∪ top-K by
 ``max(cosine(query, tool_embedding), keyword_overlap)`` ∪ structural hints
 (a URL in the turn → web/fetch tools; "remind me", "every Monday" → the schedule tools and
-``automation_create``; "when a new file lands in …" → ``automation_create``) ∪ the **sticky
+``automation_create``; "when a new file lands in …" → ``automation_create``; "my automations" →
+``automation_list``) ∪ the **sticky
 set** (tools already CALLED this session stay available). Does for tools what
 :mod:`skills.surfacing` does for skills.
 
@@ -114,6 +115,9 @@ _STRUCTURAL_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # words on a cadence or runs something for them, and it is the one the reminder asks for.
     (_CADENCE, ("schedule", "cron", "trigger", "onetime", "recurring", "automation_create")),
     (_EVENT, ("automation_create",)),
+    # "How are my automations doing?", "did my automations run?": the one that says how each
+    # stands and how its last run went, beside the one that makes them.
+    (r"\bautomations?\b", ("automation_list",)),
     # shell/exec → bash (the single env interface). Covers "run the command", a
     # CLI verb, AND git/test/lint language — those are bash commands now, not their
     # own tools, so all of it should surface bash. Matched by the shell tools' own names

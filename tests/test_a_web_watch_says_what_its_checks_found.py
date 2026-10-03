@@ -321,9 +321,14 @@ def test_the_agents_list_says_the_watch_cannot_fire(home):
     trigger = _watch(home)
     web_poll.poll_one(trigger, now=NOW, base_dir=home, fetcher=_page(PAGE))
     result = tools.list_automations(TriggerStore(base_dir=home))
-    assert f"⚠ cannot fire: It read {URL} and found nothing it can watch" in result.text
+    assert (
+        f"it is on, but it cannot fire as things stand: It read {URL} and found nothing it can "
+        "watch"
+    ) in result.text
+    assert f"{trigger.id} — " in result.text and "⚠ needs attention" in result.text
     [row] = result.data["automations"]
     assert row["last_check"]["can_fire"] is False
+    assert row["needs_attention"] is True
 
 
 def test_creating_a_watch_says_how_it_checks_and_where_a_check_it_cannot_make_goes(home):
