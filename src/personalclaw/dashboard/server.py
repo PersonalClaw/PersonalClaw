@@ -18,6 +18,7 @@ from personalclaw.dashboard.origin import build_allowed_origins, check_origin, r
 from personalclaw.dashboard.state import _DEFAULT_PORT, DashboardState
 from personalclaw.dashboard.token_auth import token_auth_middleware
 from personalclaw.hooks import ScriptHookStore, set_global_hook_store
+from personalclaw.workflows import agent_routes
 
 if TYPE_CHECKING:
     from personalclaw.dashboard._types import (  # noqa: F401
@@ -531,8 +532,6 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
 INTERNAL_ROUTES: frozenset[str] = frozenset(
     {
         "POST /api/send-message",  # `notify`, and a scheduled script's ctx.notify
-        "POST /api/workflows/batches",  # `subagent_run` starts a batch it compiled
-        "POST /api/workflows/agent-saves",  # `workflow_author` hands over a save it cannot make
         "POST /api/session-keepalive",  # `wait`
         "GET /api/session-tool-policy",  # an MCP server's per-session tool policy
         "GET /api/chat/sessions/model-reach",  # whether an `mcp-core` tool's chat keeps nothing
@@ -547,6 +546,7 @@ INTERNAL_ROUTES: frozenset[str] = frozenset(
         # surface drives the desktop, and admitting cookie auth on this one route would put the
         # operator's keyboard behind the weakest browser path.
         "POST /api/computer-use/dispatch",
+        *agent_routes.AGENT_ONLY_TOOL_ROUTES,  # an agent's workflow tools, listed there
     }
 )
 
@@ -572,6 +572,7 @@ MIXED_INTERNAL_ROUTES: frozenset[str] = frozenset(
         "GET /api/context",  # `get_context`
         "POST /api/triggers/{id}/run",  # `automation_run`, `personalclaw cron trigger`
         "POST /api/auth/rotate-key",  # `personalclaw auth rotate-key`
+        *agent_routes.AGENT_TOOL_ROUTES,  # the owner's workflow routes those tools reach
     }
 )
 

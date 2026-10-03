@@ -918,8 +918,9 @@ async def start_run(
                 }
                 for c in pending
             ]
-        else:
-            # Mirror a completion summary back into the launching session.
+        elif status in TERMINAL_RUN_STATUSES:
+            # Mirror a completion summary back into the launching session. A run still going
+            # when a bounded wait (`blocking_timeout`) ran out has none: its status says so.
             # The blocking tool RESULT is the honest mirror surface: it lands in the launching
             # chat's transcript as a normal message and is persisted by that chat's own full
             # rewrite — a controller-side `ConversationLog.append` into the origin JSONL would be

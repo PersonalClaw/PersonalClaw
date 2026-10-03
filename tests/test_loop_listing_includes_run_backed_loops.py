@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -86,10 +87,13 @@ def _call(
     *,
     match: dict[str, str] | None = None,
     body: dict[str, Any] | None = None,
+    state: _FakeState | None = None,
+    session_key: str = "",
 ) -> tuple[int, Any]:
     app = web.Application()
-    app["state"] = _FakeState()
-    request = make_mocked_request(method, path, app=app, match_info=match or {})
+    app["state"] = state or _FakeState()
+    headers = {"X-Session-Key": session_key} if session_key else None
+    request = make_mocked_request(method, path, app=app, match_info=match or {}, headers=headers)
 
     async def _json() -> dict[str, Any]:
         return body or {}
@@ -244,6 +248,40 @@ def test_pause_resume_and_stop_are_the_runs_own_verbs() -> None:
     )
     assert status == 200, body
     assert store.cancel_requested(run.id)
+
+
+def test_an_incognito_chat_stops_its_own_loop_and_not_yours() -> None:
+    """The loop door's verbs carry the permission of the run routes' own: a Temporary or Incognito
+    chat's call controls only a run it started, which keeps nothing as it does."""
+    from personalclaw.workflows import ownership
+    from personalclaw.workflows.models import OriginKind, RunOrigin
+
+    state = _FakeState()
+    state._sessions["ghost"] = SimpleNamespace(memory_mode="incognito")
+    yours = _loop_run()
+    its_own = _loop_run()
+    its_own.origin = RunOrigin(kind=OriginKind.CHAT, session_key="dashboard:ghost")
+    its_own.extra = ownership.stamp_run_mode({}, ownership.MemoryMode.INCOGNITO)
+    store.save(its_own)
+
+    def stop(run: WorkflowRun) -> tuple[int, Any]:
+        return _call(
+            H.api_loop_action,
+            "PATCH",
+            f"/api/loops/{run.id}",
+            match={"id": run.id},
+            body={"action": "stop"},
+            state=state,
+            session_key="dashboard:ghost",
+        )
+
+    status, body = stop(yours)
+    assert status == 403 and body["error"]["code"] == "restricted_session", body
+    assert "it changes only a run it started" in body["error"]["message"], body
+    assert not store.cancel_requested(yours.id)
+    status, body = stop(its_own)
+    assert status == 200, body
+    assert store.cancel_requested(its_own.id)
 
 
 def test_a_failed_run_backed_loop_is_not_resumable() -> None:

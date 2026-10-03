@@ -563,6 +563,12 @@ WF_ERROR_CODES: dict[str, str] = {
         "The plan tool call names a workflow definition that does not exist; the message "
         "lists the available ones."
     ),
+    "WF_GATEWAY_UNANSWERED": (
+        "The tool server an agent CLI runs makes every workflow call on the gateway, and this "
+        "one went unanswered: it could not be sent (no credential, no gateway at the address), "
+        "so nothing was done, or no answer came in time, so it may have been. The message says "
+        "which, and the call."
+    ),
     "WF_ERROR": (
         "The fallback code when a service result reports failure but carries no code of its "
         "own, so the model always has something to branch on rather than parsing prose."

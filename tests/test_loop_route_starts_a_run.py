@@ -292,8 +292,9 @@ def test_an_unported_kinds_dangerous_command_is_still_refused_before_either_path
 # ── the guard the second door has to carry ──
 
 
-def test_a_restricted_session_cannot_start_a_run_through_the_loop_door() -> None:
-    """An incognito/guest session is refused, exactly as it is at `POST /api/workflows/runs`.
+def test_a_session_whose_mode_cannot_be_read_cannot_start_a_run_through_the_loop_door() -> None:
+    """Refused, exactly as it is at `POST /api/workflows/runs`: a chat the gateway does not hold
+    and nothing records, as for a Temporary chat that has ended.
 
     The reason is the one `api_run_start_draft` records on itself: a second door to starting a
     run must carry the same permission as the first, or a session that may not start a workflow
@@ -301,7 +302,7 @@ def test_a_restricted_session_cannot_start_a_run_through_the_loop_door() -> None
     answered 201 and wrote a loops row, which is a different (unguarded) operation, so this
     assertion is about the door the port opened and not about the loop family's own posture.
     """
-    state = _FakeState(restricted={"ghost"})
+    state = _FakeState()
     with _launchable():
         response = _create(state, {"kind": PORTED, "task": TASK}, session_key="dashboard:ghost")
 
@@ -312,6 +313,25 @@ def test_a_restricted_session_cannot_start_a_run_through_the_loop_door() -> None
         "the run was refused but a loops row was written anyway — the refusal must stop the "
         "create outright, not fall through to the path it replaced"
     )
+
+
+def test_an_incognito_chats_loop_starts_through_the_loop_door_and_keeps_the_chats_mode() -> None:
+    """The same permission as the first door's: an Incognito chat's start is taken there, and its
+    run keeps the chat's mode, so its loop writes no memory through its run."""
+    from personalclaw.workflows import ownership
+
+    state = _FakeState(restricted={"ghost"})
+    # The gateway's supervisor, beside its dashboard state, whose live chats say what a chat is.
+    state.workflows.state = state  # type: ignore[attr-defined]
+    with _launchable():
+        response = _create(state, {"kind": PORTED, "task": TASK}, session_key="dashboard:ghost")
+
+    assert response.status == 202, f"{response.status}: {_payload(response)}"
+    run_id = str(_payload(response).get("run_id") or "")
+    assert state.workflows.launched == [run_id], state.workflows.launched
+    created = run_store.get(run_id)
+    assert created is not None
+    assert ownership.run_mode(created) is ownership.MemoryMode.INCOGNITO
 
 
 def test_a_service_refusal_reaches_the_client_in_the_workflows_envelope() -> None:

@@ -169,6 +169,7 @@ PARENT_READ_EXCLUDE = {
     "/api/workflows/runs/{run_id}/nodes/{node_id}/inspect": (
         "service.inspect_node resolves the run and node; this is child detail"
     ),
+    "/api/workflows/runs/{run_id}/observe": "service.observe rejects an unknown run",
     "/api/workflows/runs/{run_id}/outbox": "service.outbox rejects an unknown run",
     "/api/workflows/runs/{run_id}/outputs/{node_id}": (
         "service.output resolves the run and node; this is child detail"
@@ -285,9 +286,9 @@ def _directly_named_handlers() -> set[str]:
 
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
-    assert len(nonterminal) == 88
+    assert len(nonterminal) == 89
     assert len(deep_terminal) == 18
-    assert len(selected) == 106
+    assert len(selected) == 107
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)

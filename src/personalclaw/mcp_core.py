@@ -124,6 +124,19 @@ def reset_current_agent_id(token) -> None:
         pass
 
 
+#: Whether this process is the tool server an agent CLI runs (``personalclaw mcp-core``), set by
+#: :func:`run_mcp_core_server` before it serves a call. No gateway runs in it, so neither does
+#: anything only the gateway holds: the workflow engine that drives runs, and the workflow
+#: definitions. The tools whose work that is make each call through the gateway's own routes
+#: (:mod:`personalclaw.mcp_workflows_gateway`).
+_SERVES_AN_AGENT_CLI = False
+
+
+def serves_an_agent_cli() -> bool:
+    """Whether this process is the tool server an agent CLI runs (:data:`_SERVES_AN_AGENT_CLI`)."""
+    return _SERVES_AN_AGENT_CLI
+
+
 def _api_base() -> str:
     """The gateway API base for this instance, AT CALL TIME, from the ONE owner.
 
@@ -939,7 +952,8 @@ def _refused(exc: urllib.error.HTTPError) -> dict:
 #: How long a tool waits for the gateway to answer a read or a delete (``_get``, ``_delete``),
 #: and a write (``_post``). A route that does slow work bounds it inside these and answers in
 #: words (``memory_service.RECALL_BUDGET_SECS``), so a timeout here means the gateway did not
-#: answer at all.
+#: answer at all. A call whose route waits on purpose for as long as it is asked to (a bounded
+#: watch of a workflow run) names its own ``timeout``, that wait and this budget.
 GATEWAY_READ_TIMEOUT_SECS = 10.0
 GATEWAY_WRITE_TIMEOUT_SECS = 30.0
 
@@ -967,8 +981,9 @@ def _unanswered(method: str, path: str, budget: float) -> dict:
 # text — the named, fail-fast answer. Built outside the try it would instead escape
 # ``run_mcp_stdio_loop`` and take the whole MCP server down mid-turn, which is the "hang"
 # shape the refusal exists to replace.
-def _post(path: str, body: dict | None = None) -> dict:
+def _post(path: str, body: dict | None = None, *, timeout: float | None = None) -> dict:
     data = json.dumps(body or {}).encode()
+    budget = timeout or GATEWAY_WRITE_TIMEOUT_SECS
     try:
         req = urllib.request.Request(
             f"{_api_base()}{path}",
@@ -976,29 +991,30 @@ def _post(path: str, body: dict | None = None) -> dict:
             headers=_internal_headers({"Content-Type": "application/json"}),
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=GATEWAY_WRITE_TIMEOUT_SECS) as resp:
+        with urllib.request.urlopen(req, timeout=budget) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return _refused(exc)
     except Exception as e:
         if _timed_out(e):
-            return _unanswered("POST", path, GATEWAY_WRITE_TIMEOUT_SECS)
+            return _unanswered("POST", path, budget)
         return {"error": str(e)}
 
 
-def _get(path: str) -> dict:
+def _get(path: str, *, timeout: float | None = None) -> dict:
+    budget = timeout or GATEWAY_READ_TIMEOUT_SECS
     try:
         req = urllib.request.Request(
             f"{_api_base()}{path}",
             headers=_internal_headers(),
         )
-        with urllib.request.urlopen(req, timeout=GATEWAY_READ_TIMEOUT_SECS) as resp:
+        with urllib.request.urlopen(req, timeout=budget) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return _refused(exc)
     except Exception as e:
         if _timed_out(e):
-            return _unanswered("GET", path, GATEWAY_READ_TIMEOUT_SECS)
+            return _unanswered("GET", path, budget)
         return {"error": str(e)}
 
 
@@ -1797,24 +1813,7 @@ def _save_template_from_session(args: dict[str, Any]) -> str:
     # `template_surfaced` resolved against the real def registry, not left at its dataclass
     # default: the TEMPLATE_EXISTS pre-gate depends on library state, and defaulting it False
     # would make that branch unreachable in production.
-    surfaced = False
-    try:
-        from personalclaw.workflows import defs as defs_mod
-
-        for provider_name in defs_mod.list_providers():
-            provider = defs_mod.get_provider(provider_name)
-            if provider is None:
-                continue
-            found, _n = _run_coro(provider.list_defs(limit=500))
-            for item in found:
-                d = item if isinstance(item, dict) else getattr(item, "to_dict", lambda: {})()
-                if str((d or {}).get("name", "")).strip().lower() == slug.lower():
-                    surfaced = True
-                    break
-            if surfaced:
-                break
-    except Exception:
-        logger.debug("template_save_from_session: def lookup unavailable", exc_info=True)
+    surfaced = slug.lower() in _workflow_names()
 
     outcome = evaluate(
         Candidate(run_id=slug, steps=steps, template_surfaced=surfaced, intent=description),
@@ -1837,6 +1836,25 @@ def _save_template_from_session(args: dict[str, Any]) -> str:
         f"Declined '{slug}' ({outcome.decision.skip_reason}): {outcome.decision.reason}. "
         "Recorded for threshold tuning; nothing was filed."
     )
+
+
+def _workflow_names() -> set[str]:
+    """The names of the workflows this instance has, lowercased; none when they cannot be read.
+
+    The gateway's registry holds them. The tool server an agent CLI runs holds none, so there the
+    gateway's own list answers (``GET /api/workflows``): read here, every name would be missing.
+    """
+    if serves_an_agent_cli():
+        listed = _get("/api/workflows").get("defs")
+    else:
+        from personalclaw.workflows import service
+
+        try:
+            listed = _run_coro(service.list_defs()).get("defs")
+        except Exception:  # noqa: BLE001 - an unreadable library names nothing
+            logger.debug("the workflow definitions could not be listed", exc_info=True)
+            listed = None
+    return {str(d.get("name") or "").strip().lower() for d in listed or [] if isinstance(d, dict)}
 
 
 def _run_coro(coro: Any) -> Any:
@@ -2096,7 +2114,10 @@ def _call_as_its_session(name: str, raw_args: dict[str, Any]) -> str:
 def run_mcp_core_server() -> None:
     """Run MCP stdio server for core agent tools — the single endpoint an ACP CLI
     consumes, aggregating every native tool category into one surface. Each call runs as the chat
-    it serves (:func:`_call_as_its_session`)."""
+    it serves (:func:`_call_as_its_session`), and what only the gateway holds is reached through
+    it (:func:`serves_an_agent_cli`)."""
     from personalclaw.mcp_shared import run_mcp_stdio_loop
 
+    global _SERVES_AN_AGENT_CLI
+    _SERVES_AN_AGENT_CLI = True
     run_mcp_stdio_loop("personalclaw-core", "1.0.0", _aggregated_list_tools, _call_as_its_session)

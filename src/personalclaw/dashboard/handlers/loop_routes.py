@@ -654,7 +654,8 @@ async def _run_backed_action(request: web.Request, run: Any, action: str) -> web
         "resume": "workflow_run_resume",
         "stop": "workflow_run_cancel",
     }[action]
-    denied = _guard(request, operation)
+    # The run is named, so a Temporary or Incognito chat's call controls only a run of its own.
+    denied = _guard(request, operation, run_id=run.id)
     if denied is not None:
         return denied
     supervisor = _supervisor(request)

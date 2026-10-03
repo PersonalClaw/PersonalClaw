@@ -865,6 +865,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/voice/synthesize` — sentence-chunked Piper TTS.
 - `GET /api/workflows` — _(no summary)_
 - `POST /api/workflows` — validate a definition and, unless ``save: false``, save it.
+- `POST /api/workflows/agent-plans` — an agent's ``workflow_plan``, planned here.
 - `POST /api/workflows/agent-saves` — save an agent's workflow, or ask its owner to allow it.
 - `GET /api/workflows/attention` — per-template §4.4 attention summaries.
 - `GET /api/workflows/audit` — Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default
@@ -887,6 +888,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/introspect` — The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6).
 - `GET /api/workflows/runs/{run_id}/ledger-rails` — GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
 - `GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect` — The §5 reconstructability set for one node (WF2-A2), live while the run is.
+- `GET /api/workflows/runs/{run_id}/observe` — watch a run for a bounded window, and answer what
 - `GET /api/workflows/runs/{run_id}/outbox` — GET the run's published-artifact listing — the §2.5 outbox half of R17.
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — GET one node's output, masked the way the inspect drawer masks it.
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_

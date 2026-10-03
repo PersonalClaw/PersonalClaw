@@ -209,33 +209,84 @@ async def _parent_def_refusal(name: str) -> web.Response | None:
     return None if found.get("ok") else _reply(found)
 
 
-def _guard(request: web.Request, operation: str) -> web.Response | None:
-    """Refuse a mutation from a restricted session, and audit either way.
+#: What a Temporary or Incognito chat's call may start (`_guard`): a run, a batch. Each keeps the
+#: chat's mode and stays on its model (`service.start_run`, through `ownership.inherit_mode`).
+_STARTS_WORK = frozenset({"workflow_run_start", "workflow_batch_start"})
+
+#: What such a chat's call may do to a run it started, which keeps nothing as the chat does
+#: (`_guard`): what its agent's workflow tools do to a run.
+_CONTROLS_ITS_RUN = frozenset(
+    {
+        "workflow_run_start",  # its draft
+        "workflow_run_edit",
+        "workflow_run_rewind",
+        "workflow_run_from",
+        "workflow_run_fork",
+        "workflow_run_pause",
+        "workflow_run_resume",
+        "workflow_run_cancel",
+    }
+)
+
+
+def _guard(request: web.Request, operation: str, *, run_id: str = "") -> web.Response | None:
+    """Refuse a mutation a restricted session may not make, and audit the refusal.
 
     A workflow run spends money and touches the world, so every mutating call is audited —
-    an unaudited start is a worse gap than an unaudited read. The refusal says why, as the one
-    reader of a session's mode reads it (``memory_writes.session_mode``).
+    an unaudited start is a worse gap than an unaudited read. A Temporary or Incognito chat's call
+    may start a run or a batch, which keeps the chat's mode and stays on its model, as one its
+    agent's tool starts in the gateway does; and it may control a run it started that keeps nothing
+    as it does (``run_id``, the run the call is for). Anything else it would change keeps what it
+    keeps (a definition in your library, a run that you or another chat started), so it is
+    refused, and so is every call of a session whose mode cannot be read. The refusal says why, as
+    the one reader of a session's mode reads it (``memory_writes.session_mode``).
     """
     state = request.app.get("state")
-    if state is not None and _is_restricted_session(state, request):
-        _audit(request, operation, "denied")
-        from personalclaw import memory_writes
+    if state is None or not _is_restricted_session(state, request):
+        return None
+    from personalclaw import memory_writes
 
-        mode = memory_writes.session_mode(request.headers.get("X-Session-Key", ""), state=state)
-        why = {
-            "temporary": "it keeps nothing, as a Temporary chat does",
-            "incognito": "it keeps nothing, as an Incognito chat does",
-        }.get(str(mode), "the memory setting of the chat it is for cannot be read")
-        return web.json_response(
-            {
-                "error": {
-                    "code": "restricted_session",
-                    "message": f"this session cannot mutate: {why}",
-                }
-            },
-            status=403,
-        )
-    return None
+    session_key = request.headers.get("X-Session-Key", "")
+    mode = memory_writes.session_mode(session_key, state=state)
+    why = {
+        "temporary": "it keeps nothing, as a Temporary chat does",
+        "incognito": "it keeps nothing, as an Incognito chat does",
+    }.get(str(mode), "the memory setting of the chat it is for cannot be read")
+    if mode in memory_writes.RESTRICTED_MODES:
+        if run_id and operation in _CONTROLS_ITS_RUN:
+            if _its_own_run(session_key, run_id):
+                return None
+            why += ", so it changes only a run it started, which keeps nothing as it does"
+        elif not run_id and operation in _STARTS_WORK:
+            return None
+    _audit(request, operation, "denied", run_id)
+    return web.json_response(
+        {"error": {"code": "restricted_session", "message": f"this session cannot mutate: {why}"}},
+        status=403,
+    )
+
+
+def _its_own_run(session_key: str, run_id: str) -> bool:
+    """Whether the run ``run_id`` is the work of the restricted session ``session_key``: started by
+    it (a fork keeps the origin of the run it forks, and a subworkflow's tree is rooted in the run
+    that started it) and keeping nothing, as the session keeps nothing (`ownership.run_mode`).
+
+    True for a run there is none of: the route answers that there is no such run, and changes
+    nothing."""
+    from personalclaw.workflows import ownership
+
+    run = store.get(run_id)
+    if run is None:
+        return True
+    if ownership.run_mode(run) is ownership.MemoryMode.NORMAL:
+        return False
+    root = store.get(run.root_run_id) if run.root_run_id not in ("", run.id) else None
+    chat = session_key.strip().removeprefix("dashboard:")
+    return any(
+        (r.origin.session_key or "").strip().removeprefix("dashboard:") == chat
+        for r in (run, root)
+        if r is not None
+    )
 
 
 def _audit(request: web.Request, operation: str, outcome: str, resources: str = "") -> None:
@@ -821,7 +872,7 @@ async def api_def_refine(request: web.Request) -> web.Response:
         inputs={"workflow_name": name},
         mode="background",
         supervisor=_supervisor(request),
-        origin_kind=_api_origin(),
+        origin_kind=_origin_of(request),
         session_key=request.headers.get("X-Session-Key", "") or "",
     )
     _audit(request, "workflow_refine", "success" if result.get("ok") else "failure", name)
@@ -930,7 +981,7 @@ async def api_run_start(request: web.Request) -> web.Response:
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
         mode=str(body.get("mode", "background") or "background"),
         supervisor=_supervisor(request),
-        origin_kind=_api_origin(),
+        origin_kind=_origin_of(request),
         session_key=request.headers.get("X-Session-Key", "") or "",
         project_id=str(body.get("project_id", "") or ""),
         idempotency_key=str(body.get("idempotency_key", "") or ""),
@@ -946,9 +997,14 @@ async def api_run_start(request: web.Request) -> web.Response:
     return _reply(result, status=202 if result.get("ok") and not result.get("blocking") else 200)
 
 
-def _api_origin() -> Any:
+def _origin_of(request: web.Request) -> Any:
+    """Where a run this request starts comes from: the chat whose agent's tool asked, when the
+    internal credential names it an agent (`approval_answer.of_request`), as that tool records a
+    start it makes in the gateway itself; else the API."""
     from personalclaw.workflows.models import OriginKind
 
+    if approval_answer.of_request(request).kind == approval_answer.AGENT:
+        return OriginKind.CHAT
     return OriginKind.API
 
 
@@ -960,10 +1016,12 @@ async def api_agent_save(request: web.Request) -> web.Response:
     that would let a step approve its own tool calls, or change things where it only read,
     answers ``202 awaiting_approval`` with the ask its owner answers, and is saved on her Allow
     alone; a session with nobody to ask is refused (``409 save_nobody_to_ask``).
+
+    ``"save": false`` is the agent's dry run, as it is on the owner's save (`api_def_save`): the
+    ``workflow_check`` of the tool server an agent CLI runs, which holds no definitions to check
+    against. It answers what a save would find and writes nothing, so nobody is asked, and like
+    every read it is neither guarded nor audited.
     """
-    denied = _guard(request, "workflow_agent_save")
-    if denied is not None:
-        return denied
     from personalclaw.workflows import definition_ask
 
     body = await json_object_body(request)
@@ -974,21 +1032,57 @@ async def api_agent_save(request: web.Request) -> web.Response:
             status=400,
         )
     name = require_string(body, "name")
+    fields: dict[str, Any] = {
+        "name": name,
+        "root": root,
+        "description": str(body.get("description", "") or ""),
+        "inputs": body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
+        "tags": [str(t) for t in (body.get("tags") or [])],
+    }
+    if not bool_field(body, "save", default=True):
+        return _reply(await service.author_def(**fields, save=False, provenance="chat"))
+    denied = _guard(request, "workflow_agent_save")
+    if denied is not None:
+        return denied
     result = await definition_ask.save(
         request.app.get("state"),
         session_key=request.headers.get("X-Session-Key", "") or "",
-        fields={
-            "name": name,
-            "root": root,
-            "description": str(body.get("description", "") or ""),
-            "inputs": body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
-            "tags": [str(t) for t in (body.get("tags") or [])],
-        },
+        fields=fields,
     )
     _audit(request, "workflow_agent_save", "success" if result.get("ok") else "failure", name)
     if result.get("status") == "awaiting_approval":
         return _ok(result, status=202)
     return _reply(result, status=201 if result.get("saved") else 200)
+
+
+async def api_agent_plan(request: web.Request) -> web.Response:
+    """POST /api/workflows/agent-plans — an agent's ``workflow_plan``, planned here.
+
+    A plan is drawn from what only the gateway holds: the workflow definitions, and the registries
+    its grounding lists as what exists on this system. So the tool server an agent CLI runs asks
+    here, for the session its call is made for (``X-Session-Key``): that session's frozen candidates
+    are matched, and the request runs as that session's work (`memory_write_gate`), so a Temporary
+    chat's plan reads none of her memory. The body is the tool's arguments, and the answer the plan
+    the tool answers in the gateway (``plan``) and the line it opens with (``summary``), or the
+    planner's refusal. It writes nothing of hers, so it is not guarded."""
+    from personalclaw import mcp_core, mcp_workflows
+
+    body = await json_object_body(request)
+    session_key = request.headers.get("X-Session-Key", "") or ""
+
+    def plan() -> tuple[dict[str, Any], str]:
+        token = mcp_core.set_current_session_key(session_key)
+        try:
+            return mcp_workflows.plan_answer(body)
+        finally:
+            mcp_core.reset_current_session_key(token)
+
+    # Off the loop, in this request's context: the planner makes its own blocking calls (the
+    # definitions, a model for a rephrase), as it does on the native runtime's worker thread.
+    answer, summary = await asyncio.to_thread(plan)
+    if not answer.get("ok"):
+        return _fail(answer)
+    return _ok({"plan": {k: v for k, v in answer.items() if k != "ok"}, "summary": summary})
 
 
 async def api_batch_start(request: web.Request) -> web.Response:
@@ -1045,6 +1139,23 @@ async def api_batch_state(request: web.Request) -> web.Response:
 async def api_run_status(request: web.Request) -> web.Response:
     result = service.status(request.match_info.get("run_id", ""))
     return _reply(shown_status(result) if result.get("ok") else result)
+
+
+async def api_run_observe(request: web.Request) -> web.Response:
+    """GET /api/workflows/runs/{run_id}/observe — watch a run for a bounded window, and answer what
+    changed in it and its events from that window (`service.observe`, ``workflow_observe``'s read).
+
+    For the tool server an agent CLI runs, which has no run to watch. ``duration_ms`` is clamped by
+    the service (100 ms to 30 s), and the answer comes early when the run ends. A read, so not
+    guarded."""
+    try:
+        duration_ms = int(request.query.get("duration_ms", "") or 0)
+    except ValueError:
+        return web.json_response(
+            {"error": {"code": "invalid_request", "message": "'duration_ms' must be an integer"}},
+            status=400,
+        )
+    return _reply(await service.observe(request.match_info.get("run_id", ""), duration_ms))
 
 
 async def api_run_delete(request: web.Request) -> web.Response:
@@ -1345,7 +1456,7 @@ async def api_run_node_inspect(request: web.Request) -> web.Response:
 
 
 async def api_run_edit(request: web.Request) -> web.Response:
-    denied = _guard(request, "workflow_run_edit")
+    denied = _guard(request, "workflow_run_edit", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
@@ -1361,20 +1472,25 @@ async def api_run_edit(request: web.Request) -> web.Response:
         # the same path so a client can preview then apply with one shape.
         return _reply(service.preview_edit(run_id, ops))
     expect = body.get("expect_version")
+    # Her edit, or an agent's: the tool server an agent CLI runs makes its `workflow_edit` here,
+    # with the internal credential. An agent's edit is the chat's, as the tool's is in the
+    # gateway, and carries no yes of hers, whatever its body says.
+    hers = approval_answer.of_request(request) == approval_answer.YOU
     result = service.edit_run(
         run_id,
         ops,
         supervisor=_supervisor(request),
         expect_version=int(expect) if isinstance(expect, (int, float)) else None,
         confirm_cascade=confirm_granted(body, "confirm_cascade"),
-        actor="user",
+        actor="user" if hers else "chat",
         # Her yes to a step the edit would let do more, the consent dialog's answer.
-        owner_allowed=confirm_granted(body),
+        owner_allowed=hers and confirm_granted(body),
     )
     if result.get("code") == "WF_MUT_NEEDS_OWNER_YES":
         field = str(result.get("field") or "")
         _audit(request, "workflow_run_edit", "denied", f"{field}: loosening without confirm")
-        return _posture_question(result)
+        # She is asked; an agent, which cannot answer it, is told the refusal.
+        return _posture_question(result) if hers else _reply(result)
     _audit(request, "workflow_run_edit", "success" if result.get("ok") else "failure", run_id)
     return _reply(result)
 
@@ -1461,7 +1577,7 @@ async def api_run_policy_overrides(request: web.Request) -> web.Response:
 
 
 async def api_run_cancel(request: web.Request) -> web.Response:
-    denied = _guard(request, "workflow_run_cancel")
+    denied = _guard(request, "workflow_run_cancel", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
@@ -1471,7 +1587,7 @@ async def api_run_cancel(request: web.Request) -> web.Response:
 
 
 async def api_run_pause(request: web.Request) -> web.Response:
-    denied = _guard(request, "workflow_run_pause")
+    denied = _guard(request, "workflow_run_pause", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
@@ -1556,7 +1672,7 @@ async def api_run_resume(request: web.Request) -> web.Response:
     an untrusted body would let a caller claim to be a channel and get the remote path's
     different rules.
     """
-    denied = _guard(request, "workflow_run_resume")
+    denied = _guard(request, "workflow_run_resume", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
@@ -1580,7 +1696,7 @@ async def api_run_confirm(request: web.Request) -> web.Response:
     vocabulary on top, and a separate permission would let a caller who may not answer a gate
     answer it through the other door.
     """
-    denied = _guard(request, "workflow_run_resume")
+    denied = _guard(request, "workflow_run_resume", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
@@ -1611,7 +1727,7 @@ async def api_run_from(request: web.Request) -> web.Response:
 
 
 async def _reentry(request: web.Request, operation: str, fn: Any) -> web.Response:
-    denied = _guard(request, operation)
+    denied = _guard(request, operation, run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
@@ -1634,7 +1750,7 @@ async def _reentry(request: web.Request, operation: str, fn: Any) -> web.Respons
 
 
 async def api_run_fork(request: web.Request) -> web.Response:
-    denied = _guard(request, "workflow_run_fork")
+    denied = _guard(request, "workflow_run_fork", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
@@ -1659,9 +1775,10 @@ async def api_run_start_draft(request: web.Request) -> web.Response:
 
     Guarded by `workflow_run_start`, the same operation the create-and-start route uses. A
     separate permission would let a caller who may not start a workflow start one through the
-    other door — and starting a draft spends exactly the same money.
+    other door — and starting a draft spends exactly the same money. The draft is a run that
+    exists, so a Temporary or Incognito chat's call starts only one of its own (`_guard`).
     """
-    denied = _guard(request, "workflow_run_start")
+    denied = _guard(request, "workflow_run_start", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
@@ -1808,7 +1925,9 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_post("/api/workflows/batches", api_batch_start)
     app.router.add_get("/api/workflows/batches/{name}", api_batch_state)
     app.router.add_post("/api/workflows/agent-saves", api_agent_save)
+    app.router.add_post("/api/workflows/agent-plans", api_agent_plan)
     app.router.add_get("/api/workflows/runs/{run_id}", api_run_status)
+    app.router.add_get("/api/workflows/runs/{run_id}/observe", api_run_observe)
     app.router.add_delete("/api/workflows/runs/{run_id}", api_run_delete)
     app.router.add_get("/api/workflows/runs/{run_id}/events", api_run_events)
     app.router.add_get("/api/workflows/runs/{run_id}/continuations", api_run_continuations)

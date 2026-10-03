@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **912 registrations** over **738 distinct paths** — 905 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **914 registrations** over **740 distinct paths** — 907 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -26,8 +26,8 @@ The 128 families the surface divides into, largest first.
 |---|---|---|
 | `/api/chat` | 80 | 68 |
 | `/api/knowledge` | 71 | 58 |
+| `/api/workflows` | 50 | 45 |
 | `/api/memory` | 49 | 41 |
-| `/api/workflows` | 48 | 43 |
 | `/api/models` | 38 | 30 |
 | `/api/loops` | 28 | 22 |
 | `/api/artifacts` | 25 | 16 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 905 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 907 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -1018,6 +1018,7 @@ The 905 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/voice/synthesize` | sentence-chunked Piper TTS. |
 | `GET` | `/api/workflows` | _(no summary)_ |
 | `POST` | `/api/workflows` | validate a definition and, unless ``save: false``, save it. |
+| `POST` | `/api/workflows/agent-plans` | an agent's ``workflow_plan``, planned here. |
 | `POST` | `/api/workflows/agent-saves` | save an agent's workflow, or ask its owner to allow it. |
 | `GET` | `/api/workflows/attention` | per-template §4.4 attention summaries. |
 | `GET` | `/api/workflows/audit` | Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default |
@@ -1040,6 +1041,7 @@ The 905 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/workflows/runs/{run_id}/introspect` | The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6). |
 | `GET` | `/api/workflows/runs/{run_id}/ledger-rails` | GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4). |
 | `GET` | `/api/workflows/runs/{run_id}/nodes/{node_id}/inspect` | The §5 reconstructability set for one node (WF2-A2), live while the run is. |
+| `GET` | `/api/workflows/runs/{run_id}/observe` | watch a run for a bounded window, and answer what |
 | `GET` | `/api/workflows/runs/{run_id}/outbox` | GET the run's published-artifact listing — the §2.5 outbox half of R17. |
 | `GET` | `/api/workflows/runs/{run_id}/outputs/{node_id}` | GET one node's output, masked the way the inspect drawer masks it. |
 | `POST` | `/api/workflows/runs/{run_id}/pause` | _(no summary)_ |

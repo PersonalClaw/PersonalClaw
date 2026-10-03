@@ -530,6 +530,38 @@ async def test_a_batch_that_only_reads_started_on_the_chats_trust_is_the_chats_b
     assert '"run_id"' in out and run.id in out, out
 
 
+@pytest.mark.asyncio
+async def test_a_batch_from_an_incognito_chat_starts_and_keeps_the_chats_mode(gateway):
+    """It starts as a batch any chat's agent asks for starts, and its run keeps the chat's mode
+    and stays on the model its turn runs on, as a run its agent starts in the gateway does.
+    🔴 Before: refused, "the batch did not start: this session cannot mutate: it keeps nothing,
+    as an Incognito chat does"."""
+    from personalclaw import session_restrictions
+    from personalclaw.workflows import ownership
+
+    key = f"dashboard:{CHAT}"
+    gateway.session.memory_mode = "incognito"
+    # What the turn engine records for a chat that keeps nothing once its turn names its model
+    # (`memory_writes.answered_by`); and the supervisor, as the gateway's, beside its dashboard
+    # state, whose live chats say what a chat is.
+    session_restrictions.mark_own_model(key, "here:tiny")
+    gateway.supervisor.state = gateway.state
+    gateway.state.subagents = SimpleNamespace(
+        _start_grant=lambda _key: approval_grants.PARENT_TRUST
+    )
+    try:
+        out = await _run_tool({**FIX, "capability": "research", "writes": []}, FIND)
+    finally:
+        session_restrictions.clear(key)
+
+    assert len(gateway.supervisor.launched) == 1, out
+    run, _spec = gateway.supervisor.launched[0]
+    stored = store.get(run.id)
+    assert stored is not None and stored.origin.session_key == key, stored
+    assert ownership.run_mode(stored) is ownership.MemoryMode.INCOGNITO
+    assert ownership.run_model(stored) == "here:tiny"
+
+
 def _compiled_root() -> dict:
     from personalclaw.workflows import batch_compile
 

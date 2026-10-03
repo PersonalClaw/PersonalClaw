@@ -643,8 +643,12 @@ class TestAuditAndManifest:
 
 
 class TestRestrictedSessions:
-    async def test_a_restricted_session_cannot_start_a_run(self, monkeypatch) -> None:
-        """A workflow run spends money and touches the world."""
+    async def test_a_session_whose_mode_cannot_be_read_cannot_start_a_run(
+        self, monkeypatch
+    ) -> None:
+        """A workflow run spends money and touches the world. A Temporary or Incognito chat's run
+        keeps the chat's mode (`test_an_agent_clis_workflow_tools_reach_the_gateway`); a session
+        the guard holds restricted without saying which mode it keeps starts none."""
         monkeypatch.setattr(
             "personalclaw.workflows.handlers._is_restricted_session", lambda s, r: True
         )

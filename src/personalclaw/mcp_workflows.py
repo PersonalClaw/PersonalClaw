@@ -6,15 +6,18 @@ two surfaces over one engine must not grow two behaviours.
 
 Exposes `_list_tools` / `_call_tool` in the same shape as `mcp_prompts` / `mcp_memory`, so
 the in-process `InProcessMcpToolProvider` and the aggregating `mcp-core` server consume it
-through one path. Unlike the other categories this one does NOT go over HTTP: the engine is
-in-process, and a chat tool that round-tripped through the gateway to reach an object in the
-same process would add a failure mode (and a port dependency) for nothing. Being in the process
-is not being on the engine's loop, though: these tools run in a worker thread, so a call that
-reaches a run is handed to the workflow supervisor's loop and waited for (`_on_engine`), the loop
-the owner's own start runs on; a run started on a loop of the call's own stopped as it closed.
-The one exception is a save this process cannot make (`_saved_by_the_gateway`): one that would
-let a step do more, which only the owner's own Allow saves and only the gateway can ask her for,
-and one made where no store of definitions is.
+through one path. In the gateway this category does NOT go over HTTP: the engine is in-process,
+and a chat tool that round-tripped through the gateway to reach an object in the same process
+would add a failure mode (and a port dependency) for nothing. Being in the process is not being on
+the engine's loop, though: these tools run in a worker thread, so a call that reaches a run is
+handed to the workflow supervisor's loop and waited for (`_on_engine`), the loop the owner's own
+start runs on; a run started on a loop of the call's own stopped as it closed. The one exception
+there is a save that would let a step do more (`saved_by_the_gateway`), which only the owner's own
+Allow saves and only the gateway can ask her for.
+
+The tool server an agent CLI runs (`mcp-core`, its own process) holds no engine and no
+definitions, so there every call is the gateway's, made through its own routes with that process's
+internal credential and the chat it serves (`mcp_workflows_gateway`), and answered as it is here.
 
 Two deliberate shapes in the descriptions:
 
@@ -612,16 +615,27 @@ def _on_engine(work: Callable[[Any], Any]) -> Any:
     is handed to the supervisor's loop and this thread waits for the answer
     (`WorkflowWatchdog.run_threadsafe`).
 
-    With no supervisor to hand it to — none in this process (an agent CLI's tool server), or one
+    With no supervisor to hand it to — a gateway that has not wired its supervisor yet, or one
     whose loop is not running — the call is made here without one, and the service answers for
-    that: nothing is started, and a cancel or a pause it records is applied by the gateway
-    driving the run, which reads those intents from the run's folder.
+    that, as the gateway's own routes answer then: nothing is started, and a cancel or a pause it
+    records is applied by the supervisor once it drives the run. The tool server an agent CLI runs
+    never comes here: it holds no engine, and makes every call on the gateway (`_dispatch`).
     """
     supervisor = _supervisor()
     if supervisor is None or supervisor.event_loop is None:
         answer = work(None)
         return _run(answer) if inspect.isawaitable(answer) else answer
     return supervisor.run_threadsafe(lambda: work(supervisor))
+
+
+#: The line a successful call of these tools opens with, where it has one: the same in either
+#: process, so an agent CLI's answer reads as the native runtime's does.
+SUMMARIES = {
+    "workflow_manifest": "Workflow authoring reference (generated from the engine):",
+    "workflow_start": "Workflow run started.",
+    "workflow_start_draft": "Draft run started.",
+    "workflow_fork": "Forked a new run; the original is unchanged.",
+}
 
 
 def _fmt(body: dict[str, Any], *, summary: str = "") -> str:
@@ -703,14 +717,71 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     return out
 
 
+def _refusal(name: str, args: dict[str, Any]) -> ToolFailure | None:
+    """What a call's own arguments refuse before the engine is asked anything, in either process:
+    a spec with no root, an edit with no ops, a skip that names no step."""
+    if name in ("workflow_author", "workflow_check") and not isinstance(args.get("root"), dict):
+        return tool_failure(
+            "'root' must be the spec's root node object.", code="WF_DEF_ROOT_REQUIRED"
+        )
+    if name in ("workflow_edit", "workflow_edit_preview"):
+        ops = args.get("ops")
+        if not isinstance(ops, list) or not ops:
+            return tool_failure(
+                "'ops' must be a non-empty array of mutation ops.", code="WF_MUT_NO_OPS"
+            )
+    if name == "workflow_skip":
+        node_ids = args.get("node_ids")
+        if not isinstance(node_ids, list) or not node_ids:
+            return tool_failure("'node_ids' must be a non-empty array.", code="WF_NO_NODE_IDS")
+    return None
+
+
+def unknown_tool(name: str) -> ToolFailure:
+    return tool_failure(f"unknown workflows tool {name!r}.")
+
+
+def definition_fields(args: dict[str, Any]) -> dict[str, Any]:
+    """The definition ``workflow_author`` saves and ``workflow_check`` checks, from the call."""
+    return {
+        "name": str(args.get("name", "") or ""),
+        "root": args.get("root"),
+        "description": str(args.get("description", "") or ""),
+        "inputs": args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
+        "tags": [str(t) for t in (args.get("tags") or [])],
+    }
+
+
+def start_fields(args: dict[str, Any]) -> dict[str, Any]:
+    """What ``workflow_start`` asks for: the definition, its inputs, how to run it and where."""
+    return {
+        "name": str(args.get("name", "") or ""),
+        "inputs": args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
+        "mode": str(args.get("mode", "background") or "background"),
+        "project_id": str(args.get("project_id", "") or ""),
+        "idempotency_key": str(args.get("idempotency_key", "") or ""),
+    }
+
+
 def _dispatch(name: str, args: dict[str, Any]) -> str:
     args = args or {}
     run_id = str(args.get("run_id", "") or "")
+    refused = _refusal(name, args)
+    if refused is not None:
+        return refused
+
+    from personalclaw.mcp_core import serves_an_agent_cli
+
+    if serves_an_agent_cli():
+        # No engine and no definitions in this process: every call is the gateway's.
+        from personalclaw.mcp_workflows_gateway import call_through_the_gateway
+
+        return call_through_the_gateway(name, args)
 
     if name == "workflow_manifest":
         return _fmt(
             service.manifest(),
-            summary="Workflow authoring reference (generated from the engine):",
+            summary=SUMMARIES["workflow_manifest"],
         )
 
     if name == "workflow_list_defs":
@@ -727,31 +798,15 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _fmt(_run(service.get_def(str(args.get("name", "") or ""))))
 
     if name in ("workflow_author", "workflow_check"):
-        root = args.get("root")
-        if not isinstance(root, dict):
-            return tool_failure(
-                "'root' must be the spec's root node object.", code="WF_DEF_ROOT_REQUIRED"
-            )
         # A check is its own tool, never an argument of the save: a call either saves or writes
         # nothing, so what it declares is what it does (a check only reads, and asks nobody).
         save = name == "workflow_author"
-        fields: dict[str, Any] = {
-            "name": str(args.get("name", "") or ""),
-            "root": root,
-            "description": str(args.get("description", "") or ""),
-            "inputs": args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
-            "tags": [str(t) for t in (args.get("tags") or [])],
-        }
+        fields = definition_fields(args)
         result = _run(service.author_def(**fields, save=save))
-        if save and result.get("code") in _GATEWAY_SAVES:
-            return _saved_by_the_gateway(fields, why=str(result["code"]))
+        if save and result.get("code") == "WF_DEF_NEEDS_OWNER_YES":
+            return saved_by_the_gateway(fields, needs_her_allow=True)
         if not save and result.get("ok") and result.get("valid"):
-            # UP-R9 discover-then-freeze: a generated spec that VALIDATED but was not saved is
-            # exactly what used to be thrown away. Freezing it as a session-scoped candidate is
-            # what stops the next similar intent re-generating a different graph. Not saved to the
-            # library — SESSION scope, promoted by reuse, because a spec that parsed is not yet a
-            # spec that worked.
-            _freeze_authored_candidate(args)
+            freeze_authored_candidate(args)
         return _fmt(result)
 
     if name == "workflow_plan":
@@ -766,22 +821,16 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _fmt(
             _on_engine(
                 lambda supervisor: service.start_run(
-                    name=str(args.get("name", "") or ""),
-                    inputs=args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
-                    mode=str(args.get("mode", "background") or "background"),
-                    supervisor=supervisor,
-                    session_key=session_key,
-                    project_id=str(args.get("project_id", "") or ""),
-                    idempotency_key=str(args.get("idempotency_key", "") or ""),
+                    **start_fields(args), supervisor=supervisor, session_key=session_key
                 )
             ),
-            summary="Workflow run started.",
+            summary=SUMMARIES["workflow_start"],
         )
 
     if name == "workflow_start_draft":
         return _fmt(
             _on_engine(lambda supervisor: service.start_draft_run(run_id, supervisor=supervisor)),
-            summary="Draft run started.",
+            summary=SUMMARIES["workflow_start_draft"],
         )
 
     if name == "workflow_status":
@@ -794,11 +843,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _fmt(service.output(run_id, str(args.get("node_id", "") or "")))
 
     if name in ("workflow_edit", "workflow_edit_preview"):
-        ops = args.get("ops")
-        if not isinstance(ops, list) or not ops:
-            return tool_failure(
-                "'ops' must be a non-empty array of mutation ops.", code="WF_MUT_NO_OPS"
-            )
+        ops = args["ops"]
         if name == "workflow_edit_preview":
             return _fmt(service.preview_edit(run_id, ops))
         expect = args.get("expect_version")
@@ -815,14 +860,10 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         )
 
     if name == "workflow_skip":
-        node_ids = args.get("node_ids")
-        if not isinstance(node_ids, list) or not node_ids:
-            return tool_failure("'node_ids' must be a non-empty array.", code="WF_NO_NODE_IDS")
+        node_ids = [str(n) for n in args["node_ids"]]
         return _fmt(
             _on_engine(
-                lambda supervisor: service.skip_nodes(
-                    run_id, [str(n) for n in node_ids], supervisor=supervisor
-                )
+                lambda supervisor: service.skip_nodes(run_id, node_ids, supervisor=supervisor)
             )
         )
 
@@ -862,7 +903,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
                     supervisor=supervisor,
                 )
             ),
-            summary="Forked a new run; the original is unchanged.",
+            summary=SUMMARIES["workflow_fork"],
         )
 
     if name == "workflow_pause":
@@ -902,42 +943,63 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_delete_def":
         return _fmt(_run(service.delete_def(str(args.get("name", "") or ""))))
 
-    return tool_failure(f"unknown workflows tool {name!r}.")
+    return unknown_tool(name)
 
 
-#: The saves this process cannot make, which the gateway makes instead (`definition_ask`): one
-#: that would let a step do more than before, which only the owner's own Allow saves and only the
-#: gateway can ask her for, and one made where no store of definitions is (an agent CLI's tool
-#: server, `mcp-core`).
-_GATEWAY_SAVES = frozenset({"WF_DEF_NEEDS_OWNER_YES", "WF_DEF_NO_WRITABLE_PROVIDER"})
+def gateway_answer(reply: dict[str, Any], *, doing: str, summary: str = "") -> str:
+    """The gateway's *reply* to one of these tools' calls (``mcp_core._get``/``_post``/``_delete``),
+    rendered as the call's answer is rendered when the engine is in this process (:func:`_fmt`).
+
+    A refusal the gateway made is the service's own (``workflows.handlers._fail`` puts its code,
+    sentence and detail in the envelope), so it reads as it would have here, issue list included.
+    A call the gateway did not answer says what it was for (*doing*, as in "pause the run 'x'")
+    and why: one that never reached it was not made, and one it did not answer in time may have
+    been.
+    """
+    detail = reply.get("error_detail")
+    if isinstance(detail, dict):
+        given = detail.get("detail")
+        extra: dict[str, Any] = given if isinstance(given, dict) else {}
+        return _fmt(
+            {
+                **extra,
+                "ok": False,
+                "code": str(detail.get("service_code") or detail.get("code") or "WF_ERROR"),
+                "message": str(detail.get("message") or reply.get("error") or ""),
+            }
+        )
+    if reply.get("timed_out"):
+        return tool_failure(
+            f"Asked PersonalClaw's gateway to {doing}, and {reply['error']}: it may have done "
+            "it, so look before you ask again.",
+            code="WF_GATEWAY_UNANSWERED",
+        )
+    if reply.get("error"):
+        return tool_failure(f"Could not {doing}: {reply['error']}", code="WF_GATEWAY_UNANSWERED")
+    return _fmt({**reply, "ok": True}, summary=summary)
 
 
-def _saved_by_the_gateway(fields: dict[str, Any], *, why: str) -> str:
+def saved_by_the_gateway(fields: dict[str, Any], *, needs_her_allow: bool = False) -> str:
     """Hand the save *fields* to the gateway (``POST /api/workflows/agent-saves``), which saves it
     or asks the owner once to allow it, and say which, in the shape every workflow tool answers.
-    *why* is the code that sent it there, which a gateway that cannot be reached is named by."""
+
+    Two saves come here: one this process found would let a step do more (*needs_her_allow*),
+    which only the owner's own Allow saves and only the gateway can ask her for, so it is not
+    saved whatever became of the call; and every save the tool server an agent CLI runs makes,
+    which holds no definitions."""
     from personalclaw.mcp_core import _post
 
     answer = _post("/api/workflows/agent-saves", fields)
-    detail = answer.get("error_detail")
-    if isinstance(detail, dict):
-        # The gateway's own refusal, already a sentence that says what was not saved and why.
-        code = str(detail.get("service_code") or "WF_DEF_SAVE_FAILED")
-        return tool_failure(str(answer.get("error") or "it was not saved"), code=code)
-    if answer.get("error"):
-        needs = (
-            "a save that lets a step do more is made only on your owner's own Allow, which only "
-            "the gateway can ask them for"
-            if why == "WF_DEF_NEEDS_OWNER_YES"
-            else "this tool server keeps no workflows, and only the gateway saves one"
-        )
+    unanswered = answer.get("error") and not isinstance(answer.get("error_detail"), dict)
+    if unanswered and needs_her_allow:
         return tool_failure(
-            f"{fields['name']!r} was not saved: {needs}, and the gateway could not be reached "
-            f"({answer['error']})",
-            code=why,
+            f"{fields['name']!r} was not saved: a save that lets a step do more is made only on "
+            "your owner's own Allow, which only the gateway can ask them for, and the gateway "
+            f"could not be reached ({answer['error']})",
+            code="WF_DEF_NEEDS_OWNER_YES",
         )
-    if answer.get("status") != "awaiting_approval":
-        return _fmt({"ok": True, **answer})
+    if answer.get("error") or answer.get("status") != "awaiting_approval":
+        return gateway_answer(answer, doing=f"save the workflow {fields['name']!r}")
     steps = [f"“{label}”" for label in answer.get("steps") or []]
     lets = (
         f"its step {steps[0]} approve its own tool calls"
@@ -956,7 +1018,17 @@ def _saved_by_the_gateway(fields: dict[str, Any], *, why: str) -> str:
 
 
 def _plan(args: dict[str, Any]) -> str:
-    """Scaffold + manifest, or a real TEMPLATE when one is named (WORKFLOWS-V2 §4, 9b).
+    """``workflow_plan``'s answer: the plan (:func:`plan_answer`), rendered as every one of these
+    tools renders the service's answer."""
+    body, summary = plan_answer(args)
+    return _fmt(body, summary=summary)
+
+
+def plan_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Scaffold + manifest, or a real TEMPLATE when one is named (WORKFLOWS-V2 §4, 9b), as
+    ``(the service-shaped body, its summary line)``: the body the gateway's planner route answers
+    the tool server an agent CLI runs with (``POST /api/workflows/agent-plans``), which holds none
+    of what a plan is made from (the definitions, and the registries the grounding reads).
 
     Returns a SCAFFOLD deliberately when no template is given: the template-aware planner is
     UNIVERSAL-PLANNING's, and inventing a half-planner here would have to be deleted when the
@@ -987,12 +1059,15 @@ def _plan(args: dict[str, Any]) -> str:
         goal = template_pipeline.mined_goal(mined).strip()
     if not goal:
         if source_session_id:
-            return tool_failure(
-                f"no transcript with usable turns for "
-                f"session {source_session_id!r}; pass 'goal' explicitly.",
-                code="WF_PLAN_SESSION_NOT_MINEABLE",
+            return (
+                service._service_failure(
+                    "WF_PLAN_SESSION_NOT_MINEABLE",
+                    f"no transcript with usable turns for "
+                    f"session {source_session_id!r}; pass 'goal' explicitly.",
+                ),
+                "",
             )
-        return tool_failure("'goal' is required.", code="WF_PLAN_GOAL_REQUIRED")
+        return service._service_failure("WF_PLAN_GOAL_REQUIRED", "'goal' is required."), ""
 
     project_id = str(args.get("project_id", "") or "").strip()
 
@@ -1159,11 +1234,17 @@ def _plan(args: dict[str, Any]) -> str:
         ),
         "manifest": {k: v for k, v in service.manifest().items() if k != "ok"},
     }
-    return _fmt(body, summary=f"Draft plan for: {goal}")
+    return body, f"Draft plan for: {goal}"
 
 
-def _freeze_authored_candidate(args: dict[str, Any]) -> None:
-    """Freeze a validated-but-unsaved spec as a SESSION-scoped candidate (UP-R9).
+def freeze_authored_candidate(args: dict[str, Any]) -> None:
+    """Freeze a validated-but-unsaved spec as a SESSION-scoped candidate (UP-R9), after a
+    ``workflow_check`` that found it valid.
+
+    A generated spec that VALIDATED but was not saved is exactly what used to be thrown away.
+    Freezing it is what stops the next similar intent re-generating a different graph. Not saved
+    to the library — SESSION scope, promoted by reuse, because a spec that parsed is not yet a
+    spec that worked.
 
     Best-effort and silent: freezing is an optimization for the NEXT similar request, and a store
     write that failed must not turn a successful dry-run validation into an error. The user asked to
@@ -1195,17 +1276,24 @@ def _freeze_authored_candidate(args: dict[str, Any]) -> None:
 
 
 def _current_session_id() -> str:
-    """This turn's session key, or '' — the SESSION scope's identity.
+    """The session this call runs under, or '' — the SESSION scope's identity, and the agent a
+    ``workflow_resume`` is made by.
 
     The session KEY (`dashboard:chat-1-…`), which is what a chat turn can actually know; the on-disk
     session id belongs to `SessionMap` and is not reachable from a tool call. What matters for
     scoping is only that the value is stable within a conversation and distinct between them, and
-    the key is both. '' when unresolvable, which makes the candidate visible to every session —
-    correct for a headless caller that has no session to be private to.
+    the key is both. Read where every call to the gateway reads the session it names
+    (`mcp_core._resolve_session_key`): the tool server an agent CLI runs is given it in its
+    environment, and the native runtime binds it around each call it makes in the gateway, where
+    no environment names a session. Work that runs as a session's outside a call of its runtime (a
+    request made for it) is that session's (`memory_writes.source_session`). '' when nothing names
+    one, which makes the candidate visible to every session — correct for a headless caller that
+    has no session to be private to.
     """
-    import os
+    from personalclaw import memory_writes
+    from personalclaw.mcp_core import _resolve_session_key
 
-    return os.environ.get("PERSONALCLAW_SESSION_KEY", "")
+    return _resolve_session_key() or memory_writes.source_session()
 
 
 def _mine_source_session(session_id: str) -> Any:
@@ -1893,8 +1981,9 @@ def _plan_from_template(
     routing: dict | None = None,
     mined: Any = None,
     source_session_id: str = "",
-) -> str:
-    """Plan by starting from a real template's tree rather than a generic scaffold.
+) -> tuple[dict[str, Any], str]:
+    """Plan by starting from a real template's tree rather than a generic scaffold, as
+    :func:`plan_answer` answers.
 
     Returns the template's ALREADY-EXPANDED root (macros expanded, blocks resolved), because that
     is what the model will edit and then hand to `workflow_author` — handing back the authored
@@ -1912,10 +2001,13 @@ def _plan_from_template(
     if not definition:
         available = _run(service.list_defs())
         names = [d["name"] for d in available.get("defs", [])]
-        return tool_failure(
-            f"no workflow definition named "
-            f"{template!r}. Available: {', '.join(names) or 'none'}.",
-            code="WF_PLAN_TEMPLATE_NOT_FOUND",
+        return (
+            service._service_failure(
+                "WF_PLAN_TEMPLATE_NOT_FOUND",
+                f"no workflow definition named "
+                f"{template!r}. Available: {', '.join(names) or 'none'}.",
+            ),
+            "",
         )
 
     meta = definition.get("metadata") or {}
@@ -1968,4 +2060,4 @@ def _plan_from_template(
             "shared blocks are already substituted, so what you see is what the engine runs."
         ),
     }
-    return _fmt(body, summary=f"Plan for '{goal}' from template {template!r}")
+    return body, f"Plan for '{goal}' from template {template!r}"

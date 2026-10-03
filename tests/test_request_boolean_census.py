@@ -154,6 +154,7 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("workflows/handlers.py", "_reentry", "redo_effects"): False,
     ("workflows/handlers.py", "_save_def", "save"): True,
     ("workflows/handlers.py", "_save_def", "strict"): True,
+    ("workflows/handlers.py", "api_agent_save", "save"): True,
     ("workflows/handlers.py", "api_def_a2a_publish", "published"): False,
     ("workflows/handlers.py", "api_run_edit", "preview_only"): False,
     ("workflows/handlers.py", "api_run_resume", "always_allow"): False,
