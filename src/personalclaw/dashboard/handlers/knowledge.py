@@ -1799,7 +1799,8 @@ async def get_stats(request: web.Request) -> web.Response:
 
 async def ingest_file(request: web.Request) -> web.Response:
     """POST /api/knowledge/ingest -- multipart file upload. Each file becomes ONE
-    logical-document typed item run through its node-graph."""
+    logical-document typed item run through its node-graph, once the content scan
+    (:mod:`personalclaw.uploads.content_scan`) has passed it."""
     # A non-multipart body (wrong/absent Content-Type) makes multipart()/next() raise —
     # that's a malformed request (400), not a server fault (500).
     try:
@@ -1817,9 +1818,11 @@ async def ingest_file(request: web.Request) -> web.Response:
     # Per-filetype cap from the shared upload policy (video 2 GB, audio 1 GB, image
     # 200 MB, …) — the browser mime disambiguates .webm/.ogg for the right category.
     from personalclaw.uploads import check_upload
+    from personalclaw.uploads.content_scan import ContentRefused, scan_upload
     from personalclaw.uploads.spool import Spool
 
-    _limit = check_upload(filename, upload_mime).limit
+    policy = check_upload(filename, upload_mime)
+    _limit = policy.limit
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="kn_")
     try:
         total_size = 0
@@ -1856,6 +1859,12 @@ async def ingest_file(request: web.Request) -> web.Response:
         if classify(filename, upload_mime) is None:
             Path(tmp.name).unlink(missing_ok=True)
             return web.json_response({"error": f"unsupported file type: {filename}"}, status=415)
+        # Before anything is made from it: the content scan every stored upload gets.
+        try:
+            await scan_upload(Path(tmp.name), policy.category, surface="knowledge")
+        except ContentRefused as exc:
+            Path(tmp.name).unlink(missing_ok=True)
+            return exc.response()
         item, is_new = await _store_file_item(store, tmp.name, filename, mime=upload_mime)
         Path(tmp.name).unlink(missing_ok=True)
         if item is None:

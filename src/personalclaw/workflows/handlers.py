@@ -46,6 +46,8 @@ from personalclaw.stale_write import (
     revision_of,
     stale_write_refusal,
 )
+from personalclaw.uploads.content_scan import ContentRefused, scan_upload
+from personalclaw.uploads.policy import category_for
 from personalclaw.workflows import incident_hold, journal, run_cockpit, service, store
 from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase
 from personalclaw.workflows.review_service import apply_triage, review_findings
@@ -1111,7 +1113,8 @@ async def api_run_drop(request: web.Request) -> web.Response:
     `_guard`ed as a mutation and SEL-audited PER FILE (§2.5): ingesting untrusted content into a
     run's
     reference zone is exactly the event an operator reconstructing "where did this instruction come
-    from" needs to find.
+    from" needs to find. Each file gets the content scan before it is handed on
+    (:mod:`personalclaw.uploads.content_scan`): one it refuses, or could not check, is not kept.
     """
     denied = _guard(request, "workflow_run_drop")
     if denied is not None:
@@ -1181,12 +1184,19 @@ async def api_run_drop(request: web.Request) -> web.Response:
                 },
                 status=413,
             )
+        filename = part.filename or "dropped"
+        mime = part.headers.get("Content-Type", "") if part.headers else ""
+        dropped = bytes(data)
+        # Before anything is made from it: the content scan every stored upload gets.
+        try:
+            await scan_upload(
+                dropped, category_for(filename, mime or None), surface="workflow_drop"
+            )
+        except ContentRefused as exc:
+            _audit(request, "workflow_run_drop", "rejected", f"{run_id}:{exc.code}")
+            return exc.response()
         result = service.accept_dropped_file(
-            run_id,
-            filename=part.filename or "dropped",
-            data=bytes(data),
-            mime=part.headers.get("Content-Type", "") if part.headers else "",
-            confirmed=confirmed,
+            run_id, filename=filename, data=dropped, mime=mime, confirmed=confirmed
         )
         if not result.get("ok"):
             _audit(

@@ -58,9 +58,8 @@ event loop, where on a 512 MB upload it stopped every other request for up to 0.
   worker thread (on a busy disk one write of the next chunk took 0.1 s);
 - a complete assembles the parts, and the item's file is moved (a copy across disks), hashed and
   thumbnailed, in worker threads; file reads and writes and the hash leave the interpreter lock;
-- the content scan of a text-like upload's head and tail windows runs in a child process
-  (`personalclaw content-scan`, `uploads/content_scan.py`), because its parse holds the lock. A
-  scan that could not run refuses the upload (503) rather than passing it;
+- the content scan (below) runs in a child process (`personalclaw content-scan`,
+  `uploads/content_scan.py`), because its parse holds the lock;
 - what the file becomes is decided on the loop: the duplicate check and the insert, with nothing
   awaited between them, so two uploads of the same bytes still make one item.
 
@@ -68,6 +67,31 @@ While an upload's complete runs, `UploadStore.completing` holds it: a retried co
 and a drop are refused with 409 (`upload_completing` for the drop), and the sweep passes it over.
 `tests/test_event_loop_whole_file_census.py` keeps whole-file work off the loop everywhere in the
 package, and names what is still on it.
+
+### The content scan
+
+Every route that stores an uploaded file the agent or the library will later read hands it to
+`uploads.content_scan.scan_upload` before anything is made from it, whether it came in one request
+or in parts: a chat attachment, a file uploaded to a folder, a Knowledge file, a file dropped into
+a workflow run, a binary artifact's new bytes, a project archive and a backup import.
+
+The scan reads a text-like file (a document, an archive, or a file of no known kind) with both of
+the scanner's surfaces, the destructive-script rules and the prose-injection rules, as two
+windows at most: its first 256 KB and its last. A file of up to 512 KB is read whole, so no byte
+of it goes unread: its last window is the rest of it, read on from the first. A larger file gets
+the large-file policy, and what lies between its two windows is not read. A window that holds a
+NUL byte is binary and is not read (random runs of binary bytes read as false alarms), while the
+file's other window still is. So the scan does not check text inside a binary window, such as a
+file stored uncompressed in an archive or text beside a stray NUL byte, even where a reader still
+finds it; an archive is scanned as the file it is. Media is not scanned.
+
+Refused content is answered 422 `upload_content_refused`, and nothing is made from it. A scan
+that did not run is never read as a pass: a window that cannot be read, a child that cannot
+start, one silent past 60 s, and one that ends without an answer (as it does when the scanner
+raises on the content) are answered 503 `upload_content_unchecked`. Each refusal is a row in the
+security event log (`upload_scan`, naming the route). `tests/test_stored_upload_scan_census.py`
+reads the package for every route that takes a file's bytes from a request, and fails on one that
+neither scans them nor says why not.
 
 ### Ingestion pipeline (node graphs)
 

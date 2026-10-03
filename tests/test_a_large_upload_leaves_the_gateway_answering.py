@@ -382,7 +382,8 @@ async def test_an_upload_whose_content_cannot_be_checked_is_not_used(gateway):
         kept, body = await upload()
 
     assert refused == 503, said
-    assert "could not be checked" in said["error"]
+    assert said["error"]["code"] == "upload_content_unchecked"
+    assert "could not be checked" in said["error"]["message"]
     assert list(gateway.parts.iterdir()) == [], "its parts went"
     assert kept == 200, body
     assert [p.name for p in gateway.uploads.iterdir() if p.is_file()] == [

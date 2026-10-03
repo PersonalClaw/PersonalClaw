@@ -45,6 +45,7 @@ from personalclaw.security import (
     redact_exfiltration_urls,
 )
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
+from personalclaw.uploads.content_scan import ContentRefused, scan_upload
 from personalclaw.uploads.spool import Spool
 from personalclaw.validation import (
     FILE_READ_SCHEMA,
@@ -830,7 +831,9 @@ async def api_upload_file(request: web.Request) -> web.Response:
 
     Accepts multipart form data with one or more 'file' fields.
     Saves files to ~/.personalclaw/uploads/ and returns server-side paths
-    that ACP's _send_prompt() can detect for image inlining.
+    that ACP's _send_prompt() can detect for image inlining. Each file gets the content
+    scan (:mod:`personalclaw.uploads.content_scan`) before it is kept: one it refuses, or
+    could not check, refuses the request and keeps none of its files.
     """
 
     _upload_dir().mkdir(parents=True, exist_ok=True)
@@ -884,7 +887,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
             # right category cap. Unknown types are accepted (capped as "other"); the
             # size gate — not an extension allowlist — is the policy.
             part_mime = part.headers.get("Content-Type") if part.headers else None
-            _limit = _upload_check(safe_name, part_mime).limit
+            policy = _upload_check(safe_name, part_mime)
+            _limit = policy.limit
             # Stream to a tempfile, enforcing the category cap as bytes arrive — never
             # buffer the whole file in memory (a 2 GB video would OOM otherwise).
             dest = _upload_dir() / f"{uuid.uuid4().hex}_{safe_name}"
@@ -931,7 +935,21 @@ async def api_upload_file(request: web.Request) -> web.Response:
                 # ("video file too large (max 2 GB)") is populated.
                 reason = _upload_check(safe_name, part_mime, size=size).reason
                 return web.json_response({"error": reason}, status=413)
+            # Held with the others from here, so any failure below removes it with them.
             paths.append(str(dest))
+            # Before it is kept or read: the content scan every stored upload gets.
+            try:
+                await scan_upload(dest, policy.category, surface="attachment")
+            except ContentRefused as exc:
+                _cleanup()
+                _sel().log_api_access(
+                    caller=caller,
+                    operation="upload.file",
+                    outcome="rejected",
+                    source="dashboard",
+                    resources=f"file:{fname} reason:{exc.code}",
+                )
+                return exc.response()
     except Exception:
         _cleanup()
         _sel().log_api_access(
@@ -2823,7 +2841,9 @@ async def api_file_upload(request: web.Request) -> web.Response:
     resulting file path validate through :func:`_validate_dashboard_path`, so an
     upload can't land outside the allowlist or overwrite a blocked/sensitive
     name. Existing files are refused (no silent overwrite). Each part is capped
-    per-filetype by the shared upload policy (:func:`_upload_check`).
+    per-filetype by the shared upload policy (:func:`_upload_check`), and gets the content
+    scan before it takes its name: one it refuses, or could not check, refuses the request
+    and keeps none of its files.
     """
     target_dir = _validate_dashboard_path(request.query.get("path", ""))
     if not target_dir:
@@ -2863,7 +2883,8 @@ async def api_file_upload(request: web.Request) -> web.Response:
                 return web.json_response({"error": f"already exists: {filename}"}, status=409)
             # Per-filetype cap from the shared policy (browser mime disambiguates media).
             part_mime = part.headers.get("Content-Type") if part.headers else None
-            _limit = _upload_check(filename, part_mime).limit
+            policy = _upload_check(filename, part_mime)
+            _limit = policy.limit
             size = 0
             fd, tmp = tempfile.mkstemp(dir=target_dir)
             try:
@@ -2878,6 +2899,8 @@ async def api_file_upload(request: web.Request) -> web.Response:
                             raise ValueError(_upload_check(filename, part_mime, size=size).reason)
                         await spool.write(chunk)
                     await spool.flush()
+                # Before it takes its name: the content scan every stored upload gets.
+                await scan_upload(Path(tmp), policy.category, surface="workspace")
                 os.replace(tmp, dest)
             except Exception:
                 with contextlib.suppress(OSError):
@@ -2891,6 +2914,18 @@ async def api_file_upload(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": str(exc)}, status=413 if "too large" in str(exc) else 400
         )
+    except ContentRefused as exc:
+        for p in saved:
+            with contextlib.suppress(OSError):
+                os.unlink(p)
+        _sel().log_tool_invocation(
+            session_key="dashboard",
+            tool_name="file_upload",
+            outcome="rejected",
+            resources=target_dir,
+            error=exc.code,
+        )
+        return exc.response()
     except Exception:
         logging.getLogger(__name__).exception("file_upload failed into %s", target_dir)
         for p in saved:

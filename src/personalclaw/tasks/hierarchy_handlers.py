@@ -1248,7 +1248,8 @@ async def _read_project_upload(request: web.Request):
     one lives in the dashboard package and importing it here would put a handler module's private
     helper on the tasks package's import path. Unlike that one it is capped
     (`project_archive.MAX_ARCHIVE_BYTES`): no project archive is larger, and the cap is counted as
-    the bytes arrive, so an oversized upload is never written out in full.
+    the bytes arrive, so an oversized upload is never written out in full. Both give the upload the
+    content scan (`uploads.content_scan`) before it is read as an archive.
     """
     import tempfile
 
@@ -1271,6 +1272,7 @@ async def _read_project_upload(request: web.Request):
     if part is None or not isinstance(part, BodyPartReader) or part.name != "file":
         return None, web.json_response({"error": "file field required"}, status=400)
 
+    from personalclaw.uploads.content_scan import ContentRefused, scan_upload
     from personalclaw.uploads.spool import Spool
 
     cap = pa.MAX_ARCHIVE_BYTES
@@ -1295,7 +1297,12 @@ async def _read_project_upload(request: web.Request):
             await spool.write(chunk)
         await spool.flush()
         tmp.close()
+        # Before it is read as an archive: the content scan every stored upload gets.
+        await scan_upload(Path(tmp.name), "archive", surface="project_import")
         return Path(tmp.name), None
+    except ContentRefused as exc:
+        Path(tmp.name).unlink(missing_ok=True)
+        return None, exc.response()
     except Exception:
         tmp.close()
         Path(tmp.name).unlink(missing_ok=True)

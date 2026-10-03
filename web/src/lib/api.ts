@@ -10199,8 +10199,11 @@ export const api = {
         const fd = new FormData()
         for (const f of small) fd.append('file', f, f.name)
         const r = await fetch(`/api/file-upload?path=${encodeURIComponent(dir)}`, { method: 'POST', headers: { ...SK }, body: fd, signal })
+        // The refusal's own sentence, from either envelope this route answers: a coded refusal
+        // (`{error: {code, message}}`, the content scan's) read as `data.error` showed the user
+        // "[object Object]".
+        if (!r.ok) return { ok: false, error: await errText(r) }
         const data = await r.json().catch(() => ({}))
-        if (!r.ok) return { ok: false, error: data?.error || `HTTP ${r.status}` }
         if (data?.paths) paths.push(...data.paths)
       }
     } catch (e) {

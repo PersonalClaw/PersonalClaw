@@ -63,6 +63,8 @@ from personalclaw.stale_write import (
     revision_of,
     stale_write_refusal,
 )
+from personalclaw.uploads.content_scan import ContentRefused, scan_upload
+from personalclaw.uploads.policy import category_for
 
 logger = logging.getLogger(__name__)
 
@@ -906,7 +908,8 @@ async def api_artifact_raw_write(request: web.Request) -> web.Response:
 
     Guard order is the cheap-and-safe one: authorization, then the size refusal from
     headers alone, then the format, then the artifact, then the precondition. The body
-    is touched last.
+    is touched last, and gets the content scan (:mod:`personalclaw.uploads.content_scan`)
+    before it is stored.
     """
     state = request.app["state"]
     if _is_restricted_session(state, request):
@@ -958,6 +961,13 @@ async def api_artifact_raw_write(request: web.Request) -> web.Response:
             status=413,
             error_extra={"cap_bytes": MAX_BINARY_CONTENT_BYTES},
         )
+    # Before it is stored: the content scan every stored upload gets.
+    category = category_for(f"{art.slug}.{ext_for_mime(mime)}", mime)
+    try:
+        await scan_upload(data, category, surface="artifact")
+    except ContentRefused as exc:
+        _audit(request, "artifact.raw_write", "denied", f"slug={slug} {exc.code}")
+        return exc.response()
     return _store_binary(
         request,
         prov,

@@ -104,7 +104,9 @@ class TestUploadProtocol:
                 )
             r = await client.post(f"/api/uploads/{uid}/complete", json={})
             assert r.status == 422, f"dangerous script should be rejected, got {r.status}"
-            assert "safety scan" in (await r.json()).get("error", "")
+            error = (await r.json())["error"]
+            assert error["code"] == "upload_content_refused"
+            assert "safety scan" in error["message"]
 
     @pytest.mark.asyncio
     async def test_complete_skips_scan_for_binary_content(self, tmp_path, monkeypatch):

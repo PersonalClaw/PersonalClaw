@@ -54,6 +54,9 @@ def _sel():
 async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Response | None]:
     """Read a multipart ``file`` field into a temp file. Returns (path, None) or (None, error).
 
+    The file gets the content scan (:mod:`personalclaw.uploads.content_scan`) before it is
+    returned: one it refuses, or could not check, is removed and answered as the error.
+
     Moved here from the retired ``handlers/portability.py`` — it was that module's only
     surviving part once its three routes folded into the §6 pair.
     """
@@ -86,6 +89,7 @@ async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Resp
             {"error": {"code": "file_required", "message": "file field required"}}, status=400
         )
 
+    from personalclaw.uploads.content_scan import ContentRefused, scan_upload
     from personalclaw.uploads.spool import Spool
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
@@ -98,7 +102,12 @@ async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Resp
             await spool.write(chunk)
         await spool.flush()
         tmp.close()
+        # Before it is read as an archive: the content scan every stored upload gets.
+        await scan_upload(Path(tmp.name), "archive", surface="backup_import")
         return Path(tmp.name), None
+    except ContentRefused as exc:
+        Path(tmp.name).unlink(missing_ok=True)
+        return None, exc.response()
     except Exception:
         tmp.close()
         Path(tmp.name).unlink(missing_ok=True)

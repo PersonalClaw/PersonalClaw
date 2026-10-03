@@ -3,7 +3,7 @@
 The transport half of the large-file rethink: ``init`` validates the declared
 file against the size policy up front, ``part`` streams fixed-size chunks to the
 :class:`~personalclaw.uploads.store.UploadStore` (idempotent = resume), ``status``
-reports what landed, and ``complete`` assembles + runs a bounded content scan then
+reports what landed, and ``complete`` assembles + runs the content scan then
 hands the finished file to the SAME per-target finalize the single-POST paths use
 (chat attachment / knowledge ingest / workspace) — no duplicate destination logic.
 ``DELETE`` drops an upload the client cancelled: its parts go at once, and a complete
@@ -31,7 +31,7 @@ from pathlib import Path
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
-from personalclaw.uploads.content_scan import scan_upload
+from personalclaw.uploads.content_scan import ContentRefused, scan_upload
 from personalclaw.uploads.policy import limits_table, single_post_threshold
 from personalclaw.uploads.store import UploadError, UploadSession, UploadStore
 
@@ -245,10 +245,12 @@ async def _complete(request: web.Request, store: UploadStore, sid: str) -> web.R
         return web.json_response({"error": "failed to assemble upload"}, status=500)
 
     try:
-        # Bounded content scan (never the whole file). Media is skipped — only text-ish
-        # categories get the head/tail injection/exfil scan.
-        await scan_upload(final_path, sess.category)
+        # The content scan every stored upload gets, the single-request routes' too: a file of
+        # up to 512 KB is read whole, a larger one as its first and last 256 KB. Media is not.
+        await scan_upload(final_path, sess.category, surface=sess.target)
         result = await _finalize_target(request, sess, final_path)
+    except ContentRefused as exc:
+        return exc.response()
     except UploadError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
     except Exception:

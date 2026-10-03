@@ -1351,7 +1351,7 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     probe_parser = _add_hidden_parser(sub, "availability-probe")
     probe_parser.add_argument("names", nargs="*")
 
-    # content-scan (spawned by the gateway to scan a completed upload's window out of process,
+    # content-scan (spawned by the gateway to scan a stored upload's window out of process,
     # where the scan's parse holds no lock the gateway needs — uploads/content_scan.py)
     _add_hidden_parser(sub, "content-scan")
 

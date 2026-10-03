@@ -484,6 +484,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "upload_completing": (
         "This upload has all arrived and is being completed, so it can no longer be cancelled."
     ),
+    # ── the content scan every stored upload gets (uploads/content_scan.py) ──
+    # Every route that stores an uploaded file answers these two, the same way: 422
+    # `upload_content_refused` when the scan refused the content, 503 `upload_content_unchecked`
+    # when it could not check it (the window could not be read, or the scan gave no answer).
+    "upload_content_refused": (
+        "The upload's content failed the safety scan, so nothing was made from it."
+    ),
+    "upload_content_unchecked": (
+        "The upload's content could not be checked, so nothing was made from it."
+    ),
     # ── inbound MCP surface (inbound/mcp_http.py) ──
     #
     # Same reasoning as the bridge above, and the same conclusion: ADMISSION reuses the
