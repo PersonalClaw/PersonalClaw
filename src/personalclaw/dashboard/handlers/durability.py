@@ -155,6 +155,11 @@ async def api_durability_archive(request: web.Request) -> web.Response:
     ``domains: null`` rather than zeros — "no counts recorded" and "an empty archive"
     must not render identically.
 
+    The newest snapshot a drill PASSED on keeps that verdict after a later drill fails on a
+    newer one, and ``held`` marks it when only that keeps it (``retention.HELD``).
+    ``last_drill.on_disk`` says whether the file the last drill checked is still here (``null``
+    for a record that names none): a pass on a file that is gone verifies nothing listed.
+
     Replaces ``GET /api/durability/snapshots``: same list, the fields §6 requires.
     """
     from personalclaw.config.loader import AppConfig
@@ -174,11 +179,22 @@ async def api_durability_archive(request: web.Request) -> web.Response:
                 retention.DEFAULT_WEEKLY,
                 retention.DEFAULT_MONTHLY,
             )
-        keep, prune = retention.plan_retention(
-            snapshots, daily=daily, weekly=weekly, monthly=monthly
+        verified = service.last_verified()
+        plan = retention.plan_retention(
+            snapshots, verified=verified["archive"], daily=daily, weekly=weekly, monthly=monthly
         )
-        keep_names = {s.name for s in keep}
+        keep_names = {s.name for s in plan.keep}
         drill = service.last_drill()
+        drill["on_disk"] = (
+            drill["archive"] in {s.name for s in snapshots} if drill["archive"] else None
+        )
+        passed = {"ran": True, "ok": True, **verified}
+
+        def _verdict(name: str) -> dict | None:
+            if drill["archive"] == name:
+                return drill
+            return passed if verified["archive"] == name else None
+
         return {
             "directory": str(directory),
             "archives": [
@@ -188,12 +204,13 @@ async def api_durability_archive(request: web.Request) -> web.Response:
                     "taken_at": s.taken_at.isoformat(),
                     "size": s.size,
                     "retained": s.name in keep_names,
+                    "held": plan.held is not None and plan.held.name == s.name,
                     "domains": arch.domain_counts(s.path),
-                    "validate": drill if drill.get("archive") == s.name else None,
+                    "validate": _verdict(s.name),
                 }
                 for s in snapshots
             ],
-            "would_prune": [s.name for s in prune],
+            "would_prune": [s.name for s in plan.prune],
             "tiers": {"daily": daily, "weekly": weekly, "monthly": monthly},
             "last_drill": drill,
         }

@@ -106,7 +106,7 @@ def test_retention_removes_the_sidecar_with_its_archive(tmp_path):
         arch.write_sidecar(p, {"version": 3, "domains": {}})
         made.append(p)
 
-    plan = retention.apply_retention(directory, daily=2, weekly=1, monthly=1)
+    plan = retention.apply_retention(directory, verified=None, daily=2, weekly=1, monthly=1)
     assert plan["pruned"], "the fixture must actually prune something"
     for p in made:
         # A sidecar exists exactly when its archive does.

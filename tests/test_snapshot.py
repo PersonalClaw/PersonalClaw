@@ -215,8 +215,8 @@ class TestSnapshot:
         src, _, _, tmp_path = env
         out2 = tmp_path / "out2"
         out2.mkdir()
-        # Create 3 fake old snapshots
-        for i in range(3):
+        # Create 3 fake old snapshots, named for real days: a name that is no time is never pruned
+        for i in range(1, 4):
             (out2 / f"personalclaw-snapshot-2026010{i}T000000Z.tar.gz").write_text("fake")
         monkeypatch.setenv("PERSONALCLAW_HOME", str(src))
         snapshot_main([str(out2), "--keep", "2"])

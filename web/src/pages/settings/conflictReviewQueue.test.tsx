@@ -88,7 +88,7 @@ function stubPanel(conflicts: () => Promise<DurabilityConflicts>) {
   vi.spyOn(api, 'durabilityStatus').mockResolvedValue({
     enabled: true,
     export: { last_run: 0, due_in_secs: 0, due: false },
-    snapshot: { last_run: 0, due_in_secs: 0, due: false },
+    snapshot: { last_run: 0, due_in_secs: 0, due: false, detail: '' },
     drill: { last_run: 0, due_in_secs: 0, due: false },
     sync: {
       last_run: 0, due_in_secs: 0, due: false, enabled: true, transport: 'git-sync', encrypt: 'auto', encrypted: false,
@@ -100,7 +100,7 @@ function stubPanel(conflicts: () => Promise<DurabilityConflicts>) {
   vi.spyOn(api, 'durabilityArchive').mockResolvedValue({
     directory: '/tmp/snapshots', archives: [], would_prune: [],
     tiers: { daily: 14, weekly: 8, monthly: 12 },
-    last_drill: { ran: false, ok: null, at: 0, detail: '', archive: '' },
+    last_drill: { ran: false, ok: null, at: 0, detail: '', archive: '', on_disk: null },
   })
   vi.spyOn(api, 'settingsProviders').mockResolvedValue([
     { name: 'git-sync', displayName: 'Git sync', enabled: true, provider: { type: 'sync', hasConfigSchema: true } },

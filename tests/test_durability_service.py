@@ -64,7 +64,7 @@ class TestRetention:
         (tmp_path / "personalclaw-snapshot-hand-copied.tar.gz").write_bytes(b"x")
         (tmp_path / "something-else.tar.gz").write_bytes(b"x")
         assert retention.list_snapshots(tmp_path) == []
-        result = retention.apply_retention(tmp_path)
+        result = retention.apply_retention(tmp_path, verified=None)
         assert result["pruned"] == []
         assert len(list(tmp_path.glob("*.tar.gz"))) == 2
 
@@ -72,7 +72,8 @@ class TestRetention:
         base = datetime(2026, 7, 28, 1, 30, tzinfo=timezone.utc)
         for i in range(400):
             _snap(tmp_path, base - timedelta(days=i))
-        keep, prune = retention.plan_retention(retention.list_snapshots(tmp_path))
+        plan = retention.plan_retention(retention.list_snapshots(tmp_path), verified=None)
+        keep, prune = plan.keep, plan.prune
         assert len(keep) < 40, "a year should cost tens of files, not hundreds"
         assert len(prune) > 350
         # And the spread genuinely spans the year rather than the last fortnight.
@@ -83,7 +84,7 @@ class TestRetention:
         base = datetime(2026, 7, 28, 1, 30, tzinfo=timezone.utc)
         for i in range(50):
             _snap(tmp_path, base - timedelta(days=i))
-        keep, _ = retention.plan_retention(retention.list_snapshots(tmp_path))
+        keep = retention.plan_retention(retention.list_snapshots(tmp_path), verified=None).keep
         assert keep[0].taken_at == base
 
     def test_tiers_are_unions_not_slices(self, tmp_path):
@@ -93,9 +94,10 @@ class TestRetention:
         _snap(tmp_path, base)
         old = base - timedelta(days=200)
         _snap(tmp_path, old)
-        keep, prune = retention.plan_retention(
-            retention.list_snapshots(tmp_path), daily=1, weekly=0, monthly=12
+        plan = retention.plan_retention(
+            retention.list_snapshots(tmp_path), verified=None, daily=1, weekly=0, monthly=12
         )
+        keep, prune = plan.keep, plan.prune
         assert old in [s.taken_at for s in keep]
         assert prune == []
 
@@ -103,17 +105,19 @@ class TestRetention:
         day = datetime(2026, 7, 28, tzinfo=timezone.utc)
         _snap(tmp_path, day.replace(hour=1))
         newest = _snap(tmp_path, day.replace(hour=23))
-        keep, prune = retention.plan_retention(
-            retention.list_snapshots(tmp_path), daily=1, weekly=0, monthly=0
+        plan = retention.plan_retention(
+            retention.list_snapshots(tmp_path), verified=None, daily=1, weekly=0, monthly=0
         )
+        keep, prune = plan.keep, plan.prune
         assert [s.path for s in keep] == [newest]
         assert len(prune) == 1
 
     def test_zero_budgets_prune_everything(self, tmp_path):
         _snap(tmp_path, datetime(2026, 7, 28, tzinfo=timezone.utc))
-        keep, prune = retention.plan_retention(
-            retention.list_snapshots(tmp_path), daily=0, weekly=0, monthly=0
+        plan = retention.plan_retention(
+            retention.list_snapshots(tmp_path), verified=None, daily=0, weekly=0, monthly=0
         )
+        keep, prune = plan.keep, plan.prune
         assert keep == [] and len(prune) == 1
 
     def test_dry_run_deletes_nothing(self, tmp_path):
@@ -121,7 +125,9 @@ class TestRetention:
         for i in range(30):
             _snap(tmp_path, base - timedelta(days=i))
         before = len(list(tmp_path.glob("*.tar.gz")))
-        result = retention.apply_retention(tmp_path, daily=1, weekly=0, monthly=0, dry_run=True)
+        result = retention.apply_retention(
+            tmp_path, verified=None, daily=1, weekly=0, monthly=0, dry_run=True
+        )
         assert result["dry_run"] is True
         assert result["pruned"]
         assert len(list(tmp_path.glob("*.tar.gz"))) == before
@@ -130,18 +136,18 @@ class TestRetention:
         base = datetime(2026, 7, 28, tzinfo=timezone.utc)
         for i in range(40):
             _snap(tmp_path, base - timedelta(days=i))
-        retention.apply_retention(tmp_path)
-        assert retention.apply_retention(tmp_path)["pruned"] == []
+        retention.apply_retention(tmp_path, verified=None)
+        assert retention.apply_retention(tmp_path, verified=None)["pruned"] == []
 
     def test_empty_directory(self, tmp_path):
-        result = retention.apply_retention(tmp_path / "nope")
+        result = retention.apply_retention(tmp_path / "nope", verified=None)
         assert result["kept"] == [] and result["pruned"] == []
 
     def test_bytes_freed_is_reported(self, tmp_path):
         base = datetime(2026, 7, 28, tzinfo=timezone.utc)
         for i in range(5):
             _snap(tmp_path, base - timedelta(days=i), size=1000)
-        result = retention.apply_retention(tmp_path, daily=1, weekly=0, monthly=0)
+        result = retention.apply_retention(tmp_path, verified=None, daily=1, weekly=0, monthly=0)
         assert result["bytes_freed"] == 4000
 
 

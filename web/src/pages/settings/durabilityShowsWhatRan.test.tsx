@@ -41,7 +41,7 @@ function status(over: Partial<DurabilityStatus> = {}): DurabilityStatus {
   return {
     enabled: true,
     export: { last_run: 0, due_in_secs: 0, due: false },
-    snapshot: { last_run: 0, due_in_secs: 0, due: false },
+    snapshot: { last_run: 0, due_in_secs: 0, due: false, detail: '' },
     drill: { last_run: 0, due_in_secs: 0, due: false },
     sync: sync(),
     ...over,
@@ -49,14 +49,14 @@ function status(over: Partial<DurabilityStatus> = {}): DurabilityStatus {
 }
 
 function archive(name: string): DurabilityArchive {
-  return { id: name, name, taken_at: '2026-09-30T07:00:00Z', size: 2048, retained: true, domains: null, validate: null }
+  return { id: name, name, taken_at: '2026-09-30T07:00:00Z', size: 2048, retained: true, held: false, domains: null, validate: null }
 }
 
 function archives(list: DurabilityArchive[]): DurabilityArchives {
   return {
     directory: '/tmp/snapshots', archives: list, would_prune: [],
     tiers: { daily: 14, weekly: 8, monthly: 12 },
-    last_drill: { ran: false, ok: null, at: 0, detail: '', archive: '' },
+    last_drill: { ran: false, ok: null, at: 0, detail: '', archive: '', on_disk: null },
   }
 }
 
@@ -130,6 +130,82 @@ describe('Run now shows the run it just did', () => {
     fireEvent.click(screen.getByRole('button', { name: /^snapshot$/i }))
 
     expect(await screen.findByText(fresh)).toBeTruthy()
+  })
+})
+
+// A snapshot taken from Run now removed the day's earlier snapshot, the only one a restore drill had
+// passed on. The page said nothing about it, and kept showing "Last restore drill passed" with the
+// deleted file's name above an archive that no longer held it.
+describe('a snapshot says what it removed, and the drill line follows the file it checked', () => {
+  const older = 'personalclaw-snapshot-20261002T072555Z.tar.gz'
+  const newer = 'personalclaw-snapshot-20261002T232610Z.tar.gz'
+  const literally = (text: string) => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+
+  it('keeps the run’s report under the snapshot’s last run, as well as in the toast', async () => {
+    const report = `Created ${newer} (558.0 MB). Removed ${older}, replaced by a newer snapshot from the same day.`
+    const before = status({ snapshot: { last_run: NOW() - 16 * 3600, due_in_secs: 0, due: false, detail: '' } })
+    const after = status({ snapshot: { last_run: NOW(), due_in_secs: 86400, due: false, detail: report } })
+    stubPanel([before, after])
+    vi.spyOn(api, 'durabilityRun').mockResolvedValue({ job: 'snapshot', ok: true, skipped: '', detail: report, duration_secs: 40 })
+    const toasts: string[] = []
+    const onToast = (e: Event) => toasts.push((e as CustomEvent<{ message: string }>).detail.message)
+    window.addEventListener('ne:toast', onToast)
+    try {
+      render(<DurabilityPanel />)
+      await waitFor(() => expect(jobLine('Nightly snapshot')).toContain('16 hours ago'))
+      expect(screen.queryByText(literally(older))).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: /^snapshot$/i }))
+
+      // The toast is gone in seconds; the line under the job's last run stays.
+      expect(await screen.findByText(report)).toBeTruthy()
+      expect(toasts).toContain(report)
+    } finally {
+      window.removeEventListener('ne:toast', onToast)
+    }
+  })
+
+  it('says the file a drill passed on is gone, instead of a pass above an archive without it', async () => {
+    const snaps = archives([archive(newer)])
+    snaps.last_drill = {
+      ran: true, ok: true, at: NOW() - 3600, detail: `${older}: 6 database(s) verified`, archive: older, on_disk: false,
+    }
+    stubPanel([status()], [snaps])
+
+    render(<DurabilityPanel />)
+
+    expect(await screen.findByText(literally(`The last restore drill passed on ${older}, which is no longer on disk.`))).toBeTruthy()
+    expect(screen.getByText(/None of the snapshots below has been verified/)).toBeTruthy()
+    expect(screen.queryByText(/Last restore drill passed/)).toBeNull()
+  })
+
+  it('keeps the drill line as it was while the file it checked is listed', async () => {
+    const snaps = archives([archive(newer)])
+    snaps.last_drill = {
+      ran: true, ok: true, at: NOW() - 3600, detail: `${newer}: 17 database(s) verified`, archive: newer, on_disk: true,
+    }
+    stubPanel([status()], [snaps])
+
+    render(<DurabilityPanel />)
+
+    expect(await screen.findByText(/Last restore drill passed/)).toBeTruthy()
+    expect(screen.queryByText(/no longer on disk/)).toBeNull()
+  })
+
+  it('says why a held snapshot is still listed, beside its verdict', async () => {
+    const held: DurabilityArchive = {
+      ...archive(older), held: true,
+      validate: { ran: true, ok: true, at: NOW() - 3600, detail: `${older}: 6 database(s) verified`, archive: older },
+    }
+    stubPanel([status()], [archives([archive(newer), held])])
+
+    render(<DurabilityPanel />)
+
+    const row = (await screen.findByText(older)).closest('li') as HTMLElement
+    expect(within(row).getByText(/Kept beyond the settings above: it is the newest snapshot a restore drill verified/)).toBeTruthy()
+    expect(within(row).getByText('verified')).toBeTruthy()
+    const other = screen.getByText(newer).closest('li') as HTMLElement
+    expect(within(other).queryByText(/Kept beyond the settings above/)).toBeNull()
   })
 })
 

@@ -30,6 +30,10 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from personalclaw.durability.retention import Snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -104,9 +108,17 @@ def load_state() -> dict:
     import json
 
     try:
-        return json.loads(_state_path().read_text(encoding="utf-8"))
+        state = json.loads(_state_path().read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError, TypeError):
         return {}
+    if not isinstance(state, dict):
+        return {}
+    # The backfill for a pass recorded before passes had a record of their own: when the last
+    # drill passed, it IS the newest verified snapshot. Idempotent, and the next save writes it,
+    # so retention holds that snapshot from the first run after an update, not the next drill.
+    if "last_verified_archive" not in state and state.get("last_drill_ok") is True:
+        state.update(_verified_fields(state.get("last_drill_archive"), state))
+    return state
 
 
 def save_state(state: dict) -> None:
@@ -138,6 +150,10 @@ def job_stamp_fields(job: str, result: JobResult, *, at: float) -> dict:
       every tick and bury the user in notifications. The warning is already delivered,
       so the VERDICT is stamped with it (§6's "validate status") and the archive browser
       can show *whether* the last drill passed, not just when it ran.
+    * a drill that PASSES is also recorded as the newest verified snapshot, on its own, so a later
+      failing drill cannot erase it: retention holds that snapshot until a newer one passes.
+    * `snapshot` keeps its report too, which names what the run removed and kept and why, so a
+      nightly pass is as visible on the Backups page as one run from Run now.
 
     A skip always returns `{}` — "another run already holds the lock" is not a run, and
     stamping it would let a collision satisfy the schedule.
@@ -146,17 +162,32 @@ def job_stamp_fields(job: str, result: JobResult, *, at: float) -> dict:
         return {}
     if job == "drill":
         extra = result.extra or {}
-        return {
+        fields = {
             "last_drill": at,
             "last_drill_ok": bool(result.ok),
             "last_drill_detail": result.detail,
             "last_drill_archive": str(extra.get("snapshot", "") or ""),
             "last_drill_databases": int(extra.get("databases_checked", 0) or 0),
         }
+        if result.ok and fields["last_drill_archive"]:
+            fields.update(_verified_fields(fields["last_drill_archive"], fields))
+        return fields
     key = _STAMP_KEYS.get(job, "")
     if not key or not result.ok:
         return {}
+    if job == "snapshot":
+        return {key: at, "last_snapshot_detail": result.detail}
     return {key: at}
+
+
+def _verified_fields(archive: object, drill: dict) -> dict:
+    """The newest-verified record, from the `last_drill_*` fields of the drill that passed."""
+    return {
+        "last_verified_archive": str(archive or ""),
+        "last_verified_at": float(drill.get("last_drill", 0) or 0),
+        "last_verified_detail": str(drill.get("last_drill_detail", "") or ""),
+        "last_verified_databases": int(drill.get("last_drill_databases", 0) or 0),
+    }
 
 
 def persist_job_result(job: str, result: JobResult, *, at: float | None = None) -> None:
@@ -192,17 +223,39 @@ def last_drill() -> dict:
     }
 
 
+def last_verified() -> dict:
+    """The newest snapshot a restore drill PASSED on, which retention holds; ``archive`` is
+    ``""`` when no drill has passed.
+
+    Apart from :func:`last_drill` because a failing drill replaces that one: after a pass on one
+    snapshot and a failure on the next, the first is the only snapshot known to restore.
+    """
+    state = load_state()
+    return {
+        "archive": str(state.get("last_verified_archive", "") or ""),
+        "at": float(state.get("last_verified_at", 0) or 0),
+        "detail": str(state.get("last_verified_detail", "") or ""),
+        "databases_checked": int(state.get("last_verified_databases", 0) or 0),
+    }
+
+
 def _due(state: dict, key: str, interval: float, *, now: float | None = None) -> bool:
     stamp = float(state.get(key, 0) or 0)
     return (now or time.time()) - stamp >= interval
 
 
-def _audit(event: str, resources: str, *, outcome: str = "allowed") -> None:
+def _audit(
+    event: str, resources: str, *, outcome: str = "allowed", metadata: dict | None = None
+) -> None:
     try:
         from personalclaw.sel import sel
 
         sel().log_api_access(
-            caller="durability:service", operation=event, outcome=outcome, resources=resources[:400]
+            caller="durability:service",
+            operation=event,
+            outcome=outcome,
+            resources=resources[:400],
+            metadata=metadata,
         )
     except Exception:  # noqa: BLE001
         logger.debug("durability: audit write failed", exc_info=True)
@@ -355,6 +408,7 @@ def run_nightly_snapshot(
             from personalclaw.snapshot import _default_snapshot_dir, snapshot_main
 
             out_dir = _default_snapshot_dir()
+            before = {s.name for s in retention.list_snapshots(Path(out_dir))}
             # keep is very high here because tiered retention below owns pruning;
             # letting snapshot_main prune would fight the tier plan.
             code = snapshot_main(
@@ -377,26 +431,75 @@ def run_nightly_snapshot(
                 detail=f"snapshot exited {code}",
                 duration_secs=time.monotonic() - started,
             )
+        taken = next(
+            (s for s in retention.list_snapshots(Path(out_dir)) if s.name not in before), None
+        )
         cfg = _cfg()
         # `_cfg()` already falls back to `DurabilityConfig()` when config is unreadable,
         # and `load()` clamps each tier to a concrete int, so the config value IS the
         # effective budget — including 0. No second default layer here.
         plan = retention.apply_retention(
             Path(out_dir),
+            verified=last_verified()["archive"],
             daily=cfg.keep_daily if daily is None else daily,
             weekly=cfg.keep_weekly if weekly is None else weekly,
             monthly=cfg.keep_monthly if monthly is None else monthly,
         )
+    plan["taken"] = taken.name if taken else ""
+    detail = _snapshot_report(taken, plan)
+    # The run record: the sentence, and every name it removed with why, which a long list would
+    # cut off the end of the sentence's 400 characters.
     _audit(
         "durability_snapshot",
-        f"kept={len(plan['kept'])} pruned={len(plan['pruned'])}",
+        detail,
+        metadata={k: plan[k] for k in ("taken", "held", "reasons", "bytes_freed", "tiers")},
     )
     return JobResult(
         "nightly_snapshot",
-        detail=f"kept {len(plan['kept'])}, pruned {len(plan['pruned'])}",
+        detail=detail,
         duration_secs=time.monotonic() - started,
         extra=plan,
     )
+
+
+#: The names a report spells out for one reason before it counts the rest.
+_NAMED = 3
+
+
+def _names(names: list[str]) -> str:
+    """``A``, ``A and B``, ``A, B and C``, ``A, B, C and 4 more``."""
+    if len(names) > _NAMED:
+        return ", ".join(names[:_NAMED]) + f" and {len(names) - _NAMED} more"
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _snapshot_report(taken: Snapshot | None, plan: dict) -> str:
+    """What one snapshot run did, in the words Run now shows and the Backups page keeps.
+
+    It names the archive it made, each snapshot retention removed with why, and the verified one
+    it held (:data:`retention.HELD`). "kept 1, pruned 1" read as nothing at all to a person
+    whose only verified snapshot it had just deleted.
+    """
+    from personalclaw.durability import retention
+    from personalclaw.durability.footprint import human_bytes
+
+    parts = [
+        f"Created {taken.name} ({human_bytes(taken.size)})." if taken else "Created a snapshot."
+    ]
+    pruned: list[str] = plan["pruned"]
+    by_reason: dict[str, list[str]] = {}
+    for name in pruned:
+        by_reason.setdefault(plan["reasons"][name], []).append(name)
+    clauses = [f"{_names(names)}, {reason}" for reason, names in by_reason.items()]
+    if not pruned:
+        parts.append("No snapshot was removed.")
+    elif len(pruned) == 1:
+        parts.append(f"Removed {clauses[0]}.")
+    else:
+        parts.append(f"Removed {len(pruned)} snapshots: {'; '.join(clauses)}.")
+    if plan["held"]:
+        parts.append(f"Kept {plan['held']} as well: {retention.HELD}.")
+    return " ".join(parts)
 
 
 def run_restore_drill(*, notifier=None) -> JobResult:
@@ -1052,7 +1155,12 @@ def status() -> dict:
     return {
         "enabled": enabled(),
         "export": _entry("last_export", HOURLY_SECS),
-        "snapshot": _entry("last_snapshot", NIGHTLY_SECS),
+        # What the last snapshot removed and kept, beside when it ran: a nightly pass has no
+        # Run now answer, so this line is the only place a person sees what it deleted.
+        "snapshot": {
+            **_entry("last_snapshot", NIGHTLY_SECS),
+            "detail": str(state.get("last_snapshot_detail", "") or ""),
+        },
         "drill": _entry("last_drill", DRILL_SECS),
         "sync": {
             # `due` runs on the schedule stamp; `last_run` is the last run that HAPPENED, so a

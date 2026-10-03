@@ -871,15 +871,18 @@ def snapshot_main(
 
     _audit("snapshot_created", f"{outfile} ({human})")
 
-    # Prune
-    snaps = sorted(
-        out.glob("personalclaw-snapshot-*.tar.gz"), key=lambda x: x.stat().st_mtime, reverse=True
+    # Prune to the N newest by the time in each name, through retention's own plan: the newest
+    # snapshot a restore drill verified stays too while every newer one is unverified.
+    from personalclaw.durability import retention
+    from personalclaw.durability.service import last_verified
+
+    plan = retention.plan_newest(
+        retention.list_snapshots(out), keep=args.keep, verified=last_verified()["archive"]
     )
-    for old in snaps[args.keep :]:
-        old.unlink()
-        # Its manifest sidecar goes too — see `retention.apply_retention`.
-        old.with_name(old.name + ".manifest.json").unlink(missing_ok=True)
-        print(f"🗑  Pruned: {old.name}")
+    for name in retention.remove(plan.prune)[0]:
+        print(f"🗑  Pruned: {name} ({plan.reasons[name]})")
+    if plan.held is not None:
+        print(f"🛡  Kept {plan.held.name} as well: {retention.HELD}.")
 
     remaining = len(list(out.glob("personalclaw-snapshot-*.tar.gz")))
     print(f"📦 Snapshots in {out}: {remaining} (keep={args.keep})")

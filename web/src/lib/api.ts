@@ -358,6 +358,11 @@ export interface DurabilityJob {
   due_in_secs: number
   due: boolean
 }
+/** The snapshot job also keeps its last run's report: the archive it made, each snapshot it
+ *  removed and why, and the verified one it kept. `''` before any snapshot has run. */
+export interface DurabilitySnapshotJob extends DurabilityJob {
+  detail: string
+}
 /** Why the last sync run failed, in the server's words (the same sentence the Doctor and the
  *  failure note say), what to do about it, and how long it has lasted. */
 export interface DurabilitySyncProblem {
@@ -404,7 +409,7 @@ export interface DurabilitySyncStatus extends DurabilityJob {
 export interface DurabilityStatus {
   enabled: boolean
   export: DurabilityJob
-  snapshot: DurabilityJob
+  snapshot: DurabilitySnapshotJob
   drill: DurabilityJob
   sync: DurabilitySyncStatus
 }
@@ -549,16 +554,24 @@ export interface DurabilityArchive {
   size: number
   /** False = the CURRENT retention tiers would prune this one on the next pass. */
   retained: boolean
+  /** True = the tiers would remove it, and it stays because it is the newest snapshot a restore
+   *  drill verified while every newer one is unverified — until a newer one passes a drill. */
+  held: boolean
   domains: DurabilityDomainCounts | null
-  /** Present only on the archive the last drill actually exercised. */
+  /** Present on the archive the last drill exercised, and on the newest one a drill passed on. */
   validate: DurabilityDrill | null
+}
+/** The last drill, and whether the file it checked is still on disk: `null` when the record
+ *  names no file. A pass on a file that is gone verifies none of the snapshots listed. */
+export interface DurabilityLastDrill extends DurabilityDrill {
+  on_disk: boolean | null
 }
 export interface DurabilityArchives {
   directory: string
   archives: DurabilityArchive[]
   would_prune: string[]
   tiers: { daily: number; weekly: number; monthly: number }
-  last_drill: DurabilityDrill
+  last_drill: DurabilityLastDrill
 }
 export interface DurabilityJobResult {
   job: string

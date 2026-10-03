@@ -618,7 +618,8 @@ function ScheduleSection({ cfg, setCfg, status, onChanged }: {
             </div>
             <div className="flex flex-col gap-1.5">
               <JobLine label="Incremental export" when={status.export.last_run} due={status.export.due} />
-              <JobLine label="Nightly snapshot" when={status.snapshot.last_run} due={status.snapshot.due} />
+              <JobLine label="Nightly snapshot" when={status.snapshot.last_run} due={status.snapshot.due}
+                detail={status.snapshot.detail} />
               <JobLine label="Restore drill" when={status.drill.last_run} due={status.drill.due} />
             </div>
           </div>
@@ -656,7 +657,7 @@ function RetentionSection({ cfg, setCfg, snaps }: {
 
   return (
     <Section title="How long copies are kept"
-      hint="Older snapshots thin out rather than piling up: dailies become weeklies, weeklies become monthlies. 0 disables a tier.">
+      hint="Older snapshots thin out rather than piling up: dailies become weeklies, weeklies become monthlies. 0 disables a tier. When these settings keep newer snapshots that no restore drill has verified, the newest verified one stays too, until a newer one passes a drill: at most one snapshot beyond these settings.">
       <RowGroup>
         <NumberRow label="Daily snapshots" saved={saved}
           hint="How many days of nightly snapshots to keep before thinning to weeklies."
@@ -762,6 +763,13 @@ function ArchiveSection({ snaps, onChanged }: {
                   <span data-type="caption" className="shrink-0 text-on-surface-low">{formatSize(a.size)}</span>
                   {a.validate && <ValidateBadge ok={a.validate.ok} detail={a.validate.detail} />}
                 </div>
+                {a.held && (
+                  <p data-type="caption" className="mt-xs text-on-surface-low">
+                    Kept beyond the settings above: it is the newest snapshot a restore drill
+                    verified, and the newer ones are not verified yet. It stays until a newer one
+                    passes a drill.
+                  </p>
+                )}
                 <DomainCounts counts={a.domains} />
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Button variant="secondary" size="sm" ariaLabel={`Preview restore: ${a.name}`}
@@ -1303,20 +1311,34 @@ function RowVersion({ label, row }: { label: string; row: Record<string, unknown
 }
 
 /** The last drill's verdict. An unrecorded outcome renders as UNKNOWN, never as a pass —
- *  a backup surface that shows green for "we don't know" is the worst possible lie. */
+ *  a backup surface that shows green for "we don't know" is the worst possible lie. It follows
+ *  the file it checked: a pass on a snapshot that is gone verified nothing listed here, and a
+ *  green line above an archive without that file read as if it had. */
 function DrillLine({ drill }: { drill: DurabilityArchives['last_drill'] }) {
   if (!drill.ran) {
     return (
-      <div data-type="caption" className="mb-3 flex items-start gap-2 text-on-surface-low">
+      <div data-type="caption" className="mb-m flex items-start gap-s text-on-surface-low">
         <ShieldQuestion size={13} className="mt-0.5 shrink-0" />
         <span>No restore has been rehearsed yet. Run “Verify a restore” above to check that these snapshots can actually be restored.</span>
+      </div>
+    )
+  }
+  if (drill.on_disk === false) {
+    const verdict = drill.ok === true ? 'passed' : drill.ok === false ? 'failed' : 'ran'
+    return (
+      <div data-type="caption" className="mb-m flex items-start gap-s text-on-surface-low">
+        <ShieldQuestion size={13} className="mt-0.5 shrink-0" />
+        <span className="break-words">
+          The last restore drill {verdict} on {drill.archive}, which is no longer on disk.
+          {drill.ok === true && ' None of the snapshots below has been verified: run “Verify a restore” above to check the newest.'}
+        </span>
       </div>
     )
   }
   const Icon = drill.ok === true ? ShieldCheck : drill.ok === false ? ShieldAlert : ShieldQuestion
   const tone = drill.ok === true ? 'text-success' : drill.ok === false ? 'text-error' : 'text-on-surface-low'
   return (
-    <div data-type="caption" className={`mb-3 flex items-start gap-2 ${tone}`}>
+    <div data-type="caption" className={`mb-m flex items-start gap-s ${tone}`}>
       <Icon size={13} className="mt-0.5 shrink-0" />
       <span>
         {drill.ok === true ? 'Last restore drill passed' : drill.ok === false ? 'Last restore drill FAILED' : 'Last restore drill ran; its result was not recorded'}
@@ -1409,13 +1431,18 @@ function RunButton({ label, icon: Icon, busy, disabled, onClick }: {
   )
 }
 
-function JobLine({ label, when, due }: { label: string; when: number; due: boolean }) {
+/** `detail` is what that run reported. The snapshot's names what it removed and kept: a toast
+ *  is gone in seconds, and a nightly run has none, so this line is where a person sees it. */
+function JobLine({ label, when, due, detail = '' }: { label: string; when: number; due: boolean; detail?: string }) {
   return (
-    <div data-type="body-s" className="flex items-baseline justify-between gap-3">
-      <span className="text-on-surface-var">{label}</span>
-      <span data-type="caption" className="shrink-0 text-on-surface-low">
-        {when ? relativeTime(when) : 'never run'}{due && when ? ' · due' : ''}
-      </span>
+    <div>
+      <div data-type="body-s" className="flex items-baseline justify-between gap-3">
+        <span className="text-on-surface-var">{label}</span>
+        <span data-type="caption" className="shrink-0 text-on-surface-low">
+          {when ? relativeTime(when) : 'never run'}{due && when ? ' · due' : ''}
+        </span>
+      </div>
+      {detail && when > 0 && <p data-type="caption" className="mt-xs break-words text-on-surface-low">{detail}</p>}
     </div>
   )
 }

@@ -180,6 +180,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A new snapshot no longer replaces the only verified one: the newest snapshot a restore drill passed on stays until a newer one passes a drill, a snapshot run names each snapshot it removed and why (Settings → Backups, its audit row and `personalclaw snapshot`), and the drill line says when the file it checked is gone.**
 - **Opening System status on a busy machine no longer blanks the app: a reading the gateway could not take shows “—”, and a header control, popover section or Home band that fails to render shows “Couldn't show …” with Retry in its place while the rest of the app keeps working.**
 - **System status reads the machine once however many pages ask at the same moment, and a CPU reading that timed out shows “—” instead of 0%.**
 - **A Code loop task whose finished work conflicts with your branch keeps that work on its own branch and asks you: redo it on top of your branch, resolve the conflict yourself and Resume, or drop it. It was reset and run again, twice at most, with nobody asked, work you had approved included.**
