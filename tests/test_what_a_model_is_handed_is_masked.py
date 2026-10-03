@@ -555,8 +555,9 @@ def test_a_webhook_turn_reads_its_saved_context_back_masked(monkeypatch):
 
 def test_an_attached_files_text_is_masked(monkeypatch):
     from personalclaw.dashboard import attachment_extract, chat_runner
+    from personalclaw.knowledge.extract import Extracted
 
-    extracted = types.SimpleNamespace(text=f"DB_URL=postgres://app:{PASSWORD}@db/app\nk={KEY}")
+    extracted = Extracted(f"DB_URL=postgres://app:{PASSWORD}@db/app\nk={KEY}", True)
     extractor = types.SimpleNamespace(get=AsyncMock(return_value=extracted))
     monkeypatch.setattr(attachment_extract, "get_extractor", lambda: extractor)
     block = asyncio.run(chat_runner._attachment_text_blocks(["/uploads/app.env"]))

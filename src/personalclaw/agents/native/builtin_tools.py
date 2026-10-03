@@ -38,7 +38,7 @@ from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_defini
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
 from personalclaw.agents.native.smart_case import LineQuery, glob_case_sensitive
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions, task_write_fields
-from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text
+from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text, text_for_model
 from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal
 from personalclaw.file_scope import refusal as scope_refusal
 from personalclaw.file_scope import store_named_in
@@ -1084,11 +1084,10 @@ class NativeBuiltinToolProvider(ToolProvider):
         if isinstance(data, tuple) and data[0] is _DOCUMENT:
             # Not recorded as an observation of the file: what was read is its text, and an
             # edit or overwrite of the document itself stays refused until its bytes are seen.
-            if not data[1]:
-                return ToolResult(success=False, error=f"no text could be read from {a['path']}")
-            return _ok_capped(
-                f"[the text of {path.name}]\n{data[1]}", session_key=self._session_key
-            )
+            said, refused = await text_for_model(data[1], shown=str(a["path"]), name=path.name)
+            if refused:
+                return ToolResult(success=False, error=refused)
+            return _ok_capped(said, session_key=self._session_key)
         # (decoded text, digest of the FULL bytes, whether the byte cap left it whole) —
         # the sentinel-vs-tuple return keeps `_read`'s signature `object`, so name the
         # shape here rather than leaving it inferred.

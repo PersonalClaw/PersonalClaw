@@ -73,25 +73,44 @@ package, and names what is still on it.
 Every route that stores an uploaded file the agent or the library will later read hands it to
 `uploads.content_scan.scan_upload` before anything is made from it, whether it came in one request
 or in parts: a chat attachment, a file uploaded to a folder, a Knowledge file, a file dropped into
-a workflow run, a binary artifact's new bytes, a project archive and a backup import.
+a workflow run, a binary artifact's new bytes, a pinned screen frame, a project archive and a
+backup import.
 
-The scan reads a text-like file (a document, an archive, or a file of no known kind) with both of
-the scanner's surfaces, the destructive-script rules and the prose-injection rules, as two
+The scan reads an upload by its bytes, whatever its name or its declared type says it is, with
+both of the scanner's surfaces, the destructive-script rules and the prose-injection rules, as two
 windows at most: its first 256 KB and its last. A file of up to 512 KB is read whole, so no byte
 of it goes unread: its last window is the rest of it, read on from the first. A larger file gets
 the large-file policy, and what lies between its two windows is not read. A window that holds a
 NUL byte is binary and is not read (random runs of binary bytes read as false alarms), while the
-file's other window still is. So the scan does not check text inside a binary window, such as a
-file stored uncompressed in an archive or text beside a stray NUL byte, even where a reader still
-finds it; an archive is scanned as the file it is. Media is not scanned.
+file's other window still is. So an ordinary picture, recording, video or archive, whose bytes are
+binary, is never read, and an SVG drawing, which is text, is read like any text file. An archive is
+scanned as the file it is.
 
-Refused content is answered 422 `upload_content_refused`, and nothing is made from it. A scan
-that did not run is never read as a pass: a window that cannot be read, a child that cannot
-start, one silent past 60 s, and one that ends without an answer (as it does when the scanner
-raises on the content) are answered 503 `upload_content_unchecked`. Each refusal is a row in the
-security event log (`upload_scan`, naming the route). `tests/test_stored_upload_scan_census.py`
-reads the package for every route that takes a file's bytes from a request, and fails on one that
-neither scans them nor says why not.
+What a reader makes of an upload is scanned as well (`scan_text`), because the bytes do not show
+everything a model is handed: the text beside a stray NUL byte sits in a window the byte scan
+skips, and a PDF's or an Office document's text sits in compressed parts of the file. The text the
+document reader makes of an upload is read by the same rules before a model is handed it or it is
+kept for one, except that no window of it is skipped for a NUL byte: a chat or an Inbox
+attachment's text when it is extracted, a Knowledge document's when it is ingested (refused, the
+item keeps nothing of it and its status says why), a code file's when it is uploaded to Knowledge,
+and a document's that the agent opens with `read_file`. What a model writes of a picture, a
+recording or a scanned page (OCR, a description, a transcript) is not scanned. A chat turn hands
+the model no more of a long text than the scan read of it. The readers agree on what text is: a
+file whose first 8 KB hold a NUL byte is binary to every one of them (the Files view's own test,
+`file_view.is_binary`), and any other is read as UTF-8 with a byte it cannot read marked, never
+guessed at, so a zip or a program is not read as text. A file that opens with a UTF-16 or UTF-32
+byte-order mark is read in the encoding the mark names. That text reaches the model fenced as data
+(`security.fence_untrusted`), as a fetched page does: an attachment's text in a chat turn, a
+referenced Knowledge item, and a document read with `read_file`.
+
+Refused content is answered 422 `upload_content_refused`, and nothing is made from it. A scan that
+did not run is never read as a pass: a window that cannot be read, a child that cannot start, one
+silent past 60 s, and one that ends without an answer (as it does when the scanner raises on the
+content) are answered 503 `upload_content_unchecked`; text a reader made that the scan refuses or
+could not check is withheld in the same way. Each refusal is a row in the security event log
+(`upload_scan`, naming the route, or where the text was going).
+`tests/test_stored_upload_scan_census.py` reads the package for every route that takes a file's
+bytes from a request, and fails on one that neither scans them nor says why not.
 
 ### Ingestion pipeline (node graphs)
 

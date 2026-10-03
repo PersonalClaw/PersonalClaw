@@ -5942,7 +5942,9 @@ export interface AttachmentExtract {
   /** `text` was read from the file's content, rather than being only that descriptor. */
   read: boolean
   /** Why nothing was read, when that is known: `'no_image_model'` when the file needed an image
-   *  model and none is set up; `''` otherwise. */
+   *  model and none is set up; `'refused'` when the text a reader made of it failed the content
+   *  safety scan, and `'unchecked'` when the scan could not check it (the agent is not given the
+   *  text either way); `''` otherwise. */
   unread: string
 }
 /** `GET /api/chat/image-input` — how an attached image reaches the model on a chat's next turn. */

@@ -478,10 +478,17 @@ def _hash_file(path) -> str:
         return ""
 
 
-def _take_gist(tmp_path: str) -> tuple[str, str]:
-    """Read an uploaded source file's code and its content hash, and remove the upload."""
+def _take_gist(tmp_path: str) -> tuple[str | None, str]:
+    """Read an uploaded source file's code and its content hash, and remove the upload. The code
+    is ``None`` when the file is not text (``knowledge.readers.file_text``): a file named as code
+    whose bytes are binary is not code, and is not decoded into text."""
+    from personalclaw.knowledge.readers import NotText, file_text
+
+    code: str | None
     try:
-        code = Path(tmp_path).read_text(encoding="utf-8", errors="replace")
+        code = file_text(tmp_path)
+    except NotText:
+        code = None
     except OSError:
         code = ""
     content_hash = _hash_file(tmp_path)
@@ -531,7 +538,15 @@ async def _store_file_item(
     # one logical doc). Dedup on the content hash, same as binary files.
     lang = code_language(filename)
     if item_type == "gist" and lang:
+        from personalclaw.uploads.content_scan import scan_text
+        from personalclaw.uploads.store import UploadError
+
         code, content_hash = await asyncio.to_thread(_take_gist, tmp_path)
+        if code is None:
+            raise UploadError(f"{filename} is not a text file, so it cannot be kept as code", 415)
+        # Its text is the item's content, read here, so it is scanned here: the scan of the
+        # file's bytes skips a window that holds a stray NUL byte. Refused, it raises.
+        await scan_text(code, surface="knowledge")
         if content_hash:
             existing = store.find_active_by_file_hash(content_hash)
             if existing:
@@ -1820,6 +1835,7 @@ async def ingest_file(request: web.Request) -> web.Response:
     from personalclaw.uploads import check_upload
     from personalclaw.uploads.content_scan import ContentRefused, scan_upload
     from personalclaw.uploads.spool import Spool
+    from personalclaw.uploads.store import UploadError
 
     policy = check_upload(filename, upload_mime)
     _limit = policy.limit
@@ -1859,13 +1875,17 @@ async def ingest_file(request: web.Request) -> web.Response:
         if classify(filename, upload_mime) is None:
             Path(tmp.name).unlink(missing_ok=True)
             return web.json_response({"error": f"unsupported file type: {filename}"}, status=415)
-        # Before anything is made from it: the content scan every stored upload gets.
+        # Before anything is made from it: the content scan every stored upload gets, and for a
+        # code file, whose text is read as it is stored, the scan of that text.
         try:
             await scan_upload(Path(tmp.name), policy.category, surface="knowledge")
+            item, is_new = await _store_file_item(store, tmp.name, filename, mime=upload_mime)
         except ContentRefused as exc:
             Path(tmp.name).unlink(missing_ok=True)
             return exc.response()
-        item, is_new = await _store_file_item(store, tmp.name, filename, mime=upload_mime)
+        except UploadError as exc:  # a file named as code whose bytes are not text
+            Path(tmp.name).unlink(missing_ok=True)
+            return web.json_response({"error": exc.message}, status=exc.status)
         Path(tmp.name).unlink(missing_ok=True)
         if item is None:
             return web.json_response({"error": "failed to store item"}, status=500)

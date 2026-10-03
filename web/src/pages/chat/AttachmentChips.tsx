@@ -155,6 +155,14 @@ export function TurnAttachments({ paths, delivery, onOpenFile }: { paths: string
   )
 }
 
+/** What the preview says of a file whose text the agent was not given, by `AttachmentExtract.unread`
+ *  (`knowledge/extract.py`): the content scan refused the text a reader made of it, or could not
+ *  check it. */
+const WITHHELD: Record<string, string> = {
+  refused: 'Its text failed the content safety scan, so the agent was not given it.',
+  unchecked: 'Its text could not be checked, so the agent was not given it.',
+}
+
 /** Preview an attachment: its extracted text content (what the agent saw) +
  *  open-original. Extraction is read on open (it reports the job already running, or starts it):
  *  the read answers at once, `pending` while the reading runs, and is read again on the
@@ -205,6 +213,8 @@ function AttachmentPeekModal({ path, name, delivery, reason, onOpenFile, onClose
             <div data-type="body-s" className="flex items-center gap-s text-on-surface-low py-m"><Loader2 size={14} className="animate-spin" /> Extracting…</div>
           ) : text ? (
             <pre data-type="caption" className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-m py-s font-mono text-on-surface-var leading-relaxed">{text}</pre>
+          ) : WITHHELD[unread] ? (
+            <p data-type="body-s" className="text-on-surface-var">{WITHHELD[unread]}</p>
           ) : (
             <p data-type="body-s" className="text-on-surface-low">No extractable text content (e.g. an image with no OCR configured).</p>
           )}

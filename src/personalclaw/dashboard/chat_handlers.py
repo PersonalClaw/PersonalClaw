@@ -1583,6 +1583,7 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
 
     from personalclaw.dashboard import screen_context
     from personalclaw.dashboard.handlers.files import _upload_dir
+    from personalclaw.uploads.content_scan import ContentRefused, scan_upload
     from personalclaw.uploads.policy import check_upload
 
     state: DashboardState = request.app["state"]
@@ -1644,6 +1645,11 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
     check = check_upload(filename, frame.media_type, size=len(raw))
     if not check.ok:
         return web.json_response({"error": check.reason}, status=check.status)
+    # The scan every stored upload gets, by its bytes: a frame's media type is the client's word.
+    try:
+        await scan_upload(raw, check.category, surface="screen_frame")
+    except ContentRefused as exc:
+        return exc.response()
 
     _upload_dir().mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^\w.\-]", "_", filename)

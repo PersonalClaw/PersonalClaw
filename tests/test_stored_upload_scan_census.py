@@ -17,9 +17,11 @@ the body is read:
 Each one is named below. :data:`SCANNED` store what they read, each with the function that hands
 it to ``scan_upload``: the route itself, or for a part of a resumable upload the complete that
 assembles it. The census checks that function calls it. :data:`NOT_SCANNED` read a body and do
-not hand it to the scan, each with why: it stores no file the agent or the library reads, or it
-stores media only, which the scan does not read. A site in neither reds here, and so does a named
-one that is gone, so a new upload route has to say which it is.
+not hand it to the scan, each with why: it stores no file the agent or the library reads. No
+route is let off for storing pictures only: the scan reads an upload by its bytes, not by the kind
+its name or its type claims, so a route that keeps a file hands it to the scan whatever it is. A
+site in neither reds here, and so does a named one that is gone, so a new upload route has to say
+which it is.
 
 What the census cannot see: a body read through another name than ``request``, a file sent as a
 JSON string field (the Files editor's own saves, which carry what was typed in the dashboard), and
@@ -35,8 +37,6 @@ import collections
 import functools
 import textwrap
 from pathlib import Path
-
-from personalclaw.uploads.content_scan import SCANNABLE_CATEGORIES
 
 _PACKAGE = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -61,13 +61,11 @@ SCANNED: dict[tuple[str, str], tuple[str, tuple[str, str] | None]] = {
     ("artifacts/handlers.py", "api_artifact_raw_write"): ("a binary artifact's new bytes", SELF),
     ("tasks/hierarchy_handlers.py", "_read_project_upload"): ("a project archive", SELF),
     ("dashboard/handlers/durability.py", "_read_upload_file"): ("a backup to import", SELF),
+    ("dashboard/chat_handlers.py", "api_chat_screen_frame_pin"): ("a pinned screen frame", SELF),
 }
 
 #: Routes that read a body and do not hand it to the scan, by (file, function), with why.
 NOT_SCANNED: dict[tuple[str, str], str] = {
-    ("dashboard/chat_handlers.py", "api_chat_screen_frame_pin"): (
-        "stores a screen frame, which is only ever an image: the scan reads no media"
-    ),
     ("dashboard/handlers/core.py", "api_stt_transcribe"): (
         "a voice clip from the composer, transcribed and then removed: no file is kept"
     ),
@@ -205,19 +203,6 @@ def test_every_route_that_stores_an_upload_hands_it_to_the_scan():
         if not census.calls_the_scan(scanner or (f, fn))
     )
     assert not unscanned, "these never call scan_upload:\n  " + "\n  ".join(unscanned)
-
-
-def test_a_screen_frame_is_only_ever_media():
-    """The one stored upload in :data:`NOT_SCANNED`, held to its reason: every media type a
-    screen frame may have is an upload category the scan does not read. A frame type the scan
-    reads would make the route's reason false, and this reds."""
-    from personalclaw.dashboard.screen_context import ALLOWED_MEDIA_TYPES
-    from personalclaw.uploads.policy import category_for
-
-    ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
-    categories = {category_for(f"screen{ext[t]}", t) for t in ALLOWED_MEDIA_TYPES}
-    assert categories == {"image"}, categories
-    assert not categories & SCANNABLE_CATEGORIES
 
 
 def test_the_census_sees_the_upload_routes():

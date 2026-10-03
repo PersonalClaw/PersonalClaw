@@ -184,6 +184,17 @@ describe('the chip on a sent turn', () => {
     expect(signals[0]?.aborted, 'a closed preview still holds a connection').toBe(true)
   })
 
+  it.each([
+    ['refused', 'Its text failed the content safety scan, so the agent was not given it.'],
+    ['unchecked', 'Its text could not be checked, so the agent was not given it.'],
+  ])('says the agent was not given a file whose text the scan withheld (%s)', async (unread, said) => {
+    h.attachmentExtract.mockResolvedValue({ name: 'notes.md', pending: false, text: '', read: false, unread })
+    render(<TurnAttachments paths={[DOC]} onOpenFile={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /notes\.md/ }))
+    expect(await screen.findByText(said)).toBeTruthy()
+    expect(screen.queryByText(/No extractable text content/), 'a withheld file is not a file with no text').toBeNull()
+  })
+
   it('says a failed read failed, not that the file has no text', async () => {
     h.attachmentExtract.mockRejectedValue(new Error('upload is gone'))
     render(<TurnAttachments paths={[DOC]} onOpenFile={() => {}} />)

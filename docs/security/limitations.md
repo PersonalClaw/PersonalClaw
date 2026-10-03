@@ -864,32 +864,50 @@ command lines those apps start, so each is stopped, with a sentence saying how t
 its host is on that list. The bounds stop a command that says where it goes; they are not a
 network fence around one that does not.
 
-## 17. The upload scan reads a file's bytes, not what a reader makes of them
+## 17. The upload scan reads a file and what a reader makes of it, but not all of either
 
 Every file you upload is scanned before anything is made from it, sent in one request or in parts
 (`uploads/content_scan.py`): a chat attachment, a file uploaded to a folder, a Knowledge file, a
-file dropped into a workflow run, an artifact's new bytes, a project archive and a backup. The scan
-reads a text-like file as text with the scanner's destructive-script rules and its prose rules
-(injection phrases, invisible characters), and refuses a file they call dangerous. A scan that
-could not run refuses the upload as well.
+file dropped into a workflow run, an artifact's new bytes, a pinned screen frame, a project archive
+and a backup. The scan reads a file by its bytes, whatever its name says it is, with the scanner's
+destructive-script rules and its prose rules (injection phrases, invisible characters), and
+refuses a file they call dangerous: an SVG drawing is text and is read; an ordinary picture,
+recording, video or archive is binary and is not. A scan that could not run refuses the upload as
+well.
+
+What a reader makes of an upload is scanned too, by the same rules, before a model is handed it or
+it is kept for one: the text of a chat or an Inbox attachment, of a Knowledge document or code
+file, and of a document the agent opens with `read_file`. A PDF's or an Office document's text,
+which sits in compressed parts of the file, and text beside a stray NUL byte are read there. Text
+that fails the scan, or that it could not check, is withheld: the chat's preview, the Knowledge
+item's status or the agent's tool says why, and the model is told it was not given the text. No
+file is read as text that is not text: a zip or a program is not handed to a model as text. And
+the text a model is handed of an attachment, a referenced Knowledge item or a document reaches it
+fenced as quoted data, which the agent's rules say is never an instruction.
 
 What the scan does not see:
 
-- **The middle of a large file.** A file of up to 512 KB is read whole; a larger one only as its
-  first and its last 256 KB.
-- **Text in a binary window.** A 256 KB window that holds a NUL byte is read as binary and is not
-  scanned, because random runs of binary bytes read as false alarms. Text beside a stray NUL byte,
-  and a file stored uncompressed inside an archive, are not checked, though the attachment reader
-  still hands such text to the model.
-- **What a document reader extracts.** A PDF's or an Office document's text sits in compressed
-  parts the scan does not open, and an archive is scanned as the file it is: the files a project
-  or backup import writes out of it are not scanned one by one.
+- **The middle of a large file, or of a long text.** A file, or a text a reader makes, of up to
+  512 KB is read whole; a larger one only as its first and its last 256 KB. A chat attachment
+  hands the model no more of a long text than the first 256 KB the scan read; a Knowledge item
+  and a document read with `read_file` keep the rest as well.
+- **Text in a binary window of a file the agent reads itself.** A 256 KB window of a file that
+  holds a NUL byte is read as binary and is not scanned, because random runs of binary bytes read
+  as false alarms. A text file kept in a folder, which the agent opens with `read_file` as it opens
+  any file in your folders, is not scanned again when it is read, so text beside a stray NUL byte
+  in it is not checked.
+- **What a model reads off a picture, a recording or a scanned page.** OCR, an image's
+  description and a transcript are a model's reading of pixels or sound, and are not scanned; they
+  are fenced as data like any attachment's text.
+- **An archive's files.** An archive is scanned as the file it is: the files a project or backup
+  import writes out of it are not scanned one by one.
 - **An instruction written as prose.** The scan refuses what the scanner calls dangerous. An
-  instruction to the model written as ordinary prose is only a warning there, and passes.
+  instruction to the model written as ordinary prose is only a warning there, and passes; the
+  fence around a file's text is what tells the model it is not an instruction.
 
-**What this means for you:** the scan keeps a destructive script or hidden reversed text in an
-ordinary text file out of your chats and your library; it is not a reading of every document.
-Treat a file from someone else as you would their message.
+**What this means for you:** the scan keeps a destructive script or hidden reversed text out of
+your chats and your library, whether it sits in a text file or in a document's text; it is not a
+reading of every document. Treat a file from someone else as you would their message.
 
 ## Why these are listed, not fixed
 
@@ -908,8 +926,8 @@ from the agent's shell at every sandbox level, for #13; running a command Trust 
 inside a read-only sandbox with the program's own configuration ignored, for #14; a list of the
 programs a run may start, enforced by its sandbox rather than read from the command's text, for
 #15; a network and a write fence around an unattended run's shell and an app's programs,
-enforced by the OS rather than read from a command line, for #16; scanning the text a reader
-takes from a file (a document's text, an archive's files, text beside a NUL byte) rather than the
-file's bytes, for #17). This page will shrink as those land.
+enforced by the OS rather than read from a command line, for #16; reading the whole of a long
+text a reader makes of a document, and an archive's files one by one as an import writes them
+out, for #17). This page will shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

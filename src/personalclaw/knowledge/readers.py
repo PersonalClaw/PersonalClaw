@@ -1,5 +1,12 @@
-"""File readers for knowledge ingestion. Supports text, PDF, PPTX, DOCX, HTML, XLSX."""
+"""File readers for knowledge ingestion. Supports text, PDF, PPTX, DOCX, HTML, XLSX.
 
+A file with no reader of its own is read as text only when it is text, by the rule every reader
+of a file as text shares (:func:`file_text`). One that is not (an archive, a picture, a program, a
+document in a format nothing here parses) is not read: the reader says so, rather than decoding
+its bytes into text a model would then be handed.
+"""
+
+import codecs
 import importlib
 import os
 import re
@@ -7,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw.file_view import is_binary
 from personalclaw.security import is_sensitive_path
 
 #: The optional document libraries (pdfplumber, python-pptx, python-docx, html2text, openpyxl),
@@ -26,6 +34,43 @@ def _library(name: str) -> Any:
         except ImportError:
             _LIBRARIES[name] = None
     return _LIBRARIES[name]
+
+
+class NotText(ValueError):
+    """The file is not text, so it has no text to read (:func:`file_text`)."""
+
+
+#: The byte-order marks that name a text's encoding outright, each with the codec that reads it
+#: (the codec reads the mark and the order). UTF-32's little-endian mark begins with UTF-16's, so
+#: it is asked first.
+_ENCODING_MARKS = (
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+
+def file_text(path: str) -> str:
+    """The text of the file at *path*, read by the rule every reader of a file as text shares.
+
+    A file whose first bytes hold a NUL byte is binary (``file_view.is_binary``: git's own test,
+    which the Files view, the agent's ``read_file`` and its ``grep`` ask as well) and has no
+    text: :class:`NotText` is raised. Any other file is read as UTF-8, and a byte UTF-8 cannot
+    read is marked (U+FFFD), as the Files view shows it, never guessed at: a guess (latin-1 reads
+    every byte as some character) turned any file at all into text. The one exception goes the
+    other way: a file that opens with a UTF-16 or UTF-32 byte-order mark (a Windows "Unicode"
+    text, whose every other byte is NUL) is text in the encoding its mark names, which is a
+    statement, not a guess (measured over the text files ordinary software installs: 328 of
+    the 330 with a NUL byte were UTF-16)."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    for mark, codec in _ENCODING_MARKS:
+        if raw.startswith(mark):
+            return raw.decode(codec, errors="replace")
+    if is_binary(raw):
+        raise NotText(f"{Path(path).name} is not a text file, and no reader here reads its kind")
+    return raw.decode("utf-8", errors="replace")
 
 
 def _render_docx_table(table) -> list[str]:
@@ -129,14 +174,8 @@ class FileReader:
 
     def _read_text(self, path: str, fmt: str) -> tuple[str, dict]:
         try:
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    text = f.read()
-            except UnicodeDecodeError:
-                with open(path, "r", encoding="latin-1") as f:
-                    text = f.read()
-            return text, {"format": fmt}
-        except Exception as e:
+            return file_text(path), {"format": fmt}
+        except (OSError, NotText) as e:
             return f"Error reading file: {e}", {"format": "error", "error": str(e)}
 
     def _read_pdf(self, path: str) -> tuple[str, dict]:
@@ -172,13 +211,14 @@ class FileReader:
     @staticmethod
     def _salvage_as_text(path: str) -> str | None:
         """Return decoded text if the file is plausibly plain text (mostly printable),
-        else None. Used to recover a mislabeled text file from a failed binary parse."""
+        else None. Used to recover a mislabeled text file from a failed binary parse.
+        A file every reader calls binary (:func:`file_text`) is never salvaged."""
         try:
             with open(path, "rb") as f:
                 raw = f.read(200_000)
         except OSError:
             return None
-        if not raw:
+        if not raw or is_binary(raw):
             return None
         try:
             text = raw.decode("utf-8")
@@ -321,20 +361,18 @@ class FileReader:
         rather than raw delimited text. Uses the csv module so quoted fields/embedded
         delimiters parse correctly. Large files render a capped table; row_count is true."""
         import csv as _csv
+        import io as _io
 
         # .tsv is tab-delimited; everything else (.csv) is comma-delimited.
         delimiter = "\t" if Path(path).suffix.lower() == ".tsv" else ","
         fmt = "tsv" if delimiter == "\t" else "csv"
         try:
-            try:
-                f = open(path, newline="", encoding="utf-8")
-            except UnicodeDecodeError:
-                f = open(path, newline="", encoding="latin-1")
-            with f:
-                rows = [
-                    [("" if c is None else str(c)) for c in row]
-                    for row in _csv.reader(f, delimiter=delimiter)
-                ]
+            rows = [
+                [("" if c is None else str(c)) for c in row]
+                for row in _csv.reader(
+                    _io.StringIO(file_text(path), newline=""), delimiter=delimiter
+                )
+            ]
         except Exception as e:
             return f"Error reading {fmt.upper()}: {e}", {"format": "error", "error": str(e)}
         rows = [r for r in rows if any(cell.strip() for cell in r)]
@@ -356,12 +394,8 @@ class FileReader:
 
     def _read_html(self, path: str) -> tuple[str, dict]:
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                html = f.read()
-        except UnicodeDecodeError:
-            with open(path, "r", encoding="latin-1") as f:
-                html = f.read()
-        except Exception as e:
+            html = file_text(path)
+        except (OSError, NotText) as e:
             return f"Error reading file: {e}", {"format": "error", "error": str(e)}
         return html_to_prose(html), {"format": "html"}
 

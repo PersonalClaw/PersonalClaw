@@ -246,7 +246,8 @@ async def _complete(request: web.Request, store: UploadStore, sid: str) -> web.R
 
     try:
         # The content scan every stored upload gets, the single-request routes' too: a file of
-        # up to 512 KB is read whole, a larger one as its first and last 256 KB. Media is not.
+        # up to 512 KB is read whole, a larger one as its first and last 256 KB, by its bytes
+        # (a picture's are binary and are not read; an SVG's are text and are).
         await scan_upload(final_path, sess.category, surface=sess.target)
         result = await _finalize_target(request, sess, final_path)
     except ContentRefused as exc:

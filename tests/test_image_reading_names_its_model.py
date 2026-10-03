@@ -187,7 +187,7 @@ async def test_with_nothing_bound_a_chat_model_that_takes_images_reads_the_image
     from personalclaw.knowledge.extract import extract_file
 
     async with _home(chat=[f"{ENTRY}:{SEEING}"]) as fake:
-        got = await extract_file(_screenshot(tmp_path), "image/png")
+        got = await extract_file(_screenshot(tmp_path), "image/png", surface="attachment")
 
     assert fake.chats, "nothing was asked to read the image, though the chat model reads images"
     assert fake.models_named() == [SEEING] * len(fake.chats), (
@@ -207,7 +207,7 @@ async def test_with_nothing_bound_and_a_chat_model_that_takes_none_nothing_is_as
     from personalclaw.knowledge.extract import extract_file
 
     async with _home(chat=[f"{ENTRY}:{TEXT_ONLY}"]) as fake:
-        got = await extract_file(_screenshot(tmp_path), "image/png")
+        got = await extract_file(_screenshot(tmp_path), "image/png", surface="attachment")
 
     assert (
         fake.chats == []
@@ -226,7 +226,7 @@ async def test_a_bound_image_model_reads_by_its_own_name(tmp_path):
     from personalclaw.knowledge.extract import extract_file
 
     async with _home(chat=[f"{ENTRY}:{TEXT_ONLY}"], image_modality=[f"{ENTRY}:{SEEING}"]) as fake:
-        got = await extract_file(_screenshot(tmp_path), "image/png")
+        got = await extract_file(_screenshot(tmp_path), "image/png", surface="attachment")
 
     assert fake.chats and fake.models_named() == [SEEING] * len(fake.chats)
     assert got.read is True and got.unread == ""

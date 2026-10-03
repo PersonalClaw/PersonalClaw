@@ -246,22 +246,29 @@ def is_image(record: Mapping[str, Any]) -> bool:
 
 
 async def text_of(owner: str, record: Mapping[str, Any]) -> tuple[str, str]:
-    """``(text, note)`` for one kept attachment: its text, read as a chat attachment is read, up to
-    :data:`TEXT_CAP` characters, or ``""`` and a note saying why there is none."""
+    """``(text, note)`` for one kept attachment: its text, read as a chat attachment is read (the
+    content scan included), up to :data:`TEXT_CAP` characters, or ``""`` and a note saying why
+    there is none. The cap sits inside the first window the scan reads of a long text
+    (``uploads.content_scan.scanned_head``), so nothing handed on went unread."""
     path = path_of(owner, record)
     if path is None:
         return "", f"it was not kept ({record.get('not_kept') or 'it is not on this machine'})"
     if is_image(record):
         return "", "it is an image, which is not read here; the owner can open it from the Inbox"
-    from personalclaw.knowledge.extract import extract_file
+    from personalclaw.knowledge.extract import extract_file, withheld
 
     try:
         got = await extract_file(
-            str(path), str(record.get("mimetype") or "") or None, name=str(record.get("name"))
+            str(path),
+            str(record.get("mimetype") or "") or None,
+            name=str(record.get("name")),
+            surface="inbox",
         )
     except Exception:  # noqa: BLE001 - an unreadable attachment is said, never raised
         logger.warning("reading attachment %s of %s failed", record.get("id"), owner, exc_info=True)
         return "", "it could not be read"
+    if why := withheld(got.unread):
+        return "", why
     text = (got.text or "").strip() if got.read else ""
     if not text:
         return "", "no text could be read from it"
@@ -277,7 +284,9 @@ async def raw_reading(owner: str, records: Iterable[Mapping[str, Any]]) -> str:
     for record in records or ():
         text, note = await text_of(owner, record)
         head = listing([record])
-        parts.append(f"{head}\nIts text:\n{text}" if text else f"{head}\n(Its text: {note}.)")
+        parts.append(
+            f"{head}\nIts text:\n{text}" if text else f"{head}\n({note[:1].upper()}{note[1:]}.)"
+        )
     return "\n\n".join(parts)
 
 

@@ -1121,13 +1121,6 @@ class TestFileReaderExtended:
         text, meta = reader.read(str(html_file))
         assert "Hello" in text
 
-    def test_read_latin1_fallback(self, tmp_path):
-        f = tmp_path / "latin.txt"
-        f.write_bytes(b"caf\xe9")
-        reader = FileReader()
-        text, meta = reader.read(str(f))
-        assert "caf" in text
-
     def test_read_json_file(self, tmp_path):
         f = tmp_path / "data.json"
         f.write_text('{"key": "value"}')

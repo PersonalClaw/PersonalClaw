@@ -403,7 +403,7 @@ def test_a_chat_attachment_image_still_says_no_image_model_is_set_up(tmp_path):
     from PIL import Image
 
     Image.new("RGB", (8, 8), "white").save(image, format="PNG")
-    got = asyncio.run(extract_file(str(image), "image/png"))
+    got = asyncio.run(extract_file(str(image), "image/png", surface="attachment"))
     assert got.read is False
     assert got.unread == UNREAD_NO_IMAGE_MODEL
 

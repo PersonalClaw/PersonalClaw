@@ -19,7 +19,7 @@ class TestExtractFileContent:
     def test_plain_text_file(self, tmp_path):
         f = tmp_path / "report.txt"
         f.write_text("Revenue grew 42% to $3.1M.\nKey risk: API cost.")
-        got = _run(extract_file(str(f), "text/plain"))
+        got = _run(extract_file(str(f), "text/plain", surface="attachment"))
         assert "Revenue grew 42%" in got.text
         assert "$3.1M" in got.text
         assert got.read is True
@@ -27,11 +27,13 @@ class TestExtractFileContent:
     def test_markdown_file(self, tmp_path):
         f = tmp_path / "notes.md"
         f.write_text("# Heading\n\nBody text here.")
-        got = _run(extract_file(str(f), "text/markdown"))
+        got = _run(extract_file(str(f), "text/markdown", surface="attachment"))
         assert "Body text here" in got.text
 
     def test_missing_file_returns_empty(self):
-        assert _run(extract_file("/no/such/file.txt", "text/plain")) == Extracted("", False)
+        assert _run(
+            extract_file("/no/such/file.txt", "text/plain", surface="attachment")
+        ) == Extracted("", False)
 
     def test_image_no_ocr_yields_structural_descriptor(self, tmp_path):
         # A tiny PNG with no text → no OCR/vision configured → graceful structural
@@ -43,7 +45,7 @@ class TestExtractFileContent:
             b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
             b"\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
         )
-        got = _run(extract_file(str(png), "image/png"))
+        got = _run(extract_file(str(png), "image/png", surface="attachment"))
         # Either real OCR text (if a model is configured) or the structural fallback;
         # on a no-OCR box it must be the descriptor, never empty — and SAID to be one.
         assert got.text != ""
@@ -52,7 +54,7 @@ class TestExtractFileContent:
             assert got.read is False, "a structural descriptor was reported as read content"
 
     def test_empty_path_returns_empty(self):
-        assert _run(extract_file("", None)) == Extracted("", False)
+        assert _run(extract_file("", None, surface="attachment")) == Extracted("", False)
 
 
 class TestDisplayName:

@@ -549,7 +549,9 @@ async def test_a_file_the_person_attaches_is_read_by_the_models_set_up_for_it(
 
     seen: list[tuple[bool, bool]] = []
 
-    async def _extract(path: str, mime: str | None, *, name: str = "") -> Extracted:
+    async def _extract(
+        path: str, mime: str | None, *, name: str = "", surface: str = ""
+    ) -> Extracted:
         seen.append((memory_writes.model_may_read(RELAY_REF), memory_writes.writes_refused()))
         return Extracted("A receipt: 12 EUR.", True)
 

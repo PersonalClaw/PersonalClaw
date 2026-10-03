@@ -37,6 +37,18 @@ class PassthroughNode:
         )
 
 
+def reader_text(result) -> str:
+    """The text the document reader read from the file itself in the run *result*, or ``""``
+    when no reader read any: a picture, a recording, or a scanned page only a model read.
+
+    What the content scan reads of an extraction before a model is handed it
+    (``uploads.content_scan.scan_text``)."""
+    out = result.outputs.get(DocumentReadNode.node_type)
+    if out is None or not out.success:
+        return ""
+    return out.text if (out.text or "").strip() else ""
+
+
 class DocumentReadNode:
     """Extract text from a file via the existing reader stack (no model)."""
 

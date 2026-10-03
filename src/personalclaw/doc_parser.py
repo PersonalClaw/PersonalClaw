@@ -4,8 +4,10 @@ Uses only Python stdlib (zipfile + xml.etree.ElementTree) for .docx and
 .pptx since these are ZIP archives containing XML.  A PDF's text is read from its
 pages by pdfplumber, the reader the knowledge library uses.
 
-All functions accept a file path and return extracted text as a string.
+The extraction functions accept a file path and return extracted text as a string.
 They never raise — on failure they return an empty string and log a warning.
+:func:`text_for_model` is that text as the agent's ``read_file`` hands it on: scanned,
+then fenced as data.
 """
 
 import logging
@@ -80,6 +82,30 @@ def extract_text(path: str, mimetype: str = "", filename: str = "") -> str:
     except Exception:
         logger.warning("Failed to extract text from %s", path, exc_info=True)
     return ""
+
+
+async def text_for_model(text: str, *, shown: str, name: str) -> tuple[str, str]:
+    """A document's text (:func:`extract_text`) as the agent's ``read_file`` hands it to a model:
+    ``(said, "")``, the text labelled and fenced as data (``security.fence_untrusted``), or
+    ``("", why)`` when it is not handed on. *shown* is the path as the agent asked for it, *name*
+    the file's name.
+
+    The text is scanned first (``uploads.content_scan.scan_text``): a document's text sits in
+    compressed parts of the file, which the scan of an upload's bytes never opens. Text that fails
+    the scan, or that the scan could not check, is not handed on."""
+    if not text:
+        return "", f"no text could be read from {shown}"
+    from personalclaw.security import fence_untrusted
+    from personalclaw.uploads.content_scan import ContentRefused, scan_text
+
+    try:
+        await scan_text(text, surface="read_file")
+    except ContentRefused as exc:
+        return "", f"{shown} was not read: {exc.withheld}"
+    fenced = fence_untrusted(
+        text, source="file", source_type="document", source_id=name, transformation_path="extract"
+    )
+    return f"[the text of {name}]\n{fenced}", ""
 
 
 # ── ZIP entry safety ──

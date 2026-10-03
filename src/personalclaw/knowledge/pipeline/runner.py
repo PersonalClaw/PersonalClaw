@@ -16,6 +16,7 @@ import logging
 from personalclaw.knowledge.pipeline import ensure_nodes_registered, graph_for
 from personalclaw.knowledge.pipeline import outcomes as oc
 from personalclaw.knowledge.pipeline.executor import PipelineExecutor
+from personalclaw.knowledge.pipeline.nodes.text_nodes import DocumentReadNode, reader_text
 from personalclaw.knowledge.pipeline.outcomes import PhaseOutcome
 from personalclaw.knowledge.pipeline.types import NodeContext
 from personalclaw.knowledge.searchability import UNSEARCHABLE, reason_detail, verdict_for_ingest
@@ -159,6 +160,17 @@ async def ingest_item(
         if store.get_item(item_id) is None:
             _cleanup_orphaned_artifacts(item_id)
             return "deleted"
+
+        # The text the document reader made of an uploaded file is scanned before anything is
+        # kept of it or a model reads it: the file's bytes were scanned when it was uploaded, and
+        # a document's text, or text beside a stray NUL byte, is not in what that scan reads.
+        if item.get("file_path") and (read := reader_text(result)):
+            from personalclaw.uploads.content_scan import ContentRefused, scan_text
+
+            try:
+                await scan_text(read, surface="knowledge")
+            except ContentRefused as exc:
+                return _withheld(store, item_id, graph, result, exc.withheld, _emit)
 
         # Persist each pooled node output into the extracted-content pool.
         store.clear_extracted_contents(item_id)
@@ -473,6 +485,30 @@ async def ingest_item(
     if status in ("done", "partial", UNSEARCHABLE):
         emit_platform_event(KNOWLEDGE_INGESTED, {"item_id": item_id, "status": status})
     return status
+
+
+def _withheld(store, item_id: str, graph, result, why: str, emit) -> str:
+    """End the ingest of a file whose text the content scan withheld (*why*, the scan's words).
+
+    Nothing the graph made of it is kept, nor what an earlier ingest made of the same file (its
+    text, its pool, its chunks, its insights and its vector), no model reads it, and the item says
+    why on its status line and on the step that read it. ``failed``: nothing could be made of it.
+    """
+    reason = f"{why[:1].upper()}{why[1:]}, so nothing was made from it."
+    store.clear_extracted_contents(item_id)
+    store.clear_chunks(item_id)
+    store.update_item(item_id, content="", insights={}, embedding=None, touch=False)
+    phases = {
+        nt: result.outcomes.get(nt, oc.skipped("It never became ready to run.")).to_dict()
+        for nt in getattr(graph, "nodes", {})
+    }
+    phases[DocumentReadNode.node_type] = oc.failed(reason).to_dict()
+    phases.update({stage: oc.not_applicable(reason).to_dict() for stage in TERMINAL_STAGES})
+    _merge_file_metadata(store, item_id, {"node_phases": phases})
+    store.update_item(item_id, processing_status="failed", processing_error=reason, touch=False)
+    store.db.commit()
+    emit("ingest_failed", error=reason)
+    return "failed"
 
 
 def _structural_descriptor(item: dict) -> str:

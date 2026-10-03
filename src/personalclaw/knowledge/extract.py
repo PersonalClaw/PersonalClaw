@@ -12,6 +12,11 @@ the consolidated text.
 For a plain-text file this is just "read the file"; for audio/video it's ASR
 (+ ffmpeg + frame OCR/vision for video); for an image it's OCR/vision — exactly
 as knowledge ingestion does, because it IS the same node graph.
+
+The text the document reader makes of the file is scanned before it is returned
+(``uploads.content_scan.scan_text``): the upload scan reads the file's bytes, and a document's
+text, or text beside a stray NUL byte, is not in what it reads. Text that fails the scan, or that
+the scan could not check, is not returned, and ``unread`` says which.
 """
 
 from __future__ import annotations
@@ -26,6 +31,11 @@ logger = logging.getLogger(__name__)
 #: is bound to image understanding and the chat model takes no images. A stable value — the
 #: attachment chip and the sent turn's preview branch on it to say so and link Settings → Models.
 UNREAD_NO_IMAGE_MODEL = "no_image_model"
+#: ``Extracted.unread`` when the text a reader made of the file failed the content scan, and when
+#: the scan could not check it: the text is withheld. Stable values, which the sent turn's preview
+#: branches on to say why.
+UNREAD_REFUSED = "refused"
+UNREAD_UNCHECKED = "unchecked"
 
 
 @dataclass(frozen=True)
@@ -38,8 +48,9 @@ class Extracted:
     content") or nothing at all. A surface that tells a user what a model will be given reads
     ``read``, so "the text read from the image" is never said of a descriptor.
 
-    ``unread`` says why nothing was read, when that is known: :data:`UNREAD_NO_IMAGE_MODEL`, or
-    ``""`` — the reading ran and found nothing, or the file needed no model.
+    ``unread`` says why nothing was read, when that is known: :data:`UNREAD_NO_IMAGE_MODEL`,
+    :data:`UNREAD_REFUSED` or :data:`UNREAD_UNCHECKED`, or ``""`` — the reading ran and found
+    nothing, or the file needed no model.
     """
 
     text: str
@@ -47,13 +58,16 @@ class Extracted:
     unread: str = ""
 
 
-async def extract_file(file_path: str, mime: str | None = None, *, name: str = "") -> Extracted:
+async def extract_file(
+    file_path: str, mime: str | None = None, *, name: str = "", surface: str
+) -> Extracted:
     """Run the knowledge EXTRACTION graph for *file_path* and return what it got.
 
     ``name`` is what the text calls the file when it can only describe it (its size and format),
     for a caller that stores a file under a name of its own: a chat upload is saved as
     ``<uuid-hex>_<name>``, and that stored name reached the sent turn's preview and the model.
-    Defaults to the file's own name.
+    Defaults to the file's own name. ``surface`` is where the text is going (``attachment``,
+    ``inbox``), which a refusal's security event names.
 
     Never raises — an empty, unread result if extraction yields nothing (caller decides how to
     surface that). Pure extraction: no store, no insights/entities/embeddings/tags/title.
@@ -103,7 +117,7 @@ async def extract_file(file_path: str, mime: str | None = None, *, name: str = "
         text = pooled[0].text if pooled else ""
     text = text.strip()
     if text:
-        return Extracted(text, True)
+        return await _scanned(text, result, surface)
 
     # No extractable text (e.g. an image nothing is set up to read, or a text-free media
     # file). Fall back to a structural descriptor from the exif/media metadata so the agent
@@ -123,6 +137,38 @@ async def extract_file(file_path: str, mime: str | None = None, *, name: str = "
         file_path, item_type, result, unread, name or os.path.basename(file_path)
     )
     return Extracted(descriptor, False, unread)
+
+
+def withheld(unread: str) -> str:
+    """Why a file's text is withheld, as the end of a sentence about the file, for an ``unread``
+    of :data:`UNREAD_REFUSED` or :data:`UNREAD_UNCHECKED` (the scan's own words,
+    ``uploads.content_scan.WITHHELD``); ``""`` for any other."""
+    from personalclaw.uploads.content_scan import REFUSED_CODE, UNCHECKED_CODE, WITHHELD
+
+    code = {UNREAD_REFUSED: REFUSED_CODE, UNREAD_UNCHECKED: UNCHECKED_CODE}.get(unread, "")
+    return WITHHELD.get(code, "")
+
+
+async def _scanned(text: str, result, surface: str) -> Extracted:
+    """*text*, read from the file, as it may be handed on: withheld when the document reader made
+    it and the content scan refuses it or cannot check it.
+
+    Only a reader's text is scanned. What a model wrote of a picture, a recording or a scanned
+    page (OCR, a description, a transcript) is that model's reading of pixels or sound, which
+    carries none of the characters the scan's rules are about, and a screenshot of a terminal
+    would be refused for showing an ordinary command."""
+    from personalclaw.knowledge.pipeline.nodes.text_nodes import reader_text
+    from personalclaw.uploads.content_scan import REFUSED_CODE, ContentRefused, scan_text
+
+    if not reader_text(result):
+        return Extracted(text, True)
+    try:
+        await scan_text(text, surface=surface)
+    except ContentRefused as exc:
+        return Extracted(
+            "", False, UNREAD_REFUSED if exc.code == REFUSED_CODE else UNREAD_UNCHECKED
+        )
+    return Extracted(text, True)
 
 
 def _reasons(result) -> set[str]:

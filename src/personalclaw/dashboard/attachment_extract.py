@@ -31,7 +31,10 @@ from personalclaw.knowledge.extract import Extracted
 logger = logging.getLogger(__name__)
 
 _MAX_ENTRIES = 200
-_MAX_TEXT_CHARS = 200_000  # cap injected text per attachment (~50k tokens)
+#: The most of one attachment's text a turn is handed (~50k tokens), and never more of it than
+#: the content scan read (``uploads.content_scan.scanned_head``): a text too long for the scan to
+#: read whole is read as its first and last window, and only the first is handed on.
+_MAX_TEXT_CHARS = 200_000
 
 
 class AttachmentExtractor:
@@ -79,13 +82,14 @@ class AttachmentExtractor:
 
     async def _run(self, path: str, mime: str | None) -> Extracted:
         from personalclaw.knowledge.extract import extract_file
+        from personalclaw.uploads.content_scan import scanned_head
 
         try:
-            got = await extract_file(path, mime, name=display_name(path))
+            got = await extract_file(path, mime, name=display_name(path), surface="attachment")
         except Exception:
             logger.warning("attachment extract failed for %s", path, exc_info=True)
             return Extracted("", False)
-        return Extracted(got.text[:_MAX_TEXT_CHARS], got.read, got.unread)
+        return Extracted(scanned_head(got.text)[:_MAX_TEXT_CHARS], got.read, got.unread)
 
     def peek(self, path: str, mime: str | None, on_done: Callable[[], None]) -> Extracted | None:
         """What extraction got from *path* when it has finished, else None. Never waits.
@@ -140,6 +144,29 @@ def get_extractor() -> AttachmentExtractor:
     if _INSTANCE is None:
         _INSTANCE = AttachmentExtractor()
     return _INSTANCE
+
+
+def file_block(name: str, got: Extracted) -> str:
+    """One attached file as a turn hands it to the model: core's label, then the text read from
+    it, masked and fenced as data (``security.fence_untrusted``), as a fetched page or an Inbox
+    message is. Where nothing was read, core says what it hands instead: the file's size and
+    format, or why its text is withheld."""
+    from personalclaw.knowledge.extract import withheld
+    from personalclaw.security import fence_untrusted, redact_for_model
+
+    head = f"### Attached file: {name}\n\n"
+    if got.read and got.text:
+        text = redact_for_model(got.text)
+        return head + fence_untrusted(
+            text,
+            source="attachment",
+            source_type="file",
+            source_id=name,
+            transformation_path="extract",
+        )
+    if why := withheld(got.unread):
+        return f"{head}(Not given to you: {why}.)"
+    return head + (redact_for_model(got.text) if got.text else "(No extractable text content.)")
 
 
 def display_name(path: str) -> str:
