@@ -898,6 +898,19 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "A batch whose tasks may change things starts only on your own Allow, and nobody can "
         "be asked for it from where it was started."
     ),
+    # 409 from the same translation: an agent's save that would let a workflow's steps do more is
+    # made only on the owner's own Allow, and the session that asked has nobody to ask
+    # (`workflows/definition_ask.py`). The message names the steps and why.
+    "save_nobody_to_ask": (
+        "A save that lets a workflow's steps do more is made only on your own Allow, and nobody "
+        "can be asked for it from where the save was asked."
+    ),
+    # 400 from `POST /api/spawn`: a spawn's approval mode is the owner's to set, never a
+    # request's, so a body that names one is refused rather than run looser or quietly ignored.
+    "approval_mode_not_accepted": (
+        "A subagent asks as your own approval settings say; a request cannot set its approval "
+        "mode."
+    ),
     # ── onboarding local-model zero-key on-ramp (handlers/local_model.py) ──
     # `local_model_endpoint_invalid` (400) — the bind target is not a loopback or
     # private (RFC-1918) address; only the endpoint a local/LAN Ollama listens on is

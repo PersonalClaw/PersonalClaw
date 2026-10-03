@@ -532,6 +532,7 @@ INTERNAL_ROUTES: frozenset[str] = frozenset(
     {
         "POST /api/send-message",  # `notify`, and a scheduled script's ctx.notify
         "POST /api/workflows/batches",  # `subagent_run` starts a batch it compiled
+        "POST /api/workflows/agent-saves",  # `workflow_author` hands over a save it cannot make
         "POST /api/session-keepalive",  # `wait`
         "GET /api/session-tool-policy",  # an MCP server's per-session tool policy
         "GET /api/chat/sessions/model-reach",  # whether an `mcp-core` tool's chat keeps nothing

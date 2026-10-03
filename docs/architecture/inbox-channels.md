@@ -423,8 +423,8 @@ There used to be a second, five-minute window for "unattended" sources, keyed by
 every approval still under `workflow:<run>:`; stopping a loop stops its worker turns; stopping a
 chat turn (`SessionManager.stop_turn`, through the hooks `DashboardState` registers) ends that
 turn's approvals and what the turn started (`started_work.end_turn`: its batch runs and
-subagents, and so what they were asking, and a batch still waiting for her Allow to start, whose
-ask ends, `batch_start.end_asks`); cancelling a subagent ends its spawn and tool
+subagents, and so what they were asking, and what still waits for her Allow, a batch's start or a
+workflow's save, whose ask ends, `owner_allow.end_asks`); cancelling a subagent ends its spawn and tool
 approvals, which are keyed `subagent:<id>:<request_id>` so two subagents' requests can never
 share an id. Each ends as `cancelled`, with an `approval_cancelled` SEL row. And the decision path
 checks again (`approval_owner.owner_ended`, fail-closed): an approval whose run, loop or subagent

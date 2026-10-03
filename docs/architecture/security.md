@@ -628,6 +628,26 @@ the ceiling did not bound.
   is kept, and the Doctor's `security.approval_mode` row and the Settings row name it. A gateway
   with nowhere to ask (no dashboard, no channel) refuses such a call rather than approving it
   (`approval_grants.NO_SURFACE` names the refusal).
+- **What a workflow's step may do is the owner's yes, at every door that writes one.** A step that
+  approves its own tool calls (`approval_mode: "auto"`) or may change things (`capability:
+  "mutating"`) does so each time its workflow runs, so every write of a definition goes through
+  one writer that screens it (`workflows.service._write_definition`, held there by
+  `tests/test_workflow_definition_writer_census.py`). A step that would do more than the same step
+  does now (matched by its node id: a loosened key, or an allowed key on a step that no longer runs
+  as it ran) is written only with her yes. Her editor's save asks it as the consent question; an
+  agent's `workflow_author` hands the save to the gateway (`POST /api/workflows/agent-saves`),
+  which asks her once through the approval registry (`workflows.owner_allow`: the chat's card, the
+  Inbox, the phone, a channel; no standing grant, Trust or YOLO answers it), saves on her Allow
+  exactly what she was shown, saves nothing on a Deny or no answer, and refuses a session that acts
+  on its own. An accepted refiner diff that would let a step do more is not applied, and a pack's
+  template arrives with every step asking before it acts and only reading, as another machine's
+  definition does. An edit of a running workflow is held to the same rule
+  (`workflows.mid_flight.posture_refusal`): an agent's is refused, and the owner's asks her first.
+- **A spawn's approval mode is the owner's to set.** `POST /api/spawn` refuses a body that names an
+  `approval_mode` (`400 approval_mode_not_accepted`), whoever sends it, the internal credential
+  included, so a subagent started over HTTP asks as her own settings say. What lets a subagent
+  approve its own calls is consent given for that run and passed in-process: a workflow step's
+  saved posture, a trigger's step, an app's scheduled job.
 - **The `tools` scope and a spawn's capability class hold under a grant.** Both are enforced where
   the host is asked about a call, and a runtime that answers its own asks (the native one, while
   a grant stands) asked about none: a read-only research run's write tools ran. The native

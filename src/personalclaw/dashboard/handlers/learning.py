@@ -117,9 +117,9 @@ async def _apply_accepted_template_diff(prop) -> dict:
     THIS is where the diff lands (§3.1 "Accept → new template VERSION"). The ops ride the change
     manifest's ``targeted_fix`` (the same field the inbox reads to stamp a risk tier); they are
     applied to a deep copy via ``mutations.apply_batch`` and, only if the batch is clean, saved
-    through the writable def provider — which appends an immutable version snapshot and pins it
-    (``versions.record_version`` inside ``save_def``). Best-effort: the proposal is already
-    accepted, so a failed apply is reported, never a 500 that would strand it.
+    as a new version (``service.save_accepted_diff``), which refuses a diff that would let a step
+    do more than before: accepting a model's proposal is no yes to that. Best-effort: the
+    proposal is already accepted, so a failed apply is reported, never a 500 that would strand it.
     """
     manifest = getattr(prop, "change_manifest", None)
     ops_raw = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
@@ -128,8 +128,7 @@ async def _apply_accepted_template_diff(prop) -> dict:
         return {"applied": False, "reason": "no typed ops on the proposal"}
 
     from personalclaw.workflows import defs as defs_mod
-    from personalclaw.workflows import mutations
-    from personalclaw.workflows.native_defs import NativeWorkflowDefProvider
+    from personalclaw.workflows import mutations, service
 
     spec = None
     for pname in defs_mod.list_providers():
@@ -154,16 +153,10 @@ async def _apply_accepted_template_diff(prop) -> dict:
     if issues:
         return {"applied": False, "reason": "; ".join(i.code for i in issues)}
 
-    writable = [
-        p
-        for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
-        if p is not None and not p.readonly
-    ]
-    target_provider = writable[0] if writable else NativeWorkflowDefProvider()
-    saved = await target_provider.save_def(
-        **candidate, _version_source="refiner", _version_ops=ops_raw
-    )
-    return {"applied": True, "version": int(getattr(saved, "version", 0) or 0)}
+    saved = await service.save_accepted_diff(candidate, ops=ops_raw)
+    if not saved.get("ok"):
+        return {"applied": False, "reason": str(saved.get("message") or "it was not saved")}
+    return {"applied": True, "version": int(saved.get("version") or 0)}
 
 
 def _tier_for(prop) -> str:

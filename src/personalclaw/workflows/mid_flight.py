@@ -7,6 +7,11 @@ between scheduling steps — the designated safe point — preparing every batch
 the batch before it left and the state it now meets. A committed batch swaps in its candidate spec
 and applies its state effects: a rewind or `run_from` resets its binding closure, a skip marks a
 subtree, a fork branches a child run, and done nodes whose inputs changed are flagged stale.
+
+A batch that would let a step do more than it does — approve its own tool calls, or change things
+where it only read — is refused before it is queued, unless the owner's own yes covers it
+(:func:`posture_refusal`): the rule every save of a definition is held to, for a step that would act
+on it the moment it runs.
 """
 
 from __future__ import annotations
@@ -58,6 +63,49 @@ def _save_queue(ctl: RunController) -> None:
         ctl.run.id,
         [{"ops": _raw_ops(result), "actor": actor} for result, actor in ctl._pending_mutations],
     )
+
+
+def posture_refusal(
+    name: str,
+    before: dict[str, Any],
+    result: mutations.BatchResult,
+    *,
+    owner_allowed: bool,
+) -> dict[str, Any] | None:
+    """The refusal of the edit *result* of the running workflow *name*, whose spec it was
+    prepared against is *before*, when it would let a step do more than the step does now
+    (``automation_posture.workflow_loosenings``) and *owner_allowed* does not say her yes covers
+    it; ``None`` otherwise.
+
+    Whoever submits it: an agent's ``workflow_edit``, a loop's replan, the owner's own edit
+    without her ``confirm``. A step of a running workflow acts on what it says the moment it runs,
+    so an edit is held to the rule every save of a definition is, and an agent is told where the
+    owner gives that yes. Nothing is queued."""
+    from personalclaw.automation_posture import workflow_loosenings
+
+    if owner_allowed or result.spec is None:
+        return None
+    loosened = workflow_loosenings(
+        name, current_root=before.get("root"), new_root=result.spec.get("root") or {}
+    )
+    if not loosened:
+        return None
+    steps = "; ".join(f"“{step.label}”" for step in loosened)
+    message = (
+        f"this edit would let its steps {steps} approve their own tool calls or change things, "
+        "not only read, and a step of a running workflow does that only on your owner's own yes, "
+        "given where they are shown the step: save the change into the workflow's definition "
+        "(workflow_author asks them), then start a new run"
+    )
+    return {
+        "ok": False,
+        "code": "WF_MUT_NEEDS_OWNER_YES",
+        "message": message,
+        "field": loosened[0].field,
+        "consent": loosened[0].consent,
+        "steps": [step.to_dict() for step in loosened],
+        "issues": [{"code": "WF_MUT_NEEDS_OWNER_YES", "message": message, "node_id": ""}],
+    }
 
 
 def projected_spec(ctl: RunController) -> dict[str, Any]:

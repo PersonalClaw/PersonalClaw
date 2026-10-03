@@ -187,10 +187,10 @@ worker session it came from (the run's `origin.session_key`, the subagent's `par
 reason "its loop “…” was stopped" (`store.request_cancel(reason=…)`, which the controller ends the run
 with: "Stopped because its loop “…” was stopped.") and stops each subagent with it, so an approval
 either was waiting on expires naming the loop, and the decision path refuses an Allow for it in the
-meantime (`approval_owner`: "the loop that started its run was stopped"). A batch its worker asked to
-start and still waiting for her Allow has that ask ended the same way (`batch_start.end_asks`), and
-neither it nor a cancelled batch run is handed to the worker afterwards: it has nobody left to
-report to. A loop that fails or finishes
+meantime (`approval_owner`: "the loop that started its run was stopped"). What its worker asked her
+to allow and still waits (a batch's start, a workflow's save) has that ask ended the same way
+(`owner_allow.end_asks`), and neither it nor a cancelled batch run is handed to the worker
+afterwards: it has nobody left to report to. A loop that fails or finishes
 ends them the same way ("its loop “…” failed", "has finished"): a failed loop keeps its task
 workers' worktrees for a Resume, but a batch run is no worker's, and nothing would read what it
 found. The workflow supervisor asks the same question of every live run on each poll, boot included

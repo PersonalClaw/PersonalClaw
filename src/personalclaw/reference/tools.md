@@ -2152,7 +2152,7 @@ Diagnose workflow runs that drifted — nodes stuck running, gates nobody can an
 
 ### `workflow_author`
 
-Save a workflow definition from an explicit DAG spec — the low-level authoring tool. Use when you already know the node structure; use workflow_plan instead to turn a natural-language goal into a spec, and workflow_check to get the issue list back without saving anything, which is the cheap way to iterate. Never put a literal API key in the spec: reference credentials as {{secret:KEY}}.
+Save a workflow definition from an explicit DAG spec — the low-level authoring tool. Use when you already know the node structure; use workflow_plan instead to turn a natural-language goal into a spec, and workflow_check to get the issue list back without saving anything, which is the cheap way to iterate. Never put a literal API key in the spec: reference credentials as {{secret:KEY}}. A save that would let a step approve its own tool calls (approval_mode auto) or change things (capability mutating) where it did not before waits for your owner's own Allow, asked once; nothing is saved before they answer.
 
 **Response type:** `workflow.def.saved`
 
@@ -2195,7 +2195,7 @@ Cancel a run. The intent is persisted, so it is honoured even if the gateway res
 
 ### `workflow_check`
 
-Check a workflow definition from an explicit DAG spec without saving it: returns the issue list and writes nothing. Takes the spec workflow_author saves, so a spec that checks clean is one it will save.
+Check a workflow definition from an explicit DAG spec without saving it: returns the issue list and writes nothing. Takes the spec workflow_author saves, so a spec that checks clean is one it will save, or, when needs_owner_allow names steps that would do more, one it asks your owner to allow first.
 
 **Response type:** `workflow.def.saved`
 
@@ -2236,7 +2236,7 @@ Delete a workflow definition. Existing runs of it are unaffected — they carry 
 
 ### `workflow_edit`
 
-Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, move, set_input, skip. Returns a cascade preview naming every node that would re-run; if it would re-run already-completed work you must resubmit with confirm_cascade=true. Running and finished nodes cannot be edited — rewind one first. Pass expect_version from workflow_status to avoid editing a spec that changed under you. workflow_edit_preview computes the same cascade and queues nothing.
+Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, move, set_input, skip. Returns a cascade preview naming every node that would re-run; if it would re-run already-completed work you must resubmit with confirm_cascade=true. Running and finished nodes cannot be edited — rewind one first. Pass expect_version from workflow_status to avoid editing a spec that changed under you. workflow_edit_preview computes the same cascade and queues nothing. An edit that would let a step approve its own tool calls or change things, or give such a step new work, is refused: that goes into the workflow's definition with workflow_author, which asks your owner.
 
 **Response type:** `workflow.mutation.result`
 

@@ -10329,10 +10329,11 @@ export const api = {
     ).then(j<WorkflowDropStatus>)
   },
   // `preview_only` computes the cascade and queues NOTHING — the what-if a user sees
-  // before accepting an edit that would re-run completed work.
+  // before accepting an edit that would re-run completed work. An edit that would let a step act
+  // alone or change things, or give a step that does new work, is asked about first.
   editWorkflowRun: (id: string, body: { ops: Array<Record<string, unknown>>; expect_version?: number; confirm_cascade?: boolean; preview_only?: boolean }) =>
-    post<{ ok?: boolean; queued?: boolean; preview: WorkflowCascadePreview; issues: Array<{ code: string; message: string; node_id?: string }> }>(
-      `/api/workflows/runs/${encodeURIComponent(id)}/edit`, body),
+    withSecurityConsent((c) => post<{ ok?: boolean; queued?: boolean; preview: WorkflowCascadePreview; issues: Array<{ code: string; message: string; node_id?: string }> }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/edit`, c ? { ...body, confirm: true } : body)),
   // Launch a run that already exists as a DRAFT — what a forked run had no verb for (#372).
   // Distinct from `startWorkflowRun`, which takes a def name and CREATES the row it starts:
   // pointing that at a fork would mint a second run and strand the lineage the fork recorded.

@@ -441,52 +441,77 @@ def workflow_audit():
         yield
 
 
+@pytest.fixture
+def stored_defs() -> Iterator[dict[str, dict]]:
+    """Where a saved workflow definition lands, read back by the test."""
+    from personalclaw.workflows import defs as defs_mod
+
+    saved: dict[str, dict] = {}
+
+    class _Defs(defs_mod.WorkflowDefProvider):
+        @property
+        def name(self) -> str:
+            # First in sort order, so the save writes here whatever else a test registered.
+            return "aaa-consent-test-defs"
+
+        @property
+        def readonly(self) -> bool:
+            return False
+
+        async def list_defs(self, *, limit: int = 200, offset: int = 0):
+            return list(saved.values())[offset : offset + limit], len(saved)
+
+        async def get_def(self, name: str):
+            return saved.get(name)
+
+        async def save_def(self, **fields):
+            fields.setdefault("source", "user")
+            fields["version"] = int((saved.get(fields["name"]) or {}).get("version") or 0) + 1
+            saved[fields["name"]] = dict(fields)
+            return saved[fields["name"]]
+
+    defs_mod.register_provider(_Defs())
+    try:
+        yield saved
+    finally:
+        defs_mod.unregister_provider("aaa-consent-test-defs")
+
+
 @pytest.mark.usefixtures("workflow_audit")
 class TestTheOwnerConsentsToAWorkflowStepThatApprovesItself:
     @pytest.mark.asyncio
-    async def test_saving_one_needs_consent(self, monkeypatch) -> None:
-        from personalclaw.workflows import handlers, service
+    async def test_saving_one_needs_consent(self, stored_defs) -> None:
+        from personalclaw.workflows import handlers
 
-        saved: list[dict] = []
-
-        async def get_def(name):
-            return {"ok": False}
-
-        async def author_def(**kw):
-            if kw.get("save", True):
-                saved.append(kw)
-            return {"ok": True, "saved": bool(kw.get("save", True))}
-
-        monkeypatch.setattr(service, "get_def", get_def)
-        monkeypatch.setattr(service, "author_def", author_def)
-
-        body = {"name": "w", "root": _stage_def("auto")}
+        body = {"name": "w", "root": _stage_def("auto"), "strict": False}
         refused = await handlers.api_def_save(_Req(body))
         assert refused.status == 400
         error = json.loads(refused.body)["error"]
         assert error["code"] == "confirmation_required"
         assert error["detail"]["field"] == "workflows.w.root.children[0].approval_mode"
-        assert not saved, "nothing may be saved"
+        assert not stored_defs, "nothing may be saved"
 
-        # A dry run writes nothing, so it is never asked.
-        assert (await handlers.api_def_save(_Req({**body, "save": False}))).status == 200
+        # A dry run writes nothing, so it is never asked; it says which step a save would ask for.
+        checked = await handlers.api_def_save(_Req({**body, "save": False}))
+        assert checked.status == 200
+        [step] = json.loads(checked.body)["needs_owner_allow"]
+        assert step["path"] == "root.children[0]" and step["keys"] == ["approval_mode"]
         assert (await handlers.api_def_save(_Req({**body, "confirm": True}))).status == 201
-        assert saved[-1]["root"] == body["root"]
+        assert stored_defs["w"]["root"]["children"][0]["config"]["approval_mode"] == "auto"
 
     @pytest.mark.asyncio
-    async def test_re_saving_what_is_stored_is_not_asked(self, monkeypatch) -> None:
+    async def test_re_saving_what_is_stored_is_not_asked(self, stored_defs) -> None:
+        from personalclaw.stale_write import revision_of
         from personalclaw.workflows import handlers, service
 
-        async def get_def(name):
-            return {"ok": True, "definition": {"root": _stage_def("auto")}}
+        body = {"name": "w", "root": _stage_def("auto"), "strict": False, "confirm": True}
+        assert (await handlers.api_def_save(_Req(body))).status == 201
 
-        async def author_def(**kw):
-            return {"ok": True, "saved": True}
-
-        monkeypatch.setattr(service, "get_def", get_def)
-        monkeypatch.setattr(service, "author_def", author_def)
-        resp = await handlers.api_def_save(_Req({"name": "w", "root": _stage_def("auto")}))
-        assert resp.status == 201
+        again = _Req({**body, "confirm": False})
+        again.headers["If-Match"] = revision_of((await service.get_def("w"))["definition"])
+        resp = await handlers.api_def_save(again)
+        assert resp.status == 201, resp.body
+        assert stored_defs["w"]["version"] == 2
 
     @pytest.mark.asyncio
     async def test_lifting_a_runs_cycle_cap_needs_consent(self, monkeypatch) -> None:

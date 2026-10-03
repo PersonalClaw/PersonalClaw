@@ -41,7 +41,7 @@ from test_dashboard_approval import _context_builder, _make_session, _make_state
 from test_one_allow_covers_a_triggers_agent import _manager, _spawn_rows
 
 from personalclaw import approval_grants, mcp_core, mcp_subagents
-from personalclaw.automation_posture import POSTURE_SPECS
+from personalclaw.automation_posture import POSTURE_SPECS, WHAT_IT_MAY_DO
 from personalclaw.dashboard.chat_handlers import api_chat_mode
 from personalclaw.dashboard.handlers.sessions import api_approval_resolve, api_approvals
 from personalclaw.inbox import OPEN_STATUSES, InboxStore, ItemKind
@@ -335,7 +335,7 @@ async def test_an_ask_nobody_answers_ends_it_unstarted_not_declined(gateway, mon
 def test_the_ask_says_what_every_posture_key_lets_a_task_do():
     """A key a step may carry only with the owner's consent is one the ask must put in words, or
     a batch could carry it past an ask that says nothing about it."""
-    assert set(batch_start.WHAT_IT_MAY_DO) == set(POSTURE_SPECS)
+    assert set(WHAT_IT_MAY_DO) == set(POSTURE_SPECS)
 
 
 # ── its tasks start on that Allow ───────────────────────────────────────────────────────────────

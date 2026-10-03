@@ -136,6 +136,16 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # (it acts on its own, or there is nowhere to ask), and only her Allow starts a batch that
     # may change things (`batch_start`).
     "WF_BATCH_NOBODY_TO_ASK": (409, "nobody_to_ask"),
+    # The posture screen's refusal (`service._write_definition`): the save would let a step do
+    # more and the owner's yes was not given. The editor's save answers it as the consent question
+    # (`_save_def`); any other door that reaches it is asked the same question.
+    "WF_DEF_NEEDS_OWNER_YES": (400, "confirmation_required"),
+    # The same refusal of an edit of a running workflow (`mid_flight.posture_refusal`), which the
+    # run page's edit answers as the consent question (`api_run_edit`).
+    "WF_MUT_NEEDS_OWNER_YES": (400, "confirmation_required"),
+    # 409 like the batch's: the save is well-formed, and the session it came from cannot ask its
+    # owner for the Allow it needs (`definition_ask`).
+    "WF_DEF_NOBODY_TO_ASK": (409, "save_nobody_to_ask"),
 }
 
 #: A validation-shaped service code we did not map explicitly still must not read as a
@@ -324,14 +334,14 @@ async def api_def_save(request: web.Request) -> web.Response:
 async def _save_def(
     request: web.Request, body: dict[str, Any], name: str, root: dict[str, Any]
 ) -> web.Response:
-    """The save itself, under `_get_def_save_lock` — from the revision check to the write."""
-    # A step whose agent approves its own tool calls, or holds the write grant an unattended run
-    # never gets by default, is the owner's per-automation approval posture — asked about on the
-    # wire when a save loosens it over the stored definition, like `agent.approval_mode`. A dry
-    # run (`save: false`) writes nothing, so it is never asked.
-    if bool(body.get("save", True)):
-        from personalclaw.automation_posture import unconsented_workflow_loosening
+    """The save itself, under `_get_def_save_lock` — from the revision check to the write.
 
+    A step whose agent approves its own tool calls, or holds the write grant an unattended run
+    never gets by default, is the owner's per-automation approval posture: the save screens it
+    (`service._write_definition`, every door's one writer), and here, at her own editor, her yes
+    is the ``confirm`` the consent dialog sends, asked on the wire like `agent.approval_mode`. A
+    dry run (`save: false`) writes nothing, so it is never asked."""
+    if bool(body.get("save", True)):
         stored = await service.get_def(name)
         # 🔴 A DEFINITION OF YOURS IS SAVED ONLY OVER THE COPY THE EDIT WAS BUILT FROM. The editor
         # sends the whole definition it read, so a save from a page opened before another tab — or
@@ -352,16 +362,6 @@ async def _save_def(
         if stale is not None:
             _audit(request, "workflow_def_save", refusal_outcome(stale), name)
             return stale
-        loosened = unconsented_workflow_loosening(
-            name,
-            current_root=(stored.get("definition") or {}).get("root") if stored.get("ok") else None,
-            new_root=root,
-            body=body,
-        )
-        if loosened is not None:
-            field, consent = loosened
-            _audit(request, "workflow_def_save", "denied", f"{field}: loosening without confirm")
-            return consent_required(field, consent, title=LOOSEN_TITLE)
     result = await service.author_def(
         name=name,
         root=root,
@@ -389,7 +389,12 @@ async def _save_def(
         # definition (a copy of a shipped template) or that recorded version (a restore).
         based_on=str(body.get("based_on", "") or ""),
         based_on_version=_version_number(body.get("based_on_version")),
+        owner_allowed=confirm_granted(body),
     )
+    if result.get("code") == "WF_DEF_NEEDS_OWNER_YES":
+        field, consent = str(result.get("field") or ""), str(result.get("consent") or "")
+        _audit(request, "workflow_def_save", "denied", f"{field}: loosening without confirm")
+        return consent_required(field, consent, title=LOOSEN_TITLE)
     _audit(
         request,
         "workflow_def_save",
@@ -911,6 +916,45 @@ def _api_origin() -> Any:
     return OriginKind.API
 
 
+async def api_agent_save(request: web.Request) -> web.Response:
+    """POST /api/workflows/agent-saves — save an agent's workflow, or ask its owner to allow it.
+
+    The save ``workflow_author`` hands over (`definition_ask`), for the session that ran it
+    (``X-Session-Key``). A save that lets no step do more than before is saved (``201``). One
+    that would let a step approve its own tool calls, or change things where it only read,
+    answers ``202 awaiting_approval`` with the ask its owner answers, and is saved on her Allow
+    alone; a session with nobody to ask is refused (``409 save_nobody_to_ask``).
+    """
+    denied = _guard(request, "workflow_agent_save")
+    if denied is not None:
+        return denied
+    from personalclaw.workflows import definition_ask
+
+    body = await json_object_body(request)
+    root = body.get("root")
+    if not isinstance(root, dict):
+        return web.json_response(
+            {"error": {"code": "invalid_request", "message": "'root' must be an object"}},
+            status=400,
+        )
+    name = require_string(body, "name")
+    result = await definition_ask.save(
+        request.app.get("state"),
+        session_key=request.headers.get("X-Session-Key", "") or "",
+        fields={
+            "name": name,
+            "root": root,
+            "description": str(body.get("description", "") or ""),
+            "inputs": body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
+            "tags": [str(t) for t in (body.get("tags") or [])],
+        },
+    )
+    _audit(request, "workflow_agent_save", "success" if result.get("ok") else "failure", name)
+    if result.get("status") == "awaiting_approval":
+        return _ok(result, status=202)
+    return _reply(result, status=201 if result.get("saved") else 200)
+
+
 async def api_batch_start(request: web.Request) -> web.Response:
     """POST /api/workflows/batches — start a batch `subagent_run` compiled (`batch_start`).
 
@@ -1270,7 +1314,13 @@ async def api_run_edit(request: web.Request) -> web.Response:
         expect_version=int(expect) if isinstance(expect, (int, float)) else None,
         confirm_cascade=confirm_granted(body, "confirm_cascade"),
         actor="user",
+        # Her yes to a step the edit would let do more, the consent dialog's answer.
+        owner_allowed=confirm_granted(body),
     )
+    if result.get("code") == "WF_MUT_NEEDS_OWNER_YES":
+        field, consent = str(result.get("field") or ""), str(result.get("consent") or "")
+        _audit(request, "workflow_run_edit", "denied", f"{field}: loosening without confirm")
+        return consent_required(field, consent, title=LOOSEN_TITLE)
     _audit(request, "workflow_run_edit", "success" if result.get("ok") else "failure", run_id)
     return _reply(result)
 
@@ -1696,6 +1746,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs", api_runs_list)
     app.router.add_post("/api/workflows/runs", api_run_start)
     app.router.add_post("/api/workflows/batches", api_batch_start)
+    app.router.add_post("/api/workflows/agent-saves", api_agent_save)
     app.router.add_get("/api/workflows/runs/{run_id}", api_run_status)
     app.router.add_delete("/api/workflows/runs/{run_id}", api_run_delete)
     app.router.add_get("/api/workflows/runs/{run_id}/events", api_run_events)

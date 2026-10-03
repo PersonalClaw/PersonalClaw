@@ -1098,6 +1098,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "POST /api/workflows/runs": OwnerOnly(_STARTS_AGENT_WORK),
     "POST /api/workflows/batches": OwnerOnly(_STARTS_AGENT_WORK),
+    "POST /api/workflows/agent-saves": OwnerOnly(_DEFINES_AUTOMATION),
     "POST /api/workflows/runs/{run_id}/start": OwnerOnly(_STARTS_AGENT_WORK),
     "POST /api/workflows/runs/{run_id}/steer": OwnerOnly(_STARTS_AGENT_WORK),
     "POST /api/workflows/runs/{run_id}/rewind": OwnerOnly(_STARTS_AGENT_WORK),

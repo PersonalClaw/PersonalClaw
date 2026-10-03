@@ -25,9 +25,8 @@ it may change, and starts only on her Allow:
   Unattended) and a gateway with nowhere to ask are refused, saying why: a grant that approves calls
   on its own is not consent to a batch's writes.
 
-The batch waits for her answer in the gateway, not in the tool call: an approval waits as long as
-the owner's approval window, longer than any tool call may run, and the agent goes on meanwhile,
-as it does when a single subagent's start asks.
+The ask is the one every Allow an agent cannot give itself goes through (`owner_allow`), and the
+batch waits for her answer in the gateway, not in the tool call, as a single subagent's start does.
 """
 
 from __future__ import annotations
@@ -35,11 +34,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.workflows import service, store
+from personalclaw.automation_posture import WHAT_IT_MAY_DO
+from personalclaw.workflows import owner_allow, service, store
 from personalclaw.workflows.models import (
     InstanceState,
     Node,
@@ -60,20 +59,6 @@ logger = logging.getLogger(__name__)
 #: which ask, and when. Written at create, before the run's first step dispatches, and never copied
 #: to a fork (a fork carries its parent's origin and inputs, not its record).
 CONSENT_KEY = "batch_consent"
-
-#: The approval-registry id of a batch's ask, before the batch's definition name.
-_ASK_PREFIX = "batch:"
-
-#: What each posture key lets a task do, as the ask says it. The keys are
-#: `automation_posture.POSTURE_SPECS`'s, the one list of them; a test holds the two to the same
-#: keys, so a key added there cannot reach a batch the ask says nothing about.
-WHAT_IT_MAY_DO: dict[str, str] = {
-    "capability": (
-        "may change files and run commands, not only read: its file and shell tools, and any other "
-        "tool it has that changes things"
-    ),
-    "approval_mode": "approves its own tool calls instead of asking you first",
-}
 
 
 @dataclass(frozen=True)
@@ -182,18 +167,6 @@ def _reads(folder: str) -> str:
     return "" if refused else resolved
 
 
-def _nobody_to_ask(state: Any, chat: str) -> str:
-    """Why nobody can be asked to allow the batch, as the rest of "…, which …"; "" when someone
-    can. A session that acts on its own (`loop.posture`: an Unattended loop's) has nobody there to
-    answer, and a gateway with no approval surface has nowhere to ask."""
-    if state is None or not callable(getattr(state, "request_approval", None)):
-        return "there is nowhere to ask for here"
-    session = (getattr(state, "_sessions", None) or {}).get(chat)
-    if session is not None and getattr(session, "_unattended", False) is True:
-        return "this run cannot ask for: it acts on its own, with nobody there to answer"
-    return ""
-
-
 async def start(
     state: Any,
     supervisor: Any,
@@ -225,7 +198,7 @@ async def start(
     if not any(task.changes for task in tasks):
         return await begin(None)
     chat = session_key.removeprefix("dashboard:")
-    why = _nobody_to_ask(state, chat)
+    why = owner_allow.nobody_to_ask(state, chat)
     if why:
         changing = ", ".join(task.label for task in tasks if task.changes)
         return service._service_failure(
@@ -234,7 +207,7 @@ async def start(
             f"Allow, which {why}. Make those changes in this session, or start the batch from a "
             "chat.",
         )
-    ask_id = f"{_ASK_PREFIX}{name}"
+    ask_id = f"{owner_allow.BATCH_PREFIX}{name}"
     purpose, said = _ask_text(tasks, folder=str(inputs.get("cwd") or ""), workspace=workspace)
     waiter = asyncio.ensure_future(
         _ask_then_start(
@@ -275,6 +248,9 @@ def _starter(supervisor: Any, *, name: str, root: dict[str, Any], **fields: Any)
             strict=False,
             provenance="user",
             workspace=fields["workspace"] or None,
+            # Her Allow of the ask that named each task and what it may change, when it needed
+            # one: a batch that only reads lets no step do more, and asked nobody.
+            owner_allowed=consent is not None,
         )
         if not saved.get("ok"):
             return saved
@@ -306,30 +282,24 @@ async def _ask_then_start(
 ) -> None:
     """Ask the owner to allow the batch, then start it on her Allow, or tell the conversation that
     started it why it never started. Never raises: it runs with nobody awaiting it."""
-    from personalclaw.approval_grants import NOBODY, YOU, ToolDecision
-    from personalclaw.tool_providers.base import RiskLevel
+    from personalclaw.approval_grants import YOU
 
-    try:
-        allowed = await state.request_approval(
-            ask_id,
-            "subagent",
-            "subagent_run",
-            tool_input=said,
-            tool_purpose=purpose,
-            session=chat,
-            risk_level=RiskLevel.CAUTION.value,
-            answered_alone=True,
-        )
-        # How it ended, which the bool cannot say: her Allow or Deny, or no answer at all (nobody
-        # answered in time, or its work stopped first).
-        ending = str(state.ended_as(ask_id) or "") or ("approved" if allowed else "rejected")
-        decision = ToolDecision(
-            bool(allowed), ending, YOU if ending in ("approved", "rejected") else NOBODY
-        )
-    except Exception:
-        logger.warning("batch %s: asking for its approval failed", name, exc_info=True)
-        decision = ToolDecision(False, "rejected", "approval_failed")
-    _audit(session_key, name, decision)
+    decision = await owner_allow.ask(
+        state,
+        ask_id=ask_id,
+        source="subagent",
+        tool="subagent_run",
+        purpose=purpose,
+        said=said,
+        session=chat,
+    )
+    owner_allow.audit(
+        session_key,
+        source="subagent",
+        tool="subagent_run",
+        decision=decision,
+        metadata={"batch": name},
+    )
     if decision.outcome == "cancelled":
         # Its owner ended first (the loop or the turn that asked was stopped: `end_asks`), so there
         # is nobody left to tell, as a subagent stopped with its owner tells nobody either.
@@ -367,46 +337,6 @@ async def _ask_then_start(
             logger.warning(
                 "batch %s: could not tell its chat it never started", name, exc_info=True
             )
-
-
-def _audit(session_key: str, name: str, decision: Any) -> None:
-    from personalclaw.sel import sel
-
-    try:
-        sel().log_tool_invocation(
-            session_key=session_key,
-            source="subagent",
-            tool_name="subagent_run",
-            # Each one a word the audit log's filters read (`audit_outcome_families`): nobody
-            # answering, or its work stopping first, is not a Deny.
-            outcome=(
-                "approved"
-                if decision
-                else (
-                    "expired"
-                    if decision.outcome == "expired"
-                    else ("cancelled" if decision.outcome == "cancelled" else "rejected")
-                )
-            ),
-            metadata={"batch": name, "decided_by": decision.decided_by},
-        )
-    except Exception:
-        logger.debug("SEL audit failed for batch %s", name, exc_info=True)
-
-
-def end_asks(state: Any, ended: Callable[[str, float], bool], *, reason: str) -> int:
-    """End every batch still waiting for its owner's answer whose ask *ended* says is over, given
-    the session it was asked for and when (``started_work.end_started``: a loop's ending, a turn's
-    Stop): its ask is cancelled saying *reason* ("its loop “…” was stopped"), on every surface, so
-    it can no longer be allowed, and the batch never starts. Returns how many."""
-    pending = getattr(state, "_pending_approvals", None) or {}
-    asks = [
-        approval_id
-        for approval_id, entry in list(pending.items())
-        if approval_id.startswith(_ASK_PREFIX)
-        and ended(str(entry.get("session") or ""), float(entry.get("ts") or 0.0))
-    ]
-    return sum(1 for approval_id in asks if state.cancel_approval(approval_id, reason=reason))
 
 
 # ── telling the conversation that started it ─────────────────────────────────────────────────────

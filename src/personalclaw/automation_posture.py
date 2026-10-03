@@ -10,7 +10,10 @@ on the step, so its run asks the owner or not by the consent given for that step
 
 #3602's rule for a loosening write applies to both: the owner's write that loosens one needs
 ``"confirm": true`` (``edit_spec.unconsented_loosening``), and the refusal carries the sentence the
-consent dialog shows. Tightening never asks.
+consent dialog shows. Tightening never asks. A workflow definition is screened the same way at
+every door that saves one (:func:`workflow_loosenings`, read by ``workflows.service``'s one
+writer): the editor's save asks for that ``confirm``, an agent's save asks for the owner's own
+Allow, and a definition from elsewhere arrives without what only her yes puts on a step.
 
 An app never writes one at all, and that is decided per ROUTE rather than here: defining a
 trigger or a workflow is owner-only for an app (``apps/permissions.ROUTE_AUTHZ``), because a step
@@ -64,6 +67,19 @@ POSTURE_SPECS: dict[str, dict[str, Any]] = {
     "capability": {
         "security": SecurityControl(loosens_toward("research", "", "mutating"), _WRITE_ACCESS),
     },
+}
+
+#: What each posture key lets a step's agent do, after "it", in the words an ask for the owner's
+#: own Allow says it: a subagent batch's start (``workflows.batch_start``) and a workflow's save
+#: (``workflows.definition_ask``). The keys are :data:`POSTURE_SPECS`'s, the one list of them; a
+#: test holds the two to the same keys, so a key added there cannot reach a step an ask says
+#: nothing about.
+WHAT_IT_MAY_DO: dict[str, str] = {
+    "capability": (
+        "may change files and run commands, not only read: its file and shell tools, and any other "
+        "tool it has that changes things"
+    ),
+    "approval_mode": "approves its own tool calls instead of asking you first",
 }
 
 
@@ -379,23 +395,120 @@ def workflow_steps(root: Mapping[str, Any]) -> dict[str, tuple[str, dict[str, An
     return steps
 
 
-def unconsented_workflow_loosening(
-    name: str, *, current_root: Mapping[str, Any] | None, new_root: Mapping[str, Any], body: Any
-) -> tuple[str, str] | None:
-    """``(field, consent)`` for the first step of *new_root* that loosens the step at the same
-    path in *current_root* (the stored definition, ``None`` for a new one) without consent."""
-    current = workflow_steps(current_root) if current_root else {}
-    for path, (provider, config) in workflow_steps(new_root).items():
-        loosened = unconsented_step_loosening(
-            f"workflows.{name}.{path}",
-            current=current.get(path, ("", {}))[1],
-            new=config,
-            body=body,
-            provider=provider,
+@dataclass(frozen=True)
+class Loosening:
+    """A step of a workflow that a save would let do more than the same step does now.
+
+    ``keys`` are the posture keys it loosens, and ``may`` what each then lets its agent do, after
+    "it", as an ask for the owner's Allow says it (:func:`what_it_may_do`). ``field`` and
+    ``consent`` are the first key's, as the editor's consent dialog asks about it
+    (:func:`unconsented_step_loosening`)."""
+
+    path: str
+    label: str
+    agent: str
+    keys: tuple[str, ...]
+    may: tuple[str, ...]
+    field: str
+    consent: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "label": self.label,
+            "agent": self.agent,
+            "keys": list(self.keys),
+            "may": list(self.may),
+            "field": self.field,
+            "consent": self.consent,
+        }
+
+
+def what_it_may_do(key: str, provider: str, step: Mapping[str, Any]) -> str:
+    """What the posture *key* a *step* of *provider* carries lets its agent do, after "it": the
+    write access an agent-starting action is given waits for its working folder's trust
+    (``project_trust.held_to``), and says so."""
+    if key == "capability" and provider in AGENT_STARTING_PROVIDERS:
+        from personalclaw.guardrails.project_trust import held_to
+        from personalclaw.subagent import CAPABILITY_MUTATING
+
+        folder = str(step.get("cwd") or "").strip()
+        if held_to(folder, CAPABILITY_MUTATING) != CAPABILITY_MUTATING:
+            return (
+                f"may change files and run commands once you trust its working folder {folder}, "
+                "and until then only reads"
+            )
+    return WHAT_IT_MAY_DO[key]
+
+
+def workflow_loosenings(
+    name: str, *, current_root: Mapping[str, Any] | None, new_root: Mapping[str, Any]
+) -> list[Loosening]:
+    """Every step of *new_root* that would do more than the same step of *current_root* (the
+    stored definition, or a running workflow's spec; ``None`` for a new one) lets it do, in the
+    order the engine walks them: what writing *new_root* needs the owner's own yes for
+    (``workflows.service``, ``workflows.mid_flight``).
+
+    A step is the one with the same node id (the engine's name for it: its bindings, its journal
+    and every edit address it by id), or at the same path when it has none, so a step that moved
+    or had one inserted before it is the same step. It does more when it loosens a posture key
+    over that step, or when it carries one the owner allowed there but no longer runs as it ran:
+    her yes was to the step she was shown, the rule a definition from another machine follows
+    (:func:`workflow_edit_arrived`). A spec that does not parse has no steps here, and its write is
+    refused before it lands (``Node.from_dict``), so nothing unscreened is stored."""
+    current = _steps_by_identity(current_root) if current_root else {}
+    out: list[Loosening] = []
+    for key_, (path, label, provider, config) in _steps_by_identity(new_root).items():
+        _path, _label, was_provider, before = current.get(key_, ("", "", provider, {}))
+        if was_provider != provider or not _runs_the_same(before, config):
+            before = {}
+        keys = tuple(
+            key
+            for key, spec in POSTURE_SPECS.items()
+            if spec["security"].loosens(_posture_value(before, key), _posture_value(config, key))
         )
-        if loosened is not None:
-            return loosened
-    return None
+        first = unconsented_step_loosening(
+            f"workflows.{name}.{path}", current=before, new=config, body={}, provider=provider
+        )
+        if not keys or first is None:
+            continue
+        out.append(
+            Loosening(
+                path=path,
+                label=label,
+                agent=str(config.get("agent") or ""),
+                keys=keys,
+                may=tuple(what_it_may_do(key, provider, config) for key in keys),
+                field=first[0],
+                consent=first[1],
+            )
+        )
+    return out
+
+
+def _steps_by_identity(
+    root: Mapping[str, Any],
+) -> dict[str, tuple[str, str, str, dict[str, Any]]]:
+    """``{identity: (path, label, provider, step_config)}`` for every step of a spec that can carry
+    a posture (:func:`workflow_steps`), keyed by its node id, or by its path when it has none."""
+    from personalclaw.workflows.models import Node, walk
+
+    try:
+        nodes = dict(walk(Node.from_dict(dict(root))))
+    except Exception:
+        return {}
+    out: dict[str, tuple[str, str, str, dict[str, Any]]] = {}
+    for path, (provider, config) in workflow_steps(root).items():
+        node = nodes.get(path)
+        node_id = node.id if node is not None else ""
+        label = (node.label or node_id) if node is not None else ""
+        out[f"id:{node_id}" if node_id else f"path:{path}"] = (
+            path,
+            label or path,
+            provider,
+            config,
+        )
+    return out
 
 
 # ── another machine's definitions (a device sync) ────────────────────────────
@@ -459,9 +572,9 @@ def workflow_edit_arrived(here: Mapping[str, Any], edited: Mapping[str, Any]) ->
     it: each step that still runs as it ran here keeps what this home's owner allowed it (its
     loosening keys here), unless the edit set the key itself, which only a tightening value
     survives to do; a step the edit changed keeps none, so it asks again until the owner here
-    allows it — the rule an automation's grant follows (``triggers.grants.narrow``). A step is the
-    one at the same path, as the save's consent check reads it
-    (:func:`unconsented_workflow_loosening`)."""
+    allows it — the rule an automation's grant follows (``triggers.grants.narrow``), and every
+    save's screen (:func:`workflow_loosenings`). A step is the one at the same path
+    (:func:`_raw_steps`)."""
     allowed = {path: step for path, step in _raw_steps(here.get("root")) if loosened_keys(step)}
     if not allowed:
         return dict(edited)

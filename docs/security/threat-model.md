@@ -228,8 +228,13 @@ says what that means.
   (`workflows/supervisor_policy.py::POLICY_OVERRIDE_SECURITY`). An agent's `subagent_run`
   batch with a task that may change things never sends that confirm: the gateway asks you once,
   naming each task and what it may change, and saves and starts it only on your own Allow
-  (`workflows/batch_start.py`). No standing grant answers that ask, and a session with nobody to
-  ask (an Unattended loop's) is refused.
+  (`workflows/batch_start.py`). So does an agent's `workflow_author` save of a step that would do
+  more than the same step does now (`workflows/definition_ask.py`), and every other door that
+  writes a definition goes through the same screen (`workflows.service._write_definition`): an
+  accepted refiner diff, a prompt card, a pack's template (which arrives asking), and an edit of a
+  running workflow (an agent's is refused). No standing grant answers either ask, and a session
+  with nobody to ask (an Unattended loop's) is refused. A request to `POST /api/spawn` cannot set
+  a subagent's approval mode at all.
 - **The app's own code is outside all of this.** An app's provider module is imported
   into the gateway's process, its backend is a process under your account, each MCP
   server in its manifest is a command the gateway launches with the gateway's own

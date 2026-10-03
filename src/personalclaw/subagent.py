@@ -1178,10 +1178,10 @@ class SubagentManager:
         - Lets the subagent's runtime approve its own tool calls while the grant stands
           (:meth:`_policy_source`, read at each call, not once for the agent's lifetime).
 
-        This dual behavior is intentional for headless callers (e.g. a
-        background cron/agent) that have no UI to respond to approval prompts.
-        The parameter is only accepted via the internal ``POST /api/spawn``
-        endpoint (requires X-Internal-Secret), not from LLM tool calls.
+        Only an in-process caller passes it, from consent given for that run (a workflow
+        step's saved posture, a trigger's step, an app's scheduled job): ``POST /api/spawn``
+        refuses a request that names one, and an agent's tool calls cannot set it, so a
+        subagent started any other way asks as its owner's own settings say.
 
         Args:
             task (str): The prompt/task description for the subagent.
@@ -1195,8 +1195,8 @@ class SubagentManager:
                 set. Enables cwd-relative resource globs (``AGENTS.md``,
                 ``.personalclaw/steering``) to resolve correctly.
             approval_mode (str | None): "auto" to skip spawn gate and
-                set session-level auto-approve.  Only honored from
-                authenticated internal callers (X-Internal-Secret).
+                set session-level auto-approve, from consent given for
+                that run (above); no request over HTTP can set it.
             silent (bool): Suppress completion notifications.
             parent_run (str): The run this spawn belongs to (``workflow:<run_id>``
                 or any caller-chosen fan-out key). Scopes the run-level concurrency

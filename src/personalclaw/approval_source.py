@@ -73,8 +73,9 @@ def approval_source_label(
     (``ChannelDelivery.request_approval``'s ``source``): ``chat “Trip planning”``,
     ``loop “Fix the README”``, ``workflow “deep-research” · step “sweep”``,
     ``trigger “Friday digest”``, ``subagent of chat “Trip planning”``,
-    ``MCP server “deepwiki”``. A name that is not known leaves the bare kind (``chat``,
-    ``loop``), which is still true. The work is read in the order that decides it: the trigger
+    ``MCP server “deepwiki”``; a chat's own agent asking through the queue (*source* ``agent``) is
+    its chat. A name that is not known leaves the bare kind (``chat``, ``loop``), which is still
+    true. The work is read in the order that decides it: the trigger
     whose run asked, the workflow step whose session it is, the loop whose worker or planner it
     is, then the
     chat or the background origin. A loop's worker asks on the chat path, with no source of its
@@ -105,6 +106,10 @@ def approval_source_label(
         return f"subagent of {_quoted('chat', title)}" if title else "subagent"
     if not source:
         return _quoted("chat", title)
+    if source == "agent":
+        # The session's own agent, asking for its owner's Allow of what it cannot give itself
+        # (`workflows.owner_allow`) through the queue rather than its turn's own card.
+        return _quoted("chat", title) if title else "agent"
     return "background task"
 
 

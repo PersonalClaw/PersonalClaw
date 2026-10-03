@@ -211,6 +211,7 @@ describe('an automation whose agent approves itself asks the same way', () => {
     ['updateHook', () => api.updateHook('h', { provider: 'invoke-agent', provider_config: { approval_mode: 'auto' } }, 'h1'), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
     ['saveWorkflowDef', () => api.saveWorkflowDef({ name: 'w', root: { kind: 'stage', id: 's', config: { approval_mode: 'auto' } }, save: true }), { saved: true, valid: true, issues: [] }],
     ['setWorkflowRunPolicyOverrides', () => api.setWorkflowRunPolicyOverrides('r1', { max_cycles: 9 }, 'v1'), { run_id: 'r1', status: 'running', policy_overrides: { max_cycles: 9 }, revisions: { policy_overrides: 'v2' } }],
+    ['editWorkflowRun', () => api.editWorkflowRun('r1', { ops: [{ op: 'update_node', node_id: 'fix', fields: { prompt: 'Fix the lint.' } }] }), { ok: true, queued: true, preview: { rerun: [], stale: [], skipped: [] }, issues: [] }],
     ['syncAgents', () => api.syncAgents(), { ok: true, synced: ['helper'], skipped: [], unreadable: [], scanned: 1, message: '' }],
   ]
 

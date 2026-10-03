@@ -10,10 +10,11 @@ Each records the worker session it was started from: the run its ``origin.sessio
 When the loop ends, that work has nobody left to report to. Stopping a loop ends every child it
 started (:func:`end_children`, by the rule a turn's Stop and a run's ending follow too:
 ``started_work``), and so do its failing and its deletion: each workflow run is cancelled, saying
-how its loop ended, each subagent is stopped, and a batch still waiting for its owner's Allow has
-that ask ended (``workflows.batch_start.end_asks``), so an approval any of them was waiting on ends
-with them and can no longer be allowed. What a run was asking for ends through the run (its stages'
-subagents are stopped, and each approval ends naming the loop: ``dashboard.approval_owner``).
+how its loop ended, each subagent is stopped, and what still waits for its owner's Allow (a batch's
+start, a workflow's save) has that ask ended (``workflows.owner_allow.end_asks``), so an approval
+any of them was waiting on ends with them and can no longer be allowed. What a run was asking for
+ends through the run (its stages' subagents are stopped, and each approval ends naming the loop:
+``dashboard.approval_owner``).
 
 A child can also outlive a loop that ended some other way (it finished), or one stopped while the
 gateway was down. So the workflow supervisor asks :func:`parent_ended` of every run it is about to

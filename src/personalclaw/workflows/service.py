@@ -368,12 +368,20 @@ async def author_def(
     on_overlap: str = "",
     based_on: str = "",
     based_on_version: int = 0,
+    owner_allowed: bool = False,
 ) -> dict[str, Any]:
     """Validate a spec and (optionally) save it.
 
     `save=False` is a real dry run: it validates and returns the issues WITHOUT writing, so
     an author can iterate before committing anything. Validating only at save time would
-    mean every failed attempt leaves a broken def on disk.
+    mean every failed attempt leaves a broken def on disk. A dry run of a spec whose save needs
+    the owner's own yes says which steps it is for (``needs_owner_allow``), asking nobody.
+
+    `owner_allowed` is the owner's own yes to what the save lets its steps do: her ``confirm`` on
+    her editor's save, or her Allow of an ask that named each step (`batch_start`,
+    `definition_ask`). Without it, a save that lets a step do more than the same step of the
+    stored definition does is refused with ``WF_DEF_NEEDS_OWNER_YES`` and nothing is written
+    (:func:`_write_definition`).
 
     `strict` rejects on WARNINGS too. Authoring is exactly when a warning is cheap to fix,
     and a template that ships with a known smell propagates it to every run.
@@ -520,6 +528,9 @@ async def author_def(
             "WF_DEF_INVALID", "the spec did not validate", **body, repromptable=True
         )
     if not save:
+        asks = await _loosenings(spec)
+        if asks:
+            body["needs_owner_allow"] = [step.to_dict() for step in asks]
         return _ok(saved=False, dry_run=True, **body)
 
     # Dry-run-before-save for AGENT-authored defs. A human saving a spec they
@@ -533,21 +544,9 @@ async def author_def(
 
         dry_run_report = run_preflight(spec).to_dict()
 
-    writable = [
-        p
-        for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
-        if p is not None and not p.readonly
-    ]
-    if not writable:
-        return _service_failure(
-            "WF_DEF_NO_WRITABLE_PROVIDER",
-            "no writable workflow definition provider is registered",
-        )
-    try:
-        saved = await writable[0].save_def(**spec)
-    except Exception as exc:
-        return _service_failure("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
-    raw = saved if isinstance(saved, dict) else getattr(saved, "to_dict", lambda: {})()
+    raw, refused = await _write_definition(spec, owner_allowed=owner_allowed)
+    if refused is not None:
+        return refused
     return _ok(
         saved=True,
         definition=secrets.strip_secrets(raw),
@@ -555,6 +554,92 @@ async def author_def(
         preflight=dry_run_report,
         **body,
     )
+
+
+async def _loosenings(spec: dict[str, Any]) -> list[Any]:
+    """The steps of *spec* that would do more than the same steps of the stored definition do
+    (``automation_posture.workflow_loosenings``): what its save needs the owner's own yes for."""
+    from personalclaw.automation_posture import workflow_loosenings
+
+    name = str(spec.get("name") or "")
+    stored = await _raw_def(name) if valid_name(name) else None
+    current = stored if isinstance(stored, dict) or stored is None else stored.to_dict()
+    root = spec.get("root")
+    return workflow_loosenings(
+        name,
+        current_root=(current or {}).get("root"),
+        new_root=root if isinstance(root, dict) else {},
+    )
+
+
+async def _write_definition(
+    spec: dict[str, Any], *, owner_allowed: bool = False, **hints: Any
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Write *spec* to the writable provider: the one write of a definition there is, behind the
+    posture screen. Returns ``(the definition as stored, None)``, or ``({}, the failure)``.
+
+    A step that approves its own tool calls, or changes things where it only read, does so each
+    time the workflow runs, unattended included, so it is the owner's yes alone that may put one
+    there. A write that would let any step do more than the same step of the stored definition
+    does (a loosened posture key, or an allowed one on a step given new work) is refused with
+    ``WF_DEF_NEEDS_OWNER_YES``, naming each such step and what it would then do, unless
+    *owner_allowed* says her yes covers it; nothing is written. The screen reads the spec as it
+    is written (macros expanded, hidden values restored), and compares it with the definition it
+    replaces. *hints* are the provider's own (``_version_source`` and ``_version_ops``).
+
+    Every door that writes a definition comes through here (``author_def``, the A2A toggle, an
+    accepted refiner diff), and ``tests/test_workflow_definition_writer_census.py`` fails a new
+    write that does not.
+    """
+    loosened = await _loosenings(spec)
+    if loosened and not owner_allowed:
+        name = str(spec.get("name") or "")
+        said = "; ".join(f"“{s.label}” {', and '.join(s.may)}" for s in loosened)
+        # Its failure carries ``field`` and ``consent`` (the first such step's, as the editor's
+        # consent dialog asks it) and ``steps`` (each such step, ``Loosening.to_dict``).
+        return {}, _service_failure(
+            "WF_DEF_NEEDS_OWNER_YES",
+            f"{name!r} was not saved: its steps would then do more ({said}), and only your own "
+            "yes saves that: save it in the workflow's editor, which asks you.",
+            field=loosened[0].field,
+            consent=loosened[0].consent,
+            steps=[step.to_dict() for step in loosened],
+        )
+    writable = [
+        p
+        for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
+        if p is not None and not p.readonly
+    ]
+    if not writable:
+        return {}, _service_failure(
+            "WF_DEF_NO_WRITABLE_PROVIDER",
+            "no writable workflow definition provider is registered",
+        )
+    try:
+        saved = await writable[0].save_def(**spec, **hints)
+    except Exception as exc:
+        return {}, _service_failure("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
+    raw = saved if isinstance(saved, dict) else getattr(saved, "to_dict", lambda: {})()
+    return dict(raw or {}), None
+
+
+async def save_accepted_diff(
+    candidate: dict[str, Any], *, ops: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Save an accepted refiner diff's result, *candidate*, as a new version of its definition,
+    the version recording its *ops* as the refiner's (``versions.SOURCE_REFINER``).
+
+    The refiner is a model, and accepting its proposal is no yes to a step doing more: a diff that
+    would let a step approve its own tool calls or change things is refused, naming the step, and
+    nothing is written. The owner allows that where she is asked, in the workflow's editor."""
+    from personalclaw.workflows.versions import SOURCE_REFINER
+
+    raw, refused = await _write_definition(
+        dict(candidate), _version_source=SOURCE_REFINER, _version_ops=list(ops)
+    )
+    if refused is not None:
+        return refused
+    return _ok(saved=True, version=int(raw.get("version") or 0))
 
 
 async def set_a2a_published(name: str, published: bool) -> dict[str, Any]:
@@ -579,21 +664,10 @@ async def set_a2a_published(name: str, published: bool) -> dict[str, Any]:
     # to do nothing.
     metadata["a2a_published"] = bool(published)
     spec["metadata"] = metadata
-    writable = [
-        p
-        for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
-        if p is not None and not p.readonly
-    ]
-    if not writable:
-        return _service_failure(
-            "WF_DEF_NO_WRITABLE_PROVIDER",
-            "no writable workflow definition provider is registered",
-        )
-    try:
-        saved = await writable[0].save_def(**spec)
-    except Exception as exc:
-        return _service_failure("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
-    raw = saved if isinstance(saved, dict) else getattr(saved, "to_dict", lambda: {})()
+    # Its steps are the stored definition's own, so the posture screen asks nobody here.
+    raw, refused = await _write_definition(spec)
+    if refused is not None:
+        return refused
     return _ok(
         name=name,
         a2a_published=bool((raw.get("metadata") or {}).get("a2a_published") is True),
@@ -1445,11 +1519,14 @@ def edit_run(
     expect_version: int | None = None,
     confirm_cascade: bool = False,
     actor: str = "chat",
+    owner_allowed: bool = False,
 ) -> dict[str, Any]:
     """Queue a mutation batch on a live run.
 
     Requires a LIVE controller: mutation is only safe at the controller's drain point, and
     editing a run nobody is driving would write state with no one to apply it (WF2-R10).
+    `owner_allowed` is the owner's own yes to a step the edit would let do more (her ``confirm``
+    on her own edit); without it such an edit is refused (`mid_flight.posture_refusal`).
     """
     # Existence before liveness — see `_reentry`. This answered 409 "only a running workflow can
     # be edited" for an id that named no workflow at all (issue 765).
@@ -1462,7 +1539,11 @@ def edit_run(
             f"run {run_id!r} has no live controller — only a running workflow can be edited",
         )
     body = controller.submit_mutation(
-        ops, actor=actor, confirm=confirm_cascade, expect_version=expect_version
+        ops,
+        actor=actor,
+        confirm=confirm_cascade,
+        expect_version=expect_version,
+        owner_allowed=owner_allowed,
     )
     body.setdefault("run_id", run_id)
     return body
@@ -2451,6 +2532,7 @@ __all__ = [
     "resume_run",
     "rewind_run",
     "run_from",
+    "save_accepted_diff",
     "skip_nodes",
     "start_run",
     "status",

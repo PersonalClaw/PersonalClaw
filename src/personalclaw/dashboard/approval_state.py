@@ -119,8 +119,9 @@ def chat_approval_id(session_key: str, request_id: str | int) -> str:
 
 def _who_asked(entry: dict[str, Any]) -> str:
     """Who is waiting on an approval, as the Inbox says it — the chat's agent and the chat, a
-    loop's worker and the loop, a subagent of a chat, or a background task. The one wording both
-    of an approval's Inbox rows use (the ask, and the note it leaves when nobody answered)."""
+    loop's worker and the loop, a subagent of a chat, a session's own agent asking through the
+    queue, or a background task. The one wording both of an approval's Inbox rows use (the ask,
+    and the note it leaves when nobody answered)."""
     agent = str(entry.get("agent") or "")
     title = str(entry.get("session_title") or "")
     if agent:
@@ -153,6 +154,9 @@ def _who_asked(entry: dict[str, Any]) -> str:
         return f"A background agent of the app “{display_name_of(session[len('app:') :])}”"
     if entry.get("source") == "subagent":
         return f"A subagent of “{title}”" if title else "A subagent"
+    if entry.get("source") == "agent":
+        # A session's own agent asking for an Allow it cannot give itself (`owner_allow`).
+        return f"The agent in “{title}”" if title else "An agent"
     return "A background task"
 
 

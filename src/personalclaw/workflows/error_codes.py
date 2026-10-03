@@ -292,6 +292,12 @@ WF_ERROR_CODES: dict[str, str] = {
         "No writable workflow-definition provider is registered, so there is nowhere to save."
     ),
     "WF_DEF_SAVE_FAILED": "Writing the definition failed; the message carries the cause.",
+    "WF_DEF_NEEDS_OWNER_YES": (
+        "The save would let a step do more than the same step of the stored definition does "
+        "(approve its own tool calls, or change things where it only read) and carried no "
+        "owner's yes for it, so nothing was written; the failure names each such step and what "
+        "it would then do."
+    ),
     "WF_DEF_DELETE_FAILED": "Deleting the definition failed; the message carries the cause.",
     "WF_LOOP_KIND_UNKNOWN": "No workflow template replaces the named loop kind.",
     "WF_LOOP_KIND_NOT_PORTED": (
@@ -370,6 +376,12 @@ WF_ERROR_CODES: dict[str, str] = {
     ),
     "WF_DROP_LIMIT": "The run already holds the maximum number of dropped files.",
     "WF_DROP_WRITE_FAILED": "Storing the dropped file failed; the message carries the cause.",
+    # ── workflows/mid_flight.py — an edit's posture screen ─────────────────
+    "WF_MUT_NEEDS_OWNER_YES": (
+        "The edit of a running workflow would let a step do more than it does (approve its own "
+        "tool calls, or change things where it only read) and carried no owner's yes for it, so "
+        "nothing was queued; the failure names each such step."
+    ),
     # ── workflows/mutations.py — mid-flight spec edits ─────────────────────
     # Emitted as `Issue(code=..., message=...)` from op parsing and application.
     "WF_MUT_UNKNOWN_OP": "A mutation op could not be parsed into a typed op.",
@@ -509,6 +521,17 @@ WF_ERROR_CODES: dict[str, str] = {
         "A batch with a task that may change things starts only on its owner's own Allow, and "
         "the session that started it has nobody to ask (it acts on its own, or nowhere can ask); "
         "the message names those tasks and why."
+    ),
+    # ── workflows/definition_ask.py — an agent's save that needs the owner's Allow ──
+    "WF_DEF_NOBODY_TO_ASK": (
+        "An agent's save would let a step do more, which only its owner's own Allow saves, and "
+        "the session it came from has nobody to ask (it acts on its own, or nowhere can ask); "
+        "the message names those steps and why."
+    ),
+    "WF_DEF_CHANGED_WHILE_ASKED": (
+        "The owner allowed an agent's save, but the stored definition changed while she was "
+        "asked and the save would now let a step do more than her Allow named, so it was not "
+        "saved."
     ),
     # ── workflows/review_service.py — workspace review triage ─────────────
     "WF_TRIAGE_BAD_DECISIONS": (

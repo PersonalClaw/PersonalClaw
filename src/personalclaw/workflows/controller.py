@@ -998,8 +998,12 @@ class RunController:
         actor: str = "user",
         confirm: bool = False,
         expect_version: int | None = None,
+        owner_allowed: bool = False,
     ) -> dict[str, Any]:
         """Validate a batch and QUEUE it; the tick loop applies it.
+
+        A batch that would let a step do more than it does is refused unless *owner_allowed*
+        says the owner's own yes covers it (`mid_flight.posture_refusal`).
 
         Returns the preview and issues synchronously — a caller needs to see the cascade
         before it lands, and a batch that cannot pass validation should not reach the queue
@@ -1053,12 +1057,16 @@ class RunController:
 
         # Against the spec the queue will leave, not the one the run has now: an edit made while
         # others wait (a paused run) applies after them, so it must be valid there.
-        result = mutations.prepare_batch(
-            raw_ops, mid_flight.projected_spec(self), self.instances, effects=self._effects
-        )
+        before = mid_flight.projected_spec(self)
+        result = mutations.prepare_batch(raw_ops, before, self.instances, effects=self._effects)
         body = result.to_dict()
         if not result.ok:
             return body
+        refused = mid_flight.posture_refusal(
+            self.run.workflow_name, before, result, owner_allowed=owner_allowed
+        )
+        if refused is not None:
+            return {**body, **refused}
         if result.preview.needs_confirmation and not confirm:
             body["ok"] = False
             body["needs_confirmation"] = True

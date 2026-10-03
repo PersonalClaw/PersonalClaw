@@ -19,6 +19,7 @@ from personalclaw.dashboard.state import (
     DashboardState,
     _rewrite_notifications,
 )
+from personalclaw.http_errors import json_error
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.subagent_persistence import _agent_dir, read_state
 from personalclaw.validation import (
@@ -79,18 +80,21 @@ async def api_spawn(request: web.Request) -> web.Response:
     if not task:
         return web.json_response({"error": "task is required"}, status=400)
     parent_session = body.get("parent_session", "")
-    # approval_mode and silent are HTTP API parameters passed by the SDK,
-    # NOT MCP tool arguments from the LLM.  The LLM's subagent_run tool
-    # (mcp_core.py) does not expose these params — they are added by the
-    # SDK's spawn() method for app-level control.  Validated inline here
-    # rather than in SPAWN_RUN_SCHEMA because they are transport-layer
-    # params, not tool-schema params.
-    #
-    # Security: an agent's tool reaches this over loopback with the gateway's internal
-    # credential (MIXED_INTERNAL_ROUTES in server.py); every other caller needs a session.
-    approval_mode = body.get("approval_mode", "")
-    if approval_mode not in ("", "auto"):
-        return web.json_response({"error": "approval_mode must be '' or 'auto'"}, status=400)
+    # A spawn's approval mode is its owner's to set, never a request's: the subagent asks as her
+    # own settings say (the parent chat's Trust, YOLO, Settings → Agent defaults → Approval mode),
+    # whoever starts it. An agent's tool reaches this route with the gateway's internal credential
+    # (MIXED_INTERNAL_ROUTES in server.py), so a body that names an approval mode is refused rather
+    # than run looser or quietly ignored. What lets a subagent approve its own calls is consent
+    # given for that run, passed in-process (a workflow step's saved posture, a trigger's step).
+    if body.get("approval_mode") not in (None, ""):
+        return json_error(
+            "approval_mode_not_accepted",
+            message=(
+                "approval_mode is not accepted: a subagent asks as your own approval settings "
+                "say, and a request cannot set that"
+            ),
+            status=400,
+        )
     silent = body.get("silent", False)
     if not isinstance(silent, bool):
         silent = str(silent).lower() in ("true", "1", "yes")
@@ -103,7 +107,6 @@ async def api_spawn(request: web.Request) -> web.Response:
         agent=agent,
         max_turns=max_turns,
         cwd=cwd,
-        approval_mode=approval_mode or None,
         silent=silent,
         app=_app_behind(state, str(parent_session or "")),
     )
@@ -383,7 +386,7 @@ async def api_notification_trust(request: web.Request) -> web.Response:
     offers the two buttons no more.
     """
     from personalclaw import channel_trust
-    from personalclaw.http_errors import consent_required, json_error
+    from personalclaw.http_errors import consent_required
     from personalclaw.request_validation import json_object_body
     from personalclaw.safety_flags import confirm_granted
 

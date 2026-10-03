@@ -358,19 +358,27 @@ def _payload_from_body(body: str) -> dict[str, Any]:
 
 
 def _save_def_sync(spec: dict[str, Any]) -> str:
-    """Save a card-derived workflow definition from a SYNC installer.
+    """Save a card-derived workflow definition from a SYNC installer, through the save every
+    other one goes through (``workflows.service.author_def``): a name a shipped template holds is
+    refused, and so is a step that would do more than ask and read, which no card's yes covers.
 
-    ``save_def`` is async and ``proposals.accept``'s installer contract is sync, so the
+    ``author_def`` is async and ``proposals.accept``'s installer contract is sync, so the
     coroutine is driven the way :func:`packs.catalog_marketplace.fetch_catalog_text` drives
     its own — on a private loop in a worker thread when a loop is already running, rather than
     deadlocking the request handler.
     """
     import asyncio
 
-    from personalclaw.workflows.native_defs import NativeWorkflowDefProvider
+    from personalclaw.workflows import service
 
-    async def _go() -> Any:
-        return await NativeWorkflowDefProvider().save_def(**spec)
+    async def _go() -> dict[str, Any]:
+        return await service.author_def(
+            name=str(spec.get("name") or ""),
+            root=dict(spec.get("root") or {}),
+            description=str(spec.get("description") or ""),
+            tags=[str(t) for t in (spec.get("tags") or [])],
+            provenance="user",
+        )
 
     try:
         asyncio.get_running_loop()
@@ -381,4 +389,6 @@ def _save_def_sync(spec: dict[str, Any]) -> str:
 
         with memory_writes.ScopeCarryingExecutor() as pool:
             saved = pool.submit(asyncio.run, _go()).result()
-    return str(getattr(saved, "name", "") or spec.get("name", ""))
+    if not saved.get("ok"):
+        raise PromptCardError(f"the template was not saved: {saved.get('message') or 'unknown'}")
+    return str((saved.get("definition") or {}).get("name") or spec.get("name", ""))

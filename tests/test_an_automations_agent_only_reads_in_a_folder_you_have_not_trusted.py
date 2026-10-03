@@ -193,7 +193,7 @@ def test_the_consent_to_write_access_in_a_folder_you_have_not_trusted_waits_for_
 def test_a_workflows_agent_step_waits_for_its_folder_and_a_stage_does_not(home, asked):
     """An Invoke Agent step of a workflow is held to its folder's trust like a trigger's; a stage
     spawns its agent another way, which no folder holds back, so its consent stays as it was."""
-    from personalclaw.automation_posture import unconsented_workflow_loosening
+    from personalclaw.automation_posture import workflow_loosenings
 
     def spec(node: dict) -> dict:
         """The workflow's root, as its save hands it to the posture check."""
@@ -207,14 +207,10 @@ def test_a_workflows_agent_step_waits_for_its_folder_and_a_stage_does_not(home, 
     }
     stage = {"kind": "stage", "id": "rebuild", "config": {"prompt": "x", **step}}
 
-    [_field, consent] = unconsented_workflow_loosening(
-        "site", current_root=None, new_root=spec(action), body={}
-    )
-    assert consent == WRITE_ACCESS_ONCE_TRUSTED
-    [_field, consent] = unconsented_workflow_loosening(
-        "site", current_root=None, new_root=spec(stage), body={}
-    )
-    assert consent == WRITE_ACCESS
+    [step] = workflow_loosenings("site", current_root=None, new_root=spec(action))
+    assert step.consent == WRITE_ACCESS_ONCE_TRUSTED
+    [step] = workflow_loosenings("site", current_root=None, new_root=spec(stage))
+    assert step.consent == WRITE_ACCESS
 
 
 # ── invoke-agent: the same check ────────────────────────────────────────────────────────────────

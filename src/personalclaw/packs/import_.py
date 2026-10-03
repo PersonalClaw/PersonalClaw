@@ -1044,9 +1044,16 @@ def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: st
                 "lint", f"agent {comp.target_id!r} invalid after import: {'; '.join(errors)}"
             )
         text = json.dumps(comp.obj.to_dict(), indent=2, ensure_ascii=False)
+    elif comp.kind == "template":
+        # A step's `approval_mode: auto` or `capability: mutating` is its owner's yes, given where
+        # she is shown the step, so a pack's is not hers: its template arrives with every step
+        # asking before it acts and only reading, and allowing either asks her, in its editor.
+        from personalclaw.automation_posture import workflow_what_it_is
+
+        text = json.dumps(workflow_what_it_is(comp.obj), indent=2, ensure_ascii=False)
     else:
-        # A template, or a trigger — staged + disabled: never into the live trigger store, since a
-        # pack cannot arm automation on install. The user enables it later from Automations.
+        # A trigger — staged + disabled: never into the live trigger store, since a pack cannot
+        # arm automation on install. The user enables it later from Automations.
         text = json.dumps(comp.obj, indent=2, ensure_ascii=False)
 
     _mkdir_journaled(journal, path.parent)

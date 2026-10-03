@@ -18,9 +18,9 @@ its steps would start agents for work that is over.
   subagents (``subagent:<id>``) started.
 
 And what an ended subagent started from its own session ends with it, so a batch a background
-subagent started does not outlive the Stop that ends the subagent. So does a batch still waiting for
-its owner's Allow to start (``workflows.batch_start``): its ask ends, saying why, and it never
-starts.
+subagent started does not outlive the Stop that ends the subagent. So does what still waits for
+its owner's Allow (``workflows.owner_allow``: a batch's start, a workflow's save): its ask ends,
+saying why, and nothing it asked for is started or saved.
 
 Each run is cancelled with the clause, which its ending says ("Stopped because its chat turn was
 stopped."), and the controller driving it stops its steps' subagents and ends what they were
@@ -46,7 +46,8 @@ TURN_STOPPED = "its chat turn was stopped"
 class Ended(NamedTuple):
     """What an ending reached: the runs whose cancel it asked, the subagents it stopped (a
     cancelled run's steps still running among them, which that run's controller stops), and the
-    batches waiting to start whose ask it ended."""
+    asks for the owner's Allow it ended (a batch waiting to start, a workflow waiting to be
+    saved)."""
 
     runs: int
     subagents: int
@@ -79,7 +80,7 @@ async def end_started(
 ) -> Ended:
     """End what the sessions *owns* claims started, and what each subagent among it started in
     turn, as *clause* ("its chat turn was stopped"). *asks* is the approval registry, which holds
-    the batches still waiting for her Allow (``workflows.batch_start.end_asks``).
+    what still waits for her Allow (``workflows.owner_allow.end_asks``).
 
     *since* (an epoch) keeps it to what those sessions started from then on: a turn's own work,
     not an earlier turn's. What a subagent it reaches started is that subagent's, whenever it was.
@@ -133,7 +134,7 @@ async def end_started(
             logger.warning("could not stop subagents %s (%s)", going, clause, exc_info=True)
     waiting = 0
     if asks is not None:
-        from personalclaw.workflows.batch_start import end_asks
+        from personalclaw.workflows.owner_allow import end_asks
 
         try:
             waiting = end_asks(
@@ -143,10 +144,12 @@ async def end_started(
                 reason=clause,
             )
         except Exception:
-            logger.warning("could not end the batches waiting to start (%s)", clause, exc_info=True)
+            logger.warning(
+                "could not end the asks waiting for an Allow (%s)", clause, exc_info=True
+            )
     if runs or stopped or waiting:
         logger.info(
-            "ended %d run(s), %d subagent(s) and %d batch ask(s): %s",
+            "ended %d run(s), %d subagent(s) and %d ask(s) for an Allow: %s",
             runs,
             stopped,
             waiting,

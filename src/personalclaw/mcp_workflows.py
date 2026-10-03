@@ -8,7 +8,10 @@ Exposes `_list_tools` / `_call_tool` in the same shape as `mcp_prompts` / `mcp_m
 the in-process `InProcessMcpToolProvider` and the aggregating `mcp-core` server consume it
 through one path. Unlike the other categories this one does NOT go over HTTP: the engine is
 in-process, and a chat tool that round-tripped through the gateway to reach an object in the
-same process would add a failure mode (and a port dependency) for nothing.
+same process would add a failure mode (and a port dependency) for nothing. The one exception is
+a save this process cannot make (`_saved_by_the_gateway`): one that would let a step do more,
+which only the owner's own Allow saves and only the gateway can ask her for, and one made where
+no store of definitions is.
 
 Two deliberate shapes in the descriptions:
 
@@ -132,7 +135,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 "workflow_plan instead to turn a natural-language goal into a spec, and "
                 "workflow_check to get the issue list back without saving anything, which is "
                 "the cheap way to iterate. Never put a literal API key in the spec: reference "
-                "credentials as {{secret:KEY}}."
+                "credentials as {{secret:KEY}}. A save that would let a step approve its own "
+                "tool calls (approval_mode auto) or change things (capability mutating) where it "
+                "did not before waits for your owner's own Allow, asked once; nothing is saved "
+                "before they answer."
             ),
             "inputSchema": _spec_schema(),
         },
@@ -142,7 +148,9 @@ def _list_tools() -> list[dict[str, Any]]:
             "description": (
                 "Check a workflow definition from an explicit DAG spec without saving it: "
                 "returns the issue list and writes nothing. Takes the spec workflow_author "
-                "saves, so a spec that checks clean is one it will save."
+                "saves, so a spec that checks clean is one it will save, or, when "
+                "needs_owner_allow names steps that would do more, one it asks your owner to "
+                "allow first."
             ),
             "inputSchema": _spec_schema(),
         },
@@ -311,7 +319,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 "resubmit with confirm_cascade=true. Running and finished nodes cannot be "
                 "edited — rewind one first. Pass expect_version from workflow_status to "
                 "avoid editing a spec that changed under you. workflow_edit_preview computes "
-                "the same cascade and queues nothing."
+                "the same cascade and queues nothing. An edit that would let a step approve its "
+                "own tool calls or change things, or give such a step new work, is refused: "
+                "that goes into the workflow's definition with workflow_author, which asks your "
+                "owner."
             ),
             "inputSchema": _edit_schema(run_id, previews=False),
         },
@@ -694,16 +705,16 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         # A check is its own tool, never an argument of the save: a call either saves or writes
         # nothing, so what it declares is what it does (a check only reads, and asks nobody).
         save = name == "workflow_author"
-        result = _run(
-            service.author_def(
-                name=str(args.get("name", "") or ""),
-                root=root,
-                description=str(args.get("description", "") or ""),
-                inputs=args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
-                tags=[str(t) for t in (args.get("tags") or [])],
-                save=save,
-            )
-        )
+        fields: dict[str, Any] = {
+            "name": str(args.get("name", "") or ""),
+            "root": root,
+            "description": str(args.get("description", "") or ""),
+            "inputs": args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
+            "tags": [str(t) for t in (args.get("tags") or [])],
+        }
+        result = _run(service.author_def(**fields, save=save))
+        if save and result.get("code") in _GATEWAY_SAVES:
+            return _saved_by_the_gateway(fields, why=str(result["code"]))
         if not save and result.get("ok") and result.get("valid"):
             # UP-R9 discover-then-freeze: a generated spec that VALIDATED but was not saved is
             # exactly what used to be thrown away. Freezing it as a session-scoped candidate is
@@ -834,6 +845,56 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _fmt(_run(service.delete_def(str(args.get("name", "") or ""))))
 
     return tool_failure(f"unknown workflows tool {name!r}.")
+
+
+#: The saves this process cannot make, which the gateway makes instead (`definition_ask`): one
+#: that would let a step do more than before, which only the owner's own Allow saves and only the
+#: gateway can ask her for, and one made where no store of definitions is (an agent CLI's tool
+#: server, `mcp-core`).
+_GATEWAY_SAVES = frozenset({"WF_DEF_NEEDS_OWNER_YES", "WF_DEF_NO_WRITABLE_PROVIDER"})
+
+
+def _saved_by_the_gateway(fields: dict[str, Any], *, why: str) -> str:
+    """Hand the save *fields* to the gateway (``POST /api/workflows/agent-saves``), which saves it
+    or asks the owner once to allow it, and say which, in the shape every workflow tool answers.
+    *why* is the code that sent it there, which a gateway that cannot be reached is named by."""
+    from personalclaw.mcp_core import _post
+
+    answer = _post("/api/workflows/agent-saves", fields)
+    detail = answer.get("error_detail")
+    if isinstance(detail, dict):
+        # The gateway's own refusal, already a sentence that says what was not saved and why.
+        code = str(detail.get("service_code") or "WF_DEF_SAVE_FAILED")
+        return tool_failure(str(answer.get("error") or "it was not saved"), code=code)
+    if answer.get("error"):
+        needs = (
+            "a save that lets a step do more is made only on your owner's own Allow, which only "
+            "the gateway can ask them for"
+            if why == "WF_DEF_NEEDS_OWNER_YES"
+            else "this tool server keeps no workflows, and only the gateway saves one"
+        )
+        return tool_failure(
+            f"{fields['name']!r} was not saved: {needs}, and the gateway could not be reached "
+            f"({answer['error']})",
+            code=why,
+        )
+    if answer.get("status") != "awaiting_approval":
+        return _fmt({"ok": True, **answer})
+    steps = [f"“{label}”" for label in answer.get("steps") or []]
+    lets = (
+        f"its step {steps[0]} approve its own tool calls"
+        if len(steps) == 1
+        else f"{len(steps)} of its steps ({'; '.join(steps)}) approve their own tool calls"
+    )
+    return "\n".join(
+        [
+            json.dumps({"status": "awaiting_approval", "approval": answer.get("approval", "")}),
+            f"Not saved yet: it would let {lets} or change things, not only read. A save like "
+            "that waits for your owner's own Allow, asked once, the way every approval is asked, "
+            "and nothing is saved before they answer. You are not told their answer: "
+            "workflow_get_def shows the workflow once it is saved. Do not save it another way.",
+        ]
+    )
 
 
 def _plan(args: dict[str, Any]) -> str:
