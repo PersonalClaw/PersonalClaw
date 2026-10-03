@@ -222,6 +222,90 @@ class TestOrphanReaping:
         await wd.stop()
 
 
+#: One question with no deadline, then one step: a run whose tick loop stops at the question.
+ASKS_FIRST = {
+    "name": "asks-first",
+    "root": {
+        "kind": "sequence",
+        "id": "s",
+        "children": [
+            {
+                "kind": "gate",
+                "id": "approve",
+                "config": {"kind": "approval", "prompt": "ok?", "timeout_secs": 0},
+            },
+            {"kind": "transform", "id": "after", "config": {"expr": "the run carried on"}},
+        ],
+    },
+}
+
+
+class TestAControllerThatCanNoLongerDriveItsRun:
+    """A controller drives its run from a task on the event loop that launched it. One launched on
+    a loop that then closed — an agent's tool made its call on a loop of its own — was left with a
+    controller that would never move it, which the registry still answered as the run's driver, so
+    nothing ever took the run over and it read `running` on its first step for good."""
+
+    async def test_it_is_no_driver_and_the_run_is_taken_over(self) -> None:
+        """🔴 Before: the dead controller was the run's driver, and the run never moved again."""
+        run = _run()
+        wd = WorkflowWatchdog(None, EngineServices())
+        # Launched on a loop of its own, which closes as soon as the launch returns.
+        await asyncio.to_thread(asyncio.run, wd.launch(run, SPEC))
+        assert store.get(run.id).status == RunStatus.RUNNING
+        assert wd.controller(run.id) is None, "a controller that cannot move the run is its driver"
+
+        await wd._poll_once()
+
+        adopted = wd.controller(run.id)
+        assert adopted is not None, "the run was not taken over"
+        assert await adopted.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        await wd.stop()
+
+    async def test_the_step_it_had_in_flight_runs_again(self) -> None:
+        """The step a gone controller had started was that controller's own task, and went with
+        it. Left `running`, nothing would dispatch it again and the run waited on it forever, so a
+        resumed run puts it back in the queue at its epoch, its lost attempt uncharged — the same
+        a gateway that died mid-step leaves behind. 🔴 Before: the adopted run never moved."""
+        # What a controller that died mid-step leaves: the run started, its first step dispatched.
+        run = _run(started_at="2026-01-01T00:00:00Z")
+        store.write_state(
+            run.id,
+            {
+                "root.children[0]": NodeInstance(
+                    "root.children[0]",
+                    InstanceState.RUNNING,
+                    attempt=1,
+                    started_at="2026-01-01T00:00:00Z",
+                )
+            },
+        )
+        wd = WorkflowWatchdog(None, EngineServices())
+        await wd._poll_once()
+
+        adopted = wd.controller(run.id)
+        assert adopted is not None
+        assert await adopted.run_to_completion(timeout=5) == RunStatus.COMPLETE
+        assert store.read_state(run.id)["root.children[0]"].attempt == 1
+        await wd.stop()
+
+    async def test_a_run_parked_on_a_question_keeps_its_controller(self) -> None:
+        """A tick loop that stopped on purpose is no dead one: a run parked on its owner's answer
+        keeps the controller her answer restarts, poll after poll, and nothing runs it again."""
+        run = _run(spec=ASKS_FIRST)
+        wd = WorkflowWatchdog(None, EngineServices())
+        parked = await wd.launch(run, ASKS_FIRST)
+        assert await parked.wait_for_terminal(timeout=10) == RunStatus.NEEDS_INPUT
+        await asyncio.wait_for(asyncio.shield(parked._task), timeout=5)  # type: ignore[arg-type]
+
+        await wd._poll_once()
+        await wd._poll_once()
+
+        assert wd.controller(run.id) is parked
+        assert store.get(run.id).status == RunStatus.NEEDS_INPUT
+        await wd.stop()
+
+
 class TestStickyCancel:
     async def test_a_cancel_with_no_controller_is_honoured(self) -> None:
         """A cancel issued while the gateway was down must not be lost — and it lands through a

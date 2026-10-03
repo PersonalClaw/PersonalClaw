@@ -8,10 +8,13 @@ Exposes `_list_tools` / `_call_tool` in the same shape as `mcp_prompts` / `mcp_m
 the in-process `InProcessMcpToolProvider` and the aggregating `mcp-core` server consume it
 through one path. Unlike the other categories this one does NOT go over HTTP: the engine is
 in-process, and a chat tool that round-tripped through the gateway to reach an object in the
-same process would add a failure mode (and a port dependency) for nothing. The one exception is
-a save this process cannot make (`_saved_by_the_gateway`): one that would let a step do more,
-which only the owner's own Allow saves and only the gateway can ask her for, and one made where
-no store of definitions is.
+same process would add a failure mode (and a port dependency) for nothing. Being in the process
+is not being on the engine's loop, though: these tools run in a worker thread, so a call that
+reaches a run is handed to the workflow supervisor's loop and waited for (`_on_engine`), the loop
+the owner's own start runs on; a run started on a loop of the call's own stopped as it closed.
+The one exception is a save this process cannot make (`_saved_by_the_gateway`): one that would
+let a step do more, which only the owner's own Allow saves and only the gateway can ask her for,
+and one made where no store of definitions is.
 
 Two deliberate shapes in the descriptions:
 
@@ -27,8 +30,10 @@ can actually fix and retry.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from personalclaw import approval_answer
@@ -569,7 +574,9 @@ def _supervisor() -> Any:
 
 
 def _run(coro: Any) -> Any:
-    """Run a coroutine from the sync tool boundary.
+    """Run a coroutine that reaches no run from the sync tool boundary: a definition's read or
+    write, or `observe`'s read of the run store. A call that reaches a run is made on the
+    engine's loop instead (`_on_engine`), since what it starts or wakes lives there.
 
     The tool contract is sync while the service layer is async. In production the native
     runtime already calls `_call_tool` in a thread executor, so no loop is running here and
@@ -592,6 +599,29 @@ def _run(coro: Any) -> Any:
 
     with memory_writes.ScopeCarryingExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
+
+
+def _on_engine(work: Callable[[Any], Any]) -> Any:
+    """Make one call into the workflow engine from the sync tool boundary, on the engine's loop.
+
+    *work* is handed the supervisor and returns the service's answer, or a coroutine for it. A
+    run is driven by its controller's tick loop, a task on the supervisor's loop (the gateway's),
+    which is where the owner's start makes this same call (`handlers.api_run_start`). This boundary
+    runs in a worker thread: a run it started on a loop of its own was cancelled on its first step
+    as that loop closed with the call, and a pause it lifted restarted no loop at all. So the call
+    is handed to the supervisor's loop and this thread waits for the answer
+    (`WorkflowWatchdog.run_threadsafe`).
+
+    With no supervisor to hand it to — none in this process (an agent CLI's tool server), or one
+    whose loop is not running — the call is made here without one, and the service answers for
+    that: nothing is started, and a cancel or a pause it records is applied by the gateway
+    driving the run, which reads those intents from the run's folder.
+    """
+    supervisor = _supervisor()
+    if supervisor is None or supervisor.event_loop is None:
+        answer = work(None)
+        return _run(answer) if inspect.isawaitable(answer) else answer
+    return supervisor.run_threadsafe(lambda: work(supervisor))
 
 
 def _fmt(body: dict[str, Any], *, summary: str = "") -> str:
@@ -728,13 +758,19 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _plan(args)
 
     if name == "workflow_start":
+        from personalclaw.mcp_core import _resolve_session_key
+
+        # Started by the chat whose turn this is, named as the owner's route names its caller
+        # (`X-Session-Key`): the run keeps that chat's memory posture, and the turn's Stop ends it.
+        session_key = _resolve_session_key()
         return _fmt(
-            _run(
-                service.start_run(
+            _on_engine(
+                lambda supervisor: service.start_run(
                     name=str(args.get("name", "") or ""),
                     inputs=args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
                     mode=str(args.get("mode", "background") or "background"),
-                    supervisor=_supervisor(),
+                    supervisor=supervisor,
+                    session_key=session_key,
                     project_id=str(args.get("project_id", "") or ""),
                     idempotency_key=str(args.get("idempotency_key", "") or ""),
                 )
@@ -744,7 +780,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
 
     if name == "workflow_start_draft":
         return _fmt(
-            _run(service.start_draft_run(run_id, supervisor=_supervisor())),
+            _on_engine(lambda supervisor: service.start_draft_run(run_id, supervisor=supervisor)),
             summary="Draft run started.",
         )
 
@@ -767,12 +803,14 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
             return _fmt(service.preview_edit(run_id, ops))
         expect = args.get("expect_version")
         return _fmt(
-            service.edit_run(
-                run_id,
-                ops,
-                supervisor=_supervisor(),
-                expect_version=int(expect) if isinstance(expect, (int, float)) else None,
-                confirm_cascade=confirm_granted(args, "confirm_cascade"),
+            _on_engine(
+                lambda supervisor: service.edit_run(
+                    run_id,
+                    ops,
+                    supervisor=supervisor,
+                    expect_version=int(expect) if isinstance(expect, (int, float)) else None,
+                    confirm_cascade=confirm_granted(args, "confirm_cascade"),
+                )
             )
         )
 
@@ -781,65 +819,85 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         if not isinstance(node_ids, list) or not node_ids:
             return tool_failure("'node_ids' must be a non-empty array.", code="WF_NO_NODE_IDS")
         return _fmt(
-            service.skip_nodes(run_id, [str(n) for n in node_ids], supervisor=_supervisor())
+            _on_engine(
+                lambda supervisor: service.skip_nodes(
+                    run_id, [str(n) for n in node_ids], supervisor=supervisor
+                )
+            )
         )
 
     if name == "workflow_rewind":
         return _fmt(
-            service.rewind_run(
-                run_id,
-                str(args.get("node_id", "") or ""),
-                supervisor=_supervisor(),
-                redo_effects=yes_or_no(args.get("redo_effects")) is True,
-                force=yes_or_no(args.get("force")) is True,
-                confirm_cascade=confirm_granted(args, "confirm_cascade"),
+            _on_engine(
+                lambda supervisor: service.rewind_run(
+                    run_id,
+                    str(args.get("node_id", "") or ""),
+                    supervisor=supervisor,
+                    redo_effects=yes_or_no(args.get("redo_effects")) is True,
+                    force=yes_or_no(args.get("force")) is True,
+                    confirm_cascade=confirm_granted(args, "confirm_cascade"),
+                )
             )
         )
 
     if name == "workflow_run_from":
         return _fmt(
-            service.run_from(
-                run_id,
-                str(args.get("node_id", "") or ""),
-                supervisor=_supervisor(),
-                confirm_cascade=confirm_granted(args, "confirm_cascade"),
+            _on_engine(
+                lambda supervisor: service.run_from(
+                    run_id,
+                    str(args.get("node_id", "") or ""),
+                    supervisor=supervisor,
+                    confirm_cascade=confirm_granted(args, "confirm_cascade"),
+                )
             )
         )
 
     if name == "workflow_fork":
         return _fmt(
-            service.fork_run(
-                run_id,
-                checkpoint_id=str(args.get("checkpoint_id", "") or ""),
-                note=str(args.get("note", "") or ""),
-                supervisor=_supervisor(),
+            _on_engine(
+                lambda supervisor: service.fork_run(
+                    run_id,
+                    checkpoint_id=str(args.get("checkpoint_id", "") or ""),
+                    note=str(args.get("note", "") or ""),
+                    supervisor=supervisor,
+                )
             ),
             summary="Forked a new run; the original is unchanged.",
         )
 
     if name == "workflow_pause":
-        return _fmt(service.pause_run(run_id, supervisor=_supervisor()))
+        return _fmt(_on_engine(lambda supervisor: service.pause_run(run_id, supervisor=supervisor)))
 
     if name == "workflow_resume":
         # An agent lifts a pause and answers nothing (`approval_answer`). An answer it sends
         # anyway, left over from an older description of this tool, goes to the service as an
         # answer, which refuses it and audits it rather than quietly lifting the pause instead.
         return _fmt(
-            service.resume_run(
-                run_id,
-                by=approval_answer.agent(_current_session_id()),
-                supervisor=_supervisor(),
-                token=str(args.get("resume_token", "") or ""),
-                answer=decode_json_text(args.get("answer")),
-                always_allow=yes_or_no(args.get("always_allow")) is True,
+            _on_engine(
+                lambda supervisor: service.resume_run(
+                    run_id,
+                    by=approval_answer.agent(_current_session_id()),
+                    supervisor=supervisor,
+                    token=str(args.get("resume_token", "") or ""),
+                    answer=decode_json_text(args.get("answer")),
+                    always_allow=yes_or_no(args.get("always_allow")) is True,
+                )
             )
         )
 
     if name == "workflow_cancel":
-        return _fmt(service.cancel_run(run_id, supervisor=_supervisor()))
+        return _fmt(
+            _on_engine(lambda supervisor: service.cancel_run(run_id, supervisor=supervisor))
+        )
 
     if name in ("workflow_audit", "workflow_repair"):
-        return _fmt(service.audit(dry_run=name == "workflow_audit", supervisor=_supervisor()))
+        return _fmt(
+            _on_engine(
+                lambda supervisor: service.audit(
+                    dry_run=name == "workflow_audit", supervisor=supervisor
+                )
+            )
+        )
 
     if name == "workflow_delete_def":
         return _fmt(_run(service.delete_def(str(args.get("name", "") or ""))))

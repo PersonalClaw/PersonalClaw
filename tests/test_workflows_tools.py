@@ -528,7 +528,7 @@ class TestRuns:
         )
         assert body["ok"]
 
-    def test_workflow_start_surfaces_missing_derived_inputs_and_accepts_complete_payload(
+    async def test_workflow_start_surfaces_missing_derived_inputs_and_accepts_complete_payload(
         self, provider, monkeypatch
     ) -> None:
         """The two-arm production gate: the derived form fails, then the same call shape succeeds.
@@ -536,7 +536,15 @@ class TestRuns:
         The input is deliberately undeclared so a declared-only validator cannot satisfy this
         test; only the tree-derived parameter contract can name it. Its name is deliberately
         ``extracted`` so the start payload also proves it cannot collide with the contract envelope.
+
+        Called as the native runtime calls the tool, from a worker thread, under a supervisor
+        started on this loop: the start is handed to that loop, where the run it names is driven.
         """
+        import asyncio
+
+        from personalclaw.workflows.controller import EngineServices
+        from personalclaw.workflows.watchdog import WorkflowWatchdog
+
         authored = T._call_tool(
             "workflow_author",
             {
@@ -550,26 +558,35 @@ class TestRuns:
         )
         assert json.loads(authored)["valid"] is True
 
-        supervisor = _FakeSupervisor()
+        supervisor = WorkflowWatchdog(None, EngineServices())
+        supervisor.start()
         monkeypatch.setattr(T, "_supervisor", lambda: supervisor)
+        try:
+            missing = await asyncio.to_thread(
+                T._call_tool, "workflow_start", {"name": "wf-derived-input", "inputs": {}}
+            )
+            assert missing.startswith("Error [WF_RUN_MISSING_INPUTS]")
+            missing_payload = json.loads(missing.split("\n", 1)[1])
+            assert missing_payload["missing"] == ["extracted"]
+            assert "extracted" in missing_payload["follow_up"]
+            assert missing_payload["all_filled"] is False
+            # Refused before any run existed.
+            assert store.list_runs(workflow_name="wf-derived-input")[1] == 0
 
-        missing = T._call_tool("workflow_start", {"name": "wf-derived-input", "inputs": {}})
-        assert missing.startswith("Error [WF_RUN_MISSING_INPUTS]")
-        missing_payload = json.loads(missing.split("\n", 1)[1])
-        assert missing_payload["missing"] == ["extracted"]
-        assert "extracted" in missing_payload["follow_up"]
-        assert missing_payload["all_filled"] is False
-        assert supervisor.launched == []
-
-        complete = T._call_tool(
-            "workflow_start",
-            {
-                "name": "wf-derived-input",
-                "inputs": {"extracted": {"topic": "cold starts"}},
-            },
-        )
-        complete_payload = json.loads(complete.split("\n", 1)[1])
-        assert complete_payload["run_id"] == supervisor.launched[-1]
+            complete = await asyncio.to_thread(
+                T._call_tool,
+                "workflow_start",
+                {
+                    "name": "wf-derived-input",
+                    "inputs": {"extracted": {"topic": "cold starts"}},
+                },
+            )
+            complete_payload = json.loads(complete.split("\n", 1)[1])
+            controller = supervisor.controller(complete_payload["run_id"])
+            assert controller is not None, complete_payload
+            assert await controller.run_to_completion(timeout=10) == RunStatus.COMPLETE
+        finally:
+            await supervisor.stop()
 
     async def test_no_supervisor_is_honest_about_not_starting(self, provider) -> None:
         await service.author_def(name="wf-nosup", root=SPEC_ROOT)

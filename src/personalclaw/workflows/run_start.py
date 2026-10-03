@@ -3,7 +3,8 @@
 Called from `RunController._prepare`: the declared `workspace:`, the
 project's context dir as the memory cwd, a restricted origin's memory posture, and the document a
 run that continues another starts from. Each is idempotent, because `_prepare` runs again on every
-resume. Its tick loop runs in `run_context`, wherever it is started from.
+resume — when a resumed run's steps that a gone controller left running go back in the queue too.
+Its tick loop runs in `run_context`, wherever it is started from.
 """
 
 from __future__ import annotations
@@ -13,13 +14,51 @@ import logging
 from typing import TYPE_CHECKING
 
 from personalclaw.workflows import ownership
-from personalclaw.workflows.models import RunStatus
+from personalclaw.workflows.models import InstanceState, RunStatus
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
     from personalclaw.workflows.models import WorkflowRun
 
 logger = logging.getLogger(__name__)
+
+
+def requeue_lost_steps(ctl: RunController) -> list[str]:
+    """Put back in the queue every step of a resumed run that a controller now gone left running.
+
+    A step's work is a task of the controller that dispatched it, held in that controller's
+    in-flight map and nowhere else — all but a dispatched `stage`'s, which is a subagent the
+    controller polls (`stage_settlement`). So a step the run's state still reads running, with no
+    subagent behind it and nothing of this controller's in flight, belonged to a controller that
+    is gone — a gateway that died mid-step, or one whose loop died under it and was taken over
+    (`RunController.dead`) — and its task went with it. Left running it is never dispatched again:
+    the frontier counts it as running, and the run waits on it forever.
+
+    It goes back to pending at the same epoch, as a paused step does (`_withdraw_inflight`): its
+    lost attempt is not charged, and an effect it may have fired goes out again under the same
+    idempotency key, the retry `effect_boundary.effect_preflight` lets through. Returns the paths.
+    """
+    lost = [
+        path
+        for path, inst in ctl.instances.items()
+        if inst.state == InstanceState.RUNNING
+        and not inst.subagent_id
+        and path not in ctl._inflight
+    ]
+    for path in lost:
+        inst = ctl.instances[path]
+        inst.state = InstanceState.PENDING
+        inst.started_at = None
+        inst.attempt = max(0, inst.attempt - 1)
+    if lost:
+        logger.info(
+            "run %s: re-queued %d step(s) left running by a controller that is gone: %s",
+            ctl.run.id,
+            len(lost),
+            ", ".join(lost),
+        )
+        ctl._persist_state()
+    return lost
 
 
 async def provision_workspace(ctl: RunController) -> bool:

@@ -13,7 +13,10 @@ Three responsibilities:
 **Adoption.** At startup, every run the store thinks is live has no controller. Each is
 adopted: a fresh controller resumes from the journal, and completed nodes come back as
 cache hits rather than re-running. Without this a gateway restart silently abandons runs
-in RUNNING forever — the state a user reads as "still working" while nothing is.
+in RUNNING forever — the state a user reads as "still working" while nothing is. A run whose
+controller's loop died under it while the process lives on is the same: that controller is let
+go and the run adopted afresh (`RunController.dead`). Every run is driven on this supervisor's
+own loop, which a caller on another thread reaches through `run_threadsafe`.
 
 **Orphan reaping.** A run whose nodes are all terminal but whose status never got written
 (the process died between the last node and the terminal write) is finished off from its
@@ -34,8 +37,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +86,10 @@ class WorkflowWatchdog:
         self._services = services or EngineServices()
         self._task: asyncio.Task | None = None
         self._controllers: dict[str, RunController] = {}
+        #: The event loop this supervisor's runs are driven on (`event_loop`): each controller's
+        #: tick loop is a task there, so a call from another thread is handed to it
+        #: (`run_threadsafe`).
+        self._event_loop: asyncio.AbstractEventLoop | None = None
         #: The boot sweep runs ONCE, on the first poll after start — a run without a live
         #: controller then is one this process never adopted, i.e. a crash survivor. On
         #: later polls a controller-less RUNNING run is a genuinely new run, not a stale
@@ -107,6 +116,7 @@ class WorkflowWatchdog:
 
     def start(self) -> None:
         if self._task is None or self._task.done():
+            self._event_loop = asyncio.get_running_loop()
             self._task = asyncio.create_task(self._loop())
             logger.info("workflow watchdog started")
 
@@ -125,11 +135,58 @@ class WorkflowWatchdog:
     # ── controller registry ──
 
     def controller(self, run_id: str) -> RunController | None:
-        return self._controllers.get(run_id)
+        """The controller driving *run_id*, or None. One that can no longer drive it
+        (`RunController.dead`) is none: nothing handed to it would move the run, and the next poll
+        takes the run over."""
+        controller = self._controllers.get(run_id)
+        return None if controller is None or controller.dead else controller
+
+    @property
+    def event_loop(self) -> asyncio.AbstractEventLoop | None:
+        """The event loop this supervisor drives its runs on, while it runs; else None.
+
+        The loop it was started on, the gateway's. One never started (a test driving runs by
+        hand) drives them on the loop it launched them on."""
+        loop = self._event_loop
+        return loop if loop is not None and loop.is_running() else None
+
+    def run_threadsafe(self, work: Callable[[], Any]) -> Any:
+        """Call *work* on the loop this supervisor drives its runs on, from any thread, and return
+        what it returns, awaited when it is a coroutine.
+
+        The door a caller outside that loop reaches the runs by: an agent's workflow tool runs in a
+        worker thread (the native runtime's executor). A run is driven by its controller's tick
+        loop, a task on the loop the run was launched on, so a run started on a loop of the tool
+        call's own stopped when that loop closed with the call, and a tick loop restarted from a
+        thread with no loop was never restarted at all.
+
+        Called on that loop, *work* runs right here, and a coroutine it returns is refused: this
+        thread cannot wait for it without stopping the loop that would run it. Raises when no loop
+        drives this supervisor's runs (`event_loop`).
+        """
+        home = self.event_loop
+        if home is None:
+            raise RuntimeError("no event loop drives this workflow supervisor's runs")
+        try:
+            here: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            here = None
+        if here is not home:
+            return asyncio.run_coroutine_threadsafe(_awaited(work), home).result()
+        result = work()
+        if inspect.isawaitable(result):
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
+            raise RuntimeError(
+                "a call into the workflow engine that must be awaited was made on the engine's own "
+                "loop, which cannot wait for it"
+            )
+        return result
 
     def register(self, controller: RunController) -> None:
-        """Adopt a controller created elsewhere (a chat tool starting a run), so the
-        watchdog does not later adopt the same run a second time."""
+        """Adopt a controller created elsewhere, so the watchdog does not later adopt the same
+        run a second time."""
         self._controllers[controller.run.id] = controller
 
     def forget(self, run_id: str) -> bool:
@@ -147,8 +204,13 @@ class WorkflowWatchdog:
     ) -> RunController:
         """Create, register and start a controller for a run."""
         existing = self._controllers.get(run.id)
-        if existing is not None:
+        if existing is not None and not existing.dead:
             return existing
+        if existing is not None:
+            self._take_over_from(existing)
+        if self._event_loop is None or self._event_loop.is_closed():
+            # Never started, this supervisor drives its runs where it launches them (`event_loop`).
+            self._event_loop = asyncio.get_running_loop()
         controller = RunController(run, spec, services=self._services_for(run), depth=depth)
         self._controllers[run.id] = controller
         await controller.start()
@@ -315,10 +377,12 @@ class WorkflowWatchdog:
 
     async def _poll_once(self) -> None:
         # Drop finished controllers first so a completed run does not look adopted and
-        # block its own reaping.
+        # block its own reaping — and dead ones, so their runs are taken over below.
         for run_id, controller in list(self._controllers.items()):
             if controller.run.is_terminal:
                 self._controllers.pop(run_id, None)
+            elif controller.dead:
+                self._take_over_from(controller)
 
         # The boot sweep runs ONCE, before the first adoption, so a run this process never
         # drove is decided honestly rather than blindly re-adopted as "still
@@ -367,6 +431,19 @@ class WorkflowWatchdog:
         # It also covers a finish whose process died between the terminal write and the
         # controller's own drain.
         await overlap.drain_all(self)
+
+    def _take_over_from(self, controller: RunController) -> None:
+        """Let go of a controller that can no longer drive its run (`RunController.dead`), so the
+        run is adopted afresh, as a restart adopts it: by the poll, or by the launch that found it.
+        What it still had in flight is cancelled, and the steps it left running go back in the
+        queue when the new controller starts (`run_start.requeue_lost_steps`)."""
+        self._controllers.pop(controller.run.id, None)
+        controller.let_go()
+        logger.warning(
+            "workflow run %s: its controller's loop stopped, so nothing would move the run; it is "
+            "taken over",
+            controller.run.id,
+        )
 
     def _end_runs_whose_loop_ended(self) -> int:
         """Ask the cancel, with its reason, of every live run whose loop is over for good.
@@ -673,6 +750,12 @@ class WorkflowWatchdog:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+async def _awaited(work: Callable[[], Any]) -> Any:
+    """*work*'s answer, awaited when it is a coroutine: what `run_threadsafe` runs on the loop."""
+    result = work()
+    return await result if inspect.isawaitable(result) else result
 
 
 # ── retention ────────────────────────────────────────────────────────────────

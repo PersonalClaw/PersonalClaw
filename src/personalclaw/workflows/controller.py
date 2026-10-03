@@ -539,6 +539,35 @@ class RunController:
         await cancel_and_wait([self._task], what=f"workflow run {self.run.id}")
         self._task = None
 
+    @property
+    def dead(self) -> bool:
+        """Whether this controller can no longer drive its run.
+
+        Its tick loop is a task on the event loop that started it, and it stops of its own accord
+        only once the run has ended, paused or parked on a question: whatever moves the run on
+        next restarts it there (`_resume_loop`). Two things leave a run that nothing will move:
+        that event loop has closed, or the tick loop was cancelled while the run still read
+        running — as when a run was launched on a loop of a tool call's own, which closed as the
+        call returned. A loop that ended by itself with the run still running is one that could
+        not import the engine, and it leaves the run to a process that can (`_tick_loop`).
+        """
+        task = self._task
+        if task is None:
+            return False
+        if task.get_loop().is_closed():
+            return True
+        return task.cancelled() and self.run.status == RunStatus.RUNNING
+
+    def let_go(self) -> None:
+        """Give up the steps still in flight, writing nothing, so none of them settles once
+        another controller has taken the run over (`WorkflowWatchdog`): each is cancelled on the
+        loop it runs on. One whose loop has closed went with it."""
+        for entry in list(self._inflight.values()):
+            loop = entry.task.get_loop()
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(entry.task.cancel)
+        self._inflight.clear()
+
     # ── the tick loop ──
 
     async def _tick_loop(self) -> None:
@@ -646,6 +675,7 @@ class RunController:
         iteration_context.rehydrate_loop_progress(self)
         if resumed:
             stage_settlement.requeue_orphaned_stages(self)
+            run_start.requeue_lost_steps(self)
         async with self._lock:
             if not self.run.started_at:
                 self.run.started_at = now_stamp()
