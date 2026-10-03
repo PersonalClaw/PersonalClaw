@@ -158,6 +158,7 @@ def test_reaping_emits_the_sel_audit_the_cron_reaper_emitted(home, store):
         session_key="cron:clock:nightly",
         source="cron",
         tool_name="reaper_force_kill",
+        tool_input=None,
         outcome="reaped",
         metadata={"job_id": "clock:nightly", "elapsed": int(OVER)},
     )

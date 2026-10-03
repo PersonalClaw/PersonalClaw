@@ -336,7 +336,10 @@ _UPDATE_TASK_CALL_SITES: dict[str, int] = {
     # own fields directly through the façade — the one writer `engine_owned_refusal` deliberately
     # never blocks (see registry.engine_owned_refusal's docstring)
     "loop/watchdog.py": 1,
-    "loop/kinds/sdlc.py": 1,
+    # …among them the loop carrying out its owner's answer to a task's conflicting work: redo
+    # opens the task again, drop cancels it (`loop.conflicts`, behind the owner-only
+    # POST /api/loops/{id}/conflict)
+    "loop/conflicts.py": 2,
     # …one of them the release of a task no worker holds any more, which skips a run's own
     # (managed) task: that one's status is the run's projection
     "loop/tasks_link.py": 5,
@@ -368,14 +371,14 @@ def test_every_update_task_call_site_is_classified():
     """The census the issue asked for: every non-test call site that reaches
     `registry.update_task` (or, for the façade itself, the provider's own `update_task`),
     classified into guarded doors, engine/loop writers, the façade, and the one non-engine
-    door that defers field-wise. 14 sites total. A 15th — anywhere in the tree — reds here
+    door that defers field-wise. 15 sites total. A 16th — anywhere in the tree — reds here
     instead of silently joining "engine/loop writers" or disappearing from the count."""
     found = _update_task_call_line_counts()
     assert found == _UPDATE_TASK_CALL_SITES, (
         f"the update_task call-site census drifted: found {found}, classified "
         f"{_UPDATE_TASK_CALL_SITES}. Classify the new/removed site before updating this table."
     )
-    assert sum(_UPDATE_TASK_CALL_SITES.values()) == 14
+    assert sum(_UPDATE_TASK_CALL_SITES.values()) == 15
 
 
 def test_reconcile_direct_status_writes_are_declared():
