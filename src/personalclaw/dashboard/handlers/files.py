@@ -45,6 +45,7 @@ from personalclaw.security import (
     redact_exfiltration_urls,
 )
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
+from personalclaw.uploads.spool import Spool
 from personalclaw.validation import (
     FILE_READ_SCHEMA,
     ValidationError,
@@ -902,6 +903,7 @@ async def api_upload_file(request: web.Request) -> web.Response:
             fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             try:
                 with os.fdopen(fd, "wb") as fh:
+                    spool = Spool(fh)
                     while True:
                         chunk = await part.read_chunk(65536)
                         if not chunk:
@@ -910,7 +912,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
                         if size > _limit:
                             over = True
                             break
-                        fh.write(chunk)
+                        await spool.write(chunk)
+                    await spool.flush()
             except Exception:
                 dest.unlink(missing_ok=True)
                 raise
@@ -2738,7 +2741,9 @@ async def api_file_move(request: web.Request) -> web.Response:
     if not os.path.isdir(dest_parent):
         return web.json_response({"error": "destination directory does not exist"}, status=400)
     try:
-        shutil.move(src, dest)
+        # A relocate to another disk copies the whole file or folder, so in a worker thread: the
+        # gateway answers everything else meanwhile.
+        await asyncio.to_thread(shutil.move, src, dest)
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="file_move",
@@ -2863,6 +2868,7 @@ async def api_file_upload(request: web.Request) -> web.Response:
             fd, tmp = tempfile.mkstemp(dir=target_dir)
             try:
                 with os.fdopen(fd, "wb") as f:
+                    spool = Spool(f)
                     while True:
                         chunk = await part.read_chunk()
                         if not chunk:
@@ -2870,7 +2876,8 @@ async def api_file_upload(request: web.Request) -> web.Response:
                         size += len(chunk)
                         if size > _limit:
                             raise ValueError(_upload_check(filename, part_mime, size=size).reason)
-                        f.write(chunk)
+                        await spool.write(chunk)
+                    await spool.flush()
                 os.replace(tmp, dest)
             except Exception:
                 with contextlib.suppress(OSError):

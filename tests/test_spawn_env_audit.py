@@ -125,6 +125,10 @@ _BUILT: dict[str, str] = {
     "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec": (
         "update check git on PersonalClaw's own checkout"
     ),
+    # PersonalClaw's own scanner, reading what someone uploaded: it needs no gateway secret.
+    "uploads/content_scan.py::_ask_child::asyncio.create_subprocess_exec": (
+        "the upload content scan: an upload's window on stdin, a verdict out"
+    ),
 }
 
 # ── GATEWAY ENV: runs with the gateway's own environment, and why it may ────────────────────────

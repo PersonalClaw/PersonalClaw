@@ -1093,6 +1093,8 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
     import os
     import tempfile
 
+    from personalclaw.uploads.spool import Spool
+
     limit = AUDIO_UPLOAD_CAP_BYTES
     saved = ""
     try:
@@ -1110,6 +1112,7 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
             os.close(fd)
             size = 0
             with open(saved, "wb") as handle:
+                spool = Spool(handle)
                 while True:
                     chunk = await field.read_chunk(8192)  # type: ignore[union-attr]
                     if not chunk:
@@ -1128,7 +1131,8 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
                             code="request_too_large",
                             status=413,
                         )
-                    handle.write(chunk)
+                    await spool.write(chunk)
+                await spool.flush()
             break
         if not saved:
             return openai_error("Missing 'file' field.", code="missing_file", status=400)

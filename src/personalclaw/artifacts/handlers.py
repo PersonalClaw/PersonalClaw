@@ -1203,20 +1203,28 @@ async def api_artifact_extract(request: web.Request) -> web.Response:
 
     from personalclaw.knowledge.readers import FileReader
 
-    # The readers take a path, so the bytes land in a temp file that is removed
-    # immediately — the artifact store stays the only durable copy.
-    text = ""
-    with tempfile.TemporaryDirectory() as tmp:
-        scratch = _Path(tmp) / f"artifact.{ext}"
-        scratch.write_bytes(data)
-        try:
-            text, _meta = FileReader().read(str(scratch))
-        except Exception:  # noqa: BLE001 — an unreadable document is a 400, not a 500
-            logger.info("artifact extract failed for %s", slug, exc_info=True)
-            return web.json_response(
-                {"error": {"code": "extract_failed", "message": "could not read the document"}},
-                status=400,
-            )
+    def extract() -> str | None:
+        # The readers take a path, so the bytes land in a temp file that is removed
+        # immediately — the artifact store stays the only durable copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = _Path(tmp) / f"artifact.{ext}"
+            scratch.write_bytes(data)
+            try:
+                text, _meta = FileReader().read(str(scratch))
+            except Exception:  # noqa: BLE001 — an unreadable document is a 400, not a 500
+                logger.info("artifact extract failed for %s", slug, exc_info=True)
+                return None
+            return text
+
+    # Writing the document out and reading it whole runs in a worker thread: a generated PDF or
+    # workbook of up to 16 MiB takes as long as its pages to read, and the gateway answers
+    # meanwhile.
+    text = await asyncio.to_thread(extract)
+    if text is None:
+        return web.json_response(
+            {"error": {"code": "extract_failed", "message": "could not read the document"}},
+            status=400,
+        )
     truncated = len(text) > _EXTRACT_PREVIEW_CHARS
     # Masked like every other read of an artifact (`models.redacted`): a generated document can
     # contain whatever was in the prompt that produced it.

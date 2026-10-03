@@ -190,6 +190,9 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "transcribe.py::_segment::asyncio.create_subprocess_exec": _COMPOSED,
     "transcribe.py::audio_seconds::subprocess.run": _PROBE,
     "triggers/liveness.py::_dirty_git_active::subprocess.run": _GIT,
+    "uploads/content_scan.py::_ask_child::asyncio.create_subprocess_exec": (
+        "PersonalClaw's own CLI, scanning an upload's window it reads on stdin"
+    ),
     "voice_reply.py::stitch_wavs::asyncio.create_subprocess_exec": _COMPOSED,
     "workflows/container_env.py::_run_cli::create_subprocess_limited": _COMPOSED,
     "workflows/review_service.py::_git::asyncio.create_subprocess_exec": _GIT,

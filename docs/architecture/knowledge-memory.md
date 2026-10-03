@@ -48,6 +48,27 @@ puts the contributor on the fence's source label *inside* `fence_untrusted`
 foreign contributions are labelled; labelling the owner's own rows would hide the
 one case the label exists for. A push never fails the local write.
 
+### An upload landing
+
+A file arrives by one request (`POST /api/knowledge/ingest`) or by the resumable protocol
+(`uploads/store.py`: init, parts, complete). Nothing whose cost grows with the file runs on the
+event loop, where on a 512 MB upload it stopped every other request for up to 0.34 s:
+
+- a request body is written to disk through `uploads.spool.Spool`, a megabyte at a time in a
+  worker thread (on a busy disk one write of the next chunk took 0.1 s);
+- a complete assembles the parts, and the item's file is moved (a copy across disks), hashed and
+  thumbnailed, in worker threads; file reads and writes and the hash leave the interpreter lock;
+- the content scan of a text-like upload's head and tail windows runs in a child process
+  (`personalclaw content-scan`, `uploads/content_scan.py`), because its parse holds the lock. A
+  scan that could not run refuses the upload (503) rather than passing it;
+- what the file becomes is decided on the loop: the duplicate check and the insert, with nothing
+  awaited between them, so two uploads of the same bytes still make one item.
+
+While an upload's complete runs, `UploadStore.completing` holds it: a retried complete, a late part
+and a drop are refused with 409 (`upload_completing` for the drop), and the sweep passes it over.
+`tests/test_event_loop_whole_file_census.py` keeps whole-file work off the loop everywhere in the
+package, and names what is still on it.
+
 ### Ingestion pipeline (node graphs)
 
 `knowledge/pipeline/` is a node-graph executor:

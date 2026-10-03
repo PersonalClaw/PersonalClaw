@@ -235,7 +235,7 @@ async def stitch_wavs(paths: list[str], output: str | None = None) -> str | None
         return None
     if len(paths) == 1:
         if output:
-            shutil.copy2(paths[0], output)
+            await asyncio.to_thread(shutil.copy2, paths[0], output)
             return output
         return paths[0]
     from personalclaw.ffmpeg_binary import find_ffmpeg

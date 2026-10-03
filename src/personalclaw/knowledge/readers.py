@@ -1,36 +1,31 @@
 """File readers for knowledge ingestion. Supports text, PDF, PPTX, DOCX, HTML, XLSX."""
 
+import importlib
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from personalclaw.security import is_sensitive_path
 
-try:
-    import pdfplumber
-except ImportError:
-    pdfplumber = None  # type: ignore[assignment]
+#: The optional document libraries (pdfplumber, python-pptx, python-docx, html2text, openpyxl),
+#: each imported by the first read that needs it, and ``None`` when it is not installed. Imported
+#: at the top of this module, the five took 0.25-0.45 s, paid by whichever thread imported it: for
+#: the first document a gateway read that was the event loop, under a node or a route that meant
+#: only to hand the read to a worker thread, and every request waited. One loader for each, so a
+#: library is present or absent in one place for every reader that uses it.
+_LIBRARIES: dict[str, Any] = {}
 
-try:
-    from pptx import Presentation  # type: ignore[import-untyped]
-except ImportError:
-    Presentation = None  # type: ignore[assignment,misc]
 
-try:
-    from docx import Document  # type: ignore[import-untyped]
-except ImportError:
-    Document = None  # type: ignore[assignment,misc]
-
-try:
-    import html2text as _html2text_mod
-except ImportError:
-    _html2text_mod = None  # type: ignore[assignment]
-
-try:
-    from openpyxl import load_workbook as _load_workbook  # type: ignore[import-untyped]
-except ImportError:
-    _load_workbook = None  # type: ignore[assignment]
+def _library(name: str) -> Any:
+    """The optional library *name*, imported on first use, or ``None`` when it is not installed."""
+    if name not in _LIBRARIES:
+        try:
+            _LIBRARIES[name] = importlib.import_module(name)
+        except ImportError:
+            _LIBRARIES[name] = None
+    return _LIBRARIES[name]
 
 
 def _render_docx_table(table) -> list[str]:
@@ -145,6 +140,7 @@ class FileReader:
             return f"Error reading file: {e}", {"format": "error", "error": str(e)}
 
     def _read_pdf(self, path: str) -> tuple[str, dict]:
+        pdfplumber = _library("pdfplumber")
         if pdfplumber is None:
             return (
                 "PDF support requires pdfplumber: pip install pdfplumber",
@@ -196,13 +192,14 @@ class FileReader:
         return text
 
     def _read_pptx(self, path: str) -> tuple[str, dict]:
-        if Presentation is None:
+        pptx = _library("pptx")
+        if pptx is None:
             return (
                 "PPTX support requires python-pptx: pip install python-pptx",
                 {"format": "error", "error": "PPTX support requires python-pptx"},
             )
         try:
-            prs = Presentation(path)
+            prs = pptx.Presentation(path)
             parts = []
             for i, slide in enumerate(prs.slides, 1):
                 title = ""
@@ -226,13 +223,14 @@ class FileReader:
             return f"Error reading file: {e}", {"format": "error", "error": str(e)}
 
     def _read_docx(self, path: str) -> tuple[str, dict]:
-        if Document is None:
+        docx = _library("docx")
+        if docx is None:
             return (
                 "DOCX support requires python-docx: pip install python-docx",
                 {"format": "error", "error": "DOCX support requires python-docx"},
             )
         try:
-            doc = Document(path)
+            doc = docx.Document(path)
             lines = []
             for para in doc.paragraphs:
                 style = para.style.name if para.style else ""
@@ -278,13 +276,14 @@ class FileReader:
     def _read_xlsx(self, path: str) -> tuple[str, dict]:
         """Extract a spreadsheet as markdown tables (one per sheet). Without openpyxl,
         return an error rather than letting the binary .xlsx be read as raw text."""
-        if _load_workbook is None:
+        openpyxl = _library("openpyxl")
+        if openpyxl is None:
             return (
                 "XLSX support requires openpyxl: pip install openpyxl",
                 {"format": "error", "error": "XLSX support requires openpyxl"},
             )
         try:
-            wb = _load_workbook(path, read_only=True, data_only=True)
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
             parts, total_rows = [], 0
             for ws in wb.worksheets:
                 rows = [
@@ -392,8 +391,9 @@ def html_to_prose(html: str) -> str:
     from personalclaw.knowledge.connectors.base import strip_html_chrome, without_raw_html
 
     html = strip_html_chrome(html or "")
-    if _html2text_mod is not None:
-        h = _html2text_mod.HTML2Text()
+    html2text = _library("html2text")
+    if html2text is not None:
+        h = html2text.HTML2Text()
         h.ignore_links = False
         h.ignore_images = True
         h.backquote_code_style = True
@@ -406,7 +406,7 @@ def html_to_prose(html: str) -> str:
 #
 # `_read_pdf` above answers "what does this document SAY"; a section detector needs
 # "how is it LAID OUT" — per-page text, per-line font size, and the PDF's own outline.
-# Both answers come from the SAME `pdfplumber` import at the top of this module, on
+# Both answers come from the SAME `pdfplumber` import (`_library`), on
 # purpose: a second PDF library (or a second guarded import) would be a second place
 # for the PDF path to be present-or-absent, and callers would then have to know which
 # one degraded. `knowledge/slicing.py` consumes these types and never imports
@@ -452,6 +452,7 @@ def read_pdf_structure(path: str) -> PdfStructure | None:
     lay out" and "this is a PDF with one blank page" are different facts, and a caller
     that must fall back to text-only detection needs to tell them apart.
     """
+    pdfplumber = _library("pdfplumber")
     if pdfplumber is None:
         return None
     if is_sensitive_path(path):

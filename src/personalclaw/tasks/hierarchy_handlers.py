@@ -1266,10 +1266,13 @@ async def _read_project_upload(request: web.Request):
     if part is None or not isinstance(part, BodyPartReader) or part.name != "file":
         return None, web.json_response({"error": "file field required"}, status=400)
 
+    from personalclaw.uploads.spool import Spool
+
     cap = pa.MAX_ARCHIVE_BYTES
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     try:
         received = 0
+        spool = Spool(tmp)
         while True:
             chunk = await part.read_chunk(65536)
             if not chunk:
@@ -1284,7 +1287,8 @@ async def _read_project_upload(request: web.Request):
                     f"archive holds at most {_size_words(pa.MAX_TOTAL_EXTRACTED)} of files",
                     status=413,
                 )
-            tmp.write(chunk)
+            await spool.write(chunk)
+        await spool.flush()
         tmp.close()
         return Path(tmp.name), None
     except Exception:

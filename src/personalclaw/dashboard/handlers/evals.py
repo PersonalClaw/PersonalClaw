@@ -36,6 +36,7 @@ used to 404 with a code per route, and the Models page reads judge-bench on ever
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiohttp import web
@@ -329,7 +330,8 @@ async def api_evals_retrieval_card(request: web.Request) -> web.Response:
             status=400,
         )
     try:
-        card = rb.card_for_store(store_kind)
+        # In a worker thread: the read-only rail hashes both whole databases, before and after.
+        card = await asyncio.to_thread(rb.card_for_store, store_kind)
     except rb.StoreMutatedError as exc:
         return json_error("store_mutated", message=str(exc), status=500)
     except Exception:
@@ -420,8 +422,6 @@ async def api_evals_field_metrics(request: web.Request) -> web.Response:
     """
     if not _enabled():
         return _off()
-    import asyncio
-
     from personalclaw.evals import field_metrics as fm
 
     try:

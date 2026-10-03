@@ -17,21 +17,34 @@ at complete (robust resume — each part independently re-PUTtable); when tighte
 parts append into one growing final file (~1× disk). A session the client gives up
 (a cancelled upload) is dropped at once (:meth:`UploadStore.drop`); one nobody drops
 (a tab closed mid-upload) is swept by TTL.
+
+Work whose cost grows with the file runs in a worker thread, never on the event loop: on the
+loop, assembling a 512 MB upload stopped every other request for up to 0.34 s, and a 2 GB one for
+as long as it takes to copy 2 GB. File reads and writes leave the interpreter lock while they
+wait on the disk, so in a thread the loop goes on answering (measured: no gap longer than its
+own 10 ms tick). That lets other requests run while an upload is completed, so for as long as
+its complete runs (:meth:`UploadStore.completing`) no other request may touch it: a second
+complete, a late part and a drop are refused, and the sweep passes it over.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
 import shutil
+import threading
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_json_write, ensure_private_dir, open_streamed
 from personalclaw.local_models.fit import free_disk_bytes
 from personalclaw.uploads.policy import check_upload
+from personalclaw.uploads.spool import Spool
 
 # One part = this many bytes. 8 MB balances request count vs per-request overhead;
 # a 2 GB upload is ~256 parts. The client is told this in the init response.
@@ -43,6 +56,11 @@ _SESSION_TTL_SECS = 24 * 3600
 
 # Assembly / part streaming copy chunk.
 _COPY_CHUNK = 1024 * 1024
+
+# The folders of the uploads whose complete is running, in this process. Every store over the
+# same folder shares it: the routes' store and the sweep's are two objects.
+_COMPLETING: set[str] = set()
+_COMPLETING_LOCK = threading.Lock()
 
 
 @dataclass
@@ -86,8 +104,9 @@ class UploadStore:
 
     Each session is a directory ``<root>/<id>/`` holding ``meta.json`` + either the
     part files (separate mode) or the single growing ``assembled`` file (append
-    mode). Thread-safety: aiohttp handlers are single-loop; parts for one id arrive
-    serialized by the client, and different ids are independent dirs."""
+    mode). Its record is read and written on the event loop only; parts for one id arrive
+    serialized by the client, different ids are independent dirs, and an upload being
+    completed is held by :meth:`completing` while its files are worked on in a thread."""
 
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -172,6 +191,9 @@ class UploadStore:
         sess = self.get(sid)
         if sess.completed:
             raise UploadError("upload already completed", 409)
+        if self._is_completing(sid):
+            # Its parts are being assembled: a part written now would change the file under it.
+            raise UploadError("upload is being completed", 409)
         if index < 0 or index >= sess.total_parts:
             raise UploadError(f"part index {index} out of range (0..{sess.total_parts - 1})", 400)
 
@@ -218,7 +240,8 @@ class UploadStore:
     async def assemble(self, sid: str) -> tuple[Path, UploadSession]:
         """Concatenate parts (or return the append-mode final) into one file, verify
         the size, and return its path. Does NOT delete the session dir — the caller
-        finalizes (scan + hand-off) then calls :meth:`cleanup`."""
+        finalizes (scan + hand-off) then calls :meth:`cleanup`. Called inside
+        :meth:`completing`, which keeps every other request off the parts meanwhile."""
         sess = self.get(sid)
         if not self.is_complete(sess):
             missing = sorted(set(range(sess.total_parts)) - set(sess.received))
@@ -226,16 +249,8 @@ class UploadStore:
 
         final = self._dir(sid) / "assembled"
         if not sess.append_mode:
-            # Concatenate the separate part files, streamed, into `assembled`.
-            with open_streamed(final, "wb") as out:
-                for i in range(sess.total_parts):
-                    part_path = self._dir(sid) / f"part_{i:06d}"
-                    with open(part_path, "rb") as pf:
-                        while True:
-                            chunk = pf.read(_COPY_CHUNK)
-                            if not chunk:
-                                break
-                            out.write(chunk)
+            # Every byte of the file is copied, so in a worker thread (see the module docstring).
+            await asyncio.to_thread(self._concatenate, sess, final)
         actual = final.stat().st_size if final.exists() else 0
         if actual != sess.size:
             raise UploadError(
@@ -244,18 +259,60 @@ class UploadStore:
             )
         return final, sess
 
+    def _concatenate(self, sess: UploadSession, final: Path) -> None:
+        """Copy the separate part files, in order and streamed, into ``final``."""
+        with open_streamed(final, "wb") as out:
+            for i in range(sess.total_parts):
+                with open(self._dir(sess.id) / f"part_{i:06d}", "rb") as part:
+                    shutil.copyfileobj(part, out, _COPY_CHUNK)
+
+    @contextlib.contextmanager
+    def completing(self, sid: str) -> Iterator[None]:
+        """Hold upload *sid* while its complete runs, from assembling its parts to removing them.
+
+        The complete's work on the files runs in worker threads, so other requests are answered
+        while it does. None of them may touch this upload meanwhile: a second complete (a retry)
+        is refused here, a part by :meth:`write_part` and a drop by :meth:`drop`, each with 409,
+        and the sweep passes it over. Without it a retried complete assembled the same parts
+        twice, and a drop removed them while they were being read."""
+        key = str(self._dir(sid))
+        with _COMPLETING_LOCK:
+            if key in _COMPLETING:
+                raise UploadError("upload is already being completed", 409)
+            _COMPLETING.add(key)
+        try:
+            yield
+        finally:
+            with _COMPLETING_LOCK:
+                _COMPLETING.discard(key)
+
     def cleanup(self, sid: str) -> None:
+        """Remove upload *sid*'s folder: its parts and its assembled file, as large as the file
+        itself, so the complete calls it in a worker thread, inside :meth:`completing`."""
         shutil.rmtree(self._dir(sid), ignore_errors=True)
 
-    def drop(self, sid: str) -> bool:
+    async def drop(self, sid: str) -> bool:
         """Discard an upload that will not be completed: the client cancelled it.
 
         Its parts go now rather than at the sweep, a part still streaming in for it is not
         recorded (:meth:`write_part`), and a later complete finds nothing to assemble. False
-        when there is no such upload: never opened, already completed, dropped or swept."""
-        if not (self._dir(sid) / "meta.json").is_file():
+        when there is no such upload: never opened, already completed, dropped or swept. An
+        upload whose complete is running is not dropped: 409 (:meth:`completing`).
+
+        The folder is first renamed out of the upload's place, which is one step however large
+        it is, so from then on every request for the upload finds nothing; what it held is then
+        removed in a worker thread."""
+        if self._is_completing(sid):
+            raise UploadError("upload is being completed", 409)
+        here = self._dir(sid)
+        if not (here / "meta.json").is_file():
             return False
-        shutil.rmtree(self._dir(sid), ignore_errors=True)
+        dropped = self.root / f".dropped-{uuid.uuid4().hex}"
+        try:
+            here.rename(dropped)
+        except FileNotFoundError:
+            return False
+        await asyncio.to_thread(shutil.rmtree, dropped, ignore_errors=True)
         return True
 
     def sweep(self, ttl_secs: int = _SESSION_TTL_SECS) -> int:
@@ -265,7 +322,7 @@ class UploadStore:
         if not self.root.is_dir():
             return 0
         for d in self.root.iterdir():
-            if not d.is_dir():
+            if not d.is_dir() or self._is_completing(d.name):
                 continue
             meta = d / "meta.json"
             try:
@@ -284,6 +341,10 @@ class UploadStore:
         clean = "".join(c for c in sid if c.isalnum())
         return self.root / clean
 
+    def _is_completing(self, sid: str) -> bool:
+        with _COMPLETING_LOCK:
+            return str(self._dir(sid)) in _COMPLETING
+
     def _save_meta(self, sess: UploadSession) -> None:
         atomic_json_write(self._dir(sess.id) / "meta.json", asdict(sess))
 
@@ -296,9 +357,10 @@ class UploadStore:
 
 async def _stream_to(part_reader, fh, *, cap: int) -> int:
     """Copy an async part reader to an open file, chunked; stop past ``cap``+slack.
-    Returns bytes written."""
+    Returns bytes written. The writes run in a worker thread (:class:`Spool`)."""
     written = 0
     slack = cap + _COPY_CHUNK  # allow one chunk of overrun to detect a lying client
+    spool = Spool(fh)
     while True:
         chunk = (
             await part_reader.read_chunk(_COPY_CHUNK)
@@ -307,10 +369,11 @@ async def _stream_to(part_reader, fh, *, cap: int) -> int:
         )
         if not chunk:
             break
-        fh.write(chunk)
+        await spool.write(chunk)
         written += len(chunk)
         if written > slack:
             break
+    await spool.flush()
     return written
 
 

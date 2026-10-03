@@ -166,7 +166,7 @@ _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
 #: still listing the choice in the ``{chat,run,…}`` metavar. The result is the opposite of
 #: the intent: an internal sentinel on the first surface a CLI user reads, and the command
 #: advertised rather than hidden. Genuinely hiding one takes BOTH halves below.
-HIDDEN_COMMANDS = frozenset({"mcp-core", "availability-probe"})
+HIDDEN_COMMANDS = frozenset({"mcp-core", "availability-probe", "content-scan"})
 
 
 def _add_hidden_parser(
@@ -1351,6 +1351,10 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     probe_parser = _add_hidden_parser(sub, "availability-probe")
     probe_parser.add_argument("names", nargs="*")
 
+    # content-scan (spawned by the gateway to scan a completed upload's window out of process,
+    # where the scan's parse holds no lock the gateway needs — uploads/content_scan.py)
+    _add_hidden_parser(sub, "content-scan")
+
     # learn
     learn_parser = sub.add_parser(
         "learn",
@@ -1641,13 +1645,17 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # The gateway's availability-probe child answers before any of the setup below runs:
-    # that setup loads config and attaches a RotatingFileHandler to the gateway's own
+    # The gateway's availability-probe and content-scan children answer before any of the setup
+    # below runs: that setup loads config and attaches a RotatingFileHandler to the gateway's own
     # gateway.log, and a child must not become a second writer rotating the parent's log.
     if args.command == "availability-probe":
         from personalclaw.providers.availability_probe import main as _availability_probe
 
         sys.exit(_availability_probe(list(args.names)))
+    if args.command == "content-scan":
+        from personalclaw.uploads.content_scan import main as _content_scan
+
+        sys.exit(_content_scan())
 
     # ``gateway --seed <fixture>`` populates $PERSONALCLAW_HOME from a hand-authored
     # fixture BEFORE the gateway starts — lets a dev spin up a pre-populated

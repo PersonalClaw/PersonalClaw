@@ -75,7 +75,7 @@ def _upload(store, tmp_path, name=MEMO) -> str:
     """The item an upload writes (`_store_file_item`): titled with the file's name."""
     src = tmp_path / name
     src.write_bytes(b"not really audio, and the pipeline never reads it here")
-    item, is_new = H._store_file_item(store, str(src), name, mime="audio/mp4")
+    item, is_new = asyncio.run(H._store_file_item(store, str(src), name, mime="audio/mp4"))
     assert is_new and item["title"] == name
     return item["id"]
 

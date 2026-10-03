@@ -342,6 +342,7 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
     # ffmpeg-segmented STT path). Cap it well below the audio-upload category via
     # the shared policy's per-surface override so a runaway mic blob can't fill disk.
     from personalclaw.uploads import check_upload
+    from personalclaw.uploads.spool import Spool
 
     _stt_cap = _STT_MIC_CAP_BYTES
     field_mime = (getattr(field, "headers", {}) or {}).get("Content-Type") or None
@@ -350,6 +351,7 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
         os.close(fd)
         size = 0
         with open(tmp, "wb") as f:
+            spool = Spool(f)
             while True:
                 chunk = await field.read_chunk(8192)  # type: ignore[union-attr]
                 if not chunk:
@@ -364,7 +366,8 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
                         },
                         status=413,
                     )
-                f.write(chunk)
+                await spool.write(chunk)
+            await spool.flush()
 
         # Lexicon wiring: the mic is a transcription surface like any other, so it
         # gets the same two Lexicon halves knowledge ingestion has — bias the

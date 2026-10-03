@@ -474,7 +474,34 @@ def _hash_file(path) -> str:
         return ""
 
 
-def _store_file_item(
+def _take_gist(tmp_path: str) -> tuple[str, str]:
+    """Read an uploaded source file's code and its content hash, and remove the upload."""
+    try:
+        code = Path(tmp_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        code = ""
+    content_hash = _hash_file(tmp_path)
+    Path(tmp_path).unlink(missing_ok=True)
+    return code, content_hash
+
+
+def _take_file(tmp_path: str, dest: Path, thumb: Path | None) -> tuple[int, str, str]:
+    """Move an upload to *dest* (a copy when it is on another disk), and make its thumbnail at
+    *thumb* when one is asked for. Returns its size, its content hash and the thumbnail's path
+    (``""`` when none was made)."""
+    shutil.move(tmp_path, dest)
+    made = thumb is not None and make_image_thumbnail(str(dest), str(thumb))
+    return dest.stat().st_size, _hash_file(dest), str(thumb) if made else ""
+
+
+def _discard_file(dest: Path, thumb_path: str) -> None:
+    """Remove a stored upload that turned out to be a duplicate, and its thumbnail."""
+    dest.unlink(missing_ok=True)
+    if thumb_path:
+        Path(thumb_path).unlink(missing_ok=True)
+
+
+async def _store_file_item(
     store, tmp_path: str, filename: str, mime: str | None = None
 ) -> tuple[dict | None, bool]:
     """Persist an uploaded file under the knowledge files dir as ONE logical-doc
@@ -482,7 +509,13 @@ def _store_file_item(
     thumbnail for images), queued for node-graph ingestion. One item = one file —
     document text extraction + chunking happen inside the graph/embedder, never as
     separate item rows. ``mime`` (the upload's content-type) disambiguates ambiguous
-    extensions like .webm (a browser audio recording is audio/webm, not video)."""
+    extensions like .webm (a browser audio recording is audio/webm, not video).
+
+    What reads or writes the whole file (the move, which copies when the upload sits on another
+    disk, the hash, the thumbnail, a gist's read) runs in a worker thread: on the event loop,
+    hashing a 512 MB upload stopped every other request for 0.22 s. What decides the item (the
+    duplicate check and the insert) stays on the loop, so two uploads of the same bytes that
+    finish together still make one item."""
     from personalclaw.knowledge import knowledge_files_dir
     from personalclaw.knowledge.media import code_language
 
@@ -494,12 +527,7 @@ def _store_file_item(
     # one logical doc). Dedup on the content hash, same as binary files.
     lang = code_language(filename)
     if item_type == "gist" and lang:
-        try:
-            code = Path(tmp_path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            code = ""
-        content_hash = _hash_file(tmp_path)
-        Path(tmp_path).unlink(missing_ok=True)
+        code, content_hash = await asyncio.to_thread(_take_gist, tmp_path)
         if content_hash:
             existing = store.find_active_by_file_hash(content_hash)
             if existing:
@@ -525,24 +553,19 @@ def _store_file_item(
     files_dir = Path(knowledge_files_dir())
     ext = Path(filename).suffix.lower()
     dest = files_dir / f"{item_id}{ext}"
-    shutil.move(tmp_path, dest)
-    size = dest.stat().st_size
+    thumb = files_dir / f"{item_id}.thumb.webp" if item_type == "image" else None
+    size, content_hash, thumb_path = await asyncio.to_thread(_take_file, tmp_path, dest, thumb)
 
     # Content-hash dedup: re-uploading byte-identical content into the same space
     # returns the existing item instead of a duplicate (the file analog of bookmark
     # URL dedup). Hash is stored in file_metadata so the check is exact, not by name.
-    content_hash = _hash_file(dest)
+    # Nothing is awaited between this check and the insert below.
     if content_hash:
         existing = store.find_active_by_file_hash(content_hash)
         if existing:
-            dest.unlink(missing_ok=True)  # drop the redundant copy we just saved
+            # Drop the redundant copy we just saved.
+            await asyncio.to_thread(_discard_file, dest, thumb_path)
             return existing, False  # (item, is_new) — dedup hit
-
-    thumb_path = ""
-    if item_type == "image":
-        thumb = files_dir / f"{item_id}.thumb.webp"
-        if make_image_thumbnail(str(dest), str(thumb)):
-            thumb_path = str(thumb)
 
     new_id = store.create_typed_item(
         item_type=item_type,
@@ -1787,11 +1810,13 @@ async def ingest_file(request: web.Request) -> web.Response:
     # Per-filetype cap from the shared upload policy (video 2 GB, audio 1 GB, image
     # 200 MB, …) — the browser mime disambiguates .webm/.ogg for the right category.
     from personalclaw.uploads import check_upload
+    from personalclaw.uploads.spool import Spool
 
     _limit = check_upload(filename, upload_mime).limit
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="kn_")
     try:
         total_size = 0
+        spool = Spool(tmp)
         while True:
             chunk = await field.read_chunk()  # type: ignore[union-attr]
             if not chunk:
@@ -1804,7 +1829,8 @@ async def ingest_file(request: web.Request) -> web.Response:
                     {"error": check_upload(filename, upload_mime, size=total_size).reason},
                     status=413,
                 )
-            tmp.write(chunk)
+            await spool.write(chunk)
+        await spool.flush()
         tmp.close()
 
         # An empty upload has nothing to store, preview, or enrich — reject it cleanly
@@ -1823,7 +1849,7 @@ async def ingest_file(request: web.Request) -> web.Response:
         if classify(filename, upload_mime) is None:
             Path(tmp.name).unlink(missing_ok=True)
             return web.json_response({"error": f"unsupported file type: {filename}"}, status=415)
-        item, is_new = _store_file_item(store, tmp.name, filename, mime=upload_mime)
+        item, is_new = await _store_file_item(store, tmp.name, filename, mime=upload_mime)
         Path(tmp.name).unlink(missing_ok=True)
         if item is None:
             return web.json_response({"error": "failed to store item"}, status=500)

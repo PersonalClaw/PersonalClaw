@@ -33,6 +33,7 @@ added to ``ALLOWED_HOOK_PROVIDERS`` exactly as §5 requires for one, the QA run 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -113,7 +114,9 @@ class SelfQaEvidenceActionProvider(ActionProvider):
             else ev.DEFAULT_REQUIRED_KINDS
         )
 
-        try:
+        project_id = str(ctx.payload.get("project_id", "") or "")
+
+        def seal():
             # Derive the enrichments FIRST so they are on disk when the manifest walks the dir.
             # Each returns a typed Derivation; a non-produced one carries the reason the manifest
             # records, so an ffmpeg-less host produces a screenshots-only bundle, not a crash.
@@ -135,9 +138,14 @@ class SelfQaEvidenceActionProvider(ActionProvider):
                 scenario_id=scenario_id,
                 sha=sha,
                 passed=passed,
-                project_id=str(ctx.payload.get("project_id", "") or ""),
+                project_id=project_id,
             )
-            gate = ev.check_required_kinds(manifest, required_kinds)
+            return manifest, registered, ev.check_required_kinds(manifest, required_kinds)
+
+        try:
+            # Sealing runs ffmpeg over the recording and reads, hashes and copies every file of the
+            # bundle, so in a worker thread: the gateway answers everything else meanwhile.
+            manifest, registered, gate = await asyncio.to_thread(seal)
         except Exception as exc:  # noqa: BLE001 - error result, never raise past the dispatch seam
             return ActionResult(success=False, error=f"selfqa-evidence failed: {exc}")
 
@@ -146,7 +154,7 @@ class SelfQaEvidenceActionProvider(ActionProvider):
         # leaves `fix_branch` empty, and the Task then links nothing rather than a phantom branch.
         fix_branch = ""
         if not passed and fix_branch_enabled and repo:
-            fbr = create_fix_branch(repo, sha, enabled=True)
+            fbr = await asyncio.to_thread(create_fix_branch, repo, sha, enabled=True)
             if fbr.created or fbr.already_existed:
                 fix_branch = fbr.branch
             else:

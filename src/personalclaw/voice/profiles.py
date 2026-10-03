@@ -41,6 +41,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import re
 import shutil
 import time
@@ -503,7 +504,11 @@ def _audio_suffix(source: Path, suffix: str = "") -> str:
 
 
 def attach_ref_audio(profile_id: str, source: Path, *, suffix: str = "") -> VoiceProfile:
-    """Move a completed upload in as the profile's reference clip."""
+    """Move a clip in as the profile's reference clip.
+
+    A rename, so *source* is on the profile's own disk: the upload route first brings a
+    finished upload into the profile's folder, in a worker thread, and the record is changed
+    here, on the event loop, as every edit of it is."""
     profile = require_profile(profile_id)
     ext = _audio_suffix(source, suffix)
     dest = artifact_path(profile_id, f"{_ARTIFACT_REF}{ext}")
@@ -513,7 +518,7 @@ def attach_ref_audio(profile_id: str, source: Path, *, suffix: str = "") -> Voic
         if stale != dest:
             with contextlib.suppress(OSError):
                 stale.unlink()
-    shutil.move(str(source), str(dest))
+    os.replace(source, dest)
     dest.chmod(0o600)
     profile.ref_audio = dest.name
     _write(profile)
@@ -521,7 +526,7 @@ def attach_ref_audio(profile_id: str, source: Path, *, suffix: str = "") -> Voic
 
 
 def attach_consent_audio(profile_id: str, source: Path, *, suffix: str = "") -> VoiceProfile:
-    """Move a completed upload in as the consent recording.
+    """Move a clip in as the consent recording: a rename, as :func:`attach_ref_audio`'s is.
 
     Text and audio arrive independently (a JSON POST for the statement, a resumable
     upload for the clip), so neither ordering is privileged — verification is the
@@ -535,7 +540,7 @@ def attach_consent_audio(profile_id: str, source: Path, *, suffix: str = "") -> 
         if stale != dest:
             with contextlib.suppress(OSError):
                 stale.unlink()
-    shutil.move(str(source), str(dest))
+    os.replace(source, dest)
     dest.chmod(0o600)
     profile.consent_audio = dest.name
     if not profile.consent_recorded_at:
@@ -544,10 +549,11 @@ def attach_consent_audio(profile_id: str, source: Path, *, suffix: str = "") -> 
     return profile
 
 
-def record_consent(
-    profile_id: str, *, consent_text: str, audio_source: Path | None = None, suffix: str = ""
-) -> VoiceProfile:
-    """Record consent provenance. Verification still comes from the artifacts."""
+def record_consent(profile_id: str, *, consent_text: str) -> VoiceProfile:
+    """Record consent provenance. Verification still comes from the artifacts.
+
+    The statement only: the recording arrives through the resumable upload
+    (:func:`attach_consent_audio`)."""
     profile = require_profile(profile_id)
     text = str(consent_text or "").strip()
     if not text:
@@ -558,17 +564,6 @@ def record_consent(
         # A recording that arrived first (upload before statement) is adopted, so the
         # two halves can land in either order.
         profile.consent_audio = existing.name
-    if audio_source is not None:
-        ext = _audio_suffix(audio_source, suffix)
-        dest = artifact_path(profile_id, f"{_ARTIFACT_CONSENT}{ext}")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        for stale in profile_dir(profile_id).glob(f"{_ARTIFACT_CONSENT}.*"):
-            if stale != dest:
-                with contextlib.suppress(OSError):
-                    stale.unlink()
-        shutil.move(str(audio_source), str(dest))
-        dest.chmod(0o600)
-        profile.consent_audio = dest.name
     profile.consent_recorded_at = _now()
     _write(profile)
     return profile

@@ -1054,13 +1054,14 @@ class TestMediaItems:
         monkeypatch.setattr("personalclaw.knowledge.knowledge_files_dir", lambda: str(d))
         return d
 
-    def test_store_file_item_keeps_file(self, store, tmp_path, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_store_file_item_keeps_file(self, store, tmp_path, monkeypatch):
         from personalclaw.dashboard.handlers import knowledge as H
 
         self._files_dir(tmp_path, monkeypatch)
         src = tmp_path / "in.png"
         src.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 64)  # not a real image; thumbnail just no-ops
-        item, is_new = H._store_file_item(store, str(src), "in.png")
+        item, is_new = await H._store_file_item(store, str(src), "in.png")
         assert is_new
         assert item["type"] == "image"
         assert item["file_path"] and Path(item["file_path"]).is_file()
@@ -1070,7 +1071,8 @@ class TestMediaItems:
         # Queued for node-graph ingestion (Image graph runs after the caller enqueues).
         assert item["processing_status"] == "queued"
 
-    def test_store_file_item_webm_audio_classifies_and_mimes_as_audio(
+    @pytest.mark.asyncio
+    async def test_store_file_item_webm_audio_classifies_and_mimes_as_audio(
         self, store, tmp_path, monkeypatch
     ):
         """A browser audio recording is audio/webm — store it as an AUDIO item with an
@@ -1080,17 +1082,20 @@ class TestMediaItems:
         self._files_dir(tmp_path, monkeypatch)
         src = tmp_path / "rec.webm"
         src.write_bytes(b"\x1a\x45\xdf\xa3" + b"x" * 64)  # EBML header bytes + filler
-        item, is_new = H._store_file_item(store, str(src), "recording.webm", mime="audio/webm")
+        item, is_new = await H._store_file_item(
+            store, str(src), "recording.webm", mime="audio/webm"
+        )
         assert is_new
         assert item["type"] == "audio"  # not video
         assert item["mime_type"] == "audio/webm"  # honors the upload mime, not video/webm
         # A genuine video/webm still stores as video.
         src2 = tmp_path / "clip.webm"
         src2.write_bytes(b"\x1a\x45\xdf\xa3" + b"y" * 64)
-        item2, _ = H._store_file_item(store, str(src2), "clip.webm", mime="video/webm")
+        item2, _ = await H._store_file_item(store, str(src2), "clip.webm", mime="video/webm")
         assert item2["type"] == "video" and item2["mime_type"] == "video/webm"
 
-    def test_store_file_item_dedups_identical_content(self, store, tmp_path, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_store_file_item_dedups_identical_content(self, store, tmp_path, monkeypatch):
         """Re-storing byte-identical content into the same space returns the existing
         item (is_new False), not a duplicate — and doesn't leave an orphan file."""
         from personalclaw.dashboard.handlers import knowledge as H
@@ -1099,17 +1104,18 @@ class TestMediaItems:
         data = b"identical bytes for dedup check"
         a = tmp_path / "a.txt"
         a.write_bytes(data)
-        item1, new1 = H._store_file_item(store, str(a), "a.txt")
+        item1, new1 = await H._store_file_item(store, str(a), "a.txt")
         assert new1
         b = tmp_path / "b.txt"
         b.write_bytes(data)  # same content, different name
-        item2, new2 = H._store_file_item(store, str(b), "b.txt")
+        item2, new2 = await H._store_file_item(store, str(b), "b.txt")
         assert new2 is False and item2["id"] == item1["id"]  # dedup hit
         assert store.db.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 1
         # The redundant copy was removed (only the original's stored file remains).
         assert len([p for p in files_dir.iterdir() if p.is_file()]) == 1
 
-    def test_store_file_item_document_is_one_logical_doc(self, store, tmp_path, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_store_file_item_document_is_one_logical_doc(self, store, tmp_path, monkeypatch):
         """A document upload is ONE item (not chunk rows) — file extraction +
         chunking happen inside the graph/embedder."""
         from personalclaw.dashboard.handlers import knowledge as H
@@ -1117,14 +1123,15 @@ class TestMediaItems:
         self._files_dir(tmp_path, monkeypatch)
         src = tmp_path / "report.pdf"
         src.write_bytes(b"%PDF-1.4 fake")
-        item, _ = H._store_file_item(store, str(src), "report.pdf")
+        item, _ = await H._store_file_item(store, str(src), "report.pdf")
         assert item["type"] == "pdf"
         assert item["file_path"] and item["processing_status"] == "queued"
         # Exactly one row exists for this upload — no chunk fan-out.
         rows = store.db.execute("SELECT COUNT(*) FROM items").fetchone()[0]
         assert rows == 1
 
-    def test_store_file_item_source_code_becomes_gist_with_language(
+    @pytest.mark.asyncio
+    async def test_store_file_item_source_code_becomes_gist_with_language(
         self, store, tmp_path, monkeypatch
     ):
         """A source-code upload becomes a text-backed GIST: its content IS the code (read
@@ -1136,7 +1143,7 @@ class TestMediaItems:
         code = "def f(x):\n    return x * 2  # double\n"
         src = tmp_path / "algo.py"
         src.write_text(code)
-        item, is_new = H._store_file_item(store, str(src), "algo.py")
+        item, is_new = await H._store_file_item(store, str(src), "algo.py")
         assert is_new
         assert item["type"] == "gist"
         assert item["gist_language"] == "python"
@@ -1149,7 +1156,7 @@ class TestMediaItems:
         # Re-uploading byte-identical code dedups against the existing gist.
         src2 = tmp_path / "copy.py"
         src2.write_text(code)
-        item2, new2 = H._store_file_item(store, str(src2), "copy.py")
+        item2, new2 = await H._store_file_item(store, str(src2), "copy.py")
         assert new2 is False and item2["id"] == item["id"]
 
     def test_serve_path_guard_rejects_outside_root(self, store, tmp_path, monkeypatch):

@@ -9,22 +9,31 @@ hands the finished file to the SAME per-target finalize the single-POST paths us
 ``DELETE`` drops an upload the client cancelled: its parts go at once, and a complete
 asked for afterwards finds nothing, so nothing is made from it.
 
+A complete never works on the file on the event loop: assembling, moving, hashing and removing
+it run in worker threads, and the content scan in a child process
+(:mod:`personalclaw.uploads.content_scan`), so the gateway answers every other request while a
+2 GB file lands. Meanwhile the upload is held (``UploadStore.completing``): a second complete, a
+part or a drop of it is refused.
+
 These routes live on a dedicated 2 GB sub-app (see server.py) so the main + API
 apps keep a tight body ceiling; large media never touches them.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import os
+import shutil
 from pathlib import Path
 
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.uploads.content_scan import scan_upload
 from personalclaw.uploads.policy import limits_table, single_post_threshold
-from personalclaw.uploads.store import UploadError, UploadStore
+from personalclaw.uploads.store import UploadError, UploadSession, UploadStore
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +41,6 @@ _VALID_TARGETS = ("attachment", "knowledge", "workspace", "voice_profile")
 
 # voice_profile target: which slot the finished clip fills.
 _VOICE_SLOTS = ("ref_audio", "consent")
-
-# Bounded content scan at complete: media isn't grepped line-by-line (a 2 GB video
-# won't be scanned for `rm -rf` economically), so scan only a head+tail window for
-# text/code/archive-ish categories where injection/exfil patterns matter.
-_SCAN_WINDOW = 256 * 1024
-_SCANNABLE_CATEGORIES = {"document", "archive", "other"}
 
 
 def _store(request: web.Request) -> UploadStore:
@@ -207,9 +210,16 @@ async def api_uploads_status(request: web.Request) -> web.Response:
 
 
 async def api_uploads_drop(request: web.Request) -> web.Response:
-    """DELETE /api/uploads/{id} — drop a cancelled upload: its parts go, it can't be completed."""
+    """DELETE /api/uploads/{id} — drop a cancelled upload: its parts go, it can't be completed.
+
+    An upload whose complete is running is not dropped (409): once every part has landed the
+    gateway completes it whatever the page does."""
     sid = request.match_info["id"]
-    if not _store(request).drop(sid):
+    try:
+        dropped = await _store(request).drop(sid)
+    except UploadError:
+        return json_error("upload_completing", status=409)
+    if not dropped:
         return json_error("upload_not_found", status=404)
     return web.json_response({"uploadId": sid, "dropped": True})
 
@@ -219,6 +229,14 @@ async def api_uploads_complete(request: web.Request) -> web.Response:
     sid = request.match_info["id"]
     store = _store(request)
     try:
+        with store.completing(sid):
+            return await _complete(request, store, sid)
+    except UploadError as exc:  # a complete of this upload is already running
+        return web.json_response({"error": exc.message}, status=exc.status)
+
+
+async def _complete(request: web.Request, store: UploadStore, sid: str) -> web.Response:
+    try:
         final_path, sess = await store.assemble(sid)
     except UploadError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
@@ -226,83 +244,38 @@ async def api_uploads_complete(request: web.Request) -> web.Response:
         logger.exception("assemble failed for %s", sid)
         return web.json_response({"error": "failed to assemble upload"}, status=500)
 
-    # Bounded content scan (never load the whole file). Media is skipped — only
-    # text-ish categories get the head/tail injection/exfil scan.
-    scan_err = _bounded_scan(final_path, sess.category)
-    if scan_err:
-        store.cleanup(sid)
-        return web.json_response({"error": scan_err}, status=422)
-
     try:
+        # Bounded content scan (never the whole file). Media is skipped — only text-ish
+        # categories get the head/tail injection/exfil scan.
+        await scan_upload(final_path, sess.category)
         result = await _finalize_target(request, sess, final_path)
     except UploadError as exc:
-        store.cleanup(sid)
         return web.json_response({"error": exc.message}, status=exc.status)
     except Exception:
         logger.exception("finalize failed for %s target=%s", sid, sess.target)
-        store.cleanup(sid)
         return web.json_response({"error": "failed to finalize upload"}, status=500)
-
-    store.cleanup(sid)
+    finally:
+        # Its parts go whatever the outcome; they are as large as the file.
+        await asyncio.to_thread(store.cleanup, sid)
     return web.json_response(result)
 
 
-def _bounded_scan(path: Path, category: str) -> str | None:
-    """Scan a head+tail window for injection/exfil/destructive patterns. Returns an
-    error message if the content is dangerous, else None. Media categories skip the
-    scan (a 2 GB video isn't grepped line-by-line).
+async def _finalize_target(request: web.Request, sess: UploadSession, final_path: Path) -> dict:
+    """Hand the assembled file to the same finalize the single-POST path uses.
 
-    An uploaded file is UNTRUSTED content, so it gets BOTH scanner surfaces: ``script``
-    (the destructive-script ruleset — curl|sh, base64|bash, rm -rf, the S3 skill-install
-    gate) AND ``manifest`` (prose-injection + invisible-char rules, the S5 memory-write
-    gate). Scanning only ``manifest`` (the old bug) let classic shell payloads through as
-    CLEAN — the ``script`` ruleset is exactly the one that flags them."""
-    if category not in _SCANNABLE_CATEGORIES:
-        return None
-    try:
-        from personalclaw.supply_chain import SkillScanner, Verdict
-
-        with open(path, "rb") as fh:
-            head = fh.read(_SCAN_WINDOW)
-            size = path.stat().st_size
-            if size > 2 * _SCAN_WINDOW:
-                fh.seek(size - _SCAN_WINDOW)
-                tail = fh.read(_SCAN_WINDOW)
-            else:
-                tail = b""
-        window = head + b"\n" + tail
-        # A binary file (archive, or a mis-categorised binary) is meaningless to a
-        # text scanner: its compressed/random bytes can't reveal an embedded payload
-        # AND random byte runs false-positive on the DANGEROUS regexes (a /dev/urandom
-        # zip tripped the scan). NUL bytes are the reliable binary signal — skip those.
-        if b"\x00" in window:
-            return None
-        text = window.decode("utf-8", errors="replace")
-        scanner = SkillScanner()
-        for surface in ("script", "manifest"):
-            if scanner.scan_text(text, surface=surface).verdict is Verdict.DANGEROUS:
-                return "upload rejected: content failed the safety scan"
-    except Exception:
-        logger.debug("bounded scan errored (fail-open for non-scannable)", exc_info=True)
-    return None
-
-
-async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict:
-    """Hand the assembled file to the same finalize the single-POST path uses."""
-    import shutil
+    The file is moved (a copy when its destination is on another disk) and hashed in worker
+    threads; what it becomes (the item, the profile's record) is decided on the event loop."""
     import uuid
 
     if sess.target == "attachment":
+        import re
+
         from personalclaw.dashboard.attachment_extract import get_extractor
         from personalclaw.dashboard.handlers.files import _upload_dir
 
-        _upload_dir().mkdir(parents=True, exist_ok=True)
-        import re
-
         safe = re.sub(r"[^\w.\-]", "_", Path(sess.filename).name)
         dest = _upload_dir() / f"{uuid.uuid4().hex}_{safe}"
-        shutil.move(str(final_path), str(dest))
-        os.chmod(dest, 0o600)
+        await asyncio.to_thread(_move_private, final_path, dest)
         # Kick content extraction now (mirrors api_upload_file), so the attachment's
         # text is ready by the time the turn runs. An image is not read until its text
         # is asked for.
@@ -322,7 +295,7 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
         if classify(sess.filename, sess.mime or None) is None:
             raise UploadError(f"unsupported file type: {sess.filename}", 415)
         store = _kn_store(request)
-        item, is_new = _store_file_item(
+        item, is_new = await _store_file_item(
             store, str(final_path), sess.filename, mime=sess.mime or None
         )
         if item is None:
@@ -349,10 +322,18 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
             vprof.validate_id(profile_id)
             vprof.require_profile(profile_id)
             suffix = Path(sess.filename).suffix
-            if sess.target_key == "consent":
-                profile = vprof.attach_consent_audio(profile_id, final_path, suffix=suffix)
-            else:
-                profile = vprof.attach_ref_audio(profile_id, final_path, suffix=suffix)
+            # The clip is brought into the profile's own folder first, in a worker thread: a
+            # copy when the uploads are on another disk. Attaching it is then a rename there,
+            # and the profile's record is changed here, on the loop, as every edit of it is.
+            staged = vprof.profile_dir(profile_id) / f".incoming-{uuid.uuid4().hex}"
+            await asyncio.to_thread(_move_private, final_path, staged)
+            try:
+                if sess.target_key == "consent":
+                    profile = vprof.attach_consent_audio(profile_id, staged, suffix=suffix)
+                else:
+                    profile = vprof.attach_ref_audio(profile_id, staged, suffix=suffix)
+            finally:
+                staged.unlink(missing_ok=True)
         except vprof.VoiceProfileError as exc:
             raise UploadError(exc.message, exc.status) from exc
         if sess.target_key == "consent":
@@ -388,7 +369,14 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
             raise UploadError(f"forbidden filename: {sess.filename}", 400)
         if os.path.exists(wdest):
             raise UploadError(f"already exists: {sess.filename}", 409)
-        shutil.move(str(final_path), wdest)
+        await asyncio.to_thread(shutil.move, str(final_path), wdest)
         return {"paths": [wdest]}
 
     raise UploadError(f"unknown target: {sess.target}", 400)
+
+
+def _move_private(src: Path, dest: Path) -> None:
+    """Move *src* to *dest* (a copy when it is on another disk), readable by its owner alone."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dest))
+    os.chmod(dest, 0o600)

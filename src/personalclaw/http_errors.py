@@ -470,11 +470,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 400 `upload_interrupted`: the connection closed before the request's body had all arrived,
     # which is what a cancel does to the request in flight. A part answers it, and so does the
     # knowledge single-request upload (`POST /api/knowledge/ingest`).
+    # 409 `upload_completing`: `DELETE /api/uploads/{id}` named an upload whose complete is
+    # running: every part has landed, and the gateway completes it whatever the page does.
     "upload_not_found": (
         "No upload in progress has that id: it was never started, has finished, or was dropped."
     ),
     "upload_interrupted": (
         "The connection closed before the upload's bytes had all arrived, so none of it was kept."
+    ),
+    "upload_completing": (
+        "This upload has all arrived and is being completed, so it can no longer be cancelled."
     ),
     # ── inbound MCP surface (inbound/mcp_http.py) ──
     #

@@ -331,13 +331,15 @@ class TestFileReader:
         degrade to the format:'error' missing-dependency sentinel."""
         import personalclaw.knowledge.readers as rd
 
-        assert rd.pdfplumber is not None, "pdfplumber missing — PDF upload silently yields 0 items"
+        assert (
+            rd._library("pdfplumber") is not None
+        ), "pdfplumber missing — PDF upload silently yields 0 items"
 
     def test_read_xlsx_as_markdown_tables(self, tmp_path):
         """A spreadsheet extracts as markdown tables (one per sheet), not binary text."""
         import personalclaw.knowledge.readers as rd
 
-        if rd._load_workbook is None:
+        if rd._library("openpyxl") is None:
             import pytest as _pytest
 
             _pytest.skip("openpyxl not installed")
@@ -400,8 +402,8 @@ class TestFileReader:
         """python-pptx + html2text are declared core deps (#71)."""
         import personalclaw.knowledge.readers as rd
 
-        assert rd.Presentation is not None, "python-pptx missing — .pptx upload yields 0 items"
-        assert rd._html2text_mod is not None, "html2text missing — HTML extraction degrades"
+        assert rd._library("pptx") is not None, "python-pptx missing — .pptx upload yields 0 items"
+        assert rd._library("html2text") is not None, "html2text missing — HTML extraction degrades"
 
     def test_missing_reader_dep_surfaces_error(self, tmp_path, monkeypatch):
         """When a reader dependency is genuinely absent, the reader must return a
@@ -409,7 +411,7 @@ class TestFileReader:
         sync_error) rather than a silent empty/0-item result."""
         import personalclaw.knowledge.readers as rd
 
-        monkeypatch.setattr(rd, "pdfplumber", None)
+        monkeypatch.setitem(rd._LIBRARIES, "pdfplumber", None)
         f = tmp_path / "x.pdf"
         f.write_bytes(b"%PDF-1.4\n%%EOF")
         _text, meta = FileReader().read(str(f))

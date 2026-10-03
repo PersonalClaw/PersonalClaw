@@ -35,7 +35,7 @@ _MB = 1024 * 1024
 
 
 class _Reader:
-    """An aiohttp body reader stand-in: hands out *data* in chunks, running *on_read* first."""
+    """An aiohttp body reader stand-in: hands out *data* in chunks, awaiting *on_read* first."""
 
     def __init__(self, data: bytes, on_read=None, fail_after: int | None = None):
         self.data = data
@@ -45,8 +45,8 @@ class _Reader:
 
     async def read_chunk(self, n: int) -> bytes:
         if self.on_read is not None:
-            self.on_read()
-            self.on_read = None
+            on_read, self.on_read = self.on_read, None
+            await on_read()
         if self.fail_after is not None and self.pos >= self.fail_after:
             raise ConnectionResetError("Connection lost")
         chunk = self.data[self.pos : self.pos + n]
@@ -75,7 +75,7 @@ class TestDrop:
         # The part that was arriving when the browser stopped sending.
         (tmp_path / sess.id / ".part_000002.tmp").write_bytes(b"\0" * _MB)
 
-        assert store.drop(sess.id) is True
+        assert await store.drop(sess.id) is True
 
         assert not (tmp_path / sess.id).exists()
         with pytest.raises(UploadError) as ei:
@@ -88,19 +88,21 @@ class TestDrop:
         sess = _append_mode_store(store, 20 * _MB)
         await store.write_part(sess.id, 0, _Reader(os.urandom(sess.part_size)))
 
-        assert store.drop(sess.id) is True
+        assert await store.drop(sess.id) is True
 
         assert not (tmp_path / sess.id).exists()
 
-    def test_dropping_an_upload_that_is_not_there_says_so(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_dropping_an_upload_that_is_not_there_says_so(self, tmp_path):
         store = UploadStore(tmp_path)
         sess = store.init(filename="clip.mp4", size=20 * _MB, mime="video/mp4", target="knowledge")
 
-        assert store.drop("0" * 32) is False
-        assert store.drop(sess.id) is True
-        assert store.drop(sess.id) is False, "a second drop finds nothing to drop"
+        assert await store.drop("0" * 32) is False
+        assert await store.drop(sess.id) is True
+        assert await store.drop(sess.id) is False, "a second drop finds nothing to drop"
 
-    def test_an_id_that_names_no_upload_removes_nothing(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_an_id_that_names_no_upload_removes_nothing(self, tmp_path):
         """A drop deletes a folder, so only an upload's own folder may go: an id that is not an
         upload's (nothing left once reduced to an id's characters, or the folder above) is
         refused, and every upload in progress stays."""
@@ -109,7 +111,7 @@ class TestDrop:
         sess = store.init(filename="clip.mp4", size=20 * _MB, mime="video/mp4", target="knowledge")
 
         for not_an_upload in ("", "..", "./"):
-            assert store.drop(not_an_upload) is False
+            assert await store.drop(not_an_upload) is False
 
         assert (root / sess.id / "meta.json").is_file()
 

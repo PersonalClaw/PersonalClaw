@@ -233,6 +233,12 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "providers/availability.py::AvailabilityBoard._probe::asyncio.create_subprocess_exec": (
         "host-fact: provider availability probe child"
     ),
+    # Upload content scan — the gateway's OWN CLI (`personalclaw content-scan`), argv fixed; the
+    # finished upload's window is its stdin and a verdict its one line out. It exists to keep the
+    # scan's parse, which holds the interpreter lock, out of the gateway process.
+    "uploads/content_scan.py::_ask_child::asyncio.create_subprocess_exec": (
+        "host-fact: upload content scan child"
+    ),
     "acp/cli_resolve.py::resolve_node_ge::subprocess.run": "operator: node version probe",
     "acp/cli_resolve.py::provision_acp_adapter::subprocess.run": "operator: ACP adapter install",
     # ACP PID-tree host-fact probes (ps/proc reads, not spawns of agent code).

@@ -86,13 +86,17 @@ async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Resp
             {"error": {"code": "file_required", "message": "file field required"}}, status=400
         )
 
+    from personalclaw.uploads.spool import Spool
+
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     try:
+        spool = Spool(tmp)
         while True:
             chunk = await part.read_chunk(65536)
             if not chunk:
                 break
-            tmp.write(chunk)
+            await spool.write(chunk)
+        await spool.flush()
         tmp.close()
         return Path(tmp.name), None
     except Exception:
