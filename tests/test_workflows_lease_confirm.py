@@ -328,7 +328,8 @@ def test_confirm_is_guarded_by_the_SAME_operation_as_resume():
     from personalclaw.workflows import handlers
 
     source = inspect.getsource(handlers.api_run_confirm)
-    assert '_guard(request, "workflow_run_resume")' in source
+    # The guard also names the run, so a restricted chat may answer only a run of its own.
+    assert '_guard(request, "workflow_run_resume"' in source
 
 
 def test_the_confirm_handler_AUDITS_the_verb():
